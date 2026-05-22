@@ -7,18 +7,18 @@
 
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
-import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -86,6 +86,9 @@ export async function runStoreForCli(
           sourceDate,
           tags: ["auth", ...extractTags(pointerText, "Credentials")],
         });
+        if (storeResult.skipped) {
+          return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+        }
         pointerEntry = storeResult.entry;
         // Check if store was rejected (artifact text)
         if (pointerEntry.id === "" || storeResult.skipped) {
@@ -235,6 +238,9 @@ export async function runStoreForCli(
                 scope,
                 scopeTarget,
               });
+              if (storeResult.skipped) {
+                return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+              }
               const newEntry = storeResult.entry;
               // Check if store was rejected (artifact text)
               if (newEntry.id === "" || storeResult.skipped) {
@@ -302,6 +308,9 @@ export async function runStoreForCli(
       scopeTarget,
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
+    if (storeResult.skipped) {
+      return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+    }
     const entry = storeResult.entry;
     // Check if store was rejected (artifact text)
     if (entry.id === "" || storeResult.skipped) {

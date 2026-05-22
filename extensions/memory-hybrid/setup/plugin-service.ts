@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { findPluginRoot } from "../utils/plugin-root.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { clearRuntimeTimers } from "../api/plugin-runtime.js";
@@ -12,14 +11,13 @@ import type { IssueStore } from "../backends/issue-store.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { createDashboardServer } from "../routes/dashboard-server.js";
 import type { DashboardServer } from "../routes/dashboard-server.js";
+import { createDashboardServer } from "../routes/dashboard-server.js";
 import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
@@ -42,18 +40,20 @@ import {
   deleteVectorsForFactIds,
   storeCanonicalVectorForFact,
 } from "../services/vector-maintenance.js";
+import type { VerificationStore } from "../services/verification-store.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { findPluginRoot } from "../utils/plugin-root.js";
 import {
-  type VersionCheckCacheEntry,
   fetchLatestPublishedVersion,
   isPluginOutdated,
   isVersionCheckCacheFresh,
   maybeLogOutdatedVersionNudge,
   readVersionCheckCache,
+  type VersionCheckCacheEntry,
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
@@ -388,6 +388,9 @@ export function createPluginService(ctx: PluginServiceContext) {
                     summary,
                     tags,
                   });
+                  if (storeResult.skipped) {
+                    continue;
+                  }
                   const stored = storeResult.entry;
                   await cleanupEvictedVector({
                     vectorDb,

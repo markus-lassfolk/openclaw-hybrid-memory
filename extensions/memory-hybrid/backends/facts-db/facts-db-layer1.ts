@@ -13,12 +13,12 @@ import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
 import {
-  type StoreFactInput,
-  type StoreFactResult,
   deleteFact,
   getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
+  type StoreFactInput,
+  type StoreFactResult,
   statsDailyWrites as statsDailyWritesImpl,
   storeFact,
 } from "./crud.js";
@@ -44,14 +44,14 @@ import {
 import {
   logRecall as logRecallImpl,
   pruneRecallLog as pruneRecallLogImpl,
+  type RetierReport,
   retierFacts as retierFactsImpl,
   runCompaction as runCompactionImpl,
   setFactTier,
   setPreserveTags as setPreserveTagsImpl,
   setPreserveUntil as setPreserveUntilImpl,
-  trimToBudget as trimToBudgetImpl,
-  type RetierReport,
   type TieringOptions,
+  trimToBudget as trimToBudgetImpl,
 } from "./maintenance.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
@@ -236,46 +236,9 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     },
   ): MemoryEntry {
     const result = this.storeWithResult(entry, options);
-    // When skipped by pre-store guard, return a placeholder entry with empty id
-    // so callers can check entry.id === "" to avoid vector operations on non-existent facts.
-    if (result.skipped) {
-      return {
-        id: "",
-        text: entry.text,
-        category: entry.category ?? "other",
-        importance: entry.importance ?? 0.5,
-        confidence: 1,
-        decayClass: entry.decayClass ?? "normal",
-        source: entry.source ?? "conversation",
-        scope: entry.scope ?? "global",
-        scopeTarget: entry.scopeTarget ?? null,
-        tags: entry.tags ?? [],
-        entity: entry.entity ?? null,
-        key: entry.key ?? null,
-        value: entry.value ?? null,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        lastAccessed: Date.now(),
-        recallCount: 0,
-        expiresAt: entry.expiresAt ?? null,
-        supersedesId: entry.supersedesId ?? null,
-        supersededAt: null,
-        supersededBy: null,
-        validFrom: entry.validFrom ?? null,
-        validUntil: null,
-        outDegree: 0,
-        inDegree: 0,
-        provenanceSession: entry.provenanceSession ?? null,
-        sourceSessions: entry.sourceSessions ?? null,
-        sourceTurn: entry.sourceTurn ?? null,
-        extractionMethod: entry.extractionMethod ?? null,
-        extractionConfidence: entry.extractionConfidence ?? null,
-        decayFreezeUntil: entry.decayFreezeUntil ?? null,
-        preserveUntil: entry.preserveUntil ?? null,
-        preserveTags: entry.preserveTags ?? null,
-        provenanceJson: entry.provenanceJson ?? null,
-      };
-    }
+    // Skipped results carry a non-addressable placeholder entry (id === "") for
+    // legacy store() callers. storeWithResult() callers must check result.skipped
+    // before vector, supersession, provenance, or event side effects.
     return result.entry;
   }
 

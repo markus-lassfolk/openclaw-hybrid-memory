@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { classifyMemoryOperationsBatch, type MemoryClassification } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
-import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
@@ -106,6 +106,9 @@ export async function runExtractDailyForCli(
               validFrom: sourceDateSec,
               supersedesId: classification.targetId,
             });
+            if (storeResult.skipped) {
+              continue;
+            }
             const newEntry = storeResult.entry;
             // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
             await cleanupEvictedVector({
@@ -145,6 +148,9 @@ export async function runExtractDailyForCli(
           }
         }
         const storeResult = factsDb.storeWithResult(storePayload);
+        if (storeResult.skipped) {
+          continue;
+        }
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({
@@ -225,6 +231,9 @@ export async function runExtractDailyForCli(
                   sourceDate: sourceDateSec,
                   tags: ["auth", ...extractTags(pointerText, "Credentials")],
                 });
+                if (pointerStoreResult.skipped) {
+                  continue;
+                }
                 const pointerEntry = pointerStoreResult.entry;
                 await cleanupEvictedVector({
                   vectorDb,
@@ -345,6 +354,9 @@ export async function runExtractDailyForCli(
       }
       await flushPendingExtractClassify();
       const storeResult = factsDb.storeWithResult(storePayload);
+      if (storeResult.skipped) {
+        continue;
+      }
       const entry = storeResult.entry;
       await cleanupEvictedVector({
         vectorDb,
