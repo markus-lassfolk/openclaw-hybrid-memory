@@ -389,35 +389,26 @@ export function createPluginService(ctx: PluginServiceContext) {
                   // Store to LanceDB with same fact id for classification before clearing WAL.
                   if (entry.data.vector) {
                     try {
-                      if (walEmbeddingModel) {
-                        await storeCanonicalVectorForFact({
-                          vectorDb,
-                          factsDb,
-                          factId: stored.id,
-                          text,
-                          vector: entry.data.vector,
-                          importance: importance ?? 0.5,
-                          category: category || "other",
-                          embeddingModel: walEmbeddingModel,
-                        });
-                        persistCanonicalFactEmbedding(
-                          factsDb,
-                          stored.id,
-                          walEmbeddingModel,
-                          entry.data.vector,
-                          "wal-recovery-fact-embeddings",
-                          "plugin-service",
-                          api.logger.warn?.bind(api.logger),
-                        );
-                      } else {
-                        await vectorDb.store({
-                          text,
-                          vector: entry.data.vector,
-                          importance: importance ?? 0.5,
-                          category: category || "other",
-                          id: stored.id,
-                        });
-                      }
+                      const effectiveModel = walEmbeddingModel ?? embeddings.modelName;
+                      await storeCanonicalVectorForFact({
+                        vectorDb,
+                        factsDb,
+                        factId: stored.id,
+                        text,
+                        vector: entry.data.vector,
+                        importance: importance ?? 0.5,
+                        category: category || "other",
+                        embeddingModel: effectiveModel,
+                      });
+                      persistCanonicalFactEmbedding(
+                        factsDb,
+                        stored.id,
+                        effectiveModel,
+                        entry.data.vector,
+                        "wal-recovery-fact-embeddings",
+                        "plugin-service",
+                        api.logger.warn?.bind(api.logger),
+                      );
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
                       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -444,6 +435,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                   if (!existingId) existingId = factsDb.getDuplicateIdByNormalizedHash(text);
                   if (existingId) {
                     try {
+                      const effectiveModel = walEmbeddingModel ?? embeddings.modelName;
                       await vectorDb.store({
                         text,
                         vector: entry.data.vector,
@@ -451,18 +443,16 @@ export function createPluginService(ctx: PluginServiceContext) {
                         category: category || "other",
                         id: existingId,
                       });
-                      if (walEmbeddingModel) {
-                        factsDb.setEmbeddingModel(existingId, walEmbeddingModel);
-                        persistCanonicalFactEmbedding(
-                          factsDb,
-                          existingId,
-                          walEmbeddingModel,
-                          entry.data.vector,
-                          "wal-recovery-existing-fact-embeddings",
-                          "plugin-service",
-                          api.logger.warn?.bind(api.logger),
-                        );
-                      }
+                      factsDb.setEmbeddingModel(existingId, effectiveModel);
+                      persistCanonicalFactEmbedding(
+                        factsDb,
+                        existingId,
+                        effectiveModel,
+                        entry.data.vector,
+                        "wal-recovery-existing-fact-embeddings",
+                        "plugin-service",
+                        api.logger.warn?.bind(api.logger),
+                      );
                       api.logger.info(
                         `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
                       );

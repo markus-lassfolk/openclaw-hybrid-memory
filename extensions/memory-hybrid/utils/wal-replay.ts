@@ -84,7 +84,7 @@ async function ensureVectorAndEmbeddingMeta(opts: {
 
   const resolveCanonicalEmbeddingModel = (): string | null => {
     const walModel = safeString(embeddingModelName);
-    return walModel;
+    return walModel ?? embeddings?.modelName ?? null;
   };
 
   const embedAndStore = async (): Promise<number[] | null> => {
