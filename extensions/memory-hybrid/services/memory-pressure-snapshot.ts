@@ -10,12 +10,14 @@
  * ~/.openclaw/diagnostics/memory-pressure/.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdir, readlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
 import { getEnv } from "../utils/env-manager.js";
+import { parseDuration } from "../utils/duration.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -169,17 +171,17 @@ interface OpenFd {
   path: string;
 }
 
-function getOpenFds(): OpenFd[] {
+async function getOpenFds(): Promise<OpenFd[]> {
   const fds: OpenFd[] = [];
   const procFdDir = `/proc/self/fd`;
   if (!existsSync(procFdDir)) return fds;
   try {
-    const entries = readdirSync(procFdDir);
+    const entries = await readdir(procFdDir);
     for (const entry of entries) {
       const num = Number(entry);
       if (Number.isNaN(num)) continue;
       try {
-        const target = readlinkSync(join(procFdDir, entry));
+        const target = await readlink(join(procFdDir, entry));
         fds.push({ fd: num, path: target });
       } catch {
         // closed or inaccessible
@@ -256,11 +258,20 @@ function extractDbPaths(fds: OpenFd[]): MemoryPressureSnapshot["dbPaths"] {
 
 async function getActiveTaskCounts(
   activeTaskPath: string | undefined,
+  staleMinutes: number,
+  factsDb: unknown,
+  ledger: "file" | "facts",
 ): Promise<{ stale: number; active: number }> {
   try {
+    if (ledger === "facts" && factsDb) {
+      const { readActiveTaskRowsFromFacts } = await import("./task-ledger-facts.js");
+      const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
+      const stale = active.filter((t) => t.stale).length;
+      return { stale, active: active.length };
+    }
     if (!activeTaskPath) return { stale: 0, active: 0 };
     const { readActiveTaskFile } = await import("./active-task.js");
-    const file = await readActiveTaskFile(activeTaskPath, 60);
+    const file = await readActiveTaskFile(activeTaskPath, staleMinutes);
     if (!file) return { stale: 0, active: 0 };
     const active = file.active ?? [];
     const stale = active.filter((t) => t.stale).length;
@@ -280,7 +291,7 @@ function writeJsonArtifact(snapshot: MemoryPressureSnapshot): void {
     const diagDir = join(openclawHome, "diagnostics", "memory-pressure");
     mkdirSync(diagDir, { recursive: true });
     const filename = `snapshot-${Date.now()}.json`;
-    require("node:fs").writeFileSync(join(diagDir, filename), JSON.stringify(snapshot, null, 2), "utf-8");
+    writeFileSync(join(diagDir, filename), JSON.stringify(snapshot, null, 2), "utf-8");
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "write-memory-snapshot-artifact",
@@ -308,7 +319,42 @@ export async function captureMemoryPressureSnapshot(
   const cooldownRemainingSec = elapsedMs < cooldownMs ? Math.ceil((cooldownMs - elapsedMs) / 1000) : 0;
 
   // Rate-limit: skip if within cooldown window
-  if (elapsedMs < cooldownMs) return null;
+  if (elapsedMs < cooldownMs) {
+    return {
+      timestamp: new Date().toISOString(),
+      memory: {
+        rss: 0,
+        heapTotal: 0,
+        heapUsed: 0,
+        external: 0,
+        arrayBuffers: 0,
+      },
+      activeHandles: 0,
+      activeRequests: 0,
+      linuxProcMem: null,
+      fdGroups: [],
+      dbPaths: { sqlite: [], lancedb: [], wal: [], shm: [] },
+      pluginGenerations: {
+        lancedbInitGeneration: 0,
+        lancedbStoreCount: 0,
+        lancedbOptimizing: false,
+      },
+      hybridMemory: {
+        sqlitePath: null,
+        lancedbPath: null,
+        lancedbInitialized: false,
+        lancedbOptimizing: false,
+        lancedbOpenReaders: 0,
+        recallInFlight: 0,
+        staleTaskCount: 0,
+        activeTaskCount: 0,
+        uptimeSec: 0,
+        nodeVersion: "",
+        platform: "",
+      },
+      cooldownRemainingSec,
+    };
+  }
 
   const mem = process.memoryUsage();
   const memSnapshot = {
@@ -319,7 +365,7 @@ export async function captureMemoryPressureSnapshot(
     arrayBuffers: mem.arrayBuffers ?? 0,
   };
 
-  const fds = getOpenFds();
+  const fds = await getOpenFds();
   const fdGroups = groupFds(fds, config.fdGroupSampleLimit ?? 5);
   const dbPaths = extractDbPaths(fds);
   const linuxProcMem = config.includeLinuxProcMem ? parseLinuxProcMem() : null;
@@ -335,7 +381,9 @@ export async function captureMemoryPressureSnapshot(
   const lancedbPath = typeof vd.getPath === "function" ? vd.getPath() ?? null : null;
 
   // Active task counts
-  const taskCounts = await getActiveTaskCounts(ctx.activeTaskPath);
+  const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
+  const ledger = ctx.cfg.activeTask.ledger ?? "file";
+  const taskCounts = await getActiveTaskCounts(ctx.activeTaskPath, staleMinutes, ctx.factsDb, ledger);
 
   // Hybrid memory snapshot
   const hybridMemory: HybridMemorySnapshot = {
@@ -372,7 +420,7 @@ export async function captureMemoryPressureSnapshot(
       lancedbOptimizing,
     },
     hybridMemory,
-    cooldownRemainingSec: 0,
+    cooldownRemainingSec: config.cooldownSec,
   };
 
   if (config.writeArtifact) {
