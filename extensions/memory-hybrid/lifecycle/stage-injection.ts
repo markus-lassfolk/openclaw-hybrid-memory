@@ -200,13 +200,13 @@ async function runInjection(
       const lastAccessed = x.entry.lastAccessed ?? 0;
       const lastAccessedDaysAgo = lastAccessed > 0 ? (Date.now() / 1000 - lastAccessed) / 86400 : Infinity;
       const isRecentlyAccessed = lastAccessedDaysAgo < 14;
-      
+
       // Exclude facts with disproportionate index exposure (indexed_count >> recall_count)
       // which indicates garbage that was repeatedly shown in progressive index but never
       // actually recalled (#1559).
       const indexInflationRatio = recallCount > 0 ? indexedCount / recallCount : indexedCount;
       const likelyIndexGarbage = indexInflationRatio > 10 && indexedCount > 50;
-      
+
       if (
         x.entry.decayClass === "permanent" ||
         (recallCount >= pinnedRecallThreshold && isRecentlyAccessed && !likelyIndexGarbage)

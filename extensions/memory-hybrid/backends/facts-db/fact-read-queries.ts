@@ -360,8 +360,8 @@ function isLikelyGarbage(entry: MemoryEntry): boolean {
   // Unhelpful source + long reasoning combo
   if (
     entry.source === "auto-capture" &&
-    (combined.length > 3000 &&
-      (/think|reasoning|analyz|process/gi.test(combined) || /\n\n{2,}/.test(combined)))
+    combined.length > 3000 &&
+    (/think|reasoning|analyz|process/gi.test(combined) || /\n\n{2,}/.test(combined))
   ) {
     return true;
   }

@@ -1230,13 +1230,21 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
            (category = 'other' AND recall_count > ${HOT_GARBAGE_OTHER_RECALL_THRESHOLD})
          )`,
     )
-    .all() as Array<{ id: string; text: string; summary: string | null; source: string; recall_count: number; access_count: number; category: string }>;
+    .all() as Array<{
+    id: string;
+    text: string;
+    summary: string | null;
+    source: string;
+    recall_count: number;
+    access_count: number;
+    category: string;
+  }>;
 
   if (rows.length === 0) return 0;
 
   const ids = rows.map((r) => r.id);
   let totalChanged = 0;
-  
+
   // Batch updates to respect SQLite's 999 bind variable limit
   for (const batch of batchedInClauseBinds(ids)) {
     const placeholders = batch.map(() => "?").join(",");
@@ -1245,6 +1253,6 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
       .run(...batch);
     totalChanged += Number(result.changes ?? 0);
   }
-  
+
   return totalChanged;
 }
