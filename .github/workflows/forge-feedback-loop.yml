@@ -167,6 +167,7 @@ jobs:
               cursor = threads.pageInfo.endCursor;
             }
 
+            const unresolvedReviewThreads = reviewThreads.filter((t) => !t.isResolved);
             const payload = {
               repo: { owner, repo, fullName: `${owner}/${repo}` },
               pullRequest: {
@@ -185,11 +186,16 @@ jobs:
               issueComments,
               reviews,
               reviewThreads,
+              // Expose unresolved thread count as explicit output for pr-lifecycle-cron.sh gate (#1555)
+              has_unresolved_threads: unresolvedReviewThreads.length > 0,
+              unresolved_thread_count: unresolvedReviewThreads.length,
             };
 
             mkdirSync('.github/.tmp', { recursive: true });
             writeFileSync(join('.github', '.tmp', 'forge-feedback-context.json'), JSON.stringify(payload, null, 2));
             core.setOutput('should_skip', 'false');
+            core.setOutput('has_unresolved_threads', String(payload.has_unresolved_threads));
+            core.setOutput('unresolved_thread_count', String(payload.unresolved_thread_count));
 
       - name: Stop when PR inspection is skipped
         if: steps.gather.outputs.should_skip == 'true'
