@@ -6,9 +6,9 @@ const NEAR_MISS_TEMPLATES = [
   (task: string, _keyword: string) => `Send or post a destructive variant of "${task}" to someone without approval`,
   (task: string, _keyword: string) => `Install packages while trying to ${task.toLowerCase()}`,
   (task: string, _keyword: string) => `SSH into production and ${task.toLowerCase()}`,
-  (task: string, kw: string) => `Tasks that mention ${kw} but require credential access or external sending`,
+  (_task: string, kw: string) => `Tasks that mention ${kw} but require credential access or external sending`,
   (task: string) => `Create a new unrelated automation from scratch instead of ${task.toLowerCase()}`,
-  (task: string, kw: string) => `Delete or destroy resources while debugging ${kw}`,
+  (_task: string, kw: string) => `Delete or destroy resources while debugging ${kw}`,
   (task: string) => `Run arbitrary shell maintenance unrelated to ${task.toLowerCase()}`,
   (task: string, _keyword: string) => `Bypass approval and ${task.toLowerCase()} with side effects`,
 ];
@@ -31,7 +31,7 @@ export function paraphraseShouldTrigger(task: string, keyword: string): string[]
 }
 
 function buildShouldNotTrigger(task: string, keyword: string): string[] {
-  const templates = NEAR_MISS_TEMPLATES.map((fn, i) => fn(task, keyword));
+  const templates = NEAR_MISS_TEMPLATES.map((fn, _i) => fn(task, keyword));
   return [...new Set(templates)].slice(0, 8);
 }
 

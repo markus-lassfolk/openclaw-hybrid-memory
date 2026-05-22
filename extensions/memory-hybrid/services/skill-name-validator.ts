@@ -63,7 +63,7 @@ function toGerund(verb: string): string {
     // Keep 'e' for verbs ending in 'ee', 'ye', 'oe' (agree → agreeing, see → seeing)
     const beforeE = verb[verb.length - 2];
     if (beforeE !== "e" && beforeE !== "y" && beforeE !== "o") {
-      return verb.slice(0, -1) + "ing";
+      return `${verb.slice(0, -1)}ing`;
     }
   }
 
@@ -88,12 +88,12 @@ function toGerund(verb: string): string {
       // Only double for short words (likely single syllable)
       // This heuristic avoids doubling in longer words like "benefit" → "benefiting"
       if (verb.length <= 4) {
-        return verb + last + "ing";
+        return `${verb + last}ing`;
       }
     }
   }
 
-  return verb + "ing";
+  return `${verb}ing`;
 }
 
 export function validateSkillName(name: string): string[] {

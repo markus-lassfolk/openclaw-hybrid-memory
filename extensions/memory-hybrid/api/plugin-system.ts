@@ -385,8 +385,6 @@ export class PluginManager {
  * Example plugin implementation
  */
 export class SlackNotificationPlugin implements MemoryPlugin {
-  private webhookUrl?: string;
-
   metadata: PluginMetadata = {
     id: "slack-notifications",
     name: "Slack Notifications",
