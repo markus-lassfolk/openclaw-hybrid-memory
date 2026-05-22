@@ -355,6 +355,16 @@ export function createPluginService(ctx: PluginServiceContext) {
 
           for (const entry of pendingEntries) {
             try {
+              // Skip diagnostic probe entries (e.g., doctor command durability tests).
+              if (entry.data.probe) {
+                await walRemove(wal, entry.id, api.logger);
+                continue;
+              }
+              // Skip update operations without a targetId (cannot be replayed safely).
+              if (entry.operation === "update" && !entry.targetId) {
+                await walRemove(wal, entry.id, api.logger);
+                continue;
+              }
               if (entry.operation === "store" || entry.operation === "update") {
                 const { text, category, importance, entity, key, value, source, decayClass, summary, tags } =
                   entry.data;

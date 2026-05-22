@@ -167,6 +167,12 @@ export async function replayWalEntries(
 
   for (const entry of walEntries) {
     try {
+      // Skip diagnostic probe entries (e.g., doctor command durability tests).
+      if (entry.data?.probe) {
+        skipped++;
+        await wal.remove(entry.id);
+        continue;
+      }
       if (entry.operation === "store" && isSafeWalText(entry.data?.text)) {
         const text = safeString(entry.data.text);
         if (!text) continue;
