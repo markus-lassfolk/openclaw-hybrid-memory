@@ -222,6 +222,9 @@ export async function runStoreForCli(
                 scope,
                 scopeTarget,
               });
+              if (storeResult.skipped) {
+                return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+              }
               const newEntry = storeResult.entry;
               // Check if store was rejected (artifact text)
               if (newEntry.id === "" || storeResult.skipped) {
@@ -289,6 +292,9 @@ export async function runStoreForCli(
       scopeTarget,
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
+    if (storeResult.skipped) {
+      return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+    }
     const entry = storeResult.entry;
     // Check if store was rejected (artifact text)
     if (entry.id === "" || storeResult.skipped) {

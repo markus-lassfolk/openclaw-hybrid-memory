@@ -6,35 +6,34 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { stringEnum } from "../../utils/typebox.js";
-
 import { categoryToEventType } from "../../backends/event-log.js";
 import {
-  DECAY_CLASSES,
   type CredentialType,
+  DECAY_CLASSES,
   type DecayClass,
-  type MemoryCategory,
   getCronModelConfig,
   getDefaultCronModel,
   getMemoryCategories,
   isCompactVerbosity,
+  type MemoryCategory,
 } from "../../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../../services/auto-capture.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
+import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
 import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
-import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
-import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import { shouldAutoVerify } from "../../services/verification-store.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import { extractTags } from "../../utils/tags.js";
 import { truncateForStorage } from "../../utils/text.js";
+import { stringEnum } from "../../utils/typebox.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 
 export function registerStoreTools(runtime: MemoryToolRuntime): void {
@@ -570,12 +569,18 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     extractionMethod: "active",
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
+                  if (updateStoreResult.skipped) {
+                    return {
+                      content: [{ type: "text", text: "Already known: artifact text rejected" }],
+                      details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
+                    };
+                  }
                   const newEntry = updateStoreResult.entry;
                   // Skip supersede and vector operations if store was rejected (artifact text)
                   if (newEntry.id === "" || updateStoreResult.skipped) {
                     await walRemove(walEntryId, api.logger);
                     return {
-                      content: [{ type: "text", text: `Already known: artifact text rejected` }],
+                      content: [{ type: "text", text: "Already known: artifact text rejected" }],
                       details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
                     };
                   }
@@ -804,12 +809,18 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             decayFreezeUntil: decayFreezeUntil ?? undefined,
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
+          if (storeResult.skipped) {
+            return {
+              content: [{ type: "text", text: "Already known: artifact text rejected" }],
+              details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
+            };
+          }
           const entry = storeResult.entry;
           // Skip all downstream operations if store was rejected (artifact text)
           if (entry.id === "" || storeResult.skipped) {
             await walRemove(walEntryId, api.logger);
             return {
-              content: [{ type: "text", text: `Already known: artifact text rejected` }],
+              content: [{ type: "text", text: "Already known: artifact text rejected" }],
               details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
             };
           }

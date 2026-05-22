@@ -2,25 +2,19 @@
  * Minimal MemoryPluginAPI + mock Clawdbot API for registerLifecycleHooks tests.
  */
 
+import type { Mock } from "vitest";
 import { vi } from "vitest";
 import type { FactsDB } from "../../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../../config.js";
 import type { LifecycleContext } from "../../lifecycle/types.js";
 import { buildGuardTestConfig, buildGuardTestLifecycleContext } from "./lifecycle-hook-harness.js";
 
-export interface HooksApi {
-  on: ReturnType<typeof vi.fn>;
-  logger: {
-    info: ReturnType<typeof vi.fn>;
-    warn: ReturnType<typeof vi.fn>;
-    debug: ReturnType<typeof vi.fn>;
-    error: ReturnType<typeof vi.fn>;
-  };
+export function makeHooksApi(): {
+  on: Mock;
+  logger: { info: Mock; warn: Mock; debug: Mock; error: Mock };
   context: { sessionId: string; sessionKey: string; agentId: string };
-  resolvePath: ReturnType<typeof vi.fn>;
-}
-
-export function makeHooksApi(): HooksApi {
+  resolvePath: Mock;
+} {
   return {
     on: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },

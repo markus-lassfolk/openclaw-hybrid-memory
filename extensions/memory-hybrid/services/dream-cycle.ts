@@ -20,14 +20,13 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
 import type { ProvenanceService } from "./provenance.js";
-import { cleanupEvictedVector } from "./vector-maintenance.js";
 import {
-  type ReflectionConfig,
   countActivePatternFactsForMaintenance,
+  type ReflectionConfig,
   runReflection,
   runReflectionRules,
 } from "./reflection.js";
-import { deleteVectorsForFactIds } from "./vector-maintenance.js";
+import { cleanupEvictedVector, deleteVectorsForFactIds } from "./vector-maintenance.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";
@@ -459,6 +458,9 @@ export async function runEpisodicConsolidation(
           sourceEvents,
         }),
       });
+      if (storeResult.skipped) {
+        continue;
+      }
       consolidatedFact = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       if (vectorDb) {

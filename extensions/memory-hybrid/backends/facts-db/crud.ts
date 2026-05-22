@@ -5,11 +5,11 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
+import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
-import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
 
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
@@ -132,6 +132,8 @@ export type StoreFactContext = {
 export type StoredFactResult = {
   /** The stored fact entry */
   entry: MemoryEntry;
+  /** Stored results are never legacy-rejected. */
+  rejected?: false;
   /**
    * CRITICAL (#2): ID of fact evicted during onOverflow=evict-lowest-confidence.
    * Caller MUST delete the vector from VectorDB to prevent orphaned vectors.
@@ -156,9 +158,68 @@ export type SkippedStoreFactResult = {
    * No fact was written, so callers must skip all post-store operations.
    */
   skipped: true;
+  /** Non-addressable placeholder retained for legacy callers; do not use for vector/supersession/provenance side effects. */
+  entry: MemoryEntry;
+  /** Skipped results never evict persisted facts. */
+  evictedFactId: null;
+  /** Skipped results never modify embeddings. */
+  embeddingStale: false;
+  /** Legacy alias for skipped. */
+  rejected: true;
 };
 
 export type StoreFactResult = StoredFactResult | SkippedStoreFactResult;
+
+export function isStoredFactResult(result: StoreFactResult): result is StoredFactResult {
+  return result.skipped !== true;
+}
+
+function createSkippedStorePlaceholder(entry: StoreFactInput): MemoryEntry {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const decayClass =
+    entry.decayClass ??
+    classifyDecay(entry.entity ?? null, entry.key ?? null, entry.value ?? null, entry.text, {
+      source: entry.source ?? null,
+      category: entry.category ?? null,
+      importance: entry.importance ?? 0.5,
+    });
+  return {
+    id: "",
+    text: entry.text,
+    why: entry.why ?? null,
+    category: entry.category ?? "other",
+    importance: entry.importance ?? 0.5,
+    entity: entry.entity ?? null,
+    key: entry.key ?? null,
+    value: entry.value ?? null,
+    source: entry.source ?? "conversation",
+    createdAt: nowSec,
+    sourceDate: entry.sourceDate ?? null,
+    decayClass,
+    expiresAt: entry.expiresAt ?? calculateExpiry(decayClass, nowSec),
+    lastConfirmedAt: nowSec,
+    confidence: entry.confidence ?? 1,
+    summary: entry.summary ?? null,
+    tags: entry.tags ?? null,
+    validFrom: entry.validFrom ?? null,
+    validUntil: entry.validUntil ?? null,
+    supersedesId: entry.supersedesId ?? null,
+    scope: entry.scope ?? "global",
+    scopeTarget: entry.scopeTarget ?? null,
+    procedureType: entry.procedureType ?? null,
+    successCount: entry.successCount,
+    lastValidated: entry.lastValidated ?? null,
+    sourceSessions: entry.sourceSessions ?? null,
+    embeddingModel: entry.embeddingModel ?? null,
+    provenanceSession: entry.provenanceSession ?? null,
+    sourceTurn: entry.sourceTurn ?? null,
+    extractionMethod: entry.extractionMethod ?? null,
+    extractionConfidence: entry.extractionConfidence ?? null,
+    decayFreezeUntil: entry.decayFreezeUntil ?? null,
+    preserveUntil: entry.preserveUntil ?? null,
+    preserveTags: entry.preserveTags ?? null,
+  };
+}
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
@@ -166,7 +227,13 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
   if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
-    return { skipped: true };
+    return {
+      skipped: true,
+      rejected: true,
+      evictedFactId: null,
+      embeddingStale: false,
+      entry: createSkippedStorePlaceholder(entry),
+    };
   }
 
   const sourceForPolicy = entry.source ?? "conversation";

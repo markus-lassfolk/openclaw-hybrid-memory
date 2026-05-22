@@ -16,9 +16,9 @@ import {
   resolveCaptureProvenance,
 } from "../../services/capture-provenance.js";
 import {
-  type MemoryClassification,
   classifyMemoryOperation,
   classifyMemoryOperationsBatch,
+  type MemoryClassification,
 } from "../../services/classification.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { extractCredentialsFromToolCalls } from "../../services/credential-scanner.js";
@@ -28,8 +28,8 @@ import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import type { MemoryEntry } from "../../types/memory.js";
-import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
+import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
 import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
 import { extractTags } from "../../utils/tags.js";
 import { truncateForStorage } from "../../utils/text.js";
@@ -497,6 +497,9 @@ export async function runCapture(
                       extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
+                    if (storeResult.skipped) {
+                      continue;
+                    }
                     const newEntry = storeResult.entry;
                     // Skip supersede and vector operations if store was rejected (artifact text)
                     if (newEntry.id === "" || storeResult.skipped) {
@@ -952,6 +955,9 @@ export async function runCapture(
                 decayClass: "permanent",
                 tags: ["auth", "credential"],
               });
+              if (storeResult.skipped) {
+                continue;
+              }
               const entry = storeResult.entry;
               // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
               if (!storeResult.skipped) {
