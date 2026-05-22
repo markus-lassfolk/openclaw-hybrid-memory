@@ -10,11 +10,11 @@
  * ~/.openclaw/diagnostics/memory-pressure/.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readdir, readlink } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
 import { getEnv } from "../utils/env-manager.js";
 import { parseDuration } from "../utils/duration.js";
@@ -60,18 +60,10 @@ export interface MemoryPressureSnapshot {
   cooldownRemainingSec: number;
 }
 
-export interface LinuxProcMem {
-  VmPeak: string | null;
-  VmSize: string | null;
-  VmRSS: string | null;
-  VmSwap: string | null;
-  RssAnon: string | null;
-  RssFile: string | null;
-  RssShmem: string | null;
-}
+export type LinuxProcMem = Record<string, string>;
 
 export interface FdGroup {
-  /** "sqlite" | "lancedb" | "wal" | "shm" | "socket" | "anon" | "other" */
+  /** "sqlite" | "lancedb" | "wal" | "shm" | "socket" | "anon" | "device" | "other" */
   category: string;
   /** Example paths in this group */
   samplePaths: string[];
@@ -139,23 +131,21 @@ let snapshotInProgress = false;
 // Linux /proc/self/status parser
 // ---------------------------------------------------------------------------
 
-function parseLinuxProcMem(): LinuxProcMem | null {
+export function parseLinuxProcMem(): LinuxProcMem | null {
   if (process.platform !== "linux") return null;
   try {
     const content = readFileSync("/proc/self/status", "utf-8");
-    const find = (key: string): string | null => {
-      const line = content.split("\n").find((l) => l.startsWith(key));
-      return line ? line.split(/\s+/)[1] ?? null : null;
-    };
-    return {
-      VmPeak: find("VmPeak:"),
-      VmSize: find("VmSize:"),
-      VmRSS: find("VmRSS:"),
-      VmSwap: find("VmSwap:"),
-      RssAnon: find("RssAnon:"),
-      RssFile: find("RssFile:"),
-      RssShmem: find("RssShmem:"),
-    };
+    const entries = content
+      .split("\n")
+      .map((line): [string, string] | null => {
+        const separatorIndex = line.indexOf(":");
+        if (separatorIndex <= 0) return null;
+        const key = line.slice(0, separatorIndex).trim();
+        const value = line.slice(separatorIndex + 1).trim();
+        return key.length > 0 && value.length > 0 ? [key, value] : null;
+      })
+      .filter((entry): entry is [string, string] => entry !== null);
+    return Object.fromEntries(entries);
   } catch {
     return null;
   }
@@ -165,22 +155,22 @@ function parseLinuxProcMem(): LinuxProcMem | null {
 // FD grouping by path category
 // ---------------------------------------------------------------------------
 
-interface OpenFd {
+export interface OpenFd {
   fd: number;
   path: string;
 }
 
-async function getOpenFds(): Promise<OpenFd[]> {
+export function getOpenFds(): OpenFd[] {
   const fds: OpenFd[] = [];
   const procFdDir = `/proc/self/fd`;
   if (!existsSync(procFdDir)) return fds;
   try {
-    const entries = await readdir(procFdDir);
+    const entries = readdirSync(procFdDir);
     for (const entry of entries) {
       const num = Number(entry);
       if (Number.isNaN(num)) continue;
       try {
-        const target = await readlink(join(procFdDir, entry));
+        const target = readlinkSync(join(procFdDir, entry));
         fds.push({ fd: num, path: target });
       } catch {
         // closed or inaccessible
@@ -192,7 +182,7 @@ async function getOpenFds(): Promise<OpenFd[]> {
   return fds;
 }
 
-function classifyFdPath(path: string): string {
+export function classifyFdPath(path: string): string {
   if (!path) return "anon";
   const lc = path.toLowerCase();
   if (/\.wal[_-]?\d*$/.test(lc) || lc.endsWith("-wal") || lc.includes("/.wal-")) return "wal";
@@ -200,6 +190,8 @@ function classifyFdPath(path: string): string {
   if (/\.lance\//i.test(lc) || lc.includes("/.lance/") || lc.includes("/.lancedb/")) return "lancedb";
   if (
     /\.sqlite/i.test(lc) ||
+    lc.endsWith(".db") ||
+    lc.includes(".db-") ||
     (lc.includes("/.openclaw/") && (lc.endsWith(".db") || lc.includes(".db-")))
   )
     return "sqlite";
@@ -258,8 +250,8 @@ function extractDbPaths(fds: OpenFd[]): MemoryPressureSnapshot["dbPaths"] {
 async function getActiveTaskCounts(
   activeTaskPath: string | undefined,
   staleMinutes: number,
-  factsDb: unknown,
-  ledger: "file" | "facts",
+  factsDb: FactsDB | undefined,
+  ledger: "markdown" | "facts",
 ): Promise<{ stale: number; active: number }> {
   try {
     if (ledger === "facts" && factsDb) {
@@ -323,6 +315,7 @@ export async function captureMemoryPressureSnapshot(
 
   // Mark snapshot as in progress to prevent concurrent calls
   snapshotInProgress = true;
+  lastSnapshotMs = nowMs;
 
   try {
     const mem = process.memoryUsage();
@@ -334,7 +327,7 @@ export async function captureMemoryPressureSnapshot(
       arrayBuffers: mem.arrayBuffers ?? 0,
     };
 
-    const fds = await getOpenFds();
+    const fds = getOpenFds();
     const fdGroups = groupFds(fds, config.fdGroupSampleLimit ?? 5);
     const dbPaths = extractDbPaths(fds);
     const linuxProcMem = config.includeLinuxProcMem ? parseLinuxProcMem() : null;
@@ -345,15 +338,15 @@ export async function captureMemoryPressureSnapshot(
     const lancedbInitGen = typeof vd.getInitGeneration === "function" ? vd.getInitGeneration() : -1;
     const lancedbStoreCount = typeof vd.getStoreCount === "function" ? vd.getStoreCount() : -1;
     const lancedbOptimizing = typeof vd.isOptimizing === "function" ? vd.isOptimizing() : false;
-    const lancedbInitialized = typeof vd.isInitialized === "function" ? vd.isInitialized() ?? false : false;
-    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? vd.getOpenReaderCount() ?? 0 : 0;
-    const lancedbPath = typeof vd.getPath === "function" ? vd.getPath() ?? null : null;
+    const lancedbInitialized = typeof vd.isInitialized === "function" ? (vd.isInitialized() ?? false) : false;
+    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? (vd.getOpenReaderCount() ?? 0) : 0;
+    const lancedbPath = typeof vd.getPath === "function" ? (vd.getPath() ?? null) : null;
 
     // Active task counts (wrapped in try-catch to prevent parseDuration throws from skipping cooldown update)
     let taskCounts = { stale: 0, active: 0 };
     try {
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-      const ledger = ctx.cfg.activeTask.ledger ?? "file";
+      const ledger = ctx.cfg.activeTask.ledger ?? "markdown";
       taskCounts = await getActiveTaskCounts(ctx.activeTaskPath, staleMinutes, ctx.factsDb, ledger);
     } catch {
       // If parseDuration or getActiveTaskCounts fails, use defaults
@@ -401,7 +394,6 @@ export async function captureMemoryPressureSnapshot(
       writeJsonArtifact(snapshot);
     }
 
-    lastSnapshotMs = nowMs;
     return snapshot;
   } finally {
     // Always reset the in-progress flag, even if an error occurs
@@ -416,7 +408,10 @@ export function formatMemoryPressureLogLine(snapshot: MemoryPressureSnapshot): s
   const { memory, hybridMemory, fdGroups } = snapshot;
   const heapPct = memory.heapTotal > 0 ? ((memory.heapUsed / memory.heapTotal) * 100).toFixed(1) : "0.0";
   const rssMb = (memory.rss / 1024 / 1024).toFixed(0);
-  const topFdGroups = fdGroups.slice(0, 3).map((g) => `${g.category}=${g.count}`).join(",");
+  const topFdGroups = fdGroups
+    .slice(0, 3)
+    .map((g) => `${g.category}=${g.count}`)
+    .join(",");
   const recallInflight = hybridMemory.recallInFlight;
   const staleTasks = hybridMemory.staleTaskCount;
   const activeTasks = hybridMemory.activeTaskCount;
