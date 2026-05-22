@@ -899,9 +899,7 @@ export async function upsertProjectTaskKey(
     factsDb.supersede(previous.id, entry.id);
   }
   if (normalizedKey === "status" && isTerminalFactStatus(value)) {
-    const currentFacts = opts?.latestByEntityKey
-      ? [...opts.latestByEntityKey.values()]
-      : factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+    const currentFacts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
     for (const fact of currentFacts) {
       if (fact.id === entry.id) continue;
       if (opts?.createdInThisSync?.has(fact.id)) continue;
