@@ -49,7 +49,7 @@ export function captureMemoryPressureEvidence(): MemoryPressureEvidence {
   }
   const linuxProc = captureLinuxProcMemoryPressureEvidence();
   if (openFdCount === null && linuxProc?.fdCount !== null) {
-    openFdCount = linuxProc.fdCount;
+    openFdCount = linuxProc!.fdCount;
   }
   return {
     rssBytes: mem.rss,

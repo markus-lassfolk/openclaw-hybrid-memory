@@ -61,9 +61,17 @@ describe("runMemoryDiagnostics", () => {
     );
     expect(result.memoryPressure.timestamp).toBeTypeOf("number");
     if (result.memoryPressure.linuxProc) {
-      expect(result.memoryPressure.linuxProc.statusRssKb === null || typeof result.memoryPressure.linuxProc.statusRssKb === "number").toBe(true);
-      expect(result.memoryPressure.linuxProc.statusHwmKb === null || typeof result.memoryPressure.linuxProc.statusHwmKb === "number").toBe(true);
-      expect(result.memoryPressure.linuxProc.fdCount === null || typeof result.memoryPressure.linuxProc.fdCount === "number").toBe(true);
+      expect(
+        result.memoryPressure.linuxProc.statusRssKb === null ||
+          typeof result.memoryPressure.linuxProc.statusRssKb === "number",
+      ).toBe(true);
+      expect(
+        result.memoryPressure.linuxProc.statusHwmKb === null ||
+          typeof result.memoryPressure.linuxProc.statusHwmKb === "number",
+      ).toBe(true);
+      expect(
+        result.memoryPressure.linuxProc.fdCount === null || typeof result.memoryPressure.linuxProc.fdCount === "number",
+      ).toBe(true);
       expect(result.memoryPressure.linuxProc.fdTargetGroups).toBeTypeOf("object");
     } else {
       expect(process.platform).not.toBe("linux");
