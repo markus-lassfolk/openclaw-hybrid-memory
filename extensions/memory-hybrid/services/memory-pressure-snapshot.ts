@@ -10,10 +10,12 @@
  * ~/.openclaw/diagnostics/memory-pressure/.
  */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
+import { getEnv } from "../utils/env-manager.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -177,7 +179,7 @@ function getOpenFds(): OpenFd[] {
       const num = Number(entry);
       if (Number.isNaN(num)) continue;
       try {
-        const target = readFileSync(join(procFdDir, entry), "utf-8").trim();
+        const target = readlinkSync(join(procFdDir, entry));
         fds.push({ fd: num, path: target });
       } catch {
         // closed or inaccessible
@@ -274,7 +276,8 @@ async function getActiveTaskCounts(
 
 function writeJsonArtifact(snapshot: MemoryPressureSnapshot): void {
   try {
-    const diagDir = join(process.env.HOME ?? "/tmp", DIAGNOSTICS_DIR);
+    const openclawHome = getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw");
+    const diagDir = join(openclawHome, "diagnostics", "memory-pressure");
     mkdirSync(diagDir, { recursive: true });
     const filename = `snapshot-${Date.now()}.json`;
     require("node:fs").writeFileSync(join(diagDir, filename), JSON.stringify(snapshot, null, 2), "utf-8");
@@ -307,8 +310,6 @@ export async function captureMemoryPressureSnapshot(
   // Rate-limit: skip if within cooldown window
   if (elapsedMs < cooldownMs) return null;
 
-  lastSnapshotMs = nowMs;
-
   const mem = process.memoryUsage();
   const memSnapshot = {
     rss: mem.rss,
@@ -335,9 +336,6 @@ export async function captureMemoryPressureSnapshot(
 
   // Active task counts
   const taskCounts = await getActiveTaskCounts(ctx.activeTaskPath);
-
-  // Facts DB count
-  const factsCount = typeof ctx.factsDb.getCount === "function" ? ctx.factsDb.getCount() : -1;
 
   // Hybrid memory snapshot
   const hybridMemory: HybridMemorySnapshot = {
@@ -381,6 +379,7 @@ export async function captureMemoryPressureSnapshot(
     writeJsonArtifact(snapshot);
   }
 
+  lastSnapshotMs = nowMs;
   return snapshot;
 }
 
@@ -389,7 +388,7 @@ export async function captureMemoryPressureSnapshot(
  */
 export function formatMemoryPressureLogLine(snapshot: MemoryPressureSnapshot): string {
   const { memory, hybridMemory, fdGroups } = snapshot;
-  const heapPct = ((memory.heapUsed / memory.heapTotal) * 100).toFixed(1);
+  const heapPct = memory.heapTotal > 0 ? ((memory.heapUsed / memory.heapTotal) * 100).toFixed(1) : "0.0";
   const rssMb = (memory.rss / 1024 / 1024).toFixed(0);
   const topFdGroups = fdGroups.slice(0, 3).map((g) => `${g.category}=${g.count}`).join(",");
   const recallInflight = hybridMemory.recallInFlight;

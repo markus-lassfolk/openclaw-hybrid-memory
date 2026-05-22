@@ -2072,6 +2072,9 @@ export class VectorDB {
 
   /** Estimated number of open LanceDB reader handles (mirrors sessionCount). */
   getOpenReaderCount(): number {
+    if (this.isPersistent) {
+      return this.isInitialized() ? 1 : 0;
+    }
     return Math.max(0, this.sessionCount);
   }
 
