@@ -3,10 +3,12 @@
 // return safe placeholders for schema areas that are not implemented yet.
 
 import type { FactsDB } from "../backends/facts-db.js";
+import { isPreStoreGuardBlocked } from "../backends/facts-db/crud.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import { DECAY_CLASSES, type DecayClass } from "../config.js";
 import type { MemoryLinkType } from "../backends/facts-db/types.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 export type GraphQLContext = {
   factsDb: FactsDB;
@@ -164,6 +166,15 @@ function createStoreInput(input: Record<string, unknown>) {
   };
 }
 
+async function cleanupGraphqlEviction(context: GraphQLContext, evictedFactId: string | null | undefined) {
+  if (!context.vectorDb || !evictedFactId) return;
+  await cleanupEvictedVector({
+    vectorDb: context.vectorDb,
+    evictedFactId,
+    context: "graphql-mutation",
+  });
+}
+
 export const resolvers: GraphQLResolvers = {
   Query: {
     fact: (_parent, args, context) => {
@@ -301,16 +312,18 @@ export const resolvers: GraphQLResolvers = {
   },
 
   Mutation: {
-    createFact: (_parent, args, context) => {
+    createFact: async (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
-      const result = context.factsDb.storeWithResult(createStoreInput(input));
-      if (result.skipped) {
+      const storeInput = createStoreInput(input);
+      if (isPreStoreGuardBlocked(storeInput)) {
         throw new Error("Cannot create fact: blocked by pre-store guard (blocked category or source)");
       }
+      const result = context.factsDb.storeWithResult(storeInput);
+      await cleanupGraphqlEviction(context, result.evictedFactId);
       return result.entry;
     },
 
-    updateFact: (_parent, args, context) => {
+    updateFact: async (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
       const id = asString(input.id);
       if (!id) throw new Error("Missing fact id");
@@ -337,6 +350,7 @@ export const resolvers: GraphQLResolvers = {
       if (storeResult.skipped) {
         throw new Error("Cannot update fact: blocked by pre-store guard (blocked category or source)");
       }
+      await cleanupGraphqlEviction(context, storeResult.evictedFactId);
       context.factsDb.supersede(existing.id, storeResult.entry.id);
       return storeResult.entry;
     },
@@ -378,15 +392,19 @@ export const resolvers: GraphQLResolvers = {
       return result.changes > 0;
     },
 
-    importFacts: (_parent, args, context) => {
+    importFacts: async (_parent, args, context) => {
       const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
-      return facts.map((raw) => {
-        const result = context.factsDb.storeWithResult(createStoreInput(asRecord(raw)));
-        if (result.skipped) {
-          throw new Error("Cannot import fact: blocked by pre-store guard (blocked category or source)");
-        }
-        return result.entry;
-      });
+      const inputs = facts.map((raw) => createStoreInput(asRecord(raw)));
+      if (inputs.some((input) => isPreStoreGuardBlocked(input))) {
+        throw new Error("Cannot import fact: blocked by pre-store guard (blocked category or source)");
+      }
+      const stored: MemoryEntry[] = [];
+      for (const input of inputs) {
+        const result = context.factsDb.storeWithResult(input);
+        await cleanupGraphqlEviction(context, result.evictedFactId);
+        stored.push(result.entry);
+      }
+      return stored;
     },
 
     pruneFacts: (_parent, args, context) => {
