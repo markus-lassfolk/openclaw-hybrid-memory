@@ -584,7 +584,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                     }
 
-                    await walRemove(walEntryId, api.logger);
                     await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
 
                     // Issue #159: enqueue contextual variant generation (non-blocking)
@@ -595,6 +594,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
+                    await walRemove(walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -613,6 +613,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       },
                     };
                   }
+                  // WAL cleanup for skipped update path
+                  await walRemove(walEntryId, api.logger);
                 }
                 return {
                   content: [
@@ -796,7 +798,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
             }
 
-            await walRemove(walEntryId, api.logger);
             await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
             // Issue #150: write event to episodic event log
@@ -966,6 +967,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
+            await walRemove(walEntryId, api.logger);
             return {
               content: [
                 {
@@ -994,6 +996,17 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               },
             };
           }
+          // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
+          await walRemove(walEntryId, api.logger);
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Store blocked by pre-store guard (category: ${category}).`,
+              },
+            ],
+            details: { action: "skipped", reason: "blocked-by-guard", category },
+          };
         } catch (err) {
           auditAppend({
             agentId: agentIdForAudit(),
