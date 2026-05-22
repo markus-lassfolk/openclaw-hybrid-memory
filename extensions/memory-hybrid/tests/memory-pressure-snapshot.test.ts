@@ -56,7 +56,7 @@ async function loadModule() {
 
 function makeCtx(overrides?: Partial<SnapshotContext>): SnapshotContext {
   return {
-    factsDb: undefined,
+    factsDb: undefined as SnapshotContext["factsDb"],
     vectorDb: {
       getInitGeneration: () => 7,
       getStoreCount: () => 11,
@@ -64,8 +64,8 @@ function makeCtx(overrides?: Partial<SnapshotContext>): SnapshotContext {
       isInitialized: () => true,
       getOpenReaderCount: () => 2,
       getPath: () => "/tmp/lancedb",
-    },
-    recallInFlightRef: { value: 3 },
+    } as SnapshotContext["vectorDb"],
+    recallInFlightRef: { value: 3 } as SnapshotContext["recallInFlightRef"],
     resolvedSqlitePath: "/tmp/facts.db",
     cfg: {
       activeTask: {
@@ -79,9 +79,9 @@ function makeCtx(overrides?: Partial<SnapshotContext>): SnapshotContext {
         includeLinuxProcMem: true,
         fdGroupSampleLimit: 5,
       },
-    },
+    } as SnapshotContext["cfg"],
     ...overrides,
-  } as unknown as SnapshotContext;
+  };
 }
 
 describe("memory-pressure snapshot helpers", () => {
