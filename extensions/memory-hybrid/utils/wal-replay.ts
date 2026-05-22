@@ -127,8 +127,13 @@ async function ensureVectorAndEmbeddingMeta(opts: {
       try {
         factsDb.setEmbeddingModel(factId, model);
         factsDb.storeEmbedding(factId, model, "canonical", new Float32Array(vector), vector.length);
-      } catch {
-        // Non-fatal: vector was stored successfully, metadata failure is acceptable.
+      } catch (err) {
+        // Non-fatal: vector was stored successfully, but make metadata drift observable.
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "wal-replay",
+          operation: "precomputed-vector-embedding-metadata",
+          factId,
+        });
       }
     }
     return;
