@@ -20,6 +20,7 @@ import {
 } from "../../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../../services/auto-capture.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
+import { isClassificationArtifactForStorage } from "../../services/capture-utils.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
 import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
@@ -176,6 +177,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             verification_tier?: string;
             decayFreezeUntil?: number;
           };
+
+          if (isClassificationArtifactForStorage(text)) {
+            return {
+              content: [{ type: "text", text: "Skipped: classification artifact rejected." }],
+              details: { action: "noop", reason: "classification artifact rejected" },
+            };
+          }
 
           let textToStore = text;
           textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);

@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { StoreConfig } from "../../config.js";
+import { assertNotClassificationArtifactForStorage } from "../../services/capture-utils.js";
 import type { MemoryEntry, MemoryScope, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
@@ -251,6 +252,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       suppressVectorFallbackWarning?: boolean;
     },
   ): StoreFactResult {
+    assertNotClassificationArtifactForStorage(entry.text);
     const warnOnce = (key: string, message: string): void => {
       if (this.storeDedupeWarnedKeys.has(key)) return;
       this.storeDedupeWarnedKeys.add(key);

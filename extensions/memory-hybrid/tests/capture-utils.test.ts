@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { getMemoryTriggers } from "../services/auto-capture.js";
-import { detectCategory, shouldCapture } from "../services/capture-utils.js";
+import { detectCategory, isClassificationArtifactForStorage, shouldCapture } from "../services/capture-utils.js";
 import {
   getCategoryDecisionRegex,
   getCategoryEntityRegex,
@@ -107,6 +107,30 @@ describe("shouldCapture", () => {
 
   it("is case-insensitive for trigger match", () => {
     expect(shouldCapture("I PREFER uppercase sometimes", MAX_CHARS, TRIGGERS)).toBe(true);
+  });
+});
+
+
+
+describe("classification artifact pre-store guard", () => {
+  const MAX_CHARS = 500;
+  const TRIGGERS = getMemoryTriggers();
+
+  it("detects and rejects NOOP classification decisions", () => {
+    const text = "NOOP | some classification decision text";
+    expect(isClassificationArtifactForStorage(text)).toBe(true);
+    expect(shouldCapture(text, MAX_CHARS, TRIGGERS)).toBe(false);
+  });
+
+  it("detects classifier JSON output", () => {
+    expect(isClassificationArtifactForStorage('{"action":"NOOP","targetId":null,"reason":"duplicate"}')).toBe(true);
+    expect(isClassificationArtifactForStorage('[{"action":"ADD","targetId":null,"reason":"new"}]')).toBe(true);
+    expect(isClassificationArtifactForStorage({ classifications: [{ action: "NOOP", targetId: null, reason: "dup" }] })).toBe(true);
+  });
+
+  it("detects classifier prompt text", () => {
+    expect(isClassificationArtifactForStorage("You are a memory classifier. A new fact is being stored.")).toBe(true);
+    expect(isClassificationArtifactForStorage("Please classify a new memory fact before storage")).toBe(true);
   });
 });
 

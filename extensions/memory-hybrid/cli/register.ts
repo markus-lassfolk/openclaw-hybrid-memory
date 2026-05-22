@@ -21,6 +21,7 @@ import { type DistillContext, registerDistillCommands } from "./distill.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
 import { registerSkillsCommands } from "./skills.js";
+import { withExit } from "./shared.js";
 import { registerTaskQueueStatusCommands } from "./task-queue-status.js";
 import type {
   AnalyzeFeedbackPhrasesResult,
@@ -217,6 +218,9 @@ export type HybridMemCliContext = {
   runContinuousVerification: (opts?: {
     verbose?: boolean;
   }) => Promise<import("../services/continuous-verifier.js").VerificationCycleResult>;
+  runCleanupClassificationArtifacts: (opts?: {
+    dryRun?: boolean;
+  }) => Promise<import("../services/classification-artifact-cleanup.js").ClassificationArtifactCleanupResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{
       contradictionId: string;
@@ -506,6 +510,21 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
   }
 
   try {
+    mem
+      .command("cleanup")
+      .description("Cleanup stored memory artifacts")
+      .command("classification-artifacts")
+      .description("Supersede stored NOOP/classification artifacts and remove their vectors")
+      .option("--dry-run", "Report matching facts without changing storage")
+      .action(
+        withExit(async (opts?: { dryRun?: boolean }) => {
+          const res = await ctx.runCleanupClassificationArtifacts({ dryRun: opts?.dryRun === true });
+          console.log(
+            `Classification-artifacts cleanup ${res.dryRun ? "dry-run" : "applied"}: scanned ${res.scanned}, matched ${res.matched}, superseded ${res.superseded}, vectors ${res.vectorDeleted}/${res.vectorAttempted} deleted${res.vectorFailed > 0 ? ` (${res.vectorFailed} failed)` : ""}.`,
+          );
+        }),
+      );
+
     registerStatusCommands(mem, {
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,

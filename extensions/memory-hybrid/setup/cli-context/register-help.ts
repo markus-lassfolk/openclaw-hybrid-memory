@@ -98,7 +98,19 @@ export function registerHybridMemCliHelpOnlyWithApi(api: ClawdbotPluginApi): voi
     api,
   };
 
-  const services = buildCliContextServices(cliRegistrationCtx, api);
+  const services = {
+    ...buildCliContextServices(cliRegistrationCtx, api),
+    runCleanupClassificationArtifacts: async () => ({
+      scanned: 0,
+      matched: 0,
+      superseded: 0,
+      vectorAttempted: 0,
+      vectorDeleted: 0,
+      vectorFailed: 0,
+      dryRun: true,
+      matchedIds: [],
+    }),
+  };
   api.registerCli(
     ({ program }: { program: Command }) => {
       const cliCtx = createHybridMemCliContext(handlerCtx, api, services);

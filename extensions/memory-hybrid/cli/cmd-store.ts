@@ -9,6 +9,7 @@ import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
+import { isClassificationArtifactForStorage } from "../services/capture-utils.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
@@ -41,6 +42,7 @@ export async function runStoreForCli(
 ): Promise<StoreCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
+  if (isClassificationArtifactForStorage(text)) return { outcome: "noop", reason: "classification artifact rejected" };
   if (factsDb.hasDuplicate(text, "cli")) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
   const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);

@@ -11,6 +11,7 @@ import { type DreamCycleResult, runDreamCycle } from "../../services/dream-cycle
 import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
 import { runExport } from "../../services/export-memory.js";
 import { runFindDuplicates } from "../../services/find-duplicates.js";
+import { cleanupClassificationArtifacts } from "../../services/classification-artifact-cleanup.js";
 import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
 import { mergeResults } from "../../services/merge-results.js";
 import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
@@ -87,6 +88,7 @@ interface CliContextServices {
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
   runDreamCycle: (opts?: { verbose?: boolean }) => Promise<DreamCycleResult>;
   runContinuousVerification: (opts?: { verbose?: boolean }) => Promise<VerificationCycleResult>;
+  runCleanupClassificationArtifacts: (opts?: { dryRun?: boolean }) => Promise<import("../../services/classification-artifact-cleanup.js").ClassificationArtifactCleanupResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -388,6 +390,8 @@ export function buildCliContextServices(
           : {}),
       });
     },
+    runCleanupClassificationArtifacts: (opts?: { dryRun?: boolean }) =>
+      cleanupClassificationArtifacts(factsDb, vectorDb, { dryRun: opts?.dryRun === true, logger: api.logger }),
     runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,

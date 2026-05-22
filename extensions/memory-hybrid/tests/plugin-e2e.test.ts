@@ -272,6 +272,28 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     expect(recallByIdResult.content?.[0]?.text).toContain(text);
   });
 
+  it("memory_store rejects NOOP classification artifacts before recall", async () => {
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+    const storeTool = api.getTool("memory_store");
+    const recallTool = api.getTool("memory_recall");
+    expect(storeTool).toBeDefined();
+    expect(recallTool).toBeDefined();
+
+    const text = "NOOP | some classification decision text";
+    const storeResult = (await storeTool?.execute("call-noop-store", { text, category: "fact" })) as {
+      details?: { action?: string };
+    };
+    expect(storeResult.details?.action).toBe("noop");
+
+    const recallResult = (await recallTool?.execute("call-noop-recall", { query: "classification decision text" })) as {
+      details?: { memories?: Array<{ text: string }> };
+      content?: Array<{ text?: string }>;
+    };
+    const recalledTexts = (recallResult.details?.memories ?? []).map((m) => m.text);
+    expect(recalledTexts.some((t) => t.includes(text))).toBe(false);
+    expect(recallResult.content?.[0]?.text ?? "").not.toContain(text);
+  });
+
   it("memory_store accepts why and memory_recall returns lineage context", async () => {
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
 
