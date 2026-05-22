@@ -127,23 +127,23 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               expiryWarning = ` [WARNING: Expires in ${Math.ceil(daysLeft)} days — consider rotating]`;
             }
           }
+          const revealInContent = cfg.credentials?.revealInContent === true;
+          const contentText = revealInContent
+            ? [
+                `Credential for ${entry.service} (${entry.type}) retrieved.${expiryWarning}`,
+                "",
+                "Credential value (credentials.revealInContent is enabled — disable for production use):",
+                entry.value,
+              ].join("\n")
+            : `Credential for ${entry.service} (${entry.type}) retrieved.${expiryWarning} Value available in structured details (sensitiveFields: ["value"]).`;
           return {
-            content: [
-              {
-                type: "text",
-                text: [
-                  `Credential for ${entry.service} (${entry.type}) retrieved.${expiryWarning}`,
-                  "",
-                  "Credential value (shown here for use in this turn; omitted from structured `details` to reduce log/dashboard leakage — #890):",
-                  entry.value,
-                ].join("\n"),
-              },
-            ],
+            content: [{ type: "text", text: contentText }],
             details: {
               service: entry.service,
               type: entry.type,
               url: entry.url,
               expires: entry.expires,
+              value: entry.value,
               sensitiveFields: ["value"],
             },
           };
