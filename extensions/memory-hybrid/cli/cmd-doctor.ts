@@ -13,20 +13,13 @@ import { type WALEntry, WAL_ENTRY_SCHEMA_VERSION, type WriteAheadLog } from "../
 import type { HybridMemoryConfig } from "../config.js";
 import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
+import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
 
 interface DiagnosticCheck {
   name: string;
   status: "pass" | "warn" | "fail";
   message: string;
   fix?: string;
-}
-
-const WAL_SIZE_WARN_BYTES = 5 * 1024 * 1024;
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
 export function registerDoctorCommand(

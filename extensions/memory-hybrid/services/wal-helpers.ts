@@ -115,6 +115,7 @@ export async function walWrite(
 ): Promise<string> {
   const id = randomUUID();
   if (!wal) return id;
+  if (walDisabled) return id;
   const walPath = resolveWalPath(wal);
   if (walPath && isWalPersistentlyDisabledAtPath(walPath)) {
     walDisabled = true;
@@ -126,38 +127,36 @@ export async function walWrite(
     }
     return id;
   }
-  if (!walDisabled) {
-    try {
-      const entry: WALEntry = {
-        id,
-        timestamp: Date.now(),
-        schemaVersion: WAL_ENTRY_SCHEMA_VERSION,
-        operation,
-        data: normalizeWalPayload(data),
-      };
-      if (operation === "update" && supersedeTargetId) {
-        entry.targetId = supersedeTargetId;
-      }
-      await wal.write(entry);
-      walFailureCount = 0; // Reset on success
-      walPersistentDisableWarned = false;
-    } catch (err) {
-      walFailureCount++;
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        subsystem: "wal",
-        operation: "wal-write",
-      });
-      logger.warn(`memory-hybrid: WAL write failed: ${err}`);
-      if (walFailureCount >= WAL_FAILURE_THRESHOLD) {
-        walDisabled = true;
-        logger.warn(`memory-hybrid: WAL disabled after ${WAL_FAILURE_THRESHOLD} consecutive failures`);
-        if (walPath) {
-          try {
-            const sentinelPath = persistWalDisabledSentinel(walPath, err);
-            logger.warn(`memory-hybrid: WAL persistent disable sentinel written: ${sentinelPath}`);
-          } catch (persistErr) {
-            logger.warn(`memory-hybrid: failed to persist WAL disable sentinel: ${persistErr}`);
-          }
+  try {
+    const entry: WALEntry = {
+      id,
+      timestamp: Date.now(),
+      schemaVersion: WAL_ENTRY_SCHEMA_VERSION,
+      operation,
+      data: normalizeWalPayload(data),
+    };
+    if (operation === "update" && supersedeTargetId) {
+      entry.targetId = supersedeTargetId;
+    }
+    await wal.write(entry);
+    walFailureCount = 0; // Reset on success
+    walPersistentDisableWarned = false;
+  } catch (err) {
+    walFailureCount++;
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "wal",
+      operation: "wal-write",
+    });
+    logger.warn(`memory-hybrid: WAL write failed: ${err}`);
+    if (walFailureCount >= WAL_FAILURE_THRESHOLD) {
+      walDisabled = true;
+      logger.warn(`memory-hybrid: WAL disabled after ${WAL_FAILURE_THRESHOLD} consecutive failures`);
+      if (walPath) {
+        try {
+          const sentinelPath = persistWalDisabledSentinel(walPath, err);
+          logger.warn(`memory-hybrid: WAL persistent disable sentinel written: ${sentinelPath}`);
+        } catch (persistErr) {
+          logger.warn(`memory-hybrid: failed to persist WAL disable sentinel: ${persistErr}`);
         }
       }
     }
