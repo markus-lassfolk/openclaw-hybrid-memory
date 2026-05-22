@@ -554,7 +554,7 @@ export function buildActiveTaskInjection(
   maxTokens: number,
   opts?: { maxChars?: number; excludeStale?: boolean },
 ): ActiveTaskInjectionBuildResult {
-  const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status) && (opts?.excludeStale === false || !t.stale));
+  const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status) && (!opts?.excludeStale || !t.stale));
   if (activeTasks.length === 0) return { text: "", injectedCount: 0 };
 
   const lines: string[] = ["<active-tasks>", "In-progress tasks from ACTIVE-TASKS.md:"];
