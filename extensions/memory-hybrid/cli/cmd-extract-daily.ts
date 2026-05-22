@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { classifyMemoryOperationsBatch, type MemoryClassification } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
-import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
@@ -203,7 +203,7 @@ export async function runExtractDailyForCli(
               try {
                 const stored = credentialsDb.storeIfNew({
                   service: parsed.service,
-                  type: parsed.type as any,
+                  type: parsed.type,
                   value: parsed.secretValue,
                   url: parsed.url,
                   notes: parsed.notes,
@@ -212,7 +212,7 @@ export async function runExtractDailyForCli(
                   continue;
                 }
                 storedInVault = true;
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
                 const pointerStoreResult = factsDb.storeWithResult({
                   text: pointerText,
@@ -255,7 +255,7 @@ export async function runExtractDailyForCli(
               } catch (err) {
                 if (storedInVault) {
                   try {
-                    credentialsDb.delete(parsed.service, parsed.type as any);
+                    credentialsDb.delete(parsed.service, parsed.type);
                   } catch (cleanupErr) {
                     sink.warn(
                       `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
