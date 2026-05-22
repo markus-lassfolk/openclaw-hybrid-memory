@@ -45,7 +45,6 @@ function compareTasksForInjection(
   userText?: string,
   sessionKey?: string,
 ): number {
-  if (a.stale !== b.stale) return a.stale ? 1 : -1;
   const rel = taskRelevanceScore(b, userText, sessionKey) - taskRelevanceScore(a, userText, sessionKey);
   if (rel !== 0) return rel;
   return parseUpdatedMs(b.updated) - parseUpdatedMs(a.updated);
