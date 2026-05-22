@@ -41,6 +41,68 @@ function clipNarrativeText(text: string, maxChars = 360): string {
   return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
 }
 
+function sanitizeHotFactText(text: string): string {
+  return text
+    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, " ")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, " ")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, " ")
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function trimBlockToBudget(
+  block: string,
+  maxTokens: number,
+): { text: string; sourceTokens: number; usedTokens: number } {
+  const sourceTokens = block ? estimateTokens(block) : 0;
+  if (!block || sourceTokens === 0 || maxTokens <= 0) {
+    return { text: "", sourceTokens, usedTokens: 0 };
+  }
+  if (sourceTokens <= maxTokens) {
+    return { text: block, sourceTokens, usedTokens: sourceTokens };
+  }
+
+  const trailingNewlines = block.match(/\n+$/)?.[0] ?? "";
+  const core = trailingNewlines.length > 0 ? block.slice(0, -trailingNewlines.length) : block;
+  const lines = core.split("\n");
+  if (lines.length === 0) return { text: "", sourceTokens, usedTokens: 0 };
+
+  const first = lines[0] ?? "";
+  const last = lines[lines.length - 1] ?? "";
+  if (lines.length >= 3 && first.startsWith("<") && last.startsWith("</")) {
+    const middle = lines.slice(1, -1);
+    for (let keep = middle.length; keep >= 0; keep--) {
+      const candidate = [first, ...middle.slice(0, keep), last].join("\n") + trailingNewlines;
+      const candidateTokens = estimateTokens(candidate);
+      if (candidateTokens <= maxTokens) {
+        return { text: candidate, sourceTokens, usedTokens: candidateTokens };
+      }
+    }
+    return { text: "", sourceTokens, usedTokens: 0 };
+  }
+
+  for (let keep = lines.length; keep >= 1; keep--) {
+    const candidate = lines.slice(0, keep).join("\n") + trailingNewlines;
+    const candidateTokens = estimateTokens(candidate);
+    if (candidateTokens <= maxTokens) {
+      return { text: candidate, sourceTokens, usedTokens: candidateTokens };
+    }
+  }
+  return { text: "", sourceTokens, usedTokens: 0 };
+}
+
+type FixedBlockAudit = {
+  block: string;
+  sourceTokens: number;
+  capTokens: number;
+  injectedTokens: number;
+  reserved: boolean;
+  truncated: boolean;
+  suppressed: boolean;
+  reason?: "empty" | "cap" | "budget_exhausted";
+};
+
 export async function runRecall(
   event: unknown,
   api: ClawdbotPluginApi,
@@ -175,11 +237,17 @@ export async function runRecall(
       if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
         const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
         if (hotResults.length > 0) {
-          const hotLines = hotResults.map(
-            (r) =>
-              `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-          );
-          hotPart = `Hot memories:\n${hotLines.join("\n")}\n\n`;
+          const hotLines = hotResults
+            .map((r) => {
+              const text = sanitizeHotFactText(r.entry.summary || r.entry.text);
+              if (!text) return "";
+              const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
+              return `- [hot/${r.entry.category}] ${clipped}`;
+            })
+            .filter(Boolean);
+          if (hotLines.length > 0) {
+            hotPart = `Hot memories:\n${hotLines.join("\n")}\n\n`;
+          }
         }
       }
       const memoryLines = ftsOnly
@@ -291,11 +359,17 @@ export async function runRecall(
     if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
       const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
       if (hotResults.length > 0) {
-        const hotLines = hotResults.map(
-          (r) =>
-            `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
-        hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
+        const hotLines = hotResults
+          .map((r) => {
+            const cleaned = sanitizeHotFactText(r.entry.summary || r.entry.text);
+            if (!cleaned) return "";
+            const clipped = `${cleaned.slice(0, 200)}${cleaned.length > 200 ? "…" : ""}`;
+            return `- [hot/${r.entry.category}] ${clipped}`;
+          })
+          .filter(Boolean);
+        if (hotLines.length > 0) {
+          hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
+        }
       }
     }
     recallTiming.phaseCompleted("hot_facts_block", hotFactsStartedAt, { injected: hotBlock.length > 0 });
@@ -702,18 +776,6 @@ export async function runRecall(
       candidates = candidates.slice(0, limit);
     }
 
-    if (candidates.length === 0) {
-      ctx.auditStore?.append({
-        agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-        action: "recall:empty",
-        outcome: "partial",
-        sessionId: sessionKey,
-        context: { issueBlockInjected: issueBlock.length > 0, narrativeBlockInjected: narrativeBlock.length > 0 },
-      });
-      const combinedContext = issueBlock + narrativeBlock + hotBlock;
-      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
-    }
-
     const nowSec = Math.floor(Date.now() / 1000);
     const NINETY_DAYS_SEC = 90 * 24 * 3600;
     const boosted = candidates.map((r) => {
@@ -744,23 +806,146 @@ export async function runRecall(
       progressiveIndexMaxTokens,
       progressiveGroupByCategory,
       progressivePinnedRecallCount,
+      hotMaxTokens: hotBlockCapCfg,
+      narrativeMaxTokens: narrativeBlockCapCfg,
+      procedureMaxTokens: procedureBlockCapCfg,
+      activeTaskMaxTokens: activeTaskReserveCapCfg,
+      staleWarningMaxTokens: staleWarningReserveCapCfg,
     } = ctx.cfg.autoRecall;
     // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
     // ceiling — the injected context must not exceed either.
     const totalBudget = interactivePolicy.contextBudgetTokens;
-    // Account for issueBlock, hotBlock, and procedureBlock tokens to ensure total stays within budget
-    const fixedBlocksTokens =
-      estimateTokens(issueBlock) +
-      estimateTokens(narrativeBlock) +
-      estimateTokens(hotBlock) +
-      estimateTokens(procedureBlock);
-    const maxTokens = Math.max(0, totalBudget - fixedBlocksTokens);
+    const issueCapTokens = Math.max(80, Math.floor(totalBudget * 0.15));
+    const narrativeCapTokens =
+      narrativeBlockCapCfg ?? (narrativeBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
+    const hotCapTokens = hotBlockCapCfg ?? (hotBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.25)) : 0);
+    const defaultProcedureCap = procedureBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0;
+    const procedureCapTokens =
+      procedureBlockCapCfg ??
+      (ctx.cfg.procedures.enabled
+        ? Math.min(ctx.cfg.procedures.maxInjectionTokens ?? defaultProcedureCap, defaultProcedureCap)
+        : 0);
+    const defaultActiveTaskReserve =
+      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.injectionBudget > 0
+        ? Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2)))
+        : 0;
+    const activeTaskReserveTokens = activeTaskReserveCapCfg ?? defaultActiveTaskReserve;
+    const defaultStaleReserve =
+      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled
+        ? Math.max(40, Math.floor(totalBudget * 0.08))
+        : 0;
+    const staleWarningReserveTokens = staleWarningReserveCapCfg ?? defaultStaleReserve;
+
+    let remainingBudget = totalBudget;
+    const fixedBlockAudit: FixedBlockAudit[] = [];
+
+    const capAndTrackBlock = (name: string, block: string, capTokens: number): string => {
+      const cap = Math.max(0, Math.floor(capTokens));
+      const allowed = Math.min(cap, remainingBudget);
+      const { text, sourceTokens, usedTokens } = trimBlockToBudget(block, allowed);
+      const suppressed = sourceTokens > 0 && usedTokens === 0;
+      fixedBlockAudit.push({
+        block: name,
+        sourceTokens,
+        capTokens: cap,
+        injectedTokens: usedTokens,
+        reserved: false,
+        truncated: sourceTokens > usedTokens,
+        suppressed,
+        reason:
+          sourceTokens === 0
+            ? "empty"
+            : usedTokens === 0
+              ? "budget_exhausted"
+              : sourceTokens > usedTokens
+                ? allowed < cap
+                  ? "budget_exhausted"
+                  : "cap"
+                : undefined,
+      });
+      remainingBudget = Math.max(0, remainingBudget - usedTokens);
+      return text;
+    };
+
+    const reserveAndTrackBlock = (name: string, reserveTokens: number, enabled: boolean): void => {
+      const cap = enabled ? Math.max(0, Math.floor(reserveTokens)) : 0;
+      const reserved = Math.min(cap, remainingBudget);
+      fixedBlockAudit.push({
+        block: name,
+        sourceTokens: cap,
+        capTokens: cap,
+        injectedTokens: reserved,
+        reserved: true,
+        truncated: cap > reserved,
+        suppressed: cap > 0 && reserved === 0,
+        reason:
+          cap === 0 ? "empty" : reserved === 0 ? "budget_exhausted" : cap > reserved ? "budget_exhausted" : undefined,
+      });
+      remainingBudget = Math.max(0, remainingBudget - reserved);
+    };
+
+    issueBlock = capAndTrackBlock("issue", issueBlock, issueCapTokens);
+    narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens);
+    hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens);
+    procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens);
+    reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled);
+    reserveAndTrackBlock(
+      "stale-warning",
+      staleWarningReserveTokens,
+      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled,
+    );
+
+    const fixedBlocksTokens = totalBudget - remainingBudget;
+    const maxTokens = Math.max(0, remainingBudget);
+    const blockSummary = fixedBlockAudit
+      .map((b) => `${b.block}:${b.injectedTokens}/${b.capTokens}${b.reserved ? "r" : ""}${b.truncated ? "!" : ""}`)
+      .join(", ");
+    api.logger.info?.(
+      `memory-hybrid: context-audit fixed=${fixedBlocksTokens}/${totalBudget} recall=${maxTokens} blocks=[${blockSummary}]`,
+    );
+    ctx.auditStore?.append({
+      agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+      action: "recall:context-budget",
+      outcome: maxTokens === 0 ? "partial" : "success",
+      sessionId: sessionKey,
+      tokens: fixedBlocksTokens,
+      context: {
+        totalBudget,
+        recallBudget: maxTokens,
+        blocks: fixedBlockAudit,
+      },
+    });
+
     if (maxTokens === 0) {
+      const consumers = fixedBlockAudit
+        .filter((b) => b.injectedTokens > 0)
+        .sort((a, b) => b.injectedTokens - a.injectedTokens)
+        .slice(0, 4)
+        .map((b) => `${b.block}:${b.injectedTokens}`)
+        .join(", ");
       api.logger.warn?.(
-        `memory-hybrid: fixed blocks (${fixedBlocksTokens} tokens) exhausted total budget (${totalBudget} tokens); recall suppressed`,
+        `memory-hybrid: fixed blocks exhausted budget (${fixedBlocksTokens}/${totalBudget} tokens); recall suppressed (consumers: ${consumers || "none"})`,
       );
     }
+
+    if (candidates.length === 0) {
+      ctx.auditStore?.append({
+        agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+        action: "recall:empty",
+        outcome: "partial",
+        sessionId: sessionKey,
+        context: {
+          issueBlockInjected: issueBlock.length > 0,
+          narrativeBlockInjected: narrativeBlock.length > 0,
+          hotBlockInjected: hotBlock.length > 0,
+          fixedBlocks: fixedBlockAudit,
+        },
+      });
+      const combinedContext = issueBlock + narrativeBlock + hotBlock;
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+    }
+
     setRecallProbePhase("finalize");
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
     const groupByCategory = progressiveGroupByCategory === true;
