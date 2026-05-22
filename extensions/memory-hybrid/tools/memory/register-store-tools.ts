@@ -526,90 +526,93 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
                   const newEntry = updateStoreResult.entry;
-                  await cleanupEvictedVector({
-                    vectorDb,
-                    evictedFactId: updateStoreResult.evictedFactId,
-                    logger: api.logger,
-                    context: "memory-store-update",
-                  });
-                  recordActiveStoreProvenance(newEntry.id, textToStore);
-                  factsDb.supersede(classification.targetId, newEntry.id);
-                  aliasDb?.deleteByFactId(classification.targetId);
-                  await deleteVectorForFactId({
-                    vectorDb,
-                    factId: classification.targetId,
-                    logger: api.logger,
-                    context: "store-update-delete-superseded",
-                  });
-                  maybeAutoVerify(
-                    newEntry.id,
-                    textToStore,
-                    newEntry.tags ?? tags,
-                    newEntry.entity,
-                    newEntry.key,
-                    newEntry.value,
-                  );
+                  // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
+                  if (!updateStoreResult.skipped) {
+                    await cleanupEvictedVector({
+                      vectorDb,
+                      evictedFactId: updateStoreResult.evictedFactId,
+                      logger: api.logger,
+                      context: "memory-store-update",
+                    });
+                    recordActiveStoreProvenance(newEntry.id, textToStore);
+                    factsDb.supersede(classification.targetId, newEntry.id);
+                    aliasDb?.deleteByFactId(classification.targetId);
+                    await deleteVectorForFactId({
+                      vectorDb,
+                      factId: classification.targetId,
+                      logger: api.logger,
+                      context: "store-update-delete-superseded",
+                    });
+                    maybeAutoVerify(
+                      newEntry.id,
+                      textToStore,
+                      newEntry.tags ?? tags,
+                      newEntry.entity,
+                      newEntry.key,
+                      newEntry.value,
+                    );
 
-                  const finalImportance = Math.max(importance, oldFact.importance);
-                  try {
-                    if (vector) {
-                      await storeActiveCanonicalVector({
+                    const finalImportance = Math.max(importance, oldFact.importance);
+                    try {
+                      if (vector) {
+                        await storeActiveCanonicalVector({
+                          factId: newEntry.id,
+                          text: textToStore,
+                          why,
+                          vector,
+                          importance: finalImportance,
+                          category,
+                        });
+                      }
+                      await storeRegistryEmbeddings({
+                        factsDb,
+                        embeddingRegistry,
+                        embeddings,
                         factId: newEntry.id,
                         text: textToStore,
-                        why,
                         vector,
-                        importance: finalImportance,
-                        category,
+                        logger: api.logger,
+                        operation: "store-update-supersede",
                       });
+                    } catch (err) {
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "vector",
+                        operation: "store-update-supersede",
+                        phase: "runtime",
+                        backend: "lancedb",
+                      });
+                      api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                     }
-                    await storeRegistryEmbeddings({
-                      factsDb,
-                      embeddingRegistry,
-                      embeddings,
-                      factId: newEntry.id,
-                      text: textToStore,
-                      vector,
-                      logger: api.logger,
-                      operation: "store-update-supersede",
-                    });
-                  } catch (err) {
-                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                      subsystem: "vector",
-                      operation: "store-update-supersede",
-                      phase: "runtime",
-                      backend: "lancedb",
-                    });
-                    api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
-                  }
 
-                  await walRemove(walEntryId, api.logger);
-                  await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
+                    await walRemove(walEntryId, api.logger);
+                    await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
 
-                  // Issue #159: enqueue contextual variant generation (non-blocking)
-                  if (variantQueue) {
-                    variantQueue.enqueue({ factId: newEntry.id, text: textToStore, category: category as string });
-                  }
+                    // Issue #159: enqueue contextual variant generation (non-blocking)
+                    if (variantQueue) {
+                      variantQueue.enqueue({ factId: newEntry.id, text: textToStore, category: category as string });
+                    }
 
-                  api.logger.info?.(
-                    `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
-                  );
-                  return {
-                    content: [
-                      {
-                        type: "text",
-                        text: `Updated: superseded old fact with "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${newEntry.decayClass}] (reason: ${classification.reason})`,
+                    api.logger.info?.(
+                      `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
+                    );
+                    return {
+                      content: [
+                        {
+                          type: "text",
+                          text: `Updated: superseded old fact with "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${newEntry.decayClass}] (reason: ${classification.reason})`,
+                        },
+                      ],
+                      details: {
+                        action: "updated",
+                        id: newEntry.id,
+                        why: why ?? undefined,
+                        superseded: classification.targetId,
+                        reason: classification.reason,
+                        backend: "both",
+                        decayClass: newEntry.decayClass,
                       },
-                    ],
-                    details: {
-                      action: "updated",
-                      id: newEntry.id,
-                      why: why ?? undefined,
-                      superseded: classification.targetId,
-                      reason: classification.reason,
-                      backend: "both",
-                      decayClass: newEntry.decayClass,
-                    },
-                  };
+                    };
+                  }
                 }
                 return {
                   content: [
@@ -740,254 +743,257 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
           const entry = storeResult.entry;
-          await cleanupEvictedVector({
-            vectorDb,
-            evictedFactId: storeResult.evictedFactId,
-            logger: api.logger,
-            context: "memory-store",
-          });
-          recordActiveStoreProvenance(entry.id, textToStore);
-          if (supersedes?.trim()) {
-            const supersededId = supersedes.trim();
-            factsDb.supersede(supersededId, entry.id);
-            aliasDb?.deleteByFactId(supersededId);
-            await deleteVectorForFactId({
+          // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
+          if (!storeResult.skipped) {
+            await cleanupEvictedVector({
               vectorDb,
-              factId: supersededId,
+              evictedFactId: storeResult.evictedFactId,
               logger: api.logger,
-              context: "store-manual-supersede",
+              context: "memory-store",
             });
-          }
+            recordActiveStoreProvenance(entry.id, textToStore);
+            if (supersedes?.trim()) {
+              const supersededId = supersedes.trim();
+              factsDb.supersede(supersededId, entry.id);
+              aliasDb?.deleteByFactId(supersededId);
+              await deleteVectorForFactId({
+                vectorDb,
+                factId: supersededId,
+                logger: api.logger,
+                context: "store-manual-supersede",
+              });
+            }
 
-          try {
-            addOperationBreadcrumb("vector", "store-fact");
-            if (vector) {
-              await storeActiveCanonicalVector({
+            try {
+              addOperationBreadcrumb("vector", "store-fact");
+              if (vector) {
+                await storeActiveCanonicalVector({
+                  factId: entry.id,
+                  text: textToStore,
+                  why,
+                  vector,
+                  importance,
+                  category,
+                });
+              }
+              await storeRegistryEmbeddings({
+                factsDb,
+                embeddingRegistry,
+                embeddings,
                 factId: entry.id,
                 text: textToStore,
-                why,
                 vector,
-                importance,
-                category,
+                logger: api.logger,
+                operation: "store-fact",
               });
-            }
-            await storeRegistryEmbeddings({
-              factsDb,
-              embeddingRegistry,
-              embeddings,
-              factId: entry.id,
-              text: textToStore,
-              vector,
-              logger: api.logger,
-              operation: "store-fact",
-            });
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "vector",
-              operation: "store-fact",
-              phase: "runtime",
-              backend: "lancedb",
-            });
-            api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
-          }
-
-          await walRemove(walEntryId, api.logger);
-          await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
-
-          // Issue #150: write event to episodic event log
-          if (eventLog) {
-            try {
-              const eventType = categoryToEventType(category);
-              eventLog.append({
-                sessionId: api.context?.sessionId ?? "unknown",
-                timestamp: new Date().toISOString(),
-                eventType,
-                content: {
-                  text: textToStore.slice(0, 500),
-                  factId: entry.id,
-                  category,
-                  importance,
-                  source: "memory_store",
-                },
-                entities: entity ? [entity] : undefined,
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "vector",
+                operation: "store-fact",
+                phase: "runtime",
+                backend: "lancedb",
               });
-            } catch {
-              // Non-fatal
+              api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
             }
-          }
 
-          // Issue #159: enqueue contextual variant generation (non-blocking)
-          if (variantQueue) {
-            variantQueue.enqueue({ factId: entry.id, text: textToStore, category: category as string });
-          }
+            await walRemove(walEntryId, api.logger);
+            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
-          // Issue #149: generate and store retrieval aliases (non-blocking)
-          if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
-            const aliasModel = cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-            void storeAliases(entry.id, textToStore, cfg.aliases, aliasModel, openai, embeddings, aliasDb, (msg) =>
-              api.logger.warn(msg),
-            ).catch((err) => {
-              api.logger.warn(`memory-hybrid: alias generation failed: ${err}`);
-            });
-          }
-
-          // Contradiction detection (Issue #157): check for same entity+key, different value
-          // Pass the stored fact's scope so detection stays within the same scope boundary.
-          const contradictions = factsDb.detectContradictions(
-            entry.id,
-            entity ?? null,
-            key ?? null,
-            value ?? null,
-            entry.scope ?? null,
-            entry.scopeTarget ?? null,
-          );
-          for (const { contradictionId, oldFactId } of contradictions) {
+            // Issue #150: write event to episodic event log
             if (eventLog) {
-              eventLog.append({
-                sessionId: api.context?.sessionId ?? "unknown",
-                timestamp: new Date().toISOString(),
-                eventType: "correction",
-                content: {
-                  type: "contradiction_detected",
-                  contradictionId,
-                  newFactId: entry.id,
-                  oldFactId,
-                  entity: entity ?? null,
-                  key: key ?? null,
-                  newValue: value ?? null,
-                },
-                entities: entity ? [entity] : undefined,
+              try {
+                const eventType = categoryToEventType(category);
+                eventLog.append({
+                  sessionId: api.context?.sessionId ?? "unknown",
+                  timestamp: new Date().toISOString(),
+                  eventType,
+                  content: {
+                    text: textToStore.slice(0, 500),
+                    factId: entry.id,
+                    category,
+                    importance,
+                    source: "memory_store",
+                  },
+                  entities: entity ? [entity] : undefined,
+                });
+              } catch {
+                // Non-fatal
+              }
+            }
+
+            // Issue #159: enqueue contextual variant generation (non-blocking)
+            if (variantQueue) {
+              variantQueue.enqueue({ factId: entry.id, text: textToStore, category: category as string });
+            }
+
+            // Issue #149: generate and store retrieval aliases (non-blocking)
+            if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
+              const aliasModel = cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+              void storeAliases(entry.id, textToStore, cfg.aliases, aliasModel, openai, embeddings, aliasDb, (msg) =>
+                api.logger.warn(msg),
+              ).catch((err) => {
+                api.logger.warn(`memory-hybrid: alias generation failed: ${err}`);
               });
             }
-          }
 
-          // Auto-link to similar facts when enabled
-          let autoLinked = 0;
-          if (cfg.graph.enabled && cfg.graph.autoLink) {
-            const entryScope = entry.scope ?? "global";
-            const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
-            const similar = factsDb.findSimilarForClassification(
-              textToStore,
-              entity ?? null,
-              key ?? null,
-              cfg.graph.autoLinkLimit,
-              entryScope,
-              entryScopeTarget,
-            );
-            for (const s of similar) {
-              if (s.id === entry.id) continue;
-              factsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
-              autoLinked++;
-            }
-          }
-
-          // Entity-based auto-linking (Issue #154): known-entity matching, IP NER,
-          // temporal co-occurrence, and supersession detection.
-          let entityAutoLinked = 0;
-          let autoSupersededIds: string[] = [];
-          if (cfg.graph.enabled && cfg.graph.autoLink) {
-            const sessionId = api.context?.sessionId ?? null;
-            const result = factsDb.autoLinkEntities(
+            // Contradiction detection (Issue #157): check for same entity+key, different value
+            // Pass the stored fact's scope so detection stays within the same scope boundary.
+            const contradictions = factsDb.detectContradictions(
               entry.id,
-              textToStore,
               entity ?? null,
               key ?? null,
-              sessionId,
-              {
-                coOccurrenceWeight: cfg.graph.coOccurrenceWeight,
-                autoSupersede: cfg.graph.autoSupersede,
-              },
+              value ?? null,
               entry.scope ?? null,
               entry.scopeTarget ?? null,
             );
-            entityAutoLinked = result.linkedCount;
-            autoSupersededIds = result.supersededIds;
-            if (autoSupersededIds.length > 0) {
-              api.logger.info?.(
-                `memory-hybrid: autoSupersede — superseded [${autoSupersededIds.join(", ")}] with ${entry.id}`,
+            for (const { contradictionId, oldFactId } of contradictions) {
+              if (eventLog) {
+                eventLog.append({
+                  sessionId: api.context?.sessionId ?? "unknown",
+                  timestamp: new Date().toISOString(),
+                  eventType: "correction",
+                  content: {
+                    type: "contradiction_detected",
+                    contradictionId,
+                    newFactId: entry.id,
+                    oldFactId,
+                    entity: entity ?? null,
+                    key: key ?? null,
+                    newValue: value ?? null,
+                  },
+                  entities: entity ? [entity] : undefined,
+                });
+              }
+            }
+
+            // Auto-link to similar facts when enabled
+            let autoLinked = 0;
+            if (cfg.graph.enabled && cfg.graph.autoLink) {
+              const entryScope = entry.scope ?? "global";
+              const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
+              const similar = factsDb.findSimilarForClassification(
+                textToStore,
+                entity ?? null,
+                key ?? null,
+                cfg.graph.autoLinkLimit,
+                entryScope,
+                entryScopeTarget,
               );
+              for (const s of similar) {
+                if (s.id === entry.id) continue;
+                factsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
+                autoLinked++;
+              }
             }
-          }
 
-          // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
-          if (cfg.graph.enabled) {
-            const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
-            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel, {
-              stopWords: cfg.entityExtraction.stopWords,
-            })
-              .then(({ mentions, detectedLang }) => {
-                factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+            // Entity-based auto-linking (Issue #154): known-entity matching, IP NER,
+            // temporal co-occurrence, and supersession detection.
+            let entityAutoLinked = 0;
+            let autoSupersededIds: string[] = [];
+            if (cfg.graph.enabled && cfg.graph.autoLink) {
+              const sessionId = api.context?.sessionId ?? null;
+              const result = factsDb.autoLinkEntities(
+                entry.id,
+                textToStore,
+                entity ?? null,
+                key ?? null,
+                sessionId,
+                {
+                  coOccurrenceWeight: cfg.graph.coOccurrenceWeight,
+                  autoSupersede: cfg.graph.autoSupersede,
+                },
+                entry.scope ?? null,
+                entry.scopeTarget ?? null,
+              );
+              entityAutoLinked = result.linkedCount;
+              autoSupersededIds = result.supersededIds;
+              if (autoSupersededIds.length > 0) {
+                api.logger.info?.(
+                  `memory-hybrid: autoSupersede — superseded [${autoSupersededIds.join(", ")}] with ${entry.id}`,
+                );
+              }
+            }
+
+            // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
+            if (cfg.graph.enabled) {
+              const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
+              void extractEntityMentionsWithLlm(textToStore, openai, enrichModel, {
+                stopWords: cfg.entityExtraction.stopWords,
               })
-              .catch((err) => {
-                const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-                api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${msg}`);
-              });
-          }
-
-          const totalLinked = autoLinked + entityAutoLinked;
-          const verbosity = cfg.verbosity ?? "normal";
-          let storedMsg: string;
-          if (isCompactVerbosity(verbosity)) {
-            // Quiet: only report the ID and any warnings (contradictions are important)
-            storedMsg = `Stored: ${entry.id}${
-              contradictions.length > 0
-                ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
-                : ""
-            }`;
-          } else {
-            // normal / verbose: full details (verbose adds scope/category info)
-            storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersedes?.trim() ? " (supersedes previous fact)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
-              autoSupersededIds.length > 0
-                ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})`
-                : ""
-            }${
-              contradictions.length > 0
-                ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
-                : ""
-            }`;
-            if (verbosity === "verbose") {
-              storedMsg += ` [id: ${entry.id}]`;
-              if (entry.scope)
-                storedMsg += ` [scope: ${entry.scope}${entry.scopeTarget ? `/${entry.scopeTarget}` : ""}]`;
+                .then(({ mentions, detectedLang }) => {
+                  factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+                })
+                .catch((err) => {
+                  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+                  api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${msg}`);
+                });
             }
-          }
 
-          auditAppend({
-            agentId: agentIdForAudit(),
-            action: "memory_store",
-            target: `memory #${entry.id}`,
-            outcome: "success",
-            sessionId: api.context?.sessionId ?? undefined,
-            context: { category },
-          });
+            const totalLinked = autoLinked + entityAutoLinked;
+            const verbosity = cfg.verbosity ?? "normal";
+            let storedMsg: string;
+            if (isCompactVerbosity(verbosity)) {
+              // Quiet: only report the ID and any warnings (contradictions are important)
+              storedMsg = `Stored: ${entry.id}${
+                contradictions.length > 0
+                  ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
+                  : ""
+              }`;
+            } else {
+              // normal / verbose: full details (verbose adds scope/category info)
+              storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersedes?.trim() ? " (supersedes previous fact)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
+                autoSupersededIds.length > 0
+                  ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})`
+                  : ""
+              }${
+                contradictions.length > 0
+                  ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
+                  : ""
+              }`;
+              if (verbosity === "verbose") {
+                storedMsg += ` [id: ${entry.id}]`;
+                if (entry.scope)
+                  storedMsg += ` [scope: ${entry.scope}${entry.scopeTarget ? `/${entry.scopeTarget}` : ""}]`;
+              }
+            }
 
-          return {
-            content: [
-              {
-                type: "text",
-                text: storedMsg,
+            auditAppend({
+              agentId: agentIdForAudit(),
+              action: "memory_store",
+              target: `memory #${entry.id}`,
+              outcome: "success",
+              sessionId: api.context?.sessionId ?? undefined,
+              context: { category },
+            });
+
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: storedMsg,
+                },
+              ],
+              details: {
+                action: supersedes?.trim() ? "updated" : "created",
+                id: entry.id,
+                why: why ?? undefined,
+                backend: "both",
+                decayClass: entry.decayClass,
+                ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
+                ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
+                ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
+                ...(contradictions.length > 0
+                  ? {
+                      contradictions: contradictions.map((c) => ({
+                        contradictionId: c.contradictionId,
+                        oldFactId: c.oldFactId,
+                      })),
+                    }
+                  : {}),
+                ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
               },
-            ],
-            details: {
-              action: supersedes?.trim() ? "updated" : "created",
-              id: entry.id,
-              why: why ?? undefined,
-              backend: "both",
-              decayClass: entry.decayClass,
-              ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
-              ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
-              ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
-              ...(contradictions.length > 0
-                ? {
-                    contradictions: contradictions.map((c) => ({
-                      contradictionId: c.contradictionId,
-                      oldFactId: c.oldFactId,
-                    })),
-                  }
-                : {}),
-              ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
-            },
-          };
+            };
+          }
         } catch (err) {
           auditAppend({
             agentId: agentIdForAudit(),
