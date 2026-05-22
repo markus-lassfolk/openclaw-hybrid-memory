@@ -798,7 +798,12 @@ export async function upsertProjectTaskKey(
   const cacheKey = taskEntityKey(normalizedEntity, key);
   let previous: MemoryEntry | undefined;
   if (opts?.latestByEntityKey) {
-    previous = opts.latestByEntityKey.get(cacheKey);
+    const cached = opts.latestByEntityKey.get(cacheKey);
+    // Keep supersession scoped to active-task ledger rows only; cached
+    // memory_store rows must never be retired by active-task checkpoints.
+    if (cached?.source === "active-task") {
+      previous = cached;
+    }
   } else {
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
     // Case-insensitive lookup so mixed-case legacy facts are also superseded.
