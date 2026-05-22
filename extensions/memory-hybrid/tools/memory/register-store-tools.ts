@@ -297,13 +297,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 extractionConfidence: importance,
               });
               if (pointerStoreResult.skipped) {
-                return {
-                  content: [{ type: "text", text: "Already known: artifact text rejected" }],
-                  details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
-                };
-              }
-              const pointerEntry = pointerStoreResult.entry;
-              if (pointerEntry.id === "" || pointerStoreResult.skipped) {
                 try {
                   credentialsDb.delete(parsed.service, parsed.type as CredentialType);
                 } catch (cleanupErr) {
@@ -329,6 +322,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   },
                 };
               }
+              const pointerEntry = pointerStoreResult.entry;
               await cleanupEvictedVector({
                 vectorDb,
                 evictedFactId: pointerStoreResult.evictedFactId,
@@ -565,14 +559,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     };
                   }
                   const newEntry = updateStoreResult.entry;
-                  // Skip supersede and vector operations if store was rejected (artifact text)
-                  if (newEntry.id === "" || updateStoreResult.skipped) {
-                    await walRemove(walEntryId, api.logger);
-                    return {
-                      content: [{ type: "text", text: "Already known: artifact text rejected" }],
-                      details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
-                    };
-                  }
                   await cleanupEvictedVector({
                     vectorDb,
                     evictedFactId: updateStoreResult.evictedFactId,
@@ -794,14 +780,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
           const entry = storeResult.entry;
-          // Skip all downstream operations if store was rejected (artifact text)
-          if (entry.id === "" || storeResult.skipped) {
-            await walRemove(walEntryId, api.logger);
-            return {
-              content: [{ type: "text", text: "Already known: artifact text rejected" }],
-              details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
-            };
-          }
           await cleanupEvictedVector({
             vectorDb,
             evictedFactId: storeResult.evictedFactId,

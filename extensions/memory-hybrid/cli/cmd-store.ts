@@ -87,11 +87,6 @@ export async function runStoreForCli(
           tags: ["auth", ...extractTags(pointerText, "Credentials")],
         });
         if (storeResult.skipped) {
-          return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
-        }
-        pointerEntry = storeResult.entry;
-        // Check if store was rejected (artifact text)
-        if (pointerEntry.id === "" || storeResult.skipped) {
           // Compensating delete: vault write succeeded but pointer rejected
           try {
             // biome-ignore lint/suspicious/noExplicitAny: credential type from parsed input
@@ -105,6 +100,7 @@ export async function runStoreForCli(
           }
           return { outcome: "credential_rejected_artifact" };
         }
+        pointerEntry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({
           vectorDb: vectorDb,
@@ -242,10 +238,6 @@ export async function runStoreForCli(
                 return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
               }
               const newEntry = storeResult.entry;
-              // Check if store was rejected (artifact text)
-              if (newEntry.id === "" || storeResult.skipped) {
-                return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
-              }
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
               await cleanupEvictedVector({
                 vectorDb: vectorDb,
@@ -312,10 +304,6 @@ export async function runStoreForCli(
       return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
     }
     const entry = storeResult.entry;
-    // Check if store was rejected (artifact text)
-    if (entry.id === "" || storeResult.skipped) {
-      return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
-    }
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
       vectorDb: vectorDb,
