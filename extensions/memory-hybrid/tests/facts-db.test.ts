@@ -193,7 +193,7 @@ describe("FactsDB.store", () => {
   it("does not persist entries blocked by pre-store guard", () => {
     const before = db.count();
     const result = db.storeWithResult({
-      text: "guarded internal memory",
+      text: "NOOP classification output",
       category: "fact",
       importance: 0.5,
       entity: null,
