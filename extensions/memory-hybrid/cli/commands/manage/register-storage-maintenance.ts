@@ -1043,15 +1043,15 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
         })();
         const processFactBatch = async (facts: Array<{ id: string; text: string }>): Promise<number> => {
-          let processedCount = 0;
+          let supersededCount = 0;
           for (const fact of facts) {
             if (!isPromptArtifactOrReasoningTrace(fact.text)) continue;
-            processedCount++;
             if (verifiedLookup?.get(fact.id)) {
               verifiedSkippedIds.push(fact.id);
               continue;
             }
             supersededIds.push(fact.id);
+            supersededCount++;
             if (!apply) continue;
             try {
               await vectorDb.delete(fact.id);
@@ -1066,7 +1066,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
             }
           }
-          return processedCount;
+          return supersededCount;
         };
         if (hasGetBatch(factsDb)) {
           const batchSize = 500;
@@ -1076,13 +1076,13 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           while (true) {
             const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
             if (batch.length === 0) break;
-            const processed = await processFactBatch(batch);
+            const superseded = await processFactBatch(batch);
             // If applying changes, facts are removed from the result set; stay at offset 0.
             // If dry-run, the result set is stable; advance by batch size.
             if (!apply) {
               offset += batchSize;
-            } else if (processed === 0) {
-              // No artifacts found in this batch; advance to avoid infinite loop.
+            } else if (superseded === 0) {
+              // No artifacts superseded in this batch; advance to avoid infinite loop.
               offset += batchSize;
             }
           }
