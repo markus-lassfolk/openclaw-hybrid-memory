@@ -155,10 +155,11 @@ async function runInjection(
     const indexEntries: { line: string; id: string; category: string; position: number }[] = [];
     for (let i = 0; i < list.length; i++) {
       const x = list[i];
-      const rawTitle = x.entry.key
+      let rawTitle = x.entry.key
         ? `${x.entry.entity ? `${x.entry.entity}: ` : ""}${x.entry.key}`
-        : x.entry.summary || x.entry.text.slice(0, 60).trim() + (x.entry.text.length > 60 ? "…" : "");
-      const title = sanitizePromptInjection(rawTitle);
+        : x.entry.summary || x.entry.text;
+      rawTitle = sanitizePromptInjection(rawTitle);
+      const title = rawTitle.length > 60 ? rawTitle.slice(0, 60).trim() + "…" : rawTitle;
       const tokenCost = estimateTokensForDisplay(x.entry.summary || x.entry.text);
       const pos = startPosition + indexEntries.length;
       const line = formatProgressiveIndexLine(x.entry.category, title, tokenCost, pos);
