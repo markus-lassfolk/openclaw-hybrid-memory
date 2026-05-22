@@ -2,7 +2,10 @@
  * Pre-finalization guard — block scenarios.
  */
 import { describe, expect, it } from "vitest";
-import { CHECKPOINT_GUARD_BYPASS_PREFIX, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
+import {
+  CHECKPOINT_GUARD_BYPASS_PREFIX,
+  evaluatePreFinalizationGuard,
+} from "../services/pre-finalization-guard.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { NOW_ISO, NOW_MS, projectFact } from "./helpers/pre-finalization-guard-fixtures.js";
 

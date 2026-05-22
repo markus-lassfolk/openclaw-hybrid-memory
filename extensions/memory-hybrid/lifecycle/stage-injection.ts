@@ -159,7 +159,7 @@ async function runInjection(
         ? `${x.entry.entity ? `${x.entry.entity}: ` : ""}${x.entry.key}`
         : x.entry.summary || x.entry.text;
       rawTitle = sanitizePromptInjection(rawTitle);
-      const title = rawTitle.length > 60 ? rawTitle.slice(0, 60).trim() + "…" : rawTitle;
+      const title = rawTitle.length > 60 ? `${rawTitle.slice(0, 60).trim()}…` : rawTitle;
       const tokenCost = estimateTokensForDisplay(x.entry.summary || x.entry.text);
       const pos = startPosition + indexEntries.length;
       const line = formatProgressiveIndexLine(x.entry.category, title, tokenCost, pos);
