@@ -19,94 +19,92 @@ import {
 
 describe("isPromptArtifactOrReasoningTrace", () => {
   it("rejects text starting with <think>", () => {
-    expect(isPromptArtifactOrReasoningTrace("<think> The user is asking me to classify this"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("<think> The user is asking me to classify this")).toBe(true);
   });
 
   it("rejects <thinking> XML block", () => {
-    expect(isPromptArtifactOrReasoningTrace("<thinking>Some reasoning here</thinking>"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("<thinking>Some reasoning here</thinking>")).toBe(true);
   });
 
   it("rejects think + Thinking Process pattern", () => {
-    expect(isPromptArtifactOrReasoningTrace("think The Thinking Process goes like this"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("think The Thinking Process goes like this")).toBe(true);
   });
 
   it("rejects Thinking Process: prefix", () => {
-    expect(isPromptArtifactOrReasoningTrace("Thinking Process: analyzing the request"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("Thinking Process: analyzing the request")).toBe(true);
   });
 
   it("rejects 'the user is asking me to classify' pattern", () => {
-    expect(isPromptArtifactOrReasoningTrace("The user is asking me to classify this fact"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("The user is asking me to classify this fact")).toBe(true);
   });
 
   it("rejects NOOP | classifier output", () => {
-    expect(isPromptArtifactOrReasoningTrace("NOOP | this is already stored"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("NOOP | this is already stored")).toBe(true);
   });
 
   it("rejects NOOP | with target ID", () => {
-    expect(isPromptArtifactOrReasoningTrace("NOOP | abc-123 some reason"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("NOOP | abc-123 some reason")).toBe(true);
   });
 
   it("rejects ADD | classifier output", () => {
-    expect(isPromptArtifactOrReasoningTrace("ADD | new fact to store"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("ADD | new fact to store")).toBe(true);
   });
 
   it("rejects UPDATE | classifier output", () => {
-    expect(isPromptArtifactOrReasoningTrace("UPDATE | def-456 update reason"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("UPDATE | def-456 update reason")).toBe(true);
   });
 
   it("rejects DELETE | classifier output", () => {
-    expect(isPromptArtifactOrReasoningTrace("DELETE | ghi-789 delete reason"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("DELETE | ghi-789 delete reason")).toBe(true);
+  });
+
+  it("rejects classifier output without a space before the pipe", () => {
+    expect(isPromptArtifactOrReasoningTrace("NOOP|duplicate fact")).toBe(true);
   });
 
   it("rejects classifier JSON array", () => {
-    expect(isPromptArtifactOrReasoningTrace('[{"action":"NOOP","targetId":null,"reason":"dup"}]'))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace('[{"action":"NOOP","targetId":null,"reason":"dup"}]')).toBe(true);
   });
 
   it("rejects classifier JSON object", () => {
-    expect(isPromptArtifactOrReasoningTrace('{"action":"ADD","targetId":null,"reason":"new"}'))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace('{"action":"ADD","targetId":null,"reason":"new"}')).toBe(true);
+  });
+
+  it("rejects pretty-printed classifier JSON object", () => {
+    expect(isPromptArtifactOrReasoningTrace('{\n  "action" : "ADD",\n  "targetId": null,\n  "reason": "new"\n}')).toBe(
+      true,
+    );
+  });
+
+  it("rejects pretty-printed classifier JSON array", () => {
+    expect(
+      isPromptArtifactOrReasoningTrace(
+        '[\n  {\n    "action": "NOOP",\n    "confidence": 0.95,\n    "reason": "dup"\n  }\n]',
+      ),
+    ).toBe(true);
   });
 
   it("rejects capability hint markers", () => {
-    expect(isPromptArtifactOrReasoningTrace("<!-- memory-hybrid: capability hints -->\nSome text"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("<!-- memory-hybrid: capability hints -->\nSome text")).toBe(true);
   });
 
   it("accepts normal memory fact text", () => {
-    expect(isPromptArtifactOrReasoningTrace("I prefer dark mode when coding in the evening"))
-      .toBe(false);
+    expect(isPromptArtifactOrReasoningTrace("I prefer dark mode when coding in the evening")).toBe(false);
   });
 
   it("accepts text starting with 'think' but not Thinking Process", () => {
-    expect(isPromptArtifactOrReasoningTrace("think: I should remember this preference"))
-      .toBe(false);
+    expect(isPromptArtifactOrReasoningTrace("think: I should remember this preference")).toBe(false);
   });
 
   it("accepts text containing 'NOOP' in normal context", () => {
-    expect(isPromptArtifactOrReasoningTrace("Remember: no operation is needed for backup files"))
-      .toBe(false);
+    expect(isPromptArtifactOrReasoningTrace("Remember: no operation is needed for backup files")).toBe(false);
   });
 
   it("is case-insensitive for classifier action prefixes", () => {
-    expect(isPromptArtifactOrReasoningTrace("noop | reason"))
-      .toBe(true);
-    expect(isPromptArtifactOrReasoningTrace("add | new"))
-      .toBe(true);
-    expect(isPromptArtifactOrReasoningTrace("update | modify"))
-      .toBe(true);
-    expect(isPromptArtifactOrReasoningTrace("delete | remove"))
-      .toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("noop | reason")).toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("add | new")).toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("update | modify")).toBe(true);
+    expect(isPromptArtifactOrReasoningTrace("delete | remove")).toBe(true);
   });
 });
 

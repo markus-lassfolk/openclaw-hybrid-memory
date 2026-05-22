@@ -19,12 +19,11 @@ export function isPromptArtifactOrReasoningTrace(text: string): boolean {
   if (/^thinking\s*process[:#]/i.test(trimmed)) return true;
   if (/^the\s+user\s+is\s+(asking|requesting)\s+me\s+to\s+(classify|extract)/i.test(trimmed)) return true;
   // Classifier output markers (NOOP |, ADD |, UPDATE |, DELETE |)
-  if (/^(ADD|UPDATE|DELETE|NOOP)\s+[a-f0-9-]*\s*\|/i.test(trimmed)) return true;
+  if (/^(ADD|UPDATE|DELETE|NOOP)\s*[a-f0-9-]*\s*\|/i.test(trimmed)) return true;
   // Classifier JSON output: single object or array of objects with an "action" field
   // To avoid false positives, require additional classifier-specific fields like "reason" or "targetId"
   try {
-    const lower = trimmed.toLowerCase();
-    if (lower.startsWith('[{"action":') || lower.startsWith('{"action":')) {
+    if (/^[[{]/.test(trimmed) && /"action"\s*:/i.test(trimmed)) {
       const parsed = JSON.parse(trimmed);
       if (Array.isArray(parsed)) {
         if (parsed.length > 0 && parsed[0] && typeof parsed[0] === "object" && "action" in parsed[0]) {
