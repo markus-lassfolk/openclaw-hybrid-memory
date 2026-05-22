@@ -12,6 +12,7 @@ import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
+import { isLikelyGarbage } from "./fact-read-queries.js";
 
 function extractFactIds(rows: Array<{ id: string }>): string[] {
   return rows.map((row) => row.id);
@@ -136,26 +137,6 @@ type HotCandidate = {
   tokens: number;
 };
 
-const HOT_GARBAGE_LONG_TEXT_THRESHOLD = 3000;
-const HOT_GARBAGE_OTHER_RECALL_THRESHOLD = 500;
-
-function isLikelyHotGarbageCandidate(
-  row: Pick<TierCandidate, "text" | "summary" | "source" | "category" | "recall_count">,
-): boolean {
-  const combined = `${row.text}\n${row.summary ?? ""}`;
-  if (/<(?:redacted_)?think(?:ing)?>[\s\S]*?<\/(?:redacted_)?think(?:ing)?>/i.test(combined)) return true;
-  if (/^Thinking Process:/im.test(combined)) return true;
-  if (/^\[(?:hot-memories|recall|hot\/fact)\]/im.test(combined)) return true;
-  if (
-    row.source === "auto-capture" &&
-    combined.length > HOT_GARBAGE_LONG_TEXT_THRESHOLD &&
-    (/think|reasoning|analyz|process/i.test(combined) || /\n\n{2,}/.test(combined))
-  ) {
-    return true;
-  }
-  return row.category === "other" && row.recall_count > HOT_GARBAGE_OTHER_RECALL_THRESHOLD;
-}
-
 function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions> {
   return {
     inactivePreferenceDays: opts.inactivePreferenceDays,
@@ -228,7 +209,16 @@ function isHotCandidate(
   opts: Required<TieringOptions>,
   flags?: { ignoreStructuralBlock?: boolean; hotByRecallIds?: ReadonlySet<string> },
 ): boolean {
-  if (isLikelyHotGarbageCandidate(row)) return false;
+  if (
+    isLikelyGarbage({
+      text: row.text,
+      summary: row.summary,
+      source: row.source,
+      category: row.category,
+      recall_count: row.recall_count,
+    })
+  )
+    return false;
   if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row, opts)) return false;
   if (hasTag(row.tags, "blocker")) return true;
   if (flags?.hotByRecallIds?.has(row.id)) return true;
@@ -1193,60 +1183,44 @@ export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
  * Returns the count of facts demoted.
  */
 export function demoteHotGarbageFacts(db: DatabaseSync): number {
-  // Mirrors isLikelyGarbage from fact-read-queries.ts to ensure SQL demotion applies
-  // the same rules used at injection time (fixes #1559).
+  // Uses the shared isLikelyGarbage utility to ensure consistent filtering across
+  // query-time, tiering, and batch demotion operations (fixes #1559).
   const rows = db
     .prepare(
-      `SELECT id, text, summary, source, recall_count, access_count, category
+      `SELECT id, text, summary, source, recall_count, category
        FROM facts
        WHERE tier = 'hot'
          AND superseded_at IS NULL
-         AND id NOT IN (SELECT fact_id FROM verified_facts)
-         AND (
-           -- Reasoning traces (thinking tags) - no source restriction to match isLikelyGarbage
-           (text LIKE '%<thinking>%' OR text LIKE '%</thinking>%' OR
-            text LIKE '%<redacted_thinking>%' OR text LIKE '%</redacted_thinking>%' OR
-            text LIKE '%<think>%' OR text LIKE '%</think>%' OR
-            COALESCE(summary, '') LIKE '%<thinking>%' OR COALESCE(summary, '') LIKE '%</thinking>%' OR
-            COALESCE(summary, '') LIKE '%<redacted_thinking>%' OR COALESCE(summary, '') LIKE '%</redacted_thinking>%' OR
-            COALESCE(summary, '') LIKE '%<think>%' OR COALESCE(summary, '') LIKE '%</think>%')
-           OR
-           -- Classifier / capability-hint artifacts - no source restriction
-           (text LIKE '%Thinking Process:%' OR COALESCE(summary, '') LIKE '%Thinking Process:%')
-           OR
-           -- Hot-memories / recall / hot/fact prefixes - no source restriction (includes missing [Hot-memories])
-           (text LIKE '[Hot-memories]%' OR text LIKE '[recall]%' OR text LIKE '[hot/fact]%' OR
-            COALESCE(summary, '') LIKE '[Hot-memories]%' OR COALESCE(summary, '') LIKE '[recall]%' OR COALESCE(summary, '') LIKE '[hot/fact]%')
-           OR
-           -- Long auto-capture reasoning heuristic (>3000 chars + keywords/patterns)
-           (source = 'auto-capture' AND LENGTH(text || COALESCE(summary, '')) > ${HOT_GARBAGE_LONG_TEXT_THRESHOLD} AND
-            (text LIKE '%think%' OR text LIKE '%reasoning%' OR text LIKE '%analyz%' OR text LIKE '%process%' OR
-             text LIKE '%' || CHAR(10) || CHAR(10) || CHAR(10) || '%' OR
-             COALESCE(summary, '') LIKE '%think%' OR COALESCE(summary, '') LIKE '%reasoning%' OR
-             COALESCE(summary, '') LIKE '%analyz%' OR COALESCE(summary, '') LIKE '%process%' OR
-             COALESCE(summary, '') LIKE '%' || CHAR(10) || CHAR(10) || CHAR(10) || '%'))
-           OR
-           -- Staggeringly high recall counts for "other" category
-           (category = 'other' AND recall_count > ${HOT_GARBAGE_OTHER_RECALL_THRESHOLD})
-         )`,
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
     )
     .all() as Array<{
     id: string;
     text: string;
     summary: string | null;
-    source: string;
+    source: string | null;
     recall_count: number;
-    access_count: number;
-    category: string;
+    category: string | null;
   }>;
 
-  if (rows.length === 0) return 0;
+  const garbageIds: string[] = [];
+  for (const row of rows) {
+    if (
+      isLikelyGarbage({
+        text: row.text,
+        summary: row.summary,
+        source: row.source,
+        category: row.category,
+        recall_count: row.recall_count,
+      })
+    ) {
+      garbageIds.push(row.id);
+    }
+  }
 
-  const ids = rows.map((r) => r.id);
+  if (garbageIds.length === 0) return 0;
+
   let totalChanged = 0;
-
-  // Batch updates to respect SQLite's 999 bind variable limit
-  for (const batch of batchedInClauseBinds(ids)) {
+  for (const batch of batchedInClauseBinds(garbageIds)) {
     const placeholders = batch.map(() => "?").join(",");
     const result = db
       .prepare(`UPDATE facts SET tier = 'warm' WHERE id IN (${placeholders}) AND tier = 'hot'`)

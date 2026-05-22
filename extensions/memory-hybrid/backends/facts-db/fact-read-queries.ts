@@ -346,10 +346,19 @@ export function listFacts(
   return rows.map((row) => rowToMemoryEntry(row));
 }
 
-/** Returns true if the fact text looks like a reasoning trace or classifier artifact (#1559). */
-function isLikelyGarbage(entry: MemoryEntry): boolean {
-  const text = entry.text ?? "";
-  const summary = entry.summary ?? "";
+/**
+ * Shared garbage detection utility for consistency across query-time, tiering, and SQL batch operations.
+ * Returns true if the fact text looks like a reasoning trace or classifier artifact (#1559).
+ */
+export function isLikelyGarbage(input: {
+  text: string;
+  summary?: string | null;
+  source?: string | null;
+  category?: string | null;
+  recall_count?: number;
+}): boolean {
+  const text = input.text ?? "";
+  const summary = input.summary ?? "";
   const combined = text + "\n" + summary;
 
   // Reasoning traces embedded in fact content
@@ -359,10 +368,14 @@ function isLikelyGarbage(entry: MemoryEntry): boolean {
   if (/^\[(?:hot-memories|recall|hot\/fact)\]/im.test(combined)) return true;
   // Unhelpful source + long reasoning combo
   if (
-    entry.source === "auto-capture" &&
+    input.source === "auto-capture" &&
     combined.length > 3000 &&
     (/think|reasoning|analyz|process/gi.test(combined) || /\n\n{2,}/.test(combined))
   ) {
+    return true;
+  }
+  // High recall counts for "other" category (self-reinforcing garbage loop)
+  if (input.category === "other" && (input.recall_count ?? 0) > 500) {
     return true;
   }
   return false;
@@ -370,7 +383,16 @@ function isLikelyGarbage(entry: MemoryEntry): boolean {
 
 /** Quality score for HOT injection: 0–1. Garbage facts score 0 and are excluded. */
 function hotQualityScore(entry: MemoryEntry): number {
-  if (isLikelyGarbage(entry)) return 0;
+  if (
+    isLikelyGarbage({
+      text: entry.text,
+      summary: entry.summary,
+      source: entry.source,
+      category: entry.category,
+      recall_count: entry.recallCount,
+    })
+  )
+    return 0;
   const text = entry.text ?? "";
   // Penalise very long unconstrained text (likely full conversation dumps)
   if (text.length > 8000) return 0.3;
