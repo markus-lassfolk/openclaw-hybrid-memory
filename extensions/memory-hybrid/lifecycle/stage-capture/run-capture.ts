@@ -167,12 +167,14 @@ export async function runCapture(
           source: "humanizer",
           decayClass: "normal",
         });
-        await cleanupEvictedVector({
-          vectorDb: ctx.vectorDb,
-          evictedFactId: storeResult.evictedFactId,
-          logger: api.logger,
-          context: "humanizer-score",
-        });
+        if (!storeResult.skipped) {
+          await cleanupEvictedVector({
+            vectorDb: ctx.vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: api.logger,
+            context: "humanizer-score",
+          });
+        }
         api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
       }
     } catch (err) {
@@ -495,22 +497,24 @@ export async function runCapture(
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
                     const newEntry = storeResult.entry;
-                    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                    await cleanupEvictedVector({
-                      vectorDb: ctx.vectorDb,
-                      evictedFactId: storeResult.evictedFactId,
-                      logger: api.logger,
-                      context: "stage-capture",
-                    });
-                    ctx.factsDb.supersede(classification.targetId, newEntry.id);
-                    ctx.aliasDb?.deleteByFactId(classification.targetId);
-                    await deleteVectorForFactId({
-                      vectorDb: ctx.vectorDb,
-                      factId: classification.targetId,
-                      logger: api.logger,
-                      context: "stage-capture-update-superseded",
-                    });
-                    if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+                    // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
+                    if (!storeResult.skipped) {
+                      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                      await cleanupEvictedVector({
+                        vectorDb: ctx.vectorDb,
+                        evictedFactId: storeResult.evictedFactId,
+                        logger: api.logger,
+                        context: "stage-capture",
+                      });
+                      ctx.factsDb.supersede(classification.targetId, newEntry.id);
+                      ctx.aliasDb?.deleteByFactId(classification.targetId);
+                      await deleteVectorForFactId({
+                        vectorDb: ctx.vectorDb,
+                        factId: classification.targetId,
+                        logger: api.logger,
+                        context: "stage-capture-update-superseded",
+                      });
+                      if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                       try {
                         if (storeResult.embeddingStale) {
                           // Merge case: the existing fact's text was updated in-place.
@@ -575,6 +579,7 @@ export async function runCapture(
                         );
                       }
                     }
+                    }  // close if (!storeResult.skipped) guard (#1560, #1561)
                     await ctx.walRemove(walEntryId, api.logger);
                     ctx.auditStore?.append({
                       agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
@@ -910,14 +915,16 @@ export async function runCapture(
                 tags: ["auth", "credential"],
               });
               const entry = storeResult.entry;
-              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-              await cleanupEvictedVector({
-                vectorDb: ctx.vectorDb,
-                evictedFactId: storeResult.evictedFactId,
-                logger: api.logger,
-                context: "stage-capture",
-              });
-              if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+              // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
+              if (!storeResult.skipped) {
+                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                await cleanupEvictedVector({
+                  vectorDb: ctx.vectorDb,
+                  evictedFactId: storeResult.evictedFactId,
+                  logger: api.logger,
+                  context: "stage-capture",
+                });
+                if (ctx.cfg.retrieval.strategies.includes("semantic")) {
                 try {
                   if (storeResult.embeddingStale) {
                     // Merge case: re-embed the merged text to keep the vector in sync.
@@ -979,6 +986,7 @@ export async function runCapture(
                   );
                 }
               }
+              }  // close if (!storeResult.skipped) guard (#1560, #1561)
               if (logCaptures) {
                 api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
               }
