@@ -15,6 +15,7 @@ import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import type { MemoryEntry } from "../../../types/memory.js";
 import {
   countImplicitFeedbackTrajectorySignals,
   defaultReindexCheckpointPath,
@@ -31,6 +32,7 @@ type FactsDbWithBatch = {
     limit: number,
     opts: { includeSuperseded: boolean },
   ) => Array<{ id: string; text: string }>;
+  getAll?: (opts: { includeSuperseded: boolean }) => Array<{ id: string }>;
 };
 
 type FactsDbWithRawDb = {
@@ -39,12 +41,12 @@ type FactsDbWithRawDb = {
   };
 };
 
-function hasGetBatch(db: unknown): db is FactsDbWithBatch {
-  return typeof db === "object" && db !== null && "getBatch" in db && typeof db.getBatch === "function";
+function hasGetBatch(db: object): db is object & FactsDbWithBatch {
+  return "getBatch" in db && typeof (db as { getBatch?: unknown }).getBatch === "function";
 }
 
-function hasGetRawDb(db: unknown): db is FactsDbWithRawDb {
-  return typeof db === "object" && db !== null && "getRawDb" in db && typeof db.getRawDb === "function";
+function hasGetRawDb(db: object): db is object & FactsDbWithRawDb {
+  return "getRawDb" in db && typeof (db as { getRawDb?: unknown }).getRawDb === "function";
 }
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
@@ -832,7 +834,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                   }
                   return facts;
                 })()
-              : factsDb.getAll({ includeSuperseded: false });
+              : (factsDb as { getAll: (opts: { includeSuperseded: boolean }) => Array<{ id: string }> }).getAll({ includeSuperseded: false });
 
             for (const fact of allFacts) {
               try {
@@ -1073,7 +1075,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             offset += batch.length;
           }
         } else {
-          await processFactBatch(factsDb.getAll({ includeSuperseded: false }));
+          await processFactBatch(((factsDb as unknown) as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }).getAll({ includeSuperseded: false }));
         }
 
         if (apply && ctx.resolvedSqlitePath) {
