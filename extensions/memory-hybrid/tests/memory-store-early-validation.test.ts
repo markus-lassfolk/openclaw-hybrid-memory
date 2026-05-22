@@ -178,6 +178,23 @@ describe("memory_store early validation — invalid text", () => {
     const all = factsDb.getAll();
     expect(all).toHaveLength(0);
   });
+
+  it("returns invalid_text error for whitespace-only string exceeding captureMaxChars", async () => {
+    const walWrite = vi.fn().mockResolvedValue("wal-id");
+    const embeddings = makeMockEmbeddings();
+    const { api } = setupTool(walWrite, embeddings);
+
+    const storeTool = api.getTool("memory_store");
+    // Create a whitespace-only string longer than captureMaxChars (2000)
+    const longWhitespace = " ".repeat(2001);
+    const result = (await storeTool?.execute("call-ws-long", { text: longWhitespace, importance: 0.5 })) as {
+      details: { error: string };
+    };
+
+    expect(result.details.error).toBe("invalid_text");
+    expect(walWrite).not.toHaveBeenCalled();
+    expect(embeddings.embed).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------

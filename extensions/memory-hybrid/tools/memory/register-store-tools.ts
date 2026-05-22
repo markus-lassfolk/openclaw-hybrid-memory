@@ -177,16 +177,16 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             decayFreezeUntil?: number;
           };
 
-          let textToStore = text;
-          textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
-
           // --- Early input validation (must run before any side effects) ---
-          if (textToStore.trim().length === 0) {
+          if (text.trim().length === 0) {
             return {
               content: [{ type: "text", text: "memory_store: text must not be empty or whitespace." }],
               details: { error: "invalid_text" },
             };
           }
+
+          let textToStore = text;
+          textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
 
           const importanceValue = importance as number;
           if (!Number.isFinite(importanceValue) || importanceValue < 0 || importanceValue > 1) {
