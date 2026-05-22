@@ -170,6 +170,84 @@ describe("runCaptureStage", () => {
     );
   });
 
+  it("skips post-store vector and audit side effects when storeWithResult is skipped", async () => {
+    const api = makeApi("chat");
+    const storeWithResult = vi.fn().mockReturnValue({
+      entry: {
+        id: "skipped",
+        text: "Remember that I prefer concise answers.",
+        category: "fact",
+        importance: 0.5,
+        source: "auto-capture",
+        entity: null,
+        key: null,
+        value: null,
+        createdAt: Math.floor(Date.now() / 1000),
+        decayClass: "normal",
+        expiresAt: null,
+        lastConfirmedAt: 0,
+        confidence: 0,
+        tags: null,
+      },
+      evictedFactId: "evicted-fact-id",
+      skipped: true,
+    });
+    const setEmbeddingModel = vi.fn();
+    const vectorStore = vi.fn();
+    const vectorHasDuplicate = vi.fn().mockResolvedValue(false);
+    const auditAppend = vi.fn();
+    const embed = vi.fn().mockResolvedValue([0.01, 0.02, 0.03]);
+    const { ctx } = makeContext({
+      factsDb: {
+        store: vi.fn(),
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+        setEmbeddingModel,
+      } as unknown as LifecycleContext["factsDb"],
+      vectorDb: {
+        store: vectorStore,
+        hasDuplicate: vectorHasDuplicate,
+      } as unknown as LifecycleContext["vectorDb"],
+      embeddings: {
+        modelName: "test-model",
+        embed,
+      } as unknown as LifecycleContext["embeddings"],
+      cfg: {
+        autoCapture: true,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: ["semantic"] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: false },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+      auditStore: {
+        append: auditAppend,
+      } as unknown as LifecycleContext["auditStore"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [{ role: "user", content: "Remember that I prefer concise answers." }],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeWithResult).toHaveBeenCalledOnce();
+    expect(embed).toHaveBeenCalledOnce();
+    expect(setEmbeddingModel).not.toHaveBeenCalled();
+    expect(vectorHasDuplicate).not.toHaveBeenCalled();
+    expect(vectorStore).not.toHaveBeenCalled();
+    expect(auditAppend).not.toHaveBeenCalled();
+    expect(ctx.walWrite).toHaveBeenCalledOnce();
+    expect(ctx.walRemove).toHaveBeenCalledOnce();
+  });
+
   // -------------------------------------------------------------------------
   // Credential auto-detect: atomicity of pendingPath write (Issue #1498).
   // -------------------------------------------------------------------------
