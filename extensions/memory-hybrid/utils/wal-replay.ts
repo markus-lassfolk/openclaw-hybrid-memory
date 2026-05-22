@@ -108,8 +108,8 @@ async function ensureVectorAndEmbeddingMeta(opts: {
     }
   };
 
-  try {
-    if (vector && vector.length > 0) {
+  if (vector && vector.length > 0) {
+    try {
       await vectorDb.store({
         id: factId,
         text,
@@ -117,15 +117,21 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         importance,
         category,
       });
-      const model = resolveCanonicalEmbeddingModel();
-      if (model) {
-        factsDb.setEmbeddingModel(factId, model);
-        factsDb.storeEmbedding(factId, model, "canonical", new Float32Array(vector), vector.length);
-      }
+    } catch {
+      // Non-fatal: fall back to re-embed if possible.
+      await embedAndStore();
       return;
     }
-  } catch {
-    // Non-fatal: fall back to re-embed if possible.
+    const model = resolveCanonicalEmbeddingModel();
+    if (model) {
+      try {
+        factsDb.setEmbeddingModel(factId, model);
+        factsDb.storeEmbedding(factId, model, "canonical", new Float32Array(vector), vector.length);
+      } catch {
+        // Non-fatal: vector was stored successfully, metadata failure is acceptable.
+      }
+    }
+    return;
   }
 
   await embedAndStore();
