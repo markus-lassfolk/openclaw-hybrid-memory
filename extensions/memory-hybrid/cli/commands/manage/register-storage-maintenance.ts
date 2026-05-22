@@ -43,16 +43,12 @@ type FactsDbWithRawDb = {
   };
 };
 
-function hasGetBatch(db: object): db is object & {
-  getBatch: FactsDbWithBatch["getBatch"];
-} {
-  return "getBatch" in db && typeof (db as { getBatch?: unknown }).getBatch === "function";
+function hasGetBatch(db: unknown): db is FactsDbWithBatch {
+  return typeof db === "object" && db !== null && "getBatch" in db && typeof db.getBatch === "function";
 }
 
-function hasGetRawDb(db: object): db is object & {
-  getRawDb: FactsDbWithRawDb["getRawDb"];
-} {
-  return "getRawDb" in db && typeof (db as { getRawDb?: unknown }).getRawDb === "function";
+function hasGetRawDb(db: unknown): db is FactsDbWithRawDb {
+  return typeof db === "object" && db !== null && "getRawDb" in db && typeof db.getRawDb === "function";
 }
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
