@@ -27,6 +27,7 @@ export function isPromptArtifactOrReasoningTrace(text: string): boolean {
   if (/^NOOP \|/i.test(trimmed)) return true;
   if (/^ADD \|/i.test(trimmed)) return true;
   if (/^UPDATE \|/i.test(trimmed)) return true;
+  if (/^DELETE \|/i.test(trimmed)) return true;
   // Reject classifier JSON output
   if (/^\{\s*"action"\s*:/i.test(trimmed)) return true;
   // Reject capability-hint markers injected into system context
