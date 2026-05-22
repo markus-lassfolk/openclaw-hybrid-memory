@@ -145,7 +145,7 @@ function parseLinuxProcMem(): LinuxProcMem | null {
     const content = readFileSync("/proc/self/status", "utf-8");
     const find = (key: string): string | null => {
       const line = content.split("\n").find((l) => l.startsWith(key));
-      return line ? line.split(/\s+/)[1] ?? null : null;
+      return line ? (line.split(/\s+/)[1] ?? null) : null;
     };
     return {
       VmPeak: find("VmPeak:"),
@@ -198,10 +198,7 @@ function classifyFdPath(path: string): string {
   if (/\.wal[_-]?\d*$/.test(lc) || lc.endsWith("-wal") || lc.includes("/.wal-")) return "wal";
   if (/\.shm[-_]?\d*$/.test(lc) || lc.endsWith("-shm") || lc.includes("/.shm-")) return "shm";
   if (/\.lance\//i.test(lc) || lc.includes("/.lance/") || lc.includes("/.lancedb/")) return "lancedb";
-  if (
-    /\.sqlite/i.test(lc) ||
-    (lc.includes("/.openclaw/") && (lc.endsWith(".db") || lc.includes(".db-")))
-  )
+  if (/\.sqlite/i.test(lc) || (lc.includes("/.openclaw/") && (lc.endsWith(".db") || lc.includes(".db-"))))
     return "sqlite";
   if (lc.startsWith("socket:") || lc.startsWith("[socket:")) return "socket";
   if (lc.startsWith("pipe:") || lc.startsWith("[pipe:")) return "anon";
@@ -264,7 +261,10 @@ async function getActiveTaskCounts(
   try {
     if (ledger === "facts" && factsDb) {
       const { readActiveTaskRowsFromFacts } = await import("./task-ledger-facts.js");
-      const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
+      const { active } = readActiveTaskRowsFromFacts(
+        factsDb as import("../backends/facts-db/facts-db-core.js").FactsDB,
+        staleMinutes,
+      );
       const stale = active.filter((t) => t.stale).length;
       return { stale, active: active.length };
     }
@@ -345,15 +345,15 @@ export async function captureMemoryPressureSnapshot(
     const lancedbInitGen = typeof vd.getInitGeneration === "function" ? vd.getInitGeneration() : -1;
     const lancedbStoreCount = typeof vd.getStoreCount === "function" ? vd.getStoreCount() : -1;
     const lancedbOptimizing = typeof vd.isOptimizing === "function" ? vd.isOptimizing() : false;
-    const lancedbInitialized = typeof vd.isInitialized === "function" ? vd.isInitialized() ?? false : false;
-    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? vd.getOpenReaderCount() ?? 0 : 0;
-    const lancedbPath = typeof vd.getPath === "function" ? vd.getPath() ?? null : null;
+    const lancedbInitialized = typeof vd.isInitialized === "function" ? (vd.isInitialized() ?? false) : false;
+    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? (vd.getOpenReaderCount() ?? 0) : 0;
+    const lancedbPath = typeof vd.getPath === "function" ? (vd.getPath() ?? null) : null;
 
     // Active task counts (wrapped in try-catch to prevent parseDuration throws from skipping cooldown update)
     let taskCounts = { stale: 0, active: 0 };
     try {
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-      const ledger = ctx.cfg.activeTask.ledger ?? "file";
+      const ledger = ctx.cfg.activeTask.ledger === "facts" ? "facts" : "file";
       taskCounts = await getActiveTaskCounts(ctx.activeTaskPath, staleMinutes, ctx.factsDb, ledger);
     } catch {
       // If parseDuration or getActiveTaskCounts fails, use defaults
@@ -416,7 +416,10 @@ export function formatMemoryPressureLogLine(snapshot: MemoryPressureSnapshot): s
   const { memory, hybridMemory, fdGroups } = snapshot;
   const heapPct = memory.heapTotal > 0 ? ((memory.heapUsed / memory.heapTotal) * 100).toFixed(1) : "0.0";
   const rssMb = (memory.rss / 1024 / 1024).toFixed(0);
-  const topFdGroups = fdGroups.slice(0, 3).map((g) => `${g.category}=${g.count}`).join(",");
+  const topFdGroups = fdGroups
+    .slice(0, 3)
+    .map((g) => `${g.category}=${g.count}`)
+    .join(",");
   const recallInflight = hybridMemory.recallInFlight;
   const staleTasks = hybridMemory.staleTaskCount;
   const activeTasks = hybridMemory.activeTaskCount;
