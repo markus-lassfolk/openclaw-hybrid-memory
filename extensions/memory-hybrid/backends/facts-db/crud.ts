@@ -165,10 +165,6 @@ export type SkippedStoreFactResult = {
 
 export type StoreFactResult = StoredFactResult | SkippedStoreFactResult;
 
-export function isStoredFactResult(result: StoreFactResult): result is StoredFactResult {
-  return result.skipped !== true;
-}
-
 function createSkippedStorePlaceholder(entry: StoreFactInput): MemoryEntry {
   const nowSec = Math.floor(Date.now() / 1000);
   const decayClass =
