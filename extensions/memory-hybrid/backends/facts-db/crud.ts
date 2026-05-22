@@ -150,7 +150,24 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const category = (entry.category ?? "").toLowerCase().trim();
   const source = (entry.source ?? "").toLowerCase().trim();
   if (BLOCKED_CATEGORIES.has(category) || BLOCKED_SOURCES.has(source)) {
-    throw new Error(`memory-hybrid: fact blocked by pre-store guard (category=${category}, source=${source})`);
+    const nowSec = Math.floor(Date.now() / 1000);
+    const stubEntry: MemoryEntry = {
+      id: randomUUID(),
+      text: entry.text,
+      why: entry.why ?? null,
+      category: (entry.category?.trim() || "other") as MemoryCategory,
+      importance: entry.importance ?? 0.5,
+      entity: entry.entity?.trim() || null,
+      key: entry.key?.trim() || null,
+      value: entry.value ?? null,
+      source: entry.source ?? "conversation",
+      createdAt: nowSec,
+      decayClass: entry.decayClass ?? "ephemeral",
+      expiresAt: null,
+      lastConfirmedAt: nowSec,
+      confidence: entry.confidence ?? 1.0,
+    };
+    return { entry: stubEntry, skipped: true, evictedFactId: null };
   }
 
   const sourceForPolicy = entry.source ?? "conversation";
