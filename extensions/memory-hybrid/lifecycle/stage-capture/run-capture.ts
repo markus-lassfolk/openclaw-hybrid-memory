@@ -996,10 +996,10 @@ export async function runCapture(
                   );
                 }
               }
-              }  // close if (!storeResult.skipped) guard (#1560, #1561)
               if (logCaptures) {
                 api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
               }
+              }  // close if (!storeResult.skipped) guard (#1560, #1561)
             }
           }
         }
