@@ -579,7 +579,6 @@ export async function runCapture(
                         );
                       }
                     }
-                      await ctx.walRemove(walEntryId, api.logger);
                       ctx.auditStore?.append({
                         agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
                         action: "auto-capture:updated",
@@ -593,6 +592,7 @@ export async function runCapture(
                       );
                       stored++;
                     }  // close if (!storeResult.skipped) guard (#1560, #1561)
+                    await ctx.walRemove(walEntryId, api.logger);
                     continue;
                   }
                 }
@@ -651,6 +651,12 @@ export async function runCapture(
           const storedEntry = storeResult.entry;
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
+            await cleanupEvictedVector({
+              vectorDb: ctx.vectorDb,
+              evictedFactId: storeResult.evictedFactId,
+              logger: api.logger,
+              context: "stage-capture",
+            });
             try {
               if (vector) {
                 ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
@@ -680,7 +686,6 @@ export async function runCapture(
               });
               api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
             }
-            await ctx.walRemove(walEntryId, api.logger);
             stored++;
             ctx.auditStore?.append({
               agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
@@ -691,6 +696,7 @@ export async function runCapture(
               context: { category, entity: extracted.entity, role: candidate.role },
             });
           }
+          await ctx.walRemove(walEntryId, api.logger);
         }
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
       }
