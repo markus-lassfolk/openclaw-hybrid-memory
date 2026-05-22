@@ -19,7 +19,7 @@ import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/n
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
-import { RECALLED_CONTEXT_BOUNDARY } from "../../services/skill-prompt-injection.js";
+import { RECALLED_CONTEXT_BOUNDARY, sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
@@ -176,19 +176,19 @@ export async function runRecall(
       if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
         const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
         if (hotResults.length > 0) {
-          const hotLines = hotResults.map(
-            (r) =>
-              `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-          );
+          const hotLines = hotResults.map((r) => {
+            const rawText = r.entry.summary || r.entry.text;
+            const sanitized = sanitizePromptInjection(rawText.slice(0, 200));
+            return `- [hot/${r.entry.category}] ${sanitized}${rawText.length > 200 ? "…" : ""}`;
+          });
           hotPart = `Hot memories:\n${hotLines.join("\n")}\n\n`;
         }
       }
-      const memoryLines = ftsOnly
-        .slice(0, degradedLimit)
-        .map(
-          (r) =>
-            `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
+      const memoryLines = ftsOnly.slice(0, degradedLimit).map((r) => {
+        const rawText = r.entry.summary || r.entry.text;
+        const sanitized = sanitizePromptInjection(rawText.slice(0, 200));
+        return `- [${r.backend}/${r.entry.category}] ${sanitized}${rawText.length > 200 ? "…" : ""}`;
+      });
       let narrativePart = "";
       if (ctx.narrativesDb || ctx.eventLog) {
         try {
@@ -200,7 +200,8 @@ export async function runRecall(
           });
           if (recentNarratives.length > 0) {
             const narrative = recentNarratives[0];
-            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
+            const sanitizedNarrativeText = sanitizePromptInjection(clipNarrativeText(narrative.text));
+            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${sanitizedNarrativeText}\n</recent-history-narratives>\n\n`;
           }
         } catch {
           // Non-fatal.
