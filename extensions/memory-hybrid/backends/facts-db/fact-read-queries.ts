@@ -263,6 +263,67 @@ export function getAll(
   return rows.map((row) => rowToMemoryEntry(row));
 }
 
+/**
+ * SQL-level project-fact query (category='project', non-superseded, non-expired).
+ * Used by active-task injection to avoid loading all facts then filtering in JS.
+ * Returns latest fact per entity+key via the same grouping logic as `groupProjectFactsByEntity`.
+ *
+ * Columns selected: id, category, entity, key, value, text, importance, source,
+ * decay_class, scope, scope_target, created_at, valid_from, valid_until,
+ * superseded_at, expires_at, tags, embedding_model (needed for task reconstruction).
+ */
+export function getProjectFacts(
+  db: DatabaseSync,
+  options?: {
+    limit?: number;
+    scopeFilter?: ScopeFilter | null;
+  },
+): MemoryEntry[] {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const { limit = 8000, scopeFilter } = options ?? {};
+  const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
+  const params = [...[nowSec], ...scopeParams];
+  const rows = db
+    .prepare(
+      `SELECT id, category, entity, key, value, text, importance, source,
+              decay_class, scope, scope_target, created_at, valid_from, valid_until,
+              superseded_at, expires_at, tags, embedding_model
+       FROM facts
+       WHERE (expires_at IS NULL OR expires_at > ?)
+         AND category = 'project'
+         AND superseded_at IS NULL
+         ${scopeClause}
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(...params, limit) as Array<Record<string, unknown>>;
+  return rows.map((row) => rowToMemoryEntry(row));
+}
+
+/** SQL-level max created_at for project facts (category='project', non-superseded, non-expired). */
+export function getMaxCreatedAtByProjectFacts(
+  db: DatabaseSync,
+  scopeFilter?: ScopeFilter | null,
+): number | null {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
+  const params = [...[nowSec], ...scopeParams];
+  const row = db
+    .prepare(
+      `SELECT MAX(created_at) as max_created_at
+       FROM facts
+       WHERE (expires_at IS NULL OR expires_at > ?)
+         AND category = 'project'
+         AND superseded_at IS NULL
+         ${scopeClause}`,
+    )
+    .get(...params) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const maxCreatedAt = row.max_created_at;
+  if (typeof maxCreatedAt === "number" && Number.isFinite(maxCreatedAt)) return maxCreatedAt;
+  return null;
+}
+
 export function getCount(db: DatabaseSync, options?: { includeSuperseded?: boolean }): number {
   const nowSec = Math.floor(Date.now() / 1000);
   const { includeSuperseded = false } = options ?? {};

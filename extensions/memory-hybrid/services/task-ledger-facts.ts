@@ -216,13 +216,20 @@ export function loadTaskLedgerFromFacts(
 ): {
   active: ActiveTaskEntry[];
   completed: ActiveTaskEntry[];
+  /** Milliseconds spent in SQL fetch + grouping (excludes caller-level staleness detection). */
+  loadMs: number;
+  /** Number of rows returned by the SQL query. */
+  sqlRowsScanned: number;
 } {
-  const facts = factsDb
-    .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
-    .slice(0, factLimit);
+  const t0 = Date.now();
+  // SQL-level category filter instead of getAll + in-memory filter (#1553)
+  const facts = factsDb.getProjectFacts({ limit: factLimit, scopeFilter });
+  const sqlMs = Date.now() - t0;
   const grouped = groupProjectFactsByEntity(facts);
-  return buildTaskEntriesFromGroupedFacts(grouped);
+  const { active, completed } = buildTaskEntriesFromGroupedFacts(grouped);
+  const elapsed = Date.now() - t0;
+  void sqlMs; // intentionally held for potential future per-phase breakdown
+  return { active, completed, loadMs: elapsed, sqlRowsScanned: facts.length };
 }
 
 export function readActiveTaskRowsFromFacts(
@@ -230,10 +237,10 @@ export function readActiveTaskRowsFromFacts(
   staleMinutes: number,
   scopeFilter?: ScopeFilter | null,
 ): { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[]; latestProjectFactSec: number | null } {
-  const { active, completed } = loadTaskLedgerFromFacts(factsDb, 8000, scopeFilter);
-  const staleActive = detectStaleTasks(active, staleMinutes);
+  const result = loadTaskLedgerFromFacts(factsDb, 8000, scopeFilter);
+  const staleActive = detectStaleTasks(result.active, staleMinutes);
   const latestProjectFactSec = getLatestProjectFactCreatedAtSec(factsDb, scopeFilter);
-  return { active: staleActive, completed, latestProjectFactSec };
+  return { active: staleActive, completed: result.completed, latestProjectFactSec };
 }
 
 export function getActiveTaskProjectionStaleMarkerPath(filePath: string): string {
@@ -299,18 +306,8 @@ export async function clearActiveTaskProjectionStale(filePath: string): Promise<
 }
 
 export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, scopeFilter?: ScopeFilter | null): number | null {
-  const projectFacts = factsDb
-    .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
-    .slice(0, 8000);
-  if (projectFacts.length === 0) return null;
-  let maxSec = Number.NEGATIVE_INFINITY;
-  for (const fact of projectFacts) {
-    if (typeof fact.createdAt === "number" && Number.isFinite(fact.createdAt)) {
-      maxSec = Math.max(maxSec, fact.createdAt);
-    }
-  }
-  return maxSec === Number.NEGATIVE_INFINITY ? null : maxSec;
+  // SQL-level max; avoids loading all project facts just to find the latest timestamp (#1553)
+  return factsDb.getMaxCreatedAtByProjectFacts(scopeFilter);
 }
 
 function toIsoOrNull(unixSeconds: number | null): string | null {

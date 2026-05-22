@@ -13,6 +13,8 @@ import {
   getByCategory as getByCategoryImpl,
   getCount as getCountImpl,
   getMaxCreatedAtByCategory as getMaxCreatedAtByCategoryImpl,
+  getMaxCreatedAtByProjectFacts as getMaxCreatedAtByProjectFactsImpl,
+  getProjectFacts as getProjectFactsImpl,
   getRecentFacts as getRecentFactsImpl,
   getUnattemptedOtherFacts as getUnattemptedOtherFactsImpl,
   listDirectives as listDirectivesImpl,
@@ -502,6 +504,23 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** Get maximum created_at timestamp for non-superseded facts in a category. */
   getMaxCreatedAtByCategory(category: string): number | null {
     return getMaxCreatedAtByCategoryImpl(this.liveDb, category);
+  }
+
+  /**
+   * SQL-level project-fact query (category='project', non-superseded, non-expired).
+   * Used by active-task injection to avoid loading all facts then filtering in JS.
+   * Applies scope filter and limit at DB level.
+   */
+  getProjectFacts(options?: {
+    limit?: number;
+    scopeFilter?: ScopeFilter | null;
+  }): MemoryEntry[] {
+    return getProjectFactsImpl(this.liveDb, options);
+  }
+
+  /** SQL-level max created_at for project facts (category='project', non-superseded, non-expired). */
+  getMaxCreatedAtByProjectFacts(scopeFilter?: ScopeFilter | null): number | null {
+    return getMaxCreatedAtByProjectFactsImpl(this.liveDb, scopeFilter);
   }
 
   updateCategory(id: string, category: string): boolean {
