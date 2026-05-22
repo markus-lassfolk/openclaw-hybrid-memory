@@ -189,7 +189,7 @@ describe("runCaptureStage", () => {
         confidence: 0,
         tags: null,
       },
-      evictedFactId: "evicted-fact-id",
+      evictedFactId: null,
       skipped: true,
     });
     const setEmbeddingModel = vi.fn();
