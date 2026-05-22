@@ -29,66 +29,30 @@ import {
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
 
-function formatMiB(bytes: number | null | undefined): string {
-  if (bytes == null || !Number.isFinite(bytes)) return "n/a";
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+type FactsDbWithBatch = {
+  getBatch: (
+    offset: number,
+    limit: number,
+    opts: { includeSuperseded: boolean },
+  ) => Array<{ id: string; text: string }>;
+};
+
+type FactsDbWithRawDb = {
+  getRawDb: () => {
+    prepare: (sql: string) => { get: (id: string) => unknown };
+  };
+};
+
+function hasGetBatch(db: object): db is object & {
+  getBatch: FactsDbWithBatch["getBatch"];
+} {
+  return "getBatch" in db && typeof (db as { getBatch?: unknown }).getBatch === "function";
 }
 
-function formatAgo(epochMs: number | null | undefined): string {
-  if (epochMs == null || !Number.isFinite(epochMs)) return "never";
-  const deltaSec = Math.max(0, Math.floor((Date.now() - epochMs) / 1000));
-  if (deltaSec < 60) return `${deltaSec}s ago`;
-  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`;
-  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`;
-  return `${Math.floor(deltaSec / 86400)}d ago`;
-}
-
-function printVectorBackendObservabilitySummary(obs: VectorBackendObservability): void {
-  const mem = obs.memory;
-  console.log("Vector/native observability:");
-  console.log(
-    `  RSS=${formatMiB(mem.rssBytes)} heapUsed=${formatMiB(mem.heapUsedBytes)} external=${formatMiB(mem.externalBytes)} arrayBuffers=${formatMiB(mem.arrayBuffersBytes)} native≈${formatMiB(mem.nativeRssEstimateBytes)}`,
-  );
-  if (mem.procStatus) {
-    console.log(
-      `  /proc VmRSS=${mem.procStatus.vmRssKb ?? "?"}kB RssAnon=${mem.procStatus.rssAnonKb ?? "?"}kB RssFile=${mem.procStatus.rssFileKb ?? "?"}kB RssShmem=${mem.procStatus.rssShmemKb ?? "?"}kB VmSwap=${mem.procStatus.vmSwapKb ?? "?"}kB`,
-    );
-  }
-  if (obs.fileDescriptors) {
-    const fd = obs.fileDescriptors;
-    console.log(
-      `  FDs total=${fd.total} lancedb=${fd.byGroup.lancedb} sqlite=${fd.byGroup.sqlite} wal=${fd.byGroup.wal} shm=${fd.byGroup.shm} socket=${fd.byGroup.socket} anon=${fd.byGroup.anon}`,
-    );
-  }
-  const v = obs.vectorDb;
-  if (v.path) console.log(`  LanceDB path: ${v.path}`);
-  if (v.bounds) {
-    console.log(
-      `  Bounds: vectorSearchMaxResults=${v.bounds.vectorSearchMaxResults} semanticCacheMaxRowsPerFilterKey=${v.bounds.semanticCacheMaxRowsPerFilterKey} semanticCacheCandidateLimitMax=${v.bounds.semanticCacheCandidateLimitMax}`,
-    );
-  }
-  if (v.search) {
-    console.log(
-      `  Search activity: active=${v.search.active} peak=${v.search.peak} total=${v.search.total} lastResult=${v.search.lastResultCount} limit=${v.search.lastEffectiveLimit}/${v.search.lastRequestedLimit} last=${formatAgo(v.search.lastCompletedAtEpochMs)}`,
-    );
-  }
-  if (v.cache) {
-    console.log(
-      `  Semantic cache: rows=${v.cache.rows ?? "n/a"} cap=${v.cache.maxRowsPerFilterKey} candidateCap=${v.cache.candidateLimitMax} lastPruneRemoved=${v.cache.lastRemovedRows} lastPrune=${formatAgo(v.cache.lastPrunedAtEpochMs)}`,
-    );
-  }
-  if (v.lastOptimize) {
-    console.log(
-      `  Last optimize: ${formatAgo(v.lastOptimize.ranAtEpochMs)} compacted=${v.lastOptimize.compacted} pruned=${v.lastOptimize.removedFragments} freed=${v.lastOptimize.freedBytes} bytes`,
-    );
-  }
-  if (obs.lancedb.tables.length > 0) {
-    for (const table of obs.lancedb.tables) {
-      console.log(
-        `  Table ${table.name}: rows=${table.rowCount ?? "n/a"} size=${formatMiB(table.sizeBytes)} path=${table.path}${table.sizeScanTruncated ? " (size scan truncated)" : ""}`,
-      );
-    }
-  }
+function hasGetRawDb(db: object): db is object & {
+  getRawDb: FactsDbWithRawDb["getRawDb"];
+} {
+  return "getRawDb" in db && typeof (db as { getRawDb?: unknown }).getRawDb === "function";
 }
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
@@ -934,29 +898,20 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
 
             // Update embedding metadata in SQLite (batch update for all facts)
             console.log("Re-index: updating embedding metadata in SQLite...");
-            const allFacts =
-              typeof (factsDb as { getBatch?: unknown }).getBatch === "function"
-                ? (() => {
-                    const facts: Array<{ id: string }> = [];
-                    let offset = 0;
-                    const batchSize = 500;
-                    while (true) {
-                      const batch = (
-                        factsDb as {
-                          getBatch: (
-                            offset: number,
-                            limit: number,
-                            opts: { includeSuperseded: boolean },
-                          ) => Array<{ id: string }>;
-                        }
-                      ).getBatch(offset, batchSize, { includeSuperseded: false });
-                      if (batch.length === 0) break;
-                      facts.push(...batch);
-                      offset += batch.length;
-                    }
-                    return facts;
-                  })()
-                : factsDb.getAll({ includeSuperseded: false });
+            const allFacts = hasGetBatch(factsDb)
+              ? (() => {
+                  const facts: Array<{ id: string }> = [];
+                  let offset = 0;
+                  const batchSize = 500;
+                  while (true) {
+                    const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
+                    if (batch.length === 0) break;
+                    facts.push(...batch);
+                    offset += batch.length;
+                  }
+                  return facts;
+                })()
+              : factsDb.getAll({ includeSuperseded: false });
 
             for (const fact of allFacts) {
               try {
@@ -1157,15 +1112,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         let vectorDeleteCount = 0;
         const verifiedLookup = (() => {
           try {
-            return (
-              factsDb as {
-                getRawDb?: () => {
-                  prepare: (sql: string) => { get: (id: string) => unknown };
-                };
-              }
-            )
-              .getRawDb?.()
-              .prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1");
+            return hasGetRawDb(factsDb)
+              ? factsDb.getRawDb().prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1")
+              : null;
           } catch {
             return null;
           }
@@ -1193,19 +1142,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             }
           }
         };
-        if (typeof (factsDb as { getBatch?: unknown }).getBatch === "function") {
+        if (hasGetBatch(factsDb)) {
           let offset = 0;
           const batchSize = 500;
           while (true) {
-            const batch = (
-              factsDb as {
-                getBatch: (
-                  offset: number,
-                  limit: number,
-                  opts: { includeSuperseded: boolean },
-                ) => Array<{ id: string; text: string }>;
-              }
-            ).getBatch(offset, batchSize, { includeSuperseded: false });
+            const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
             if (batch.length === 0) break;
             await processFactBatch(batch);
             offset += batch.length;

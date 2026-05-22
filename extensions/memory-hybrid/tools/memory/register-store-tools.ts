@@ -11,6 +11,7 @@ import { stringEnum } from "../../utils/typebox.js";
 import { categoryToEventType } from "../../backends/event-log.js";
 import {
   DECAY_CLASSES,
+  type CredentialType,
   type DecayClass,
   type MemoryCategory,
   getCronModelConfig,
