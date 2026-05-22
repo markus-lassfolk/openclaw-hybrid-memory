@@ -123,6 +123,7 @@ Current snapshot:
 - [docs/PRESENTATION-STRATEGY.md](docs/PRESENTATION-STRATEGY.md): product message, visuals, demos, terminology
 - [docs/DEMO-PACKAGE.md](docs/DEMO-PACKAGE.md): 60-second + 5-minute demo scripts and asset checklist
 - [docs/OPERATIONS.md](docs/OPERATIONS.md): maintenance, backup, restore, troubleshooting
+- [docs/OPERATOR-ARCHITECTURE-MAP.md](docs/OPERATOR-ARCHITECTURE-MAP.md): minimal operator map (components, flows, storage, health/incident surfaces)
 - [docs/advanced-capabilities.md](docs/advanced-capabilities.md): graph, workflows, procedures, crystallization
 - [docs/PRODUCTISATION-TRACK.md](docs/PRODUCTISATION-TRACK.md): shipped productisation milestones and open lanes
 - [docs/SYNC-REPLICATION.md](docs/SYNC-REPLICATION.md): optional encrypted sync/replication workflow

@@ -96,6 +96,7 @@ Hybrid Memory gives your OpenClaw agent **persistent memory** without turning me
 | Document | Description |
 |----------|-------------|
 | [CLI Reference](CLI-REFERENCE) | All `openclaw hybrid-mem` commands by category |
+| [Operator Architecture Map](OPERATOR-ARCHITECTURE-MAP) | Minimal runbook map: components, data flows, storage, commands, and incident lookup |
 | [Operations](OPERATIONS) | Day-to-day operational procedures |
 | [Uninstall](UNINSTALL) | Revert to default memory; optional data removal |
 | [Upgrade OpenClaw](UPGRADE-OPENCLAW) | What to do after every OpenClaw upgrade |
