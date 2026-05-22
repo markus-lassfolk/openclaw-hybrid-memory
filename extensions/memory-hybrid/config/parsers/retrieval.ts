@@ -4,6 +4,7 @@ import type {
   AutoClassifyConfig,
   AutoRecallConfig,
   AutoRecallInjectionFormat,
+  CapabilityHintsMode,
   ContextualVariantsConfig,
   DocumentGradingConfig,
   EntityLookupConfig,
@@ -139,6 +140,13 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
           : typeof recallTimingRaw === "string" && (VALID_RECALL_TIMING as readonly string[]).includes(recallTimingRaw)
             ? (recallTimingRaw as (typeof VALID_RECALL_TIMING)[number])
             : "off";
+    const VALID_CAPABILITY_HINTS = ["session", "always", "off"] as const;
+    const capabilityHintsRaw = ar.capabilityHints;
+    const capabilityHints =
+      typeof capabilityHintsRaw === "string" &&
+      (VALID_CAPABILITY_HINTS as readonly string[]).includes(capabilityHintsRaw)
+        ? (capabilityHintsRaw as CapabilityHintsMode)
+        : "session";
     const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;
     const scopeFilter =
       scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
@@ -172,6 +180,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
     };
     return {
       enabled: ar.enabled !== false,
+      capabilityHints,
       recallTiming,
       maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
       maxPerMemoryChars:
@@ -207,6 +216,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
   }
   return {
     enabled: arRaw !== false,
+    capabilityHints: "session",
     recallTiming: "off",
     maxTokens: 800,
     maxPerMemoryChars: 0,

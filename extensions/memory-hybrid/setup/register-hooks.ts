@@ -10,7 +10,9 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
 import { getMemoryCategories } from "../config.js";
+import { withHookResolutionApi } from "../lifecycle/hook-resolution-api.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
+import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
@@ -212,8 +214,11 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   //
   // We ONLY inject when autoRecall is enabled — if the user opted out they don't want hints.
   // Silent mode suppresses all unsolicited output including capability hints (Issue #317).
-  if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent") {
+  const capabilityHintsMode = ctx.cfg.autoRecall.capabilityHints ?? "session";
+  if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent" && capabilityHintsMode !== "off") {
     let staticMemoryInstructions: string | null = null;
+    const capabilityHintsSessionsSeen = new Set<string>();
+    const MAX_CAPABILITY_HINT_SESSIONS = 200;
 
     // Build once and cache — these never change within a gateway session.
     const buildStaticInstructions = (): string => {
@@ -236,9 +241,19 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // the prompt build. When a reliable capability signal for `appendSystemContext`
     // becomes available in the plugin SDK, this hook can be extended to prefer that
     // field without risking duplicate instructions.
-    api.on("before_prompt_build", (): undefined | { prependContext: string } => {
+    api.on("before_prompt_build", (event: unknown, hookCtx: unknown): undefined | { prependContext: string } => {
       if (!staticMemoryInstructions) {
         staticMemoryInstructions = buildStaticInstructions();
+      }
+      if (capabilityHintsMode === "session") {
+        const rApi = withHookResolutionApi(api, hookCtx);
+        const sessionKey = resolveSessionKeyFromHookEvent(event, rApi) ?? "default";
+        if (capabilityHintsSessionsSeen.has(sessionKey)) return;
+        capabilityHintsSessionsSeen.add(sessionKey);
+        if (capabilityHintsSessionsSeen.size > MAX_CAPABILITY_HINT_SESSIONS) {
+          const oldest = capabilityHintsSessionsSeen.values().next().value;
+          if (oldest) capabilityHintsSessionsSeen.delete(oldest);
+        }
       }
       return { prependContext: staticMemoryInstructions };
     });
