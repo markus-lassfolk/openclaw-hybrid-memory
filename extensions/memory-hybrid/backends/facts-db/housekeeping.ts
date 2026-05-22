@@ -1,6 +1,7 @@
 /**
  * Misc DB ops: pruning logs, stats helpers, scope pruning (Issue #954 split).
  */
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
 
@@ -52,6 +53,213 @@ export function pruneLogTables(db: DatabaseSync, retentionDays: number): number 
 /** Run standard FTS5 optimize maintenance on `facts_fts`. */
 export function optimizeFts(db: DatabaseSync): void {
   db.exec(`INSERT INTO facts_fts(facts_fts) VALUES('optimize')`);
+}
+
+const EXPECTED_FTS_TRIGGERS = ["facts_ai", "facts_au", "facts_ad"] as const;
+
+export type FtsConsistencySnapshot = {
+  factsCount: number;
+  ftsCount: number;
+  ftsTableExists: boolean;
+  ftsTableSql: string | null;
+  hasTagsColumn: boolean;
+  hasWhyColumn: boolean;
+  presentTriggers: string[];
+  missingTriggers: string[];
+  missingFactsInFts: number;
+  extraFtsRows: number;
+  missingFactIdsSample: string[];
+  extraFtsRowidsSample: number[];
+};
+
+export type FtsTriggerProbeResult = {
+  ok: boolean;
+  insertVisible: boolean;
+  updateVisible: boolean;
+  deleteVisibleAfterDelete: boolean;
+  error?: string;
+};
+
+function scalarCount(db: DatabaseSync, query: string, ...params: (string | number)[]): number {
+  const row = db.prepare(query).get(...params) as { cnt: number } | undefined;
+  return Number(row?.cnt ?? 0);
+}
+
+export function getFtsConsistencySnapshot(db: DatabaseSync): FtsConsistencySnapshot {
+  const factsCount = scalarCount(db, "SELECT COUNT(*) AS cnt FROM facts");
+  const ftsRow = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='facts_fts'`).get() as
+    | { sql: string | null }
+    | undefined;
+  const ftsTableExists = !!ftsRow;
+  const ftsTableSql = ftsRow?.sql ?? null;
+  const hasTagsColumn = /\btags\b/i.test(ftsTableSql ?? "");
+  const hasWhyColumn = /\bwhy\b/i.test(ftsTableSql ?? "");
+
+  const triggerRows = db
+    .prepare(
+      `SELECT name FROM sqlite_master
+       WHERE type = 'trigger' AND name IN ('facts_ai', 'facts_au', 'facts_ad')`,
+    )
+    .all() as Array<{ name: string }>;
+  const presentTriggers = triggerRows.map((r) => r.name).sort();
+  const missingTriggers = EXPECTED_FTS_TRIGGERS.filter((name) => !presentTriggers.includes(name));
+
+  if (!ftsTableExists) {
+    return {
+      factsCount,
+      ftsCount: 0,
+      ftsTableExists,
+      ftsTableSql,
+      hasTagsColumn,
+      hasWhyColumn,
+      presentTriggers,
+      missingTriggers,
+      missingFactsInFts: factsCount,
+      extraFtsRows: 0,
+      missingFactIdsSample: [],
+      extraFtsRowidsSample: [],
+    };
+  }
+
+  const ftsCount = scalarCount(db, "SELECT COUNT(*) AS cnt FROM facts_fts");
+  const missingFactsInFts = scalarCount(
+    db,
+    `SELECT COUNT(*) AS cnt
+       FROM facts f
+      WHERE NOT EXISTS (SELECT 1 FROM facts_fts t WHERE t.rowid = f.rowid)`,
+  );
+  const extraFtsRows = scalarCount(
+    db,
+    `SELECT COUNT(*) AS cnt
+       FROM facts_fts t
+      WHERE NOT EXISTS (SELECT 1 FROM facts f WHERE f.rowid = t.rowid)`,
+  );
+  const missingFactIdsSampleRows = db
+    .prepare(
+      `SELECT f.id
+         FROM facts f
+        WHERE NOT EXISTS (SELECT 1 FROM facts_fts t WHERE t.rowid = f.rowid)
+        LIMIT 5`,
+    )
+    .all() as Array<{ id: string }>;
+  const extraFtsRowidsSampleRows = db
+    .prepare(
+      `SELECT t.rowid
+         FROM facts_fts t
+        WHERE NOT EXISTS (SELECT 1 FROM facts f WHERE f.rowid = t.rowid)
+        LIMIT 5`,
+    )
+    .all() as Array<{ rowid: number }>;
+
+  return {
+    factsCount,
+    ftsCount,
+    ftsTableExists,
+    ftsTableSql,
+    hasTagsColumn,
+    hasWhyColumn,
+    presentTriggers,
+    missingTriggers,
+    missingFactsInFts,
+    extraFtsRows,
+    missingFactIdsSample: missingFactIdsSampleRows.map((row) => row.id),
+    extraFtsRowidsSample: extraFtsRowidsSampleRows.map((row) => Number(row.rowid)),
+  };
+}
+
+export function runFtsTriggerProbe(db: DatabaseSync): FtsTriggerProbeResult {
+  const savepoint = `hm_fts_probe_${randomUUID().replace(/-/g, "")}`;
+  const probeId = randomUUID();
+  const tokenBase = randomUUID().replace(/-/g, "");
+  const insertToken = `hmdoctorins${tokenBase.slice(0, 12)}`;
+  const updateToken = `hmdoctorupd${tokenBase.slice(12, 24)}`;
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  let insertVisible = false;
+  let updateVisible = false;
+  let deleteVisibleAfterDelete = true;
+
+  db.exec(`SAVEPOINT ${savepoint}`);
+  try {
+    db.prepare(
+      `INSERT INTO facts(id, text, category, importance, source, created_at)
+       VALUES(?, ?, 'fact', 0.01, 'doctor-fts-probe', ?)`,
+    ).run(probeId, insertToken, nowSec);
+
+    const rowidRow = db.prepare("SELECT rowid FROM facts WHERE id = ?").get(probeId) as { rowid: number } | undefined;
+    if (!rowidRow?.rowid) {
+      return {
+        ok: false,
+        insertVisible,
+        updateVisible,
+        deleteVisibleAfterDelete,
+        error: "probe insert rowid not found",
+      };
+    }
+    const rowid = Number(rowidRow.rowid);
+
+    const insertMatchCount = scalarCount(
+      db,
+      "SELECT COUNT(*) AS cnt FROM facts_fts WHERE rowid = ? AND facts_fts MATCH ?",
+      rowid,
+      insertToken,
+    );
+    insertVisible = insertMatchCount === 1;
+
+    db.prepare("UPDATE facts SET text = ? WHERE id = ?").run(updateToken, probeId);
+    const updateMatchCount = scalarCount(
+      db,
+      "SELECT COUNT(*) AS cnt FROM facts_fts WHERE rowid = ? AND facts_fts MATCH ?",
+      rowid,
+      updateToken,
+    );
+    const staleMatchCount = scalarCount(
+      db,
+      "SELECT COUNT(*) AS cnt FROM facts_fts WHERE rowid = ? AND facts_fts MATCH ?",
+      rowid,
+      insertToken,
+    );
+    updateVisible = updateMatchCount === 1 && staleMatchCount === 0;
+
+    db.prepare("DELETE FROM facts WHERE id = ?").run(probeId);
+    const postDeleteCount = scalarCount(db, "SELECT COUNT(*) AS cnt FROM facts_fts WHERE rowid = ?", rowid);
+    deleteVisibleAfterDelete = postDeleteCount > 0;
+
+    return {
+      ok: insertVisible && updateVisible && !deleteVisibleAfterDelete,
+      insertVisible,
+      updateVisible,
+      deleteVisibleAfterDelete,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      insertVisible,
+      updateVisible,
+      deleteVisibleAfterDelete,
+      error: String(error),
+    };
+  } finally {
+    try {
+      db.exec(`ROLLBACK TO ${savepoint}`);
+    } catch {
+      // ignore cleanup errors
+    }
+    try {
+      db.exec(`RELEASE ${savepoint}`);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+export function rebuildFtsIndexFromFacts(db: DatabaseSync): number {
+  db.exec("DELETE FROM facts_fts");
+  db.exec(`
+    INSERT INTO facts_fts(rowid, text, category, entity, tags, why, key, value)
+    SELECT rowid, text, category, entity, tags, why, key, value FROM facts
+  `);
+  return scalarCount(db, "SELECT COUNT(*) AS cnt FROM facts");
 }
 
 export function freelistSpaceStats(db: DatabaseSync): {

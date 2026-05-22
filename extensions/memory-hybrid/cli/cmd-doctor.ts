@@ -27,7 +27,9 @@ export function registerDoctorCommand(
   program
     .command("doctor")
     .description("Run health diagnostics and detect common issues (🟢 pass, 🟡 warn, 🔴 fail)")
-    .action(async () => {
+    .option("--deep", "Run a deep FTS trigger probe (savepointed insert/update/delete round-trip)")
+    .option("--fix", "Repair detected FTS population drift by rebuilding the FTS index")
+    .action(async (opts?: { deep?: boolean; fix?: boolean }) => {
       console.log("\n🏥 Running Hybrid Memory Diagnostics...\n");
 
       const checks: DiagnosticCheck[] = [];
@@ -161,6 +163,156 @@ export function registerDoctorCommand(
           name: "Disk Space",
           status: "warn",
           message: "Could not check disk space",
+        });
+      }
+
+      // Check 7: FTS trigger/index consistency
+      try {
+        type FtsDbCheckShape = {
+          getFtsConsistencySnapshot?: () => {
+            factsCount: number;
+            ftsCount: number;
+            ftsTableExists: boolean;
+            hasTagsColumn: boolean;
+            hasWhyColumn: boolean;
+            missingTriggers: string[];
+            missingFactsInFts: number;
+            extraFtsRows: number;
+            missingFactIdsSample: string[];
+            extraFtsRowidsSample: number[];
+          };
+          runFtsTriggerProbe?: () => {
+            ok: boolean;
+            insertVisible: boolean;
+            updateVisible: boolean;
+            deleteVisibleAfterDelete: boolean;
+            error?: string;
+          };
+          rebuildFtsIndex?: () => number;
+        };
+        const ftsDb = factsDb as unknown as FtsDbCheckShape;
+        if (typeof ftsDb.getFtsConsistencySnapshot !== "function") {
+          checks.push({
+            name: "FTS Index/Triggers",
+            status: "warn",
+            message: "FTS consistency APIs unavailable in this runtime build",
+          });
+        } else {
+          let snapshot = ftsDb.getFtsConsistencySnapshot();
+          const structuralProblems: string[] = [];
+          if (!snapshot.ftsTableExists) structuralProblems.push("facts_fts table missing");
+          if (!snapshot.hasTagsColumn || !snapshot.hasWhyColumn) {
+            const missingCols = [!snapshot.hasTagsColumn ? "tags" : null, !snapshot.hasWhyColumn ? "why" : null].filter(
+              Boolean,
+            );
+            structuralProblems.push(`facts_fts schema missing column(s): ${missingCols.join(", ")}`);
+          }
+          if (snapshot.missingTriggers.length > 0) {
+            structuralProblems.push(`missing trigger(s): ${snapshot.missingTriggers.join(", ")}`);
+          }
+          const populationDrift =
+            snapshot.factsCount !== snapshot.ftsCount || snapshot.missingFactsInFts > 0 || snapshot.extraFtsRows > 0;
+
+          if (structuralProblems.length > 0) {
+            checks.push({
+              name: "FTS Index/Triggers",
+              status: "fail",
+              message: structuralProblems.join("; "),
+              fix: "Restart gateway to re-run migrations. If unresolved, rebuild facts_fts from SQLite facts.",
+            });
+          } else if (populationDrift) {
+            if (opts?.fix && typeof ftsDb.rebuildFtsIndex === "function") {
+              try {
+                const rebuilt = ftsDb.rebuildFtsIndex();
+                snapshot = ftsDb.getFtsConsistencySnapshot();
+                const driftAfterFix =
+                  snapshot.factsCount !== snapshot.ftsCount ||
+                  snapshot.missingFactsInFts > 0 ||
+                  snapshot.extraFtsRows > 0;
+                if (!driftAfterFix) {
+                  checks.push({
+                    name: "FTS Index/Triggers",
+                    status: "pass",
+                    message: `Rebuilt FTS index for ${rebuilt} fact(s) and verified consistency`,
+                  });
+                } else {
+                  checks.push({
+                    name: "FTS Index/Triggers",
+                    status: "warn",
+                    message:
+                      `FTS drift persists after rebuild (facts=${snapshot.factsCount}, facts_fts=${snapshot.ftsCount}, ` +
+                      `missing=${snapshot.missingFactsInFts}, extra=${snapshot.extraFtsRows})`,
+                    fix: "Run with --deep for trigger probe; if still drifting, inspect DB integrity and restore from backup.",
+                  });
+                }
+              } catch (error) {
+                checks.push({
+                  name: "FTS Index/Triggers",
+                  status: "fail",
+                  message: `FTS rebuild failed: ${error}`,
+                  fix: "Run with --deep to probe triggers, then rebuild facts_fts from SQLite facts.",
+                });
+              }
+            } else {
+              const sampleMissing =
+                snapshot.missingFactIdsSample.length > 0
+                  ? ` missingFactIds=${snapshot.missingFactIdsSample.join(", ")}`
+                  : "";
+              const sampleExtra =
+                snapshot.extraFtsRowidsSample.length > 0
+                  ? ` extraFtsRowids=${snapshot.extraFtsRowidsSample.join(", ")}`
+                  : "";
+              checks.push({
+                name: "FTS Index/Triggers",
+                status: "warn",
+                message:
+                  `FTS drift detected (facts=${snapshot.factsCount}, facts_fts=${snapshot.ftsCount}, ` +
+                  `missing=${snapshot.missingFactsInFts}, extra=${snapshot.extraFtsRows})${sampleMissing}${sampleExtra}`,
+                fix: "Run: openclaw hybrid-mem doctor --fix (then --deep to validate trigger round-trip).",
+              });
+            }
+          } else {
+            checks.push({
+              name: "FTS Index/Triggers",
+              status: "pass",
+              message: `FTS table/triggers healthy (${snapshot.factsCount} facts, ${snapshot.ftsCount} indexed rows)`,
+            });
+          }
+
+          if (opts?.deep) {
+            if (typeof ftsDb.runFtsTriggerProbe !== "function") {
+              checks.push({
+                name: "FTS Trigger Probe (Deep)",
+                status: "warn",
+                message: "Deep FTS probe API unavailable in this runtime build",
+              });
+            } else {
+              const probe = ftsDb.runFtsTriggerProbe();
+              if (probe.ok) {
+                checks.push({
+                  name: "FTS Trigger Probe (Deep)",
+                  status: "pass",
+                  message: "Insert/update/delete trigger round-trip verified",
+                });
+              } else {
+                checks.push({
+                  name: "FTS Trigger Probe (Deep)",
+                  status: "fail",
+                  message:
+                    `Trigger probe failed (insertVisible=${probe.insertVisible}, ` +
+                    `updateVisible=${probe.updateVisible}, deleteVisibleAfterDelete=${probe.deleteVisibleAfterDelete})` +
+                    (probe.error ? `: ${probe.error}` : ""),
+                  fix: "Repair/recreate facts_fts triggers and rebuild the FTS index from facts.",
+                });
+              }
+            }
+          }
+        }
+      } catch (error) {
+        checks.push({
+          name: "FTS Index/Triggers",
+          status: "warn",
+          message: `Could not run FTS consistency check: ${error}`,
         });
       }
 

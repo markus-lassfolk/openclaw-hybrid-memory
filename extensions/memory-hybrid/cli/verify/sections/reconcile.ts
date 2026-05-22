@@ -90,21 +90,64 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             });
             if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
             if (opts.fix) {
-              let deleted = 0;
-              let failed = 0;
+              let attempted = 0;
+              let apiDeleted = 0;
+              let apiNoOp = 0;
+              let deleteErrors = 0;
               for (const id of vectorOrphans) {
                 try {
-                  await vectorDb.delete(id);
-                  deleted++;
+                  attempted++;
+                  const removed = await vectorDb.delete(id);
+                  if (removed) {
+                    apiDeleted++;
+                  } else {
+                    apiNoOp++;
+                  }
                 } catch {
-                  failed++;
+                  deleteErrors++;
                 }
               }
-              log(`  → Deleted ${deleted} orphan vector(s) from LanceDB${failed > 0 ? ` (${failed} failed)` : ""}.`);
+              log(
+                `  → Delete attempted for ${attempted} orphan vector(s): ` +
+                  `apiDeleted=${apiDeleted}, apiNoOp=${apiNoOp}, errors=${deleteErrors}.`,
+              );
+
+              let unresolvedAfterDelete = [...vectorOrphans];
+              try {
+                const postDeleteVectorIds = new Set(await vectorDb.getAllIds());
+                unresolvedAfterDelete = vectorOrphans.filter((id) => postDeleteVectorIds.has(id));
+              } catch (recheckErr) {
+                log(`${FAIL} Could not re-query LanceDB after delete attempt: ${String(recheckErr)}`);
+              }
+
+              const verifiedRemoved = vectorOrphans.length - unresolvedAfterDelete.length;
+              if (unresolvedAfterDelete.length === 0) {
+                log(`  → Verified removal: ${verifiedRemoved}/${vectorOrphans.length} orphan vector(s) are gone.`);
+                fixes.push(`Verified removal of ${verifiedRemoved} LanceDB orphan vector(s)`);
+              } else {
+                log(
+                  `${FAIL} Reconciliation incomplete — ${unresolvedAfterDelete.length}/${vectorOrphans.length} orphan vector(s) remain after delete attempt.`,
+                );
+                for (const id of unresolvedAfterDelete.slice(0, 10)) {
+                  log(`  - unresolved: ${id}`);
+                }
+                if (unresolvedAfterDelete.length > 10) {
+                  log(`  … and ${unresolvedAfterDelete.length - 10} more unresolved orphan vectors`);
+                }
+                const failReason =
+                  typeof vectorDb.getLastSearchFailReason === "function" ? vectorDb.getLastSearchFailReason() : null;
+                if (failReason) {
+                  log(`  → LanceDB degraded hint: lastSearchFailReason=${failReason}`);
+                }
+                state.issues.push(
+                  `${unresolvedAfterDelete.length} orphan vector(s) still present after --reconcile --fix delete attempts`,
+                );
+                state.allOk = false;
+              }
             } else {
               log("  → Run with --fix to delete these orphan vectors from LanceDB.");
+              state.issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
             }
-            state.issues.push(`${vectorOrphans.length} orphan vector(s) in LanceDB with no matching SQLite fact`);
           }
           if (sqliteOrphans.length > 0) {
             const WARN = noEmoji ? "[WARN]" : "⚠️";
