@@ -55,6 +55,7 @@ export async function runCaptureCleanupForCli(options: {
         `SELECT id, text, source, category, importance FROM facts
          WHERE superseded_at IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
+         ORDER BY created_at DESC
          LIMIT ? OFFSET ?`,
       )
       .all(Math.floor(Date.now() / 1000), PAGE_SIZE, offset) as Array<{
