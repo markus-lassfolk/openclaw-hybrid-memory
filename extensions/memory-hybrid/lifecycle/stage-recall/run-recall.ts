@@ -342,6 +342,11 @@ export async function runRecall(
         activeTaskReserveTokens,
         ctx.cfg.activeTask.enabled && ctx.cfg.verbosity !== "silent",
       );
+      reserveAndTrackBlock(
+        "stale-warning",
+        staleWarningReserveTokens,
+        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled,
+      );
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
         .map(
@@ -990,6 +995,11 @@ export async function runRecall(
       "active-task",
       activeTaskReserveTokens,
       ctx.cfg.activeTask.enabled && ctx.cfg.verbosity !== "silent",
+    );
+    reserveAndTrackBlock(
+      "stale-warning",
+      staleWarningReserveTokens,
+      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled,
     );
 
     const fixedBlocksTokens = totalBudget - remainingBudget;
