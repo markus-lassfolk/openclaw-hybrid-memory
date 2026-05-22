@@ -128,13 +128,12 @@ const DEFAULT_CONFIG: DiagnosticSnapshotConfig = {
   fdGroupSampleLimit: 5,
 };
 
-const DIAGNOSTICS_DIR = ".openclaw/diagnostics/memory-pressure";
-
 // ---------------------------------------------------------------------------
 // Rate-limit tracker (module-level, lives for gateway process lifetime)
 // ---------------------------------------------------------------------------
 
 let lastSnapshotMs = 0;
+let snapshotInProgress = false;
 
 // ---------------------------------------------------------------------------
 // Linux /proc/self/status parser
@@ -316,119 +315,98 @@ export async function captureMemoryPressureSnapshot(
   const nowMs = Date.now();
   const cooldownMs = config.cooldownSec * 1000;
   const elapsedMs = nowMs - lastSnapshotMs;
-  const cooldownRemainingSec = elapsedMs < cooldownMs ? Math.ceil((cooldownMs - elapsedMs) / 1000) : 0;
 
-  // Rate-limit: skip if within cooldown window
-  if (elapsedMs < cooldownMs) {
-    return {
-      timestamp: new Date().toISOString(),
-      memory: {
-        rss: 0,
-        heapTotal: 0,
-        heapUsed: 0,
-        external: 0,
-        arrayBuffers: 0,
-      },
-      activeHandles: 0,
-      activeRequests: 0,
-      linuxProcMem: null,
-      fdGroups: [],
-      dbPaths: { sqlite: [], lancedb: [], wal: [], shm: [] },
-      pluginGenerations: {
-        lancedbInitGeneration: 0,
-        lancedbStoreCount: 0,
-        lancedbOptimizing: false,
-      },
-      hybridMemory: {
-        sqlitePath: null,
-        lancedbPath: null,
-        lancedbInitialized: false,
-        lancedbOptimizing: false,
-        lancedbOpenReaders: 0,
-        recallInFlight: 0,
-        staleTaskCount: 0,
-        activeTaskCount: 0,
-        uptimeSec: 0,
-        nodeVersion: "",
-        platform: "",
-      },
-      cooldownRemainingSec,
+  // Rate-limit: skip if within cooldown window or if another snapshot is in progress
+  if (elapsedMs < cooldownMs || snapshotInProgress) {
+    return null;
+  }
+
+  // Mark snapshot as in progress to prevent concurrent calls
+  snapshotInProgress = true;
+
+  try {
+    const mem = process.memoryUsage();
+    const memSnapshot = {
+      rss: mem.rss,
+      heapTotal: mem.heapTotal,
+      heapUsed: mem.heapUsed,
+      external: mem.external,
+      arrayBuffers: mem.arrayBuffers ?? 0,
     };
-  }
 
-  const mem = process.memoryUsage();
-  const memSnapshot = {
-    rss: mem.rss,
-    heapTotal: mem.heapTotal,
-    heapUsed: mem.heapUsed,
-    external: mem.external,
-    arrayBuffers: mem.arrayBuffers ?? 0,
-  };
+    const fds = await getOpenFds();
+    const fdGroups = groupFds(fds, config.fdGroupSampleLimit ?? 5);
+    const dbPaths = extractDbPaths(fds);
+    const linuxProcMem = config.includeLinuxProcMem ? parseLinuxProcMem() : null;
 
-  const fds = await getOpenFds();
-  const fdGroups = groupFds(fds, config.fdGroupSampleLimit ?? 5);
-  const dbPaths = extractDbPaths(fds);
-  const linuxProcMem = config.includeLinuxProcMem ? parseLinuxProcMem() : null;
+    // LanceDB plugin state from VectorDB instance
+    const vd = ctx.vectorDb;
+    // These are the actual public VectorDB method names
+    const lancedbInitGen = typeof vd.getInitGeneration === "function" ? vd.getInitGeneration() : -1;
+    const lancedbStoreCount = typeof vd.getStoreCount === "function" ? vd.getStoreCount() : -1;
+    const lancedbOptimizing = typeof vd.isOptimizing === "function" ? vd.isOptimizing() : false;
+    const lancedbInitialized = typeof vd.isInitialized === "function" ? vd.isInitialized() ?? false : false;
+    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? vd.getOpenReaderCount() ?? 0 : 0;
+    const lancedbPath = typeof vd.getPath === "function" ? vd.getPath() ?? null : null;
 
-  // LanceDB plugin state from VectorDB instance
-  const vd = ctx.vectorDb;
-  // These are the actual public VectorDB method names
-  const lancedbInitGen = typeof vd.getInitGeneration === "function" ? vd.getInitGeneration() : -1;
-  const lancedbStoreCount = typeof vd.getStoreCount === "function" ? vd.getStoreCount() : -1;
-  const lancedbOptimizing = typeof vd.isOptimizing === "function" ? vd.isOptimizing() : false;
-  const lancedbInitialized = typeof vd.isInitialized === "function" ? vd.isInitialized() ?? false : false;
-  const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? vd.getOpenReaderCount() ?? 0 : 0;
-  const lancedbPath = typeof vd.getPath === "function" ? vd.getPath() ?? null : null;
+    // Active task counts (wrapped in try-catch to prevent parseDuration throws from skipping cooldown update)
+    let taskCounts = { stale: 0, active: 0 };
+    try {
+      const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
+      const ledger = ctx.cfg.activeTask.ledger ?? "file";
+      taskCounts = await getActiveTaskCounts(ctx.activeTaskPath, staleMinutes, ctx.factsDb, ledger);
+    } catch {
+      // If parseDuration or getActiveTaskCounts fails, use defaults
+    }
 
-  // Active task counts
-  const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-  const ledger = ctx.cfg.activeTask.ledger ?? "file";
-  const taskCounts = await getActiveTaskCounts(ctx.activeTaskPath, staleMinutes, ctx.factsDb, ledger);
-
-  // Hybrid memory snapshot
-  const hybridMemory: HybridMemorySnapshot = {
-    sqlitePath: ctx.resolvedSqlitePath || null,
-    lancedbPath,
-    lancedbInitialized,
-    lancedbOptimizing,
-    lancedbOpenReaders,
-    recallInFlight: ctx.recallInFlightRef?.value ?? 0,
-    staleTaskCount: taskCounts.stale,
-    activeTaskCount: taskCounts.active,
-    uptimeSec: Math.floor(process.uptime()),
-    nodeVersion: process.version,
-    platform: process.platform,
-  };
-
-  const snapshot: MemoryPressureSnapshot = {
-    timestamp: new Date().toISOString(),
-    memory: memSnapshot,
-    activeHandles:
-      typeof (process as unknown as { _getActiveHandles?: () => unknown[] })._getActiveHandles === "function"
-        ? ((process as unknown as { _getActiveHandles: () => unknown[] })._getActiveHandles()?.length ?? -1)
-        : -1,
-    activeRequests:
-      typeof (process as unknown as { _getActiveRequests?: () => unknown[] })._getActiveRequests === "function"
-        ? ((process as unknown as { _getActiveRequests: () => unknown[] })._getActiveRequests()?.length ?? -1)
-        : -1,
-    linuxProcMem,
-    fdGroups,
-    dbPaths,
-    pluginGenerations: {
-      lancedbInitGeneration: lancedbInitGen,
-      lancedbStoreCount: lancedbStoreCount,
+    // Hybrid memory snapshot
+    const hybridMemory: HybridMemorySnapshot = {
+      sqlitePath: ctx.resolvedSqlitePath || null,
+      lancedbPath,
+      lancedbInitialized,
       lancedbOptimizing,
-    },
-    hybridMemory,
-    cooldownRemainingSec: config.cooldownSec,
-  };
+      lancedbOpenReaders,
+      recallInFlight: ctx.recallInFlightRef?.value ?? 0,
+      staleTaskCount: taskCounts.stale,
+      activeTaskCount: taskCounts.active,
+      uptimeSec: Math.floor(process.uptime()),
+      nodeVersion: process.version,
+      platform: process.platform,
+    };
 
-  if (config.writeArtifact) {
-    writeJsonArtifact(snapshot);
+    const snapshot: MemoryPressureSnapshot = {
+      timestamp: new Date().toISOString(),
+      memory: memSnapshot,
+      activeHandles:
+        typeof (process as unknown as { _getActiveHandles?: () => unknown[] })._getActiveHandles === "function"
+          ? ((process as unknown as { _getActiveHandles: () => unknown[] })._getActiveHandles()?.length ?? -1)
+          : -1,
+      activeRequests:
+        typeof (process as unknown as { _getActiveRequests?: () => unknown[] })._getActiveRequests === "function"
+          ? ((process as unknown as { _getActiveRequests: () => unknown[] })._getActiveRequests()?.length ?? -1)
+          : -1,
+      linuxProcMem,
+      fdGroups,
+      dbPaths,
+      pluginGenerations: {
+        lancedbInitGeneration: lancedbInitGen,
+        lancedbStoreCount: lancedbStoreCount,
+        lancedbOptimizing,
+      },
+      hybridMemory,
+      cooldownRemainingSec: 0,
+    };
+
+    if (config.writeArtifact) {
+      writeJsonArtifact(snapshot);
+    }
+
+    lastSnapshotMs = nowMs;
+    return snapshot;
+  } finally {
+    // Always reset the in-progress flag, even if an error occurs
+    snapshotInProgress = false;
   }
-
-  lastSnapshotMs = nowMs;
-  return snapshot;
 }
 
 /**
