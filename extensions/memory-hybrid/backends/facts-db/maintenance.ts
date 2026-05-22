@@ -1185,7 +1185,11 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
              text LIKE '%<thinking>%' OR text LIKE '%<redacted_thinking>%' OR
              text LIKE '%<think>%' || '%</think>%' OR
              text LIKE '%Thinking Process:%' OR
-             text LIKE '%[recall]%' OR text LIKE '%[hot/fact]%'
+             text LIKE '%[recall]%' OR text LIKE '%[hot/fact]%' OR
+             COALESCE(summary, '') LIKE '%<thinking>%' OR COALESCE(summary, '') LIKE '%<redacted_thinking>%' OR
+             COALESCE(summary, '') LIKE '%<think>%' || '%</think>%' OR
+             COALESCE(summary, '') LIKE '%Thinking Process:%' OR
+             COALESCE(summary, '') LIKE '%[recall]%' OR COALESCE(summary, '') LIKE '%[hot/fact]%'
            ))
            OR
            -- Staggeringly high recall counts for "other" category (classic garbage artifacts)
