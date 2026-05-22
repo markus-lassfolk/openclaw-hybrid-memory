@@ -213,9 +213,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   //     it is supported by all OpenClaw versions and produces the correct runtime behaviour.
   //
   // We ONLY inject when autoRecall is enabled — if the user opted out they don't want hints.
-  // Silent mode suppresses all unsolicited output including capability hints (Issue #317).
   const capabilityHintsMode = ctx.cfg.autoRecall.capabilityHints ?? "off";
-  if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent" && capabilityHintsMode !== "off") {
+  if (ctx.cfg.autoRecall.enabled && capabilityHintsMode !== "off") {
     let staticMemoryInstructions: string | null = null;
 
     // Build once and cache — these never change within a gateway session.
