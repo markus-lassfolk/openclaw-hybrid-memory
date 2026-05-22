@@ -66,9 +66,16 @@ export function isWalPersistentlyDisabled(wal: WriteAheadLog | null): boolean {
   return walPath ? isWalPersistentlyDisabledAtPath(walPath) : false;
 }
 
+function resetWalCircuitBreakerState(): void {
+  walFailureCount = 0;
+  walDisabled = false;
+  walPersistentDisableWarned = false;
+}
+
 export function clearWalDisabledSentinelAtPath(walPath: string): boolean {
   try {
     rmSync(getWalDisabledSentinelPath(walPath), { force: true });
+    resetWalCircuitBreakerState();
     return true;
   } catch {
     return false;
@@ -187,7 +194,5 @@ export async function walRemove(
  * Intended for use in tests only — do not call in production code.
  */
 export function _resetWalCircuitBreakerForTesting(): void {
-  walFailureCount = 0;
-  walDisabled = false;
-  walPersistentDisableWarned = false;
+  resetWalCircuitBreakerState();
 }
