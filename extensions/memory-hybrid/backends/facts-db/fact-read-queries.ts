@@ -346,6 +346,37 @@ export function listFacts(
   return rows.map((row) => rowToMemoryEntry(row));
 }
 
+/** Returns true if the fact text looks like a reasoning trace or classifier artifact (#1559). */
+function isLikelyGarbage(entry: MemoryEntry): boolean {
+  const text = entry.text ?? "";
+  const summary = entry.summary ?? "";
+  const combined = text + "\n" + summary;
+
+  // Reasoning traces embedded in fact content
+  if (/<(?:redacted_)?think(?:ing)?>[\s\S]*?<\/(?:redacted_)?think(?:ing)?>/i.test(combined)) return true;
+  // Classifier / capability-hint artifacts
+  if (/^Thinking Process:/im.test(text)) return true;
+  if (/^\[Hot-memories\]|^\[recall\]/im.test(text)) return true;
+  // Unhelpful source + long reasoning combo
+  if (
+    entry.source === "auto-capture" &&
+    (combined.length > 3000 &&
+      (/think|reasoning|analyz|process/gi.test(combined) || /\n\n{2,}/.test(combined)))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Quality score for HOT injection: 0–1. Garbage facts score 0 and are excluded. */
+function hotQualityScore(entry: MemoryEntry): number {
+  if (isLikelyGarbage(entry)) return 0;
+  const text = entry.text ?? "";
+  // Penalise very long unconstrained text (likely full conversation dumps)
+  if (text.length > 8000) return 0.3;
+  return 1.0;
+}
+
 export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: ScopeFilter | null): SearchResult[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
@@ -360,14 +391,16 @@ export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: S
   const results: SearchResult[] = [];
   let usedTokens = 0;
   for (const row of rows) {
-    if (usedTokens >= maxTokens) break;
     const entry = rowToMemoryEntry(row);
+    // Apply quality filter: exclude reasoning traces, prompt artifacts, and garbage (#1559)
+    const score = hotQualityScore(entry);
+    if (score === 0) continue;
     const tokens = estimateTokensForDisplay(entry.summary || entry.text);
     if (usedTokens + tokens > maxTokens) {
       continue;
     }
     usedTokens += tokens;
-    results.push({ entry, score: 1.0, backend: "sqlite" as const });
+    results.push({ entry, score, backend: "sqlite" as const });
   }
   return results;
 }

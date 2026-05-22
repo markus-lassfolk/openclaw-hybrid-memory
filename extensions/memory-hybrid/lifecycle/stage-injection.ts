@@ -194,8 +194,19 @@ async function runInjection(
     const rest: typeof candidates = [];
     for (const x of candidates) {
       const recallCount = x.entry.recallCount ?? 0;
-      if (x.entry.decayClass === "permanent" || recallCount >= pinnedRecallThreshold) pinned.push(x);
-      else rest.push(x);
+      // Pin by recall_count ONLY when last_accessed is recent (within 14 days) to prevent
+      // garbage artifacts (high recall_count from repeated index exposure) from being pinned (#1559).
+      const lastAccessed = x.entry.lastAccessed ?? 0;
+      const lastAccessedDaysAgo = lastAccessed > 0 ? (Date.now() / 1000 - lastAccessed) / 86400 : Infinity;
+      const isRecentlyAccessed = lastAccessedDaysAgo < 14;
+      if (
+        x.entry.decayClass === "permanent" ||
+        (recallCount >= pinnedRecallThreshold && isRecentlyAccessed)
+      ) {
+        pinned.push(x);
+      } else {
+        rest.push(x);
+      }
     }
     const pinnedHeader = '<relevant-memories format="progressive_hybrid">\n';
     const pinnedPart: string[] = [];
@@ -253,7 +264,8 @@ async function runInjection(
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
     if (pinnedPart.length > 0) ctx.factsDb.refreshAccessedFacts(pinned.map((x) => x.entry.id));
-    if (indexIds.length > 0) ctx.factsDb.refreshAccessedFacts(indexIds);
+    // Index-only exposures must NOT inflate recall_count (#1559)
+    if (indexIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexIds);
     const allIds = [...pinned.map((x) => x.entry.id), ...indexIds];
     if (ambientSeenFacts && allIds.length > 0) ambientSeenFacts.markSeen(allIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
@@ -296,7 +308,8 @@ async function runInjection(
     }
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
-    ctx.factsDb.refreshAccessedFacts(indexIds);
+    // Index-only exposures must NOT inflate recall_count (#1559)
+    ctx.factsDb.refreshIndexedFacts(indexIds);
     if (ambientSeenFacts && indexIds.length > 0) ambientSeenFacts.markSeen(indexIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && indexIds.length >= 2) {
       strengthenHebbianLinks(indexIds, ctx.factsDb, api.logger);

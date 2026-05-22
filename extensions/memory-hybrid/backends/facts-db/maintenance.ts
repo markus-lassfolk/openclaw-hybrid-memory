@@ -1159,3 +1159,44 @@ export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
   createTransaction(db, run)();
   return counts;
 }
+
+/**
+ * Demote HOT garbage facts (reasoning traces, prompt artifacts, capability hints)
+ * to warm tier. Fixes the self-reinforcing loop where these artifacts dominated hot tier
+ * via inflated recall_count from repeated index exposure (#1559).
+ *
+ * Returns the count of facts demoted.
+ */
+export function demoteHotGarbageFacts(db: DatabaseSync): number {
+  // Pattern 1: recall_count is suspiciously high (>500) for what should be transient thinking artifacts
+  // Pattern 2: text contains reasoning/think tags (captured by the isLikelyGarbage detector in queries)
+  const rows = db
+    .prepare(
+      `SELECT id, text, summary, source, recall_count, access_count, category
+       FROM facts
+       WHERE tier = 'hot'
+         AND superseded_at IS NULL
+         AND (
+           -- Known garbage patterns
+           (source = 'auto-capture' AND (
+             text LIKE '%<thinking>%' OR text LIKE '%<redacted_thinking>%' OR
+             text LIKE '%<think>%' || '%</think>%' OR
+             text LIKE '%Thinking Process:%' OR
+             text LIKE '%[recall]%' OR text LIKE '%[hot/fact]%'
+           ))
+           OR
+           -- Staggeringly high recall counts for "other" category (classic garbage artifacts)
+           (category = 'other' AND recall_count > 500 AND source = 'auto-capture')
+         )`,
+    )
+    .all() as Array<{ id: string; text: string; summary: string | null; source: string; recall_count: number; access_count: number; category: string }>;
+
+  if (rows.length === 0) return 0;
+
+  const ids = rows.map((r) => r.id);
+  const placeholders = ids.map(() => "?").join(",");
+  const result = db
+    .prepare(`UPDATE facts SET tier = 'warm' WHERE id IN (${placeholders}) AND tier = 'hot'`)
+    .run(...ids);
+  return result.changes;
+}

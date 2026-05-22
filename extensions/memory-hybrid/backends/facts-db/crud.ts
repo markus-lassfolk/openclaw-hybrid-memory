@@ -428,7 +428,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   return { entry: loaded, evictedFactId };
 }
 
-/** Update recall_count and last_accessed for facts (bulk UPDATE). */
+/**
+ * Update recall_count and last_accessed for facts (bulk UPDATE).
+ * MUST only be called when full content is injected or explicitly recalled by user.
+ * Index-only exposures must use refreshIndexedFacts() instead (#1559).
+ */
 export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
   if (ids.length === 0) return;
   const nowSec = Math.floor(Date.now() / 1000);
@@ -457,6 +461,27 @@ export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
       db.prepare(
         `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id IN (${placeholders})`,
       ).run(nowSec, nowSec, ...batch);
+    }
+  });
+  tx();
+}
+
+/**
+ * Update indexed_count and last_indexed for index-only exposures (#1559).
+ * Does NOT inflate recall_count or last_accessed — these are separate signals.
+ */
+export function refreshIndexedFacts(db: DatabaseSync, ids: string[]): void {
+  if (ids.length === 0) return;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const BATCH_SIZE = 500;
+
+  const tx = createTransaction(db, () => {
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      const batch = ids.slice(i, i + BATCH_SIZE);
+      const placeholders = batch.map(() => "?").join(",");
+      db.prepare(
+        `UPDATE facts SET indexed_count = indexed_count + 1, last_indexed = ? WHERE id IN (${placeholders})`,
+      ).run(nowSec, ...batch);
     }
   });
   tx();
