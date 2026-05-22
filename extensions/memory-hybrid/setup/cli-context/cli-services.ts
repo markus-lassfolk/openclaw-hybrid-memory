@@ -88,7 +88,9 @@ interface CliContextServices {
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
   runDreamCycle: (opts?: { verbose?: boolean }) => Promise<DreamCycleResult>;
   runContinuousVerification: (opts?: { verbose?: boolean }) => Promise<VerificationCycleResult>;
-  runCleanupClassificationArtifacts: (opts?: { dryRun?: boolean }) => Promise<import("../../services/classification-artifact-cleanup.js").ClassificationArtifactCleanupResult>;
+  runCleanupClassificationArtifacts: (opts?: {
+    dryRun?: boolean;
+  }) => Promise<import("../../services/classification-artifact-cleanup.js").ClassificationArtifactCleanupResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;

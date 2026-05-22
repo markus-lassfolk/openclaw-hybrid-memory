@@ -110,8 +110,6 @@ describe("shouldCapture", () => {
   });
 });
 
-
-
 describe("classification artifact pre-store guard", () => {
   const MAX_CHARS = 500;
   const TRIGGERS = getMemoryTriggers();
@@ -125,7 +123,9 @@ describe("classification artifact pre-store guard", () => {
   it("detects classifier JSON output", () => {
     expect(isClassificationArtifactForStorage('{"action":"NOOP","targetId":null,"reason":"duplicate"}')).toBe(true);
     expect(isClassificationArtifactForStorage('[{"action":"ADD","targetId":null,"reason":"new"}]')).toBe(true);
-    expect(isClassificationArtifactForStorage({ classifications: [{ action: "NOOP", targetId: null, reason: "dup" }] })).toBe(true);
+    expect(
+      isClassificationArtifactForStorage({ classifications: [{ action: "NOOP", targetId: null, reason: "dup" }] }),
+    ).toBe(true);
   });
 
   it("detects classifier prompt text", () => {

@@ -23,13 +23,29 @@ describe("cleanupClassificationArtifacts", () => {
   });
 
   it("supersedes matching facts and deletes their vectors", async () => {
-    const artifact = factsDb.store({ text: "legacy artifact placeholder", category: "fact", source: "test" });
+    const artifact = factsDb.store({
+      text: "legacy artifact placeholder",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
     factsDb
       .getRawDb()
       .prepare("UPDATE facts SET text = ? WHERE id = ?")
       .run("NOOP | some classification decision text", artifact.id);
     artifact.text = "NOOP | some classification decision text";
-    const normal = factsDb.store({ text: "Markus prefers practical answers", category: "preference", source: "test" });
+    const normal = factsDb.store({
+      text: "Markus prefers practical answers",
+      category: "preference",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
     const vectorDb = { deleteMany: vi.fn(async () => 1), delete: vi.fn(async () => true) };
 
     const result = await cleanupClassificationArtifacts(factsDb, vectorDb as never);
@@ -42,7 +58,15 @@ describe("cleanupClassificationArtifacts", () => {
   });
 
   it("supports dry-run without superseding or deleting vectors", async () => {
-    const artifact = factsDb.store({ text: "legacy json placeholder", category: "fact", source: "test" });
+    const artifact = factsDb.store({
+      text: "legacy json placeholder",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
     const artifactText = '{"action":"NOOP","targetId":null,"reason":"duplicate"}';
     factsDb.getRawDb().prepare("UPDATE facts SET text = ? WHERE id = ?").run(artifactText, artifact.id);
     artifact.text = artifactText;
