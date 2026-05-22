@@ -304,6 +304,9 @@ export const resolvers: GraphQLResolvers = {
     createFact: (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
       const fact = context.factsDb.store(createStoreInput(input));
+      if (fact.id === "") {
+        throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
+      }
       return fact;
     },
 
@@ -374,7 +377,9 @@ export const resolvers: GraphQLResolvers = {
 
     importFacts: (_parent, args, context) => {
       const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
-      return facts.map((raw) => context.factsDb.store(createStoreInput(asRecord(raw))));
+      return facts
+        .map((raw) => context.factsDb.store(createStoreInput(asRecord(raw))))
+        .filter((fact) => fact.id !== "");
     },
 
     pruneFacts: (_parent, args, context) => {

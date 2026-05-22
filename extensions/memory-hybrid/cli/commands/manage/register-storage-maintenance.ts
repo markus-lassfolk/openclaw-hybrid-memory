@@ -1020,6 +1020,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
 
         // Scan all active facts for classifier artifact patterns
         const allFacts = factsDb.getAll({ includeSuperseded: false });
+        const vectorDeleteSuccesses = new Set<string>();
         for (const fact of allFacts) {
           if (isPromptArtifactOrReasoningTrace(fact.text)) {
             supersededIds.push(fact.id);
@@ -1027,6 +1028,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               try {
                 await vectorDb.delete(fact.id);
                 vectorDeleteCount++;
+                vectorDeleteSuccesses.add(fact.id);
               } catch (err) {
                 vectorDeleteErrors.push(`${fact.id}: ${String(err)}`);
               }
@@ -1036,10 +1038,13 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
 
         if (apply) {
           for (const id of supersededIds) {
-            try {
-              factsDb.supersede(id, null);
-            } catch (err) {
-              vectorDeleteErrors.push(`supersede ${id}: ${String(err)}`);
+            // Only supersede if vector delete succeeded or was not attempted
+            if (vectorDeleteSuccesses.has(id)) {
+              try {
+                factsDb.supersede(id, null);
+              } catch (err) {
+                vectorDeleteErrors.push(`supersede ${id}: ${String(err)}`);
+              }
             }
           }
           if (ctx.resolvedSqlitePath) {
