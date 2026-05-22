@@ -46,7 +46,6 @@ function sanitizeHotFactText(text: string): string {
     .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, " ")
     .replace(/<thinking>[\s\S]*?<\/thinking>/gi, " ")
     .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, " ")
-    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -338,11 +337,15 @@ export async function runRecall(
           }
         }
       }
-      reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled);
+      reserveAndTrackBlock(
+        "active-task",
+        activeTaskReserveTokens,
+        ctx.cfg.activeTask.enabled && ctx.cfg.verbosity !== "silent",
+      );
       reserveAndTrackBlock(
         "stale-warning",
         staleWarningReserveTokens,
-        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled,
+        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled && ctx.cfg.verbosity !== "silent",
       );
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
@@ -988,11 +991,15 @@ export async function runRecall(
     narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens);
     hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens);
     procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens);
-    reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled);
+    reserveAndTrackBlock(
+      "active-task",
+      activeTaskReserveTokens,
+      ctx.cfg.activeTask.enabled && ctx.cfg.verbosity !== "silent",
+    );
     reserveAndTrackBlock(
       "stale-warning",
       staleWarningReserveTokens,
-      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled,
+      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled && ctx.cfg.verbosity !== "silent",
     );
 
     const fixedBlocksTokens = totalBudget - remainingBudget;
@@ -1041,7 +1048,7 @@ export async function runRecall(
           fixedBlocks: fixedBlockAudit,
         },
       });
-      const combinedContext = issueBlock + narrativeBlock + hotBlock;
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     }
 
