@@ -225,7 +225,7 @@ describe("memory_store early validation — invalid importance", () => {
     const storeTool = api.getTool("memory_store");
     const result = (await storeTool?.execute("call-imp-nan", {
       text: "Valid text",
-      importance: Number.NaN,
+      importance: NaN,
     })) as { details: { error: string } };
 
     expect(result.details.error).toBe("invalid_importance");
@@ -241,7 +241,7 @@ describe("memory_store early validation — invalid importance", () => {
     const storeTool = api.getTool("memory_store");
     const result = (await storeTool?.execute("call-imp-inf", {
       text: "Valid text",
-      importance: Number.POSITIVE_INFINITY,
+      importance: Infinity,
     })) as { details: { error: string } };
 
     expect(result.details.error).toBe("invalid_importance");
@@ -312,7 +312,7 @@ describe("memory_store early validation — invalid decayFreezeUntil", () => {
     const result = (await storeTool?.execute("call-dfu-nan", {
       text: "Valid text",
       importance: 0.5,
-      decayFreezeUntil: Number.NaN,
+      decayFreezeUntil: NaN,
     })) as { details: { error: string } };
 
     expect(result.details.error).toBe("invalid_decay_freeze_until");
