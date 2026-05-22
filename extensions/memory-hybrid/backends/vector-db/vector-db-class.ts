@@ -2135,16 +2135,6 @@ export class VectorDB {
     return this.dbPath;
   }
 
-  /** Number of successful store() calls observed in this process lifetime. */
-  getStoreCount(): number {
-    return this.storeCount;
-  }
-
-  /** Number incremented each time this instance is force-closed and re-opened. */
-  getInitGeneration(): number {
-    return this.initGeneration;
-  }
-
   /** Reader slots currently held for this Lance path (search/count/getVectors, etc.). */
   getOpenReaderCount(): number {
     return VectorDB._activeReadersByPath.get(this.dbPath) ?? 0;
