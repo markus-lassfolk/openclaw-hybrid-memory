@@ -383,11 +383,7 @@ export function getByCategory(db: DatabaseSync, category: string): MemoryEntry[]
  * Targeted project-fact query for active-task projection (#1553).
  * Only loads facts with category='project', avoiding a full table scan.
  */
-export function getProjectFacts(
-  db: DatabaseSync,
-  limit = 8000,
-  scopeFilter?: ScopeFilter | null,
-): MemoryEntry[] {
+export function getProjectFacts(db: DatabaseSync, limit = 8000, scopeFilter?: ScopeFilter | null): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
   const rows = db
