@@ -146,7 +146,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       typeof capabilityHintsRaw === "string" &&
       (VALID_CAPABILITY_HINTS as readonly string[]).includes(capabilityHintsRaw)
         ? (capabilityHintsRaw as CapabilityHintsMode)
-        : "session";
+        : "off";
     const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;
     const scopeFilter =
       scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
@@ -216,7 +216,7 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
   }
   return {
     enabled: arRaw !== false,
-    capabilityHints: "session",
+    capabilityHints: "off",
     recallTiming: "off",
     maxTokens: 800,
     maxPerMemoryChars: 0,

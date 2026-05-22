@@ -214,7 +214,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   //
   // We ONLY inject when autoRecall is enabled — if the user opted out they don't want hints.
   // Silent mode suppresses all unsolicited output including capability hints (Issue #317).
-  const capabilityHintsMode = ctx.cfg.autoRecall.capabilityHints ?? "session";
+  const capabilityHintsMode = ctx.cfg.autoRecall.capabilityHints ?? "off";
   if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent" && capabilityHintsMode !== "off") {
     let staticMemoryInstructions: string | null = null;
     const capabilityHintsSessionsSeen = new Set<string>();

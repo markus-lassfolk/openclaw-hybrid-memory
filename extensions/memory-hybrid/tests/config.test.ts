@@ -566,14 +566,14 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.interactiveEnrichment).toBe("fast");
   });
 
-  it("defaults autoRecall.capabilityHints to session", () => {
+  it("defaults autoRecall.capabilityHints to off", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,
       autoRecall: {
         enabled: true,
       },
     });
-    expect(result.autoRecall.capabilityHints).toBe("session");
+    expect(result.autoRecall.capabilityHints).toBe("off");
   });
 
   it("parses autoRecall.capabilityHints override", () => {
