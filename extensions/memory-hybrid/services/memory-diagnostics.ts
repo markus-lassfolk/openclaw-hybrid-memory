@@ -48,7 +48,7 @@ export function captureMemoryPressureEvidence(): MemoryPressureEvidence {
     // Not available on all platforms / Node versions — degrade gracefully
   }
   const linuxProc = captureLinuxProcMemoryPressureEvidence();
-  if (openFdCount === null && linuxProc?.fdCount !== null) {
+  if (openFdCount === null && linuxProc?.fdCount != null) {
     openFdCount = linuxProc!.fdCount;
   }
   return {
