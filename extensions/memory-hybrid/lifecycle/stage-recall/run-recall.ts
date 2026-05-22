@@ -71,7 +71,9 @@ function trimBlockToBudget(
 
   const first = lines[0] ?? "";
   const last = lines[lines.length - 1] ?? "";
-  if (lines.length >= 3 && first.startsWith("<") && last.startsWith("</")) {
+  const firstTagMatch = first.match(/^<([^>\s/]+)>$/);
+  const lastTagMatch = last.match(/^<\/([^>\s]+)>$/);
+  if (lines.length >= 3 && firstTagMatch && lastTagMatch && firstTagMatch[1] === lastTagMatch[1]) {
     const middle = lines.slice(1, -1);
     for (let keep = middle.length; keep >= 0; keep--) {
       const candidate = [first, ...middle.slice(0, keep), last].join("\n") + trailingNewlines;
@@ -235,7 +237,71 @@ export async function runRecall(
       await yieldEventLoop();
       const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
       const totalBudget = interactivePolicy.contextBudgetTokens;
+      const {
+        hotMaxTokens: hotBlockCapCfg,
+        narrativeMaxTokens: narrativeBlockCapCfg,
+        procedureMaxTokens: procedureBlockCapCfg,
+        activeTaskMaxTokens: activeTaskReserveCapCfg,
+        staleWarningMaxTokens: staleWarningReserveCapCfg,
+      } = ctx.cfg.autoRecall;
+      const narrativeCapTokens =
+        narrativeBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.2));
+      const hotCapTokens = hotBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.25));
+      const activeTaskReserveTokens = activeTaskReserveCapCfg ?? (
+        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.injectionBudget > 0
+          ? Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2)))
+          : 0
+      );
+      const staleWarningReserveTokens = staleWarningReserveCapCfg ?? (
+        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled
+          ? Math.max(40, Math.floor(totalBudget * 0.08))
+          : 0
+      );
       let remainingBudget = totalBudget;
+      const fixedBlockAudit: FixedBlockAudit[] = [];
+      const capAndTrackBlock = (name: string, block: string, capTokens: number): string => {
+        const cap = Math.max(0, Math.floor(capTokens));
+        const allowed = Math.min(cap, remainingBudget);
+        const { text, sourceTokens, usedTokens } = trimBlockToBudget(block, allowed);
+        const suppressed = sourceTokens > 0 && usedTokens === 0;
+        fixedBlockAudit.push({
+          block: name,
+          sourceTokens,
+          capTokens: cap,
+          injectedTokens: usedTokens,
+          reserved: false,
+          truncated: sourceTokens > usedTokens,
+          suppressed,
+          reason:
+            sourceTokens === 0
+              ? "empty"
+              : usedTokens === 0
+                ? "budget_exhausted"
+                : sourceTokens > usedTokens
+                  ? allowed < cap
+                    ? "budget_exhausted"
+                    : "cap"
+                  : undefined,
+        });
+        remainingBudget = Math.max(0, remainingBudget - usedTokens);
+        return text;
+      };
+      const reserveAndTrackBlock = (name: string, reserveTokens: number, enabled: boolean): void => {
+        const cap = enabled ? Math.max(0, Math.floor(reserveTokens)) : 0;
+        const reserved = Math.min(cap, remainingBudget);
+        fixedBlockAudit.push({
+          block: name,
+          sourceTokens: cap,
+          capTokens: cap,
+          injectedTokens: reserved,
+          reserved: true,
+          truncated: cap > reserved,
+          suppressed: cap > 0 && reserved === 0,
+          reason:
+            cap === 0 ? "empty" : reserved === 0 ? "budget_exhausted" : cap > reserved ? "budget_exhausted" : undefined,
+        });
+        remainingBudget = Math.max(0, remainingBudget - reserved);
+      };
       let narrativePart = "";
       if (ctx.narrativesDb || ctx.eventLog) {
         try {
@@ -248,10 +314,7 @@ export async function runRecall(
           if (recentNarratives.length > 0) {
             const narrative = recentNarratives[0];
             const narrativeBlock = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
-            const narrativeCapTokens = Math.max(100, Math.floor(totalBudget * 0.2));
-            const { text } = trimBlockToBudget(narrativeBlock, Math.min(narrativeCapTokens, remainingBudget));
-            narrativePart = text;
-            remainingBudget = Math.max(0, remainingBudget - estimateTokens(text));
+            narrativePart = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens);
           }
         } catch {
           // Non-fatal.
@@ -271,13 +334,16 @@ export async function runRecall(
             .filter(Boolean);
           if (hotLines.length > 0) {
             const hotBlock = `Hot memories:\n${hotLines.join("\n")}\n\n`;
-            const hotCapTokens = Math.max(100, Math.floor(totalBudget * 0.25));
-            const { text } = trimBlockToBudget(hotBlock, Math.min(hotCapTokens, remainingBudget));
-            hotPart = text;
-            remainingBudget = Math.max(0, remainingBudget - estimateTokens(text));
+            hotPart = capAndTrackBlock("hot", hotBlock, hotCapTokens);
           }
         }
       }
+      reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled);
+      reserveAndTrackBlock(
+        "stale-warning",
+        staleWarningReserveTokens,
+        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled,
+      );
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
         .map(
@@ -289,6 +355,27 @@ export async function runRecall(
       const inner = narrativePart + hotPart + recallPart;
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
+      const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
+      const fixedBlocksTokens = totalBudget - remainingBudget;
+      const blockSummary = fixedBlockAudit
+        .map((b) => `${b.block}:${b.injectedTokens}/${b.capTokens}${b.reserved ? "r" : ""}${b.truncated ? "!" : ""}`)
+        .join(", ");
+      api.logger.info?.(
+        `memory-hybrid: context-audit (degraded) fixed=${fixedBlocksTokens}/${totalBudget} recall=${remainingBudget} blocks=[${blockSummary}]`,
+      );
+      ctx.auditStore?.append({
+        agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+        action: "recall:context-budget",
+        outcome: remainingBudget === 0 ? "partial" : "success",
+        sessionId: sessionKey,
+        tokens: fixedBlocksTokens,
+        context: {
+          totalBudget,
+          recallBudget: remainingBudget,
+          blocks: fixedBlockAudit,
+          degraded: true,
+        },
+      });
       api.logger.debug?.(
         `memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`,
       );
