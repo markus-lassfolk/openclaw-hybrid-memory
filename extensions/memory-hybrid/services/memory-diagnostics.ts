@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, readlinkSync } from "node:fs";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ScopeFilter, SearchResult } from "../types/memory.js";
@@ -7,11 +8,21 @@ import { capturePluginError } from "./error-reporter.js";
 import { filterByScope, mergeResults } from "./merge-results.js";
 
 /** Native process metrics captured as evidence of memory pressure (#1551). */
+interface LinuxProcMemoryPressureEvidence {
+  statusRssKb: number | null;
+  statusHwmKb: number | null;
+  fdCount: number | null;
+  fdTargetGroups: Record<string, number>;
+}
+
 export interface MemoryPressureEvidence {
   rssBytes: number;
   heapUsedBytes: number;
   heapTotalBytes: number;
+  externalBytes: number;
+  arrayBuffersBytes: number;
   openFdCount: number | null;
+  linuxProc: LinuxProcMemoryPressureEvidence | null;
   timestamp: number;
 }
 
@@ -22,23 +33,82 @@ export interface MemoryPressureEvidence {
 export function captureMemoryPressureEvidence(): MemoryPressureEvidence {
   const mem = process.memoryUsage();
   let openFdCount: number | null = null;
+  const resources = (process as unknown as { resources?: { openFd?: () => number } }).resources;
   try {
-    // Node.js 18+: process.resources available
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = (process as any).resources;
-    if (res && typeof res.openFd === "function") {
-      openFdCount = res.openFd();
+    if (typeof resources?.openFd === "function") {
+      openFdCount = resources.openFd();
     }
   } catch {
     // Not available on all platforms / Node versions — degrade gracefully
+  }
+  const linuxProc = captureLinuxProcMemoryPressureEvidence();
+  if (openFdCount === null && linuxProc?.fdCount !== null) {
+    openFdCount = linuxProc.fdCount;
   }
   return {
     rssBytes: mem.rss,
     heapUsedBytes: mem.heapUsed,
     heapTotalBytes: mem.heapTotal,
+    externalBytes: mem.external,
+    arrayBuffersBytes: mem.arrayBuffers,
     openFdCount,
+    linuxProc,
     timestamp: Date.now(),
   };
+}
+
+function captureLinuxProcMemoryPressureEvidence(): LinuxProcMemoryPressureEvidence | null {
+  if (process.platform !== "linux") {
+    return null;
+  }
+
+  let statusRssKb: number | null = null;
+  let statusHwmKb: number | null = null;
+  let fdCount: number | null = null;
+  const fdTargetGroups: Record<string, number> = {};
+
+  try {
+    const status = readFileSync("/proc/self/status", "utf8");
+    statusRssKb = parseProcStatusKb(status, "VmRSS");
+    statusHwmKb = parseProcStatusKb(status, "VmHWM");
+  } catch {
+    // Degrade gracefully if /proc is unavailable.
+  }
+
+  try {
+    const fds = readdirSync("/proc/self/fd");
+    fdCount = fds.length;
+    for (const fd of fds) {
+      try {
+        const target = readlinkSync(`/proc/self/fd/${fd}`);
+        const group = classifyFdTarget(target);
+        fdTargetGroups[group] = (fdTargetGroups[group] ?? 0) + 1;
+      } catch {
+        // Ignore transient FD races while sampling.
+      }
+    }
+  } catch {
+    // Degrade gracefully if /proc/self/fd cannot be read.
+  }
+
+  return { statusRssKb, statusHwmKb, fdCount, fdTargetGroups };
+}
+
+function parseProcStatusKb(status: string, field: "VmRSS" | "VmHWM"): number | null {
+  const match = status.match(new RegExp(`^${field}:\\s+(\\d+)\\s+kB$`, "m"));
+  if (!match) {
+    return null;
+  }
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function classifyFdTarget(target: string): string {
+  if (target.startsWith("socket:")) return "socket";
+  if (target.startsWith("pipe:")) return "pipe";
+  if (target.startsWith("anon_inode:")) return "anon_inode";
+  if (target.startsWith("/") || target.startsWith("./")) return "path";
+  return "other";
 }
 
 type MemoryDiagnosticsResult = {
@@ -49,7 +119,7 @@ type MemoryDiagnosticsResult = {
   hybrid: { ok: boolean; count: number };
   autoRecall: { ok: boolean; count: number };
   /** Native RSS / heap / FD evidence captured at diagnostic time (#1551). */
-  memoryPressure?: MemoryPressureEvidence;
+  memoryPressure: MemoryPressureEvidence;
 };
 
 export async function runMemoryDiagnostics(opts: {

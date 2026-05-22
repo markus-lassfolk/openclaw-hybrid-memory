@@ -51,6 +51,23 @@ describe("runMemoryDiagnostics", () => {
     expect(result.semantic.failReason).toBeUndefined();
     expect(result.hybrid.ok).toBe(true);
     expect(result.autoRecall.ok).toBe(true);
+    expect(result.memoryPressure.rssBytes).toBeTypeOf("number");
+    expect(result.memoryPressure.heapUsedBytes).toBeTypeOf("number");
+    expect(result.memoryPressure.heapTotalBytes).toBeTypeOf("number");
+    expect(result.memoryPressure.externalBytes).toBeTypeOf("number");
+    expect(result.memoryPressure.arrayBuffersBytes).toBeTypeOf("number");
+    expect(result.memoryPressure.openFdCount === null || typeof result.memoryPressure.openFdCount === "number").toBe(
+      true,
+    );
+    expect(result.memoryPressure.timestamp).toBeTypeOf("number");
+    if (result.memoryPressure.linuxProc) {
+      expect(result.memoryPressure.linuxProc.statusRssKb === null || typeof result.memoryPressure.linuxProc.statusRssKb === "number").toBe(true);
+      expect(result.memoryPressure.linuxProc.statusHwmKb === null || typeof result.memoryPressure.linuxProc.statusHwmKb === "number").toBe(true);
+      expect(result.memoryPressure.linuxProc.fdCount === null || typeof result.memoryPressure.linuxProc.fdCount === "number").toBe(true);
+      expect(result.memoryPressure.linuxProc.fdTargetGroups).toBeTypeOf("object");
+    } else {
+      expect(process.platform).not.toBe("linux");
+    }
   });
 
   it("reports vector_dim_mismatch when embedding dimensions != LanceDB dimensions (#939)", async () => {
