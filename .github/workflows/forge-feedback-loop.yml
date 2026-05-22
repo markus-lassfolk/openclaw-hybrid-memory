@@ -167,7 +167,7 @@ jobs:
               cursor = threads.pageInfo.endCursor;
             }
 
-            const unresolvedReviewThreads = reviewThreads.filter((t) => !t.isResolved);
+            const unresolvedReviewThreads = reviewThreads.filter((t) => !t.isResolved && !t.isOutdated);
             const payload = {
               repo: { owner, repo, fullName: `${owner}/${repo}` },
               pullRequest: {
