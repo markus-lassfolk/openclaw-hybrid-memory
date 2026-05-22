@@ -526,6 +526,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
                   const newEntry = updateStoreResult.entry;
+                  // Skip supersede and vector operations if store was rejected (artifact text)
+                  if (newEntry.id === "" || updateStoreResult.rejected) {
+                    await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [{ type: "text", text: `Already known: artifact text rejected` }],
+                      details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
+                    };
+                  }
                   await cleanupEvictedVector({
                     vectorDb,
                     evictedFactId: updateStoreResult.evictedFactId,
@@ -740,6 +748,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
           const entry = storeResult.entry;
+          // Skip all downstream operations if store was rejected (artifact text)
+          if (entry.id === "" || storeResult.rejected) {
+            await walRemove(walEntryId, api.logger);
+            return {
+              content: [{ type: "text", text: `Already known: artifact text rejected` }],
+              details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
+            };
+          }
           await cleanupEvictedVector({
             vectorDb,
             evictedFactId: storeResult.evictedFactId,
