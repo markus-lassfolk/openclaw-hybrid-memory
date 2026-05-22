@@ -342,7 +342,8 @@ export async function runRecall(
         })
         .filter(Boolean);
       const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
-      const { text: recallPart } = trimBlockToBudget(recallBlock, remainingBudget);
+      const { text: recallPart, usedTokens: recallUsedTokens } = trimBlockToBudget(recallBlock, remainingBudget);
+      remainingBudget = Math.max(0, remainingBudget - recallUsedTokens);
       const inner = narrativePart + hotPart + recallPart;
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
