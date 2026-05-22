@@ -15,6 +15,12 @@ interface LinuxProcMemoryPressureEvidence {
   fdTargetGroups: Record<string, number>;
 }
 
+type ProcessWithResources = NodeJS.Process & { resources?: { openFd?: () => number } };
+const PROC_STATUS_KB_REGEX: Record<"VmRSS" | "VmHWM", RegExp> = {
+  VmRSS: /^VmRSS:\s+(\d+)\s+kB$/m,
+  VmHWM: /^VmHWM:\s+(\d+)\s+kB$/m,
+};
+
 export interface MemoryPressureEvidence {
   rssBytes: number;
   heapUsedBytes: number;
@@ -33,7 +39,7 @@ export interface MemoryPressureEvidence {
 export function captureMemoryPressureEvidence(): MemoryPressureEvidence {
   const mem = process.memoryUsage();
   let openFdCount: number | null = null;
-  const resources = (process as unknown as { resources?: { openFd?: () => number } }).resources;
+  const resources = (process as ProcessWithResources).resources;
   try {
     if (typeof resources?.openFd === "function") {
       openFdCount = resources.openFd();
@@ -95,7 +101,7 @@ function captureLinuxProcMemoryPressureEvidence(): LinuxProcMemoryPressureEviden
 }
 
 function parseProcStatusKb(status: string, field: "VmRSS" | "VmHWM"): number | null {
-  const match = status.match(new RegExp(`^${field}:\\s+(\\d+)\\s+kB$`, "m"));
+  const match = status.match(PROC_STATUS_KB_REGEX[field]);
   if (!match) {
     return null;
   }
