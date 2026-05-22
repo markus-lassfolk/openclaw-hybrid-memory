@@ -802,7 +802,10 @@ export async function upsertProjectTaskKey(
   } else {
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
     // Case-insensitive lookup so mixed-case legacy facts are also superseded.
-    const same = facts.filter((f) => f.entity?.toLowerCase() === normalizedEntity && (f.key ?? "") === key);
+    // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
+    const same = facts.filter(
+      (f) => f.source === "active-task" && f.entity?.toLowerCase() === normalizedEntity && (f.key ?? "") === key,
+    );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
   }
@@ -924,7 +927,9 @@ export async function applyActiveTaskHygieneFacts(
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
   const latestByEntityKey = new Map<string, MemoryEntry>();
+  // Only index active-task ledger facts, not memory_store project facts.
   for (const fact of factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000)) {
+    if (fact.source !== "active-task") continue;
     const entity = fact.entity?.trim().toLowerCase();
     if (!entity) continue;
     const key = (fact.key ?? "").trim();
