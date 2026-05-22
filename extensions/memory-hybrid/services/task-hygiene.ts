@@ -115,7 +115,8 @@ export async function fetchLivePrBlockerStatus(
 
     // 2. Check CI (from statusCheckRollup + checkSuites on latest commit)
     const statusCheckRollup = pr.statusCheckRollup ?? [];
-    const latestCommit = pr.commits?.nodes?.[0]?.commit;
+    const commitNodes = pr.commits?.nodes ?? [];
+    const latestCommit = commitNodes[commitNodes.length - 1]?.commit;
     const checkSuites = latestCommit?.checkSuites?.nodes ?? [];
 
     const hasFailure =
@@ -145,7 +146,7 @@ export async function fetchLivePrBlockerStatus(
     return "no_live_blocker";
   } catch {
     // Network or parse error — be conservative, don't claim "no blocker"
-    return "no_live_blocker";
+    return "unresolved_review_threads";
   } finally {
     clearTimeout(timeout);
   }
