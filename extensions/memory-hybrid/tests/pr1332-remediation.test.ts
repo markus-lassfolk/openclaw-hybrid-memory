@@ -29,6 +29,9 @@ class FakeCommand {
   description(): FakeCommand {
     return this;
   }
+  option(): FakeCommand {
+    return this;
+  }
   action(fn: (...args: unknown[]) => unknown): FakeCommand {
     this.handler = fn;
     return this;

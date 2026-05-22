@@ -57,6 +57,7 @@ import {
   countBySource as countBySourceImpl,
   countSupersededFacts as countSupersededFactsImpl,
   countVerifiedFacts as countVerifiedFactsImpl,
+  getFtsConsistencySnapshot as getFtsConsistencySnapshotImpl,
   findSessionFactsForPromotion as findSessionFactsForPromotionImpl,
   freelistSpaceStats as freelistSpaceStatsImpl,
   languageKeywordsCount as languageKeywordsCountImpl,
@@ -67,10 +68,14 @@ import {
   pruneScopedFacts as pruneScopedFactsImpl,
   listScopedFactIdsPendingPrune as listScopedFactIdsPendingPruneImpl,
   recentActivity as recentActivityImpl,
+  rebuildFtsIndexFromFacts as rebuildFtsIndexFromFactsImpl,
+  runFtsTriggerProbe as runFtsTriggerProbeImpl,
   scopeStats as scopeStatsImpl,
   selfCorrectionIncidentsCount as selfCorrectionIncidentsCountImpl,
   statsBySource as statsBySourceImpl,
   statsReflection as statsReflectionImpl,
+  type FtsConsistencySnapshot,
+  type FtsTriggerProbeResult,
   uniqueScopes as uniqueScopesImpl,
   vacuumAndCheckpoint as vacuumAndCheckpointImpl,
   countActiveFactsByCategory as countActiveFactsByCategoryImpl,
@@ -110,6 +115,21 @@ export class FactsDB extends FactsDBLayer2 {
 
   optimizeFts(): void {
     optimizeFtsImpl(this.liveDb);
+  }
+
+  /** Snapshot FTS table/trigger/population consistency for doctor/health checks. */
+  getFtsConsistencySnapshot(): FtsConsistencySnapshot {
+    return getFtsConsistencySnapshotImpl(this.liveDb);
+  }
+
+  /** Deep savepointed INSERT/UPDATE/DELETE probe to confirm FTS triggers actually fire. */
+  runFtsTriggerProbe(): FtsTriggerProbeResult {
+    return runFtsTriggerProbeImpl(this.liveDb);
+  }
+
+  /** Rebuild FTS contents from `facts` rows (used by doctor --fix when drift is detected). */
+  rebuildFtsIndex(): number {
+    return rebuildFtsIndexFromFactsImpl(this.liveDb);
   }
 
   freelistSpaceStats(): ReturnType<typeof freelistSpaceStatsImpl> {
