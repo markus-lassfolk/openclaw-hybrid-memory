@@ -936,9 +936,12 @@ export function closeOldDatabases(context: {
 
   invalidateClusterCache();
 
-  if (typeof factsDb?.close === "function") {
+  // BaseSqliteStore-derived stores: call permanentClose() so liveDb throws on any
+  // subsequent access rather than silently reopening the old SQLite handle.
+  // This is the primary fix for issue #1550 (duplicate handles after re-registration).
+  if (typeof factsDb?.permanentClose === "function") {
     try {
-      factsDb.close();
+      factsDb.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -946,9 +949,9 @@ export function closeOldDatabases(context: {
       });
     }
   }
-  if (typeof edictStore?.close === "function") {
+  if (typeof edictStore?.permanentClose === "function") {
     try {
-      edictStore.close();
+      edictStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -956,6 +959,7 @@ export function closeOldDatabases(context: {
       });
     }
   }
+  // VectorDB is LanceDB-based (not a BaseSqliteStore); its close() is already terminal.
   if (typeof vectorDb?.close === "function") {
     try {
       vectorDb.close();
@@ -968,7 +972,7 @@ export function closeOldDatabases(context: {
   }
   if (credentialsDb) {
     try {
-      credentialsDb.close();
+      credentialsDb.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -978,7 +982,7 @@ export function closeOldDatabases(context: {
   }
   if (narrativesDb) {
     try {
-      narrativesDb.close();
+      narrativesDb.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -988,7 +992,7 @@ export function closeOldDatabases(context: {
   }
   if (proposalsDb) {
     try {
-      proposalsDb.close();
+      proposalsDb.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -998,7 +1002,7 @@ export function closeOldDatabases(context: {
   }
   if (identityReflectionStore) {
     try {
-      identityReflectionStore.close();
+      identityReflectionStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1008,7 +1012,7 @@ export function closeOldDatabases(context: {
   }
   if (personaStateStore) {
     try {
-      personaStateStore.close();
+      personaStateStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1018,7 +1022,7 @@ export function closeOldDatabases(context: {
   }
   if (eventLog) {
     try {
-      eventLog.close();
+      eventLog.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1026,6 +1030,7 @@ export function closeOldDatabases(context: {
       });
     }
   }
+  // AliasDB has its own reference-counted close logic (not a BaseSqliteStore).
   if (aliasDb) {
     try {
       aliasDb.close();
@@ -1036,6 +1041,7 @@ export function closeOldDatabases(context: {
       });
     }
   }
+  // EventBus.close() is already terminal (sets _terminallyClosed = true).
   if (eventBus) {
     try {
       eventBus.close();
@@ -1048,7 +1054,7 @@ export function closeOldDatabases(context: {
   }
   if (issueStore) {
     try {
-      issueStore.close();
+      issueStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1058,7 +1064,7 @@ export function closeOldDatabases(context: {
   }
   if (workflowStore) {
     try {
-      workflowStore.close();
+      workflowStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1068,7 +1074,7 @@ export function closeOldDatabases(context: {
   }
   if (crystallizationStore) {
     try {
-      crystallizationStore.close();
+      crystallizationStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1078,7 +1084,7 @@ export function closeOldDatabases(context: {
   }
   if (toolProposalStore) {
     try {
-      toolProposalStore.close();
+      toolProposalStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1086,6 +1092,7 @@ export function closeOldDatabases(context: {
       });
     }
   }
+  // VerificationStore has its own connection-sharing logic (not a BaseSqliteStore).
   if (verificationStore) {
     try {
       verificationStore.close();
@@ -1098,7 +1105,7 @@ export function closeOldDatabases(context: {
   }
   if (provenanceService) {
     try {
-      provenanceService.close();
+      provenanceService.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1108,7 +1115,7 @@ export function closeOldDatabases(context: {
   }
   if (learningsDb) {
     try {
-      learningsDb.close();
+      learningsDb.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1118,7 +1125,7 @@ export function closeOldDatabases(context: {
   }
   if (apitapStore) {
     try {
-      apitapStore.close();
+      apitapStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1128,7 +1135,7 @@ export function closeOldDatabases(context: {
   }
   if (auditStore) {
     try {
-      auditStore.close();
+      auditStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",
@@ -1138,7 +1145,7 @@ export function closeOldDatabases(context: {
   }
   if (agentHealthStore) {
     try {
-      agentHealthStore.close();
+      agentHealthStore.permanentClose();
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "close-databases",

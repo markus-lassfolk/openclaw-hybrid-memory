@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { runConfigViewForCli } from "../cli/cmd-config.js";
 import type { HandlerContext } from "../cli/handlers.js";
-import type { VerifyCliSink } from "../cli/types.js";
 
 function makeCtx(overrides?: Partial<HandlerContext["cfg"]>): HandlerContext {
   const cfg = {

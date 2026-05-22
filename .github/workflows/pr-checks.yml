@@ -115,6 +115,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # Allow WIP: prefix so draft/in-progress PRs don't fail the check.
+          wip: true
           types: |
             feat
             fix
