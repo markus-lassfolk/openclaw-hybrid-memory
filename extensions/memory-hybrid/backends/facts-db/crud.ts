@@ -46,6 +46,11 @@ function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
   }
 }
 
+// Pre-store guard constants: filter internal artifacts (#1560, #1561).
+// These categories and sources are not user-relevant memories.
+const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
+const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
+
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
   MemoryEntry,
@@ -143,10 +148,6 @@ export type StoreFactResult = {
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
 
-  // Pre-store guard: filter internal artifacts (#1560, #1561).
-  // These categories and sources are not user-relevant memories.
-  const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
-  const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
   const category = entry.category ?? "";
   const source = entry.source ?? "";
   if (BLOCKED_CATEGORIES.has(category) || BLOCKED_SOURCES.has(source)) {
