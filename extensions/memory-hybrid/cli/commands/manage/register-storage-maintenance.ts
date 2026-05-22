@@ -1157,36 +1157,35 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
 
         // Scan all active facts for classifier artifact patterns
         const allFacts = factsDb.getAll({ includeSuperseded: false });
-        const vectorDeleteSuccesses = new Set<string>();
+        const supersededIds: string[] = [];
+        const vectorDeleteErrors: string[] = [];
+        let vectorDeleteCount = 0;
+
         for (const fact of allFacts) {
           if (isPromptArtifactOrReasoningTrace(fact.text)) {
             supersededIds.push(fact.id);
             if (apply) {
+              // Supersede SQLite row first to remove from recall immediately
+              try {
+                factsDb.supersede(fact.id, null);
+              } catch (err) {
+                vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
+                continue; // Skip vector delete if supersede failed
+              }
+              // Then attempt vector cleanup (best-effort)
               try {
                 await vectorDb.delete(fact.id);
                 vectorDeleteCount++;
-                vectorDeleteSuccesses.add(fact.id);
               } catch (err) {
-                vectorDeleteErrors.push(`${fact.id}: ${String(err)}`);
+                vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
+                // Vector delete failed, but fact is already superseded (acceptable)
               }
             }
           }
         }
 
-        if (apply) {
-          for (const id of supersededIds) {
-            // Only supersede if vector delete succeeded or was not attempted
-            if (vectorDeleteSuccesses.has(id)) {
-              try {
-                factsDb.supersede(id, null);
-              } catch (err) {
-                vectorDeleteErrors.push(`supersede ${id}: ${String(err)}`);
-              }
-            }
-          }
-          if (ctx.resolvedSqlitePath) {
-            recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".classification_artifacts_last_run");
-          }
+        if (apply && ctx.resolvedSqlitePath) {
+          recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".classification_artifacts_last_run");
         }
 
         const report = {

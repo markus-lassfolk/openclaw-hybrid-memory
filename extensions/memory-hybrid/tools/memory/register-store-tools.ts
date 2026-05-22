@@ -570,31 +570,37 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
                   const newEntry = updateStoreResult.entry;
-                  // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-                  if (!updateStoreResult.skipped) {
-                    await cleanupEvictedVector({
-                      vectorDb,
-                      evictedFactId: updateStoreResult.evictedFactId,
-                      logger: api.logger,
-                      context: "memory-store-update",
-                    });
-                    recordActiveStoreProvenance(newEntry.id, textToStore);
-                    factsDb.supersede(classification.targetId, newEntry.id);
-                    aliasDb?.deleteByFactId(classification.targetId);
-                    await deleteVectorForFactId({
-                      vectorDb,
-                      factId: classification.targetId,
-                      logger: api.logger,
-                      context: "store-update-delete-superseded",
-                    });
-                    maybeAutoVerify(
-                      newEntry.id,
-                      textToStore,
-                      newEntry.tags ?? tags,
-                      newEntry.entity,
-                      newEntry.key,
-                      newEntry.value,
-                    );
+                  // Skip supersede and vector operations if store was rejected (artifact text)
+                  if (newEntry.id === "" || updateStoreResult.rejected) {
+                    await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [{ type: "text", text: `Already known: artifact text rejected` }],
+                      details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
+                    };
+                  }
+                  await cleanupEvictedVector({
+                    vectorDb,
+                    evictedFactId: updateStoreResult.evictedFactId,
+                    logger: api.logger,
+                    context: "memory-store-update",
+                  });
+                  recordActiveStoreProvenance(newEntry.id, textToStore);
+                  factsDb.supersede(classification.targetId, newEntry.id);
+                  aliasDb?.deleteByFactId(classification.targetId);
+                  await deleteVectorForFactId({
+                    vectorDb,
+                    factId: classification.targetId,
+                    logger: api.logger,
+                    context: "store-update-delete-superseded",
+                  });
+                  maybeAutoVerify(
+                    newEntry.id,
+                    textToStore,
+                    newEntry.tags ?? tags,
+                    newEntry.entity,
+                    newEntry.key,
+                    newEntry.value,
+                  );
 
                     const finalImportance = Math.max(importance, oldFact.importance);
                     try {
@@ -798,9 +804,26 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
           const entry = storeResult.entry;
-          // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-          if (!storeResult.skipped) {
-            await cleanupEvictedVector({
+          // Skip all downstream operations if store was rejected (artifact text)
+          if (entry.id === "" || storeResult.rejected) {
+            await walRemove(walEntryId, api.logger);
+            return {
+              content: [{ type: "text", text: `Already known: artifact text rejected` }],
+              details: { action: "noop", reason: "artifact text rejected by pre-store guard" },
+            };
+          }
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: api.logger,
+            context: "memory-store",
+          });
+          recordActiveStoreProvenance(entry.id, textToStore);
+          if (supersedes?.trim()) {
+            const supersededId = supersedes.trim();
+            factsDb.supersede(supersededId, entry.id);
+            aliasDb?.deleteByFactId(supersededId);
+            await deleteVectorForFactId({
               vectorDb,
               evictedFactId: storeResult.evictedFactId,
               logger: api.logger,
