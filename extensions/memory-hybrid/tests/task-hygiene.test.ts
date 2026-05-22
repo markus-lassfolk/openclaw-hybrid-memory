@@ -14,12 +14,16 @@ import {
 // fetchLivePrBlockerStatus mock for planActiveTaskHygiene integration tests.
 // hoisted so it is initialized before vi.mock() runs.
 const fetchLivePrBlockerStatusMock = vi.hoisted(() =>
-  vi.fn<() => Promise<"unresolved_review_threads" | "red_ci" | "pending_ci" | "merge_conflict" | "human_approval" | "no_live_blocker">>(),
+  vi.fn<
+    () => Promise<
+      "unresolved_review_threads" | "red_ci" | "pending_ci" | "merge_conflict" | "human_approval" | "no_live_blocker"
+    >
+  >(),
 );
 
 // Partial mock of task-hygiene.js: keep all exports, replace only fetchLivePrBlockerStatus
 vi.mock("../services/task-hygiene.js", async () => {
-  const actual = await vi.importMock("../services/task-hygiene.js");
+  const actual = await vi.importActual("../services/task-hygiene.js");
   return {
     ...(actual as Record<string, unknown>),
     fetchLivePrBlockerStatus: fetchLivePrBlockerStatusMock,
@@ -243,10 +247,21 @@ describe("task-hygiene", () => {
 
     it("returns no_live_blocker when no GitHub token is available", async () => {
       // Without a token, the function must be conservative and return no_live_blocker
+      // Import the actual implementation for this test
+      vi.doUnmock("../services/task-hygiene.js");
+      const { fetchLivePrBlockerStatus: realFetch } = await import("../services/task-hygiene.js");
       delete process.env.GITHUB_TOKEN;
       delete process.env.GH_TOKEN;
-      const result = await fetchLivePrBlockerStatus("owner", "repo", 123);
+      const result = await realFetch("owner", "repo", 123);
       expect(result).toBe("no_live_blocker");
+      // Re-mock for other tests
+      vi.doMock("../services/task-hygiene.js", async () => {
+        const actual = await vi.importActual("../services/task-hygiene.js");
+        return {
+          ...(actual as Record<string, unknown>),
+          fetchLivePrBlockerStatus: fetchLivePrBlockerStatusMock,
+        };
+      });
     });
   });
 
@@ -254,7 +269,12 @@ describe("task-hygiene", () => {
     // These tests exercise the PR blocker check at the integration level by
     // mocking fetchLivePrBlockerStatus (the function that calls GitHub).
 
+    beforeEach(() => {
+      fetchLivePrBlockerStatusMock.mockReset();
+    });
+
     afterEach(() => {
+      fetchLivePrBlockerStatusMock.mockReset();
       vi.restoreAllMocks();
     });
 
@@ -288,11 +308,7 @@ describe("task-hygiene", () => {
         expect(action).toBeDefined();
         expect(action?.kind).toBe("pr-live-blocker");
         expect(action?.toStatus).toBe("stage-4-feedback");
-        expect(fetchLivePrBlockerStatusMock).toHaveBeenCalledWith(
-          "markus-lassfolk",
-          "openclaw-hybrid-memory",
-          1549,
-        );
+        expect(fetchLivePrBlockerStatusMock).toHaveBeenCalledWith("markus-lassfolk", "openclaw-hybrid-memory", 1549);
       },
     );
 

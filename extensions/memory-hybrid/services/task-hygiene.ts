@@ -48,6 +48,11 @@ interface GhPrViewJson {
     }>;
   };
   mergeable?: string;
+  statusCheckRollup?: Array<{
+    state?: string;
+    conclusion?: string;
+    status?: string;
+  }>;
   commits?: {
     nodes: Array<{ commit: { checkSuites?: { nodes: Array<{ conclusion?: string; status?: string }> } } }>;
   };
@@ -85,7 +90,7 @@ export async function fetchLivePrBlockerStatus(
     "--repo",
     `${owner}/${repo}`,
     "--json",
-    "mergeStateStatus,reviewDecision,reviewThreads,mergeable,commits{node{commit{statusCheckRollup{state},checkSuites{nodes{conclusion,status}}}}}",
+    "mergeStateStatus,reviewDecision,reviewThreads,mergeable,statusCheckRollup,commits",
     "--jq=.",
   ];
 
@@ -109,19 +114,19 @@ export async function fetchLivePrBlockerStatus(
     }
 
     // 2. Check CI (from statusCheckRollup + checkSuites on latest commit)
+    const statusCheckRollup = pr.statusCheckRollup ?? [];
     const latestCommit = pr.commits?.nodes?.[0]?.commit;
-    const checkRollup = latestCommit?.statusCheckRollup?.state;
     const checkSuites = latestCommit?.checkSuites?.nodes ?? [];
 
     const hasFailure =
-      checkRollup === "FAILURE" ||
-      checkRollup === "TIMED_OUT" ||
-      checkSuites.some((cs) => cs.conclusion && BLOCKING_CONCLUSIONS.has(cs.conclusion));
+      statusCheckRollup.some(
+        (c) =>
+          c.state === "FAILURE" || c.state === "TIMED_OUT" || (c.conclusion && BLOCKING_CONCLUSIONS.has(c.conclusion)),
+      ) || checkSuites.some((cs) => cs.conclusion && BLOCKING_CONCLUSIONS.has(cs.conclusion));
     const hasPending =
-      checkRollup === "PENDING" ||
-      checkRollup === "IN_PROGRESS" ||
-      PENDING_CHECK_STATES.has(checkRollup ?? "") ||
-      checkSuites.some((cs) => cs.status && PENDING_CHECK_STATES.has(cs.status));
+      statusCheckRollup.some(
+        (c) => c.state === "PENDING" || c.state === "IN_PROGRESS" || (c.status && PENDING_CHECK_STATES.has(c.status)),
+      ) || checkSuites.some((cs) => cs.status && PENDING_CHECK_STATES.has(cs.status));
 
     if (hasFailure) return "red_ci";
     if (hasPending) return "pending_ci";

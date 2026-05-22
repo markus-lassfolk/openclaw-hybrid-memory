@@ -722,8 +722,8 @@ export async function planActiveTaskHygiene(
             kind: "pr-live-blocker",
             toStatus: "stage-4-feedback",
             reason,
-            // Encode PR ref so apply() can report it for Forge dispatch
-            prBlockerStatus: `${owner}:${repo}:${number}`,
+            // Store actual blocker classification, plus PR coordinates for parsing
+            prBlockerStatus: `${blockerStatus.status}|${owner}:${repo}:${number}`,
           });
         }
       }
@@ -1049,12 +1049,14 @@ export async function applyActiveTaskHygieneFacts(
       });
       // Record so caller can dispatch Forge for these tasks
       const parsed = action.prBlockerStatus ?? "";
+      const [actualStatus, prRef] = parsed.includes("|") ? parsed.split("|", 2) : ["", parsed];
+      const prParts = prRef.split(":");
       prBlockerTasks.push({
         label: task.label,
-        owner: action.prBlockerStatus?.split(":")[0] ?? "",
-        repo: action.prBlockerStatus?.split(":")[1] ?? "",
-        number: Number(action.prBlockerStatus?.split(":")[2] ?? 0) || 0,
-        blockerStatus: parsed,
+        owner: prParts[0] ?? "",
+        repo: prParts[1] ?? "",
+        number: Number(prParts[2] ?? 0) || 0,
+        blockerStatus: actualStatus,
         reason: action.reason,
       });
       appliedCount++;
