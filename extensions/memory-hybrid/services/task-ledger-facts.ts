@@ -710,7 +710,7 @@ export async function planActiveTaskHygiene(
         if (blockerStatus.status !== "no_live_blocker") {
           const key = `${owner}/${repo}`;
           const reason = `[PR hygiene #${number}] Live GitHub state: ${blockerStatus.status} — task updated to reflect actual PR state.`;
-          
+
           // Apply action to ALL tasks referencing this PR
           for (const task of tasks) {
             // Skip if already handled by a dead-session or stale-failed action
