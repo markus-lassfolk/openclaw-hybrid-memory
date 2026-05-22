@@ -243,19 +243,18 @@ export async function runRecall(
         activeTaskMaxTokens: activeTaskReserveCapCfg,
         staleWarningMaxTokens: staleWarningReserveCapCfg,
       } = ctx.cfg.autoRecall;
-      const narrativeCapTokens =
-        narrativeBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.2));
+      const narrativeCapTokens = narrativeBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.2));
       const hotCapTokens = hotBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.25));
-      const activeTaskReserveTokens = activeTaskReserveCapCfg ?? (
-        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.injectionBudget > 0
+      const activeTaskReserveTokens =
+        activeTaskReserveCapCfg ??
+        (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.injectionBudget > 0
           ? Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2)))
-          : 0
-      );
-      const staleWarningReserveTokens = staleWarningReserveCapCfg ?? (
-        ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled
+          : 0);
+      const staleWarningReserveTokens =
+        staleWarningReserveCapCfg ??
+        (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled
           ? Math.max(40, Math.floor(totalBudget * 0.08))
-          : 0
-      );
+          : 0);
       let remainingBudget = totalBudget;
       const fixedBlockAudit: FixedBlockAudit[] = [];
       const capAndTrackBlock = (name: string, block: string, capTokens: number): string => {
