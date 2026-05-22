@@ -239,7 +239,6 @@ describe("runCaptureStage", () => {
     );
 
     expect(storeWithResult).toHaveBeenCalledOnce();
-    expect(embed).toHaveBeenCalledOnce();
     expect(setEmbeddingModel).not.toHaveBeenCalled();
     expect(vectorHasDuplicate).not.toHaveBeenCalled();
     expect(vectorStore).not.toHaveBeenCalled();

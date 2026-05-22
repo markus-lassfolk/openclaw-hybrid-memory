@@ -193,7 +193,7 @@ describe("FactsDB.store", () => {
   it("does not persist entries blocked by pre-store guard", () => {
     const before = db.count();
     const result = db.storeWithResult({
-      text: "internal classifier artifact",
+      text: "guarded internal memory",
       category: "fact",
       importance: 0.5,
       entity: null,
@@ -204,6 +204,7 @@ describe("FactsDB.store", () => {
 
     expect(result.skipped).toBe(true);
     expect(result.entry.id).toBe("skipped");
+    expect(result.entry.source).toBe("remember");
     expect(db.count()).toBe(before);
   });
 });
