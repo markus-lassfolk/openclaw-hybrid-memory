@@ -51,6 +51,10 @@ function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
 const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
 const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
 
+export function isPreStoreGuardBlocked(entry: Pick<StoreFactInput, "category" | "source">): boolean {
+  return BLOCKED_CATEGORIES.has(entry.category ?? "") || BLOCKED_SOURCES.has(entry.source ?? "");
+}
+
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
   MemoryEntry,
@@ -155,7 +159,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
-  if (!ctx.allowPreStoreGuardBypass && (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource))) {
+  if (!ctx.allowPreStoreGuardBypass && isPreStoreGuardBlocked({ category: entryCategory, source: entrySource })) {
     // Return a minimal skipped result — caller should skip post-store operations.
     const skippedEntry: MemoryEntry = {
       id: "skipped",
