@@ -390,6 +390,7 @@ export async function runActiveTaskHygiene(
   const plan = await planActiveTaskHygiene(active, {
     olderThanMinutes,
     openclawHome: opts.openclawHome,
+    checkPrLiveBlocker,
   });
   if (apply && !taskFile) {
     return {

@@ -4,12 +4,12 @@
  */
 
 import { basename } from "node:path";
-import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ActiveTaskEntry } from "./active-task.js";
 import { isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
+import { execFile } from "../utils/process-runner.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
 export type LongRunningRegistrationMode = ActiveTaskLongRunningRegistrationMode;
@@ -36,32 +36,6 @@ export type PrBlockerStatus =
 
 const execFileAsync = promisify(execFile);
 
-/**
- * Extract an "owner/repo#N" PR reference from a task label or description.
- * Matches "owner/repo#N", "owner/repo/pull/N", or bare "#N" (repo then inferred from task label).
- */
-function parsePrRef(taskLabel: string, taskDescription: string): { owner: string; repo: string; number: number } | null {
-  // Try "owner/repo#N" or "owner/repo/pull/N"
-  const m1 = /(?:^|\s)([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#(\d+)(?:\s|$)/.exec(taskLabel + " " + taskDescription);
-  if (m1) {
-    const n = Number(m1[2]);
-    if (Number.isFinite(n) && n >= 1) {
-      const [owner, repo] = m1[1].split("/");
-      return { owner, repo, number: Math.floor(n) };
-    }
-  }
-  // Try bare "#N" in description
-  const m2 = /#(\d+)/.exec(taskLabel + " " + taskDescription);
-  if (m2) {
-    const n = Number(m2[1]);
-    if (Number.isFinite(n) && n >= 1) {
-      // No bare repo info — caller must provide it via opts
-      return null;
-    }
-  }
-  return null;
-}
-
 interface GhPrViewJson {
   number: number;
   mergeStateStatus?: string;
@@ -79,20 +53,8 @@ interface GhPrViewJson {
   };
 }
 
-interface GhPrStatusJson {
-  statuses: Array<{ state: string; context: string }>;
-  commits: {
-    nodes: Array<{
-      commit: {
-        statusCheckRollup?: { state: string };
-        checkSuites?: { nodes: Array<{ conclusion?: string; status?: string }> };
-      };
-    }>;
-  };
-}
-
-const BLOCKING_CONCLUSIONS = new Set(["failure", "timed_out", "startup_failure"]);
-const PENDING_CHECK_STATES = new Set(["in_progress", "queued", "pending", "waiting", "requested"]);
+const BLOCKING_CONCLUSIONS = new Set(["FAILURE", "TIMED_OUT", "STARTUP_FAILURE"]);
+const PENDING_CHECK_STATES = new Set(["IN_PROGRESS", "QUEUED", "PENDING", "WAITING", "REQUESTED"]);
 
 /**
  * Fetch live PR state from GitHub (via `gh`) and classify the blocking status.
@@ -116,9 +78,16 @@ export async function fetchLivePrBlockerStatus(
     return "no_live_blocker";
   }
 
-  const ghArgs = ["pr", "view", String(prNumber), "--repo", `${owner}/${repo}`, "--json",
+  const ghArgs = [
+    "pr",
+    "view",
+    String(prNumber),
+    "--repo",
+    `${owner}/${repo}`,
+    "--json",
     "mergeStateStatus,reviewDecision,reviewThreads,mergeable,commits{node{commit{statusCheckRollup{state},checkSuites{nodes{conclusion,status}}}}}",
-    "--jq=."];
+    "--jq=.",
+  ];
 
   const ac = new AbortController();
   const timeout = setTimeout(() => ac.abort(), 20_000);
@@ -145,12 +114,12 @@ export async function fetchLivePrBlockerStatus(
     const checkSuites = latestCommit?.checkSuites?.nodes ?? [];
 
     const hasFailure =
-      checkRollup === "failure" ||
-      checkRollup === "timed_out" ||
+      checkRollup === "FAILURE" ||
+      checkRollup === "TIMED_OUT" ||
       checkSuites.some((cs) => cs.conclusion && BLOCKING_CONCLUSIONS.has(cs.conclusion));
     const hasPending =
-      checkRollup === "pending" ||
-      checkRollup === "in_progress" ||
+      checkRollup === "PENDING" ||
+      checkRollup === "IN_PROGRESS" ||
       PENDING_CHECK_STATES.has(checkRollup ?? "") ||
       checkSuites.some((cs) => cs.status && PENDING_CHECK_STATES.has(cs.status));
 
@@ -160,9 +129,9 @@ export async function fetchLivePrBlockerStatus(
     // 3. Check merge conflict
     if (pr.mergeStateStatus === "BLOCKED" || pr.mergeStateStatus === "UNSTABLE") {
       // Double-check via mergeable field if available
-      if (pr.mergeable === "false") return "merge_conflict";
+      if (pr.mergeable === "CONFLICTING") return "merge_conflict";
     }
-    if (pr.mergeable === "false") return "merge_conflict";
+    if (pr.mergeable === "CONFLICTING") return "merge_conflict";
 
     // 4. Human approval pending
     if (pr.reviewDecision === "CHANGES_REQUESTED") return "human_approval";

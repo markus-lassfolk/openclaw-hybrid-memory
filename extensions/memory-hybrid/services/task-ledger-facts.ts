@@ -707,9 +707,9 @@ export async function planActiveTaskHygiene(
         const blockerStatus = statusByKey.get(`${owner}/${repo}#${number}`);
         if (!blockerStatus) continue;
 
-        if (blockerStatus !== "no_live_blocker") {
+        if (blockerStatus.status !== "no_live_blocker") {
           const key = `${owner}/${repo}`;
-          const reason = `[PR hygiene #${number}] Live GitHub state: ${blockerStatus} — task updated to reflect actual PR state.`;
+          const reason = `[PR hygiene #${number}] Live GitHub state: ${blockerStatus.status} — task updated to reflect actual PR state.`;
           stale.push({
             label: task.label,
             status: task.status,
