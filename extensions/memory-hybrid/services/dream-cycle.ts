@@ -459,6 +459,9 @@ export async function runEpisodicConsolidation(
           sourceEvents,
         }),
       });
+      if (storeResult.skipped) {
+        continue;
+      }
       consolidatedFact = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       if (vectorDb) {

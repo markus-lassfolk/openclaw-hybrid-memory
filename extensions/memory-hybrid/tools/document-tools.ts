@@ -584,6 +584,9 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           tags: chunkTags,
           decayClass: "stable",
         });
+        if (storeResult.skipped) {
+          continue;
+        }
         entry = storeResult.entry;
         await cleanupEvictedVector({
           vectorDb,

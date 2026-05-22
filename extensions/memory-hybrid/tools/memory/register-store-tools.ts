@@ -296,6 +296,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 extractionMethod: "active",
                 extractionConfidence: importance,
               });
+              if (pointerStoreResult.skipped) {
+                credentialsDb.delete(parsed.service, parsed.type as any);
+                return {
+                  content: [{ type: "text", text: "Credential pointer was filtered and was not stored." }],
+                  details: { action: "credential_skipped_internal_artifact" },
+                };
+              }
               const pointerEntry = pointerStoreResult.entry;
               await cleanupEvictedVector({
                 vectorDb,
@@ -522,6 +529,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     extractionMethod: "active",
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
+                  if (updateStoreResult.skipped) {
+                    await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [{ type: "text", text: "Skipped storing internal artifact memory." }],
+                      details: { action: "memory_skipped_internal_artifact" },
+                    };
+                  }
                   const newEntry = updateStoreResult.entry;
                   await cleanupEvictedVector({
                     vectorDb,
@@ -731,6 +745,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             decayFreezeUntil: decayFreezeUntil ?? undefined,
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
+          if (storeResult.skipped) {
+            await walRemove(walEntryId, api.logger);
+            return {
+              content: [{ type: "text", text: "Skipped storing internal artifact memory." }],
+              details: { action: "memory_skipped_internal_artifact" },
+            };
+          }
           const entry = storeResult.entry;
           await cleanupEvictedVector({
             vectorDb,

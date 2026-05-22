@@ -124,7 +124,7 @@ export type StoreFactContext = {
   vectorCandidates?: ReadonlyArray<{ id: string; score: number }>;
 };
 
-export type StoreFactResult = {
+export type StoredFactResult = {
   /** The stored fact entry */
   entry: MemoryEntry;
   /**
@@ -142,8 +142,20 @@ export type StoreFactResult = {
    * True when the pre-store guard filtered this entry as an internal artifact (#1560, #1561).
    * Callers must skip post-store operations (vector upsert, supersession, logging) when true.
    */
-  skipped?: boolean;
+  skipped?: false;
 };
+
+export type SkippedStoreFactResult = {
+  /**
+   * True when the pre-store guard filtered this entry as an internal artifact (#1560, #1561).
+   * No fact was written, so callers must skip all post-store operations.
+   */
+  skipped: true;
+  evictedFactId?: null;
+  embeddingStale?: false;
+};
+
+export type StoreFactResult = StoredFactResult | SkippedStoreFactResult;
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
@@ -151,24 +163,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
   if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
-    // Return a minimal skipped result — caller should skip post-store operations.
-    const skippedEntry: MemoryEntry = {
-      id: "skipped",
-      text: entry.text,
-      category: entry.category ?? "noop",
-      importance: entry.importance ?? 0.5,
-      source: entry.source ?? "guard",
-      entity: entry.entity ?? null,
-      key: entry.key ?? null,
-      value: entry.value ?? null,
-      createdAt: Date.now(),
-      decayClass: entry.decayClass ?? "normal",
-      expiresAt: null,
-      lastConfirmedAt: 0,
-      confidence: 0,
-      tags: entry.tags ?? null,
-    };
-    return { entry: skippedEntry, evictedFactId: null, skipped: true };
+    return { skipped: true, evictedFactId: null, embeddingStale: false };
   }
 
   const sourceForPolicy = entry.source ?? "conversation";

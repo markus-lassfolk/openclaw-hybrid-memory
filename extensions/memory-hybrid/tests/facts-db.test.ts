@@ -189,6 +189,37 @@ describe("FactsDB.store", () => {
       sqlite.prepare = originalPrepare;
     }
   });
+
+  it("returns skipped result without writing internal artifact facts", () => {
+    const result = db.storeWithResult({
+      text: "internal noop artifact",
+      category: "noop",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    expect(result.skipped).toBe(true);
+    expect("entry" in result).toBe(false);
+    expect(db.count()).toBe(0);
+  });
+
+  it("throws from store() when an internal artifact fact is filtered", () => {
+    expect(() =>
+      db.store({
+        text: "internal noop artifact",
+        category: "noop",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "conversation",
+      }),
+    ).toThrow(/skipped internal artifact fact/i);
+    expect(db.count()).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

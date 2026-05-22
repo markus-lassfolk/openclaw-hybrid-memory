@@ -373,6 +373,9 @@ export function createPluginService(ctx: PluginServiceContext) {
                     summary,
                     tags,
                   });
+                  if (storeResult.skipped) {
+                    continue;
+                  }
                   const stored = storeResult.entry;
                   await cleanupEvictedVector({
                     vectorDb,

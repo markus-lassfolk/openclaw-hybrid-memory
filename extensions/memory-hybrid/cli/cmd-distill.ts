@@ -655,6 +655,14 @@ export async function runDistillForCli(
                 source: "distillation",
                 sourceDate: sourceDateSec(fact.source_date),
               });
+              if (storeResult.skipped) {
+                if (storedInVault) {
+                  credentialsDb.delete(parsed.service, parsed.type as any);
+                  storedInVault = false;
+                }
+                skipped++;
+                continue;
+              }
               const entry = storeResult.entry;
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
               await cleanupEvictedVector({
@@ -724,6 +732,10 @@ export async function runDistillForCli(
           sourceDate: sourceDateSec(fact.source_date),
           tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
         });
+        if (storeResult.skipped) {
+          skipped++;
+          continue;
+        }
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({

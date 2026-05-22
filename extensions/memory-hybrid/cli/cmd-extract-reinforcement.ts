@@ -276,6 +276,9 @@ export async function runExtractReinforcementForCli(
               source: "reinforcement-analysis",
               tags,
             });
+            if (storeResult.skipped) {
+              continue;
+            }
             const entry = storeResult.entry;
             // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
             await cleanupEvictedVector({

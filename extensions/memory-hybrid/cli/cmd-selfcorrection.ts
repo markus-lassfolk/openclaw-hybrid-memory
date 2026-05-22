@@ -353,6 +353,9 @@ export async function runSelfCorrectionRunForCli(
             source: "self-correction",
             tags: Array.isArray(obj.tags) ? obj.tags : [],
           });
+          if (storeResult.skipped) {
+            continue;
+          }
           const entry = storeResult.entry;
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({

@@ -235,7 +235,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       suppressVectorFallbackWarning?: boolean;
     },
   ): MemoryEntry {
-    return this.storeWithResult(entry, options).entry;
+    const result = this.storeWithResult(entry, options);
+    if (result.skipped) {
+      throw new Error("memory-hybrid: store() skipped internal artifact fact; use storeWithResult() to handle skipped writes");
+    }
+    return result.entry;
   }
 
   storeWithResult(

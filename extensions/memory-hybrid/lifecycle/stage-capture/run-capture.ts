@@ -493,6 +493,10 @@ export async function runCapture(
                       extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
+                    if (storeResult.skipped) {
+                      await ctx.walRemove(walEntryId, api.logger);
+                      continue;
+                    }
                     const newEntry = storeResult.entry;
                     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
                     await cleanupEvictedVector({
@@ -907,6 +911,9 @@ export async function runCapture(
                 decayClass: "permanent",
                 tags: ["auth", "credential"],
               });
+              if (storeResult.skipped) {
+                continue;
+              }
               const entry = storeResult.entry;
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
               await cleanupEvictedVector({

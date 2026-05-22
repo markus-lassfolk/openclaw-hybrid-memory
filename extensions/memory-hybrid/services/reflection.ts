@@ -655,6 +655,9 @@ export async function runReflection(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
@@ -932,6 +935,9 @@ export async function runReflectionRules(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
@@ -1189,6 +1195,9 @@ export async function runReflectionMeta(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({

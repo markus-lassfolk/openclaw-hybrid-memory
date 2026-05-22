@@ -86,6 +86,10 @@ export async function runStoreForCli(
           sourceDate,
           tags: ["auth", ...extractTags(pointerText, "Credentials")],
         });
+        if (storeResult.skipped) {
+          credentialsDb.delete(parsed.service, parsed.type as any);
+          return { outcome: "credential_db_error" };
+        }
         pointerEntry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({
@@ -220,6 +224,12 @@ export async function runStoreForCli(
                 scope,
                 scopeTarget,
               });
+              if (storeResult.skipped) {
+                return {
+                  outcome: "noop",
+                  reason: "skipped internal artifact fact during classified update",
+                };
+              }
               const newEntry = storeResult.entry;
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
               await cleanupEvictedVector({
@@ -283,6 +293,9 @@ export async function runStoreForCli(
       scopeTarget,
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
+    if (storeResult.skipped) {
+      return { outcome: "noop", reason: "skipped internal artifact fact" };
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
