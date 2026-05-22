@@ -97,8 +97,17 @@ async function runInjection(
   const agentId = resolveAgentIdFromHookEvent(event, api);
   const injectionStart = Date.now();
 
-  const wrapRecalledContext = (content: string): string =>
-    content ? `<recalled-context>\n${RECALLED_CONTEXT_BOUNDARY}\n${content}\n</recalled-context>` : "";
+  const wrapRecalledContext = (edicts: string, memoryContent: string): string => {
+    if (!edicts && !memoryContent) return "";
+    const parts: string[] = ["<recalled-context>"];
+    if (edicts) parts.push(edicts);
+    if (memoryContent) {
+      parts.push(RECALLED_CONTEXT_BOUNDARY);
+      parts.push(memoryContent);
+    }
+    parts.push("</recalled-context>");
+    return parts.join("\n");
+  };
 
   const markDegradedLatency = (content: string): string => {
     if (r.degradationMaxLatencyMs > 0 && Date.now() - r.recallStartMs > r.degradationMaxLatencyMs) {
@@ -238,17 +247,17 @@ async function runInjection(
         );
         emitAudit(pinnedTokens);
         return {
-          prependContext: markDegradedLatency(wrapRecalledContext(baseContext + withProcedures(fullContent))),
+          prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withProcedures(fullContent))),
         };
       }
       if (procedureBlock) {
         emitAudit(estimateTokens(baseContext + procedureBlock));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, procedureBlock)) };
       }
       const combinedContext = baseContext;
       if (combinedContext) {
         emitAudit(estimateTokens(combinedContext));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) };
+        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext, "")) };
       }
       return undefined;
     }
@@ -273,7 +282,7 @@ async function runInjection(
     );
     emitAudit(totalTokens);
     return {
-      prependContext: markDegradedLatency(wrapRecalledContext(baseContext + withProcedures(fullContent))),
+      prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withProcedures(fullContent))),
     };
   }
 
@@ -288,12 +297,12 @@ async function runInjection(
     if (indexLines.length === 0) {
       if (procedureBlock) {
         emitAudit(estimateTokens(baseContext + procedureBlock));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext + procedureBlock)) };
+        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, procedureBlock)) };
       }
       const combinedContext = baseContext;
       if (combinedContext) {
         emitAudit(estimateTokens(combinedContext));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext)) };
+        return { prependContext: markDegradedLatency(wrapRecalledContext(combinedContext, "")) };
       }
       return undefined;
     }
@@ -311,7 +320,7 @@ async function runInjection(
     emitAudit(indexTokens);
     return {
       prependContext: markDegradedLatency(
-        wrapRecalledContext(baseContext + withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
+        wrapRecalledContext(baseContext, withProcedures(`${indexHeader}${indexContent}${indexFooter}`)),
       ),
     };
   }
@@ -438,7 +447,7 @@ async function runInjection(
 
   return {
     prependContext: markDegradedLatency(
-      wrapRecalledContext(baseContext + withProcedures(`${header}${memoryContext}${footer}`)),
+      wrapRecalledContext(baseContext, withProcedures(`${header}${memoryContext}${footer}`)),
     ),
   };
 }
