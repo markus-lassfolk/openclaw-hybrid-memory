@@ -1097,7 +1097,8 @@ export async function consumePendingTaskSignalsFacts(
   const active = detectStaleTasks(rawActive, staleMinutes);
 
   const findMatchingTask = (activeEntries: ActiveTaskEntry[], signal: PendingTaskSignal): ActiveTaskEntry | null => {
-    const byLabel = activeEntries.filter((t) => t.label === signal.taskRef);
+    const normalizedTaskRef = signal.taskRef.trim().toLowerCase();
+    const byLabel = activeEntries.filter((t) => t.label.toLowerCase() === normalizedTaskRef);
     if (byLabel.length === 1) return byLabel[0];
     if (byLabel.length > 1) {
       logger?.warn?.(`memory-hybrid: multiple active tasks share label ${signal.taskRef}; leaving signal pending`);
