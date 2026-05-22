@@ -98,9 +98,7 @@ async function runInjection(
   const injectionStart = Date.now();
 
   const wrapRecalledContext = (content: string): string =>
-    content
-      ? `<recalled-context>\n${RECALLED_CONTEXT_BOUNDARY}\n${content}\n</recalled-context>`
-      : "";
+    content ? `<recalled-context>\n${RECALLED_CONTEXT_BOUNDARY}\n${content}\n</recalled-context>` : "";
 
   const markDegradedLatency = (content: string): string => {
     if (r.degradationMaxLatencyMs > 0 && Date.now() - r.recallStartMs > r.degradationMaxLatencyMs) {
@@ -206,9 +204,7 @@ async function runInjection(
     let pinnedTokens = estimateTokens(pinnedHeader);
     const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
     for (const x of pinned) {
-      let text = sanitizePromptInjection(
-        useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text,
-      );
+      let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
       if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
         text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
       const line = `- [${x.backend}/${x.entry.category}] ${text}`;
@@ -325,9 +321,7 @@ async function runInjection(
   const lines: string[] = [];
   const injectedIds: string[] = [];
   for (const x of candidates) {
-    let text = sanitizePromptInjection(
-      useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text,
-    );
+    let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
     if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
     const line =
       injectionFormat === "minimal"
@@ -369,9 +363,7 @@ async function runInjection(
     });
     const fullBullets = candidates
       .map((x) => {
-        let text = sanitizePromptInjection(
-          useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text,
-        );
+        let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
         if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
           text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
         return injectionFormat === "minimal"
