@@ -234,6 +234,29 @@ export async function runRecall(
       const trimmed = e.prompt.trim();
       await yieldEventLoop();
       const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
+      const totalBudget = interactivePolicy.contextBudgetTokens;
+      let remainingBudget = totalBudget;
+      let narrativePart = "";
+      if (ctx.narrativesDb || ctx.eventLog) {
+        try {
+          const recentNarratives = recallNarrativeSummaries({
+            narrativesDb: ctx.narrativesDb,
+            eventLog: ctx.eventLog,
+            query: e.prompt,
+            limit: 1,
+          });
+          if (recentNarratives.length > 0) {
+            const narrative = recentNarratives[0];
+            const narrativeBlock = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
+            const narrativeCapTokens = Math.max(100, Math.floor(totalBudget * 0.2));
+            const { text } = trimBlockToBudget(narrativeBlock, Math.min(narrativeCapTokens, remainingBudget));
+            narrativePart = text;
+            remainingBudget = Math.max(0, remainingBudget - estimateTokens(text));
+          }
+        } catch {
+          // Non-fatal.
+        }
+      }
       let hotPart = "";
       if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
         const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
@@ -247,38 +270,24 @@ export async function runRecall(
             })
             .filter(Boolean);
           if (hotLines.length > 0) {
-            hotPart = `Hot memories:\n${hotLines.join("\n")}\n\n`;
+            const hotBlock = `Hot memories:\n${hotLines.join("\n")}\n\n`;
+            const hotCapTokens = Math.max(100, Math.floor(totalBudget * 0.25));
+            const { text } = trimBlockToBudget(hotBlock, Math.min(hotCapTokens, remainingBudget));
+            hotPart = text;
+            remainingBudget = Math.max(0, remainingBudget - estimateTokens(text));
           }
         }
       }
-      const memoryLines = ftsOnly.slice(0, degradedLimit).map((r) => {
-        const rawText = r.entry.summary || r.entry.text;
-        const sanitized = sanitizePromptInjection(rawText);
-        const truncated = sanitized.slice(0, 200);
-        return `- [${r.backend}/${r.entry.category}] ${truncated}${sanitized.length > 200 ? "…" : ""}`;
-      });
-      let narrativePart = "";
-      if (ctx.narrativesDb || ctx.eventLog) {
-        try {
-          const recentNarratives = recallNarrativeSummaries({
-            narrativesDb: ctx.narrativesDb,
-            eventLog: ctx.eventLog,
-            query: e.prompt,
-            limit: 1,
-          });
-          if (recentNarratives.length > 0) {
-            const narrative = recentNarratives[0];
-            const sanitized = sanitizePromptInjection(narrative.text);
-            const clipped = clipNarrativeText(sanitized);
-            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipped}\n</recent-history-narratives>\n\n`;
-          }
-        } catch {
-          // Non-fatal.
-        }
-      }
-      const inner =
-        narrativePart + hotPart + (memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "");
-      const block = inner ? `<recalled-context>\n${RECALLED_CONTEXT_BOUNDARY}\n${inner}\n</recalled-context>` : "";
+      const memoryLines = ftsOnly
+        .slice(0, degradedLimit)
+        .map(
+          (r) =>
+            `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
+        );
+      const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
+      const { text: recallPart } = trimBlockToBudget(recallBlock, remainingBudget);
+      const inner = narrativePart + hotPart + recallPart;
+      const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       api.logger.debug?.(
         `memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`,

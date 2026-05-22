@@ -19,17 +19,19 @@ type ContextAuditResult = {
     injectionFormat: string;
     fixedBlocks: {
       caps: {
-        hotMaxTokens: number;
+        issueMaxTokens: number;
         narrativeMaxTokens: number;
+        hotMaxTokens: number;
         procedureMaxTokens: number;
         activeTaskMaxTokens: number;
         staleWarningMaxTokens: number;
       };
       estimatedTokens: {
+        issue: number;
+        narrative: number;
         hot: number;
         procedures: number;
         activeTasks: number;
-        staleWarning: number;
         total: number;
         remainingForRecall: number;
         wouldExhaustRecall: boolean;
@@ -209,14 +211,16 @@ export async function runContextAudit(opts: {
     }
   }
 
-  const autoRecallBudget = cfg.autoRecall.enabled
+  const baseRecallBudget = cfg.autoRecall.enabled
     ? cfg.autoRecall.injectionFormat === "progressive" || cfg.autoRecall.injectionFormat === "progressive_hybrid"
       ? (cfg.autoRecall.progressiveIndexMaxTokens ?? cfg.autoRecall.maxTokens)
       : cfg.autoRecall.maxTokens
     : 0;
+  const autoRecallBudget = Math.min(baseRecallBudget, cfg.retrieval.ambientBudgetTokens);
+  const issueCapTokens = Math.max(80, Math.floor(autoRecallBudget * 0.15));
+  const narrativeMaxTokens = cfg.autoRecall.narrativeMaxTokens ?? 0;
   const hotMaxTokens =
     cfg.autoRecall.hotMaxTokens ?? (hotTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.25)) : 0);
-  const narrativeMaxTokens = cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2));
   const defaultProcedureCap = proceduresTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0;
   const procedureMaxTokens =
     cfg.autoRecall.procedureMaxTokens ??
@@ -232,11 +236,14 @@ export async function runContextAudit(opts: {
       ? Math.max(40, Math.floor(autoRecallBudget * 0.08))
       : 0);
 
+  const issueEstimateTokens = cfg.ambient.enabled ? issueCapTokens : 0;
+  const narrativeEstimateTokens = narrativeMaxTokens;
   const fixedBlockEstimatedTokens =
+    issueEstimateTokens +
+    narrativeEstimateTokens +
     Math.min(hotTokens, hotMaxTokens) +
     Math.min(proceduresTokens, procedureMaxTokens) +
-    Math.min(activeTasksTokens, activeTaskMaxTokens) +
-    Math.min(staleWarningTokens, staleWarningMaxTokens);
+    Math.min(activeTasksTokens, activeTaskMaxTokens);
   const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
   const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
 
@@ -278,17 +285,19 @@ export async function runContextAudit(opts: {
       injectionFormat: cfg.autoRecall.injectionFormat,
       fixedBlocks: {
         caps: {
-          hotMaxTokens,
+          issueMaxTokens: issueCapTokens,
           narrativeMaxTokens,
+          hotMaxTokens,
           procedureMaxTokens,
           activeTaskMaxTokens,
           staleWarningMaxTokens,
         },
         estimatedTokens: {
+          issue: issueEstimateTokens,
+          narrative: narrativeEstimateTokens,
           hot: Math.min(hotTokens, hotMaxTokens),
           procedures: Math.min(proceduresTokens, procedureMaxTokens),
           activeTasks: Math.min(activeTasksTokens, activeTaskMaxTokens),
-          staleWarning: Math.min(staleWarningTokens, staleWarningMaxTokens),
           total: fixedBlockEstimatedTokens,
           remainingForRecall,
           wouldExhaustRecall,
