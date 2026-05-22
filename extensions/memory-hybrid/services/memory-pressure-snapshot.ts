@@ -96,7 +96,7 @@ export interface HybridMemorySnapshot {
 }
 
 interface DiagnosticSnapshotConfig {
-  /** Enable memory pressure snapshots (default: true) */
+  /** Enable memory pressure snapshots (default: false) */
   enabled: boolean;
   /** Write JSON artifact to ~/.openclaw/diagnostics/memory-pressure/ (default: false) */
   writeArtifact: boolean;
@@ -113,7 +113,7 @@ interface DiagnosticSnapshotConfig {
 // ---------------------------------------------------------------------------
 
 const DEFAULT_CONFIG: DiagnosticSnapshotConfig = {
-  enabled: true,
+  enabled: false,
   writeArtifact: false,
   cooldownSec: 300,
   includeLinuxProcMem: true,

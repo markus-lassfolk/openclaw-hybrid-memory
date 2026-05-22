@@ -622,7 +622,7 @@ export type HybridMemoryConfig = {
   entityExtraction: EntityExtractionConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
-  /** Memory pressure diagnostic snapshots — Issue #1551 (default: enabled). */
+  /** Memory pressure diagnostic snapshots — Issue #1551 (default: disabled). */
   diagnostics: DiagnosticsConfig;
   /** Event log archival configuration. */
   eventLog: EventLogConfig;

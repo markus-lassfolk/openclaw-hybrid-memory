@@ -1305,7 +1305,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "description": "Enable memory pressure snapshots (default: true)"
+            "description": "Enable memory pressure snapshots (default: false)"
           },
           "writeArtifact": {
             "type": "boolean",
