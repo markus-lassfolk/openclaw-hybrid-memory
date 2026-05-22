@@ -46,6 +46,11 @@ function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
   }
 }
 
+// Pre-store guard constants: filter internal artifacts (#1560, #1561).
+// These categories and sources are not user-relevant memories.
+const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
+const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
+
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
   MemoryEntry,
@@ -143,31 +148,27 @@ export type StoreFactResult = {
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
 
-  // Pre-store guard: filter internal artifacts (#1560, #1561).
-  // These categories and sources are not user-relevant memories.
-  const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
-  const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
-  const category = (entry.category ?? "").toLowerCase().trim();
-  const source = (entry.source ?? "").toLowerCase().trim();
-  if (BLOCKED_CATEGORIES.has(category) || BLOCKED_SOURCES.has(source)) {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const stubEntry: MemoryEntry = {
-      id: randomUUID(),
+  const entryCategory = entry.category ?? "";
+  const entrySource = entry.source ?? "";
+  if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
+    // Return a minimal skipped result — caller should skip post-store operations.
+    const skippedEntry: MemoryEntry = {
+      id: "skipped",
       text: entry.text,
-      why: entry.why ?? null,
-      category: (entry.category?.trim() || "other") as MemoryCategory,
+      category: entry.category ?? "noop",
       importance: entry.importance ?? 0.5,
-      entity: entry.entity?.trim() || null,
-      key: entry.key?.trim() || null,
+      source: entry.source ?? "guard",
+      entity: entry.entity ?? null,
+      key: entry.key ?? null,
       value: entry.value ?? null,
-      source: entry.source ?? "conversation",
-      createdAt: nowSec,
-      decayClass: entry.decayClass ?? "ephemeral",
+      createdAt: Date.now(),
+      decayClass: entry.decayClass ?? "normal",
       expiresAt: null,
-      lastConfirmedAt: nowSec,
-      confidence: entry.confidence ?? 1.0,
+      lastConfirmedAt: 0,
+      confidence: 0,
+      tags: entry.tags ?? null,
     };
-    return { entry: stubEntry, skipped: true, evictedFactId: null };
+    return { entry: skippedEntry, evictedFactId: null, skipped: true };
   }
 
   const sourceForPolicy = entry.source ?? "conversation";
