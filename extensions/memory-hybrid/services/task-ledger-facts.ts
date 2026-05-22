@@ -217,10 +217,8 @@ export function loadTaskLedgerFromFacts(
   active: ActiveTaskEntry[];
   completed: ActiveTaskEntry[];
 } {
-  const facts = factsDb
-    .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
-    .slice(0, factLimit);
+  // Use targeted query instead of loading all facts then filtering by category (#1553)
+  const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
   const grouped = groupProjectFactsByEntity(facts);
   return buildTaskEntriesFromGroupedFacts(grouped);
 }
@@ -299,10 +297,8 @@ export async function clearActiveTaskProjectionStale(filePath: string): Promise<
 }
 
 export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, scopeFilter?: ScopeFilter | null): number | null {
-  const projectFacts = factsDb
-    .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
-    .slice(0, 8000);
+  // Use targeted query instead of loading all facts then filtering by category (#1553)
+  const projectFacts = factsDb.getProjectFacts(8000, scopeFilter);
   if (projectFacts.length === 0) return null;
   let maxSec = Number.NEGATIVE_INFINITY;
   for (const fact of projectFacts) {
