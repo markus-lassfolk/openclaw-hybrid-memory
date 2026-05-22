@@ -127,7 +127,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               expiryWarning = ` [WARNING: Expires in ${Math.ceil(daysLeft)} days — consider rotating]`;
             }
           }
-          const revealInContent = cfg.credentials.revealInContent === true;
+          const revealInContent = cfg.credentials?.revealInContent === true;
           const contentText = revealInContent
             ? [
                 `Credential for ${entry.service} (${entry.type}) retrieved.${expiryWarning}`,
