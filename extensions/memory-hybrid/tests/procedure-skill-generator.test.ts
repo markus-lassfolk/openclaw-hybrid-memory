@@ -44,7 +44,7 @@ function collectIdentityKeyFindings(value: unknown, path = "$", findings: string
 }
 
 function isSlugOrPathIdentityKey(key: string, path: string): boolean {
-  if (key === "path" && /^\$\[\d+\]\.args\.path$/.test(path)) return false;
+  if (key === "path" && /(?:^|\.)steps(?:\[\d+\]|\.[\d]+)\.args\.path$/.test(path)) return false;
   return /^(?:skill|skillSlug|generatedSkillPath|generatedPath|skillPath|path)$/i.test(key);
 }
 
@@ -145,13 +145,18 @@ describe("generateAutoSkills", () => {
     const skillContent = readFileSync(skillPath, "utf-8");
     expect(skillContent).toContain("Check Moltbook notifications");
     expect(skillContent).toContain("## Workflow");
-    expect(skillContent).toContain("## Telemetry");
-    expect(skillContent).toContain("openclaw hybrid-mem skills record check-moltbook-notifications");
+    expect(skillContent).toContain("references/telemetry.md");
+    expect(skillContent).not.toContain("## Telemetry");
     expect(skillContent).toContain(proc.id);
+    const telemetryMd = readFileSync(
+      join(skillsDir, "check-moltbook-notifications", "references", "telemetry.md"),
+      "utf-8",
+    );
+    expect(telemetryMd).toContain("openclaw hybrid-mem skills record check-moltbook-notifications");
 
-    const recipeContent = JSON.parse(readFileSync(recipePath, "utf-8"));
-    expect(Array.isArray(recipeContent)).toBe(true);
-    expect(recipeContent).toHaveLength(3);
+    const recipeContent = JSON.parse(readFileSync(recipePath, "utf-8")) as { steps?: unknown[] };
+    expect(Array.isArray(recipeContent.steps)).toBe(true);
+    expect(recipeContent.steps).toHaveLength(3);
     const verification = JSON.parse(
       readFileSync(join(skillsDir, "check-moltbook-notifications", "verification.json"), "utf-8"),
     ) as { lifecycleState?: string; telemetryCommand?: string; validatorScore?: number };
@@ -215,12 +220,16 @@ describe("generateAutoSkills", () => {
     const verification = JSON.parse(readFileSync(join(collidedDir, "verification.json"), "utf-8"));
     const proposalMetadata = JSON.parse(readFileSync(join(collidedDir, "proposal-metadata.json"), "utf-8"));
 
-    expect(skillContent).toContain("name: validate-colliding-release-report-1");
-    expect(skillContent).toContain("# Validate Colliding Release Report 1");
+    expect(skillContent).toContain('name: "validating-colliding-release-report-1"');
+    expect(skillContent).toContain("# Validating Colliding Release Report 1");
     expect(verification).toMatchObject({
-      skill: "validate-colliding-release-report-1",
+      skill: "validating-colliding-release-report-1",
       generatedSkillPath: join(skillsDir, "validate-colliding-release-report-1"),
+      telemetryCommand: "openclaw hybrid-mem skills record validate-colliding-release-report-1",
     });
+    const telemetryMd = readFileSync(join(collidedDir, "references", "telemetry.md"), "utf-8");
+    expect(telemetryMd).toContain("openclaw hybrid-mem skills record validate-colliding-release-report-1");
+    expect(telemetryMd).not.toContain("openclaw hybrid-mem skills record validate-colliding-release-report\n");
     expect(proposalMetadata.generated_skill_path).toBe(join(skillsDir, "validate-colliding-release-report-1"));
 
     const originalSlug = "validate-colliding-release-report";
@@ -232,6 +241,76 @@ describe("generateAutoSkills", () => {
     ]) {
       expectSidecarHasNoStaleIdentity(sidecarPath, originalSlug, originalPath);
     }
+  });
+
+  it("uses the representative collision-resolved slug when merging related procedures", () => {
+    const representativeSlug = "validate-collision-prone-release-report-with-objective-check";
+    mkdirSync(join(skillsDir, representativeSlug), { recursive: true });
+    writeFileSync(join(skillsDir, representativeSlug, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
+    writeFileSync(
+      join(skillsDir, representativeSlug, "SKILL.md"),
+      `---
+name: unrelated-existing-skill
+description: Existing skill occupying the representative base slug only.
+---
+
+# Existing Skill
+
+## Workflow
+1. Keep the existing skill untouched.
+`,
+      "utf-8",
+    );
+
+    const representative = db.upsertProcedure({
+      taskPattern: "Validate collision-prone release report with objective checks",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Read release status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run objective tests" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify release report" },
+      ]),
+      procedureType: "positive",
+      successCount: 4,
+      confidence: 0.9,
+      sourceSessionId: "collision-rep-a",
+    });
+    db.recordProcedureSuccess(representative.id, undefined, "collision-rep-b");
+    db.recordProcedureSuccess(representative.id, undefined, "collision-rep-c");
+
+    const related = db.upsertProcedure({
+      taskPattern: "Validate collision-prone release report with objective checks daily",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Read release status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run objective tests" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify release report" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.86,
+      sourceSessionId: "collision-related-a",
+    });
+    recordDistinctSuccesses(related.id);
+
+    const result = generateAutoSkills(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        apply: true,
+        policy: "auto-safe",
+        maxPerRun: 10,
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    expect(result.generated).toBe(1);
+    const mergedDir = join(skillsDir, `${representativeSlug}-1`);
+    expect(existsSync(join(mergedDir, "SKILL.md"))).toBe(true);
+    const verification = JSON.parse(readFileSync(join(mergedDir, "verification.json"), "utf-8"));
+    expect(verification.relatedProcedures).toEqual([related.id]);
+    expect(verification.sourceProcedureIds).toEqual([representative.id, related.id]);
+    expect(result.decisions?.find((d) => d.procedureId === related.id)?.reasons).toContain("cluster_merged_into");
   });
 
   it("preserves legacy skill directories that lack completion markers when resolving slug collisions", () => {
@@ -612,6 +691,41 @@ description: Existing legacy skill created before completion markers.
     expect(existsSync(join(skillsDir, "validate-single-procedure-report", "SKILL.md"))).toBe(false);
   });
 
+  it("single procedure generation does not load the full ready-procedure queue for clustering", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Validate focused single procedure generation",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "status.json" }, summary: "Check status" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.9,
+      sourceSessionId: "single-no-full-queue-1",
+    });
+    recordDistinctSuccesses(proc.id);
+    const queueSpy = vi.spyOn(db, "getProceduresReadyForSkill");
+
+    const result = generateAutoSkillForProcedure(
+      db,
+      {
+        skillsAutoPath: skillsDir,
+        validationThreshold: 3,
+        skillTTLDays: 30,
+        procedureId: proc.id,
+        apply: true,
+        policy: "auto-safe",
+      },
+      { info: () => {}, warn: () => {} },
+    );
+
+    queueSpy.mockRestore();
+
+    expect(result).toMatchObject({ ok: true });
+    expect(queueSpy).not.toHaveBeenCalled();
+  });
+
   it("single procedure legacy non-dry-run apply defaults to auto-safe and writes draft artifacts", () => {
     const proc = db.upsertProcedure({
       taskPattern: "Validate single apply report",
@@ -698,7 +812,7 @@ description: Existing legacy skill created before completion markers.
     expect(existsSync(join(skillsDir, "validate-raced-draft-allocation", "SKILL.md"))).toBe(false);
     expect(existsSync(join(skillsDir, "validate-raced-draft-allocation-1", "SKILL.md"))).toBe(true);
     expect(readFileSync(join(skillsDir, "validate-raced-draft-allocation-1", "verification.json"), "utf-8")).toContain(
-      '"skill": "validate-raced-draft-allocation-1"',
+      '"skill": "validating-raced-draft-allocation-1"',
     );
   });
 
@@ -806,7 +920,7 @@ description: Existing legacy skill created before completion markers.
     });
     recordDistinctSuccesses(proc.id);
     const retry = db.upsertProcedure({
-      taskPattern: "Validate rollback batch behavior",
+      taskPattern: "Audit nightly backup restore checklist with objective gates",
       recipeJson: JSON.stringify([
         { tool: "read", args: { path: "status.json" }, summary: "Check status" },
         {
@@ -850,7 +964,9 @@ description: Existing legacy skill created before completion markers.
     readySpy.mockRestore();
 
     expect(result.generated).toBe(1);
-    expect(result.paths).toEqual([join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md")]);
+    expect(result.paths).toEqual([
+      join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates", "SKILL.md"),
+    ]);
     expect(result.skipped).toBe(1);
     expect(result.summary).toMatchObject({
       eligible: 2,
@@ -864,10 +980,12 @@ description: Existing legacy skill created before completion markers.
     });
     expect(result.decisions?.find((decision) => decision.procedureId === retry.id)).toMatchObject({
       action: "promoted-to-draft",
-      skillPath: join(skillsDir, "validate-rollback-batch-behavior"),
+      skillPath: join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates"),
     });
-    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior-1"))).toBe(false);
+    expect(existsSync(join(skillsDir, "audit-nightly-backup-restore-checklist-with-objective-gates", "SKILL.md"))).toBe(
+      true,
+    );
+    expect(existsSync(join(skillsDir, "validate-rollback-batch-behavior"))).toBe(false);
     expect(db.getProcedureById(proc.id)?.promotedToSkill).toBe(0);
     expect(db.getProcedureById(retry.id)?.promotedToSkill).toBe(1);
   });

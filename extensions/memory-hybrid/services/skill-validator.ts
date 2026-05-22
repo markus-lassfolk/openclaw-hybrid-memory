@@ -17,11 +17,18 @@
 import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
 import {
+  MAX_SKILL_DESCRIPTION_CHARS,
+  MAX_SKILL_FILE_BYTES,
+  MAX_SKILL_FILE_BYTES_SAFE,
+  utf8ByteLength,
+} from "../config/skill-size-limits.js";
+import {
   CATEGORY_FRONTMATTER_KEYS,
   MAX_SKILL_LINES,
   getSectionTaxonomy,
   type SectionTaxonomyOverrides,
 } from "../config/skill-sections.js";
+import { parseSkillFrontmatterKeys } from "./skill-frontmatter.js";
 export {
   CATEGORY_FRONTMATTER_KEYS,
   DEFAULT_REQUIRED_SECTIONS,
@@ -266,12 +273,46 @@ export class SkillValidator {
    */
   validate(skillContent: string): ValidationResult {
     const violations: string[] = [];
+    const rawBytes = utf8ByteLength(skillContent);
+    if (rawBytes > MAX_SKILL_FILE_BYTES) {
+      return {
+        valid: false,
+        violations: [
+          `Skill exceeds OpenClaw loader byte limit (${rawBytes} > ${MAX_SKILL_FILE_BYTES}). Shrink SKILL.md or move deterministic detail into bounded sidecars.`,
+        ],
+      };
+    }
+
     const normalizedSkillContent = stripLeadingHtmlComments(skillContent);
     const lines = normalizedSkillContent.split("\n");
 
     if (lines.length > MAX_SKILL_LINES) {
       violations.push(
         `Skill exceeds ${MAX_SKILL_LINES} lines (${lines.length}). Summarize logs/transcripts into workflow phases and checklists.`,
+      );
+    }
+
+    const skillBytes = Buffer.byteLength(normalizedSkillContent, "utf8");
+    if (skillBytes > MAX_SKILL_FILE_BYTES_SAFE) {
+      violations.push(
+        `Skill exceeds ${MAX_SKILL_FILE_BYTES_SAFE} bytes (${skillBytes}). Use progressive disclosure and bounded sidecars.`,
+      );
+    }
+
+    if (/\*\*\w+\*\*\s*\{/.test(normalizedSkillContent)) {
+      violations.push("Legacy raw tool-call dump format detected (**tool** {json}); summarize into workflow phases.");
+    }
+
+    if (/\b[A-Za-z]:\\[^\s/]+/.test(normalizedSkillContent) || /\b[A-Za-z]:\\/.test(normalizedSkillContent)) {
+      violations.push("Windows-style paths are not allowed; use forward-slash paths only.");
+    }
+
+    const bodyLower = normalizedSkillContent.toLowerCase();
+    const usesProcedure = /\bprocedure\b/.test(bodyLower);
+    const usesWorkflow = /\bworkflow\b/.test(bodyLower);
+    if (usesProcedure && usesWorkflow && /\bthis procedure\b|\bthe procedure\b/i.test(normalizedSkillContent)) {
+      violations.push(
+        "Mixed procedure/workflow terminology: prefer workflow (user-facing) and recipe (machine-readable sidecar).",
       );
     }
 
@@ -298,10 +339,19 @@ export class SkillValidator {
       for (const req of ["name", "description"] as const) {
         if (!keys.has(req)) violations.push(`Frontmatter missing required field: ${req}`);
       }
-      const hasCategory = CATEGORY_FRONTMATTER_KEYS.some((key) => keys.has(key));
+      const desc = keys.get("description") ?? "";
+      if (desc.length > MAX_SKILL_DESCRIPTION_CHARS) {
+        violations.push(`Frontmatter description exceeds ${MAX_SKILL_DESCRIPTION_CHARS} characters.`);
+      }
+      const hasCategory =
+        CATEGORY_FRONTMATTER_KEYS.some((key) => keys.has(key)) ||
+        keys.has("metadata.category") ||
+        keys.has("metadata.tags") ||
+        keys.has("metadata.type");
       if (!hasCategory) violations.push("Frontmatter missing required category (or equivalent: tags/type/kind).");
       const hasProvenance =
         keys.has("provenance") ||
+        keys.has("metadata.provenance") ||
         keys.has("generated_from") ||
         keys.has("generatedfrom") ||
         keys.has("source") ||
@@ -562,6 +612,8 @@ function unquoteFrontmatterValue(value: string | undefined): string | undefined 
 }
 
 function getFrontmatterCategory(keys: Map<string, string>): string | undefined {
+  const metaCategory = keys.get("metadata.category");
+  if (metaCategory) return unquoteFrontmatterValue(metaCategory);
   for (const key of CATEGORY_FRONTMATTER_KEYS) {
     const value = keys.get(key);
     if (value) return unquoteFrontmatterValue(value);
@@ -574,24 +626,24 @@ function parseFrontmatter(lines: string[]): {
   keys: Map<string, string>;
   endLine: number;
 } {
-  const keys = new Map<string, string>();
   const originalContent = lines.join("\n");
   const body = stripLeadingHtmlComments(originalContent);
   const bodyLines = body.split("\n");
   const strippedLineCount = originalContent.split("\n").length - bodyLines.length;
-  let i = 0;
-  if (bodyLines[i]?.trim() !== "---") return { present: false, keys, endLine: -1 };
-  i++;
-  for (; i < bodyLines.length; i++) {
-    const line = bodyLines[i] ?? "";
-    if (line.trim() === "---") return { present: true, keys, endLine: i + 1 + strippedLineCount };
-    const match = line.match(/^\s*([A-Za-z0-9_-]+)\s*:\s*(.*)\s*$/);
-    if (!match) continue;
-    const key = match[1].toLowerCase();
-    const value = match[2];
-    if (!keys.has(key)) keys.set(key, value);
+  if (bodyLines[0]?.trim() !== "---") {
+    return { present: false, keys: new Map(), endLine: -1 };
   }
-  return { present: false, keys, endLine: -1 };
+  let endIdx = -1;
+  for (let i = 1; i < bodyLines.length; i++) {
+    if (bodyLines[i]?.trim() === "---") {
+      endIdx = i;
+      break;
+    }
+  }
+  if (endIdx < 0) return { present: false, keys: new Map(), endLine: -1 };
+  const block = bodyLines.slice(1, endIdx).join("\n");
+  const keys = parseSkillFrontmatterKeys(block);
+  return { present: true, keys, endLine: endIdx + 1 + strippedLineCount };
 }
 
 function looksLikeToolOrJsonBlob(trimmed: string): boolean {

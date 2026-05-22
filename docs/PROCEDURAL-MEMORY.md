@@ -64,6 +64,14 @@ openclaw hybrid-mem generate-auto-skills --dry-run
 
 Generated skills live under `skills/auto/` (or your `procedures.skillsAutoPath`). To promote one to a permanent skill, move the folder out of `auto/` (e.g. to `skills/` or a custom path).
 
+**Size and quality gates (issues #1537–#1548):**
+
+- `SKILL.md` is capped at **256 KB** (OpenClaw loader default); the generator targets **200 KB** with shrink + optional `references/workflow.md` offload.
+- `recipe.json` is summarized and capped at **64 KB** (no raw marathon traces).
+- Frontmatter uses Skill Creator layout: `name`, `description`, and `metadata.{category,provenance,generated_at}`.
+- Deterministic evals are written to `evals/results.json`; promotion defers on failed trigger/functional/actionability gates.
+- Legacy oversized or transcript-style skills: `openclaw hybrid-mem skills audit [--json] [--quarantine]`.
+
 ### Generated skill telemetry
 
 ```bash
@@ -74,6 +82,8 @@ openclaw hybrid-mem skills reset moltbook-check --reason "agent prompt updated; 
 openclaw hybrid-mem skills reject moltbook-check --reason "superseded by skill-xyz"
 openclaw hybrid-mem skills doctor                 # scan for skills missing on disk
 openclaw hybrid-mem skills doctor --fix           # mark missing skills as uninstalled
+openclaw hybrid-mem skills audit --json           # scan skills/auto for oversized or suspicious drafts
+openclaw hybrid-mem skills audit --quarantine     # move unsafe/oversized auto-skills aside (recoverable)
 ```
 
 Generated skills start in the `experimental` lifecycle state. Each activation or near-miss can be recorded with `openclaw hybrid-mem skills record <skill-name> ...`, and a specific activation can later be marked as a false-positive with `openclaw hybrid-mem skills correct <activation-id> --reason "..."`.
@@ -94,6 +104,23 @@ When ranking promotion candidates and generating verification telemetry:
 - **Rules/preferences** contribution is capped so repeated rules cannot dominate the signal.
 - **Risk** is applied as a multiplicative score factor (high ≈ `0.35x`, medium ≈ `0.65x`, low `1x`) rather than a small additive nudge.
 - Generated-skill demotion uses the same risk tier via `effectiveDemoteThresholdsForRisk`.
+- **Concreteness** and **reusability** (distinct sessions) are additive score terms; deferrals include `procedure_too_obvious` (single obvious read/`git status`-class steps) and `low_concreteness` (thin task/recipe).
+- **`auto-safe`** additionally requires ≥1 manual workflow request **or** ≥3 distinct source sessions (`insufficient_auto_safe_evidence`).
+- Near-duplicate procedures are **clustered** (task-token Jaccard ≥ 0.6); non-representatives defer with `cluster_merged_into` and land in `verification.json` as `relatedProcedures`.
+
+### Skill Creator alignment (v2)
+
+Generated `SKILL.md` bodies are tightened (~6 sections): **Do Not Use When**, **Workflow** (risk-tiered freedom + checklist + plan→validate→execute when needed), **Verification**, **Examples** (concrete input/output), optional **Anti-patterns**. Triggering lives in a pushy, multi-paraphrase `description` (≤1024 chars); `name` uses gerund form (≤64 chars, no `anthropic`/`claude`).
+
+Sidecars:
+
+| Artifact | Purpose |
+|----------|---------|
+| `evals/trigger-eval.json` | 8 should-trigger + 8 should-not-trigger queries (Skill Creator schema) |
+| `evals/results.json` | Deterministic eval + replay `baselineComparison` vs historical prompts |
+| `references/telemetry.md` | Operator telemetry / rollback (not in `SKILL.md`) |
+| `references/workflow.md` | Progressive disclosure when over byte budget |
+| `scripts/replay.sh` | Deterministic exec replay when recipe has repeatable commands |
 
 See [SKILL-PIPELINES.md](./SKILL-PIPELINES.md) for the full pipeline architecture and operator playbooks.
 

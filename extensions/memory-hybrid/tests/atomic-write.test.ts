@@ -17,6 +17,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -143,6 +144,17 @@ describe("atomicWriteSkillDir", () => {
     "evals/evals.json": '{"evals":[]}',
     "SKILL.md": "# My Skill\n\nContent.",
   };
+
+  it("writes executable sidecar files when requested", () => {
+    const skillDir = join(tmpDir, "exec-skill");
+    atomicWriteSkillDir(
+      skillDir,
+      { ...DRAFT, "scripts/replay.sh": "#!/usr/bin/env bash\necho ok\n" },
+      { executableRelativePaths: ["scripts/replay.sh"] },
+    );
+    const mode = statSync(join(skillDir, "scripts/replay.sh")).mode & 0o777;
+    expect(mode).toBe(0o755);
+  });
 
   it("writes all files to the skill directory", () => {
     const skillDir = join(tmpDir, "my-skill");

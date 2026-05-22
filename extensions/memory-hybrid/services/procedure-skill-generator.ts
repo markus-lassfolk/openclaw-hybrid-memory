@@ -2,25 +2,30 @@
  * Procedural memory: generate verified draft SKILL.md + recipe.json from validated procedures.
  */
 
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
+import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limits.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
-import { SKILL_COMPLETE_MARKER, atomicWriteSkillDir } from "../utils/atomic-write.js";
+import { atomicWriteSkillDir, SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
-import { titleCase } from "../utils/text.js";
+import { stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
+import { redactAutopilotText } from "./pending-autopilot/redaction.js";
+import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
 import {
+  createProcedurePromotionDecision,
+  createProcedurePromotionItem,
+  evaluateProcedureForPromotion,
   PROCEDURE_PROMOTION_POLICY_VERSION,
   type ProcedurePromotionDuplicateCandidate,
   type ProcedurePromotionEvidence,
   type ProcedurePromotionPolicy,
-  createProcedurePromotionDecision,
-  createProcedurePromotionItem,
-  evaluateProcedureForPromotion,
   parseProcedurePromotionPolicy,
 } from "./procedure-promotion-policy.js";
+import { parseSkillFrontmatterKeys } from "./skill-frontmatter.js";
+import { toGerundSkillName } from "./skill-name-validator.js";
 
 const MAX_SKILLS_PER_RUN = 10;
 const EVIDENCE_STOP_WORDS = new Set(["with", "from", "that", "this", "workflow", "procedure", "report"]);
@@ -145,6 +150,8 @@ function rebaseDraftSlug(
     verificationJson: string;
     evalsJson: string;
     proposalMetadataJson: string;
+    triggerEvalJson?: string;
+    referenceTelemetryMd?: string | null;
   },
   resolvedSlug: string,
   generatedSkillPath: string,
@@ -154,43 +161,83 @@ function rebaseDraftSlug(
   verificationJson: string;
   evalsJson: string;
   proposalMetadataJson: string;
+  triggerEvalJson?: string;
+  referenceTelemetryMd?: string | null;
 } {
   const verification = JSON.parse(draft.verificationJson) as {
     skill?: unknown;
     generatedSkillPath?: unknown;
     telemetryCommand?: unknown;
+    relatedProcedures?: unknown;
   };
   const proposalMetadata = JSON.parse(draft.proposalMetadataJson) as {
     generated_skill_path?: unknown;
   };
-  const originalSlug =
-    typeof verification.skill === "string" && verification.skill.length > 0 ? verification.skill : resolvedSlug;
-  verification.skill = resolvedSlug;
+  const originalGerundName =
+    typeof verification.skill === "string" && verification.skill.length > 0
+      ? verification.skill
+      : toGerundSkillName(resolvedSlug);
+  const resolvedSkillName = toGerundSkillName(resolvedSlug);
+  const originalTelemetryCommand =
+    typeof verification.telemetryCommand === "string" && verification.telemetryCommand.length > 0
+      ? verification.telemetryCommand
+      : `openclaw hybrid-mem skills record ${resolvedSlug}`;
+  const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
+  verification.skill = resolvedSkillName;
   verification.generatedSkillPath = generatedSkillPath;
   proposalMetadata.generated_skill_path = generatedSkillPath;
-  verification.telemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
+  verification.telemetryCommand = newTelemetryCommand;
 
   // Match the H1 heading in either its title-cased form (e.g. "# My Skill") or
   // its raw slug form (e.g. "# my-skill") so that non-standard headings are also
   // rebased correctly after a slug collision.
-  const h1Pattern = new RegExp(`^# (?:${escapeRegExp(titleCase(originalSlug))}|${escapeRegExp(originalSlug)})$`, "m");
-  const originalTelemetryCommand = `openclaw hybrid-mem skills record ${originalSlug}`;
-  const newTelemetryCommand = `openclaw hybrid-mem skills record ${resolvedSlug}`;
+  const h1Pattern = new RegExp(
+    `^# (?:${escapeRegExp(titleCase(originalGerundName))}|${escapeRegExp(originalGerundName.replace(/-/g, " "))})$`,
+    "m",
+  );
+  const namePattern = new RegExp(`^(name:\\s*)(["']?)${escapeRegExp(originalGerundName)}\\2\\s*$`, "m");
   const skillMd = draft.skillMd
-    .replace(new RegExp(`^name: ${escapeRegExp(originalSlug)}$`, "m"), `name: ${resolvedSlug}`)
-    .replace(h1Pattern, `# ${titleCase(resolvedSlug)}`)
+    .replace(namePattern, `name: "${resolvedSkillName}"`)
+    .replace(h1Pattern, `# ${titleCase(resolvedSkillName)}`)
     .replace(new RegExp(escapeRegExp(originalTelemetryCommand), "g"), newTelemetryCommand);
+
+  let triggerEvalJson = draft.triggerEvalJson;
+  if (triggerEvalJson && originalGerundName !== resolvedSkillName) {
+    const triggerEval = JSON.parse(triggerEvalJson) as { skill_name?: unknown };
+    if (triggerEval.skill_name === originalGerundName) {
+      triggerEval.skill_name = resolvedSkillName;
+      triggerEvalJson = `${JSON.stringify(triggerEval, null, 2)}\n`;
+    }
+  }
+
+  let referenceTelemetryMd = draft.referenceTelemetryMd;
+  if (referenceTelemetryMd && originalTelemetryCommand !== newTelemetryCommand) {
+    referenceTelemetryMd = referenceTelemetryMd.replace(
+      new RegExp(escapeRegExp(originalTelemetryCommand), "g"),
+      newTelemetryCommand,
+    );
+  }
 
   return {
     ...draft,
     skillMd,
     verificationJson: `${JSON.stringify(verification, null, 2)}\n`,
     proposalMetadataJson: `${JSON.stringify(proposalMetadata, null, 2)}\n`,
+    triggerEvalJson,
+    referenceTelemetryMd,
   };
 }
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function promotionWriteFailureReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/OpenClaw limit|exceeds OpenClaw loader byte limit|refusing to write oversized/i.test(message)) {
+    return "skill_exceeds_openclaw_limit";
+  }
+  return "write_failed";
 }
 
 type GenerateAutoSkillsOptions = {
@@ -235,11 +282,39 @@ export function generateAutoSkills(
   let failedEval = 0;
   const reservedSlugs = new Set<string>();
   const inRunSkillCandidates: Array<{ slug: string; taskPattern: string }> = [];
+  const promotionItems = procedures.map((proc) => createProcedurePromotionItem(proc, policy));
+  const clusters = clusterProcedureItems(promotionItems);
+  const clusterDeferMap = buildClusterDeferMap(clusters);
+  const relatedByRepresentative = new Map<string, string[]>();
+  for (const c of clusters) {
+    if (c.relatedProcedureIds.length > 0) {
+      relatedByRepresentative.set(c.representative.procedure.id, c.relatedProcedureIds);
+    }
+  }
+  const baselineDescriptions = loadExistingSkillDescriptions(basePath);
+  const itemsByProcedureId = new Map(promotionItems.map((item) => [item.procedure.id, item]));
+  const resolvedSlugByProcedureId = new Map<string, string>();
+  const reservedSlugsForPreview = new Set<string>();
+  for (const proc of procedures) {
+    const item = itemsByProcedureId.get(proc.id)!;
+    const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugsForPreview);
+    resolvedSlugByProcedureId.set(proc.id, resolvedSlug);
+    reservedSlugsForPreview.add(resolvedSlug);
+  }
+  const clusterEligibilityOptions = {
+    skillsAutoPath: basePath,
+    validationThreshold: options.validationThreshold,
+    contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
+    bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+    baselineDescriptions,
+  };
+  const evaluatedEligibilityByProcedureId = new Map<string, boolean>();
 
   for (const proc of procedures) {
-    const item = createProcedurePromotionItem(proc, policy);
-    const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug, reservedSlugs);
+    const item = itemsByProcedureId.get(proc.id)!;
+    const resolvedSlug = resolvedSlugByProcedureId.get(proc.id)!;
     const evidence = collectProcedurePromotionEvidence(factsDb, proc);
+    const historicalPrompts = collectHistoricalSessionPrompts(factsDb, proc, evidence);
     const context = {
       runId,
       mode: dryRun ? ("dry-run" as const) : ("apply" as const),
@@ -248,6 +323,7 @@ export function generateAutoSkills(
       inputHash: item.inputHash,
       actor: { type: "system" as const, id: "generate-auto-skills" },
     };
+    const clusterMerge = clusterDeferMap.get(proc.id);
     const evaluation = evaluateProcedureForPromotion(item, policy, {
       skillsAutoPath: basePath,
       validationThreshold: options.validationThreshold,
@@ -256,8 +332,28 @@ export function generateAutoSkills(
       evidence,
       contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
       bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+      clusterDeferMap,
+      clusterRepresentativeEligible: clusterMerge
+        ? getRepresentativeEligibility(
+            evaluatedEligibilityByProcedureId,
+            resolvedSlugByProcedureId,
+            factsDb,
+            clusterMerge.representativeId,
+            procedures,
+            policy,
+            clusterEligibilityOptions,
+            [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
+            reservedSlugs,
+            clusterDeferMap,
+            relatedByRepresentative,
+          )
+        : undefined,
+      relatedProcedureIds: relatedByRepresentative.get(proc.id),
+      historicalPrompts,
+      baselineDescriptions,
     });
     const decision = createProcedurePromotionDecision(item, context, evaluation);
+    evaluatedEligibilityByProcedureId.set(proc.id, evaluation.eligible);
     const reservedCandidate = {
       slug: resolvedSlug,
       taskPattern: proc.taskPattern,
@@ -364,7 +460,7 @@ export function generateAutoSkills(
       decisions.push({
         procedureId: proc.id,
         action: "failed-validation",
-        reasons: ["write_failed"],
+        reasons: [promotionWriteFailureReason(err)],
         skillPath: evaluation.metadata.generatedSkillPath,
         inputHash: item.inputHash,
         policyVersion: PROCEDURE_PROMOTION_POLICY_VERSION,
@@ -380,6 +476,16 @@ export function generateAutoSkills(
     }
   }
 
+  const defersByReason: Record<string, number> = {};
+  for (const d of decisions) {
+    if (d.action === "deferred-for-human" || d.action === "failed-validation") {
+      for (const r of d.reasons ?? []) {
+        defersByReason[r] = (defersByReason[r] ?? 0) + 1;
+      }
+    }
+  }
+  const clustersMerged = clusters.reduce((acc, c) => acc + c.relatedProcedureIds.length, 0);
+
   return {
     generated: paths.length,
     skipped,
@@ -394,6 +500,8 @@ export function generateAutoSkills(
       deferred,
       failedValidation,
       failedEval,
+      clustersMerged,
+      defersByReason,
     },
     decisions,
   };
@@ -439,6 +547,30 @@ export function generateAutoSkillForProcedure(
   const item = createProcedurePromotionItem(proc, policy);
   const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
   const evidence = collectProcedurePromotionEvidence(factsDb, proc);
+  const baselineDescriptions = loadExistingSkillDescriptions(basePath);
+  // Single-procedure promotion should evaluate only the requested procedure.
+  // Batch promotion performs cross-procedure clustering; doing the same here
+  // needlessly loads and clusters up to 200 unrelated ready procedures.
+  const readyProcedures = [proc];
+  const promotionItems = readyProcedures.map((p) => createProcedurePromotionItem(p, policy));
+  const itemsByProcedureId = new Map(promotionItems.map((item) => [item.procedure.id, item]));
+  const resolvedSlugByProcedureId = new Map<string, string>();
+  const reservedSlugsForPreview = new Set<string>();
+  for (const readyProc of readyProcedures) {
+    const readyItem = itemsByProcedureId.get(readyProc.id)!;
+    const readyResolvedSlug = ensureUniqueSlug(basePath, readyItem.payload.skillSlug, reservedSlugsForPreview);
+    resolvedSlugByProcedureId.set(readyProc.id, readyResolvedSlug);
+    reservedSlugsForPreview.add(readyResolvedSlug);
+  }
+  const clusters = clusterProcedureItems(promotionItems);
+  const clusterDeferMap = buildClusterDeferMap(clusters);
+  const relatedByRepresentative = new Map<string, string[]>();
+  for (const c of clusters) {
+    if (c.relatedProcedureIds.length > 0) {
+      relatedByRepresentative.set(c.representative.procedure.id, c.relatedProcedureIds);
+    }
+  }
+  const clusterMerge = clusterDeferMap.get(proc.id);
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
@@ -447,6 +579,29 @@ export function generateAutoSkillForProcedure(
     contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
     inRunSkillCandidates: options.inRunSkillCandidates ?? [],
     bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+    clusterDeferMap,
+    clusterRepresentativeEligible: clusterMerge
+      ? evaluateClusterRepresentativeEligible(
+          factsDb,
+          clusterMerge.representativeId,
+          readyProcedures,
+          policy,
+          {
+            skillsAutoPath: basePath,
+            validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
+            contextSpecificTaskPatterns: options.promotionContextSpecificPatterns,
+            bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+            baselineDescriptions,
+          },
+          [...(options.inRunSkillCandidates ?? [])],
+          reservedSlugsForPreview,
+          resolvedSlugByProcedureId,
+          clusterDeferMap,
+          relatedByRepresentative,
+        )
+      : undefined,
+    historicalPrompts: collectHistoricalSessionPrompts(factsDb, proc, evidence),
+    baselineDescriptions,
   });
   if (!evaluation.eligible || !evaluation.draft || evaluation.metadata.requiresHumanApproval) {
     const reasons =
@@ -490,7 +645,12 @@ export function generateAutoSkillForProcedure(
       subsystem: "procedure-skill-generator",
       operation: "promote-write-draft",
     });
-    return { ok: false, reason: "write-failed", error: String(err) };
+    return {
+      ok: false,
+      reason: "write-failed",
+      error: String(err),
+      reasons: [promotionWriteFailureReason(err)],
+    };
   }
 
   const allocatedSkillPath = join(allocated.skillDir, "SKILL.md");
@@ -590,18 +750,181 @@ function writeDraftSkill(
     verificationJson: string;
     evalsJson: string;
     proposalMetadataJson: string;
+    referenceWorkflowMd?: string | null;
+    referenceTelemetryMd?: string | null;
+    triggerEvalJson?: string;
+    replayScript?: string | null;
+    evalsResultsJson?: string;
   },
 ): void {
-  // Write all sidecar files atomically (temp dir → rename). SKILL.md is
-  // written last among content files so it is the final content write before
-  // the completion marker.
-  atomicWriteSkillDir(skillDir, {
+  if (utf8ByteLength(draft.skillMd) > MAX_SKILL_FILE_BYTES) {
+    throw new Error(
+      `Refusing to write SKILL.md over OpenClaw limit (${utf8ByteLength(draft.skillMd)} > ${MAX_SKILL_FILE_BYTES} bytes)`,
+    );
+  }
+  const files: Record<string, string> = {
     "recipe.json": draft.recipeJson,
     "verification.json": draft.verificationJson,
     "proposal-metadata.json": draft.proposalMetadataJson,
     "evals/evals.json": draft.evalsJson,
     "SKILL.md": draft.skillMd,
+  };
+  if (draft.evalsResultsJson) {
+    files["evals/results.json"] = draft.evalsResultsJson;
+  }
+  if (draft.referenceWorkflowMd) {
+    files["references/workflow.md"] = draft.referenceWorkflowMd;
+  }
+  if (draft.referenceTelemetryMd) {
+    files["references/telemetry.md"] = draft.referenceTelemetryMd;
+  }
+  if (draft.triggerEvalJson) {
+    files["evals/trigger-eval.json"] = draft.triggerEvalJson;
+  }
+  const executableRelativePaths: string[] = [];
+  if (draft.replayScript) {
+    files["scripts/replay.sh"] = draft.replayScript;
+    executableRelativePaths.push("scripts/replay.sh");
+  }
+  atomicWriteSkillDir(skillDir, files, { executableRelativePaths });
+}
+
+function isActiveFactForReplay(fact: MemoryEntry | null): fact is MemoryEntry {
+  if (!fact?.text?.trim()) return false;
+  if (fact.supersededAt != null) return false;
+  const now = Math.floor(Date.now() / 1000);
+  if (fact.expiresAt != null && fact.expiresAt <= now) return false;
+  return true;
+}
+
+/** Return the representative's known eligibility, or preview it with current collision state. */
+function getRepresentativeEligibility(
+  evaluatedEligibilityByProcedureId: ReadonlyMap<string, boolean>,
+  resolvedSlugByProcedureId: ReadonlyMap<string, string>,
+  factsDb: FactsDB,
+  representativeId: string,
+  procedures: ProcedureEntry[],
+  policy: ProcedurePromotionPolicy,
+  options: {
+    skillsAutoPath: string;
+    validationThreshold: number;
+    contextSpecificTaskPatterns?: readonly string[];
+    bypassDuplicateSkillCache?: boolean;
+    baselineDescriptions: string[];
+  },
+  inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  reservedSlugs: ReadonlySet<string>,
+  clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
+  relatedByRepresentative: Map<string, string[]>,
+): boolean | undefined {
+  const evaluated = evaluatedEligibilityByProcedureId.get(representativeId);
+  if (evaluated !== undefined) return evaluated;
+  return evaluateClusterRepresentativeEligible(
+    factsDb,
+    representativeId,
+    procedures,
+    policy,
+    options,
+    inRunSkillCandidates,
+    reservedSlugs,
+    resolvedSlugByProcedureId,
+    clusterDeferMap,
+    relatedByRepresentative,
+  );
+}
+
+/** Re-evaluate representative eligibility with the current in-run duplicate set. */
+function evaluateClusterRepresentativeEligible(
+  factsDb: FactsDB,
+  representativeId: string,
+  procedures: ProcedureEntry[],
+  policy: ProcedurePromotionPolicy,
+  options: {
+    skillsAutoPath: string;
+    validationThreshold: number;
+    contextSpecificTaskPatterns?: readonly string[];
+    bypassDuplicateSkillCache?: boolean;
+    baselineDescriptions: string[];
+  },
+  inRunSkillCandidates: Array<{ slug: string; taskPattern: string }>,
+  reservedSlugs: ReadonlySet<string>,
+  resolvedSlugByProcedureId: ReadonlyMap<string, string>,
+  _clusterDeferMap: Map<string, { representativeId: string; slug: string }>,
+  relatedByRepresentative: Map<string, string[]>,
+): boolean | undefined {
+  const repProc = procedures.find((p) => p.id === representativeId);
+  if (!repProc) return undefined;
+  const item = createProcedurePromotionItem(repProc, policy);
+  const resolvedSlug =
+    resolvedSlugByProcedureId.get(representativeId) ??
+    ensureUniqueSlug(options.skillsAutoPath, item.payload.skillSlug, reservedSlugs);
+  const evidence = collectProcedurePromotionEvidence(factsDb, repProc);
+  const evaluation = evaluateProcedureForPromotion(item, policy, {
+    skillsAutoPath: options.skillsAutoPath,
+    validationThreshold: options.validationThreshold,
+    resolvedSlug,
+    evidence,
+    contextSpecificTaskPatterns: options.contextSpecificTaskPatterns,
+    bypassDuplicateSkillCache: options.bypassDuplicateSkillCache,
+    inRunSkillCandidates,
+    clusterDeferMap: undefined,
+    clusterRepresentativeEligible: undefined,
+    relatedProcedureIds: relatedByRepresentative.get(representativeId),
+    historicalPrompts: collectHistoricalSessionPrompts(factsDb, repProc, evidence),
+    baselineDescriptions: options.baselineDescriptions,
   });
+  return evaluation.eligible;
+}
+
+function loadExistingSkillDescriptions(skillsBasePath: string): string[] {
+  const descriptions: string[] = [];
+  if (!existsSync(skillsBasePath)) return descriptions;
+  try {
+    for (const entry of readdirSync(skillsBasePath, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const skillMdPath = join(skillsBasePath, entry.name, "SKILL.md");
+      if (!existsSync(skillMdPath)) continue;
+      const raw = readFileSync(skillMdPath, "utf8");
+      const stripped = stripLeadingHtmlComments(raw);
+      const fm = stripped.match(/^---\n([\s\S]*?)\n---/);
+      if (!fm) continue;
+      const keys = parseSkillFrontmatterKeys(fm[1]);
+      const desc = keys.get("description");
+      if (desc) descriptions.push(desc);
+    }
+  } catch {
+    return descriptions;
+  }
+  return descriptions;
+}
+
+function redactHistoricalPromptForEval(text: string): string {
+  const { redacted } = redactAutopilotText(text.trim());
+  return redacted;
+}
+
+function collectHistoricalSessionPrompts(
+  factsDb: FactsDB,
+  proc: ProcedureEntry,
+  evidence: ProcedurePromotionEvidence,
+): string[] {
+  const prompts = new Set<string>();
+  prompts.add(redactHistoricalPromptForEval(proc.taskPattern));
+  for (const req of evidence.manualWorkflowRequests ?? []) {
+    const fact = factsDb.getById(req.id);
+    if (isActiveFactForReplay(fact)) {
+      prompts.add(redactHistoricalPromptForEval(fact.text));
+    }
+  }
+  const episodes = factsDb.searchEpisodes({
+    procedureId: proc.id,
+    limit: 20,
+    scopeFilter: scopeFilterForProcedure(proc),
+  });
+  for (const ep of episodes) {
+    if (ep.event?.trim()) prompts.add(redactHistoricalPromptForEval(ep.event));
+  }
+  return [...prompts].filter((p) => p.length > 0).slice(0, 20);
 }
 
 function releaseInRunReservation(

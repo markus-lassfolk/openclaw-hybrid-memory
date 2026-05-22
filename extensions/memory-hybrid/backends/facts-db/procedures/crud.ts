@@ -170,11 +170,16 @@ export function enrichProcedureWithFeedback(db: DatabaseSync, base: ProcedureEnt
     const versionTrialTotal = totalSuccess + totalFailure;
     const successRate = versionTrialTotal > 0 ? totalSuccess / versionTrialTotal : 0;
 
-    // Merge avoidance notes across all versions
+    // Merge avoidance notes across all versions (not only the latest row — failures may be on older versions)
     const allNotes = new Set<string>(base.avoidanceNotes ?? []);
-    if (versionRow.avoidance_notes) {
-      const notes = parseAvoidanceNotes(versionRow.avoidance_notes);
-      for (const n of notes) allNotes.add(n);
+    const versionNoteRows = db
+      .prepare(
+        `SELECT avoidance_notes FROM procedure_versions
+         WHERE procedure_id = ? AND avoidance_notes IS NOT NULL`,
+      )
+      .all(base.id) as Array<{ avoidance_notes: string }>;
+    for (const row of versionNoteRows) {
+      for (const n of parseAvoidanceNotes(row.avoidance_notes)) allNotes.add(n);
     }
 
     return {

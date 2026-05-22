@@ -547,6 +547,8 @@ name: ${skillName}
 description: Short description for validation.
 category: testing
 source_pattern_id: p-h1
+metadata:
+  provenance: "crystallization-test-fixture"
 ---
 
 # ${h1Title}

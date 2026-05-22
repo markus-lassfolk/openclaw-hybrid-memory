@@ -22,7 +22,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -75,10 +75,6 @@ export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
 
 /** Non-terminal statuses (still active) */
 const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set(["In progress", "Waiting", "Stalled", "Failed"]);
-
-export function isInjectableActiveTask(task: ActiveTaskEntry): boolean {
-  return ACTIVE_STATUSES.has(task.status) && !task.stale;
-}
 
 /** Structured task entry */
 export interface ActiveTaskEntry {
@@ -544,19 +540,28 @@ export function completeTask(
 // Injection summary builder
 // ---------------------------------------------------------------------------
 
+export type ActiveTaskInjectionBuildResult = {
+  text: string;
+  injectedCount: number;
+};
+
 /**
  * Build a compact injection block for the active task working memory.
- * Budget-capped to `maxTokens` (approximate — 4 chars ≈ 1 token).
+ * Budget-capped to `maxTokens` or `opts.maxChars` (approximate — 4 chars ≈ 1 token).
  */
-export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: number): string {
-  const activeTasks = tasks.filter(isInjectableActiveTask);
-  if (activeTasks.length === 0) return "";
+export function buildActiveTaskInjection(
+  tasks: ActiveTaskEntry[],
+  maxTokens: number,
+  opts?: { maxChars?: number; excludeStale?: boolean },
+): ActiveTaskInjectionBuildResult {
+  const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status) && (opts?.excludeStale === false || !t.stale));
+  if (activeTasks.length === 0) return { text: "", injectedCount: 0 };
 
   const lines: string[] = ["<active-tasks>", "In-progress tasks from ACTIVE-TASKS.md:"];
 
-  // Budget: ~4 chars per token, minus header/footer overhead
-  const charBudget = maxTokens * 4 - 60;
+  const charBudget = typeof opts?.maxChars === "number" && opts.maxChars > 0 ? opts.maxChars - 60 : maxTokens * 4 - 60;
   let used = 0;
+  let injectedCount = 0;
 
   for (const task of activeTasks) {
     const summary = [`- [${task.label}] ${task.description} (${task.status})`];
@@ -566,13 +571,13 @@ export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: nu
     if (used + block.length > charBudget) break;
     lines.push(block);
     used += block.length + 1;
+    injectedCount++;
   }
 
-  // If no tasks fit within the budget, return nothing rather than an empty wrapper
-  if (lines.length === 2) return "";
+  if (lines.length === 2) return { text: "", injectedCount: 0 };
 
   lines.push("</active-tasks>");
-  return lines.join("\n");
+  return { text: lines.join("\n"), injectedCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -593,22 +598,28 @@ export function buildActiveTaskInjection(tasks: ActiveTaskEntry[], maxTokens: nu
  * @param tasks     Active tasks (must have `stale` already computed by `detectStaleTasks`).
  * @param staleMinutes Threshold used for the warning label (e.g. 1440 → shows ">24h").
  * @param maxChars Optional character budget cap (approximate — 4 chars ≈ 1 token). If provided, truncates output.
+ * @returns Object with the rendered text and the count of tasks actually rendered.
  */
-export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinutes: number, maxChars?: number): string {
+export function buildStaleWarningInjection(
+  tasks: ActiveTaskEntry[],
+  staleMinutes: number,
+  maxChars?: number,
+): { text: string; renderedCount: number } {
   const staleTasks = tasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
   const inProgressWithSubagent = tasks.filter((t) => t.status === "In progress" && t.subagent);
 
-  if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return "";
+  if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return { text: "", renderedCount: 0 };
 
   const lines: string[] = [];
   const thresholdDisplay = formatDuration(staleMinutes);
   let usedChars = 0;
+  let renderedCount = 0;
 
   // ── Stale task warnings ──────────────────────────────────────────────────
   if (staleTasks.length > 0) {
     const header = `⚠️ STALE ACTIVE TASKS (not updated in >${thresholdDisplay}):`;
-    if (maxChars != null && usedChars + header.length > maxChars) return "";
+    if (maxChars != null && usedChars + header.length > maxChars) return { text: "", renderedCount: 0 };
     lines.push(header);
     usedChars += header.length + 1;
 
@@ -624,6 +635,7 @@ export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinute
       lines.push(line1);
       lines.push(line2);
       usedChars += blockSize;
+      renderedCount++;
     }
     const footer = "Consider: check subagent status, resume, or mark complete.";
     if (maxChars == null || usedChars + footer.length <= maxChars) {
@@ -638,7 +650,7 @@ export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinute
     const header = "💡 In-progress tasks with subagents — verify they are still running:";
     const headerSize = separator.length + header.length + 1;
     if (maxChars != null && usedChars + headerSize > maxChars) {
-      return lines.join("\n");
+      return { text: lines.join("\n"), renderedCount };
     }
     if (lines.length > 0) lines.push("");
     lines.push(header);
@@ -649,6 +661,7 @@ export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinute
       if (maxChars != null && usedChars + line.length + 1 > maxChars) break;
       lines.push(line);
       usedChars += line.length + 1;
+      renderedCount++;
     }
     const footer = "Hint: use `subagents list` to check if these subagents are still active.";
     if (maxChars == null || usedChars + footer.length <= maxChars) {
@@ -656,7 +669,7 @@ export function buildStaleWarningInjection(tasks: ActiveTaskEntry[], staleMinute
     }
   }
 
-  return lines.join("\n");
+  return { text: lines.join("\n"), renderedCount };
 }
 
 // ---------------------------------------------------------------------------
