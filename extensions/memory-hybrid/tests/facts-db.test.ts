@@ -721,6 +721,7 @@ describe("FactsDB tiering", () => {
   });
 
   it("getHotFacts filters garbage prefixes and down-scores long hot facts", () => {
+    const longHotText = "longfact ".repeat(Math.ceil(8001 / "longfact ".length));
     const clean = db.store({
       text: "Operational runbook summary",
       category: "fact",
@@ -741,7 +742,7 @@ describe("FactsDB tiering", () => {
       source: "test",
     });
     const long = db.store({
-      text: "longfact ".repeat(1200),
+      text: longHotText,
       category: "fact",
       importance: 0.8,
       entity: null,

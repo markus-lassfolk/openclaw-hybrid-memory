@@ -136,6 +136,9 @@ type HotCandidate = {
   tokens: number;
 };
 
+const HOT_GARBAGE_LONG_TEXT_THRESHOLD = 3000;
+const HOT_GARBAGE_OTHER_RECALL_THRESHOLD = 500;
+
 function isLikelyHotGarbageCandidate(
   row: Pick<TierCandidate, "text" | "summary" | "source" | "category" | "recall_count">,
 ): boolean {
@@ -145,12 +148,12 @@ function isLikelyHotGarbageCandidate(
   if (/^\[(?:hot-memories|recall|hot\/fact)\]/im.test(combined)) return true;
   if (
     row.source === "auto-capture" &&
-    combined.length > 3000 &&
+    combined.length > HOT_GARBAGE_LONG_TEXT_THRESHOLD &&
     (/think|reasoning|analyz|process/i.test(combined) || /\n\n{2,}/.test(combined))
   ) {
     return true;
   }
-  return row.category === "other" && row.recall_count > 500;
+  return row.category === "other" && row.recall_count > HOT_GARBAGE_OTHER_RECALL_THRESHOLD;
 }
 
 function normalizeTieringOptions(opts: TieringOptions): Required<TieringOptions> {
@@ -1216,7 +1219,7 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
             COALESCE(summary, '') LIKE '[Hot-memories]%' OR COALESCE(summary, '') LIKE '[recall]%' OR COALESCE(summary, '') LIKE '[hot/fact]%')
            OR
            -- Long auto-capture reasoning heuristic (>3000 chars + keywords/patterns)
-           (source = 'auto-capture' AND LENGTH(text || COALESCE(summary, '')) > 3000 AND
+           (source = 'auto-capture' AND LENGTH(text || COALESCE(summary, '')) > ${HOT_GARBAGE_LONG_TEXT_THRESHOLD} AND
             (text LIKE '%think%' OR text LIKE '%reasoning%' OR text LIKE '%analyz%' OR text LIKE '%process%' OR
              text LIKE '%' || CHAR(10) || CHAR(10) || CHAR(10) || '%' OR
              COALESCE(summary, '') LIKE '%think%' OR COALESCE(summary, '') LIKE '%reasoning%' OR
@@ -1224,7 +1227,7 @@ export function demoteHotGarbageFacts(db: DatabaseSync): number {
              COALESCE(summary, '') LIKE '%' || CHAR(10) || CHAR(10) || CHAR(10) || '%'))
            OR
            -- Staggeringly high recall counts for "other" category
-           (category = 'other' AND recall_count > 500)
+           (category = 'other' AND recall_count > ${HOT_GARBAGE_OTHER_RECALL_THRESHOLD})
          )`,
     )
     .all() as Array<{ id: string; text: string; summary: string | null; source: string; recall_count: number; access_count: number; category: string }>;
