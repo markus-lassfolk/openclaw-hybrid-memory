@@ -88,7 +88,7 @@ export async function runStoreForCli(
         });
         pointerEntry = storeResult.entry;
         // Check if store was rejected (artifact text)
-        if (pointerEntry.id === "" || storeResult.rejected) {
+        if (pointerEntry.id === "" || storeResult.skipped) {
           // Compensating delete: vault write succeeded but pointer rejected
           try {
             // biome-ignore lint/suspicious/noExplicitAny: credential type from parsed input
@@ -237,7 +237,7 @@ export async function runStoreForCli(
               });
               const newEntry = storeResult.entry;
               // Check if store was rejected (artifact text)
-              if (newEntry.id === "" || storeResult.rejected) {
+              if (newEntry.id === "" || storeResult.skipped) {
                 return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
               }
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
@@ -304,7 +304,7 @@ export async function runStoreForCli(
     });
     const entry = storeResult.entry;
     // Check if store was rejected (artifact text)
-    if (entry.id === "" || storeResult.rejected) {
+    if (entry.id === "" || storeResult.skipped) {
       return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
     }
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors

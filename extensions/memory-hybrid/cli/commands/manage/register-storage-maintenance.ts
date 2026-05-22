@@ -1066,13 +1066,19 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
         };
         if (hasGetBatch(factsDb)) {
-          let offset = 0;
           const batchSize = 500;
+          // In apply mode, keep offset at 0 because each superseded fact shrinks the result set.
+          // In dry-run mode, increment offset normally since the set is stable.
+          let offset = 0;
           while (true) {
             const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
             if (batch.length === 0) break;
             await processFactBatch(batch);
-            offset += batch.length;
+            // If applying changes, facts are removed from the result set; stay at offset 0.
+            // If dry-run, the result set is stable; advance by batch size.
+            if (!apply) {
+              offset += batchSize;
+            }
           }
         } else {
           await processFactBatch(((factsDb as unknown) as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }).getAll({ includeSuperseded: false }));

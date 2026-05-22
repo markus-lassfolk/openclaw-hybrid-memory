@@ -499,7 +499,7 @@ export async function runCapture(
                     });
                     const newEntry = storeResult.entry;
                     // Skip supersede and vector operations if store was rejected (artifact text)
-                    if (newEntry.id === "" || storeResult.rejected) {
+                    if (newEntry.id === "" || storeResult.skipped) {
                       await ctx.walRemove(walEntryId, api.logger);
                       continue;
                     }
