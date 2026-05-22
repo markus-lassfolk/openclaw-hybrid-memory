@@ -146,7 +146,16 @@ export async function replayWalEntries(
 
   for (const entry of walEntries) {
     try {
-      if (entry.operation === "store" && isSafeWalText(entry.data?.text)) {
+      if (
+        (entry.operation === "store" || entry.operation === "update") &&
+        isClassificationArtifactForStorage(entry.data?.text)
+      ) {
+        // Classification artifacts (NOOP/ADD/UPDATE/DELETE lines, JSON classifiers) cannot
+        // ever be stored into FactsDB due to assertNotClassificationArtifactForStorage guard.
+        // Skip and remove to prevent infinite retry loops.
+        skipped++;
+        await wal.remove(entry.id);
+      } else if (entry.operation === "store" && isSafeWalText(entry.data?.text)) {
         const text = safeString(entry.data.text);
         if (!text) continue;
         const source = safeString(entry.data.source) ?? "conversation";
@@ -342,15 +351,6 @@ export async function replayWalEntries(
         await wal.remove(entry.id);
       } else if ((entry.operation === "store" || entry.operation === "update") && !isSafeWalText(entry.data?.text)) {
         // Empty or whitespace-only text cannot ever be replayed into FactsDB.
-        skipped++;
-        await wal.remove(entry.id);
-      } else if (
-        (entry.operation === "store" || entry.operation === "update") &&
-        isClassificationArtifactForStorage(entry.data?.text)
-      ) {
-        // Classification artifacts (NOOP/ADD/UPDATE/DELETE lines, JSON classifiers) cannot
-        // ever be stored into FactsDB due to assertNotClassificationArtifactForStorage guard.
-        // Skip and remove to prevent infinite retry loops.
         skipped++;
         await wal.remove(entry.id);
       } else if (entry.operation === "update") {
