@@ -189,6 +189,23 @@ describe("FactsDB.store", () => {
       sqlite.prepare = originalPrepare;
     }
   });
+
+  it("does not persist entries blocked by pre-store guard", () => {
+    const before = db.count();
+    const result = db.storeWithResult({
+      text: "internal classifier artifact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "remember",
+    });
+
+    expect(result.skipped).toBe(true);
+    expect(result.entry.id).toBe("skipped");
+    expect(db.count()).toBe(before);
+  });
 });
 
 // ---------------------------------------------------------------------------
