@@ -191,8 +191,7 @@ export function classifyFdPath(path: string): string {
   if (
     /\.sqlite/i.test(lc) ||
     lc.endsWith(".db") ||
-    lc.includes(".db-") ||
-    (lc.includes("/.openclaw/") && (lc.endsWith(".db") || lc.includes(".db-")))
+    lc.includes(".db-")
   )
     return "sqlite";
   if (lc.startsWith("socket:") || lc.startsWith("[socket:")) return "socket";
@@ -338,9 +337,9 @@ export async function captureMemoryPressureSnapshot(
     const lancedbInitGen = typeof vd.getInitGeneration === "function" ? vd.getInitGeneration() : -1;
     const lancedbStoreCount = typeof vd.getStoreCount === "function" ? vd.getStoreCount() : -1;
     const lancedbOptimizing = typeof vd.isOptimizing === "function" ? vd.isOptimizing() : false;
-    const lancedbInitialized = typeof vd.isInitialized === "function" ? (vd.isInitialized() ?? false) : false;
-    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? (vd.getOpenReaderCount() ?? 0) : 0;
-    const lancedbPath = typeof vd.getPath === "function" ? (vd.getPath() ?? null) : null;
+    const lancedbInitialized = typeof vd.isInitialized === "function" ? vd.isInitialized() : false;
+    const lancedbOpenReaders = typeof vd.getOpenReaderCount === "function" ? vd.getOpenReaderCount() : 0;
+    const lancedbPath = typeof vd.getPath === "function" ? vd.getPath() : null;
 
     // Active task counts (wrapped in try-catch to prevent parseDuration throws from skipping cooldown update)
     let taskCounts = { stale: 0, active: 0 };
