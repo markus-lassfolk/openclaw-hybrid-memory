@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { type DecayClass, type MemoryCategory, type StoreConfig, TTL_DEFAULTS } from "../../config.js";
 import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../../services/dedupe-policy.js";
+import { isPromptArtifactOrReasoningTrace } from "../../services/capture-utils.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
@@ -222,7 +223,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
-  if (BLOCKED_CATEGORIES.has(entryCategory) || BLOCKED_SOURCES.has(entrySource)) {
+  if (
+    BLOCKED_CATEGORIES.has(entryCategory) ||
+    BLOCKED_SOURCES.has(entrySource) ||
+    isPromptArtifactOrReasoningTrace(entry.text)
+  ) {
     return {
       skipped: true,
       rejected: true,
