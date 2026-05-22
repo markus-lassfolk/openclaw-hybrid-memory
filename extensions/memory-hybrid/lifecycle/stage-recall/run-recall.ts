@@ -338,10 +338,13 @@ export async function runRecall(
       );
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
-        .map(
-          (r) =>
-            `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
+        .map((r) => {
+          const text = sanitizeHotFactText(r.entry.summary || r.entry.text);
+          if (!text) return "";
+          const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
+          return `- [${r.backend}/${r.entry.category}] ${clipped}`;
+        })
+        .filter(Boolean);
       const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
       const { text: recallPart } = trimBlockToBudget(recallBlock, remainingBudget);
       const inner = narrativePart + hotPart + recallPart;
