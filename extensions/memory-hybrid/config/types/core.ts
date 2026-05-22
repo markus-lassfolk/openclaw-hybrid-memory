@@ -95,7 +95,7 @@ export type PathConfig = {
  * and stale plugin generations.
  */
 export type DiagnosticsConfig = {
-  /** Enable memory pressure snapshots on critical threshold (default: true). */
+  /** Enable memory pressure snapshots on critical threshold (default: false). */
   enabled: boolean;
   /** Write JSON artifact to ~/.openclaw/diagnostics/memory-pressure/ (default: false). */
   writeArtifact: boolean;

@@ -156,7 +156,7 @@ export function parseEventLogConfig(cfg: Record<string, unknown>): EventLogConfi
 export function parseDiagnosticsConfig(cfg: Record<string, unknown>): DiagnosticsConfig {
   const raw = cfg.diagnostics as Record<string, unknown> | undefined;
   return {
-    enabled: raw?.enabled !== false,
+    enabled: raw?.enabled === true,
     writeArtifact: raw?.writeArtifact === true,
     cooldownSec: typeof raw?.cooldownSec === "number" && raw.cooldownSec >= 10 ? Math.floor(raw.cooldownSec) : 300,
     includeLinuxProcMem: raw?.includeLinuxProcMem !== false,

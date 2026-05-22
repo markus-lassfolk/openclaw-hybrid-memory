@@ -404,24 +404,3 @@ export async function captureMemoryPressureSnapshot(
     snapshotInProgress = false;
   }
 }
-
-/**
- * Format snapshot as a compact single-line string for log output.
- */
-export function formatMemoryPressureLogLine(snapshot: MemoryPressureSnapshot): string {
-  const { memory, hybridMemory, fdGroups } = snapshot;
-  const heapPct = memory.heapTotal > 0 ? ((memory.heapUsed / memory.heapTotal) * 100).toFixed(1) : "0.0";
-  const rssMb = (memory.rss / 1024 / 1024).toFixed(0);
-  const topFdGroups = fdGroups
-    .slice(0, 3)
-    .map((g) => `${g.category}=${g.count}`)
-    .join(",");
-  const recallInflight = hybridMemory.recallInFlight;
-  const staleTasks = hybridMemory.staleTaskCount;
-  const activeTasks = hybridMemory.activeTaskCount;
-  return (
-    `[memory-pressure] rss=${rssMb}MB heap=${heapPct}% ` +
-    `fd=[${topFdGroups}] recall_inflight=${recallInflight} ` +
-    `tasks=active:${activeTasks}+stale:${staleTasks}`
-  );
-}
