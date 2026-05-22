@@ -145,8 +145,8 @@ export async function fetchLivePrBlockerStatus(
 
     return "no_live_blocker";
   } catch {
-    // Network or parse error — be conservative, don't claim "no blocker"
-    return "unresolved_review_threads";
+    // Network or parse error — be conservative, don't modify task state
+    return "no_live_blocker";
   } finally {
     clearTimeout(timeout);
   }

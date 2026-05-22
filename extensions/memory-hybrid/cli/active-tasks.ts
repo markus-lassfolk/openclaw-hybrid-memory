@@ -340,13 +340,13 @@ export async function runActiveTaskHygiene(
     apply?: boolean;
     olderThanMinutes?: number;
     openclawHome?: string;
-    /** When true (default), fetch live PR state for tasks with PR references (default: true). */
+    /** When true, fetch live PR state for tasks with PR references (default: false). */
     checkPrLiveBlocker?: boolean;
   } = {},
 ): Promise<ActiveTaskHygieneResult> {
   const olderThanMinutes = Math.max(1, Math.floor(opts.olderThanMinutes ?? ctx.staleMinutes));
   const apply = opts.apply === true;
-  const checkPrLiveBlocker = opts.checkPrLiveBlocker !== false;
+  const checkPrLiveBlocker = opts.checkPrLiveBlocker === true;
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
     const { active } = loadTaskLedgerFromFacts(factsDb);

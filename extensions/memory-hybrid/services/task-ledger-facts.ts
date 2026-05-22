@@ -669,7 +669,7 @@ export async function planActiveTaskHygiene(
   // This prevents hygiene from incorrectly marking PR-backed tasks as stalled when
   // mergeStateStatus says BLOCKED but unresolved review threads exist.
   // -----------------------------------------------------------------------------------------
-  if (opts.checkPrLiveBlocker !== false) {
+  if (opts.checkPrLiveBlocker === true) {
     // Collect tasks that reference a PR (owner/repo#N pattern in label or description)
     const PR_REF_RE = /(?:^|[\s/])([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#(\d+)/;
     const prCandidateTasks = tasks.filter((t) => {
@@ -680,14 +680,17 @@ export async function planActiveTaskHygiene(
 
     if (prCandidateTasks.length > 0) {
       // Group by owner/repo to avoid duplicate API calls for the same repo
-      const prKeys = new Map<string, { task: ActiveTaskEntry; owner: string; repo: string; number: number }>();
+      const prKeys = new Map<string, { tasks: ActiveTaskEntry[]; owner: string; repo: string; number: number }>();
       for (const task of prCandidateTasks) {
         const m = PR_REF_RE.exec(`${task.label} ${task.description}`);
         if (!m) continue;
         const key = `${m[1]}#${m[2]}`;
-        if (!prKeys.has(key)) {
+        const existing = prKeys.get(key);
+        if (existing) {
+          existing.tasks.push(task);
+        } else {
           const [owner, repo] = m[1].split("/");
-          prKeys.set(key, { task, owner, repo, number: Number(m[2]) });
+          prKeys.set(key, { tasks: [task], owner, repo, number: Number(m[2]) });
         }
       }
 
@@ -700,31 +703,35 @@ export async function planActiveTaskHygiene(
       );
       const statusByKey = new Map(prStatuses.map((p) => [`${p.owner}/${p.repo}#${p.number}`, p]));
 
-      for (const { task, owner, repo, number } of prKeys.values()) {
-        // Skip if already handled by a dead-session or stale-failed action
-        if (actionsByLabel.has(task.label)) continue;
-
+      for (const { tasks, owner, repo, number } of prKeys.values()) {
         const blockerStatus = statusByKey.get(`${owner}/${repo}#${number}`);
         if (!blockerStatus) continue;
 
         if (blockerStatus.status !== "no_live_blocker") {
           const key = `${owner}/${repo}`;
           const reason = `[PR hygiene #${number}] Live GitHub state: ${blockerStatus.status} — task updated to reflect actual PR state.`;
-          stale.push({
-            label: task.label,
-            status: task.status,
-            updated: task.updated,
-            hoursStale: staleHoursFromUpdated(task.updated, nowMs),
-            reason,
-          });
-          actionsByLabel.set(task.label, {
-            label: task.label,
-            kind: "pr-live-blocker",
-            toStatus: "stage-4-feedback",
-            reason,
-            // Store actual blocker classification, plus PR coordinates for parsing
-            prBlockerStatus: `${blockerStatus.status}|${owner}:${repo}:${number}`,
-          });
+          
+          // Apply action to ALL tasks referencing this PR
+          for (const task of tasks) {
+            // Skip if already handled by a dead-session or stale-failed action
+            if (actionsByLabel.has(task.label)) continue;
+
+            stale.push({
+              label: task.label,
+              status: task.status,
+              updated: task.updated,
+              hoursStale: staleHoursFromUpdated(task.updated, nowMs),
+              reason,
+            });
+            actionsByLabel.set(task.label, {
+              label: task.label,
+              kind: "pr-live-blocker",
+              toStatus: "stage-4-feedback",
+              reason,
+              // Store actual blocker classification, plus PR coordinates for parsing
+              prBlockerStatus: `${blockerStatus.status}|${owner}:${repo}:${number}`,
+            });
+          }
         }
       }
     }
