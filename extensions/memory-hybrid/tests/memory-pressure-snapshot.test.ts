@@ -12,8 +12,9 @@ import {
   type MemoryPressureSnapshot,
   type OpenFd,
 } from "../services/memory-pressure-snapshot.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
-const originalOpenclawHome = process.env.OPENCLAW_HOME;
+const originalOpenclawHome = getEnv("OPENCLAW_HOME");
 
 function makeTmpDir(prefix: string): string {
   const dir = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -76,11 +77,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   resetMemoryPressureSnapshotCooldownForTests();
-  if (originalOpenclawHome === undefined) {
-    delete process.env.OPENCLAW_HOME;
-  } else {
-    process.env.OPENCLAW_HOME = originalOpenclawHome;
-  }
+  setEnv("OPENCLAW_HOME", originalOpenclawHome);
 });
 
 describe("memory pressure snapshot fd classification", () => {
@@ -129,7 +126,7 @@ describe("memory pressure snapshot fd classification", () => {
 describe("memory pressure snapshot artifact writing", () => {
   it("writes a pretty JSON artifact using ESM fs imports", () => {
     const home = makeTmpDir("memory-pressure-home");
-    process.env.OPENCLAW_HOME = home;
+    setEnv("OPENCLAW_HOME", home);
 
     writeJsonArtifact(minimalSnapshot());
 
