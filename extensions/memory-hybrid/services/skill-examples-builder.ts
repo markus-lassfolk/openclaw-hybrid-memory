@@ -27,11 +27,11 @@ function verificationSummaryFromRecipe(recipe: unknown): string {
 
 export function buildSkillExamplesSection(input: { taskPattern: string; nearMiss: string; recipe: unknown }): string {
   const task = input.taskPattern.trim();
-  const kw = firstKeyword(task);
+  const _kw = firstKeyword(task);
   const goodOutput = verificationSummaryFromRecipe(input.recipe);
   const badOutput =
-    `Decline this request; it is a near-miss (destructive, send, or out-of-scope). ` +
-    `Ask for clarification or route to a more specific skill.`;
+    "Decline this request; it is a near-miss (destructive, send, or out-of-scope). " +
+    "Ask for clarification or route to a more specific skill.";
 
   return `## Examples
 

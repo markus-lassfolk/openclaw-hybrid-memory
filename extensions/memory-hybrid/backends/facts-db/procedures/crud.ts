@@ -73,7 +73,7 @@ function repairProcedureEnumDrift(
     rawStateStr !== "" && !PROCEDURE_SKILL_STATE_SET.has(rawStateStr as NonNullable<ProcedureEntry["skillState"]>);
   if (!typeDrifted && !stateDrifted) return;
   try {
-    db.prepare(`UPDATE procedures SET procedure_type = ?, skill_state = ? WHERE id = ?`).run(
+    db.prepare("UPDATE procedures SET procedure_type = ?, skill_state = ? WHERE id = ?").run(
       normalizedType,
       normalizedState,
       id,

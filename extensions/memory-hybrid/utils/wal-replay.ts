@@ -45,6 +45,26 @@ function isSafeWalText(v: unknown): v is string {
   return safeString(v) !== null;
 }
 
+/**
+ * Returns a diagnostic message if a WAL entry has a non-global scope but no scopeTarget,
+ * or null if the entry is valid and safe to replay.
+ *
+ * A non-global scope without a scopeTarget cannot be replayed safely because FactsDB.store()
+ * requires scopeTarget for scoped facts. Storing without one would silently fall back to
+ * global scope, which is the bug described in issue #1574.
+ */
+function invalidScopeMessage(
+  entryId: string,
+  operation: string,
+  scope: "global" | "user" | "agent" | "session" | null,
+  scopeTarget: string | null,
+): string | null {
+  if (scope && scope !== "global" && !scopeTarget) {
+    return `WAL replay skipped "${operation}" entry ${entryId}: scope="${scope}" but scopeTarget is missing; refusing to globalize a scoped fact.`;
+  }
+  return null;
+}
+
 function findExistingFactIdForWal(factsDb: FactsDB, text: string, source: string | null): string | null {
   try {
     const src = source?.trim() || "conversation";
@@ -127,6 +147,7 @@ async function ensureVectorAndEmbeddingMeta(opts: {
  * @param factsDb - Facts database for storing entries
  * @param vectorDb - Optional vector database for storing embeddings
  * @param embeddings - Optional embedding provider for generating vectors
+ * @param logger - Optional logger for operator-visible diagnostics (e.g. skipped WAL entries)
  * @returns Object with committed and skipped counts
  */
 export async function replayWalEntries(
@@ -134,6 +155,7 @@ export async function replayWalEntries(
   factsDb: FactsDB,
   vectorDb?: VectorDB,
   embeddings?: EmbeddingProvider | null,
+  logger?: { warn?: (msg: string) => void },
 ): Promise<WalReplayResult> {
   let committed = 0;
   let skipped = 0;
@@ -169,6 +191,24 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+
+        // Guard: a non-global scope without a scopeTarget cannot be safely replayed — storing it
+        // would silently change the intended scope to global (issue #1574). Skip with a diagnostic
+        // so that scoped facts are never accidentally promoted to global during crash recovery.
+        const storeInvalidMsg = invalidScopeMessage(entry.id, "store", scope, scopeTarget);
+        if (storeInvalidMsg) {
+          capturePluginError(new Error(storeInvalidMsg), {
+            subsystem: "wal-replay",
+            operation: "replay-store",
+            severity: "warning",
+            entryId: entry.id,
+            scope,
+          });
+          logger?.warn?.(`memory-hybrid: ${storeInvalidMsg}`);
+          skipped++;
+          await wal.remove(entry.id);
+          continue;
+        }
 
         // Idempotent replay: if the fact already exists, still ensure vector/embedding metadata.
         const existingId = findExistingFactIdForWal(factsDb, text, source);
@@ -261,6 +301,22 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+
+        // Guard: same as "store" path — do not replay a non-global scoped update without a scopeTarget.
+        const updateInvalidMsg = invalidScopeMessage(entry.id, "update", scope, scopeTarget);
+        if (updateInvalidMsg) {
+          capturePluginError(new Error(updateInvalidMsg), {
+            subsystem: "wal-replay",
+            operation: "replay-update",
+            severity: "warning",
+            entryId: entry.id,
+            scope,
+          });
+          logger?.warn?.(`memory-hybrid: ${updateInvalidMsg}`);
+          skipped++;
+          await wal.remove(entry.id);
+          continue;
+        }
 
         const target = factsDb.getById(targetId);
         if (!target) {
