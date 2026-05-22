@@ -17,6 +17,8 @@ export function isPromptArtifactOrReasoningTrace(text: string): boolean {
 
   // Reject text beginning with think/think markers (with optional leading whitespace)
   if (/^think\s/i.test(trimmed)) return true;
+  // Reject XML-like think wrappers from some model traces
+  if (/^<think(?:ing)?>/i.test(trimmed)) return true;
   // Reject "Thinking Process" headers emitted by some models
   if (/^Thinking Process[;:]/i.test(trimmed)) return true;
   // Reject classifier/system prompt fragments
@@ -26,7 +28,7 @@ export function isPromptArtifactOrReasoningTrace(text: string): boolean {
   if (/^ADD \|/i.test(trimmed)) return true;
   if (/^UPDATE \|/i.test(trimmed)) return true;
   // Reject classifier JSON output
-  if (/^\{"action"\s*:/i.test(trimmed)) return true;
+  if (/^\{\s*"action"\s*:/i.test(trimmed)) return true;
   // Reject capability-hint markers injected into system context
   if (/^<!--\s*memory-hybrid\s*:\s*capability\s*hints/i.test(trimmed)) return true;
 

@@ -14,7 +14,8 @@
 
 import { isPromptArtifactOrReasoningTrace } from "../services/capture-utils.js";
 import { deleteVectorForFactId } from "../services/vector-maintenance.js";
-import type { FactsDB, VectorDB } from "../types/memory.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 
 export interface CaptureCleanupResult {
   scanned: number;
@@ -89,7 +90,7 @@ export async function runCaptureCleanupForCli(options: {
             if (vectorDb) {
               try {
                 const deleted = await deleteVectorForFactId({
-                  vectorDb: vectorDb as VectorDB,
+                  vectorDb,
                   factId: row.id,
                   logger,
                   context: "capture-cleanup",

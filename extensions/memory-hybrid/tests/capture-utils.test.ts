@@ -31,6 +31,12 @@ describe("isPromptArtifactOrReasoningTrace", () => {
     it("rejects 'Think I am a helpful assistant' (capitalized think)", () => {
       expect(isPromptArtifactOrReasoningTrace("Think I am a helpful assistant")).toBe(true);
     });
+    it("rejects '<think>' wrapper prefix", () => {
+      expect(isPromptArtifactOrReasoningTrace("<think>I should check the config first")).toBe(true);
+    });
+    it("rejects '<thinking>' wrapper prefix", () => {
+      expect(isPromptArtifactOrReasoningTrace("<thinking>I should check the config first")).toBe(true);
+    });
   });
 
   describe("rejects Thinking Process headers", () => {
@@ -47,14 +53,14 @@ describe("isPromptArtifactOrReasoningTrace", () => {
 
   describe("rejects classifier prompt fragments", () => {
     it('rejects "The user is asking me to classify..."', () => {
-      expect(
-        isPromptArtifactOrReasoningTrace("The user is asking me to classify this message as a preference"),
-      ).toBe(true);
+      expect(isPromptArtifactOrReasoningTrace("The user is asking me to classify this message as a preference")).toBe(
+        true,
+      );
     });
     it('rejects "The user is asking me to extract..."', () => {
-      expect(
-        isPromptArtifactOrReasoningTrace("The user is asking me to extract entities from this message"),
-      ).toBe(true);
+      expect(isPromptArtifactOrReasoningTrace("The user is asking me to extract entities from this message")).toBe(
+        true,
+      );
     });
   });
 
@@ -76,6 +82,9 @@ describe("isPromptArtifactOrReasoningTrace", () => {
     });
     it("rejects compact classifier JSON", () => {
       expect(isPromptArtifactOrReasoningTrace('{"action":"UPDATE","targetId":"abc123"}')).toBe(true);
+    });
+    it('rejects JSON with whitespace after "{" before "action"', () => {
+      expect(isPromptArtifactOrReasoningTrace('{ "action": "NOOP", "reason": "..." }')).toBe(true);
     });
   });
 
@@ -213,6 +222,14 @@ describe("shouldCapture", () => {
 
   it("rejects classifier JSON", () => {
     expect(shouldCapture('{"action": "NOOP"}', MAX_CHARS, [/./])).toBe(false);
+  });
+
+  it("rejects classifier JSON with whitespace after opening brace", () => {
+    expect(shouldCapture('{ "action": "NOOP" }', MAX_CHARS, [/./])).toBe(false);
+  });
+
+  it("rejects <think>-prefixed text via isPromptArtifactOrReasoningTrace guard", () => {
+    expect(shouldCapture("<think>I should fix this</think>", MAX_CHARS, [/./])).toBe(false);
   });
 });
 
