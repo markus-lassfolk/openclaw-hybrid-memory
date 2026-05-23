@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { toWorkspaceRelativePath } from "../utils/path.js";
@@ -51,6 +51,11 @@ import {
   lintNestedReferences,
 } from "./skill-reference-sidecar.js";
 import { sanitizeRecipePromptInjection, scanForPromptInjection } from "./skill-prompt-injection.js";
+import {
+  clearProcedurePromotionDuplicateSkillCache,
+  readSkillMdLowerCached,
+} from "./procedure-promotion/duplicate-skill-cache.js";
+export { clearProcedurePromotionDuplicateSkillCache } from "./procedure-promotion/duplicate-skill-cache.js";
 
 export const PROCEDURE_PROMOTION_POLICY_VERSION = "procedure-promotion-policy-v3";
 
@@ -1428,65 +1433,6 @@ function hasValidationCheck(recipe: unknown, _task: string): boolean {
     }
     return EXPLICIT_VALIDATION_PATTERN.test(chunks.join("\n"));
   });
-}
-
-/** Minimal LRU cache with max-size cap for skill MD digest cache. */
-class LRUCache<K, V> {
-  private readonly cache: Map<K, V>;
-  private readonly capacity: number;
-
-  constructor(capacity: number) {
-    this.cache = new Map();
-    this.capacity = Math.max(1, capacity);
-  }
-
-  get(key: K): V | undefined {
-    if (!this.cache.has(key)) return undefined;
-    const value = this.cache.get(key)!;
-    this.cache.delete(key);
-    this.cache.set(key, value);
-    return value;
-  }
-
-  set(key: K, value: V): void {
-    if (this.cache.has(key)) {
-      this.cache.delete(key);
-    } else if (this.cache.size >= this.capacity) {
-      const oldest = this.cache.keys().next().value as K;
-      this.cache.delete(oldest);
-    }
-    this.cache.set(key, value);
-  }
-
-  clear(): void {
-    this.cache.clear();
-  }
-}
-
-const skillMdDuplicateDigestCache = new LRUCache<string, { mtimeMs: number; lower: string }>(500);
-
-/** Clears the SKILL.md mtime cache used by duplicate-skill detection (for tests and --bypass-skill-duplicate-cache). */
-export function clearProcedurePromotionDuplicateSkillCache(): void {
-  skillMdDuplicateDigestCache.clear();
-}
-
-function readSkillMdLowerCached(skillPath: string, bypassCache: boolean): string | null {
-  if (bypassCache) {
-    const raw = safeReadFile(skillPath);
-    return raw ? raw.toLowerCase() : null;
-  }
-  try {
-    const mtimeMs = Math.trunc(statSync(skillPath).mtimeMs);
-    const hit = skillMdDuplicateDigestCache.get(skillPath);
-    if (hit && hit.mtimeMs === mtimeMs) return hit.lower;
-    const raw = safeReadFile(skillPath);
-    if (!raw) return null;
-    const lower = raw.toLowerCase();
-    skillMdDuplicateDigestCache.set(skillPath, { mtimeMs, lower });
-    return lower;
-  } catch {
-    return null;
-  }
 }
 
 function isDuplicateSkill(
