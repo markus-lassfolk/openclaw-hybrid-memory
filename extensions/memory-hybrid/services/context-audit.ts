@@ -248,8 +248,9 @@ export async function runContextAudit(opts: {
 
   const issueEstimateTokens = 0;
   const narrativeEstimateTokens = 0;
-  const activeTaskEstimateTokens = Math.min(activeTasksTokens, activeTaskMaxTokens);
-  const staleWarningEstimateTokens = Math.min(staleWarningTokens, staleWarningMaxTokens);
+  const activeTaskEstimateTokens = cfg.activeTask.enabled ? activeTaskMaxTokens : 0;
+  const staleWarningEstimateTokens =
+    cfg.activeTask.enabled && cfg.activeTask.staleWarning.enabled ? staleWarningMaxTokens : 0;
   const fixedBlockEstimatedTokens =
     issueEstimateTokens +
     narrativeEstimateTokens +
@@ -260,7 +261,8 @@ export async function runContextAudit(opts: {
   const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
   const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
 
-  const totalTokens = autoRecallBudget + hotTokens + proceduresTokens + activeTasksTokens + workspaceTokens;
+  const totalTokens =
+    autoRecallBudget + hotTokens + proceduresTokens + activeTasksTokens + staleWarningTokens + workspaceTokens;
 
   const recommendations: string[] = [];
   if (workspaceTokens > 3000) {
@@ -321,7 +323,7 @@ export async function runContextAudit(opts: {
     procedures: { enabled: cfg.procedures.enabled, tokens: proceduresTokens, lines: proceduresLines },
     activeTasks: {
       enabled: cfg.activeTask.enabled,
-      tokens: activeTasksTokens,
+      tokens: activeTasksTokens + staleWarningTokens,
       ledgerActiveCount,
       filteredActiveCount,
       injectedTaskCount,
