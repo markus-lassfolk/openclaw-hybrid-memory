@@ -247,6 +247,23 @@ describe("session-state", () => {
         // Should not throw
         expect(() => state.clearSessionState("non-existent")).not.toThrow();
       });
+
+      it("should NOT clear capabilityHintsSessionsSeen (persists across agent turns)", () => {
+        // Populate state including capability hints
+        state.sessionStartSeen.add("session-1");
+        state.capabilityHintsSessionsSeen.add("session-1");
+        state.sessionLastActivity.set("session-1", Date.now());
+
+        // Clear session state
+        state.clearSessionState("session-1");
+
+        // Verify most state is cleared
+        expect(state.sessionStartSeen.has("session-1")).toBe(false);
+        expect(state.sessionLastActivity.has("session-1")).toBe(false);
+
+        // But capabilityHintsSessionsSeen should persist across agent turns
+        expect(state.capabilityHintsSessionsSeen.has("session-1")).toBe(true);
+      });
     });
 
     describe("pruneSessionMaps", () => {

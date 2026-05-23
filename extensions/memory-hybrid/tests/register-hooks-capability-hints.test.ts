@@ -93,4 +93,19 @@ describe("registerLifecycleHooks capability hints cadence", () => {
     expect(findCapabilityHints(second)).toBeUndefined();
     expect(findCapabilityHints(third)).toBeDefined();
   });
+
+  it("silent mode suppresses capability hints even with explicit capabilityHints setting", () => {
+    const api = makeHooksApi();
+    const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, {
+      autoRecall: { enabled: true, capabilityHints: "always" },
+      verbosity: "silent",
+    });
+    registerLifecycleHooks(pluginApi as never, api as never);
+
+    const first = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } });
+    const second = invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } });
+
+    expect(findCapabilityHints(first)).toBeUndefined();
+    expect(findCapabilityHints(second)).toBeUndefined();
+  });
 });

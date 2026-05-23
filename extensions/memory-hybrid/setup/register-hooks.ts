@@ -213,8 +213,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   //     it is supported by all OpenClaw versions and produces the correct runtime behaviour.
   //
   // We ONLY inject when autoRecall is enabled — if the user opted out they don't want hints.
+  // Silent mode suppresses capability hints (VerbosityLevel docs) regardless of explicit capabilityHints setting.
   const capabilityHintsMode = ctx.cfg.autoRecall.capabilityHints ?? "off";
-  if (ctx.cfg.autoRecall.enabled && capabilityHintsMode !== "off") {
+  if (ctx.cfg.autoRecall.enabled && capabilityHintsMode !== "off" && ctx.cfg.verbosity !== "silent") {
     let staticMemoryInstructions: string | null = null;
 
     // Build once and cache — these never change within a gateway session.
@@ -244,7 +245,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       }
       if (capabilityHintsMode === "session") {
         const rApi = withHookResolutionApi(api, hookCtx);
-        const sessionKey = resolveSessionKeyFromHookEvent(event, rApi) ?? "default";
+        const sessionKey = resolveSessionKeyFromHookEvent(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
         if (hooks.sessionState.capabilityHintsSessionsSeen.has(sessionKey)) return;
         hooks.sessionState.capabilityHintsSessionsSeen.add(sessionKey);
         hooks.sessionState.pruneSessionMaps();

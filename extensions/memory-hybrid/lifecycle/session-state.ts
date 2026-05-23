@@ -67,7 +67,8 @@ export function createSessionState(): SessionState {
     ambientLastEmbeddingMap.delete(sessionKey);
     frustrationStateMap.delete(sessionKey);
     sessionLastActivity.delete(sessionKey);
-    capabilityHintsSessionsSeen.delete(sessionKey);
+    // Do NOT clear capabilityHintsSessionsSeen here — that set persists across agent turns
+    // within the same chat session so "session" mode injects once per chat, not once per turn.
     const prefix = `${sessionKey}:`;
     for (const key of authFailureRecallsThisSession.keys()) {
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
