@@ -617,9 +617,13 @@ describe("buildContextBlock()", () => {
 
     expect(blockFull).not.toBeNull();
     expect(blockSmall).not.toBeNull();
+    if (blockFull === null || blockSmall === null) {
+      throw new Error("Expected context blocks to be generated");
+    }
 
-    const smallTokens = estimateTokenCount(blockSmall!);
-    expect(smallTokens).toBeLessThanOrEqual(100);
+    const smallTokens = estimateTokenCount(blockSmall);
+    expect(smallTokens).toBeLessThanOrEqual(50);
+>>>>>>> 7cc57e8e (fix: resolve node 24 type errors)
 
     // Ensure blockSmall has fewer entries
     expect(blockSmall!.length).toBeLessThan(blockFull!.length);
