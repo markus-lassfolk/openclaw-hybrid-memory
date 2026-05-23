@@ -60,6 +60,16 @@ type ContextAuditResult = {
   recommendations: string[];
 };
 
+function sanitizeHotFactText(text: string): string {
+  return text
+    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, " ")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, " ")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, " ")
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 const DEFAULT_BOOTSTRAP_FILES = [
   "AGENTS.md",
   "SOUL.md",
@@ -196,12 +206,18 @@ export async function runContextAudit(opts: {
     try {
       const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens);
       if (hotResults.length > 0) {
-        const hotLines = hotResults.map(
-          (r) =>
-            `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
-        const hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>`;
-        hotTokens = estimateTokens(hotBlock);
+        const hotLines = hotResults
+          .map((r) => {
+            const text = sanitizeHotFactText(r.entry.summary || r.entry.text);
+            if (!text) return "";
+            const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
+            return `- [hot/${r.entry.category}] ${clipped}`;
+          })
+          .filter(Boolean);
+        if (hotLines.length > 0) {
+          const hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>`;
+          hotTokens = estimateTokens(hotBlock);
+        }
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -214,24 +230,32 @@ export async function runContextAudit(opts: {
   const autoRecallBudget = cfg.autoRecall.enabled
     ? Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens)
     : 0;
-  const issueCapTokens = Math.max(80, Math.floor(autoRecallBudget * 0.15));
-  const narrativeMaxTokens = cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2));
-  const hotMaxTokens =
-    cfg.autoRecall.hotMaxTokens ?? (hotTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.25)) : 0);
-  const defaultProcedureCap = proceduresTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0;
-  const procedureMaxTokens =
-    cfg.autoRecall.procedureMaxTokens ??
-    (cfg.procedures.enabled ? Math.min(cfg.procedures.maxInjectionTokens, defaultProcedureCap) : 0);
-  const activeTaskMaxTokens =
-    cfg.autoRecall.activeTaskMaxTokens ??
-    (cfg.activeTask.enabled
-      ? Math.min(cfg.activeTask.injectionBudget, Math.max(80, Math.floor(autoRecallBudget * 0.2)))
-      : 0);
-  const staleWarningMaxTokens =
-    cfg.autoRecall.staleWarningMaxTokens ??
-    (cfg.activeTask.enabled && cfg.activeTask.staleWarning.enabled
-      ? Math.max(40, Math.floor(autoRecallBudget * 0.08))
-      : 0);
+  const autoRecallHasBudget = cfg.autoRecall.enabled && autoRecallBudget > 0;
+  const issueCapTokens = autoRecallHasBudget ? Math.max(80, Math.floor(autoRecallBudget * 0.15)) : 0;
+  const narrativeMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2)))
+    : 0;
+  const hotMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.hotMaxTokens ?? (hotTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.25)) : 0))
+    : 0;
+  const defaultProcedureCap =
+    autoRecallHasBudget && proceduresTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0;
+  const procedureMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.procedureMaxTokens ??
+      (cfg.procedures.enabled ? Math.min(cfg.procedures.maxInjectionTokens, defaultProcedureCap) : 0))
+    : 0;
+  const activeTaskMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.activeTaskMaxTokens ??
+      (cfg.activeTask.enabled
+        ? Math.min(cfg.activeTask.injectionBudget, Math.max(80, Math.floor(autoRecallBudget * 0.2)))
+        : 0))
+    : 0;
+  const staleWarningMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.staleWarningMaxTokens ??
+      (cfg.activeTask.enabled && cfg.activeTask.staleWarning.enabled
+        ? Math.max(40, Math.floor(autoRecallBudget * 0.08))
+        : 0))
+    : 0;
 
   const issueEstimateTokens = cfg.ambient.enabled ? issueCapTokens : 0;
   const narrativeEstimateTokens = narrativeMaxTokens;
