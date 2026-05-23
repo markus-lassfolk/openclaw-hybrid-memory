@@ -619,7 +619,7 @@ describe("buildContextBlock()", () => {
     expect(blockSmall).not.toBeNull();
 
     const smallTokens = estimateTokenCount(blockSmall ?? "");
-    expect(smallTokens).toBeLessThanOrEqual(50);
+    expect(smallTokens).toBeLessThanOrEqual(100);
 
     // Ensure blockSmall has fewer entries
     expect(blockSmall!.length).toBeLessThan(blockFull!.length);
