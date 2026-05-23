@@ -33,7 +33,7 @@ import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
 import { PLUGIN_ID } from "../utils/constants.js";
 import { isHybridMemHelpInvocation } from "../index-help.js";
-import { wrapApiLoggerStderrForJsonCli } from "../utils/hybrid-mem-json-cli.js";
+import { wrapApiLoggerStderrForJsonCli, restoreStdoutAfterJsonCli } from "../utils/hybrid-mem-json-cli.js";
 import {
   getCategoryDecisionRegex,
   getCategoryEntityRegex,
@@ -120,6 +120,8 @@ async function performHybridMemCliTeardown(): Promise<void> {
       operation: "hybrid-mem-teardown:python-bridge",
     });
   }
+  // Restore stdout after JSON CLI tee (issue #1618)
+  restoreStdoutAfterJsonCli();
 }
 
 export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
