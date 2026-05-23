@@ -4,7 +4,7 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { readActiveTaskFile, upsertTask, writeActiveTaskFileGuarded } from "../services/active-task.js";
+import { detectStaleTasks, readActiveTaskFile, upsertTask, writeActiveTaskFileGuarded } from "../services/active-task.js";
 import { buildActiveTaskContextBundle } from "../services/active-task-injection.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { listGoals, resolveGoalsDir } from "../services/goal-registry.js";
@@ -16,7 +16,7 @@ import {
   detectLongRunningWorkflowProposal,
   shouldAutoRegisterLongRunningTask,
 } from "../services/task-hygiene.js";
-import { readActiveTaskRowsFromFacts, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
+import { loadTaskLedgerFromFactsWithMetrics, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -42,15 +42,28 @@ export function registerActiveTaskInjection(
         userText && longRunningMode !== "off" ? detectLongRunningWorkflowProposal(userText, workspaceRoot) : null;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
+      let factsSelectionMetrics: import("../services/task-ledger-facts.js").ActiveTaskLedgerSelectionMetrics | null = null;
+      let factsSelectionStartMs: number | null = null;
+      let staleSkippedFromFacts = 0;
 
       if (ctx.cfg.activeTask.ledger === "facts") {
-        const { active } = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes);
-        activeForInjection = active;
+        factsSelectionStartMs = Date.now();
+        const { active, metrics } = loadTaskLedgerFromFactsWithMetrics(ctx.factsDb);
+        activeForInjection = detectStaleTasks(active, staleMinutes);
+        factsSelectionMetrics = metrics;
+        staleSkippedFromFacts = activeForInjection.filter((task) => task.stale).length;
       } else {
         const taskFile = await readActiveTaskFile(resolvedActiveTaskPath, staleMinutes);
         activeForInjection = taskFile?.active ?? [];
         completedForWrite = taskFile?.completed ?? [];
       }
+
+      const logFactsSelection = (injectedCount: number): void => {
+        if (!factsSelectionMetrics || factsSelectionStartMs === null) return;
+        api.logger?.debug?.(
+          `memory-hybrid: active-task selection rowsFetched=${factsSelectionMetrics.projectRowsFetched} groupedEntities=${factsSelectionMetrics.groupedEntityCount} duplicatesCollapsed=${factsSelectionMetrics.duplicateRowsCollapsed} activeCandidates=${factsSelectionMetrics.activeCandidates} staleSkipped=${staleSkippedFromFacts} injected=${injectedCount} elapsedMs=${Date.now() - factsSelectionStartMs}`,
+        );
+      };
 
       let longRunningBlock = "";
       if (proposal) {
@@ -88,7 +101,10 @@ export function registerActiveTaskInjection(
         });
       }
 
-      if (activeForInjection.length === 0 && !longRunningBlock) return undefined;
+      if (activeForInjection.length === 0 && !longRunningBlock) {
+        logFactsSelection(0);
+        return undefined;
+      }
 
       const th = ctx.cfg.activeTask.taskHygiene;
       const isHeartbeat =
@@ -132,6 +148,8 @@ export function registerActiveTaskInjection(
       if (isHeartbeat && bundle.parts.some((p) => p.includes("<task-hygiene>"))) {
         api.logger?.info?.("memory-hybrid: task hygiene block appended (heartbeat match)");
       }
+
+      logFactsSelection(bundle.injectedTaskCount);
 
       const parts = [...bundle.parts, longRunningBlock].filter(Boolean);
       if (parts.length === 0) return undefined;

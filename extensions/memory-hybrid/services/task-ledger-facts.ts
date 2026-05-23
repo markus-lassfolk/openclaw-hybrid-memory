@@ -98,6 +98,16 @@ export type ActiveTaskProjectionStatus = {
   marker: ActiveTaskProjectionStaleMarker | null;
 };
 
+export type ActiveTaskLedgerSelectionMetrics = {
+  projectRowsFetched: number;
+  groupedEntityCount: number;
+  duplicateRowsCollapsed: number;
+  activeCandidates: number;
+  completedCandidates: number;
+  entitiesSkippedWithoutStatus: number;
+  elapsedMs: number;
+};
+
 /** Latest value per entity+key from non-superseded project facts.
  *  Entity labels are normalised to lowercase (trim + toLowerCase) so that
  *  case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
@@ -272,10 +282,38 @@ export function loadTaskLedgerFromFacts(
   active: ActiveTaskEntry[];
   completed: ActiveTaskEntry[];
 } {
+  const { active, completed } = loadTaskLedgerFromFactsWithMetrics(factsDb, factLimit, scopeFilter);
+  return { active, completed };
+}
+
+export function loadTaskLedgerFromFactsWithMetrics(
+  factsDb: FactsDB,
+  factLimit = 8000,
+  scopeFilter?: ScopeFilter | null,
+): {
+  active: ActiveTaskEntry[];
+  completed: ActiveTaskEntry[];
+  metrics: ActiveTaskLedgerSelectionMetrics;
+} {
+  const startedAtMs = Date.now();
   // Use targeted query instead of loading all facts then filtering by category (#1553)
   const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
   const grouped = groupProjectFactsByEntity(facts);
-  return buildTaskEntriesFromGroupedFacts(grouped);
+  const { active, completed } = buildTaskEntriesFromGroupedFacts(grouped);
+  let groupedFactRows = 0;
+  for (const keyMap of grouped.values()) {
+    groupedFactRows += keyMap.size;
+  }
+  const metrics: ActiveTaskLedgerSelectionMetrics = {
+    projectRowsFetched: facts.length,
+    groupedEntityCount: grouped.size,
+    duplicateRowsCollapsed: Math.max(0, facts.length - groupedFactRows),
+    activeCandidates: active.length,
+    completedCandidates: completed.length,
+    entitiesSkippedWithoutStatus: Math.max(0, grouped.size - active.length - completed.length),
+    elapsedMs: Date.now() - startedAtMs,
+  };
+  return { active, completed, metrics };
 }
 
 export function readActiveTaskRowsFromFacts(
@@ -432,7 +470,7 @@ export async function refreshActiveTaskProjectionBestEffort(opts: {
   logger?: { warn?: (m: string) => void };
 }): Promise<{ rendered: boolean; staleMarked: boolean; error?: string }> {
   try {
-    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection);
+    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection, opts.logger);
     return { rendered: true, staleMarked: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1297,8 +1335,14 @@ export async function renderActiveTaskMarkdownFile(
   staleMinutes: number,
   filePath: string,
   projection: ActiveTaskProjectionConfig,
+  logger?: { debug?: (message: string) => void },
 ): Promise<void> {
-  let { active, completed } = loadTaskLedgerFromFacts(factsDb, 8000, ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER);
+  const renderStartMs = Date.now();
+  let {
+    active,
+    completed,
+    metrics,
+  } = loadTaskLedgerFromFactsWithMetrics(factsDb, 8000, ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER);
   active = applyActiveTaskProjectionFilters(active, projection);
   completed = applyActiveTaskProjectionFilters(completed, projection);
   active = detectStaleTasks(active, staleMinutes);
@@ -1352,6 +1396,9 @@ export async function renderActiveTaskMarkdownFile(
   } catch {
     // Keep render success best-effort even when marker cleanup fails.
   }
+  logger?.debug?.(
+    `memory-hybrid: active-task projection rowsFetched=${metrics.projectRowsFetched} groupedEntities=${metrics.groupedEntityCount} duplicatesCollapsed=${metrics.duplicateRowsCollapsed} activeCandidates=${metrics.activeCandidates} staleBucketed=${staleRaw.length} renderedActive=${capAct.rows.length} renderedStale=${capStale.rows.length} renderedCompleted=${capDone.rows.length} elapsedMs=${Date.now() - renderStartMs}`,
+  );
 }
 
 /**
