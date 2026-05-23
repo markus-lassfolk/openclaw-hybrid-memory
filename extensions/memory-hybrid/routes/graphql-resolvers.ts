@@ -316,11 +316,12 @@ export const resolvers: GraphQLResolvers = {
   Mutation: {
     createFact: async (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
-      const fact = context.factsDb.store(createStoreInput(input));
-      if (fact.id === "") {
+      const result = context.factsDb.storeWithResult(createStoreInput(input));
+      if (result.entry.id === "") {
         throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
       }
-      return fact;
+      await cleanupGraphqlEviction(context, result.evictedFactId);
+      return result.entry;
     },
 
     updateFact: async (_parent, args, context) => {
@@ -329,26 +330,30 @@ export const resolvers: GraphQLResolvers = {
       if (!id) throw new Error("Missing fact id");
       const existing = context.factsDb.getById(id);
       if (!existing) throw new Error(`Fact not found: ${id}`);
-      const updated = context.factsDb.store({
-        text: asString(input.text) ?? existing.text,
-        category: asString(input.category) ?? existing.category,
-        importance: asNumber(input.importance) ?? existing.importance,
-        confidence: asNumber(input.confidence) ?? existing.confidence,
-        decayClass: existing.decayClass,
-        source: existing.source,
-        tags: asStringArray(input.tags) ?? existing.tags ?? [],
-        entity: existing.entity,
-        key: existing.key,
-        value: existing.value,
-        scope: existing.scope,
-        scopeTarget: existing.scopeTarget ?? null,
-        expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
-      });
+      const result = context.factsDb.storeWithResult(
+        {
+          text: asString(input.text) ?? existing.text,
+          category: asString(input.category) ?? existing.category,
+          importance: asNumber(input.importance) ?? existing.importance,
+          confidence: asNumber(input.confidence) ?? existing.confidence,
+          decayClass: existing.decayClass,
+          source: existing.source,
+          tags: asStringArray(input.tags) ?? existing.tags ?? [],
+          entity: existing.entity,
+          key: existing.key,
+          value: existing.value,
+          scope: existing.scope,
+          scopeTarget: existing.scopeTarget ?? null,
+          expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
+        },
+        { allowPreStoreGuardBypass: true },
+      );
       // Skip supersede if store was rejected (artifact text)
-      if (updated.id !== "") {
-        context.factsDb.supersede(existing.id, updated.id);
+      if (result.entry.id !== "") {
+        context.factsDb.supersede(existing.id, result.entry.id);
       }
-      return updated;
+      await cleanupGraphqlEviction(context, result.evictedFactId);
+      return result.entry;
     },
 
     deleteFact: (_parent, args, context) => {
@@ -390,9 +395,24 @@ export const resolvers: GraphQLResolvers = {
 
     importFacts: async (_parent, args, context) => {
       const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
-      return facts
-        .map((raw) => context.factsDb.store(createStoreInput(asRecord(raw))))
-        .filter((fact) => fact.id !== "");
+      const inputs = facts.map((raw) => createStoreInput(asRecord(raw)));
+      // Pre-validate all facts before storing any
+      for (const input of inputs) {
+        if (isPreStoreGuardBlocked(input)) {
+          throw new Error(
+            `Fact blocked by pre-store guard: category=${input.category ?? ""}, source=${input.source ?? ""}`,
+          );
+        }
+      }
+      const stored: MemoryEntry[] = [];
+      for (const input of inputs) {
+        const result = context.factsDb.storeWithResult(input);
+        if (result.entry.id !== "") {
+          stored.push(result.entry);
+        }
+        await cleanupGraphqlEviction(context, result.evictedFactId);
+      }
+      return stored;
     },
 
     pruneFacts: (_parent, args, context) => {

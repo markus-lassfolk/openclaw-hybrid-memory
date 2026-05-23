@@ -52,6 +52,17 @@ function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
 const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
 const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
 
+/** Check if an entry would be blocked by the pre-store guard. */
+export function isPreStoreGuardBlocked(entry: { category?: string; source?: string; text: string }): boolean {
+  const entryCategory = entry.category ?? "";
+  const entrySource = entry.source ?? "";
+  return (
+    BLOCKED_CATEGORIES.has(entryCategory) ||
+    BLOCKED_SOURCES.has(entrySource) ||
+    isPromptArtifactOrReasoningTrace(entry.text)
+  );
+}
+
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
   MemoryEntry,
