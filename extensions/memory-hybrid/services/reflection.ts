@@ -93,7 +93,6 @@ interface ReflectionMetaResult {
   metaStored: number;
 }
 
-
 /**
  * Build normalized dedupe-corpus vectors for existing facts: prefer LanceDB rows (same id as fact),
  * else call the embedding API. Batches API calls (20) with adaptive throttle based on rate limits.

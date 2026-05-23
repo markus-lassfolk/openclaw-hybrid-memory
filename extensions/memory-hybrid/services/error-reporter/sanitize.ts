@@ -19,31 +19,29 @@ export function extractVersion(release: string): string | null {
  * Scrub sensitive data from strings
  */
 export function scrubString(input: string): string {
-  return (
-    input
-      .replace(/sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})/g, "[REDACTED]")
-      .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
-      .replace(/ghp_[A-Za-z0-9]{36}/g, "[REDACTED]")
-      .replace(/gho_[A-Za-z0-9]{36}/g, "[REDACTED]")
-      .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
-      .replace(/Basic\s+[A-Za-z0-9+/=_-]+/gi, "[REDACTED]")
-      .replace(/(?:\?|&)(?:api[_-]?key|token|access_token|password|secret)=[^&\s]+/gi, "[REDACTED]")
-      .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
-      .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED]")
-      .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]")
-      .replace(/-----BEGIN [^-]*PRIVATE KEY-----/g, "[REDACTED]")
-      .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, "://[REDACTED]@")
-      .replace(/postgres:\/\/[^\s]+/g, "postgres://[REDACTED]")
-      .replace(/mysql:\/\/[^\s]+/g, "mysql://[REDACTED]")
-      .replace(/redis:\/\/[^\s]+/g, "redis://[REDACTED]")
-      .replace(/mongodb:\/\/[^\s]+/g, "mongodb://[REDACTED]")
-      .replace(/\/home\/[^/\s]+/g, "$HOME")
-      .replace(/\/Users\/[^/\s]+/g, "$HOME")
-      .replace(/C:\\Users\\[^\\\s]+/g, "%USERPROFILE%")
-      .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, "[EMAIL]")
-      .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[IP]")
-      .slice(0, 500)
-  );
+  return input
+    .replace(/sk-(?:proj-[A-Za-z0-9_-]{20,}|[A-Za-z0-9_]{20,})/g, "[REDACTED]")
+    .replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
+    .replace(/ghp_[A-Za-z0-9]{36}/g, "[REDACTED]")
+    .replace(/gho_[A-Za-z0-9]{36}/g, "[REDACTED]")
+    .replace(/Bearer\s+[\w.-]+/gi, "[REDACTED]")
+    .replace(/Basic\s+[A-Za-z0-9+/=_-]+/gi, "[REDACTED]")
+    .replace(/(?:\?|&)(?:api[_-]?key|token|access_token|password|secret)=[^&\s]+/gi, "[REDACTED]")
+    .replace(/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, "[REDACTED]")
+    .replace(/AKIA[0-9A-Z]{16}/g, "[REDACTED]")
+    .replace(/xox[baprs]-[A-Za-z0-9-]{10,}/g, "[REDACTED]")
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----/g, "[REDACTED]")
+    .replace(/:\/\/[^\s:@]+:[^\s@]+@[^\s/]+/g, "://[REDACTED]@")
+    .replace(/postgres:\/\/[^\s]+/g, "postgres://[REDACTED]")
+    .replace(/mysql:\/\/[^\s]+/g, "mysql://[REDACTED]")
+    .replace(/redis:\/\/[^\s]+/g, "redis://[REDACTED]")
+    .replace(/mongodb:\/\/[^\s]+/g, "mongodb://[REDACTED]")
+    .replace(/\/home\/[^/\s]+/g, "$HOME")
+    .replace(/\/Users\/[^/\s]+/g, "$HOME")
+    .replace(/C:\\Users\\[^\\\s]+/g, "%USERPROFILE%")
+    .replace(/\b[\w.-]+@[\w.-]+\.\w{2,}\b/g, "[EMAIL]")
+    .replace(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g, "[IP]")
+    .slice(0, 500);
 }
 
 /**
@@ -121,11 +119,16 @@ export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
       ...(event.contexts?.config_shape
         ? {
             config_shape: Object.fromEntries(
-              Object.entries(event.contexts.config_shape).map(([k, v]) => [k, typeof v === "string" ? scrubString(v) : v]),
+              Object.entries(event.contexts.config_shape).map(([k, v]) => [
+                k,
+                typeof v === "string" ? scrubString(v) : v,
+              ]),
             ),
           }
         : {}),
-      ...(event.contexts?.runtime ? { runtime: { name: event.contexts.runtime.name, version: event.contexts.runtime.version } } : {}),
+      ...(event.contexts?.runtime
+        ? { runtime: { name: event.contexts.runtime.name, version: event.contexts.runtime.version } }
+        : {}),
       ...(event.contexts?.os ? { os: { name: event.contexts.os.name } } : {}),
     },
     breadcrumbs: event.breadcrumbs

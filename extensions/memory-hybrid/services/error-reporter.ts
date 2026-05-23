@@ -10,7 +10,13 @@ import {
   scrubString,
   shouldDropForResolvedIssue,
 } from "./error-reporter/sanitize.js";
-import type { GlitchTipEvent, ReportBreadcrumb, ReportExceptionValue, ReportFrame, ReportStacktrace } from "./error-reporter/types.js";
+import type {
+  GlitchTipEvent,
+  ReportBreadcrumb,
+  ReportExceptionValue,
+  ReportFrame,
+  ReportStacktrace,
+} from "./error-reporter/types.js";
 
 export { compareVersions };
 export { shouldDropNoisyError } from "./error-reporter/noisy-errors.js";

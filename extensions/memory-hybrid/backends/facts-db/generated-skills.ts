@@ -28,6 +28,14 @@ export type {
   GeneratedSkillTelemetryReport,
   GeneratedSkillTelemetryReportRow,
 } from "./generated-skills/policy.js";
+import type {
+  GeneratedSkillLifecyclePolicy,
+  GeneratedSkillTelemetryFlags,
+  GeneratedSkillTelemetryMetrics,
+  GeneratedSkillTelemetryRecordInput,
+  GeneratedSkillTelemetryReport,
+  GeneratedSkillTelemetryReportRow,
+} from "./generated-skills/policy.js";
 import { procedureRowToEntry } from "./procedures.js";
 
 const MAX_REQUEST_SUMMARY_LENGTH = 240;
