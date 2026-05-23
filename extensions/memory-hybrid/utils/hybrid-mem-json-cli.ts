@@ -54,15 +54,37 @@ function writeToStream(
   callback?: WriteCallback,
 ): boolean {
   if (encoding !== undefined && callback) {
-    return write.call(stream, chunk, encoding, callback);
+    return (
+      write as unknown as (
+        this: Pick<NodeJS.WriteStream, "write">,
+        chunk: WriteChunk,
+        encoding: BufferEncoding,
+        callback: WriteCallback,
+      ) => boolean
+    ).call(stream, chunk, encoding, callback);
   }
   if (encoding !== undefined) {
-    return write.call(stream, chunk, encoding);
+    return (
+      write as unknown as (
+        this: Pick<NodeJS.WriteStream, "write">,
+        chunk: WriteChunk,
+        encoding: BufferEncoding,
+      ) => boolean
+    ).call(stream, chunk, encoding);
   }
   if (callback) {
-    return write.call(stream, chunk, callback);
+    return (
+      write as unknown as (
+        this: Pick<NodeJS.WriteStream, "write">,
+        chunk: WriteChunk,
+        callback: WriteCallback,
+      ) => boolean
+    ).call(stream, chunk, callback);
   }
-  return write.call(stream, chunk);
+  return (write as unknown as (this: Pick<NodeJS.WriteStream, "write">, chunk: WriteChunk) => boolean).call(
+    stream,
+    chunk,
+  );
 }
 
 /**

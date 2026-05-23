@@ -112,7 +112,9 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
     process.stdout.write = stdoutWrite as unknown as typeof process.stdout.write;
     process.stderr.write = stderrWrite as unknown as typeof process.stderr.write;
 
-    const api = { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } as unknown as ClawdbotPluginApi;
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
     wrapApiLoggerStderrForJsonCli(api);
 
     const result = process.stdout.write(Buffer.from("bootstrap log\n"));
@@ -131,7 +133,9 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
     process.stdout.write = stdoutWrite as unknown as typeof process.stdout.write;
     process.stderr.write = stderrWrite as unknown as typeof process.stderr.write;
 
-    const api = { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } as unknown as ClawdbotPluginApi;
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
     wrapApiLoggerStderrForJsonCli(api);
 
     const payload = `${JSON.stringify({ ok: true })}\n`;
@@ -149,14 +153,16 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
     process.stdout.write = stdoutWrite as unknown as typeof process.stdout.write;
     process.stderr.write = stderrWrite as unknown as typeof process.stderr.write;
 
-    const api = { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } as unknown as ClawdbotPluginApi;
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
     wrapApiLoggerStderrForJsonCli(api);
 
     withJsonCliStdoutMirrorSuppressed(() => {
-      process.stdout.write("{\"ok\":true}\n");
+      process.stdout.write('{"ok":true}\n');
     });
 
-    expect(stdoutWrite).toHaveBeenCalledWith("{\"ok\":true}\n");
+    expect(stdoutWrite).toHaveBeenCalledWith('{"ok":true}\n');
     expect(stderrWrite).not.toHaveBeenCalled();
   });
 
@@ -165,7 +171,9 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
     const stdoutWrite = vi.fn(() => true);
     process.stdout.write = stdoutWrite as unknown as typeof process.stdout.write;
 
-    const api = { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } as unknown as ClawdbotPluginApi;
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
     wrapApiLoggerStderrForJsonCli(api);
     expect(process.stdout.write).not.toBe(stdoutWrite);
 
@@ -185,7 +193,9 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
     process.stdout.write = stdoutWrite as unknown as typeof process.stdout.write;
     process.stderr.write = stderrWrite as unknown as typeof process.stderr.write;
 
-    const api = { logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } } as unknown as ClawdbotPluginApi;
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
     wrapApiLoggerStderrForJsonCli(api);
 
     expect(() => process.stdout.write("diagnostic\n")).not.toThrow();
