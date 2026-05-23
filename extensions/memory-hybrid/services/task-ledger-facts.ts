@@ -195,7 +195,9 @@ export function backfillActiveTaskCanonicalLabels(
   const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, limit);
   const activeFacts = facts.filter((fact) => fact.supersededAt == null);
   const rawDb = factsDb.getRawDb();
-  const updateProvenanceAndSource = rawDb.prepare("UPDATE facts SET provenance_json = ?, source = 'active-task' WHERE id = ?");
+  const updateProvenanceAndSource = rawDb.prepare(
+    "UPDATE facts SET provenance_json = ?, source = 'active-task' WHERE id = ?",
+  );
   const updateSourceOnly = rawDb.prepare("UPDATE facts SET source = 'active-task' WHERE id = ?");
 
   let canonicalLabelsUpdated = 0;
