@@ -17,6 +17,8 @@ import {
   groupProjectFactsByEntity,
   loadTaskLedgerFromFacts,
   planActiveTaskHygiene,
+  taskEntityKey,
+  upsertProjectTaskKey,
 } from "../services/task-ledger-facts.js";
 import type { MemoryEntry } from "../types/memory.js";
 
@@ -268,7 +270,8 @@ describe("task-ledger-facts", () => {
       const base = {
         category: "project",
         importance: 0.7,
-        source: "test",
+        // Use "active-task" source so loadTaskLedgerFromFacts picks these up.
+        source: "active-task",
         decayClass: "permanent" as const,
         entity,
       };
@@ -323,5 +326,156 @@ describe("task-ledger-facts", () => {
       db.close();
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("loadTaskLedgerFromFacts ignores category:project facts without source='active-task'", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-source-filter-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      // Arbitrary project entity stored without the active-task marker.
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "memory_store",
+        decayClass: "permanent",
+        entity: "some-random-note",
+        key: "pr_1338_plan",
+        value: "some plan text",
+        text: "Task [some-random-note] pr_1338_plan: some plan text",
+      });
+      // Another arbitrary entity — no status key at all.
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "memory_store",
+        decayClass: "permanent",
+        entity: "release-history",
+        key: "v1.0",
+        value: "initial release",
+        text: "Task [release-history] v1.0: initial release",
+      });
+      // A real active task — has the marker.
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "real-active-task",
+        key: "status",
+        value: "in_progress",
+        text: "Task [real-active-task] status: in_progress",
+      });
+
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      const allLabels = [...active, ...completed].map((t) => t.label);
+      expect(allLabels).not.toContain("some-random-note");
+      expect(allLabels).not.toContain("release-history");
+      expect(allLabels).toContain("real-active-task");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loadTaskLedgerFromFacts excludes active-task entities that have no status key", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-no-status-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      // Active-task marker present but no status key written yet.
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "incomplete-task",
+        key: "title",
+        value: "Not yet started",
+        text: "Task [incomplete-task] title: Not yet started",
+      });
+      // Properly formed active task.
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "proper-task",
+        key: "status",
+        value: "in_progress",
+        text: "Task [proper-task] status: in_progress",
+      });
+
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      const allLabels = [...active, ...completed].map((t) => t.label);
+      // incomplete-task has no status key — must be excluded, not defaulted to in-progress.
+      expect(allLabels).not.toContain("incomplete-task");
+      expect(allLabels).toContain("proper-task");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("upsertProjectTaskKey does not supersede cached memory_store rows", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-upsert-source-filter-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const vectorDb = {
+      hasDuplicate: async () => true,
+      store: async () => {},
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "test-model",
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingProvider;
+    try {
+      const memoryStoreFact = db.store({
+        category: "project",
+        importance: 0.7,
+        source: "memory_store",
+        decayClass: "permanent",
+        entity: "proj-1273",
+        key: "status",
+        value: "legacy-note",
+        text: "Task [proj-1273] status: legacy-note",
+      });
+      const latestByEntityKey = new Map<string, MemoryEntry>();
+      latestByEntityKey.set(taskEntityKey("proj-1273", "status"), memoryStoreFact);
+
+      await upsertProjectTaskKey(db, vectorDb, embeddings, "PROJ-1273", "status", "in_progress", undefined, {
+        latestByEntityKey,
+      });
+
+      const untouched = db.getById(memoryStoreFact.id);
+      expect(untouched?.supersededBy).toBeNull();
+
+      const activeRows = db
+        .listFactsByCategory("project", 100)
+        .filter((row) => row.entity === "proj-1273" && row.key === "status" && row.source === "active-task");
+      expect(activeRows.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("groupProjectFactsByEntity merges case-variant entities under a normalised lowercase key", () => {
+    const rows: MemoryEntry[] = [
+      fact({ id: "h1", entity: "Humanizer", key: "status", value: "in_progress", createdAt: 1, source: "active-task" }),
+      fact({
+        id: "h2",
+        entity: "humanizer",
+        key: "title",
+        value: "Humanizer task",
+        createdAt: 2,
+        source: "active-task",
+      }),
+      fact({ id: "h3", entity: "HUMANIZER", key: "next", value: "do stuff", createdAt: 3, source: "active-task" }),
+    ];
+    const g = groupProjectFactsByEntity(rows);
+    // All three variants should collapse into one group keyed by the lowercase label.
+    expect(g.size).toBe(1);
+    expect(g.has("humanizer")).toBe(true);
+    expect(g.get("humanizer")?.get("status")?.value).toBe("in_progress");
+    expect(g.get("humanizer")?.get("title")?.value).toBe("Humanizer task");
+    expect(g.get("humanizer")?.get("next")?.value).toBe("do stuff");
   });
 });

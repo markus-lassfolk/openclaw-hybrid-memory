@@ -53,12 +53,14 @@ export type ActiveTaskProjectionStatus = {
   marker: ActiveTaskProjectionStaleMarker | null;
 };
 
-/** Latest value per entity+key from non-superseded project facts */
+/** Latest value per entity+key from non-superseded project facts.
+ *  Entity labels are normalised to lowercase (trim + toLowerCase) so that
+ *  case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
   for (const f of facts) {
     if (!f.entity?.trim()) continue;
-    const ent = f.entity.trim();
+    const ent = f.entity.trim().toLowerCase();
     const k = (f.key ?? "").trim() || "_body";
     let km = byEntity.get(ent);
     if (!km) {
@@ -174,7 +176,9 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
   for (const [entity, keyMap] of sorted) {
     const f = rowToRecord(keyMap);
     const bounds = createdBoundsFromKeyMap(keyMap);
-    const statusRaw = (f.status ?? "open").trim();
+    // Entities with no explicit `status` key must not default to in-progress.
+    const statusRaw = f.status?.trim();
+    if (!statusRaw) continue;
     const disp = factStatusToDisplay(statusRaw);
     const started = resolveTaskStarted(f, bounds);
     const updated = resolveTaskUpdated(f, bounds);
@@ -219,7 +223,7 @@ export function loadTaskLedgerFromFacts(
 } {
   const facts = factsDb
     .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
+    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY && fact.source === "active-task")
     .slice(0, factLimit);
   const grouped = groupProjectFactsByEntity(facts);
   return buildTaskEntriesFromGroupedFacts(grouped);
@@ -788,22 +792,34 @@ export async function upsertProjectTaskKey(
   log?: { warn?: (m: string) => void },
   opts?: { latestByEntityKey?: Map<string, MemoryEntry> },
 ): Promise<void> {
-  const cacheKey = taskEntityKey(entity, key);
+  // Normalise entity labels on write (trim + lowercase) to prevent case-variant
+  // collisions (e.g. "Humanizer" and "humanizer" stored as separate entities).
+  const normalizedEntity = entity.trim().toLowerCase();
+  const cacheKey = taskEntityKey(normalizedEntity, key);
   let previous: MemoryEntry | undefined;
-  if (opts?.latestByEntityKey) {
-    previous = opts.latestByEntityKey.get(cacheKey);
-  } else {
+  const cached = opts?.latestByEntityKey?.get(cacheKey);
+  // Keep supersession scoped to active-task ledger rows only; cached
+  // memory_store rows must never be retired by active-task checkpoints.
+  if (cached?.source === "active-task") {
+    previous = cached;
+  } else if (!opts?.latestByEntityKey || cached) {
+    // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
+    // entry (which we must not supersede, but an active-task row may still exist).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-    const same = facts.filter((f) => f.entity === entity && (f.key ?? "") === key);
+    // Case-insensitive lookup so mixed-case legacy facts are also superseded.
+    // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
+    const same = facts.filter(
+      (f) => f.source === "active-task" && f.entity?.toLowerCase() === normalizedEntity && (f.key ?? "") === key,
+    );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
   }
-  const text = `Task [${entity}] ${key}: ${value}`;
+  const text = `Task [${normalizedEntity}] ${key}: ${value}`;
   const entry = factsDb.store({
     text,
     category: TASK_LEDGER_CATEGORY,
     importance: CLI_STORE_IMPORTANCE,
-    entity,
+    entity: normalizedEntity,
     key,
     value,
     source: "active-task",
@@ -916,8 +932,10 @@ export async function applyActiveTaskHygieneFacts(
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
   const latestByEntityKey = new Map<string, MemoryEntry>();
+  // Only index active-task ledger facts, not memory_store project facts.
   for (const fact of factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000)) {
-    const entity = fact.entity?.trim();
+    if (fact.source !== "active-task") continue;
+    const entity = fact.entity?.trim().toLowerCase();
     if (!entity) continue;
     const key = (fact.key ?? "").trim();
     const cacheKey = taskEntityKey(entity, key);
@@ -1084,7 +1102,8 @@ export async function consumePendingTaskSignalsFacts(
   const active = detectStaleTasks(rawActive, staleMinutes);
 
   const findMatchingTask = (activeEntries: ActiveTaskEntry[], signal: PendingTaskSignal): ActiveTaskEntry | null => {
-    const byLabel = activeEntries.filter((t) => t.label === signal.taskRef);
+    const normalizedTaskRef = signal.taskRef.trim().toLowerCase();
+    const byLabel = activeEntries.filter((t) => t.label.toLowerCase() === normalizedTaskRef);
     if (byLabel.length === 1) return byLabel[0];
     if (byLabel.length > 1) {
       logger?.warn?.(`memory-hybrid: multiple active tasks share label ${signal.taskRef}; leaving signal pending`);
