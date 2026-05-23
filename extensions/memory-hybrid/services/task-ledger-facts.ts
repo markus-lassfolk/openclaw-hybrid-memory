@@ -1064,6 +1064,14 @@ export function backfillActiveTaskCanonicalLabels(
   const groups = new Map<string, MemoryEntry[]>();
   let canonicalLabelsUpdated = 0;
 
+  const verifiedLookup = (() => {
+    try {
+      return factsDb.getRawDb().prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1");
+    } catch {
+      return null;
+    }
+  })();
+
   for (const fact of facts) {
     if (!fact.entity?.trim()) continue;
     const canonical = factCanonicalLabel(fact);
@@ -1112,6 +1120,9 @@ export function backfillActiveTaskCanonicalLabels(
       }
     }
     const supersede = (oldId: string, newId: string | null): void => {
+      if (verifiedLookup?.get(oldId)) {
+        return;
+      }
       supersededFacts++;
       groupSuperseded++;
       if (!opts.dryRun) factsDb.supersede(oldId, newId);
