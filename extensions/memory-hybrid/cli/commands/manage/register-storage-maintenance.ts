@@ -4,7 +4,6 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { isPromptArtifactOrReasoningTrace } from "../../../services/capture-utils.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
