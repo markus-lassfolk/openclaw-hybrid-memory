@@ -246,8 +246,8 @@ export async function runContextAudit(opts: {
         : 0))
     : 0;
 
-  const issueEstimateTokens = cfg.ambient.enabled ? issueCapTokens : 0;
-  const narrativeEstimateTokens = narrativeMaxTokens;
+  const issueEstimateTokens = 0;
+  const narrativeEstimateTokens = 0;
   const activeTaskEstimateTokens = Math.min(activeTasksTokens, activeTaskMaxTokens);
   const staleWarningEstimateTokens = Math.min(staleWarningTokens, staleWarningMaxTokens);
   const fixedBlockEstimatedTokens =
