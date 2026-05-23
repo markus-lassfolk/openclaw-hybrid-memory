@@ -830,6 +830,7 @@ export async function upsertProjectTaskKey(
   // Normalise entity labels on write (trim + lowercase) to prevent case-variant
   // collisions (e.g. "Humanizer" and "humanizer" stored as separate entities).
   const normalizedEntity = entity.trim().toLowerCase();
+  const canonical = canonicalLabel(normalizedEntity);
   const cacheKey = taskEntityKey(normalizedEntity, key);
   let previous: MemoryEntry | undefined;
   const cached = opts?.latestByEntityKey?.get(cacheKey);
@@ -841,10 +842,10 @@ export async function upsertProjectTaskKey(
     // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
     // entry (which we must not supersede, but an active-task row may still exist).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-    // Case-insensitive lookup so mixed-case legacy facts are also superseded.
+    // Supersede by canonical label to match grouping logic (strips suffixes, normalizes separators).
     // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
     const same = facts.filter(
-      (f) => f.source === "active-task" && f.entity?.toLowerCase() === normalizedEntity && (f.key ?? "") === key,
+      (f) => f.source === "active-task" && canonicalLabel(f.entity ?? "") === canonical && (f.key ?? "") === key,
     );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
@@ -859,6 +860,7 @@ export async function upsertProjectTaskKey(
     value,
     source: "active-task",
     decayClass: "permanent",
+    provenanceJson: activeTaskProvenance(canonical),
   });
   if (previous) {
     factsDb.supersede(previous.id, entry.id);
