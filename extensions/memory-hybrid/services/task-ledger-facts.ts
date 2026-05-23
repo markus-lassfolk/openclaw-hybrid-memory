@@ -301,9 +301,21 @@ export async function clearActiveTaskProjectionStale(filePath: string): Promise<
 }
 
 export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, scopeFilter?: ScopeFilter | null): number | null {
-  // Use targeted query instead of loading all facts then filtering by category (#1553)
-  const latestProjectFact = factsDb.getProjectFacts(1, scopeFilter)[0];
-  return latestProjectFact?.createdAt ?? null;
+  // Query all project facts (any source) to detect staleness from any project fact updates.
+  // Note: getProjectFacts filters by source='active-task', but we need to detect updates
+  // from all sources (e.g., memory_store) to properly mark projections as stale.
+  const projectFacts = factsDb
+    .getAll({ scopeFilter })
+    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
+    .slice(0, 8000);
+  if (projectFacts.length === 0) return null;
+  let maxSec = Number.NEGATIVE_INFINITY;
+  for (const fact of projectFacts) {
+    if (typeof fact.createdAt === "number" && Number.isFinite(fact.createdAt)) {
+      maxSec = Math.max(maxSec, fact.createdAt);
+    }
+  }
+  return maxSec === Number.NEGATIVE_INFINITY ? null : maxSec;
 }
 
 function toIsoOrNull(unixSeconds: number | null): string | null {
