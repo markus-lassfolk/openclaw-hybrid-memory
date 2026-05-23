@@ -91,7 +91,7 @@ describe("pre-finalization guard", () => {
     expect(result.action).toBe("allow");
     expect(result.reason).toBe("checkpoint_present");
     expect(result.checkpoint.projectFactsSatisfied).toBe(true);
-    expect(result.checkpoint.projectCheckpointEntity).toBe("issue-1271-ci");
+    expect(result.checkpoint.projectCheckpointEntity).toBeUndefined();
   });
 
   it("requires goal_assess to match the related goal id on active project rows", () => {
