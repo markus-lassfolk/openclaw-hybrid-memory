@@ -21,6 +21,7 @@ vi.mock("../utils/atomic-write.js", async (importOriginal) => {
 // ---------------------------------------------------------------------------
 
 const detectCredentialPatternsMock = vi.fn().mockReturnValue([]);
+const classifyMemoryOperationsBatchMock = vi.fn().mockResolvedValue([]);
 
 vi.mock("../services/auto-capture.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../services/auto-capture.js")>();
@@ -28,6 +29,15 @@ vi.mock("../services/auto-capture.js", async (importOriginal) => {
     ...actual,
     detectCredentialPatterns: (...args: Parameters<typeof actual.detectCredentialPatterns>) =>
       detectCredentialPatternsMock(...args),
+  };
+});
+
+vi.mock("../services/classification.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/classification.js")>();
+  return {
+    ...actual,
+    classifyMemoryOperationsBatch: (...args: Parameters<typeof actual.classifyMemoryOperationsBatch>) =>
+      classifyMemoryOperationsBatchMock(...args),
   };
 });
 
@@ -121,6 +131,8 @@ describe("runCaptureStage", () => {
   beforeEach(() => {
     atomicWriteFileMock.mockReset();
     detectCredentialPatternsMock.mockReturnValue([]);
+    classifyMemoryOperationsBatchMock.mockReset();
+    classifyMemoryOperationsBatchMock.mockResolvedValue([]);
   });
 
   it("skips auto-capture for cron/system sessions", async () => {
@@ -243,6 +255,88 @@ describe("runCaptureStage", () => {
     expect(vectorHasDuplicate).not.toHaveBeenCalled();
     expect(vectorStore).not.toHaveBeenCalled();
     expect(auditAppend).not.toHaveBeenCalled();
+    expect(ctx.walWrite).toHaveBeenCalledOnce();
+    expect(ctx.walRemove).toHaveBeenCalledOnce();
+  });
+
+  it("skips update supersession/vector side effects when classified UPDATE store is skipped", async () => {
+    const api = makeApi("chat");
+    const existingFact = {
+      id: "fact-existing",
+      text: "Remember to answer concisely.",
+      category: "fact",
+      importance: 0.8,
+      source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
+      createdAt: Math.floor(Date.now() / 1000) - 3600,
+      decayClass: "normal",
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 1,
+      tags: null,
+      scope: "global",
+      scopeTarget: null,
+    };
+    classifyMemoryOperationsBatchMock.mockResolvedValue([
+      { action: "UPDATE", targetId: existingFact.id, reason: "replace old wording" },
+    ]);
+    const storeWithResult = vi.fn().mockReturnValue({
+      entry: { ...existingFact, id: "skipped" },
+      evictedFactId: null,
+      skipped: true,
+    });
+    const supersede = vi.fn();
+    const aliasDeleteByFactId = vi.fn();
+    const vectorDelete = vi.fn().mockResolvedValue(true);
+    const auditAppend = vi.fn();
+    const { ctx } = makeContext({
+      factsDb: {
+        store: vi.fn(),
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+        getById: vi.fn((id: string) => (id === existingFact.id ? existingFact : null)),
+        findSimilarForClassification: vi.fn().mockReturnValue([existingFact]),
+        supersede,
+      } as unknown as LifecycleContext["factsDb"],
+      aliasDb: {
+        deleteByFactId: aliasDeleteByFactId,
+      } as unknown as LifecycleContext["aliasDb"],
+      vectorDb: {
+        delete: vectorDelete,
+      } as unknown as LifecycleContext["vectorDb"],
+      cfg: {
+        autoCapture: true,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: [] },
+        store: { classifyBeforeWrite: true },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: false },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+      auditStore: {
+        append: auditAppend,
+      } as unknown as LifecycleContext["auditStore"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [{ role: "user", content: "Remember to answer with one sentence." }],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeWithResult).toHaveBeenCalledOnce();
+    expect(supersede).not.toHaveBeenCalled();
+    expect(aliasDeleteByFactId).not.toHaveBeenCalled();
+    expect(vectorDelete).not.toHaveBeenCalled();
+    expect(auditAppend).not.toHaveBeenCalledWith(expect.objectContaining({ action: "auto-capture:updated" }));
     expect(ctx.walWrite).toHaveBeenCalledOnce();
     expect(ctx.walRemove).toHaveBeenCalledOnce();
   });
