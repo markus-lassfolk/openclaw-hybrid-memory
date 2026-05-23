@@ -159,10 +159,10 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
     wrapApiLoggerStderrForJsonCli(api);
 
     withJsonCliStdoutMirrorSuppressed(() => {
-      process.stdout.write('{"ok":true}\n');
+      process.stdout.write("diagnostic log\n");
     });
 
-    expect(stdoutWrite).toHaveBeenCalledWith('{"ok":true}\n');
+    expect(stdoutWrite).toHaveBeenCalledWith("diagnostic log\n");
     expect(stderrWrite).not.toHaveBeenCalled();
   });
 
