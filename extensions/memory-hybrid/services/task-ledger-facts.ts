@@ -35,7 +35,7 @@ export function canonicalLabel(entity: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+(?:pr\s+queue|pull\s+request\s+queue|pr-stewardship|pull\s+request\s+stewardship)\s*$/i, "")
-    .replace(/[\s\/_]+/g, "-")
+    .replace(/[\s/_]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
@@ -60,10 +60,19 @@ function readCanonicalLabelFromFact(fact: MemoryEntry): string | null {
   }
 }
 
-function activeTaskProvenance(canonical: string): string {
-  return JSON.stringify({ activeTask: { canonicalLabel: canonical }, canonical_label: canonical });
+function activeTaskProvenance(canonical: string, existing?: string | null): string {
+  const base = { activeTask: { canonicalLabel: canonical }, canonical_label: canonical };
+  if (existing) {
+    try {
+      const parsed = JSON.parse(existing) as Record<string, unknown>;
+      return JSON.stringify({ ...parsed, ...base });
+    } catch {
+      // If existing provenance is not valid JSON, use base only
+    }
+  }
+  return JSON.stringify(base);
 }
-const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
+export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
@@ -1037,6 +1046,112 @@ export interface ActiveTaskHygieneApplyResult {
     blockerStatus: string;
     reason: string;
   }>;
+}
+
+export interface ActiveTaskCanonicalBackfillResult {
+  scannedFacts: number;
+  canonicalLabelsUpdated: number;
+  supersededFacts: number;
+  duplicateGroups: Array<{ canonicalLabel: string; facts: number; activeBefore: number; superseded: number }>;
+}
+
+export function backfillActiveTaskCanonicalLabels(
+  factsDb: FactsDB,
+  opts: { dryRun?: boolean; limit?: number } = {},
+): ActiveTaskCanonicalBackfillResult {
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, opts.limit ?? 50_000);
+  const groups = new Map<string, MemoryEntry[]>();
+  let canonicalLabelsUpdated = 0;
+
+  for (const fact of facts) {
+    if (!fact.entity?.trim()) continue;
+    const canonical = factCanonicalLabel(fact);
+    const existing = readCanonicalLabelFromFact(fact);
+    if (existing !== canonical) {
+      canonicalLabelsUpdated++;
+      if (!opts.dryRun) {
+        const rawDb = (
+          factsDb as unknown as {
+            getRawDb?: () => { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+          }
+        ).getRawDb?.();
+        rawDb
+          ?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?")
+          .run(activeTaskProvenance(canonical, fact.provenanceJson), fact.id);
+      }
+    }
+    const arr = groups.get(canonical) ?? [];
+    arr.push(fact);
+    groups.set(canonical, arr);
+  }
+
+  const duplicateGroups: ActiveTaskCanonicalBackfillResult["duplicateGroups"] = [];
+  let supersededFacts = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const [canonical, rows] of groups) {
+    const activeBefore = rows.filter((f) => !f.supersededAt).length;
+    let groupSuperseded = 0;
+    const byKey = new Map<string, MemoryEntry[]>();
+    for (const row of rows) {
+      const key = (row.key ?? "").trim() || "_body";
+      const arr = byKey.get(key) ?? [];
+      arr.push(row);
+      byKey.set(key, arr);
+    }
+    let terminalStatus: MemoryEntry | undefined;
+    const statusRows = byKey.get("status") ?? [];
+    for (const row of statusRows) {
+      const isExpired = row.expiresAt !== null && row.expiresAt <= nowSec;
+      if (
+        !isExpired &&
+        isTerminalFactStatus(row.value ?? row.text ?? "") &&
+        (!terminalStatus || row.createdAt > terminalStatus.createdAt)
+      ) {
+        terminalStatus = row;
+      }
+    }
+    const supersede = (oldId: string, newId: string | null): void => {
+      supersededFacts++;
+      groupSuperseded++;
+      if (!opts.dryRun) factsDb.supersede(oldId, newId);
+    };
+    if (terminalStatus) {
+      for (const [key, sameKey] of byKey) {
+        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
+        const keeper = key === "status" ? terminalStatus : ranked[0];
+        for (const row of ranked) {
+          if (row.id !== keeper.id && !row.supersededAt) supersede(row.id, keeper.id);
+        }
+      }
+    } else {
+      for (const sameKey of byKey.values()) {
+        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
+        const keeper = ranked[0];
+        for (const row of ranked.slice(1)) {
+          if (!row.supersededAt) supersede(row.id, keeper.id);
+        }
+      }
+    }
+    if (activeBefore > 1 || groupSuperseded > 0) {
+      duplicateGroups.push({
+        canonicalLabel: canonical,
+        facts: rows.length,
+        activeBefore,
+        superseded: groupSuperseded,
+      });
+    }
+  }
+
+  if (!opts.dryRun) {
+    (factsDb as unknown as { invalidateSupersededTextsCache?: () => void }).invalidateSupersededTextsCache?.();
+  }
+
+  return {
+    scannedFacts: facts.length,
+    canonicalLabelsUpdated,
+    supersededFacts,
+    duplicateGroups: duplicateGroups.sort((a, b) => a.canonicalLabel.localeCompare(b.canonicalLabel)),
+  };
 }
 
 export async function applyActiveTaskHygieneFacts(

@@ -51,7 +51,7 @@ So in one sentence: **it re-reads conversation logs in a chosen window (full or 
 
 ## Overview
 
-Session distillation is a **batch fact-extraction pipeline** that **indexes and processes old session logs and historical memories**: it runs over historical OpenClaw session transcripts, extracts durable facts (and credentials when present), and stores them in the right place in **one run**. Facts go to hybrid memory (SQLite + LanceDB); credentials are routed automatically—to the **Secure Credential Vault** (plus a pointer in memory) when the vault is enabled, or to memory when it is not. No separate “facts” vs “credentials” distillation runs are needed. It complements the hybrid memory system's real-time auto-capture by retrospectively analyzing chat history.
+Session distillation is a **batch fact-extraction pipeline** that **indexes and processes old session logs and historical memories**: it runs over historical OpenClaw session transcripts, extracts durable facts (and credentials when present), and stores them in the right place in **one run**. Facts go to hybrid memory (SQLite + LanceDB); credentials are routed automatically—to the **Secure Credential Vault** (plus a pointer in memory) when the vault is enabled, and are skipped when the vault is disabled or unavailable. No separate “facts” vs “credentials” distillation runs are needed. It complements the hybrid memory system's real-time auto-capture by retrospectively analyzing chat history.
 
 **Model choice:** The pipeline uses whatever chat model the **OpenClaw gateway** provides; configure **`llm.heavy`** (see [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md)) for an ordered preference list (e.g. Gemini for 1M+ context, then Claude/OpenAI). Long-context models allow large batches (~500k tokens per batch); others use 80k. You can pass `--model M` to override for a run or spawn the distillation sub-agent with a specific model (see [Running the Pipeline](#running-the-pipeline-manually) and [Nightly Cron Setup](#nightly-cron-setup)).
 
@@ -303,7 +303,7 @@ Use `openclaw hybrid-mem distill-window` at the start of the job to get `mode`, 
 1. **Get the window:** Run `openclaw hybrid-mem distill-window --json`. Parse `mode`, `startDate`, `endDate`, `mtimeDays`.
 2. Find session JSONL files in that window (e.g. `find ... -mtime -<mtimeDays>`).
 3. Extract conversational text (e.g. via `scripts/distill-sessions/extract-text.sh`).
-4. Extract facts with the LLM (Gemini or other), dedupe against memory_recall, store net new facts via memory_store. Extracted credentials are routed the same way as in real time: to the secure vault (plus a pointer in memory) when the vault is enabled, or to memory when it is not.
+4. Extract facts with the LLM (Gemini or other), dedupe against memory_recall, store net new facts via memory_store. Extracted credentials are routed the same way as in real time: to the secure vault (plus a pointer in memory) when the vault is enabled, and skipped when the vault is disabled or unavailable.
 5. Log a short summary to `nightly-logs/YYYY-MM-DD.md`.
 6. **Always** run `openclaw hybrid-mem record-distill` at the end so the next run uses the correct window.
 
@@ -317,7 +317,7 @@ Run the nightly memory distillation pipeline.
 1. Get the window: run `openclaw hybrid-mem distill-window --json`. Parse the JSON (mode, startDate, endDate, mtimeDays).
 2. Find session files in that window: e.g. find ~/.openclaw/agents/main/sessions/ -name '*.jsonl' -not -name '*.deleted.*' -mtime -<mtimeDays> (use mtimeDays from step 1).
 3. Extract text using scripts/distill-sessions/extract-text.sh (or equivalent) for those files.
-4. Extract facts from the text using the LLM (category, entity, key, value, source date). For each fact, check memory_recall for similar — skip if already stored. Store only net new facts via memory_store, prefixed with [YYYY-MM-DD]. Credentials extracted from sessions are routed like in real time: to the secure vault (plus a pointer in memory) when the vault is enabled, or to memory when it is not.
+4. Extract facts from the text using the LLM (category, entity, key, value, source date). For each fact, check memory_recall for similar — skip if already stored. Store only net new facts via memory_store, prefixed with [YYYY-MM-DD]. Credentials extracted from sessions are routed like in real time: to the secure vault (plus a pointer in memory) when the vault is enabled, and skipped when the vault is disabled or unavailable.
 5. Write a brief summary to scripts/distill-sessions/nightly-logs/YYYY-MM-DD.md (sessions scanned, facts extracted, new stored).
 6. Run openclaw hybrid-mem record-distill so the next run uses the correct incremental window.
 

@@ -7,18 +7,18 @@
 
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
-import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -48,86 +48,88 @@ export async function runStoreForCli(
   const key = opts.key ?? extracted.key ?? null;
   const value = opts.value ?? extracted.value ?? null;
 
-  if (cfg.credentials.enabled && credentialsDb && isCredentialLike(text, entity, key, value)) {
-    const parsed = tryParseCredentialForVault(text, entity, key, value, {
-      requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-    });
-    if (parsed) {
-      // Step 1: Write to vault (use storeIfNew to avoid overwriting user-managed credentials)
-      try {
-        const stored = credentialsDb.storeIfNew({
-          service: parsed.service,
-          type: parsed.type as any,
-          value: parsed.secretValue,
-          url: parsed.url,
-          notes: parsed.notes,
-        });
-        if (!stored) {
-          return { outcome: "credential_skipped_duplicate", service: parsed.service, type: parsed.type };
-        }
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-vault-store" });
-        return { outcome: "credential_vault_error" };
-      }
-
-      // Step 2: Write pointer to factsDb
-      let pointerEntry: any;
-      try {
-        const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
-        const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-        const storeResult = factsDb.storeWithResult({
-          text: pointerText,
-          category: "technical" as MemoryCategory,
-          importance: CLI_STORE_IMPORTANCE,
-          entity: "Credentials",
-          key: parsed.service,
-          value: pointerValue,
-          source: "cli",
-          sourceDate,
-          tags: ["auth", ...extractTags(pointerText, "Credentials")],
-        });
-        pointerEntry = storeResult.entry;
-        // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-        await cleanupEvictedVector({
-          vectorDb: vectorDb,
-          evictedFactId: storeResult.evictedFactId,
-          logger: log,
-          context: "cli-store",
-        });
+  if (isCredentialLike(text, entity, key, value)) {
+    if (cfg.credentials.enabled && credentialsDb) {
+      const parsed = tryParseCredentialForVault(text, entity, key, value, {
+        requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+      });
+      if (parsed) {
+        // Step 1: Write to vault (use storeIfNew to avoid overwriting user-managed credentials)
         try {
-          const vector = await embeddings.embed(pointerText);
-          factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
-          if (!(await vectorDb.hasDuplicate(vector))) {
-            await vectorDb.store({
-              text: pointerText,
-              vector,
-              importance: CLI_STORE_IMPORTANCE,
-              category: "technical",
-              id: pointerEntry.id,
-            });
+          const stored = credentialsDb.storeIfNew({
+            service: parsed.service,
+            type: parsed.type,
+            value: parsed.secretValue,
+            url: parsed.url,
+            notes: parsed.notes,
+          });
+          if (!stored) {
+            return { outcome: "credential_skipped_duplicate", service: parsed.service, type: parsed.type };
           }
         } catch (err) {
-          log.warn(`memory-hybrid: vector store failed: ${err}`);
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-vault-store" });
+          return { outcome: "credential_vault_error" };
         }
-      } catch (err) {
-        // Compensating delete: vault write succeeded but pointer write failed
+
+        // Step 2: Write pointer to factsDb
+        let pointerEntry: any;
         try {
-          // biome-ignore lint/suspicious/noExplicitAny: credential type from parsed input
-          credentialsDb.delete(parsed.service, parsed.type as any);
-        } catch (cleanupErr) {
-          log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
-          capturePluginError(cleanupErr as Error, {
-            subsystem: "cli",
-            operation: "runStoreForCli:credential-compensating-delete",
+          const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
+          const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
+          const storeResult = factsDb.storeWithResult({
+            text: pointerText,
+            category: "technical" as MemoryCategory,
+            importance: CLI_STORE_IMPORTANCE,
+            entity: "Credentials",
+            key: parsed.service,
+            value: pointerValue,
+            source: "cli",
+            sourceDate,
+            tags: ["auth", ...extractTags(pointerText, "Credentials")],
           });
+          pointerEntry = storeResult.entry;
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          await cleanupEvictedVector({
+            vectorDb: vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: log,
+            context: "cli-store",
+          });
+          try {
+            const vector = await embeddings.embed(pointerText);
+            factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
+            if (!(await vectorDb.hasDuplicate(vector))) {
+              await vectorDb.store({
+                text: pointerText,
+                vector,
+                importance: CLI_STORE_IMPORTANCE,
+                category: "technical",
+                id: pointerEntry.id,
+              });
+            }
+          } catch (err) {
+            log.warn(`memory-hybrid: vector store failed: ${err}`);
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
+          }
+        } catch (err) {
+          // Compensating delete: vault write succeeded but pointer write failed
+          try {
+            credentialsDb.delete(parsed.service, parsed.type);
+          } catch (cleanupErr) {
+            log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+            capturePluginError(cleanupErr as Error, {
+              subsystem: "cli",
+              operation: "runStoreForCli:credential-compensating-delete",
+            });
+          }
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-db-store" });
+          return { outcome: "credential_db_error" };
         }
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-db-store" });
-        return { outcome: "credential_db_error" };
+        return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
       }
-      return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
+      return { outcome: "credential_parse_error" };
     }
-    return { outcome: "credential_parse_error" };
+    return { outcome: "credential_blocked_no_vault" };
   }
 
   const tags = opts.tags

@@ -273,7 +273,6 @@ export function registerHealthCommand(
           detail: "Could not inspect vector bounds",
         });
       }
-      }
 
       // JSON output
       if (opts.json) {

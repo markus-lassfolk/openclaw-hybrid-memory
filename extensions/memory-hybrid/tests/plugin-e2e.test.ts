@@ -328,6 +328,28 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     expect(texts.some((t) => t.includes("banana server port 9999"))).toBe(true);
   });
 
+  it("memory_store blocks credential-like content when vault is disabled", async () => {
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+
+    const storeTool = api.getTool("memory_store");
+    const recallTool = api.getTool("memory_recall");
+
+    const result = (await storeTool?.execute("call-cred-block", {
+      text: "OpenAI API Key: sk-testAbCdEfGh1234IjKlMnOpQrSt",
+      category: "technical",
+      importance: 0.9,
+    })) as { content?: { type: string; text: string }[]; details?: { action?: string } };
+
+    expect(result.details?.action).toBe("credential_blocked_no_vault");
+    expect(result.content?.[0]?.text).toContain("blocked");
+
+    const recallResult = (await recallTool?.execute("call-cred-block-recall", {
+      query: "OpenAI API Key",
+      limit: 5,
+    })) as { details?: { count?: number } };
+    expect(recallResult.details?.count ?? 0).toBe(0);
+  });
+
   it("memory_recall exposes constrained-recall mode with filter and rank explanation", async () => {
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
 
