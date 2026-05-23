@@ -13,6 +13,18 @@ import {
 import { type SubagentEndedEvent, subagentEndedIsSuccess } from "../utils/subagent-ended-utils.js";
 import type { LifecycleContext } from "./types.js";
 
+function getEventStringField(event: unknown, key: string): string | null {
+  if (!event || typeof event !== "object") return null;
+  const value = (event as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : null;
+}
+
+function getEventBooleanField(event: unknown, key: string): boolean | null {
+  if (!event || typeof event !== "object") return null;
+  const value = (event as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : null;
+}
+
 export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: LifecycleContext, goalsDir: string): void {
   if (!ctx.cfg.goalStewardship.enabled) return;
 
@@ -75,23 +87,11 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "goal-subagent",
         operation: "subagent_ended",
-        eventLabel: typeof (event as { label?: unknown })?.label === "string" ? (event as { label: string }).label : null,
-        eventSessionKey:
-          typeof (event as { sessionKey?: unknown })?.sessionKey === "string"
-            ? (event as { sessionKey: string }).sessionKey
-            : null,
-        eventTargetSessionKey:
-          typeof (event as { targetSessionKey?: unknown })?.targetSessionKey === "string"
-            ? (event as { targetSessionKey: string }).targetSessionKey
-            : null,
-        eventSuccess:
-          typeof (event as { success?: unknown })?.success === "boolean"
-            ? (event as { success: boolean }).success
-            : null,
-        eventOutcome:
-          typeof (event as { outcome?: unknown })?.outcome === "string"
-            ? (event as { outcome: string }).outcome
-            : null,
+        eventLabel: getEventStringField(event, "label"),
+        eventSessionKey: getEventStringField(event, "sessionKey"),
+        eventTargetSessionKey: getEventStringField(event, "targetSessionKey"),
+        eventSuccess: getEventBooleanField(event, "success"),
+        eventOutcome: getEventStringField(event, "outcome"),
       });
     }
   });

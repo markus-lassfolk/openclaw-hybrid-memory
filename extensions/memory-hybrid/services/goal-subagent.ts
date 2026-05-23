@@ -174,6 +174,10 @@ function allLinkedTasksTerminal(g: Goal): boolean {
   );
 }
 
+function normalizedLinkedTasks(g: Goal): Goal["linkedTasks"] {
+  return Array.isArray(g.linkedTasks) ? g.linkedTasks : [];
+}
+
 export async function updateGoalOnSubagentEnd(
   goalsDir: string,
   info: {
@@ -184,25 +188,25 @@ export async function updateGoalOnSubagentEnd(
   },
 ): Promise<void> {
   const goals = await listActiveGoals(goalsDir);
-  const matches: Array<{ goal: Goal; linkedTasks: Goal["linkedTasks"]; taskLabel: string }> = [];
+  const matches: Array<{ goal: Goal; taskLabel: string }> = [];
   for (const g of goals) {
-    const linkedTasks = Array.isArray(g.linkedTasks) ? g.linkedTasks : [];
+    const linkedTasks = normalizedLinkedTasks(g);
     if (info.sessionKey) {
       const task = linkedTasks.find((t) => t.sessionKey && t.sessionKey === info.sessionKey);
-      if (task) matches.push({ goal: g, linkedTasks, taskLabel: task.label });
+      if (task) matches.push({ goal: g, taskLabel: task.label });
       continue;
     }
     const task = linkedTasks.find((t) => t.label === info.label);
-    if (task) matches.push({ goal: g, linkedTasks, taskLabel: task.label });
+    if (task) matches.push({ goal: g, taskLabel: task.label });
   }
   if (matches.length !== 1) {
     return;
   }
-  const { goal: g, linkedTasks: existingLinkedTasks, taskLabel: matchedTaskLabel } = matches[0];
+  const { goal: g, taskLabel: matchedTaskLabel } = matches[0];
 
   const ts = nowIso();
   const newStatus = info.success ? "completed" : "failed";
-  const linkedTasks = existingLinkedTasks.map((t) =>
+  const linkedTasks = normalizedLinkedTasks(g).map((t) =>
     t.label === matchedTaskLabel
       ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
       : t,
