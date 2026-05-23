@@ -328,7 +328,10 @@ export const resolvers: GraphQLResolvers = {
         scopeTarget: existing.scopeTarget ?? null,
         expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
       });
-      context.factsDb.supersede(existing.id, updated.id);
+      // Skip supersede if store was rejected (artifact text)
+      if (updated.id !== "") {
+        context.factsDb.supersede(existing.id, updated.id);
+      }
       return updated;
     },
 

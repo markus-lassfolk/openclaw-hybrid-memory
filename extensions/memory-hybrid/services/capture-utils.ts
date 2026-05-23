@@ -21,13 +21,25 @@ export function isPromptArtifactOrReasoningTrace(text: string): boolean {
   // Classifier output markers (NOOP |, ADD |, UPDATE |, DELETE |)
   if (/^(ADD|UPDATE|DELETE|NOOP)\s+[a-f0-9-]*\s*\|/i.test(trimmed)) return true;
   // Classifier JSON output: single object or array of objects with an "action" field
+  // To avoid false positives, require additional classifier-specific fields like "reason" or "targetId"
   try {
     const lower = trimmed.toLowerCase();
     if (lower.startsWith('[{"action":') || lower.startsWith('{"action":')) {
       const parsed = JSON.parse(trimmed);
       if (Array.isArray(parsed)) {
-        if (parsed.length > 0 && parsed[0] && typeof parsed[0] === "object" && "action" in parsed[0]) return true;
-      } else if (parsed && typeof parsed === "object" && "action" in parsed) return true;
+        if (parsed.length > 0 && parsed[0] && typeof parsed[0] === "object" && "action" in parsed[0]) {
+          // Require classifier-specific fields to avoid matching legitimate action logs
+          const first = parsed[0] as Record<string, unknown>;
+          if ("reason" in first || "targetId" in first || "confidence" in first) {
+            return true;
+          }
+        }
+      } else if (parsed && typeof parsed === "object" && "action" in parsed) {
+        // Require classifier-specific fields to avoid matching legitimate action logs
+        if ("reason" in parsed || "targetId" in parsed || "confidence" in parsed) {
+          return true;
+        }
+      }
     }
   } catch {
     // Not JSON
@@ -35,14 +47,6 @@ export function isPromptArtifactOrReasoningTrace(text: string): boolean {
   // Memory-hybrid capability hints (issue #1560)
   if (trimmed.startsWith("<!-- ") && trimmed.includes("memory-hybrid:")) return true;
   return false;
-}
-
-/**
- * Returns true if the text is a memory artifact that should never be stored.
- * Combines prompt artifact detection with other hard-filter rules.
- */
-export function isMemoryArtifact(text: string): boolean {
-  return isPromptArtifactOrReasoningTrace(text);
 }
 
 export function shouldCapture(text: string, captureMaxChars: number, memoryTriggers: RegExp[]): boolean {

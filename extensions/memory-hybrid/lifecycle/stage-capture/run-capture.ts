@@ -495,6 +495,10 @@ export async function runCapture(
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
                     const newEntry = storeResult.entry;
+                    // Skip supersede and vector operations if store was rejected (artifact text)
+                    if (newEntry.id === "" || storeResult.rejected) {
+                      continue;
+                    }
                     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
                     await cleanupEvictedVector({
                       vectorDb: ctx.vectorDb,

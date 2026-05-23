@@ -87,6 +87,21 @@ export async function runStoreForCli(
           tags: ["auth", ...extractTags(pointerText, "Credentials")],
         });
         pointerEntry = storeResult.entry;
+        // Check if store was rejected (artifact text)
+        if (pointerEntry.id === "" || storeResult.rejected) {
+          // Compensating delete: vault write succeeded but pointer rejected
+          try {
+            // biome-ignore lint/suspicious/noExplicitAny: credential type from parsed input
+            credentialsDb.delete(parsed.service, parsed.type as any);
+          } catch (cleanupErr) {
+            log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+            capturePluginError(cleanupErr as Error, {
+              subsystem: "cli",
+              operation: "runStoreForCli:credential-compensating-delete",
+            });
+          }
+          return { outcome: "credential_rejected_artifact" };
+        }
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({
           vectorDb: vectorDb,
@@ -221,6 +236,10 @@ export async function runStoreForCli(
                 scopeTarget,
               });
               const newEntry = storeResult.entry;
+              // Check if store was rejected (artifact text)
+              if (newEntry.id === "" || storeResult.rejected) {
+                return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+              }
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
               await cleanupEvictedVector({
                 vectorDb: vectorDb,
@@ -284,6 +303,10 @@ export async function runStoreForCli(
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
     const entry = storeResult.entry;
+    // Check if store was rejected (artifact text)
+    if (entry.id === "" || storeResult.rejected) {
+      return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+    }
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
       vectorDb: vectorDb,
