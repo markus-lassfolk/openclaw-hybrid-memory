@@ -257,10 +257,8 @@ export function loadTaskLedgerFromFacts(
   active: ActiveTaskEntry[];
   completed: ActiveTaskEntry[];
 } {
-  const facts = factsDb
-    .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY && fact.source === "active-task")
-    .slice(0, factLimit);
+  // Use targeted query instead of loading all facts then filtering by category (#1553)
+  const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
   const grouped = groupProjectFactsByEntity(facts);
   return buildTaskEntriesFromGroupedFacts(grouped);
 }
@@ -339,6 +337,9 @@ export async function clearActiveTaskProjectionStale(filePath: string): Promise<
 }
 
 export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, scopeFilter?: ScopeFilter | null): number | null {
+  // Query all project facts (any source) to detect staleness from any project fact updates.
+  // Note: getProjectFacts filters by source='active-task', but we need to detect updates
+  // from all sources (e.g., memory_store) to properly mark projections as stale.
   const projectFacts = factsDb
     .getAll({ scopeFilter })
     .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
