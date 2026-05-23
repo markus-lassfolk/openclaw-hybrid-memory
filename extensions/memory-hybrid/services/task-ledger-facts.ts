@@ -100,6 +100,7 @@ export type ActiveTaskProjectionStatus = {
 
 export type ActiveTaskLedgerSelectionMetrics = {
   projectRowsFetched: number;
+  rowsDroppedMissingEntityOrCanonical: number;
   groupedEntityCount: number;
   duplicateRowsCollapsed: number;
   activeCandidates: number;
@@ -298,16 +299,25 @@ export function loadTaskLedgerFromFactsWithMetrics(
   const startedAtMs = Date.now();
   // Use targeted query instead of loading all facts then filtering by category (#1553)
   const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
+  // groupProjectFactsByEntity silently drops rows with no entity or no canonical label;
+  // count those separately so duplicateRowsCollapsed only reflects true duplicates.
   const grouped = groupProjectFactsByEntity(facts);
   const { active, completed } = buildTaskEntriesFromGroupedFacts(grouped);
   let groupedFactRows = 0;
   for (const keyMap of grouped.values()) {
     groupedFactRows += keyMap.size;
   }
+  // The rows fed to groupProjectFactsByEntity = facts that passed entity/canonical guard.
+  // We infer dropped rows = facts.length - sum of sizes of all keyMaps.
+  // But keyMaps only count unique (entity,key) pairs — so true duplicates are also in groupedFactRows.
+  // Instead: track rows fed to grouping = only rows with entity AND canonicalLabel.
+  // Use canonicalLabel directly to determine eligibility.
+  const eligibleRows = facts.filter(f => f.entity?.trim() && canonicalLabel(f.entity.trim())).length;
   const metrics: ActiveTaskLedgerSelectionMetrics = {
     projectRowsFetched: facts.length,
+    rowsDroppedMissingEntityOrCanonical: facts.length - eligibleRows,
     groupedEntityCount: grouped.size,
-    duplicateRowsCollapsed: Math.max(0, facts.length - groupedFactRows),
+    duplicateRowsCollapsed: Math.max(0, eligibleRows - groupedFactRows),
     activeCandidates: active.length,
     completedCandidates: completed.length,
     entitiesSkippedWithoutStatus: Math.max(0, grouped.size - active.length - completed.length),
