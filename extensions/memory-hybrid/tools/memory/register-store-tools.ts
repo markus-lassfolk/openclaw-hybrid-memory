@@ -177,8 +177,43 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             decayFreezeUntil?: number;
           };
 
+          // --- Early input validation (must run before any side effects) ---
+          if (text.trim().length === 0) {
+            return {
+              content: [{ type: "text", text: "memory_store: text must not be empty or whitespace." }],
+              details: { error: "invalid_text" },
+            };
+          }
+
           let textToStore = text;
           textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+
+          const importanceValue = importance as number;
+          if (!Number.isFinite(importanceValue) || importanceValue < 0 || importanceValue > 1) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `memory_store: importance must be a finite number in [0, 1]; got ${importanceValue}.`,
+                },
+              ],
+              details: { error: "invalid_importance" },
+            };
+          }
+
+          if (paramDecayFreezeUntil != null && (!Number.isFinite(paramDecayFreezeUntil) || paramDecayFreezeUntil < 0)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `memory_store: decayFreezeUntil must be a non-negative finite epoch seconds value; got ${paramDecayFreezeUntil}.`,
+                },
+              ],
+              details: { error: "invalid_decay_freeze_until" },
+            };
+          }
+          // --- End early validation ---
+
           const provenanceSessionId = api.context?.sessionId ?? null;
           const recordActiveStoreProvenance = (factId: string, sourceText?: string) => {
             if (!provenanceService || !cfg.provenance.enabled) return;
