@@ -230,6 +230,15 @@ openclaw hybrid-mem audit health --strict
 
 The JSON output is versioned (`schemaVersion: 1`) for dashboards and automation. The report surfaces tier sanity, category drift, vectorless active facts, validated-but-unpromoted procedures, implicit-feedback signal noise, and remediation hints. `--strict` exits `2` when warnings/errors are present; JSON includes `exitCode`, `exitReason`, `warningCount`, and `errorCount` so cron/automation can treat strict health failures differently from command crashes. The installer also publishes a weekly `hybrid-mem:weekly-audit-health` cron step that runs `openclaw hybrid-mem audit health --strict --json`.
 
+For LanceDB/Arrow/native RSS diagnostics, run:
+
+```bash
+openclaw hybrid-mem vectordb-health
+openclaw hybrid-mem vectordb-health --json
+```
+
+`hybrid-mem stats` and `hybrid-mem health` now also surface decay stickiness (`stable+permanent`) and guidance to run `decay reclassify --dry-run --stable-only` when legacy ratios are high.
+
 ## Weekly pending digest (#1197)
 
 Render an at-a-glance backlog of approve/decline/defer actions across persona proposals,

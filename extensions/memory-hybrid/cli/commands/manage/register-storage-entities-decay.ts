@@ -76,11 +76,44 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
   mem
     .command("backfill-decay")
     .description("Backfill legacy stable decay classes (compat alias for decay reclassify --stable-only --apply)")
+    .option("--json", "Emit JSON")
     .action(
-      withExit(async () => {
+      withExit(async (opts?: { json?: boolean }) => {
+        const before = factsDb.statsBreakdownByDecayClass();
         const updated = factsDb.backfillDecay();
+        const after = factsDb.statsBreakdownByDecayClass();
         const total = Object.values(updated).reduce((a, b) => a + b, 0);
+        const totalBefore = Object.values(before).reduce((sum, count) => sum + count, 0);
+        const totalAfter = Object.values(after).reduce((sum, count) => sum + count, 0);
+        const stablePermanentBefore = (before.stable ?? 0) + (before.permanent ?? 0);
+        const stablePermanentAfter = (after.stable ?? 0) + (after.permanent ?? 0);
+        const report = {
+          changed: total,
+          transitionsByTargetDecayClass: updated,
+          before,
+          after,
+          stablePermanentBefore,
+          stablePermanentAfter,
+          stablePermanentRatioBefore: totalBefore > 0 ? stablePermanentBefore / totalBefore : 0,
+          stablePermanentRatioAfter: totalAfter > 0 ? stablePermanentAfter / totalAfter : 0,
+        };
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
         console.log(`Backfilled decayAt for ${total} facts.`);
+        console.log(
+          `Stable+permanent before: ${stablePermanentBefore} (${(report.stablePermanentRatioBefore * 100).toFixed(1)}%)`,
+        );
+        console.log(
+          `Stable+permanent after: ${stablePermanentAfter} (${(report.stablePermanentRatioAfter * 100).toFixed(1)}%)`,
+        );
+        if (Object.keys(updated).length > 0) {
+          console.log("Reclassifications:");
+          for (const [decayClass, count] of Object.entries(updated)) {
+            console.log(`  stable->${decayClass}: ${count}`);
+          }
+        }
       }),
     );
 

@@ -203,6 +203,78 @@ export function registerHealthCommand(
         }
       }
 
+      // Decay profile guidance (Issue #1582).
+      try {
+        const decayBreakdown =
+          typeof (factsDb as { statsBreakdownByDecayClass?: unknown }).statsBreakdownByDecayClass === "function"
+            ? (
+                factsDb as {
+                  statsBreakdownByDecayClass: () => Record<string, number>;
+                }
+              ).statsBreakdownByDecayClass()
+            : null;
+        if (decayBreakdown) {
+          const total = Object.values(decayBreakdown).reduce((sum, count) => sum + count, 0);
+          const stablePermanent = (decayBreakdown.stable ?? 0) + (decayBreakdown.permanent ?? 0);
+          const ratio = total > 0 ? stablePermanent / total : 0;
+          if (ratio > 0.6) {
+            indicators.push({
+              name: "Decay Profile",
+              status: "warn",
+              detail: `stable+permanent ${(ratio * 100).toFixed(1)}% — run: openclaw hybrid-mem decay reclassify --dry-run --stable-only`,
+            });
+          } else {
+            indicators.push({
+              name: "Decay Profile",
+              status: "good",
+              detail: `stable+permanent ${(ratio * 100).toFixed(1)}%`,
+            });
+          }
+        }
+      } catch (_error) {
+        indicators.push({
+          name: "Decay Profile",
+          status: "warn",
+          detail: "Could not inspect decay distribution",
+        });
+      }
+
+      // Vector bounds visibility (Issue #1554).
+      try {
+        const bounds =
+          typeof (vectorDb as { getRuntimeBounds?: unknown }).getRuntimeBounds === "function"
+            ? (
+                vectorDb as {
+                  getRuntimeBounds: () => {
+                    vectorSearchMaxResults: number;
+                    semanticCacheMaxRowsPerFilterKey: number;
+                    semanticCacheCandidateLimitMax: number;
+                  };
+                }
+              ).getRuntimeBounds()
+            : null;
+        if (bounds) {
+          indicators.push({
+            name: "Vector Bounds",
+            status: "good",
+            detail: `search<=${bounds.vectorSearchMaxResults}, cacheRows<=${bounds.semanticCacheMaxRowsPerFilterKey}, cacheCandidates<=${bounds.semanticCacheCandidateLimitMax}`,
+          });
+        } else {
+          indicators.push({
+            name: "Vector Bounds",
+            status: "warn",
+            detail: "Runtime bounds unavailable",
+          });
+        }
+      } catch (_error) {
+        indicators.push({
+          name: "Vector Bounds",
+          status: "warn",
+          detail: "Could not inspect vector bounds",
+        });
+      }
+      }
+
       // JSON output
       if (opts.json) {
         console.log(

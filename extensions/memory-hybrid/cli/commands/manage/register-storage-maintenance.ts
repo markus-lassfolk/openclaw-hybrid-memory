@@ -9,6 +9,10 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
+import {
+  type VectorBackendObservability,
+  collectVectorBackendObservability,
+} from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
@@ -23,6 +27,68 @@ import {
   recordStorageGrowthSample,
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
+
+function formatMiB(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes)) return "n/a";
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function formatAgo(epochMs: number | null | undefined): string {
+  if (epochMs == null || !Number.isFinite(epochMs)) return "never";
+  const deltaSec = Math.max(0, Math.floor((Date.now() - epochMs) / 1000));
+  if (deltaSec < 60) return `${deltaSec}s ago`;
+  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)}m ago`;
+  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)}h ago`;
+  return `${Math.floor(deltaSec / 86400)}d ago`;
+}
+
+function printVectorBackendObservabilitySummary(obs: VectorBackendObservability): void {
+  const mem = obs.memory;
+  console.log("Vector/native observability:");
+  console.log(
+    `  RSS=${formatMiB(mem.rssBytes)} heapUsed=${formatMiB(mem.heapUsedBytes)} external=${formatMiB(mem.externalBytes)} arrayBuffers=${formatMiB(mem.arrayBuffersBytes)} native≈${formatMiB(mem.nativeRssEstimateBytes)}`,
+  );
+  if (mem.procStatus) {
+    console.log(
+      `  /proc VmRSS=${mem.procStatus.vmRssKb ?? "?"}kB RssAnon=${mem.procStatus.rssAnonKb ?? "?"}kB RssFile=${mem.procStatus.rssFileKb ?? "?"}kB RssShmem=${mem.procStatus.rssShmemKb ?? "?"}kB VmSwap=${mem.procStatus.vmSwapKb ?? "?"}kB`,
+    );
+  }
+  if (obs.fileDescriptors) {
+    const fd = obs.fileDescriptors;
+    console.log(
+      `  FDs total=${fd.total} lancedb=${fd.byGroup.lancedb} sqlite=${fd.byGroup.sqlite} wal=${fd.byGroup.wal} shm=${fd.byGroup.shm} socket=${fd.byGroup.socket} anon=${fd.byGroup.anon}`,
+    );
+  }
+  const v = obs.vectorDb;
+  if (v.path) console.log(`  LanceDB path: ${v.path}`);
+  if (v.bounds) {
+    console.log(
+      `  Bounds: vectorSearchMaxResults=${v.bounds.vectorSearchMaxResults} semanticCacheMaxRowsPerFilterKey=${v.bounds.semanticCacheMaxRowsPerFilterKey} semanticCacheCandidateLimitMax=${v.bounds.semanticCacheCandidateLimitMax}`,
+    );
+  }
+  if (v.search) {
+    console.log(
+      `  Search activity: active=${v.search.active} peak=${v.search.peak} total=${v.search.total} lastResult=${v.search.lastResultCount} limit=${v.search.lastEffectiveLimit}/${v.search.lastRequestedLimit} last=${formatAgo(v.search.lastCompletedAtEpochMs)}`,
+    );
+  }
+  if (v.cache) {
+    console.log(
+      `  Semantic cache: rows=${v.cache.rows ?? "n/a"} cap=${v.cache.maxRowsPerFilterKey} candidateCap=${v.cache.candidateLimitMax} lastPruneRemoved=${v.cache.lastRemovedRows} lastPrune=${formatAgo(v.cache.lastPrunedAtEpochMs)}`,
+    );
+  }
+  if (v.lastOptimize) {
+    console.log(
+      `  Last optimize: ${formatAgo(v.lastOptimize.ranAtEpochMs)} compacted=${v.lastOptimize.compacted} pruned=${v.lastOptimize.removedFragments} freed=${v.lastOptimize.freedBytes} bytes`,
+    );
+  }
+  if (obs.lancedb.tables.length > 0) {
+    for (const table of obs.lancedb.tables) {
+      console.log(
+        `  Table ${table.name}: rows=${table.rowCount ?? "n/a"} size=${formatMiB(table.sizeBytes)} path=${table.path}${table.sizeScanTruncated ? " (size scan truncated)" : ""}`,
+      );
+    }
+  }
+}
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
   const {
@@ -126,6 +192,35 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     );
 
   mem
+    .command("vectordb-health")
+    .description(
+      "Low-cost LanceDB/Arrow/native memory health snapshot (RSS/native estimate, FD groups, cache/search bounds, table rows/sizes)",
+    )
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        let lanceBytes: number | null = null;
+        try {
+          const sizes = await Promise.resolve(ctx.richStatsExtras?.getStorageSizes());
+          if (sizes && typeof sizes.lanceBytes === "number") lanceBytes = sizes.lanceBytes;
+        } catch {
+          // keep observability cheap/best-effort; omit lanceBytes on failure
+        }
+        const observability = await collectVectorBackendObservability({
+          vectorDb,
+          resolvedLancePath: ctx.resolvedLancePath,
+          lanceBytes,
+        });
+        if (opts?.json) {
+          console.log(JSON.stringify(observability, null, 2));
+          return;
+        }
+        console.log("=== Vector Backend Health ===");
+        printVectorBackendObservabilitySummary(observability);
+      }),
+    );
+
+  mem
     .command("record-storage-sample")
     .description(
       "Record one storage_growth_history row per UTC day (SQLite + Lance sizes). Use with daily cron so audit-health can compute 7d deltas.",
@@ -220,6 +315,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           const verifiedFacts = factsDb.countVerifiedFacts();
           const activity = factsDb.recentActivity();
           const decayBreakdown = factsDb.statsBreakdownByDecayClass();
+          const activeDecayTotal = Object.values(decayBreakdown).reduce((sum, count) => sum + count, 0);
+          const stablePermanentCount = (decayBreakdown.stable ?? 0) + (decayBreakdown.permanent ?? 0);
+          const stablePermanentRatio = activeDecayTotal > 0 ? stablePermanentCount / activeDecayTotal : 0;
           const sourceBreakdown = factsDb.statsBySource();
           const dailyWrites = factsDb.statsDailyWrites().slice(0, 10);
           const implicitFeedbackSignals = countImplicitFeedbackTrajectorySignals(factsDb);
@@ -335,10 +433,21 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           console.log(
             `Breakdown by tier: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
           );
-          const decayParts = Object.entries(decayBreakdown)
-            .map(([k, v]) => `${k}=${v}`)
-            .join(", ");
-          if (decayParts) console.log(`Breakdown by decay: ${decayParts}`);
+          const decayParts = Object.entries(decayBreakdown).sort((a, b) => b[1] - a[1]);
+          if (decayParts.length > 0) {
+            const summary = decayParts
+              .map(([k, v]) => `${k}=${v} (${activeDecayTotal > 0 ? ((v / activeDecayTotal) * 100).toFixed(1) : "0.0"}%)`)
+              .join(", ");
+            console.log(`Breakdown by decay: ${summary}`);
+            console.log(
+              `Decay stickiness: stable+permanent=${stablePermanentCount}/${activeDecayTotal} (${(stablePermanentRatio * 100).toFixed(1)}%)`,
+            );
+            if (stablePermanentRatio > 0.6) {
+              console.log(
+                "  Guidance: legacy stable/permanent ratio is high. Run `openclaw hybrid-mem decay reclassify --dry-run --stable-only` then `openclaw hybrid-mem decay reclassify --apply --stable-only`.",
+              );
+            }
+          }
           const topSources = Object.entries(sourceBreakdown)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 5);
@@ -377,6 +486,13 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             console.log(`SQLite bytes per active fact: ${bytesPerFact.toFixed(0)}`);
           }
           if (sizes.sqliteBytes != null || sizes.lanceBytes != null) console.log("");
+          const vectorObservability = await collectVectorBackendObservability({
+            vectorDb,
+            resolvedLancePath: ctx.resolvedLancePath,
+            lanceBytes: sizes.lanceBytes ?? null,
+          });
+          printVectorBackendObservabilitySummary(vectorObservability);
+          console.log("");
           if (efficiency) {
             const estimatedTokens = factsDb.estimateStoredTokens();
             console.log("--- Efficiency (token estimate) ---");
@@ -434,12 +550,31 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           console.log("");
           console.log("Note: Tiering and scoping can significantly reduce token usage in LLM context.");
         } else {
+          const decayBreakdown = factsDb.statsBreakdownByDecayClass();
+          const activeDecayTotal = Object.values(decayBreakdown).reduce((sum, count) => sum + count, 0);
+          const stablePermanentCount = (decayBreakdown.stable ?? 0) + (decayBreakdown.permanent ?? 0);
+          const stablePermanentRatio = activeDecayTotal > 0 ? stablePermanentCount / activeDecayTotal : 0;
           console.log(`Total facts (SQLite): ${sqlCount}`);
           console.log(`Total vectors (LanceDB): ${lanceCount}`);
           console.log(`Expired (prunable): ${expired}`);
           console.log(
             `Breakdown: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
           );
+          const decaySummary = Object.entries(decayBreakdown)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ");
+          if (decaySummary.length > 0) {
+            console.log(`Decay: ${decaySummary}`);
+            console.log(
+              `Decay stickiness (stable+permanent): ${stablePermanentCount}/${activeDecayTotal} (${(stablePermanentRatio * 100).toFixed(1)}%)`,
+            );
+            if (stablePermanentRatio > 0.6) {
+              console.log(
+                "Guidance: run `openclaw hybrid-mem decay reclassify --dry-run --stable-only` then `openclaw hybrid-mem decay reclassify --apply --stable-only`.",
+              );
+            }
+          }
         }
       }),
     );
