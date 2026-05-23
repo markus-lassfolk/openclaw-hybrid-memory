@@ -5,7 +5,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
-import { estimateTokens } from "../utils/text.js";
+import { estimateTokens, sanitizeHotFactText } from "../utils/text.js";
 import { readActiveTaskFile } from "./active-task.js";
 import { buildActiveTaskContextBundle } from "./active-task-injection.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -59,16 +59,6 @@ type ContextAuditResult = {
   totalTokens: number;
   recommendations: string[];
 };
-
-function sanitizeHotFactText(text: string): string {
-  return text
-    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, " ")
-    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, " ")
-    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, " ")
-    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 const DEFAULT_BOOTSTRAP_FILES = [
   "AGENTS.md",

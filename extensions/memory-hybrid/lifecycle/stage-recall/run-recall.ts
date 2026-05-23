@@ -26,7 +26,7 @@ import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
-import { estimateTokens } from "../../utils/text.js";
+import { estimateTokens, sanitizeHotFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 
 function emptyRecallStage(): RecallStageResult {
@@ -40,16 +40,6 @@ function recallAborted(signal: AbortSignal | undefined): boolean {
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
-}
-
-function sanitizeHotFactText(text: string): string {
-  return text
-    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, " ")
-    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, " ")
-    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, " ")
-    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 function trimBlockToBudget(

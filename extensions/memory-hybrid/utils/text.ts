@@ -158,6 +158,20 @@ export function titleCase(slug: string): string {
 }
 
 /**
+ * Sanitize HOT fact text by removing thinking/reasoning wrappers and normalizing whitespace.
+ * Used by recall injection and context audit to ensure consistent token estimates.
+ */
+export function sanitizeHotFactText(text: string): string {
+  return text
+    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, " ")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, " ")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, " ")
+    .replace(/<think>[\s\S]*?<\/think>/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Strip leading whitespace plus repeated HTML comment blocks from skill content.
  *
  * Skill installers can prepend metadata comments before YAML frontmatter. This
