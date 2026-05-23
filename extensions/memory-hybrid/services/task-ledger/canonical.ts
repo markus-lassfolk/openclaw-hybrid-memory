@@ -48,8 +48,8 @@ export function activeTaskProvenance(canonical: string, existing?: string | null
 }
 
 /** Latest value per entity+key from non-superseded project facts.
- *  Entity labels are normalised to lowercase (trim + toLowerCase) so that
- *  case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
+ *  Entity labels are normalized via factCanonicalLabel() (provenance-aware + trim + toLowerCase + suffix/separator cleanup)
+ *  so that case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
   for (const f of facts) {
