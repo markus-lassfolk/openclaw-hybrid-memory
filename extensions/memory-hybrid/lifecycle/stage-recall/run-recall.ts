@@ -291,6 +291,7 @@ export async function runRecall(
         narrativeMaxTokens: narrativeBlockCapCfg,
         procedureMaxTokens: procedureBlockCapCfg,
         activeTaskMaxTokens: activeTaskReserveCapCfg,
+        staleWarningMaxTokens: staleWarningReserveCapCfg,
       } = ctx.cfg.autoRecall;
       const hasNarrativesDb = ctx.narrativesDb != null || ctx.eventLog != null;
       const narrativeCapTokens =
@@ -300,6 +301,11 @@ export async function runRecall(
         activeTaskReserveCapCfg ??
         (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.injectionBudget > 0
           ? Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2)))
+          : 0);
+      const staleWarningReserveTokens =
+        staleWarningReserveCapCfg ??
+        (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning?.enabled
+          ? Math.max(40, Math.floor(totalBudget * 0.08))
           : 0);
       const budgetState: BudgetState = {
         remainingBudget: totalBudget,
@@ -342,6 +348,12 @@ export async function runRecall(
         }
       }
       reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled, budgetState);
+      reserveAndTrackBlock(
+        "stale-warning",
+        staleWarningReserveTokens,
+        ctx.cfg.activeTask.enabled && (ctx.cfg.activeTask.staleWarning?.enabled ?? false),
+        budgetState,
+      );
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
         .map((r) => {
@@ -918,6 +930,7 @@ export async function runRecall(
       narrativeMaxTokens: narrativeBlockCapCfg,
       procedureMaxTokens: procedureBlockCapCfg,
       activeTaskMaxTokens: activeTaskReserveCapCfg,
+      staleWarningMaxTokens: staleWarningReserveCapCfg,
     } = ctx.cfg.autoRecall;
     // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
@@ -938,6 +951,11 @@ export async function runRecall(
         ? Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2)))
         : 0;
     const activeTaskReserveTokens = activeTaskReserveCapCfg ?? defaultActiveTaskReserve;
+    const staleWarningReserveTokens =
+      staleWarningReserveCapCfg ??
+      (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning?.enabled
+        ? Math.max(40, Math.floor(totalBudget * 0.08))
+        : 0);
 
     const budgetState: BudgetState = {
       remainingBudget: totalBudget,
@@ -949,6 +967,12 @@ export async function runRecall(
     hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
     procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens, budgetState);
     reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled, budgetState);
+    reserveAndTrackBlock(
+      "stale-warning",
+      staleWarningReserveTokens,
+      ctx.cfg.activeTask.enabled && (ctx.cfg.activeTask.staleWarning?.enabled ?? false),
+      budgetState,
+    );
 
     const fixedBlocksTokens = totalBudget - budgetState.remainingBudget;
     const maxTokens = Math.max(0, budgetState.remainingBudget);
