@@ -35,7 +35,7 @@ export function canonicalLabel(entity: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+(?:pr\s+queue|pull\s+request\s+queue|pr-stewardship|pull\s+request\s+stewardship)\s*$/i, "")
-    .replace(/[\s\/_]+/g, "-")
+    .replace(/[\s/_]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
@@ -72,7 +72,21 @@ function activeTaskProvenance(canonical: string, existing?: string | null): stri
   }
   return JSON.stringify(base);
 }
-const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
+export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
+
+export interface ActiveTaskCanonicalBackfillDuplicateGroup {
+  canonicalLabel: string;
+  facts: number;
+  activeBefore: number;
+  superseded: number;
+}
+
+export interface ActiveTaskCanonicalBackfillResult {
+  scannedFacts: number;
+  canonicalLabelsUpdated: number;
+  supersededFacts: number;
+  duplicateGroups: ActiveTaskCanonicalBackfillDuplicateGroup[];
+}
 
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
@@ -270,6 +284,131 @@ export function loadTaskLedgerFromFacts(
   const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
   const grouped = groupProjectFactsByEntity(facts);
   return buildTaskEntriesFromGroupedFacts(grouped);
+}
+
+function factRecencyForBackfill(fact: MemoryEntry): number {
+  if (typeof fact.sourceDate === "number" && Number.isFinite(fact.sourceDate)) return fact.sourceDate;
+  if (typeof fact.createdAt === "number" && Number.isFinite(fact.createdAt)) return fact.createdAt;
+  return Number.NEGATIVE_INFINITY;
+}
+
+function chooseBackfillKeeper(key: string, facts: MemoryEntry[]): MemoryEntry {
+  return [...facts].sort((a, b) => {
+    if (key === "status") {
+      const aTerminal = isTerminalFactStatus(a.value ?? "") ? 1 : 0;
+      const bTerminal = isTerminalFactStatus(b.value ?? "") ? 1 : 0;
+      if (aTerminal !== bTerminal) return bTerminal - aTerminal;
+    }
+    const recencyDiff = factRecencyForBackfill(b) - factRecencyForBackfill(a);
+    if (recencyDiff !== 0) return recencyDiff;
+    return b.id.localeCompare(a.id);
+  })[0];
+}
+
+function hasCanonicalProvenance(raw: string | null, canonical: string): boolean {
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw) as { activeTask?: { canonicalLabel?: unknown }; canonical_label?: unknown };
+    return parsed.activeTask?.canonicalLabel === canonical && parsed.canonical_label === canonical;
+  } catch {
+    return false;
+  }
+}
+
+function mergeCanonicalProvenance(raw: string | null, canonical: string): string {
+  let existing: Record<string, unknown> = {};
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        existing = parsed as Record<string, unknown>;
+      }
+    } catch {
+      existing = {};
+    }
+  }
+  const existingActiveTask =
+    existing.activeTask && typeof existing.activeTask === "object" && !Array.isArray(existing.activeTask)
+      ? (existing.activeTask as Record<string, unknown>)
+      : {};
+  return JSON.stringify({
+    ...existing,
+    activeTask: {
+      ...existingActiveTask,
+      canonicalLabel: canonical,
+    },
+    canonical_label: canonical,
+  });
+}
+
+export function backfillActiveTaskCanonicalLabels(
+  factsDb: FactsDB,
+  opts: { dryRun?: boolean; limit?: number } = {},
+): ActiveTaskCanonicalBackfillResult {
+  const limit = Math.max(1, Math.floor(opts.limit ?? 50_000));
+  const dryRun = opts.dryRun === true;
+  const allProjectFacts = factsDb
+    .listFactsByCategory(TASK_LEDGER_CATEGORY, limit)
+    .filter((fact) => (fact.entity ?? "").trim().length > 0);
+  const activeFacts = allProjectFacts.filter((fact) => fact.supersededAt == null);
+  const duplicateGroups: ActiveTaskCanonicalBackfillDuplicateGroup[] = [];
+  let canonicalLabelsUpdated = 0;
+  let supersededFacts = 0;
+
+  for (const fact of activeFacts) {
+    const canonical = canonicalLabel(fact.entity ?? "");
+    if (!canonical) continue;
+    if (hasCanonicalProvenance(fact.provenanceJson ?? null, canonical)) continue;
+    canonicalLabelsUpdated++;
+    if (dryRun) continue;
+    const merged = mergeCanonicalProvenance(fact.provenanceJson ?? null, canonical);
+    factsDb
+      .getRawDb()
+      .prepare("UPDATE facts SET provenance_json = ?, source = 'active-task' WHERE id = ?")
+      .run(merged, fact.id);
+  }
+
+  const groups = new Map<string, MemoryEntry[]>();
+  for (const fact of activeFacts) {
+    const canonical = canonicalLabel(fact.entity ?? "");
+    if (!canonical) continue;
+    const key = (fact.key ?? "").trim() || "_body";
+    const groupKey = `${canonical}\u0000${key}`;
+    const current = groups.get(groupKey);
+    if (current) current.push(fact);
+    else groups.set(groupKey, [fact]);
+  }
+
+  for (const [groupKey, facts] of groups) {
+    if (facts.length < 2) continue;
+    const [canonical, key] = groupKey.split("\u0000");
+    const keeper = chooseBackfillKeeper(key, facts);
+    let superseded = 0;
+    for (const fact of facts) {
+      if (fact.id === keeper.id) continue;
+      if (dryRun) {
+        superseded++;
+        continue;
+      }
+      if (factsDb.supersede(fact.id, keeper.id)) superseded++;
+    }
+    if (superseded > 0) {
+      supersededFacts += superseded;
+      duplicateGroups.push({
+        canonicalLabel: canonical,
+        facts: facts.length,
+        activeBefore: facts.length,
+        superseded,
+      });
+    }
+  }
+
+  return {
+    scannedFacts: allProjectFacts.length,
+    canonicalLabelsUpdated,
+    supersededFacts,
+    duplicateGroups,
+  };
 }
 
 export function readActiveTaskRowsFromFacts(

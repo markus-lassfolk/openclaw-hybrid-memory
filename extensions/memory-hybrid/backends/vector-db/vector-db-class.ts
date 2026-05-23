@@ -2245,26 +2245,4 @@ export class VectorDB {
     return this.storeCount;
   }
 
-  /** Whether an optimize() pass is currently in progress. */
-  isOptimizing(): boolean {
-    return optimizingByPath.get(this.dbPath) ?? false;
-  }
-
-  /** Whether LanceDB has been successfully initialized (connection established and table ready). */
-  isInitialized(): boolean {
-    return this.lanceDbAvailable && !this.lanceInitFailed && this.table !== null;
-  }
-
-  /** Estimated number of open LanceDB reader handles (mirrors sessionCount). */
-  getOpenReaderCount(): number {
-    if (this.isPersistent) {
-      return this.isInitialized() ? 1 : 0;
-    }
-    return Math.max(0, this.sessionCount);
-  }
-
-  /** Base path to the LanceDB directory. */
-  getPath(): string {
-    return this.dbPath;
-  }
 }
