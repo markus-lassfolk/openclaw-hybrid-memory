@@ -19,6 +19,7 @@ import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/n
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
+import { RECALLED_CONTEXT_BOUNDARY, sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
@@ -175,19 +176,21 @@ export async function runRecall(
       if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
         const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
         if (hotResults.length > 0) {
-          const hotLines = hotResults.map(
-            (r) =>
-              `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-          );
+          const hotLines = hotResults.map((r) => {
+            const rawText = r.entry.summary || r.entry.text;
+            const sanitized = sanitizePromptInjection(rawText);
+            const truncated = sanitized.slice(0, 200);
+            return `- [hot/${r.entry.category}] ${truncated}${sanitized.length > 200 ? "…" : ""}`;
+          });
           hotPart = `Hot memories:\n${hotLines.join("\n")}\n\n`;
         }
       }
-      const memoryLines = ftsOnly
-        .slice(0, degradedLimit)
-        .map(
-          (r) =>
-            `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
+      const memoryLines = ftsOnly.slice(0, degradedLimit).map((r) => {
+        const rawText = r.entry.summary || r.entry.text;
+        const sanitized = sanitizePromptInjection(rawText);
+        const truncated = sanitized.slice(0, 200);
+        return `- [${r.backend}/${r.entry.category}] ${truncated}${sanitized.length > 200 ? "…" : ""}`;
+      });
       let narrativePart = "";
       if (ctx.narrativesDb || ctx.eventLog) {
         try {
@@ -199,7 +202,9 @@ export async function runRecall(
           });
           if (recentNarratives.length > 0) {
             const narrative = recentNarratives[0];
-            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
+            const sanitized = sanitizePromptInjection(narrative.text);
+            const clipped = clipNarrativeText(sanitized);
+            narrativePart = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipped}\n</recent-history-narratives>\n\n`;
           }
         } catch {
           // Non-fatal.
@@ -207,7 +212,7 @@ export async function runRecall(
       }
       const inner =
         narrativePart + hotPart + (memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "");
-      const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
+      const block = inner ? `<recalled-context>\n${RECALLED_CONTEXT_BOUNDARY}\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       api.logger.debug?.(
         `memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`,
@@ -291,10 +296,12 @@ export async function runRecall(
     if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
       const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
       if (hotResults.length > 0) {
-        const hotLines = hotResults.map(
-          (r) =>
-            `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
+        const hotLines = hotResults.map((r) => {
+          const rawText = r.entry.summary || r.entry.text;
+          const sanitized = sanitizePromptInjection(rawText);
+          const truncated = sanitized.slice(0, 200);
+          return `- [hot/${r.entry.category}] ${truncated}${sanitized.length > 200 ? "…" : ""}`;
+        });
         hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>\n\n`;
       }
     }
@@ -466,15 +473,17 @@ export async function runRecall(
           if (issueResults.openIssues.length > 0) {
             issueLines.push("<known-issues>");
             for (const issue of issueResults.openIssues) {
-              issueLines.push(`- [${issue.severity}] ${issue.title} (status: ${issue.status})`);
+              const sanitizedTitle = sanitizePromptInjection(issue.title);
+              issueLines.push(`- [${issue.severity}] ${sanitizedTitle} (status: ${issue.status})`);
             }
             issueLines.push("</known-issues>");
           }
           if (issueResults.resolvedIssues.length > 0) {
             issueLines.push("<resolved-issues>");
             for (const issue of issueResults.resolvedIssues) {
-              const resolution = issue.fix ? ` — Fix: ${issue.fix.slice(0, 100)}` : "";
-              issueLines.push(`- [${issue.severity}] ${issue.title}${resolution}`);
+              const sanitizedTitle = sanitizePromptInjection(issue.title);
+              const resolution = issue.fix ? ` — Fix: ${sanitizePromptInjection(issue.fix).slice(0, 100)}` : "";
+              issueLines.push(`- [${issue.severity}] ${sanitizedTitle}${resolution}`);
             }
             issueLines.push("</resolved-issues>");
           }
@@ -501,7 +510,9 @@ export async function runRecall(
         });
         if (recentNarratives.length > 0) {
           const lines = recentNarratives.map((n) => {
-            return `- [${n.source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${n.sessionId})\n${clipNarrativeText(n.text)}`;
+            const sanitized = sanitizePromptInjection(n.text);
+            const clipped = clipNarrativeText(sanitized);
+            return `- [${n.source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${n.sessionId})\n${clipped}`;
           });
           narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
         }

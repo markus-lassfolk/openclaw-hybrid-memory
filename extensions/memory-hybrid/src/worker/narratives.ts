@@ -5,7 +5,7 @@ import type { WorkflowStore } from "../../backends/workflow-store.js";
 import { chatCompleteWithRetry, is500OrWrapped, isAbortOrTransientLlmError } from "../../services/chat.js";
 import { CostFeature } from "../../services/cost-feature-labels.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import { NARRATIVE_CHAT_TIMEOUT_MS, getSessionLogFileSuffix } from "../../utils/constants.js";
+import { getSessionLogFileSuffix, NARRATIVE_CHAT_TIMEOUT_MS } from "../../utils/constants.js";
 import { fillPrompt, loadPrompt } from "../../utils/prompt-loader.js";
 
 /** Session transcript basename for `sessionId` (suffix from OPENCLAW_SESSION_LOG_SUFFIX, default .jsonl). */
