@@ -500,7 +500,9 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     const resultFull = await engineFull.assemble({ sessionId: "s1", messages: [], tokenBudget: 10000 });
     // Keep this low enough that high-numbered facts cannot all fit under the same
     // char/4 estimate as the header + label (otherwise 150 still fits facts 7–9 — flaky on CI).
-    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 85 });
+    // The boundary comment overhead adds ~29 tokens vs the prior implementation,
+    // so the tight budget is increased to 130 accordingly.
+    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 130 });
 
     // Full budget should include more content
     const fullLength = resultFull.systemPromptAddition?.length ?? 0;
@@ -513,7 +515,7 @@ describe("HybridMemoryContextEngine.assemble()", () => {
 
     // Check exact enforcement on tight
     const tightTokens = estimateTokenCount(resultTight.systemPromptAddition!);
-    expect(tightTokens).toBeLessThanOrEqual(85);
+    expect(tightTokens).toBeLessThanOrEqual(130);
 
     // Verify some facts are missing in tight vs full
     expect(resultFull.systemPromptAddition).toContain("Fact number 9");
@@ -611,16 +613,16 @@ describe("buildContextBlock()", () => {
     );
 
     const blockFull = buildContextBlock(facts, "h", "Label:", 100000);
-    const blockSmall = buildContextBlock(facts, "h", "Label:", 50);
+    const blockSmall = buildContextBlock(facts, "h", "Label:", 100);
 
     expect(blockFull).not.toBeNull();
     expect(blockSmall).not.toBeNull();
 
     const smallTokens = estimateTokenCount(blockSmall!);
-    expect(smallTokens).toBeLessThanOrEqual(50);
+    expect(smallTokens).toBeLessThanOrEqual(100);
 
     // Ensure blockSmall has fewer entries
-    expect(blockSmall?.length ?? 0).toBeLessThan(blockFull?.length ?? 0);
+    expect(blockSmall!.length).toBeLessThan(blockFull!.length);
     expect(blockFull).toContain("Fact 19");
     expect(blockSmall).not.toContain("Fact 19");
 
