@@ -101,7 +101,7 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
           console.log(JSON.stringify(report, null, 2));
           return;
         }
-        console.log(`Backfilled decayAt for ${total} facts.`);
+        console.log(`Backfilled decay classes and expires_at for ${total} facts.`);
         console.log(
           `Stable+permanent before: ${stablePermanentBefore} (${(report.stablePermanentRatioBefore * 100).toFixed(1)}%)`,
         );

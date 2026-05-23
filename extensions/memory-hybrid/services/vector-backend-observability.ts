@@ -187,27 +187,35 @@ function measurePathBytes(path: string, maxEntries = 50_000): SizeSummary {
   const out: SizeSummary = { bytes: 0, scannedEntries: 0, truncated: false };
   if (!existsSync(path)) return { bytes: null, scannedEntries: 0, truncated: false };
   const queue = [path];
-  try {
-    while (queue.length > 0) {
-      const current = queue.pop();
-      if (!current) continue;
-      const st = lstatSync(current);
-      out.scannedEntries += 1;
-      if (out.scannedEntries > maxEntries) {
-        out.truncated = true;
-        return out;
-      }
-      if (st.isDirectory()) {
-        const children = readdirSync(current).map((name) => join(current, name));
-        queue.push(...children);
-      } else if (st.isFile()) {
-        if (out.bytes != null) out.bytes += st.size;
-      }
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (!current) continue;
+    let st: ReturnType<typeof lstatSync>;
+    try {
+      st = lstatSync(current);
+    } catch {
+      // Transient ENOENT/EACCES — skip this entry and continue the scan
+      continue;
     }
-    return out;
-  } catch {
-    return { bytes: null, scannedEntries: out.scannedEntries, truncated: out.truncated };
+    out.scannedEntries += 1;
+    if (out.scannedEntries > maxEntries) {
+      out.truncated = true;
+      return out;
+    }
+    if (st.isDirectory()) {
+      let children: string[];
+      try {
+        children = readdirSync(current).map((name) => join(current, name));
+      } catch {
+        // Directory became unreadable (e.g. concurrent Lance compaction) — skip
+        continue;
+      }
+      queue.push(...children);
+    } else if (st.isFile()) {
+      if (out.bytes != null) out.bytes += st.size;
+    }
   }
+  return out;
 }
 
 export async function collectVectorBackendObservability(opts: {

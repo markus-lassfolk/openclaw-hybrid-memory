@@ -237,6 +237,16 @@ openclaw hybrid-mem vectordb-health
 openclaw hybrid-mem vectordb-health --json
 ```
 
+Vector search and semantic-cache result materialization are bounded at runtime to prevent unbounded
+Arrow/Lance memory use under heavy recall workloads. The defaults can be tuned via environment
+variables:
+
+| Variable | Default | Min | Max | Description |
+|---|---|---|---|---|
+| `OPENCLAW_HYBRID_MEM_VECTOR_QUERY_MAX_RESULTS` | `200` | `10` | `5000` | Hard ceiling for rows fetched per vector search call |
+| `OPENCLAW_HYBRID_MEM_SEMANTIC_CACHE_MAX_ROWS_PER_FILTER_KEY` | `100` | `10` | `5000` | Per-filter cap for semantic query cache rows |
+| `OPENCLAW_HYBRID_MEM_SEMANTIC_CACHE_CANDIDATE_LIMIT_MAX` | `200` | `10` | `5000` | Upper bound for candidate vectors loaded per cache lookup |
+
 `hybrid-mem stats` and `hybrid-mem health` now also surface decay stickiness (`stable+permanent`) and guidance to run `decay reclassify --dry-run --stable-only` when legacy ratios are high.
 
 ## Weekly pending digest (#1197)
