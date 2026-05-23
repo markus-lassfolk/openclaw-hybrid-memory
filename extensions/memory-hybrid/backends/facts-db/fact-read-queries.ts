@@ -381,7 +381,7 @@ export function getByCategory(db: DatabaseSync, category: string): MemoryEntry[]
 
 /**
  * Targeted project-fact query for active-task projection (#1553).
- * Only loads facts with category='project', avoiding a full table scan.
+ * Only loads facts with category='project' and source='active-task', avoiding a full table scan.
  */
 export function getProjectFacts(db: DatabaseSync, limit = 8000, scopeFilter?: ScopeFilter | null): MemoryEntry[] {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -390,6 +390,7 @@ export function getProjectFacts(db: DatabaseSync, limit = 8000, scopeFilter?: Sc
     .prepare(
       `SELECT * FROM facts
          WHERE category = 'project'
+           AND source = 'active-task'
            AND (expires_at IS NULL OR expires_at > ?)
            AND superseded_at IS NULL
            ${scopeClause}
