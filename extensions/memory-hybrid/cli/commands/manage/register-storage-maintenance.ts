@@ -20,6 +20,7 @@ import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-ver
 import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import type { MemoryEntry } from "../../../types/memory.js";
+import { isPreStoreGuardBlocked } from "../../../backends/facts-db/crud.js";
 import {
   countImplicitFeedbackTrajectorySignals,
   defaultReindexCheckpointPath,
@@ -35,7 +36,7 @@ type FactsDbWithBatch = {
     offset: number,
     limit: number,
     opts: { includeSuperseded: boolean },
-  ) => Array<{ id: string; text: string }>;
+  ) => Array<{ id: string; text: string; category?: string; source?: string }>;
   getAll?: (opts: { includeSuperseded: boolean }) => Array<{ id: string }>;
 };
 
@@ -1119,10 +1120,10 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             return null;
           }
         })();
-        const processFactBatch = async (facts: Array<{ id: string; text: string }>): Promise<number> => {
+        const processFactBatch = async (facts: Array<{ id: string; text: string; category?: string; source?: string }>): Promise<number> => {
           let supersededCount = 0;
           for (const fact of facts) {
-            if (!isPromptArtifactOrReasoningTrace(fact.text)) continue;
+            if (!isPreStoreGuardBlocked({ text: fact.text, category: fact.category, source: fact.source })) continue;
             if (verifiedLookup?.get(fact.id)) {
               verifiedSkippedIds.push(fact.id);
               continue;
@@ -1166,11 +1167,15 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             }
           }
         } else {
-          await processFactBatch(
-            (factsDb as unknown as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }).getAll({
-              includeSuperseded: false,
-            }),
-          );
+          // Fallback: process all facts in batches to avoid loading entire table into memory at once.
+          const allFacts = (factsDb as unknown as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }).getAll({
+            includeSuperseded: false,
+          });
+          const batchSize = 500;
+          for (let offset = 0; offset < allFacts.length; offset += batchSize) {
+            const batch = allFacts.slice(offset, offset + batchSize);
+            await processFactBatch(batch);
+          }
         }
 
         if (apply && ctx.resolvedSqlitePath) {
