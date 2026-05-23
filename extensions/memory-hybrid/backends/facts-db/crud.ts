@@ -224,9 +224,10 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const entryCategory = entry.category ?? "";
   const entrySource = entry.source ?? "";
   if (
-    BLOCKED_CATEGORIES.has(entryCategory) ||
-    BLOCKED_SOURCES.has(entrySource) ||
-    isPromptArtifactOrReasoningTrace(entry.text)
+    !ctx.allowPreStoreGuardBypass &&
+    (BLOCKED_CATEGORIES.has(entryCategory) ||
+      BLOCKED_SOURCES.has(entrySource) ||
+      isPromptArtifactOrReasoningTrace(entry.text))
   ) {
     return {
       skipped: true,
