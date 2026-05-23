@@ -1113,6 +1113,7 @@ export function backfillActiveTaskCanonicalLabels(
       const isExpired = row.expiresAt !== null && row.expiresAt <= nowSec;
       if (
         !isExpired &&
+        !row.supersededAt &&
         isTerminalFactStatus(row.value ?? row.text ?? "") &&
         (!terminalStatus || row.createdAt > terminalStatus.createdAt)
       ) {
