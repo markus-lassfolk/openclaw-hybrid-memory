@@ -2130,8 +2130,6 @@ export class VectorDB {
     return this.closeGeneration;
   }
 
-  /** LanceDB root path for this backend instance. */
-
   /** Lightweight search telemetry for diagnostics/health surfaces. */
   getSearchTelemetry(): {
     active: number;
@@ -2225,5 +2223,25 @@ export class VectorDB {
   /** Number of store() calls since the last auto-optimize reset (rough proxy for write pressure). */
   getStoreCount(): number {
     return this.storeCount;
+  }
+
+  /** LanceDB root path for this backend instance. */
+  getPath(): string {
+    return this.dbPath;
+  }
+
+  /** Returns true if the VectorDB table and semantic query cache table are initialized and ready. */
+  isInitialized(): boolean {
+    return this.table !== null && this.semanticQueryCacheTable !== null;
+  }
+
+  /** Returns true if an optimize operation is currently in progress. */
+  isOptimizing(): boolean {
+    return this.optimizePromise !== null;
+  }
+
+  /** Returns the current number of active readers (for exclusive lock coordination with optimize). */
+  getOpenReaderCount(): number {
+    return VectorDB._activeReadersByPath.get(this.dbPath) ?? 0;
   }
 }
