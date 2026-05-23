@@ -1299,6 +1299,33 @@
         },
         "description": "Event log archival configuration"
       },
+      "diagnostics": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable memory pressure snapshots (default: false)"
+          },
+          "writeArtifact": {
+            "type": "boolean",
+            "description": "Write JSON artifact to ~/.openclaw/diagnostics/memory-pressure/ (default: false)"
+          },
+          "cooldownSec": {
+            "type": "number",
+            "description": "Minimum seconds between snapshots (rate-limit / cooldown, default: 300)"
+          },
+          "includeLinuxProcMem": {
+            "type": "boolean",
+            "description": "Include full /proc/self/status fields (default: true on Linux)"
+          },
+          "fdGroupSampleLimit": {
+            "type": "number",
+            "description": "Max sample paths per FD group (default: 5)"
+          }
+        },
+        "description": "Memory pressure diagnostics configuration (Issue #1551)"
+      },
       "personaProposals": {
         "type": "object",
         "additionalProperties": false,

@@ -91,7 +91,18 @@ export function makeRecallSessionState(): SessionState {
   return createSessionState();
 }
 
-export function makeMockStageApi(sessionKey = "agent:main:telegram:test") {
+export interface MockStageApi {
+  on: ReturnType<typeof vi.fn>;
+  logger: {
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    debug: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  };
+  context: { sessionId: string; sessionKey: string; agentId: string };
+}
+
+export function makeMockStageApi(sessionKey = "agent:main:telegram:test"): MockStageApi {
   return {
     on: vi.fn(),
     logger: {

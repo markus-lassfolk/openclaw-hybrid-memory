@@ -8,7 +8,19 @@ import type { HybridMemoryConfig } from "../../config.js";
 import type { LifecycleContext } from "../../lifecycle/types.js";
 import { buildGuardTestConfig, buildGuardTestLifecycleContext } from "./lifecycle-hook-harness.js";
 
-export function makeHooksApi() {
+export interface HooksApi {
+  on: ReturnType<typeof vi.fn>;
+  logger: {
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    debug: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  };
+  context: { sessionId: string; sessionKey: string; agentId: string };
+  resolvePath: ReturnType<typeof vi.fn>;
+}
+
+export function makeHooksApi(): HooksApi {
   return {
     on: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
@@ -21,7 +33,7 @@ export function buildPluginApiForRegisterHooks(
   tmpDir: string,
   factsDb: FactsDB,
   cfgOverrides: Record<string, unknown> = {},
-) {
+): LifecycleContext & Record<string, unknown> {
   const lifecycleCtx = buildGuardTestLifecycleContext(tmpDir, factsDb);
   const cfg = buildGuardTestConfig(tmpDir);
   if (cfgOverrides.autoRecall && typeof cfgOverrides.autoRecall === "object") {

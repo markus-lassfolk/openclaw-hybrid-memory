@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { normalizeMaintenanceFallbackPolicy } from "../maintenance-fallback-policy.js";
 import { parseDuration } from "../../utils/duration.js";
 import { pluginLogger } from "../../utils/logger.js";
-import type { EventLogConfig, PathConfig, StoreConfig, StoreSourceProfile, WALConfig } from "../types/core.js";
+import type {
+  DiagnosticsConfig,
+  EventLogConfig,
+  PathConfig,
+  StoreConfig,
+  StoreSourceProfile,
+  WALConfig,
+} from "../types/core.js";
 import type {
   ActiveTaskConfig,
   ActiveTaskProjectionConfig,
@@ -143,6 +150,20 @@ export function parseEventLogConfig(cfg: Record<string, unknown>): EventLogConfi
       typeof eventLogRaw?.archivePath === "string" && eventLogRaw.archivePath.trim().length > 0
         ? eventLogRaw.archivePath.trim()
         : DEFAULT_EVENT_ARCHIVE_PATH,
+  };
+}
+
+export function parseDiagnosticsConfig(cfg: Record<string, unknown>): DiagnosticsConfig {
+  const raw = cfg.diagnostics as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    writeArtifact: raw?.writeArtifact === true,
+    cooldownSec: typeof raw?.cooldownSec === "number" && raw.cooldownSec >= 10 ? Math.floor(raw.cooldownSec) : 300,
+    includeLinuxProcMem: raw?.includeLinuxProcMem !== false,
+    fdGroupSampleLimit:
+      typeof raw?.fdGroupSampleLimit === "number" && raw.fdGroupSampleLimit > 0
+        ? Math.floor(raw.fdGroupSampleLimit)
+        : 5,
   };
 }
 
