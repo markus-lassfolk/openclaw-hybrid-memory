@@ -26,7 +26,7 @@ import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
-import { estimateTokens, sanitizeHotFactText } from "../../utils/text.js";
+import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 
 function emptyRecallStage(): RecallStageResult {
@@ -325,7 +325,7 @@ export async function runRecall(
         if (hotResults.length > 0) {
           const hotLines = hotResults
             .map((r) => {
-              const text = sanitizePromptInjection(sanitizeHotFactText(r.entry.summary || r.entry.text));
+              const text = sanitizePromptInjection(sanitizeRecallFactText(r.entry.summary || r.entry.text));
               if (!text) return "";
               const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
               return `- [hot/${r.entry.category}] ${clipped}`;
@@ -347,7 +347,7 @@ export async function runRecall(
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
         .map((r) => {
-          const text = sanitizePromptInjection(sanitizeHotFactText(r.entry.summary || r.entry.text));
+          const text = sanitizePromptInjection(sanitizeRecallFactText(r.entry.summary || r.entry.text));
           if (!text) return "";
           const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
           return `- [${r.backend}/${r.entry.category}] ${clipped}`;
@@ -367,9 +367,11 @@ export async function runRecall(
       const blockSummary = budgetState.audit
         .map((b) => `${b.block}:${b.injectedTokens}/${b.capTokens}${b.reserved ? "r" : ""}${b.truncated ? "!" : ""}`)
         .join(", ");
-      api.logger.info?.(
-        `memory-hybrid: context-audit (degraded) fixed=${fixedBlocksTokens}/${totalBudget} recall=${budgetState.remainingBudget} blocks=[${blockSummary}]`,
-      );
+      if (ctx.cfg.autoRecall.recallTiming === "basic" || ctx.cfg.autoRecall.recallTiming === "verbose") {
+        api.logger.info?.(
+          `memory-hybrid: context-audit (degraded) fixed=${fixedBlocksTokens}/${totalBudget} recall=${budgetState.remainingBudget} blocks=[${blockSummary}]`,
+        );
+      }
       ctx.auditStore?.append({
         agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
         action: "recall:context-budget",
@@ -467,7 +469,7 @@ export async function runRecall(
       if (hotResults.length > 0) {
         const hotLines = hotResults
           .map((r) => {
-            const cleaned = sanitizePromptInjection(sanitizeHotFactText(r.entry.summary || r.entry.text));
+            const cleaned = sanitizePromptInjection(sanitizeRecallFactText(r.entry.summary || r.entry.text));
             if (!cleaned) return "";
             const clipped = `${cleaned.slice(0, 200)}${cleaned.length > 200 ? "…" : ""}`;
             return `- [hot/${r.entry.category}] ${clipped}`;

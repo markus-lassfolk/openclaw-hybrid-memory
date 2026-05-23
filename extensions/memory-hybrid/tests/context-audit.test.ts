@@ -90,20 +90,34 @@ describe("runContextAudit", () => {
       memoryTiering: { enabled: true, hotMaxTokens: 2000 },
       autoRecall: { enabled: true, maxTokens: 400, hotMaxTokens: 200, narrativeMaxTokens: 0 },
     });
-    const stored = factsDb.store(
+    factsDb.getHotFacts = (() => [
       {
-        category: "fact",
-        entity: "context-audit-hot-sanitize",
-        key: "note",
-        value: "visible",
-        text: `<think>${"x".repeat(1600)}</think> visible memory`,
-        source: "test",
-        importance: 0.95,
-        decayClass: "normal",
+        entry: {
+          id: "context-audit-hot-sanitize",
+          category: "fact",
+          entity: "context-audit-hot-sanitize",
+          key: "note",
+          value: "visible",
+          text: `<think>${"x".repeat(1600)}</think> visible memory`,
+          summary: null,
+          source: "test",
+          tags: [],
+          importance: 0.95,
+          decayClass: "normal",
+          recallCount: 0,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          createdAt: 1,
+          expiresAt: null,
+          validFrom: 0,
+          validUntil: null,
+          supersededBy: null,
+          scope: "global",
+        },
+        score: 1,
+        backend: "sqlite",
       },
-      { suppressVectorFallbackWarning: true },
-    );
-    factsDb.setTier(stored.id, "hot");
+    ]) as typeof factsDb.getHotFacts;
 
     const audit = await runContextAudit({ cfg, factsDb, workspaceRoot: tmpDir });
 
@@ -111,5 +125,4 @@ describe("runContextAudit", () => {
     expect(audit.autoRecall.hotTokens).toBeLessThan(80);
     expect(audit.autoRecall.fixedBlocks.estimatedTokens.hot).toBe(audit.autoRecall.hotTokens);
   });
-
 });

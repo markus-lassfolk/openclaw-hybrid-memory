@@ -5,7 +5,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
-import { estimateTokens, sanitizeHotFactText } from "../utils/text.js";
+import { estimateTokens, sanitizeRecallFactText } from "../utils/text.js";
 import { readActiveTaskFile } from "./active-task.js";
 import { buildActiveTaskContextBundle } from "./active-task-injection.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -32,6 +32,7 @@ type ContextAuditResult = {
         hot: number;
         procedures: number;
         activeTasks: number;
+        staleWarnings: number;
         total: number;
         remainingForRecall: number;
         wouldExhaustRecall: boolean;
@@ -88,7 +89,7 @@ export async function runContextAudit(opts: {
   const workspaceTokens = workspaceFiles.reduce((sum, f) => sum + f.tokens, 0);
 
   let activeTasksTokens = 0;
-  let _staleWarningTokens = 0;
+  let staleWarningTokens = 0;
   let ledgerActiveCount = 0;
   let filteredActiveCount = 0;
   let injectedTaskCount = 0;
@@ -115,10 +116,8 @@ export async function runContextAudit(opts: {
         projection: cfg.activeTask.projection,
         injectionMaxTasks: cfg.activeTask.injectionMaxTasks,
       });
-      activeTasksTokens = bundle.injectedTokens;
-      _staleWarningTokens = bundle.parts
-        .filter((part) => /⚠️ STALE ACTIVE TASKS|💡 In-progress tasks with subagents/.test(part))
-        .reduce((sum, part) => sum + estimateTokens(part), 0);
+      activeTasksTokens = bundle.activeTaskTokens;
+      staleWarningTokens = bundle.staleWarningTokens;
       ledgerActiveCount = bundle.ledgerActiveCount;
       filteredActiveCount = bundle.filteredActiveCount;
       injectedTaskCount = bundle.injectedTaskCount;
@@ -198,7 +197,7 @@ export async function runContextAudit(opts: {
       if (hotResults.length > 0) {
         const hotLines = hotResults
           .map((r) => {
-            const text = sanitizeHotFactText(r.entry.summary || r.entry.text);
+            const text = sanitizeRecallFactText(r.entry.summary || r.entry.text);
             if (!text) return "";
             const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
             return `- [hot/${r.entry.category}] ${clipped}`;
@@ -249,13 +248,15 @@ export async function runContextAudit(opts: {
 
   const issueEstimateTokens = cfg.ambient.enabled ? issueCapTokens : 0;
   const narrativeEstimateTokens = narrativeMaxTokens;
+  const activeTaskEstimateTokens = Math.min(activeTasksTokens, activeTaskMaxTokens);
+  const staleWarningEstimateTokens = Math.min(staleWarningTokens, staleWarningMaxTokens);
   const fixedBlockEstimatedTokens =
     issueEstimateTokens +
     narrativeEstimateTokens +
     Math.min(hotTokens, hotMaxTokens) +
     Math.min(proceduresTokens, procedureMaxTokens) +
-    Math.min(activeTasksTokens, activeTaskMaxTokens) +
-    staleWarningMaxTokens;
+    activeTaskEstimateTokens +
+    staleWarningEstimateTokens;
   const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
   const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
 
@@ -309,7 +310,8 @@ export async function runContextAudit(opts: {
           narrative: narrativeEstimateTokens,
           hot: Math.min(hotTokens, hotMaxTokens),
           procedures: Math.min(proceduresTokens, procedureMaxTokens),
-          activeTasks: Math.min(activeTasksTokens, activeTaskMaxTokens),
+          activeTasks: activeTaskEstimateTokens,
+          staleWarnings: staleWarningEstimateTokens,
           total: fixedBlockEstimatedTokens,
           remainingForRecall,
           wouldExhaustRecall,
