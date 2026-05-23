@@ -340,16 +340,20 @@ export async function runActiveTaskHygiene(
     apply?: boolean;
     olderThanMinutes?: number;
     openclawHome?: string;
+    /** When true, fetch live PR state for tasks with PR references (default: false). */
+    checkPrLiveBlocker?: boolean;
   } = {},
 ): Promise<ActiveTaskHygieneResult> {
   const olderThanMinutes = Math.max(1, Math.floor(opts.olderThanMinutes ?? ctx.staleMinutes));
   const apply = opts.apply === true;
+  const checkPrLiveBlocker = opts.checkPrLiveBlocker === true;
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
     const { active } = loadTaskLedgerFromFacts(factsDb);
     const plan = await planActiveTaskHygiene(active, {
       olderThanMinutes,
       openclawHome: opts.openclawHome,
+      checkPrLiveBlocker,
     });
     if (!apply || plan.actions.length === 0) {
       return {
@@ -376,6 +380,7 @@ export async function runActiveTaskHygiene(
       actions: plan.actions,
       appliedCount: applied.appliedCount,
       auditFactId: applied.auditFactId,
+      prBlockerTasks: applied.prBlockerTasks,
     };
   }
 
@@ -385,6 +390,7 @@ export async function runActiveTaskHygiene(
   const plan = await planActiveTaskHygiene(active, {
     olderThanMinutes,
     openclawHome: opts.openclawHome,
+    checkPrLiveBlocker,
   });
   if (apply && !taskFile) {
     return {

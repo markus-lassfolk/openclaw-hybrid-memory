@@ -333,11 +333,21 @@ export type ActiveTaskHygieneResult = {
   }>;
   actions: Array<{
     label: string;
-    kind: "dead-session" | "stale-failed" | "superseded-duplicate";
-    toStatus: "abandoned" | "superseded";
+    kind: "dead-session" | "stale-failed" | "superseded-duplicate" | "pr-live-blocker";
+    toStatus: "abandoned" | "superseded" | "stage-4-feedback";
     reason: string;
     canonicalLabel?: string;
+    prBlockerStatus?: string;
   }>;
   appliedCount: number;
   auditFactId?: string;
+  /** Tasks with live PR blockers detected during hygiene (only populated when checkPrLiveBlocker is true and plan is applied) */
+  prBlockerTasks?: Array<{
+    label: string;
+    owner: string;
+    repo: string;
+    number: number;
+    blockerStatus: string;
+    reason: string;
+  }>;
 };

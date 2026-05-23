@@ -27,6 +27,7 @@ import {
 } from "./active-task.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
+import { fetchLivePrBlockerStatus, type PrBlockerStatus } from "./task-hygiene.js";
 
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
@@ -445,14 +446,16 @@ export interface ActiveTaskHygieneStaleCandidate {
   reason: string;
 }
 
-export type ActiveTaskHygieneActionKind = "dead-session" | "stale-failed" | "superseded-duplicate";
+export type ActiveTaskHygieneActionKind = "dead-session" | "stale-failed" | "superseded-duplicate" | "pr-live-blocker";
 
 export interface ActiveTaskHygieneAction {
   label: string;
   kind: ActiveTaskHygieneActionKind;
-  toStatus: "abandoned" | "superseded";
+  toStatus: "abandoned" | "superseded" | "stage-4-feedback";
   reason: string;
   canonicalLabel?: string;
+  /** Set when kind is "pr-live-blocker" — the actual GitHub-classified blocker */
+  prBlockerStatus?: string;
 }
 
 export interface ActiveTaskHygienePlan {
@@ -575,6 +578,8 @@ export async function planActiveTaskHygiene(
     nowMs?: number;
     openclawHome?: string;
     checkSessionPresent?: (sessionRef: string) => Promise<boolean>;
+    /** When true, fetch live PR state for tasks whose labels contain an "owner/repo#N" PR reference. */
+    checkPrLiveBlocker?: boolean;
   },
 ): Promise<ActiveTaskHygienePlan> {
   const nowMs = opts.nowMs ?? Date.now();
@@ -656,6 +661,80 @@ export async function planActiveTaskHygiene(
       toStatus: "abandoned",
       reason,
     });
+  }
+
+  // -----------------------------------------------------------------------------------------
+  // PR live blocker check: verify tasks with "In progress" / "Waiting" / "Stalled" status
+  // actually have a live GitHub blocker before classifying them as blocked/waiting.
+  // This prevents hygiene from incorrectly marking PR-backed tasks as stalled when
+  // mergeStateStatus says BLOCKED but unresolved review threads exist.
+  // -----------------------------------------------------------------------------------------
+  if (opts.checkPrLiveBlocker === true) {
+    // Collect tasks that reference a PR (owner/repo#N pattern in label or description)
+    const PR_REF_RE = /(?:^|[\s/])([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#(\d+)/;
+    const prCandidateTasks = tasks.filter((t) => {
+      if (t.status !== "In progress" && t.status !== "Waiting" && t.status !== "Stalled") return false;
+      const text = `${t.label} ${t.description}`;
+      return PR_REF_RE.test(text);
+    });
+
+    if (prCandidateTasks.length > 0) {
+      // Group by owner/repo to avoid duplicate API calls for the same repo
+      const prKeys = new Map<string, { tasks: ActiveTaskEntry[]; owner: string; repo: string; number: number }>();
+      for (const task of prCandidateTasks) {
+        const m = PR_REF_RE.exec(`${task.label} ${task.description}`);
+        if (!m) continue;
+        const key = `${m[1]}#${m[2]}`;
+        const existing = prKeys.get(key);
+        if (existing) {
+          existing.tasks.push(task);
+        } else {
+          const [owner, repo] = m[1].split("/");
+          prKeys.set(key, { tasks: [task], owner, repo, number: Number(m[2]) });
+        }
+      }
+
+      // Fetch live blocker status for each unique PR (parallel, deduped)
+      const prStatuses = await Promise.all(
+        [...prKeys.values()].map(async ({ owner, repo, number }) => {
+          const status = await fetchLivePrBlockerStatus(owner, repo, number);
+          return { owner, repo, number, status };
+        }),
+      );
+      const statusByKey = new Map(prStatuses.map((p) => [`${p.owner}/${p.repo}#${p.number}`, p]));
+
+      for (const { tasks, owner, repo, number } of prKeys.values()) {
+        const blockerStatus = statusByKey.get(`${owner}/${repo}#${number}`);
+        if (!blockerStatus) continue;
+
+        if (blockerStatus.status !== "no_live_blocker") {
+          const key = `${owner}/${repo}`;
+          const reason = `[PR hygiene #${number}] Live GitHub state: ${blockerStatus.status} — task updated to reflect actual PR state.`;
+
+          // Apply action to ALL tasks referencing this PR
+          for (const task of tasks) {
+            // Skip if already handled by a dead-session or stale-failed action
+            if (actionsByLabel.has(task.label)) continue;
+
+            stale.push({
+              label: task.label,
+              status: task.status,
+              updated: task.updated,
+              hoursStale: staleHoursFromUpdated(task.updated, nowMs),
+              reason,
+            });
+            actionsByLabel.set(task.label, {
+              label: task.label,
+              kind: "pr-live-blocker",
+              toStatus: "stage-4-feedback",
+              reason,
+              // Store actual blocker classification, plus PR coordinates for parsing
+              prBlockerStatus: `${blockerStatus.status}|${owner}:${repo}:${number}`,
+            });
+          }
+        }
+      }
+    }
   }
 
   const duplicates: ActiveTaskHygieneDuplicateGroup[] = [];
@@ -911,6 +990,15 @@ export async function syncActiveTaskEntryToFacts(
 export interface ActiveTaskHygieneApplyResult {
   appliedCount: number;
   auditFactId?: string;
+  /** Tasks whose live PR state has an actionable blocker (unresolved threads, red CI, etc.) */
+  prBlockerTasks?: Array<{
+    label: string;
+    owner: string;
+    repo: string;
+    number: number;
+    blockerStatus: string;
+    reason: string;
+  }>;
 }
 
 export async function applyActiveTaskHygieneFacts(
@@ -945,9 +1033,43 @@ export async function applyActiveTaskHygieneFacts(
     }
   }
   let appliedCount = 0;
+  const prBlockerTasks: ActiveTaskHygieneApplyResult["prBlockerTasks"] = [];
+
   for (const action of plan.actions) {
     const task = byLabel.get(action.label);
     if (!task) continue;
+
+    if (action.kind === "pr-live-blocker") {
+      // Update task in-place: set status to "Waiting" and record the live blocker reason.
+      // Do NOT complete the task — it is actively blocked and needs Forge attention.
+      const updatedEntry: ActiveTaskEntry = {
+        ...task,
+        status: "Waiting",
+        updated: runAt,
+        next: action.reason,
+        // Keep subagent so we know who is working on it
+        subagent: task.subagent,
+      };
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, updatedEntry, opts.log, {
+        statusOverride: displayStatusToFact("Waiting"),
+        latestByEntityKey,
+      });
+      // Record so caller can dispatch Forge for these tasks
+      const parsed = action.prBlockerStatus ?? "";
+      const [actualStatus, prRef] = parsed.includes("|") ? parsed.split("|", 2) : ["", parsed];
+      const prParts = prRef.split(":");
+      prBlockerTasks.push({
+        label: task.label,
+        owner: prParts[0] ?? "",
+        repo: prParts[1] ?? "",
+        number: Number(prParts[2] ?? 0) || 0,
+        blockerStatus: actualStatus,
+        reason: action.reason,
+      });
+      appliedCount++;
+      continue;
+    }
+
     const doneEntry: ActiveTaskEntry = {
       ...task,
       status: "Done",
@@ -996,7 +1118,7 @@ export async function applyActiveTaskHygieneFacts(
     value: JSON.stringify(audit),
   });
 
-  return { appliedCount, auditFactId: auditFact.id };
+  return { appliedCount, auditFactId: auditFact.id, prBlockerTasks };
 }
 
 export async function renderActiveTaskMarkdownFile(
