@@ -245,8 +245,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       }
       if (capabilityHintsMode === "session") {
         const rApi = withHookResolutionApi(api, hookCtx);
-        const sessionKey = resolveSessionKeyFromHookEvent(event, rApi);
-        if (!sessionKey) return;
+        const sessionKey =
+          resolveSessionKeyFromHookEvent(event, rApi) ?? lifecycleContext.currentAgentIdRef.value ?? "default";
         if (hooks.sessionState.capabilityHintsSessionsSeen.has(sessionKey)) return;
         hooks.sessionState.capabilityHintsSessionsSeen.add(sessionKey);
         hooks.sessionState.touchSession(sessionKey);
