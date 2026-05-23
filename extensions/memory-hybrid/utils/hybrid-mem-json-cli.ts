@@ -45,11 +45,7 @@ class TeeStderr {
    */
   tee(): void {
     const originalWrite = this.originalWrite;
-    process.stdout.write = (
-      chunk: unknown,
-      encoding?: BufferEncoding | (() => void),
-      cb?: () => void,
-    ): boolean => {
+    process.stdout.write = (chunk: unknown, encoding?: BufferEncoding | (() => void), cb?: () => void): boolean => {
       const str = typeof chunk === "string" ? chunk : String(chunk);
       originalWrite(str, encoding as BufferEncoding, cb);
       process.stderr.write(str);
