@@ -23,6 +23,7 @@ import {
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import {
   applyActiveTaskHygieneFacts,
+  backfillActiveTaskCanonicalLabels,
   loadTaskLedgerFromFacts,
   planActiveTaskHygiene,
   readActiveTaskRowsFromFacts,
@@ -705,6 +706,44 @@ export function registerActiveTaskCommands(
         console.log(`Audit fact: ${result.auditFactId}`);
       }
       if (result.ledger === "facts") {
+        console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
+      }
+    });
+
+  activeTasks
+    .command("backfill-canonical-labels")
+    .description("Backfill active-task canonical labels and collapse case-variant duplicate facts (facts ledger only)")
+    .option("--dry-run", "Report planned changes without updating facts")
+    .option("--limit <n>", "Maximum project facts to scan (default: 50000)")
+    .action(async (opts: { dryRun?: boolean; limit?: string }) => {
+      if (ctx.ledger !== "facts") {
+        console.log("ℹ️  backfill-canonical-labels applies only when activeTask.ledger is 'facts'.");
+        return;
+      }
+      const { factsDb } = requireFacts(ctx);
+      const parsedLimit = opts.limit == null ? undefined : Number.parseInt(String(opts.limit), 10);
+      if (parsedLimit !== undefined && (!Number.isFinite(parsedLimit) || parsedLimit <= 0)) {
+        console.error(`Error: invalid --limit value "${opts.limit}"`);
+        process.exitCode = 1;
+        return;
+      }
+      const result = backfillActiveTaskCanonicalLabels(factsDb, {
+        dryRun: opts.dryRun === true,
+        limit: parsedLimit,
+      });
+      console.log(`${opts.dryRun ? "Dry run — " : ""}Scanned ${result.scannedFacts} project fact(s).`);
+      console.log(`Canonical label updates: ${result.canonicalLabelsUpdated}`);
+      console.log(`Superseded duplicate facts: ${result.supersededFacts}`);
+      if (result.duplicateGroups.length > 0) {
+        console.log("Duplicate canonical groups:");
+        for (const group of result.duplicateGroups) {
+          console.log(
+            `  - ${group.canonicalLabel}: facts=${group.facts}, activeBefore=${group.activeBefore}, superseded=${group.superseded}`,
+          );
+        }
+      }
+      if (!opts.dryRun) {
+        await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
         console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
       }
     });

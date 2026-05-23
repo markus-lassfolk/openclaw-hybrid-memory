@@ -29,7 +29,41 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import { fetchLivePrBlockerStatus, type PrBlockerStatus } from "./task-hygiene.js";
 
-export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
+export function canonicalLabel(entity: string): string {
+  if (!entity?.trim()) return "";
+  return entity
+    .trim()
+    .toLowerCase()
+    .replace(/\s+(?:pr\s+queue|pull\s+request\s+queue|pr-stewardship|pull\s+request\s+stewardship)\s*$/i, "")
+    .replace(/[\s\/_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function factCanonicalLabel(fact: MemoryEntry): string {
+  const fromProvenance = readCanonicalLabelFromFact(fact);
+  if (fromProvenance) return fromProvenance;
+  return canonicalLabel(fact.entity ?? "");
+}
+
+function readCanonicalLabelFromFact(fact: MemoryEntry): string | null {
+  if (!fact.provenanceJson) return null;
+  try {
+    const parsed = JSON.parse(fact.provenanceJson) as {
+      activeTask?: { canonicalLabel?: unknown };
+      canonical_label?: unknown;
+    };
+    const raw = parsed.activeTask?.canonicalLabel ?? parsed.canonical_label;
+    return typeof raw === "string" && raw.trim().length > 0 ? canonicalLabel(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function activeTaskProvenance(canonical: string): string {
+  return JSON.stringify({ activeTask: { canonicalLabel: canonical }, canonical_label: canonical });
+}
+const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
@@ -61,12 +95,13 @@ export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
   for (const f of facts) {
     if (!f.entity?.trim()) continue;
-    const ent = f.entity.trim().toLowerCase();
+    const canonical = factCanonicalLabel(f);
+    if (!canonical) continue;
     const k = (f.key ?? "").trim() || "_body";
-    let km = byEntity.get(ent);
+    let km = byEntity.get(canonical);
     if (!km) {
       km = new Map();
-      byEntity.set(ent, km);
+      byEntity.set(canonical, km);
     }
     const prev = km.get(k);
     if (!prev || f.createdAt > prev.createdAt) {
@@ -874,6 +909,7 @@ export async function upsertProjectTaskKey(
   // Normalise entity labels on write (trim + lowercase) to prevent case-variant
   // collisions (e.g. "Humanizer" and "humanizer" stored as separate entities).
   const normalizedEntity = entity.trim().toLowerCase();
+  const canonical = canonicalLabel(normalizedEntity);
   const cacheKey = taskEntityKey(normalizedEntity, key);
   let previous: MemoryEntry | undefined;
   const cached = opts?.latestByEntityKey?.get(cacheKey);
@@ -885,10 +921,10 @@ export async function upsertProjectTaskKey(
     // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
     // entry (which we must not supersede, but an active-task row may still exist).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-    // Case-insensitive lookup so mixed-case legacy facts are also superseded.
+    // Supersede by canonical label to match grouping logic (strips suffixes, normalizes separators).
     // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
     const same = facts.filter(
-      (f) => f.source === "active-task" && f.entity?.toLowerCase() === normalizedEntity && (f.key ?? "") === key,
+      (f) => f.source === "active-task" && canonicalLabel(f.entity ?? "") === canonical && (f.key ?? "") === key,
     );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
@@ -903,6 +939,7 @@ export async function upsertProjectTaskKey(
     value,
     source: "active-task",
     decayClass: "permanent",
+    provenanceJson: activeTaskProvenance(canonical),
   });
   if (previous) {
     factsDb.supersede(previous.id, entry.id);

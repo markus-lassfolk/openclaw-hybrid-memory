@@ -10,13 +10,16 @@ import type { EmbeddingProvider } from "../services/embeddings.js";
 import {
   applyActiveTaskHygieneFacts,
   applyActiveTaskProjectionFilters,
+  backfillActiveTaskCanonicalLabels,
   buildFactsSectionedMarkdownBody,
   buildTaskEntriesFromGroupedFacts,
+  canonicalLabel,
   displayStatusToFact,
   factStatusToDisplay,
   groupProjectFactsByEntity,
   loadTaskLedgerFromFacts,
   planActiveTaskHygiene,
+  syncActiveTaskEntryToFacts,
   taskEntityKey,
   upsertProjectTaskKey,
 } from "../services/task-ledger-facts.js";
@@ -478,4 +481,270 @@ describe("task-ledger-facts", () => {
     expect(g.get("humanizer")?.get("title")?.value).toBe("Humanizer task");
     expect(g.get("humanizer")?.get("next")?.value).toBe("do stuff");
   });
+});
+
+it("canonicalLabel collapses case, separators, and active-task suffix variants", () => {
+  expect(canonicalLabel(" Hybrid_Memory PR Queue ")).toBe("hybrid-memory");
+  expect(canonicalLabel("hybrid-memory pr-stewardship")).toBe("hybrid-memory");
+  expect(canonicalLabel("Humanizer")).toBe("humanizer");
+});
+
+it("factStatusToDisplay maps common stored values case-insensitively", () => {
+  expect(factStatusToDisplay("in_progress")).toBe("In progress");
+  expect(factStatusToDisplay("Done")).toBe("Done");
+  expect(factStatusToDisplay("COMPLETED")).toBe("Done");
+  expect(factStatusToDisplay("failed")).toBe("Failed");
+  expect(factStatusToDisplay("blocked")).toBe("Stalled");
+});
+
+it("groupProjectFactsByEntity collapses case-variant labels by canonical label", () => {
+  const rows: MemoryEntry[] = [
+    fact({ id: "a1", entity: "humanizer", key: "status", value: "in_progress", createdAt: 1 }),
+    fact({ id: "a2", entity: "Humanizer", key: "status", value: "Done", createdAt: 3 }),
+    fact({ id: "b1", entity: "humanizer", key: "title", value: "Old title", createdAt: 2 }),
+    fact({ id: "b2", entity: "Humanizer", key: "title", value: "New title", createdAt: 4 }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  expect(g.size).toBe(1);
+  const row = g.get("humanizer");
+  expect(row?.get("status")?.value).toBe("Done");
+  expect(row?.get("title")?.value).toBe("New title");
+});
+
+it("upserting Humanizer as done suppresses humanizer case-variant rows from active projection", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-ledger-canonical-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const vectorDb = {
+    hasDuplicate: async () => true,
+    store: async () => {},
+  } as unknown as VectorDB;
+  const embeddings = {
+    modelName: "test-model",
+    embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+  } as unknown as EmbeddingProvider;
+  const now = new Date().toISOString();
+
+  try {
+    db.store({
+      text: "Task [humanizer] title: old",
+      category: "project",
+      importance: 0.7,
+      source: "test",
+      decayClass: "permanent",
+      entity: "humanizer",
+      key: "title",
+      value: "Old humanizer task",
+    });
+    db.store({
+      text: "Task [humanizer] status: in_progress",
+      category: "project",
+      importance: 0.7,
+      source: "test",
+      decayClass: "permanent",
+      entity: "humanizer",
+      key: "status",
+      value: "in_progress",
+    });
+    db.store({
+      text: `Task [humanizer] task_updated: ${now}`,
+      category: "project",
+      importance: 0.7,
+      source: "test",
+      decayClass: "permanent",
+      entity: "humanizer",
+      key: "task_updated",
+      value: now,
+    });
+
+    await syncActiveTaskEntryToFacts(
+      db,
+      vectorDb,
+      embeddings,
+      {
+        label: "Humanizer",
+        description: "Closed humanizer task",
+        status: "Done",
+        started: now,
+        updated: now,
+      },
+      undefined,
+      { statusOverride: "DONE" },
+    );
+
+    const { active, completed } = loadTaskLedgerFromFacts(db);
+    expect(active.some((t) => canonicalLabel(t.label) === "humanizer")).toBe(false);
+    expect(completed).toHaveLength(1);
+    expect(canonicalLabel(completed[0].label)).toBe("humanizer");
+    expect(completed[0].status).toBe("Done");
+    expect(completed[0].description).toBe("Closed humanizer task");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("backfillActiveTaskCanonicalLabels collapses legacy case-variant duplicate facts", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-ledger-backfill-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const now = new Date().toISOString();
+  try {
+    for (const [entity, status, offset] of [
+      ["hybrid-memory", "in_progress", 1],
+      ["Hybrid-Memory", "DONE", 2],
+      ["Hybrid-memory PR Queue", "in_progress", 3],
+    ] as const) {
+      db.store({
+        text: `Task [${entity}] status: ${status}`,
+        category: "project",
+        importance: 0.7,
+        source: "test",
+        decayClass: "permanent",
+        entity,
+        key: "status",
+        value: status,
+        sourceDate: Date.now() / 1000 + offset,
+      });
+      db.store({
+        text: `Task [${entity}] task_updated: ${now}`,
+        category: "project",
+        importance: 0.7,
+        source: "test",
+        decayClass: "permanent",
+        entity,
+        key: "task_updated",
+        value: now,
+        sourceDate: Date.now() / 1000 + offset,
+      });
+    }
+
+    const result = backfillActiveTaskCanonicalLabels(db);
+    expect(result.scannedFacts).toBe(6);
+    expect(result.canonicalLabelsUpdated).toBe(6);
+    expect(result.supersededFacts).toBeGreaterThan(0);
+    const { active, completed } = loadTaskLedgerFromFacts(db);
+    expect(active.some((t) => canonicalLabel(t.label) === "hybrid-memory")).toBe(false);
+    expect(completed.some((t) => canonicalLabel(t.label) === "hybrid-memory")).toBe(true);
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("backfillActiveTaskCanonicalLabels preserves provenance and avoids superseded keepers", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-ledger-backfill-provenance-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  try {
+    const supersededDone = db.store({
+      text: "Task [Hybrid-Memory] status: done",
+      category: "project",
+      importance: 0.7,
+      source: "test",
+      decayClass: "permanent",
+      entity: "Hybrid-Memory",
+      key: "status",
+      value: "done",
+      provenanceJson: JSON.stringify({ sourceEventIds: ["evt-1"], method: "fixture" }),
+      sourceDate: 3,
+    });
+    const activeProgress = db.store({
+      text: "Task [hybrid-memory] status: in_progress",
+      category: "project",
+      importance: 0.7,
+      source: "test",
+      decayClass: "permanent",
+      entity: "hybrid-memory",
+      key: "status",
+      value: "in_progress",
+      provenanceJson: JSON.stringify({ sourceEventIds: ["evt-2"], method: "active-fixture" }),
+      sourceDate: 2,
+    });
+    db.supersede(supersededDone.id, null);
+
+    const olderTitle = db.store({
+      text: "Task [hybrid-memory] title: Old",
+      category: "project",
+      importance: 0.7,
+      source: "test",
+      decayClass: "permanent",
+      entity: "hybrid-memory",
+      key: "title",
+      value: "Old",
+      sourceDate: 1,
+    });
+    const newerSupersededTitle = db.store({
+      text: "Task [Hybrid-Memory] title: Newer but superseded",
+      category: "project",
+      importance: 0.7,
+      source: "test",
+      decayClass: "permanent",
+      entity: "Hybrid-Memory",
+      key: "title",
+      value: "Newer but superseded",
+      sourceDate: 4,
+    });
+    db.supersede(newerSupersededTitle.id, null);
+
+    const result = backfillActiveTaskCanonicalLabels(db);
+    expect(result.canonicalLabelsUpdated).toBe(2);
+
+    const updatedProgress = db
+      .getRawDb()
+      .prepare("SELECT provenance_json FROM facts WHERE id = ?")
+      .get(activeProgress.id) as {
+      provenance_json: string;
+    };
+    expect(JSON.parse(updatedProgress.provenance_json)).toMatchObject({
+      sourceEventIds: ["evt-2"],
+      method: "active-fixture",
+      activeTask: { canonicalLabel: "hybrid-memory" },
+      canonical_label: "hybrid-memory",
+    });
+
+    const rows = db.listFactsByCategory("project", 20);
+    expect(rows.find((row) => row.id === activeProgress.id)?.supersededAt).toBeNull();
+    expect(rows.find((row) => row.id === olderTitle.id)?.supersededAt).toBeNull();
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("terminal status supersession does not supersede title fact created in same sync", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-title-preservation-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const vectorDb = {
+    hasDuplicate: async () => true,
+    store: async () => {},
+  } as unknown as VectorDB;
+  const embeddings = {
+    modelName: "test-model",
+    embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+  } as unknown as EmbeddingProvider;
+  const now = new Date().toISOString();
+
+  try {
+    await syncActiveTaskEntryToFacts(
+      db,
+      vectorDb,
+      embeddings,
+      {
+        label: "my-task",
+        description: "Specific title for this task",
+        status: "Done",
+        started: now,
+        updated: now,
+      },
+      undefined,
+      { statusOverride: "done" },
+    );
+
+    const { completed } = loadTaskLedgerFromFacts(db);
+    expect(completed).toHaveLength(1);
+    expect(completed[0].label).toBe("my-task");
+    expect(completed[0].description).toBe("Specific title for this task");
+    expect(completed[0].status).toBe("Done");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
