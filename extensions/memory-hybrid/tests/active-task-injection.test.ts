@@ -25,7 +25,7 @@ const defaultProjection = {
 };
 
 describe("prepareActiveTasksForInjection", () => {
-  it("drops generic titles in readable mode and sorts non-stale first", () => {
+  it("drops generic titles and stale tasks in readable mode", () => {
     const tasks = [
       entry({ label: "stale-a", stale: true, updated: "2020-01-01T00:00:00.000Z", description: "Real work A" }),
       entry({ label: "fresh-b", stale: false, description: "Real work B" }),
@@ -35,8 +35,8 @@ describe("prepareActiveTasksForInjection", () => {
       projection: defaultProjection,
     });
     expect(ledgerActiveCount).toBe(3);
-    expect(filteredActiveCount).toBe(2);
-    expect(prepared.map((t) => t.label)).toEqual(["fresh-b", "stale-a"]);
+    expect(filteredActiveCount).toBe(1);
+    expect(prepared.map((t) => t.label)).toEqual(["fresh-b"]);
   });
 
   it("boosts tasks matching user text", () => {
@@ -71,7 +71,7 @@ describe("formatCappedTaskLabelList", () => {
 });
 
 describe("buildActiveTaskContextBundle", () => {
-  it("includes stale tasks in main block with STALE flag and also in stale warnings", () => {
+  it("excludes stale tasks from the main block but still reports stale warnings", () => {
     const tasks = [
       entry({ label: "fresh", stale: false, description: "Current work" }),
       entry({
@@ -91,14 +91,14 @@ describe("buildActiveTaskContextBundle", () => {
     const main = bundle.parts.find((p) => p.includes("<active-tasks>")) ?? "";
     const combined = bundle.parts.join("\n");
     expect(main).toContain("[fresh]");
-    expect(main).toContain("[old-stale]");
-    expect(main).toContain("⚠️ STALE");
+    expect(main).not.toContain("[old-stale]");
     expect(combined).toContain("STALE ACTIVE TASKS");
-    expect(bundle.injectedTaskCount).toBe(2);
+    expect(bundle.injectedTaskCount).toBe(1);
     expect(bundle.ledgerActiveCount).toBe(2);
+    expect(bundle.filteredActiveCount).toBe(1);
   });
 
-  it("includes stale tasks in main injection and counts them", () => {
+  it("does not count stale-only ledgers as injected tasks", () => {
     const tasks = [
       entry({
         label: "old-stale",
@@ -115,9 +115,35 @@ describe("buildActiveTaskContextBundle", () => {
       projection: defaultProjection,
     });
     const combined = bundle.parts.join("\n");
+    const main = bundle.parts.find((p) => p.includes("<active-tasks>")) ?? "";
+    expect(main).toBe("");
     expect(combined).toContain("[old-stale]");
-    expect(combined).toContain("⚠️ STALE");
-    expect(bundle.injectedTaskCount).toBe(1);
+    expect(bundle.injectedTaskCount).toBe(0);
+    expect(bundle.filteredActiveCount).toBe(0);
+  });
+
+  it("reports injectedTaskCount after the shared budget caps rendered tasks", () => {
+    const tasks = Array.from({ length: 12 }, (_, i) =>
+      entry({
+        label: `fresh-${i}`,
+        stale: false,
+        description: "Fresh work with enough text to make the active-task block hit its character budget quickly",
+        next: "Continue with a specific bounded implementation step before moving to the next task",
+      }),
+    );
+    const bundle = buildActiveTaskContextBundle({
+      ledgerTasks: tasks,
+      injectionBudgetTokens: 100,
+      staleMinutes: 60,
+      staleWarningEnabled: false,
+      projection: { ...defaultProjection, excludeGenericTitle: false },
+    });
+    const main = bundle.parts.find((p) => p.includes("<active-tasks>")) ?? "";
+    const rendered = main.match(/\[fresh-/g)?.length ?? 0;
+    expect(rendered).toBeGreaterThan(0);
+    expect(rendered).toBeLessThan(tasks.length);
+    expect(bundle.injectedTaskCount).toBe(rendered);
+    expect(bundle.filteredActiveCount).toBe(tasks.length);
   });
 
   it("keeps total injected tokens within shared budget on heartbeat hygiene", () => {

@@ -494,6 +494,7 @@ export function createHybridMemCliContext(
   return {
     factsDb: handlerCtx.factsDb,
     vectorDb: handlerCtx.vectorDb,
+    wal: handlerCtx.wal,
     aliasDb: handlerCtx.aliasDb,
     crystallizationStore: handlerCtx.crystallizationStore ?? null,
     versionInfo: services.versionInfo,

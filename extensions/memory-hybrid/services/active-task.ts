@@ -22,7 +22,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
@@ -554,10 +554,7 @@ export function buildActiveTaskInjection(
   maxTokens: number,
   opts?: { maxChars?: number; excludeStale?: boolean },
 ): ActiveTaskInjectionBuildResult {
-  let activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status));
-  if (opts?.excludeStale) {
-    activeTasks = activeTasks.filter((t) => !t.stale);
-  }
+  const activeTasks = tasks.filter((t) => ACTIVE_STATUSES.has(t.status) && (!opts?.excludeStale || !t.stale));
   if (activeTasks.length === 0) return { text: "", injectedCount: 0 };
 
   const lines: string[] = ["<active-tasks>", "In-progress tasks from ACTIVE-TASKS.md:"];
@@ -567,8 +564,7 @@ export function buildActiveTaskInjection(
   let injectedCount = 0;
 
   for (const task of activeTasks) {
-    const staleFlag = task.stale ? " ⚠️ STALE" : "";
-    const summary = [`- [${task.label}] ${task.description} (${task.status}${staleFlag})`];
+    const summary = [`- [${task.label}] ${task.description} (${task.status})`];
     if (task.next) summary.push(`  Next: ${task.next}`);
     if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
     const block = summary.join("\n");

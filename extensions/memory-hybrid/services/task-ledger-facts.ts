@@ -10,7 +10,6 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
-import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
@@ -29,41 +28,14 @@ import {
 import type { EmbeddingProvider } from "./embeddings.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 
-export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
-
-const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
-const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
-const CANONICAL_TASK_SUFFIX_RE =
-  /(?:[\s_-]*(?:pr[\s_-]*queue|pull[\s_-]*request[\s_-]*queue|pr[\s_-]*stewardship|pull[\s_-]*request[\s_-]*stewardship))+$/i;
-
-export function normalizeTaskStatus(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-}
-
-/**
- * Canonical active-task entity label used for facts-ledger supersession/grouping.
- *
- * Keeps labels human-readable enough for audit metadata while making case variants
- * and common pipeline suffixes collapse to the same logical task.
- */
 export function canonicalLabel(entity: string): string {
-  const normalized = entity
+  if (!entity?.trim()) return "";
+  return entity
     .trim()
     .toLowerCase()
-    .replace(CANONICAL_TASK_SUFFIX_RE, "")
-    .replace(/[\s_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return (
-    normalized ||
-    entity
-      .trim()
-      .toLowerCase()
-      .replace(/[\s_-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-  );
+    .replace(/^-+|-+$/g, "")
+    .replace(/[\/_]+/g, "-")
+    .replace(/-+/g, "-");
 }
 
 function factCanonicalLabel(fact: MemoryEntry): string {
@@ -89,6 +61,10 @@ function readCanonicalLabelFromFact(fact: MemoryEntry): string | null {
 function activeTaskProvenance(canonical: string): string {
   return JSON.stringify({ activeTask: { canonicalLabel: canonical }, canonical_label: canonical });
 }
+const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
+
+const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
+const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
 const PROJECTION_STALE_MARKER_SUFFIX = ".stale.json";
 const ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER: ScopeFilter = { agentId: "__active_task_projection_global__" };
 
@@ -110,46 +86,25 @@ export type ActiveTaskProjectionStatus = {
   marker: ActiveTaskProjectionStaleMarker | null;
 };
 
-/** Latest value per entity+key from non-superseded project facts */
+/** Latest value per entity+key from non-superseded project facts.
+ *  Entity labels are normalised to lowercase (trim + toLowerCase) so that
+ *  case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
-  const byCanonical = new Map<
-    string,
-    { displayEntity: string; displayUpdatedAt: number; keys: Map<string, MemoryEntry> }
-  >();
+  const byEntity = new Map<string, Map<string, MemoryEntry>>();
   for (const f of facts) {
     if (!f.entity?.trim()) continue;
     const canonical = factCanonicalLabel(f);
     if (!canonical) continue;
-    const ent = f.entity.trim();
+    const ent = f.entity.trim().toLowerCase();
     const k = (f.key ?? "").trim() || "_body";
-    let group = byCanonical.get(canonical);
-    if (!group) {
-      group = { displayEntity: ent, displayUpdatedAt: Number.NEGATIVE_INFINITY, keys: new Map() };
-      byCanonical.set(canonical, group);
+    let km = byEntity.get(ent);
+    if (!km) {
+      km = new Map();
+      byEntity.set(ent, km);
     }
-    if (f.createdAt > group.displayUpdatedAt && !isGenericTaskTitle(ent)) {
-      group.displayEntity = ent;
-      group.displayUpdatedAt = f.createdAt;
-    }
-    const prev = group.keys.get(k);
+    const prev = km.get(k);
     if (!prev || f.createdAt > prev.createdAt) {
-      group.keys.set(k, f);
-    }
-  }
-
-  const byEntity = new Map<string, Map<string, MemoryEntry>>();
-  for (const [canonical, group] of byCanonical) {
-    const label = group.displayEntity || canonical;
-    if (byEntity.has(label)) {
-      const existing = byEntity.get(label)!;
-      for (const [key, entry] of group.keys) {
-        const prev = existing.get(key);
-        if (!prev || entry.createdAt > prev.createdAt) {
-          existing.set(key, entry);
-        }
-      }
-    } else {
-      byEntity.set(label, group.keys);
+      km.set(k, f);
     }
   }
   return byEntity;
@@ -206,9 +161,9 @@ function resolveTaskUpdated(f: Record<string, string>, bounds: ReturnType<typeof
 }
 
 export function factStatusToDisplay(raw: string): ActiveTaskStatus {
-  const s = normalizeTaskStatus(raw);
+  const s = raw.trim().toLowerCase();
   if (s === "open") return "In progress";
-  if (s === "in_progress") return "In progress";
+  if (s === "in_progress" || s === "in progress") return "In progress";
   if (s === "blocked" || s.startsWith("blocked")) return "Stalled";
   if (s === "waiting") return "Waiting";
   if (s === "failed" || s === "error") return "Failed";
@@ -235,7 +190,7 @@ export function displayStatusToFact(status: ActiveTaskStatus): string {
 }
 
 function isTerminalFactStatus(raw: string): boolean {
-  return TERMINAL.has(normalizeTaskStatus(raw));
+  return TERMINAL.has(raw.trim().toLowerCase());
 }
 
 function titleFromFacts(f: Record<string, string>): string {
@@ -256,7 +211,9 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
   for (const [entity, keyMap] of sorted) {
     const f = rowToRecord(keyMap);
     const bounds = createdBoundsFromKeyMap(keyMap);
-    const statusRaw = (f.status ?? "open").trim();
+    // Entities with no explicit `status` key must not default to in-progress.
+    const statusRaw = f.status?.trim();
+    if (!statusRaw) continue;
     const disp = factStatusToDisplay(statusRaw);
     const started = resolveTaskStarted(f, bounds);
     const updated = resolveTaskUpdated(f, bounds);
@@ -301,7 +258,7 @@ export function loadTaskLedgerFromFacts(
 } {
   const facts = factsDb
     .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
+    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY && fact.source === "active-task")
     .slice(0, factLimit);
   const grouped = groupProjectFactsByEntity(facts);
   return buildTaskEntriesFromGroupedFacts(grouped);
@@ -857,7 +814,7 @@ export function buildFactsSectionedMarkdownBody(
 }
 
 export function taskEntityKey(entity: string, key: string): string {
-  return `${canonicalLabel(entity)}\u0000${key.trim()}`;
+  return `${entity}\u0000${key}`;
 }
 
 export async function upsertProjectTaskKey(
@@ -868,58 +825,45 @@ export async function upsertProjectTaskKey(
   key: string,
   value: string,
   log?: { warn?: (m: string) => void },
-  opts?: { latestByEntityKey?: Map<string, MemoryEntry>; createdInThisSync?: Set<string> },
+  opts?: { latestByEntityKey?: Map<string, MemoryEntry> },
 ): Promise<void> {
-  const canonical = canonicalLabel(entity);
-  const normalizedKey = key.trim();
-  const cacheKey = taskEntityKey(entity, normalizedKey);
-  const facts = opts?.latestByEntityKey ? [] : factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+  // Normalise entity labels on write (trim + lowercase) to prevent case-variant
+  // collisions (e.g. "Humanizer" and "humanizer" stored as separate entities).
+  const normalizedEntity = entity.trim().toLowerCase();
+  const cacheKey = taskEntityKey(normalizedEntity, key);
   let previous: MemoryEntry | undefined;
-  if (opts?.latestByEntityKey) {
-    previous = opts.latestByEntityKey.get(cacheKey);
-  } else {
-    const same = facts.filter((f) => factCanonicalLabel(f) === canonical && (f.key ?? "").trim() === normalizedKey);
+  const cached = opts?.latestByEntityKey?.get(cacheKey);
+  // Keep supersession scoped to active-task ledger rows only; cached
+  // memory_store rows must never be retired by active-task checkpoints.
+  if (cached?.source === "active-task") {
+    previous = cached;
+  } else if (!opts?.latestByEntityKey || cached) {
+    // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
+    // entry (which we must not supersede, but an active-task row may still exist).
+    const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+    // Case-insensitive lookup so mixed-case legacy facts are also superseded.
+    // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
+    const same = facts.filter(
+      (f) => f.source === "active-task" && f.entity?.toLowerCase() === normalizedEntity && (f.key ?? "") === key,
+    );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
   }
-  const text = `Task [${entity}] ${normalizedKey}: ${value}`;
+  const text = `Task [${normalizedEntity}] ${key}: ${value}`;
   const entry = factsDb.store({
     text,
     category: TASK_LEDGER_CATEGORY,
     importance: CLI_STORE_IMPORTANCE,
-    entity,
-    key: normalizedKey,
+    entity: normalizedEntity,
+    key,
     value,
     source: "active-task",
-    provenanceJson: activeTaskProvenance(canonical),
     decayClass: "permanent",
   });
-  opts?.createdInThisSync?.add(entry.id);
   if (previous) {
     factsDb.supersede(previous.id, entry.id);
   }
-  if (normalizedKey === "status" && isTerminalFactStatus(value)) {
-    const currentFacts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-    for (const fact of currentFacts) {
-      if (fact.id === entry.id) continue;
-      if (opts?.createdInThisSync?.has(fact.id)) continue;
-      if (factCanonicalLabel(fact) !== canonical) continue;
-      factsDb.supersede(fact.id, entry.id);
-    }
-  }
-  if (opts?.latestByEntityKey) {
-    for (const [existingKey, fact] of [...opts.latestByEntityKey.entries()]) {
-      if (
-        factCanonicalLabel(fact) === canonical &&
-        ((normalizedKey === "status" && isTerminalFactStatus(value)) || existingKey === cacheKey)
-      ) {
-        opts.latestByEntityKey.delete(existingKey);
-      }
-    }
-    if (!(normalizedKey === "status" && isTerminalFactStatus(value))) {
-      opts.latestByEntityKey.set(cacheKey, entry);
-    }
-  }
+  opts?.latestByEntityKey?.set(cacheKey, entry);
   try {
     const vector = await embeddings.embed(text);
     factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
@@ -950,8 +894,7 @@ export async function syncActiveTaskEntryToFacts(
   },
 ): Promise<void> {
   const entity = entry.label;
-  const createdInThisSync = new Set<string>();
-  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey, createdInThisSync };
+  const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey };
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log, upsertOpts);
   const statusValue = opts?.statusOverride?.trim() || displayStatusToFact(entry.status);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", statusValue, log, upsertOpts);
@@ -1000,109 +943,6 @@ export async function syncActiveTaskEntryToFacts(
   );
 }
 
-export interface ActiveTaskCanonicalBackfillResult {
-  scannedFacts: number;
-  canonicalLabelsUpdated: number;
-  supersededFacts: number;
-  duplicateGroups: Array<{ canonicalLabel: string; facts: number; activeBefore: number; superseded: number }>;
-}
-
-export function backfillActiveTaskCanonicalLabels(
-  factsDb: FactsDB,
-  opts: { dryRun?: boolean; limit?: number } = {},
-): ActiveTaskCanonicalBackfillResult {
-  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, opts.limit ?? 50_000);
-  const groups = new Map<string, MemoryEntry[]>();
-  let canonicalLabelsUpdated = 0;
-
-  for (const fact of facts) {
-    if (!fact.entity?.trim()) continue;
-    const canonical = canonicalLabel(fact.entity);
-    const existing = readCanonicalLabelFromFact(fact);
-    if (existing !== canonical) {
-      canonicalLabelsUpdated++;
-      if (!opts.dryRun) {
-        const patch = { activeTask: { canonicalLabel: canonical }, canonical_label: canonical };
-        const merged = mergeFactProvenanceJson(fact.provenanceJson, patch);
-        factsDb.getRawDb().prepare("UPDATE facts SET provenance_json = ? WHERE id = ?").run(merged, fact.id);
-      }
-    }
-    const arr = groups.get(canonical) ?? [];
-    arr.push(fact);
-    groups.set(canonical, arr);
-  }
-
-  const duplicateGroups: ActiveTaskCanonicalBackfillResult["duplicateGroups"] = [];
-  let supersededFacts = 0;
-  for (const [canonical, rows] of groups) {
-    const activeBefore = rows.filter((f) => !f.supersededAt).length;
-    let groupSuperseded = 0;
-    const byKey = new Map<string, MemoryEntry[]>();
-    for (const row of rows) {
-      const key = (row.key ?? "").trim() || "_body";
-      const arr = byKey.get(key) ?? [];
-      arr.push(row);
-      byKey.set(key, arr);
-    }
-    const statusRows = byKey.get("status") ?? [];
-    const activeRows = rows.filter((row) => !row.supersededAt);
-    const activeStatusRows = statusRows.filter((row) => !row.supersededAt);
-    const terminalCandidates = activeStatusRows.some((row) => isTerminalFactStatus(row.value ?? row.text ?? ""))
-      ? activeStatusRows
-      : activeRows.length === 0
-        ? statusRows
-        : [];
-    let terminalStatus: MemoryEntry | undefined;
-    for (const row of terminalCandidates) {
-      if (
-        isTerminalFactStatus(row.value ?? row.text ?? "") &&
-        (!terminalStatus || row.createdAt > terminalStatus.createdAt)
-      ) {
-        terminalStatus = row;
-      }
-    }
-    const supersede = (oldId: string, newId: string | null): void => {
-      supersededFacts++;
-      groupSuperseded++;
-      if (!opts.dryRun) factsDb.supersede(oldId, newId);
-    };
-    if (terminalStatus) {
-      for (const row of rows) {
-        if (row.id !== terminalStatus.id && !row.supersededAt) supersede(row.id, terminalStatus.id);
-      }
-    } else {
-      for (const sameKey of byKey.values()) {
-        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
-        const activeRanked = ranked.filter((row) => !row.supersededAt);
-        if (activeRanked.length <= 1) continue;
-        const keeper = activeRanked[0];
-        for (const row of activeRanked.slice(1)) {
-          supersede(row.id, keeper.id);
-        }
-      }
-    }
-    if (activeBefore > 1 || groupSuperseded > 0) {
-      duplicateGroups.push({
-        canonicalLabel: canonical,
-        facts: rows.length,
-        activeBefore,
-        superseded: groupSuperseded,
-      });
-    }
-  }
-
-  if (!opts.dryRun) {
-    (factsDb as unknown as { invalidateSupersededTextsCache?: () => void }).invalidateSupersededTextsCache?.();
-  }
-
-  return {
-    scannedFacts: facts.length,
-    canonicalLabelsUpdated,
-    supersededFacts,
-    duplicateGroups: duplicateGroups.sort((a, b) => a.canonicalLabel.localeCompare(b.canonicalLabel)),
-  };
-}
-
 export interface ActiveTaskHygieneApplyResult {
   appliedCount: number;
   auditFactId?: string;
@@ -1127,8 +967,10 @@ export async function applyActiveTaskHygieneFacts(
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
   const latestByEntityKey = new Map<string, MemoryEntry>();
+  // Only index active-task ledger facts, not memory_store project facts.
   for (const fact of factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000)) {
-    const entity = fact.entity?.trim();
+    if (fact.source !== "active-task") continue;
+    const entity = fact.entity?.trim().toLowerCase();
     if (!entity) continue;
     const key = (fact.key ?? "").trim();
     const cacheKey = taskEntityKey(entity, key);
@@ -1295,7 +1137,8 @@ export async function consumePendingTaskSignalsFacts(
   const active = detectStaleTasks(rawActive, staleMinutes);
 
   const findMatchingTask = (activeEntries: ActiveTaskEntry[], signal: PendingTaskSignal): ActiveTaskEntry | null => {
-    const byLabel = activeEntries.filter((t) => t.label === signal.taskRef);
+    const normalizedTaskRef = signal.taskRef.trim().toLowerCase();
+    const byLabel = activeEntries.filter((t) => t.label.toLowerCase() === normalizedTaskRef);
     if (byLabel.length === 1) return byLabel[0];
     if (byLabel.length > 1) {
       logger?.warn?.(`memory-hybrid: multiple active tasks share label ${signal.taskRef}; leaving signal pending`);

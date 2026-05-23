@@ -468,6 +468,7 @@ export async function runCapture(
                         extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
                         extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                         vector,
+                        embeddingModelName: vector ? ctx.embeddings.modelName : undefined,
                       },
                       api.logger,
                       classification.targetId,
@@ -623,6 +624,7 @@ export async function runCapture(
               extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
               extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
               vector,
+              embeddingModelName: vector ? ctx.embeddings.modelName : undefined,
             },
             api.logger,
           );

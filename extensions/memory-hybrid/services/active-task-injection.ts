@@ -3,15 +3,15 @@
  */
 
 import type { ActiveTaskProjectionConfig } from "../config.js";
+import { estimateTokens } from "../utils/text.js";
 import type { ActiveTaskEntry, ActiveTaskStatus } from "./active-task.js";
 import {
+  type ActiveTaskInjectionBuildResult,
   buildActiveTaskInjection,
   buildStaleWarningInjection,
-  type ActiveTaskInjectionBuildResult,
 } from "./active-task.js";
 import { buildHeartbeatTaskHygieneBlock } from "./task-hygiene.js";
 import { applyActiveTaskProjectionFilters } from "./task-ledger-facts.js";
-import { estimateTokens } from "../utils/text.js";
 
 const ACTIVE_STATUSES = new Set<ActiveTaskStatus>(["In progress", "Waiting", "Stalled", "Failed"]);
 const LABEL_LIST_CAP = 15;
@@ -45,7 +45,6 @@ function compareTasksForInjection(
   userText?: string,
   sessionKey?: string,
 ): number {
-  if (a.stale !== b.stale) return a.stale ? 1 : -1;
   const rel = taskRelevanceScore(b, userText, sessionKey) - taskRelevanceScore(a, userText, sessionKey);
   if (rel !== 0) return rel;
   return parseUpdatedMs(b.updated) - parseUpdatedMs(a.updated);
@@ -74,19 +73,19 @@ export function prepareActiveTasksForInjection(
     userText?: string;
     sessionKey?: string;
   },
-): { prepared: ActiveTaskEntry[]; preCap: ActiveTaskEntry[]; ledgerActiveCount: number; filteredActiveCount: number } {
+): { prepared: ActiveTaskEntry[]; ledgerActiveCount: number; filteredActiveCount: number } {
   const ledgerActiveCount = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status)).length;
-  let prepared = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status));
+  let prepared = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status) && !t.stale);
   prepared = applyActiveTaskProjectionFilters(prepared, opts.projection);
   prepared.sort((a, b) => compareTasksForInjection(a, b, opts.userText, opts.sessionKey));
 
-  const preCap = [...prepared];
+  const filteredActiveCount = prepared.length;
   const rowCap = opts.injectionMaxTasks ?? opts.projection.maxRowsPerSection;
   if (typeof rowCap === "number" && rowCap > 0 && prepared.length > rowCap) {
     prepared = prepared.slice(0, rowCap);
   }
 
-  return { prepared, preCap, ledgerActiveCount, filteredActiveCount: preCap.length };
+  return { prepared, ledgerActiveCount, filteredActiveCount };
 }
 
 export type ActiveTaskContextBundleResult = {
@@ -114,15 +113,12 @@ export type ActiveTaskContextBundleInput = {
  * Build all budgeted active-task prepend blocks from one shared char pool (`injectionBudget * 4`).
  */
 export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput): ActiveTaskContextBundleResult {
-  const { prepared, preCap, ledgerActiveCount, filteredActiveCount } = prepareActiveTasksForInjection(
-    input.ledgerTasks,
-    {
-      projection: input.projection,
-      injectionMaxTasks: input.injectionMaxTasks,
-      userText: input.userText,
-      sessionKey: input.sessionKey,
-    },
-  );
+  const { prepared, ledgerActiveCount, filteredActiveCount } = prepareActiveTasksForInjection(input.ledgerTasks, {
+    projection: input.projection,
+    injectionMaxTasks: input.injectionMaxTasks,
+    userText: input.userText,
+    sessionKey: input.sessionKey,
+  });
 
   const parts: string[] = [];
   let injectedTaskCount = 0;
@@ -145,7 +141,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   }
 
   if (input.staleWarningEnabled && remainingChars > 40) {
-    const staleResult = buildStaleWarningInjection(prepared, input.staleMinutes, remainingChars);
+    const staleResult = buildStaleWarningInjection(input.ledgerTasks, input.staleMinutes, remainingChars);
     if (staleResult.text) {
       parts.push(staleResult.text);
       remainingChars = Math.max(0, remainingChars - staleResult.text.length - 2);
@@ -155,7 +151,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   if (input.heartbeatHygiene) {
     const hygieneCap = Math.min(input.heartbeatHygiene.maxChars, hygieneReserve + remainingChars);
     if (hygieneCap > 60) {
-      const hygiene = buildHeartbeatTaskHygieneBlock(prepared, {
+      const hygiene = buildHeartbeatTaskHygieneBlock(input.ledgerTasks, {
         maxChars: hygieneCap,
         suggestGoalAfterTaskAgeDays: input.heartbeatHygiene.suggestGoalAfterTaskAgeDays,
         formatLabelList: formatCappedTaskLabelList,

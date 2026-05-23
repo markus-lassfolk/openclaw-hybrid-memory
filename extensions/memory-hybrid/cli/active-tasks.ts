@@ -190,7 +190,10 @@ export async function runActiveTaskComplete(ctx: ActiveTaskContext, label: strin
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
     const { active } = loadTaskLedgerFromFacts(factsDb);
-    const { completed } = completeTask(active, label);
+    const normalizedLabel = label.trim().toLowerCase();
+    const matchedTask = active.find((t) => t.label.toLowerCase() === normalizedLabel);
+    const labelToUse = matchedTask?.label ?? label;
+    const { completed } = completeTask(active, labelToUse);
     if (!completed) {
       return { ok: false, error: `No active task found with label "${label}"` };
     }
@@ -250,8 +253,13 @@ export async function runActiveTaskAdd(
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
     const { active, completed } = loadTaskLedgerFromFacts(factsDb);
-    const wasExisting = active.some((t) => t.label === opts.label) || completed.some((t) => t.label === opts.label);
-    const existing = active.find((t) => t.label === opts.label) ?? completed.find((t) => t.label === opts.label);
+    const normalizedLabel = opts.label.trim().toLowerCase();
+    const wasExisting =
+      active.some((t) => t.label.toLowerCase() === normalizedLabel) ||
+      completed.some((t) => t.label.toLowerCase() === normalizedLabel);
+    const existing =
+      active.find((t) => t.label.toLowerCase() === normalizedLabel) ??
+      completed.find((t) => t.label.toLowerCase() === normalizedLabel);
     const status: ActiveTaskStatus = (() => {
       if (opts.status && ACTIVE_TASK_STATUSES.includes(opts.status as ActiveTaskStatus)) {
         return opts.status as ActiveTaskStatus;
@@ -259,7 +267,7 @@ export async function runActiveTaskAdd(
       return existing?.status ?? "In progress";
     })();
     const entry: ActiveTaskEntry = {
-      label: opts.label,
+      label: opts.label.trim().toLowerCase(),
       description: opts.description,
       status,
       branch: opts.branch ?? existing?.branch,
