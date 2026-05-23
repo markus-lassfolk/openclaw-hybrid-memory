@@ -60,6 +60,7 @@ export class ProgressSpinner {
 }
 
 export class ProgressBar {
+  private current = 0;
   private message: string;
   private total: number;
   private startTime: number;
