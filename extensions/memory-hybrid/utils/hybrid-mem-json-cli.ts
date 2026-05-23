@@ -21,62 +21,43 @@ export function isHybridMemJsonInvocation(argv: string[]): boolean {
 }
 
 /**
- * Tee write stream that mirrors all writes to both stdout and stderr.
- * Used in JSON mode so diagnostics on stderr are visible AND the JSON
- * document on stdout remains clean for `jq` / cron consumers.
+ * Track whether stdout.write has been modified, for cleanup in teardown.
+ * Note: We no longer tee stdout to stderr (that would duplicate JSON payloads),
+ * but keep this structure for potential future use.
  */
-class TeeStderr {
-  private originalWrite: (chunk: unknown, encoding?: BufferEncoding | (() => void), cb?: () => void) => boolean;
-
-  constructor() {
-    // Capture the original stdout.write before we replace it
-    this.originalWrite = process.stdout.write.bind(process.stdout);
-  }
+class StdoutTracker {
+  private modified = false;
 
   /**
-   * Replace process.stdout.write to tee all output to stderr as well.
-   * This ensures JSON emitted via `console.log` ends up on BOTH stdout and stderr,
-   * so cron harnesses that capture stderr still see the JSON while human operators
-   * can see diagnostics on stderr.
-   *
-   * Issue: #1618 — `hybrid-mem --json` stdout is empty; all output including JSON
-   * goes to stderr. Using a tee so stdout always has the JSON payload even if a
-   * host/process setup redirects stdout away.
+   * Mark that stdout handling has been set up for JSON mode.
+   * Currently a no-op since we don't modify stdout.write anymore.
    */
   tee(): void {
-    const originalWrite = this.originalWrite;
-    process.stdout.write = (chunk: unknown, encoding?: BufferEncoding | (() => void), cb?: () => void): boolean => {
-      const str = typeof chunk === "string" ? chunk : String(chunk);
-      originalWrite(str, encoding as BufferEncoding, cb);
-      process.stderr.write(str);
-      return true;
-    };
+    this.modified = true;
   }
 
   /**
-   * Restore the original stdout.write.
+   * Restore/cleanup after JSON CLI mode.
    */
   restore(): void {
-    process.stdout.write = this.originalWrite;
+    this.modified = false;
   }
 }
 
-const teeStderr = new TeeStderr();
+const stdoutTracker = new StdoutTracker();
 
 /**
  * For hybrid-mem `--json` / `--format json` CLI runs, OpenClaw's default `api.logger` may write
  * telemetry to stdout (e.g. `[plugins] …`), which breaks `jq` and cron harnesses.
- * Also tee stdout→stderr so JSON payloads are visible on stderr as a fallback stream.
+ * Redirect plugin logger output to stderr to keep stdout clean for JSON.
  *
- * Issue: #1618 — the repro showed stdout=0 bytes, all output including JSON on stderr.
- * Teeing stdout→stderr means any JSON written to stdout is ALSO captured on stderr,
- * making the command work regardless of which stream the caller monitors.
+ * Issue: #1618 / JSON-CLI-OUTPUT.md — JSON must stay on stdout only, diagnostics on stderr only.
  */
 export function wrapApiLoggerStderrForJsonCli(api: ClawdbotPluginApi): ClawdbotPluginApi {
   if (!isHybridMemJsonInvocation(process.argv)) return api;
 
-  // Tee stdout→stderr so JSON appears on both streams.
-  teeStderr.tee();
+  // Mark that we're in JSON mode (no actual stdout modification needed).
+  stdoutTracker.tee();
 
   const log = (msg: string) => {
     console.error(msg);
@@ -100,6 +81,6 @@ export function wrapApiLoggerStderrForJsonCli(api: ClawdbotPluginApi): ClawdbotP
  */
 export function restoreStdoutAfterJsonCli(): void {
   if (isHybridMemJsonInvocation(process.argv)) {
-    teeStderr.restore();
+    stdoutTracker.restore();
   }
 }

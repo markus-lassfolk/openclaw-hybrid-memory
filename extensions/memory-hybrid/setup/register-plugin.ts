@@ -63,6 +63,9 @@ const runtimeRef: { value: PluginRuntime | null } = { value: null };
 
 /** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
 async function performHybridMemCliTeardown(): Promise<void> {
+  // Restore stdout before checking runtime ref, so teardown without runtime still cleans up (issue #1618).
+  restoreStdoutAfterJsonCli();
+  
   const r = runtimeRef.value;
   if (!r) return;
   // Stop long-lived service timers first so one-shot CLI commands can exit promptly.
@@ -120,8 +123,6 @@ async function performHybridMemCliTeardown(): Promise<void> {
       operation: "hybrid-mem-teardown:python-bridge",
     });
   }
-  // Restore stdout after JSON CLI tee (issue #1618)
-  restoreStdoutAfterJsonCli();
 }
 
 export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
