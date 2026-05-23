@@ -83,6 +83,54 @@ describe("buildForgeRemediationRequest", () => {
     expect(result.prompt).toContain("Fix every failing CI check");
   });
 
+  it("ignores unresolved threads that are outdated", () => {
+    const result = buildForgeRemediationRequest({
+      repo: {
+        owner: "markus-lassfolk",
+        repo: "openclaw-hybrid-memory",
+        fullName: "markus-lassfolk/openclaw-hybrid-memory",
+      },
+      pullRequest: {
+        number: 665,
+        title: "Feature: outdated thread handling",
+        url: "https://example.test/pr/665",
+        baseRef: "main",
+        headRef: "fix/665",
+        headSha: "def234",
+        author: "forge-bot",
+      },
+      headCommit: { committedAt: "2026-03-23T10:00:00Z" },
+      checkRuns: [],
+      issueComments: [],
+      reviews: [],
+      reviewThreads: [
+        {
+          id: "thread-outdated",
+          isResolved: false,
+          isOutdated: true,
+          path: "src/example.ts",
+          line: 12,
+          comments: {
+            nodes: [
+              {
+                body: "Outdated unresolved thread should not block lifecycle gate.",
+                createdAt: "2026-03-23T10:08:00Z",
+                updatedAt: "2026-03-23T10:08:00Z",
+                url: "https://example.test/thread/outdated",
+                author: { login: "maintainer" },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result.unresolvedThreads).toHaveLength(0);
+    expect(result.summary.unresolvedThreads).toBe(0);
+    expect(result.summary.shouldDispatch).toBe(false);
+    expect(result.summary.completionReady).toBe(true);
+  });
+
   it("ignores its own cancelled inspection check when deciding whether to dispatch", () => {
     const result = buildForgeRemediationRequest({
       repo: {
