@@ -316,7 +316,7 @@ export async function runRecall(
           });
           if (recentNarratives.length > 0) {
             const narrative = recentNarratives[0];
-            const narrativeBlock = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(narrative.text)}\n</recent-history-narratives>\n\n`;
+            const narrativeBlock = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(sanitizePromptInjection(narrative.text))}\n</recent-history-narratives>\n\n`;
             narrativePart = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens, budgetState);
           }
         } catch {
@@ -329,7 +329,7 @@ export async function runRecall(
         if (hotResults.length > 0) {
           const hotLines = hotResults
             .map((r) => {
-              const text = sanitizeHotFactText(r.entry.summary || r.entry.text);
+              const text = sanitizePromptInjection(sanitizeHotFactText(r.entry.summary || r.entry.text));
               if (!text) return "";
               const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
               return `- [hot/${r.entry.category}] ${clipped}`;
@@ -345,7 +345,7 @@ export async function runRecall(
       const memoryLines = ftsOnly
         .slice(0, degradedLimit)
         .map((r) => {
-          const text = sanitizeHotFactText(r.entry.summary || r.entry.text);
+          const text = sanitizePromptInjection(sanitizeHotFactText(r.entry.summary || r.entry.text));
           if (!text) return "";
           const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
           return `- [${r.backend}/${r.entry.category}] ${clipped}`;
@@ -358,7 +358,7 @@ export async function runRecall(
       );
       budgetState.remainingBudget = Math.max(0, budgetState.remainingBudget - recallUsedTokens);
       const inner = narrativePart + hotPart + recallPart;
-      const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
+      const block = inner ? `${RECALLED_CONTEXT_BOUNDARY}\n<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
       const fixedBlocksTokens = totalBudget - budgetState.remainingBudget;
@@ -465,7 +465,7 @@ export async function runRecall(
       if (hotResults.length > 0) {
         const hotLines = hotResults
           .map((r) => {
-            const cleaned = sanitizeHotFactText(r.entry.summary || r.entry.text);
+            const cleaned = sanitizePromptInjection(sanitizeHotFactText(r.entry.summary || r.entry.text));
             if (!cleaned) return "";
             const clipped = `${cleaned.slice(0, 200)}${cleaned.length > 200 ? "…" : ""}`;
             return `- [hot/${r.entry.category}] ${clipped}`;
