@@ -4,8 +4,8 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { buildActiveTaskContextBundle } from "../services/active-task-injection.js";
 import { readActiveTaskFile, upsertTask, writeActiveTaskFileGuarded } from "../services/active-task.js";
+import { buildActiveTaskContextBundle } from "../services/active-task-injection.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { listGoals, resolveGoalsDir } from "../services/goal-registry.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
@@ -55,7 +55,7 @@ export function registerActiveTaskInjection(
       let longRunningBlock = "";
       if (proposal) {
         const draft = buildLongRunningTaskDraft(proposal);
-        const alreadyActive = activeForInjection.some((t) => t.label === draft.label);
+        const alreadyActive = activeForInjection.some((t) => t.label.toLowerCase() === draft.label.toLowerCase());
         let autoCreated = false;
 
         if (!alreadyActive && shouldAutoRegisterLongRunningTask(longRunningMode, sessionKey)) {

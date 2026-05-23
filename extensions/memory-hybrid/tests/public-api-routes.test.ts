@@ -307,7 +307,7 @@ describe("registerPublicApiRoutes", () => {
       entity: "task-1272",
       key: "title",
       value: "Ship active-task endpoint",
-      source: "conversation",
+      source: "active-task",
     });
     factsDb.store({
       text: "Task status: in progress",
@@ -316,7 +316,7 @@ describe("registerPublicApiRoutes", () => {
       entity: "task-1272",
       key: "status",
       value: "in_progress",
-      source: "conversation",
+      source: "active-task",
     });
 
     const { api, routes } = makeApi();
@@ -363,7 +363,7 @@ describe("registerPublicApiRoutes", () => {
       entity: "task-1272",
       key: "next",
       value: "Wire tests",
-      source: "conversation",
+      source: "active-task",
     });
 
     const staleAgainRes = await invokeNodeHttpRoute(
@@ -384,7 +384,7 @@ describe("registerPublicApiRoutes", () => {
       entity: "task-global",
       key: "title",
       value: "Global task",
-      source: "conversation",
+      source: "active-task",
       scope: "global",
       scopeTarget: null,
     });
@@ -395,7 +395,7 @@ describe("registerPublicApiRoutes", () => {
       entity: "task-global",
       key: "status",
       value: "in_progress",
-      source: "conversation",
+      source: "active-task",
       scope: "global",
       scopeTarget: null,
     });
@@ -406,7 +406,7 @@ describe("registerPublicApiRoutes", () => {
       entity: "task-agent-a",
       key: "title",
       value: "Agent A task",
-      source: "conversation",
+      source: "active-task",
       scope: "agent",
       scopeTarget: "agent-a",
     });
@@ -417,7 +417,7 @@ describe("registerPublicApiRoutes", () => {
       entity: "task-agent-a",
       key: "status",
       value: "in_progress",
-      source: "conversation",
+      source: "active-task",
       scope: "agent",
       scopeTarget: "agent-a",
     });

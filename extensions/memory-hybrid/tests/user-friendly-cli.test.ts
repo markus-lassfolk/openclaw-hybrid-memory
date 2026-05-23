@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { registerUserFriendlyCommands } from "../cli/cmd-user-friendly.js";
 import { registerSetupCommand } from "../cli/cmd-setup.js";
 import { registerHealthCommand } from "../cli/cmd-health.js";
+import { getWalDisabledSentinelPath } from "../services/wal-helpers.js";
 import { registerExamplesCommand } from "../cli/cmd-examples.js";
 import { wrapCommonError, UserFriendlyError } from "../utils/error-codes.js";
 import { ProgressBar } from "../utils/progress-indicators.js";
@@ -104,6 +108,36 @@ describe("user-friendly CLI registration", () => {
     const health = root.children.find((child) => child.name === "health");
     await health?.handler?.({ json: true });
     expect(localVectorDb.getAllIds).toHaveBeenCalledTimes(1);
+  });
+
+  it("health reports persistent WAL circuit-breaker state", async () => {
+    const root = new FakeCommand();
+    const walRoot = mkdtempSync(join(tmpdir(), "hm-health-wal-"));
+    try {
+      const walPath = join(walRoot, "memory.wal");
+      writeFileSync(getWalDisabledSentinelPath(walPath), '{"reason":"test"}\n', "utf-8");
+      const wal = {
+        getPath: () => walPath,
+        readAll: vi.fn().mockResolvedValue([]),
+        getValidEntries: vi.fn().mockResolvedValue([]),
+      };
+      registerHealthCommand(
+        root as never,
+        { ...cfg, wal: { enabled: true, walPath } } as never,
+        factsDb as never,
+        vectorDb as never,
+        wal as never,
+      );
+      const health = root.children.find((child) => child.name === "health");
+      const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      await health?.handler?.({ json: true });
+      const output = log.mock.calls.at(-1)?.[0];
+      const parsed = JSON.parse(String(output)) as { indicators: Array<{ name: string; status: string }> };
+      const walIndicator = parsed.indicators.find((indicator) => indicator.name === "WAL");
+      expect(walIndicator?.status).toBe("error");
+    } finally {
+      rmSync(walRoot, { recursive: true, force: true });
+    }
   });
 
   it("examples uses own-property category checks", () => {
