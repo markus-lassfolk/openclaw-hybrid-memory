@@ -312,7 +312,7 @@ export function loadTaskLedgerFromFactsWithMetrics(
   // But keyMaps only count unique (entity,key) pairs — so true duplicates are also in groupedFactRows.
   // Instead: track rows fed to grouping = only rows with entity AND canonicalLabel.
   // Use canonicalLabel directly to determine eligibility.
-  const eligibleRows = facts.filter(f => f.entity?.trim() && canonicalLabel(f.entity.trim())).length;
+  const eligibleRows = facts.filter((f) => f.entity?.trim() && canonicalLabel(f.entity.trim())).length;
   const metrics: ActiveTaskLedgerSelectionMetrics = {
     projectRowsFetched: facts.length,
     rowsDroppedMissingEntityOrCanonical: facts.length - eligibleRows,
@@ -480,7 +480,7 @@ export async function refreshActiveTaskProjectionBestEffort(opts: {
   logger?: { warn?: (m: string) => void };
 }): Promise<{ rendered: boolean; staleMarked: boolean; error?: string }> {
   try {
-    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection, opts.logger);
+    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection);
     return { rendered: true, staleMarked: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1348,11 +1348,11 @@ export async function renderActiveTaskMarkdownFile(
   logger?: { debug?: (message: string) => void },
 ): Promise<void> {
   const renderStartMs = Date.now();
-  let {
-    active,
-    completed,
-    metrics,
-  } = loadTaskLedgerFromFactsWithMetrics(factsDb, 8000, ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER);
+  let { active, completed, metrics } = loadTaskLedgerFromFactsWithMetrics(
+    factsDb,
+    8000,
+    ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER,
+  );
   active = applyActiveTaskProjectionFilters(active, projection);
   completed = applyActiveTaskProjectionFilters(completed, projection);
   active = detectStaleTasks(active, staleMinutes);

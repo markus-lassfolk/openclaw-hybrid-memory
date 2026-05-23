@@ -4,7 +4,12 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { detectStaleTasks, readActiveTaskFile, upsertTask, writeActiveTaskFileGuarded } from "../services/active-task.js";
+import {
+  detectStaleTasks,
+  readActiveTaskFile,
+  upsertTask,
+  writeActiveTaskFileGuarded,
+} from "../services/active-task.js";
 import { buildActiveTaskContextBundle } from "../services/active-task-injection.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { listGoals, resolveGoalsDir } from "../services/goal-registry.js";
@@ -42,7 +47,8 @@ export function registerActiveTaskInjection(
         userText && longRunningMode !== "off" ? detectLongRunningWorkflowProposal(userText, workspaceRoot) : null;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
-      let factsSelectionMetrics: import("../services/task-ledger-facts.js").ActiveTaskLedgerSelectionMetrics | null = null;
+      let factsSelectionMetrics: import("../services/task-ledger-facts.js").ActiveTaskLedgerSelectionMetrics | null =
+        null;
       let factsSelectionStartMs: number | null = null;
       let staleSkippedFromFacts = 0;
 
