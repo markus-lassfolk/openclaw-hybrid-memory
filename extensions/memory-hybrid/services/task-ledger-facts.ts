@@ -121,6 +121,11 @@ export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map
   return byEntity;
 }
 
+export type ActiveTaskCanonicalBackfillOptions = {
+  dryRun?: boolean;
+  limit?: number;
+};
+
 function rowToRecord(row: Map<string, MemoryEntry>): Record<string, string> {
   const o: Record<string, string> = {};
   for (const [k, e] of row) {
@@ -1058,7 +1063,7 @@ export interface ActiveTaskCanonicalBackfillResult {
 
 export function backfillActiveTaskCanonicalLabels(
   factsDb: FactsDB,
-  opts: { dryRun?: boolean; limit?: number } = {},
+  opts: ActiveTaskCanonicalBackfillOptions = {},
 ): ActiveTaskCanonicalBackfillResult {
   const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, opts.limit ?? 50_000);
   const groups = new Map<string, MemoryEntry[]>();

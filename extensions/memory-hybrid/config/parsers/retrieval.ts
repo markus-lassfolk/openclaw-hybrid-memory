@@ -147,6 +147,24 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       (VALID_CAPABILITY_HINTS as readonly string[]).includes(capabilityHintsRaw)
         ? (capabilityHintsRaw as CapabilityHintsMode)
         : "off";
+    const hotMaxTokens =
+      typeof ar.hotMaxTokens === "number" && ar.hotMaxTokens >= 0 ? Math.floor(ar.hotMaxTokens) : undefined;
+    const narrativeMaxTokens =
+      typeof ar.narrativeMaxTokens === "number" && ar.narrativeMaxTokens >= 0
+        ? Math.floor(ar.narrativeMaxTokens)
+        : undefined;
+    const procedureMaxTokens =
+      typeof ar.procedureMaxTokens === "number" && ar.procedureMaxTokens >= 0
+        ? Math.floor(ar.procedureMaxTokens)
+        : undefined;
+    const activeTaskMaxTokens =
+      typeof ar.activeTaskMaxTokens === "number" && ar.activeTaskMaxTokens >= 0
+        ? Math.floor(ar.activeTaskMaxTokens)
+        : undefined;
+    const staleWarningMaxTokens =
+      typeof ar.staleWarningMaxTokens === "number" && ar.staleWarningMaxTokens >= 0
+        ? Math.floor(ar.staleWarningMaxTokens)
+        : undefined;
     const scopeFilterRaw = ar.scopeFilter as Record<string, unknown> | undefined;
     const scopeFilter =
       scopeFilterRaw && typeof scopeFilterRaw === "object" && !Array.isArray(scopeFilterRaw)
@@ -183,6 +201,11 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
       capabilityHints,
       recallTiming,
       maxTokens: typeof ar.maxTokens === "number" && ar.maxTokens > 0 ? ar.maxTokens : 800,
+      hotMaxTokens,
+      narrativeMaxTokens,
+      procedureMaxTokens,
+      activeTaskMaxTokens,
+      staleWarningMaxTokens,
       maxPerMemoryChars:
         typeof ar.maxPerMemoryChars === "number" && ar.maxPerMemoryChars >= 0 ? ar.maxPerMemoryChars : 0,
       injectionFormat: format,
@@ -219,6 +242,11 @@ export function parseAutoRecallConfig(cfg: Record<string, unknown>): AutoRecallC
     capabilityHints: "off",
     recallTiming: "off",
     maxTokens: 800,
+    hotMaxTokens: undefined,
+    narrativeMaxTokens: undefined,
+    procedureMaxTokens: undefined,
+    activeTaskMaxTokens: undefined,
+    staleWarningMaxTokens: undefined,
     maxPerMemoryChars: 0,
     injectionFormat: "full",
     limit: 10,
