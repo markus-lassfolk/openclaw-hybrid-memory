@@ -7,6 +7,7 @@
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -86,6 +87,7 @@ export type { ActiveTaskContext };
 export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  wal?: WriteAheadLog | null;
   aliasDb?: AliasDB | null;
   crystallizationStore?: CrystallizationStore | null;
   versionInfo: {
@@ -576,6 +578,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       cfg: ctx.cfg,
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
+      wal: ctx.wal,
       embeddings: ctx.embeddings,
       runConfigSet: ctx.runConfigSet,
     };
