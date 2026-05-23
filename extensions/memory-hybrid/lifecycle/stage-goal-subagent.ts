@@ -75,6 +75,23 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "goal-subagent",
         operation: "subagent_ended",
+        eventLabel: typeof (event as { label?: unknown })?.label === "string" ? (event as { label: string }).label : null,
+        eventSessionKey:
+          typeof (event as { sessionKey?: unknown })?.sessionKey === "string"
+            ? (event as { sessionKey: string }).sessionKey
+            : null,
+        eventTargetSessionKey:
+          typeof (event as { targetSessionKey?: unknown })?.targetSessionKey === "string"
+            ? (event as { targetSessionKey: string }).targetSessionKey
+            : null,
+        eventSuccess:
+          typeof (event as { success?: unknown })?.success === "boolean"
+            ? (event as { success: boolean }).success
+            : null,
+        eventOutcome:
+          typeof (event as { outcome?: unknown })?.outcome === "string"
+            ? (event as { outcome: string }).outcome
+            : null,
       });
     }
   });

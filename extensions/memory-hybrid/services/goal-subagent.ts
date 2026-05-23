@@ -184,24 +184,25 @@ export async function updateGoalOnSubagentEnd(
   },
 ): Promise<void> {
   const goals = await listActiveGoals(goalsDir);
-  const matches: Array<{ goal: Goal; taskLabel: string }> = [];
+  const matches: Array<{ goal: Goal; linkedTasks: Goal["linkedTasks"]; taskLabel: string }> = [];
   for (const g of goals) {
+    const linkedTasks = Array.isArray(g.linkedTasks) ? g.linkedTasks : [];
     if (info.sessionKey) {
-      const task = g.linkedTasks.find((t) => t.sessionKey && t.sessionKey === info.sessionKey);
-      if (task) matches.push({ goal: g, taskLabel: task.label });
+      const task = linkedTasks.find((t) => t.sessionKey && t.sessionKey === info.sessionKey);
+      if (task) matches.push({ goal: g, linkedTasks, taskLabel: task.label });
       continue;
     }
-    const task = g.linkedTasks.find((t) => t.label === info.label);
-    if (task) matches.push({ goal: g, taskLabel: task.label });
+    const task = linkedTasks.find((t) => t.label === info.label);
+    if (task) matches.push({ goal: g, linkedTasks, taskLabel: task.label });
   }
   if (matches.length !== 1) {
     return;
   }
-  const { goal: g, taskLabel: matchedTaskLabel } = matches[0];
+  const { goal: g, linkedTasks: existingLinkedTasks, taskLabel: matchedTaskLabel } = matches[0];
 
   const ts = nowIso();
   const newStatus = info.success ? "completed" : "failed";
-  const linkedTasks = g.linkedTasks.map((t) =>
+  const linkedTasks = existingLinkedTasks.map((t) =>
     t.label === matchedTaskLabel
       ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
       : t,
