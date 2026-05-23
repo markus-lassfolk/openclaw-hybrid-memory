@@ -1061,9 +1061,24 @@ export function backfillActiveTaskCanonicalLabels(
             getRawDb?: () => { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
           }
         ).getRawDb?.();
+        // Merge canonical label fields into existing provenance to preserve other
+        // fields (e.g. sourceEventIds, method) instead of replacing them entirely.
+        const existingProvenance = (() => {
+          if (!fact.provenanceJson) return {};
+          try {
+            return JSON.parse(fact.provenanceJson) as Record<string, unknown>;
+          } catch {
+            return {};
+          }
+        })();
+        const mergedProvenance = {
+          ...existingProvenance,
+          activeTask: { canonicalLabel: canonical },
+          canonical_label: canonical,
+        };
         rawDb
           ?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?")
-          .run(activeTaskProvenance(canonical), fact.id);
+          .run(JSON.stringify(mergedProvenance), fact.id);
       }
     }
     const arr = groups.get(canonical) ?? [];
