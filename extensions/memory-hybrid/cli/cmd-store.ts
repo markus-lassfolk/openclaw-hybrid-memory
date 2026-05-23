@@ -7,18 +7,18 @@
 
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { classifyMemoryOperation } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
+import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
-import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
 
 /**
  * Infer which identity file a rule or suggestion should target (#260).
@@ -58,7 +58,7 @@ export async function runStoreForCli(
         try {
           const stored = credentialsDb.storeIfNew({
             service: parsed.service,
-            type: parsed.type as any,
+            type: parsed.type,
             value: parsed.secretValue,
             url: parsed.url,
             notes: parsed.notes,
@@ -74,7 +74,7 @@ export async function runStoreForCli(
         // Step 2: Write pointer to factsDb
         let pointerEntry: any;
         try {
-          const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+          const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
           const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
           const storeResult = factsDb.storeWithResult({
             text: pointerText,
@@ -114,8 +114,7 @@ export async function runStoreForCli(
         } catch (err) {
           // Compensating delete: vault write succeeded but pointer write failed
           try {
-            // biome-ignore lint/suspicious/noExplicitAny: credential type from parsed input
-            credentialsDb.delete(parsed.service, parsed.type as any);
+            credentialsDb.delete(parsed.service, parsed.type);
           } catch (cleanupErr) {
             log.warn(`memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
             capturePluginError(cleanupErr as Error, {
