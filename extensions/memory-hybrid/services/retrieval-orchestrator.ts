@@ -44,6 +44,7 @@ import {
   fuseResults,
 } from "./rrf-fusion.js";
 import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -166,6 +167,10 @@ export function estimateTokenCount(text: string): number {
  *
  * When `options.isContradicted` is true, a warning line is prepended so the
  * consumer knows the fact has an unresolved contradiction.
+ *
+ * Prompt-injection markers in the memory text are sanitized before serialization
+ * so that stored user-authored or web-ingested content cannot escalate into
+ * instructions in the assembled prompt (Issue #1579).
  */
 export function serializeFactForContext(entry: MemoryEntry, options?: { isContradicted?: boolean }): string {
   const parts: string[] = [];
@@ -179,7 +184,8 @@ export function serializeFactForContext(entry: MemoryEntry, options?: { isContra
   parts.push(`stored: ${storedDate}`);
 
   const header = `[${parts.join(" | ")}]`;
-  const body = `${header}\n${entry.text}`;
+  const sanitizedText = sanitizePromptInjection(entry.text);
+  const body = `${header}\n${sanitizedText}`;
   if (options?.isContradicted) {
     return `[WARNING: CONTRADICTED — verify before use]\n${body}`;
   }
