@@ -1,9 +1,8 @@
 /** Reinforcement extraction CLI (`runExtractReinforcementForCli`). Split from cmd-extract.ts. */
-import { getEnv } from "../utils/env-manager.js";
+
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-
 import type { ReinforcementContext } from "../backends/facts-db.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
@@ -15,15 +14,15 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { getMaxMtime, getSessionFilePathsSince } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
-
-import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
 export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
   opts: {
@@ -276,6 +275,9 @@ export async function runExtractReinforcementForCli(
               source: "reinforcement-analysis",
               tags,
             });
+            if (storeResult.skipped) {
+              continue;
+            }
             const entry = storeResult.entry;
             // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
             await cleanupEvictedVector({

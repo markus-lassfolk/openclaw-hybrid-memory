@@ -777,6 +777,11 @@
                 ],
                 "description": "Structured recall timing logs: false/off=disabled, true/basic=completed events only, verbose=started+completed with timestamps."
               },
+              "capabilityHints": {
+                "type": "string",
+                "enum": ["session", "always", "off"],
+                "description": "Capability hints injection cadence for static memory tools guidance: session = inject once per session start, always = inject on every turn, off = disabled (default: off)."
+              },
               "progressiveMaxCandidates": {
                 "type": "number"
               },

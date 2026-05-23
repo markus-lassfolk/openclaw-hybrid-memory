@@ -102,11 +102,6 @@ async function ensureVectorAndEmbeddingMeta(opts: {
   const { factId, text, category, importance, vector, embeddingModelName, vectorDb, embeddings, factsDb } = opts;
   if (!vectorDb) return;
 
-  const resolveCanonicalEmbeddingModel = (): string | null => {
-    const walModel = safeString(embeddingModelName);
-    return walModel ?? embeddings?.modelName ?? null;
-  };
-
   const embedAndStore = async (): Promise<number[] | null> => {
     if (!embeddings) return null;
     try {
@@ -128,8 +123,8 @@ async function ensureVectorAndEmbeddingMeta(opts: {
     }
   };
 
-  if (vector && vector.length > 0) {
-    try {
+  try {
+    if (vector && vector.length > 0) {
       await vectorDb.store({
         id: factId,
         text,
@@ -137,26 +132,23 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         importance,
         category,
       });
-    } catch {
-      // Non-fatal: fall back to re-embed if possible.
-      await embedAndStore();
+      const effectiveModel = embeddingModelName ?? embeddings?.modelName;
+      if (effectiveModel) {
+        try {
+          factsDb.setEmbeddingModel(factId, effectiveModel);
+          factsDb.storeEmbedding(factId, effectiveModel, "canonical", new Float32Array(vector), vector.length);
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "wal-replay",
+            operation: "store-embedding-metadata",
+            factId,
+          });
+        }
+      }
       return;
     }
-    const model = resolveCanonicalEmbeddingModel();
-    if (model) {
-      try {
-        factsDb.setEmbeddingModel(factId, model);
-        factsDb.storeEmbedding(factId, model, "canonical", new Float32Array(vector), vector.length);
-      } catch (err) {
-        // Non-fatal: vector was stored successfully, but make metadata drift observable.
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "wal-replay",
-          operation: "precomputed-vector-embedding-metadata",
-          factId,
-        });
-      }
-    }
-    return;
+  } catch {
+    // Non-fatal: fall back to re-embed if possible.
   }
 
   await embedAndStore();
@@ -293,19 +285,23 @@ export async function replayWalEntries(
           provenanceJson: provenanceJson ?? undefined,
         });
 
-        await ensureVectorAndEmbeddingMeta({
-          factId: stored.id,
-          text: stored.text,
-          category: stored.category,
-          importance: stored.importance,
-          vector: precomputedVector,
-          embeddingModelName,
-          vectorDb,
-          embeddings,
-          factsDb,
-        });
-
-        committed++;
+        // Skip vector operations if the store was rejected (artifact text)
+        if (stored.id !== "") {
+          await ensureVectorAndEmbeddingMeta({
+            factId: stored.id,
+            text: stored.text,
+            category: stored.category,
+            importance: stored.importance,
+            vector: precomputedVector,
+            embeddingModelName,
+            vectorDb,
+            embeddings,
+            factsDb,
+          });
+          committed++;
+        } else {
+          skipped++;
+        }
         await wal.remove(entry.id);
       } else if (entry.operation === "update" && entry.targetId && isSafeWalText(entry.data?.text)) {
         const targetId = entry.targetId;
@@ -413,21 +409,27 @@ export async function replayWalEntries(
           preserveTags: preserveTags ?? undefined,
           provenanceJson: provenanceJson ?? undefined,
         });
-        factsDb.supersede(targetId, stored.id);
 
-        await ensureVectorAndEmbeddingMeta({
-          factId: stored.id,
-          text: stored.text,
-          category: stored.category,
-          importance: stored.importance,
-          vector: precomputedVector,
-          embeddingModelName,
-          vectorDb,
-          embeddings,
-          factsDb,
-        });
+        // Skip supersede and vector operations if store was rejected (artifact text)
+        if (stored.id !== "") {
+          factsDb.supersede(targetId, stored.id);
 
-        committed++;
+          await ensureVectorAndEmbeddingMeta({
+            factId: stored.id,
+            text: stored.text,
+            category: stored.category,
+            importance: stored.importance,
+            vector: precomputedVector,
+            embeddingModelName,
+            vectorDb,
+            embeddings,
+            factsDb,
+          });
+
+          committed++;
+        } else {
+          skipped++;
+        }
         await wal.remove(entry.id);
       } else if ((entry.operation === "store" || entry.operation === "update") && !isSafeWalText(entry.data?.text)) {
         // Empty or whitespace-only text cannot ever be replayed into FactsDB.

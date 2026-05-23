@@ -1,5 +1,7 @@
 /** Auto-recall injection line format: full = [backend/category] text, short = category: text, minimal = text only, progressive = memory index (agent fetches on demand), progressive_hybrid = pinned in full + rest as index */
 export type AutoRecallInjectionFormat = "full" | "short" | "minimal" | "progressive" | "progressive_hybrid";
+/** Capability hints injection cadence: session = once per session, always = every prompt, off = disable hints injection (default). */
+export type CapabilityHintsMode = "session" | "always" | "off";
 
 export type AutoClassifyConfig = {
   enabled: boolean;
@@ -58,6 +60,8 @@ export type RetrievalDirectivesConfig = {
 /** Auto-recall: enable/disable plus token cap, format, limit, minScore, preferLongTerm, importance/recency, entity lookup, summary, progressive options */
 export type AutoRecallConfig = {
   enabled: boolean;
+  /** Capability hints injection cadence for static memory tools guidance (default: "off"). */
+  capabilityHints?: CapabilityHintsMode;
   /** Recall timing logs: off = disabled, basic = completed events only, verbose = started+completed with timestamps. */
   recallTiming?: "off" | "basic" | "verbose";
   maxTokens: number;

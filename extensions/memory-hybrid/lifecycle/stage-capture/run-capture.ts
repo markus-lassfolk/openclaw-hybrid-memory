@@ -16,9 +16,9 @@ import {
   resolveCaptureProvenance,
 } from "../../services/capture-provenance.js";
 import {
-  type MemoryClassification,
   classifyMemoryOperation,
   classifyMemoryOperationsBatch,
+  type MemoryClassification,
 } from "../../services/classification.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { extractCredentialsFromToolCalls } from "../../services/credential-scanner.js";
@@ -28,8 +28,8 @@ import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
 import type { MemoryEntry } from "../../types/memory.js";
-import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
+import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
 import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
 import { extractTags } from "../../utils/tags.js";
 import { truncateForStorage } from "../../utils/text.js";
@@ -174,8 +174,8 @@ export async function runCapture(
             logger: api.logger,
             context: "humanizer-score",
           });
+          api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
         }
-        api.logger.debug?.(`memory-hybrid: humanizer_score=${result.score.toFixed(2)} stored`);
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -496,36 +496,62 @@ export async function runCapture(
                       extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
+                    if (storeResult.skipped) {
+                      await ctx.walRemove(walEntryId, api.logger);
+                      continue;
+                    }
                     const newEntry = storeResult.entry;
-                    // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-                    if (!storeResult.skipped) {
-                      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                      await cleanupEvictedVector({
-                        vectorDb: ctx.vectorDb,
-                        evictedFactId: storeResult.evictedFactId,
-                        logger: api.logger,
-                        context: "stage-capture",
-                      });
-                      ctx.factsDb.supersede(classification.targetId, newEntry.id);
-                      ctx.aliasDb?.deleteByFactId(classification.targetId);
-                      await deleteVectorForFactId({
-                        vectorDb: ctx.vectorDb,
-                        factId: classification.targetId,
-                        logger: api.logger,
-                        context: "stage-capture-update-superseded",
-                      });
-                      if (ctx.cfg.retrieval.strategies.includes("semantic")) {
-                        try {
-                          if (storeResult.embeddingStale) {
-                            // Merge case: the existing fact's text was updated in-place.
-                            // Re-embed the merged text and force-replace the stale LanceDB vector.
-                            // If embed fails, the vector encodes stale pre-merge text; the dream-cycle
-                            // re-index will repair it on the next nightly run.
-                            const mergedVector = await ctx.embeddings.embed(newEntry.text);
-                            ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
+                    // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                    await cleanupEvictedVector({
+                      vectorDb: ctx.vectorDb,
+                      evictedFactId: storeResult.evictedFactId,
+                      logger: api.logger,
+                      context: "stage-capture",
+                    });
+                    ctx.factsDb.supersede(classification.targetId, newEntry.id);
+                    ctx.aliasDb?.deleteByFactId(classification.targetId);
+                    await deleteVectorForFactId({
+                      vectorDb: ctx.vectorDb,
+                      factId: classification.targetId,
+                      logger: api.logger,
+                      context: "stage-capture-update-superseded",
+                    });
+                    if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+                      try {
+                        if (storeResult.embeddingStale) {
+                          // Merge case: the existing fact's text was updated in-place.
+                          // Re-embed the merged text and force-replace the stale LanceDB vector.
+                          // If embed fails, the vector encodes stale pre-merge text; the dream-cycle
+                          // re-index will repair it on the next nightly run.
+                          const mergedVector = await ctx.embeddings.embed(newEntry.text);
+                          ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
+                          await ctx.vectorDb.store({
+                            text: newEntry.text,
+                            vector: mergedVector,
+                            importance: finalImportance,
+                            category,
+                            id: newEntry.id,
+                          });
+                          persistCanonicalFactEmbedding(
+                            ctx.factsDb,
+                            newEntry.id,
+                            ctx.embeddings.modelName,
+                            mergedVector,
+                            "auto-capture-fact-embeddings",
+                            "auto-capture",
+                            api.logger.warn?.bind(api.logger),
+                          );
+                        } else if (vector) {
+                          // `storeWithResult()` can return an existing deduped fact whose text
+                          // differs from `textToStore`; keep vector content aligned to stored text.
+                          const canonicalText = newEntry.text;
+                          const canonicalVector =
+                            canonicalText === textToStore ? vector : await ctx.embeddings.embed(canonicalText);
+                          ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
+                          if (!(await ctx.vectorDb.hasDuplicate(canonicalVector))) {
                             await ctx.vectorDb.store({
-                              text: newEntry.text,
-                              vector: mergedVector,
+                              text: canonicalText,
+                              vector: canonicalVector,
                               importance: finalImportance,
                               category,
                               id: newEntry.id,
@@ -534,50 +560,25 @@ export async function runCapture(
                               ctx.factsDb,
                               newEntry.id,
                               ctx.embeddings.modelName,
-                              mergedVector,
+                              canonicalVector,
                               "auto-capture-fact-embeddings",
                               "auto-capture",
                               api.logger.warn?.bind(api.logger),
                             );
-                          } else if (vector) {
-                            // `storeWithResult()` can return an existing deduped fact whose text
-                            // differs from `textToStore`; keep vector content aligned to stored text.
-                            const canonicalText = newEntry.text;
-                            const canonicalVector =
-                              canonicalText === textToStore ? vector : await ctx.embeddings.embed(canonicalText);
-                            ctx.factsDb.setEmbeddingModel(newEntry.id, ctx.embeddings.modelName);
-                            if (!(await ctx.vectorDb.hasDuplicate(canonicalVector))) {
-                              await ctx.vectorDb.store({
-                                text: canonicalText,
-                                vector: canonicalVector,
-                                importance: finalImportance,
-                                category,
-                                id: newEntry.id,
-                              });
-                              persistCanonicalFactEmbedding(
-                                ctx.factsDb,
-                                newEntry.id,
-                                ctx.embeddings.modelName,
-                                canonicalVector,
-                                "auto-capture-fact-embeddings",
-                                "auto-capture",
-                                api.logger.warn?.bind(api.logger),
-                              );
-                            }
                           }
-                        } catch (vecErr) {
-                          capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
-                            operation: storeResult.embeddingStale
-                              ? "auto-capture-stale-vector-update"
-                              : "auto-capture-vector-update",
-                            subsystem: "auto-capture",
-                          });
-                          api.logger.warn(
-                            storeResult.embeddingStale
-                              ? `memory-hybrid: stale vector re-embed failed for merged fact ${newEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
-                              : `memory-hybrid: vector capture failed: ${vecErr}`,
-                          );
                         }
+                      } catch (vecErr) {
+                        capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
+                          operation: storeResult.embeddingStale
+                            ? "auto-capture-stale-vector-update"
+                            : "auto-capture-vector-update",
+                          subsystem: "auto-capture",
+                        });
+                        api.logger.warn(
+                          storeResult.embeddingStale
+                            ? `memory-hybrid: stale vector re-embed failed for merged fact ${newEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
+                            : `memory-hybrid: vector capture failed: ${vecErr}`,
+                        );
                       }
                       ctx.auditStore?.append({
                         agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
@@ -924,6 +925,9 @@ export async function runCapture(
                 decayClass: "permanent",
                 tags: ["auth", "credential"],
               });
+              if (storeResult.skipped) {
+                continue;
+              }
               const entry = storeResult.entry;
               // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
               if (!storeResult.skipped) {
