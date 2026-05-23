@@ -134,8 +134,16 @@ async function ensureVectorAndEmbeddingMeta(opts: {
       });
       const effectiveModel = embeddingModelName ?? embeddings?.modelName;
       if (effectiveModel) {
-        factsDb.setEmbeddingModel(factId, effectiveModel);
-        factsDb.storeEmbedding(factId, effectiveModel, "canonical", new Float32Array(vector), vector.length);
+        try {
+          factsDb.setEmbeddingModel(factId, effectiveModel);
+          factsDb.storeEmbedding(factId, effectiveModel, "canonical", new Float32Array(vector), vector.length);
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "wal-replay",
+            operation: "store-embedding-metadata",
+            factId,
+          });
+        }
       }
       return;
     }
