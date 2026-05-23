@@ -94,11 +94,12 @@ async function ensureVectorAndEmbeddingMeta(opts: {
   category: string;
   importance: number;
   vector: number[] | null;
+  embeddingModelName?: string | null;
   vectorDb?: VectorDB;
   embeddings?: EmbeddingProvider | null;
   factsDb: FactsDB;
 }): Promise<void> {
-  const { factId, text, category, importance, vector, vectorDb, embeddings, factsDb } = opts;
+  const { factId, text, category, importance, vector, embeddingModelName, vectorDb, embeddings, factsDb } = opts;
   if (!vectorDb) return;
 
   const embedAndStore = async (): Promise<number[] | null> => {
@@ -131,6 +132,11 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         importance,
         category,
       });
+      const effectiveModel = embeddingModelName ?? embeddings?.modelName;
+      if (effectiveModel) {
+        factsDb.setEmbeddingModel(factId, effectiveModel);
+        factsDb.storeEmbedding(factId, effectiveModel, "canonical", new Float32Array(vector), vector.length);
+      }
       return;
     }
   } catch {
@@ -191,6 +197,7 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+        const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: a non-global scope without a scopeTarget cannot be safely replayed — storing it
         // would silently change the intended scope to global (issue #1574). Skip with a diagnostic
@@ -219,6 +226,7 @@ export async function replayWalEntries(
             category,
             importance,
             vector: precomputedVector,
+            embeddingModelName,
             vectorDb,
             embeddings,
             factsDb,
@@ -271,6 +279,7 @@ export async function replayWalEntries(
             category: stored.category,
             importance: stored.importance,
             vector: precomputedVector,
+            embeddingModelName,
             vectorDb,
             embeddings,
             factsDb,
@@ -305,6 +314,7 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+        const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: same as "store" path — do not replay a non-global scoped update without a scopeTarget.
         const updateInvalidMsg = invalidScopeMessage(entry.id, "update", scope, scopeTarget);
@@ -342,6 +352,7 @@ export async function replayWalEntries(
               category,
               importance,
               vector: precomputedVector,
+              embeddingModelName,
               vectorDb,
               embeddings,
               factsDb,
@@ -395,6 +406,7 @@ export async function replayWalEntries(
             category: stored.category,
             importance: stored.importance,
             vector: precomputedVector,
+            embeddingModelName,
             vectorDb,
             embeddings,
             factsDb,
