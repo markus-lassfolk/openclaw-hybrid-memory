@@ -17,6 +17,7 @@ import {
   getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
+  refreshIndexedFacts as refreshIndexedFactsImpl,
   type StoreFactInput,
   type StoreFactResult,
   statsDailyWrites as statsDailyWritesImpl,

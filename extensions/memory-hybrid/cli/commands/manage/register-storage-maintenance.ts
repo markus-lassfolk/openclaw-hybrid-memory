@@ -45,6 +45,44 @@ type FactsDbWithRawDb = {
   };
 };
 
+function printVectorBackendObservabilitySummary(observability: VectorBackendObservability): void {
+  console.log(`Captured: ${observability.capturedAt}`);
+  if (observability.vectorDb.path) console.log(`Vector path: ${observability.vectorDb.path}`);
+  console.log(
+    `VectorDB: initialized=${String(observability.vectorDb.initialized)} lanceAvailable=${String(observability.vectorDb.lanceAvailable)} openReaders=${observability.vectorDb.openReaders ?? "n/a"} optimizing=${String(observability.vectorDb.optimizing)}`,
+  );
+  if (observability.vectorDb.degraded?.active) {
+    console.log(
+      `Degraded mode: active reason=${observability.vectorDb.degraded.reason ?? "unknown"} since=${observability.vectorDb.degraded.sinceEpochMs ?? "n/a"}`,
+    );
+  }
+  if (observability.vectorDb.search) {
+    console.log(
+      `Search: active=${observability.vectorDb.search.active} peak=${observability.vectorDb.search.peak} total=${observability.vectorDb.search.total} lastResults=${observability.vectorDb.search.lastResultCount}`,
+    );
+  }
+  if (observability.vectorDb.cache) {
+    console.log(
+      `Cache: rows=${observability.vectorDb.cache.rows ?? "n/a"} lastFilterKey=${observability.vectorDb.cache.lastFilterKey ?? "n/a"} lastRemoved=${observability.vectorDb.cache.lastRemovedRows}`,
+    );
+  }
+  if (observability.vectorDb.lastOptimize) {
+    console.log(
+      `Last optimize: compacted=${observability.vectorDb.lastOptimize.compacted} removed=${observability.vectorDb.lastOptimize.removedFragments} freedBytes=${observability.vectorDb.lastOptimize.freedBytes}`,
+    );
+  }
+  if (observability.lancedb.basePath) {
+    console.log(
+      `LanceDB: basePath=${observability.lancedb.basePath} totalSizeBytes=${observability.lancedb.totalSizeBytes ?? "n/a"}`,
+    );
+    for (const table of observability.lancedb.tables) {
+      console.log(
+        `  table=${table.name} exists=${table.exists} rows=${table.rowCount ?? "n/a"} sizeBytes=${table.sizeBytes ?? "n/a"}`,
+      );
+    }
+  }
+}
+
 function hasGetBatch(db: object): db is object & FactsDbWithBatch {
   return "getBatch" in db && typeof (db as { getBatch?: unknown }).getBatch === "function";
 }
@@ -1119,7 +1157,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             return null;
           }
         })();
-        const processFactBatch = async (facts: Array<{ id: string; text: string; category?: string; source?: string }>): Promise<number> => {
+        const processFactBatch = async (
+          facts: Array<{ id: string; text: string; category?: string; source?: string }>,
+        ): Promise<number> => {
           let supersededCount = 0;
           for (const fact of facts) {
             if (!isPreStoreGuardBlocked({ text: fact.text, category: fact.category, source: fact.source })) continue;
@@ -1167,7 +1207,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
         } else {
           // Fallback: process all facts in batches to avoid loading entire table into memory at once.
-          const allFacts = (factsDb as unknown as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }).getAll({
+          const allFacts = (
+            factsDb as unknown as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }
+          ).getAll({
             includeSuperseded: false,
           });
           const batchSize = 500;

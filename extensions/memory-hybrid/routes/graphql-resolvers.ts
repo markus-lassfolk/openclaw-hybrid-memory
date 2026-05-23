@@ -331,10 +331,6 @@ export const resolvers: GraphQLResolvers = {
       const existing = context.factsDb.getById(id);
       if (!existing) throw new Error(`Fact not found: ${id}`);
       const updatedText = asString(input.text) ?? existing.text;
-      // Check text guard even for updates to prevent artifact injection via GraphQL (#1561).
-      if (isPreStoreGuardBlocked({ text: updatedText, category: existing.category, source: existing.source })) {
-        throw new Error("Update rejected: artifact or reasoning trace text cannot be stored");
-      }
       const result = context.factsDb.storeWithResult(
         {
           text: updatedText,
