@@ -238,7 +238,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       allowPreStoreGuardBypass?: boolean;
     },
   ): MemoryEntry {
-    return this.storeWithResult(entry, options).entry;
+    const result = this.storeWithResult(entry, options);
+    // When rejected, return the placeholder entry but callers should check entry.id === ""
+    // to avoid vector operations on non-existent facts.
+    return result.entry;
   }
 
   storeWithResult(

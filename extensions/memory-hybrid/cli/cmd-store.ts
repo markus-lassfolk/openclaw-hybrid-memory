@@ -223,6 +223,10 @@ export async function runStoreForCli(
                 scopeTarget,
               });
               const newEntry = storeResult.entry;
+              // Check if store was rejected (artifact text)
+              if (newEntry.id === "" || storeResult.rejected) {
+                return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+              }
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
               await cleanupEvictedVector({
                 vectorDb: vectorDb,
@@ -286,6 +290,10 @@ export async function runStoreForCli(
       ...(supersedesId ? { validFrom: nowSec, supersedesId } : {}),
     });
     const entry = storeResult.entry;
+    // Check if store was rejected (artifact text)
+    if (entry.id === "" || storeResult.rejected) {
+      return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
+    }
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
       vectorDb: vectorDb,

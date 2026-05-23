@@ -155,20 +155,6 @@ export type StoreFactResult = {
   rejected?: boolean;
 };
 
-/**
- * Error thrown (not returned) when a store is rejected by a pre-store quality guard.
- * Catch this if you need to distinguish artifact rejections from normal store failures.
- */
-export class StoreRejectedError extends Error {
-  constructor(
-    public readonly reason: string,
-    public readonly artifactType: string,
-  ) {
-    super(`store rejected: ${reason}`);
-    this.name = "StoreRejectedError";
-  }
-}
-
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
 
