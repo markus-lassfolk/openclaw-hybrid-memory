@@ -33,7 +33,7 @@ import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
 import { PLUGIN_ID } from "../utils/constants.js";
 import { isHybridMemHelpInvocation } from "../index-help.js";
-import { wrapApiLoggerStderrForJsonCli } from "../utils/hybrid-mem-json-cli.js";
+import { wrapApiLoggerStderrForJsonCli, restoreStdoutAfterJsonCli } from "../utils/hybrid-mem-json-cli.js";
 import {
   getCategoryDecisionRegex,
   getCategoryEntityRegex,
@@ -63,6 +63,9 @@ const runtimeRef: { value: PluginRuntime | null } = { value: null };
 
 /** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
 async function performHybridMemCliTeardown(): Promise<void> {
+  // Restore stdout before checking runtime ref, so teardown without runtime still cleans up (issue #1618).
+  restoreStdoutAfterJsonCli();
+
   const r = runtimeRef.value;
   if (!r) return;
   // Stop long-lived service timers first so one-shot CLI commands can exit promptly.
