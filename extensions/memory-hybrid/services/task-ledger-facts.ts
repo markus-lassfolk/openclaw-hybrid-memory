@@ -74,20 +74,6 @@ function activeTaskProvenance(canonical: string, existing?: string | null): stri
 }
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
-export interface ActiveTaskCanonicalBackfillDuplicateGroup {
-  canonicalLabel: string;
-  facts: number;
-  activeBefore: number;
-  superseded: number;
-}
-
-export interface ActiveTaskCanonicalBackfillResult {
-  scannedFacts: number;
-  canonicalLabelsUpdated: number;
-  supersededFacts: number;
-  duplicateGroups: ActiveTaskCanonicalBackfillDuplicateGroup[];
-}
-
 const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
 const PROJECTION_STALE_MARKER_SUFFIX = ".stale.json";
@@ -284,131 +270,6 @@ export function loadTaskLedgerFromFacts(
   const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
   const grouped = groupProjectFactsByEntity(facts);
   return buildTaskEntriesFromGroupedFacts(grouped);
-}
-
-function factRecencyForBackfill(fact: MemoryEntry): number {
-  if (typeof fact.sourceDate === "number" && Number.isFinite(fact.sourceDate)) return fact.sourceDate;
-  if (typeof fact.createdAt === "number" && Number.isFinite(fact.createdAt)) return fact.createdAt;
-  return Number.NEGATIVE_INFINITY;
-}
-
-function chooseBackfillKeeper(key: string, facts: MemoryEntry[]): MemoryEntry {
-  return [...facts].sort((a, b) => {
-    if (key === "status") {
-      const aTerminal = isTerminalFactStatus(a.value ?? "") ? 1 : 0;
-      const bTerminal = isTerminalFactStatus(b.value ?? "") ? 1 : 0;
-      if (aTerminal !== bTerminal) return bTerminal - aTerminal;
-    }
-    const recencyDiff = factRecencyForBackfill(b) - factRecencyForBackfill(a);
-    if (recencyDiff !== 0) return recencyDiff;
-    return b.id.localeCompare(a.id);
-  })[0];
-}
-
-function hasCanonicalProvenance(raw: string | null, canonical: string): boolean {
-  if (!raw) return false;
-  try {
-    const parsed = JSON.parse(raw) as { activeTask?: { canonicalLabel?: unknown }; canonical_label?: unknown };
-    return parsed.activeTask?.canonicalLabel === canonical && parsed.canonical_label === canonical;
-  } catch {
-    return false;
-  }
-}
-
-function mergeCanonicalProvenance(raw: string | null, canonical: string): string {
-  let existing: Record<string, unknown> = {};
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        existing = parsed as Record<string, unknown>;
-      }
-    } catch {
-      existing = {};
-    }
-  }
-  const existingActiveTask =
-    existing.activeTask && typeof existing.activeTask === "object" && !Array.isArray(existing.activeTask)
-      ? (existing.activeTask as Record<string, unknown>)
-      : {};
-  return JSON.stringify({
-    ...existing,
-    activeTask: {
-      ...existingActiveTask,
-      canonicalLabel: canonical,
-    },
-    canonical_label: canonical,
-  });
-}
-
-export function backfillActiveTaskCanonicalLabels(
-  factsDb: FactsDB,
-  opts: { dryRun?: boolean; limit?: number } = {},
-): ActiveTaskCanonicalBackfillResult {
-  const limit = Math.max(1, Math.floor(opts.limit ?? 50_000));
-  const dryRun = opts.dryRun === true;
-  const allProjectFacts = factsDb
-    .listFactsByCategory(TASK_LEDGER_CATEGORY, limit)
-    .filter((fact) => (fact.entity ?? "").trim().length > 0);
-  const activeFacts = allProjectFacts.filter((fact) => fact.supersededAt == null);
-  const duplicateGroups: ActiveTaskCanonicalBackfillDuplicateGroup[] = [];
-  let canonicalLabelsUpdated = 0;
-  let supersededFacts = 0;
-
-  for (const fact of activeFacts) {
-    const canonical = canonicalLabel(fact.entity ?? "");
-    if (!canonical) continue;
-    if (hasCanonicalProvenance(fact.provenanceJson ?? null, canonical)) continue;
-    canonicalLabelsUpdated++;
-    if (dryRun) continue;
-    const merged = mergeCanonicalProvenance(fact.provenanceJson ?? null, canonical);
-    factsDb
-      .getRawDb()
-      .prepare("UPDATE facts SET provenance_json = ?, source = 'active-task' WHERE id = ?")
-      .run(merged, fact.id);
-  }
-
-  const groups = new Map<string, MemoryEntry[]>();
-  for (const fact of activeFacts) {
-    const canonical = canonicalLabel(fact.entity ?? "");
-    if (!canonical) continue;
-    const key = (fact.key ?? "").trim() || "_body";
-    const groupKey = `${canonical}\u0000${key}`;
-    const current = groups.get(groupKey);
-    if (current) current.push(fact);
-    else groups.set(groupKey, [fact]);
-  }
-
-  for (const [groupKey, facts] of groups) {
-    if (facts.length < 2) continue;
-    const [canonical, key] = groupKey.split("\u0000");
-    const keeper = chooseBackfillKeeper(key, facts);
-    let superseded = 0;
-    for (const fact of facts) {
-      if (fact.id === keeper.id) continue;
-      if (dryRun) {
-        superseded++;
-        continue;
-      }
-      if (factsDb.supersede(fact.id, keeper.id)) superseded++;
-    }
-    if (superseded > 0) {
-      supersededFacts += superseded;
-      duplicateGroups.push({
-        canonicalLabel: canonical,
-        facts: facts.length,
-        activeBefore: facts.length,
-        superseded,
-      });
-    }
-  }
-
-  return {
-    scannedFacts: allProjectFacts.length,
-    canonicalLabelsUpdated,
-    supersededFacts,
-    duplicateGroups,
-  };
 }
 
 export function readActiveTaskRowsFromFacts(
@@ -1185,6 +1046,112 @@ export interface ActiveTaskHygieneApplyResult {
     blockerStatus: string;
     reason: string;
   }>;
+}
+
+export interface ActiveTaskCanonicalBackfillResult {
+  scannedFacts: number;
+  canonicalLabelsUpdated: number;
+  supersededFacts: number;
+  duplicateGroups: Array<{ canonicalLabel: string; facts: number; activeBefore: number; superseded: number }>;
+}
+
+export function backfillActiveTaskCanonicalLabels(
+  factsDb: FactsDB,
+  opts: { dryRun?: boolean; limit?: number } = {},
+): ActiveTaskCanonicalBackfillResult {
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, opts.limit ?? 50_000);
+  const groups = new Map<string, MemoryEntry[]>();
+  let canonicalLabelsUpdated = 0;
+
+  for (const fact of facts) {
+    if (!fact.entity?.trim()) continue;
+    const canonical = factCanonicalLabel(fact);
+    const existing = readCanonicalLabelFromFact(fact);
+    if (existing !== canonical) {
+      canonicalLabelsUpdated++;
+      if (!opts.dryRun) {
+        const rawDb = (
+          factsDb as unknown as {
+            getRawDb?: () => { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+          }
+        ).getRawDb?.();
+        rawDb
+          ?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?")
+          .run(activeTaskProvenance(canonical, fact.provenanceJson), fact.id);
+      }
+    }
+    const arr = groups.get(canonical) ?? [];
+    arr.push(fact);
+    groups.set(canonical, arr);
+  }
+
+  const duplicateGroups: ActiveTaskCanonicalBackfillResult["duplicateGroups"] = [];
+  let supersededFacts = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const [canonical, rows] of groups) {
+    const activeBefore = rows.filter((f) => !f.supersededAt).length;
+    let groupSuperseded = 0;
+    const byKey = new Map<string, MemoryEntry[]>();
+    for (const row of rows) {
+      const key = (row.key ?? "").trim() || "_body";
+      const arr = byKey.get(key) ?? [];
+      arr.push(row);
+      byKey.set(key, arr);
+    }
+    let terminalStatus: MemoryEntry | undefined;
+    const statusRows = byKey.get("status") ?? [];
+    for (const row of statusRows) {
+      const isExpired = row.expiresAt !== null && row.expiresAt <= nowSec;
+      if (
+        !isExpired &&
+        isTerminalFactStatus(row.value ?? row.text ?? "") &&
+        (!terminalStatus || row.createdAt > terminalStatus.createdAt)
+      ) {
+        terminalStatus = row;
+      }
+    }
+    const supersede = (oldId: string, newId: string | null): void => {
+      supersededFacts++;
+      groupSuperseded++;
+      if (!opts.dryRun) factsDb.supersede(oldId, newId);
+    };
+    if (terminalStatus) {
+      for (const [key, sameKey] of byKey) {
+        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
+        const keeper = key === "status" ? terminalStatus : ranked[0];
+        for (const row of ranked) {
+          if (row.id !== keeper.id && !row.supersededAt) supersede(row.id, keeper.id);
+        }
+      }
+    } else {
+      for (const sameKey of byKey.values()) {
+        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
+        const keeper = ranked[0];
+        for (const row of ranked.slice(1)) {
+          if (!row.supersededAt) supersede(row.id, keeper.id);
+        }
+      }
+    }
+    if (activeBefore > 1 || groupSuperseded > 0) {
+      duplicateGroups.push({
+        canonicalLabel: canonical,
+        facts: rows.length,
+        activeBefore,
+        superseded: groupSuperseded,
+      });
+    }
+  }
+
+  if (!opts.dryRun) {
+    (factsDb as unknown as { invalidateSupersededTextsCache?: () => void }).invalidateSupersededTextsCache?.();
+  }
+
+  return {
+    scannedFacts: facts.length,
+    canonicalLabelsUpdated,
+    supersededFacts,
+    duplicateGroups: duplicateGroups.sort((a, b) => a.canonicalLabel.localeCompare(b.canonicalLabel)),
+  };
 }
 
 export async function applyActiveTaskHygieneFacts(

@@ -2244,5 +2244,4 @@ export class VectorDB {
   getStoreCount(): number {
     return this.storeCount;
   }
-
 }
