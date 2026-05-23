@@ -232,6 +232,18 @@ export async function runExtractDailyForCli(
                   tags: ["auth", ...extractTags(pointerText, "Credentials")],
                 });
                 if (pointerStoreResult.skipped) {
+                  // Compensating delete: vault write succeeded but pointer rejected
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (cleanupErr) {
+                    sink.warn(
+                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
+                    );
+                    capturePluginError(cleanupErr as Error, {
+                      subsystem: "cli",
+                      operation: "runExtractDailyForCli:credential-compensating-delete-skip",
+                    });
+                  }
                   continue;
                 }
                 const pointerEntry = pointerStoreResult.entry;
