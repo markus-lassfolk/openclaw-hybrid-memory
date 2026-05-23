@@ -2232,7 +2232,13 @@ export class VectorDB {
 
   /** Returns true if the VectorDB table and semantic query cache table are initialized and ready. */
   isInitialized(): boolean {
-    return this.table !== null && this.semanticQueryCacheTable !== null;
+    return (
+      !this.closed &&
+      this.db !== null &&
+      this.table !== null &&
+      this.semanticQueryCacheTable !== null &&
+      !this.lanceInitFailed
+    );
   }
 
   /** Returns true if an optimize operation is currently in progress. */
