@@ -2131,24 +2131,6 @@ export class VectorDB {
   }
 
   /** LanceDB root path for this backend instance. */
-  getPath(): string {
-    return this.dbPath;
-  }
-
-  /** Reader slots currently held for this Lance path (search/count/getVectors, etc.). */
-  getOpenReaderCount(): number {
-    return VectorDB._activeReadersByPath.get(this.dbPath) ?? 0;
-  }
-
-  /** True while optimize() holds/awaits the exclusive maintenance lock for this path. */
-  isOptimizing(): boolean {
-    return optimizingByPath.get(this.dbPath) === true;
-  }
-
-  /** True when a live db/table handle exists and the instance is not closed/degraded-init-failed. */
-  isInitialized(): boolean {
-    return !this.closed && this.db != null && this.table != null && !this.lanceInitFailed;
-  }
 
   /** Lightweight search telemetry for diagnostics/health surfaces. */
   getSearchTelemetry(): {
