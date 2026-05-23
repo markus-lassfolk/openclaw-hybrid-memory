@@ -43,3 +43,18 @@ export function wrapApiLoggerStderrForJsonCli(api: ClawdbotPluginApi): ClawdbotP
     },
   };
 }
+
+/**
+ * Write a machine-readable JSON document to stdout.
+ *
+ * Uses process.stdout directly (instead of console.log) so payloads remain on stdout even
+ * in host environments that reroute or decorate console output.
+ */
+export function writeJsonDocumentToStdout(payload: unknown): void {
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
+/** Write one compact NDJSON line to stdout. */
+export function writeJsonLineToStdout(payload: unknown): void {
+  process.stdout.write(`${JSON.stringify(payload)}\n`);
+}

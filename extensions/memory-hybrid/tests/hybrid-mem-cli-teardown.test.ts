@@ -94,7 +94,7 @@ async function expectCommandCompletesAndRunsTeardown(argv: string[]): Promise<vo
   program.exitOverride();
   capture.callback?.({ program });
 
-  const log = vi.spyOn(console, "log").mockImplementation(() => {});
+  const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
   try {
     await program.parseAsync(argv, { from: "user" });
@@ -102,10 +102,10 @@ async function expectCommandCompletesAndRunsTeardown(argv: string[]): Promise<vo
     await new Promise((resolve) => setTimeout(resolve, 180));
     expect(onComplete).toHaveBeenCalledTimes(1);
     expect(ticks).toBe(ticksAfterCompletion);
-    expect(log).toHaveBeenCalled();
+    expect(stdoutSpy).toHaveBeenCalled();
   } finally {
     clearInterval(sentinel);
-    log.mockRestore();
+    stdoutSpy.mockRestore();
     setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
     rmSync(workspace, { recursive: true, force: true });
   }

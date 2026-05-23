@@ -8,6 +8,7 @@ import {
   terminateGoal,
   updateGoal,
 } from "../services/goal-stewardship.js";
+import { writeJsonDocumentToStdout, writeJsonLineToStdout } from "../utils/hybrid-mem-json-cli.js";
 import { formatGoalStewardshipConfigLines, workspaceRootForCli } from "./config-feature-summaries.js";
 import type { Chainable } from "./shared.js";
 
@@ -30,35 +31,29 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
     .action((opts: { json?: boolean }) => {
       const gs = ctx.cfg.goalStewardship;
       if (opts.json) {
-        console.log(
-          JSON.stringify(
-            {
-              enabled: gs.enabled,
-              goalsDir: gs.goalsDir,
-              resolvedGoalsDir: goalsDir(ctx.cfg),
-              workspaceRoot: workspaceRoot(),
-              model: gs.model,
-              heartbeatStewardship: gs.heartbeatStewardship,
-              watchdogHealthCheck: gs.watchdogHealthCheck,
-              heartbeatRefreshActiveTask: gs.heartbeatRefreshActiveTask,
-              llmTriageOnHeartbeat: gs.llmTriageOnHeartbeat,
-              triageSuggestHeavyDirective: gs.triageSuggestHeavyDirective,
-              heartbeatPatterns: gs.heartbeatPatterns,
-              attentionWeights: gs.attentionWeights,
-              multiGoalMaxChars: gs.multiGoalMaxChars,
-              multiGoalMaxGoals: gs.multiGoalMaxGoals,
-              confirmationPolicy: gs.confirmationPolicy,
-              circuitBreaker: gs.circuitBreaker,
-              escalationPolicy: gs.escalationPolicy,
-              allowCommandVerification: gs.allowCommandVerification,
-              allowPrVerification: gs.allowPrVerification,
-              globalLimits: gs.globalLimits,
-              defaults: gs.defaults,
-            },
-            null,
-            2,
-          ),
-        );
+        writeJsonDocumentToStdout({
+          enabled: gs.enabled,
+          goalsDir: gs.goalsDir,
+          resolvedGoalsDir: goalsDir(ctx.cfg),
+          workspaceRoot: workspaceRoot(),
+          model: gs.model,
+          heartbeatStewardship: gs.heartbeatStewardship,
+          watchdogHealthCheck: gs.watchdogHealthCheck,
+          heartbeatRefreshActiveTask: gs.heartbeatRefreshActiveTask,
+          llmTriageOnHeartbeat: gs.llmTriageOnHeartbeat,
+          triageSuggestHeavyDirective: gs.triageSuggestHeavyDirective,
+          heartbeatPatterns: gs.heartbeatPatterns,
+          attentionWeights: gs.attentionWeights,
+          multiGoalMaxChars: gs.multiGoalMaxChars,
+          multiGoalMaxGoals: gs.multiGoalMaxGoals,
+          confirmationPolicy: gs.confirmationPolicy,
+          circuitBreaker: gs.circuitBreaker,
+          escalationPolicy: gs.escalationPolicy,
+          allowCommandVerification: gs.allowCommandVerification,
+          allowPrVerification: gs.allowPrVerification,
+          globalLimits: gs.globalLimits,
+          defaults: gs.defaults,
+        });
         return;
       }
       for (const line of formatGoalStewardshipConfigLines(gs)) {
@@ -75,7 +70,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       const goals = await listGoals(dir);
       const rows = opts.all ? goals : goals.filter((x) => !["completed", "failed", "abandoned"].includes(x.status));
       if (opts.json) {
-        console.log(JSON.stringify(rows, null, 2));
+        writeJsonDocumentToStdout(rows);
         return;
       }
       if (rows.length === 0) {
@@ -102,18 +97,12 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         const goals = await listGoals(dir);
         const activeRows = goals.filter((x) => !["completed", "failed", "abandoned"].includes(x.status));
         if (opts.json) {
-          console.log(
-            JSON.stringify(
-              {
-                goalStewardshipEnabled: gs.enabled,
-                goalsDir: dir,
-                workspaceRoot: workspaceRoot(),
-                activeGoals: activeRows,
-              },
-              null,
-              2,
-            ),
-          );
+          writeJsonDocumentToStdout({
+            goalStewardshipEnabled: gs.enabled,
+            goalsDir: dir,
+            workspaceRoot: workspaceRoot(),
+            activeGoals: activeRows,
+          });
           return;
         }
         console.log(`Goal stewardship: ${gs.enabled ? "enabled" : "disabled"}`);
@@ -142,7 +131,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         return;
       }
       if (opts.json) {
-        console.log(JSON.stringify(goal, null, 2));
+        writeJsonDocumentToStdout(goal);
         return;
       }
       const ago = (iso: string | null) => {
@@ -241,11 +230,11 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       };
       if (opts.jsonl) {
         for (const goal of goals) {
-          console.log(JSON.stringify({ ...base, goal }));
+          writeJsonLineToStdout({ ...base, goal });
         }
-        if (goals.length === 0) console.log(JSON.stringify({ ...base, goal: null }));
+        if (goals.length === 0) writeJsonLineToStdout({ ...base, goal: null });
       } else {
-        console.log(JSON.stringify({ ...base, goals }, null, 2));
+        writeJsonDocumentToStdout({ ...base, goals });
       }
       return;
     });

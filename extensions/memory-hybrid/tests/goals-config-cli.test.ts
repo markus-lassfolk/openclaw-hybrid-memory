@@ -47,15 +47,19 @@ describe("goals config CLI", () => {
     const program = new Command("hybrid-mem");
     program.exitOverride();
     registerGoalCommands(program, { cfg: makeCfg() });
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stdoutChunks: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdoutChunks.push(String(chunk));
+      return true;
+    });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit called");
     }) as any);
     try {
       await program.parseAsync(["goals", "config", "--json"], { from: "user" });
       expect(exitSpy).not.toHaveBeenCalled();
-      expect(log).toHaveBeenCalledOnce();
-      const parsed = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(stdoutSpy).toHaveBeenCalled();
+      const parsed = JSON.parse(stdoutChunks.join("").trim());
       expect(parsed.enabled).toBe(true);
       expect(parsed.goalsDir).toBe("state/goals-test");
       expect(parsed.resolvedGoalsDir).toBe("/tmp/openclaw-goals-config-test/state/goals-test");
@@ -65,7 +69,7 @@ describe("goals config CLI", () => {
       expect(parsed.globalLimits.maxActiveGoals).toBeGreaterThan(0);
       expect(parsed.defaults.maxDispatches).toBeGreaterThan(0);
     } finally {
-      log.mockRestore();
+      stdoutSpy.mockRestore();
       exitSpy.mockRestore();
       setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
     }
@@ -80,7 +84,11 @@ describe("goals config CLI", () => {
     program.exitOverride();
     registerGoalCommands(program, { cfg: makeCfg() });
 
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const stdoutChunks: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdoutChunks.push(String(chunk));
+      return true;
+    });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit called");
     }) as any);
@@ -88,11 +96,11 @@ describe("goals config CLI", () => {
     try {
       await program.parseAsync(["goals", "config", "--json"], { from: "user" });
       expect(exitSpy).not.toHaveBeenCalled();
-      expect(log).toHaveBeenCalled();
-      const parsed = JSON.parse(String(log.mock.calls[0]?.[0]));
+      expect(stdoutSpy).toHaveBeenCalled();
+      const parsed = JSON.parse(stdoutChunks.join("").trim());
       expect(parsed.enabled).toBe(true);
     } finally {
-      log.mockRestore();
+      stdoutSpy.mockRestore();
       exitSpy.mockRestore();
       setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
     }

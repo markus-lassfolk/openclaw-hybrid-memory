@@ -1,10 +1,14 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { Command } from "commander";
 /**
  * Regression tests for issue #1230 / #1234: hybrid-mem --json commands must emit pure JSON on stdout.
  *
  * Plugin startup logs/warnings must go to stderr to avoid breaking cron harnesses and JSON parsers.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { registerGoalCommands } from "../cli/goals.js";
+import { hybridConfigSchema } from "../config.js";
+import { setEnv } from "../utils/env-manager.js";
 import { isHybridMemJsonInvocation, wrapApiLoggerStderrForJsonCli } from "../utils/hybrid-mem-json-cli.js";
 
 describe("isHybridMemJsonInvocation", () => {
@@ -93,5 +97,52 @@ describe("wrapApiLoggerStderrForJsonCli", () => {
     expect(errSpy).toHaveBeenCalledWith("warn");
     expect(origInfo).not.toHaveBeenCalled();
     expect(origWarn).not.toHaveBeenCalled();
+  });
+
+  it("keeps goals list --json payload on stdout while plugin/bootstrap diagnostics go to stderr", async () => {
+    process.argv = ["node", "openclaw", "hybrid-mem", "goals", "list", "--json"];
+    const prevWorkspace = process.env.OPENCLAW_WORKSPACE;
+    setEnv("OPENCLAW_WORKSPACE", "/tmp/openclaw-json-contract-test");
+
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
+    const wrapped = wrapApiLoggerStderrForJsonCli(api);
+
+    const program = new Command("hybrid-mem");
+    program.exitOverride();
+    registerGoalCommands(program, {
+      cfg: hybridConfigSchema.parse({
+        embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
+        goalStewardship: { enabled: true, goalsDir: "state/goals-test" },
+      }),
+    });
+
+    const stdoutChunks: string[] = [];
+    const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      stdoutChunks.push(String(chunk));
+      return true;
+    });
+    const stderrSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      wrapped.logger.info("[plugins] loading openclaw-hybrid-memory");
+      wrapped.logger.info("memory-hybrid: embedding check OK");
+      await program.parseAsync(["goals", "list", "--json"], { from: "user" });
+
+      const stdoutText = stdoutChunks.join("").trim();
+      expect(() => JSON.parse(stdoutText)).not.toThrow();
+      expect(stdoutText).not.toContain("[plugins]");
+      expect(stdoutText).not.toContain("memory-hybrid:");
+      expect(stderrSpy).toHaveBeenCalledWith("[plugins] loading openclaw-hybrid-memory");
+      expect(stderrSpy).toHaveBeenCalledWith("memory-hybrid: embedding check OK");
+      expect(logSpy).not.toHaveBeenCalled();
+    } finally {
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+      logSpy.mockRestore();
+      setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
+    }
   });
 });
