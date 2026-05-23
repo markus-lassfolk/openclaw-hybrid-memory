@@ -1099,7 +1099,8 @@ export function backfillActiveTaskCanonicalLabels(
       if (!opts.dryRun) factsDb.supersede(oldId, newId);
     };
     if (terminalStatus) {
-      for (const row of rows) {
+      const statusRows = byKey.get("status") ?? [];
+      for (const row of statusRows) {
         if (row.id !== terminalStatus!.id && !row.supersededAt) supersede(row.id, terminalStatus!.id);
       }
     } else {

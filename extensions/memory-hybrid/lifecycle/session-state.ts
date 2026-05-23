@@ -104,11 +104,22 @@ export function createSessionState(): SessionState {
       }
     }
     if (capabilityHintsSessionsSeen.size > MAX_TRACKED_SESSIONS) {
-      const excess = capabilityHintsSessionsSeen.size - MAX_TRACKED_SESSIONS;
-      const keys = capabilityHintsSessionsSeen.keys();
-      for (let i = 0; i < excess; i++) {
-        const { value } = keys.next();
-        if (value) capabilityHintsSessionsSeen.delete(value);
+      const keysToRemove: string[] = [];
+      for (const key of capabilityHintsSessionsSeen) {
+        if (!sessionLastActivity.has(key)) {
+          keysToRemove.push(key);
+        }
+      }
+      for (const key of keysToRemove) {
+        capabilityHintsSessionsSeen.delete(key);
+      }
+      if (capabilityHintsSessionsSeen.size > MAX_TRACKED_SESSIONS) {
+        const excess = capabilityHintsSessionsSeen.size - MAX_TRACKED_SESSIONS;
+        const keys = capabilityHintsSessionsSeen.keys();
+        for (let i = 0; i < excess; i++) {
+          const { value } = keys.next();
+          if (value) capabilityHintsSessionsSeen.delete(value);
+        }
       }
     }
     if (authFailureRecallsThisSession.size > MAX_TRACKED_SESSIONS * 3) {
