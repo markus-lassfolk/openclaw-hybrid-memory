@@ -249,6 +249,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         if (!sessionKey) return;
         if (hooks.sessionState.capabilityHintsSessionsSeen.has(sessionKey)) return;
         hooks.sessionState.capabilityHintsSessionsSeen.add(sessionKey);
+        hooks.sessionState.touchSession(sessionKey);
         hooks.sessionState.pruneSessionMaps();
       }
       return { prependContext: staticMemoryInstructions };

@@ -1073,6 +1073,7 @@ export function backfillActiveTaskCanonicalLabels(
 
   const duplicateGroups: ActiveTaskCanonicalBackfillResult["duplicateGroups"] = [];
   let supersededFacts = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
   for (const [canonical, rows] of groups) {
     const activeBefore = rows.filter((f) => !f.supersededAt).length;
     let groupSuperseded = 0;
@@ -1086,7 +1087,9 @@ export function backfillActiveTaskCanonicalLabels(
     let terminalStatus: MemoryEntry | undefined;
     const statusRows = byKey.get("status") ?? [];
     for (const row of statusRows) {
+      const isExpired = row.expiresAt !== null && row.expiresAt <= nowSec;
       if (
+        !isExpired &&
         isTerminalFactStatus(row.value ?? row.text ?? "") &&
         (!terminalStatus || row.createdAt > terminalStatus.createdAt)
       ) {
