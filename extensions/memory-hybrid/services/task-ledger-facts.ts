@@ -231,6 +231,14 @@ export function backfillActiveTaskCanonicalLabels(
     }
   }
 
+  const verifiedLookup = (() => {
+    try {
+      return rawDb.prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1");
+    } catch {
+      return null;
+    }
+  })();
+
   let supersededFacts = 0;
   const duplicateGroups: ActiveTaskCanonicalBackfillResult["duplicateGroups"] = [];
   for (const [canonical, rows] of byCanonical) {
@@ -251,6 +259,9 @@ export function backfillActiveTaskCanonicalLabels(
       const keeper = chooseCanonicalKeeper(key, keyRows);
       for (const row of keyRows) {
         if (row.id === keeper.id) continue;
+        if (verifiedLookup?.get(row.id)) {
+          continue;
+        }
         groupSuperseded++;
         if (!dryRun) {
           factsDb.supersede(row.id, keeper.id);

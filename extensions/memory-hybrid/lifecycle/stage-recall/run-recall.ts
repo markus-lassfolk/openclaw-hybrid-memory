@@ -370,7 +370,7 @@ export async function runRecall(
       );
       budgetState.remainingBudget = Math.max(0, budgetState.remainingBudget - recallUsedTokens);
       const inner = narrativePart + hotPart + recallPart;
-      const block = inner ? `${RECALLED_CONTEXT_BOUNDARY}\n<recalled-context>\n${inner}\n</recalled-context>` : "";
+      const block = inner ? `<recalled-context>\n${RECALLED_CONTEXT_BOUNDARY}\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
       const fixedBlocksTokens = totalBudget - budgetState.remainingBudget;
