@@ -240,7 +240,8 @@ export async function runContextAudit(opts: {
     narrativeEstimateTokens +
     Math.min(hotTokens, hotMaxTokens) +
     Math.min(proceduresTokens, procedureMaxTokens) +
-    Math.min(activeTasksTokens, activeTaskMaxTokens);
+    Math.min(activeTasksTokens, activeTaskMaxTokens) +
+    staleWarningMaxTokens;
   const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
   const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
 

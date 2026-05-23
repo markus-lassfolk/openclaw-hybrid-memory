@@ -955,9 +955,11 @@ export async function runRecall(
     const blockSummary = budgetState.audit
       .map((b) => `${b.block}:${b.injectedTokens}/${b.capTokens}${b.reserved ? "r" : ""}${b.truncated ? "!" : ""}`)
       .join(", ");
-    api.logger.info?.(
-      `memory-hybrid: context-audit fixed=${fixedBlocksTokens}/${totalBudget} recall=${maxTokens} blocks=[${blockSummary}]`,
-    );
+    if (ctx.cfg.autoRecall.recallTiming === "basic" || ctx.cfg.autoRecall.recallTiming === "verbose") {
+      api.logger.info?.(
+        `memory-hybrid: context-audit fixed=${fixedBlocksTokens}/${totalBudget} recall=${maxTokens} blocks=[${blockSummary}]`,
+      );
+    }
     ctx.auditStore?.append({
       agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
       action: "recall:context-budget",
