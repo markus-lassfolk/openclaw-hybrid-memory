@@ -3,7 +3,7 @@
  * Tests for ACTIVE-TASKS.md working memory service and CLI commands.
  */
 
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,9 +18,6 @@ import {
 import {
   ACTIVE_TASK_STATUSES,
   type ActiveTaskEntry,
-  OCTAVE_TASK_HANDOFF_SCHEMA,
-  STALE_CORRUPT_SIGNAL_MS,
-  type TaskSignal,
   buildActiveTaskInjection,
   buildStaleWarningInjection,
   completeTask,
@@ -29,13 +26,16 @@ import {
   detectStaleTasks,
   flushCompletedTaskToMemory,
   isSubagentSession,
+  OCTAVE_TASK_HANDOFF_SCHEMA,
   parseActiveTaskFile,
   readActiveTaskFile,
   readActiveTaskFileWithMtime,
   readPendingSignals,
   reconcileActiveTaskInProgressSessions,
+  STALE_CORRUPT_SIGNAL_MS,
   serializeActiveTaskFile,
   serializeTaskEntry,
+  type TaskSignal,
   upsertTask,
   validateOctaveTaskHandoffArtifact,
   writeActiveTaskFile,
@@ -411,10 +411,37 @@ describe("buildActiveTaskInjection", () => {
     expect(result.text).toContain("Deploy the fix");
   });
 
-  it("includes stale flag for stale tasks", () => {
+  it("excludes stale tasks from active-task injection when excludeStale is true", () => {
     const tasks = [makeEntry({ stale: true })];
+    const result = buildActiveTaskInjection(tasks, 500, { excludeStale: true });
+    expect(result.text).toBe("");
+    expect(result.injectedCount).toBe(0);
+  });
+
+  it("does not let stale tasks consume the active-task injection budget when excludeStale is true", () => {
+    const tasks = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        makeEntry({
+          label: `stale-${i}`,
+          description: "A stale task with enough text to consume a tight context budget before fresh work is listed",
+          next: "This stale task should not be part of the active task injection block",
+          status: "In progress",
+          stale: true,
+        }),
+      ),
+      makeEntry({ label: "fresh", description: "Fresh task", status: "In progress", stale: false }),
+    ];
+    const result = buildActiveTaskInjection(tasks, 100, { excludeStale: true });
+    expect(result.text).toContain("[fresh]");
+    expect(result.text).not.toContain("[stale-");
+    expect(result.injectedCount).toBe(1);
+  });
+
+  it("includes stale tasks by default (conventional excludeStale semantics)", () => {
+    const tasks = [makeEntry({ label: "stale-task", stale: true })];
     const result = buildActiveTaskInjection(tasks, 500);
-    expect(result.text).toContain("STALE");
+    expect(result.text).toContain("[stale-task]");
+    expect(result.injectedCount).toBe(1);
   });
 
   it("caps injection to budget (approximate)", () => {

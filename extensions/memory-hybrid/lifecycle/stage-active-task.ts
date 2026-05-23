@@ -4,8 +4,8 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { buildActiveTaskContextBundle } from "../services/active-task-injection.js";
 import { readActiveTaskFile, upsertTask, writeActiveTaskFileGuarded } from "../services/active-task.js";
+import { buildActiveTaskContextBundle } from "../services/active-task-injection.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { listGoals, resolveGoalsDir } from "../services/goal-registry.js";
 import { matchesHeartbeat } from "../services/goal-stewardship-heartbeat.js";
