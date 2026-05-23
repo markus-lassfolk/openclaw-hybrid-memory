@@ -169,7 +169,6 @@ describe("user-friendly CLI registration", () => {
     expect(bounds?.detail).toContain("search<=200");
     log.mockRestore();
   });
-  });
 
   it("examples uses own-property category checks", () => {
     const root = new FakeCommand();
