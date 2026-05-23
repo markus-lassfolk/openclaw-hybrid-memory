@@ -45,6 +45,7 @@ export {
 export {
   confirmFact,
   decayConfidence,
+  demoteHotGarbageFacts,
   listFactIdsToBeDeletedByDecayRun,
   logRecall,
   promoteScope,

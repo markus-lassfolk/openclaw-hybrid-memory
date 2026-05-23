@@ -12,6 +12,7 @@ import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
+import { isLikelyGarbage } from "./fact-read-queries.js";
 
 function extractFactIds(rows: Array<{ id: string }>): string[] {
   return rows.map((row) => row.id);
@@ -110,6 +111,7 @@ type TierCandidate = {
   tier: MemoryTier;
   text: string;
   summary: string | null;
+  source: string | null;
   category: MemoryCategory | null;
   importance: number;
   key: string | null;
@@ -207,6 +209,16 @@ function isHotCandidate(
   opts: Required<TieringOptions>,
   flags?: { ignoreStructuralBlock?: boolean; hotByRecallIds?: ReadonlySet<string> },
 ): boolean {
+  if (
+    isLikelyGarbage({
+      text: row.text,
+      summary: row.summary,
+      source: row.source,
+      category: row.category,
+      recall_count: row.recall_count,
+    })
+  )
+    return false;
   if (!flags?.ignoreStructuralBlock && isStructuralCandidate(row, opts)) return false;
   if (hasTag(row.tags, "blocker")) return true;
   if (flags?.hotByRecallIds?.has(row.id)) return true;
@@ -295,6 +307,7 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
   const rows = db
     .prepare(
       `SELECT id, COALESCE(tier, 'warm') as tier, text, summary, category, importance, key, value, decay_class, tags,
+              source,
               COALESCE(recall_count, 0) as recall_count, COALESCE(access_count, 0) as access_count,
               created_at, last_accessed, last_confirmed_at, preserve_until, preserve_tags
          FROM facts
@@ -362,6 +375,8 @@ export function retierFacts(db: DatabaseSync, opts: TieringOptions, apply = true
 }
 
 export function runCompaction(db: DatabaseSync, opts: TieringOptions): RetierReport {
+  // Demote hot garbage facts before retier to prevent them from staying pinned (#1559)
+  demoteHotGarbageFacts(db);
   const report = retierFacts(db, opts, true);
   return report;
 }
@@ -1158,4 +1173,60 @@ export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
 
   createTransaction(db, run)();
   return counts;
+}
+
+/**
+ * Demote HOT garbage facts (reasoning traces, prompt artifacts, capability hints)
+ * to warm tier. Fixes the self-reinforcing loop where these artifacts dominated hot tier
+ * via inflated recall_count from repeated index exposure (#1559).
+ *
+ * Returns the count of facts demoted.
+ */
+export function demoteHotGarbageFacts(db: DatabaseSync): number {
+  // Uses the shared isLikelyGarbage utility to ensure consistent filtering across
+  // query-time, tiering, and batch demotion operations (fixes #1559).
+  const rows = db
+    .prepare(
+      `SELECT id, text, summary, source, recall_count, category
+       FROM facts
+       WHERE tier = 'hot'
+         AND superseded_at IS NULL
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+    )
+    .all() as Array<{
+    id: string;
+    text: string;
+    summary: string | null;
+    source: string | null;
+    recall_count: number;
+    category: string | null;
+  }>;
+
+  const garbageIds: string[] = [];
+  for (const row of rows) {
+    if (
+      isLikelyGarbage({
+        text: row.text,
+        summary: row.summary,
+        source: row.source,
+        category: row.category,
+        recall_count: row.recall_count,
+      })
+    ) {
+      garbageIds.push(row.id);
+    }
+  }
+
+  if (garbageIds.length === 0) return 0;
+
+  let totalChanged = 0;
+  for (const batch of batchedInClauseBinds(garbageIds)) {
+    const placeholders = batch.map(() => "?").join(",");
+    const result = db
+      .prepare(`UPDATE facts SET tier = 'warm' WHERE id IN (${placeholders}) AND tier = 'hot'`)
+      .run(...batch);
+    totalChanged += Number(result.changes ?? 0);
+  }
+
+  return totalChanged;
 }

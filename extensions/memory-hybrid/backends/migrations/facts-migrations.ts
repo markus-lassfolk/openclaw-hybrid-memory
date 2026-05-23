@@ -1369,6 +1369,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Scan cursors and access salience
   migrateScanCursorsTable(db);
   migrateAccessCountAndLastAccessedAt(db);
+  migrateIndexedCountAndLastIndexed(db);
   migrateSupersededAtLookupIndex(db);
 
   // Token-budget tiered trimming (Issue #792)
@@ -1490,4 +1491,15 @@ function migrateTrimBudgetIndex(db: DatabaseSync): void {
     ON facts(superseded_at, importance, created_at, last_accessed)
     WHERE superseded_at IS NULL
   `);
+}
+
+/** Issue #1559: Separate index-only exposure signal from recall_count/last_accessed. */
+function migrateIndexedCountAndLastIndexed(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "indexed_count")) {
+    db.exec("ALTER TABLE facts ADD COLUMN indexed_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!cols.some((c) => c.name === "last_indexed")) {
+    db.exec("ALTER TABLE facts ADD COLUMN last_indexed INTEGER");
+  }
 }

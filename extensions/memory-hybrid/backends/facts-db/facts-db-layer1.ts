@@ -19,6 +19,7 @@ import {
   getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
+  refreshIndexedFacts as refreshIndexedFactsImpl,
   statsDailyWrites as statsDailyWritesImpl,
   storeFact,
 } from "./crud.js";
@@ -287,6 +288,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
   refreshAccessedFacts(ids: string[]): void {
     refreshAccessedFactsImpl(this.liveDb, ids);
+  }
+
+  /** Update indexed_count and last_indexed for index-only exposures (#1559). Does NOT inflate recall_count. */
+  refreshIndexedFacts(ids: string[]): void {
+    refreshIndexedFactsImpl(this.liveDb, ids);
   }
 
   /** Record a memory_recall invocation outcome for hit-rate tracking (Issue #148). */

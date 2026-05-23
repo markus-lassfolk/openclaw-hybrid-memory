@@ -346,6 +346,63 @@ export function listFacts(
   return rows.map((row) => rowToMemoryEntry(row));
 }
 
+/**
+ * Shared garbage detection utility for consistency across query-time, tiering, and SQL batch operations.
+ * Returns true if the fact text looks like a reasoning trace or classifier artifact (#1559).
+ */
+export function isLikelyGarbage(input: {
+  text: string;
+  summary?: string | null;
+  source?: string | null;
+  category?: string | null;
+  recall_count?: number;
+}): boolean {
+  const text = input.text ?? "";
+  const summary = input.summary ?? "";
+  const combined = text + "\n" + summary;
+
+  // Reasoning traces embedded in fact content
+  if (/<(?:redacted_)?think(?:ing)?>[\s\S]*?<\/(?:redacted_)?think(?:ing)?>/i.test(combined)) return true;
+  // Classifier / capability-hint artifacts
+  if (/^Thinking Process:/im.test(combined)) return true;
+  if (/^\[(?:hot-memories|recall|hot\/fact)\]/im.test(combined)) return true;
+  // Unhelpful source + long reasoning combo
+  // Match reasoning trace patterns more precisely to avoid false positives with common English words
+  if (input.source === "auto-capture" && combined.length > 3000) {
+    // Reasoning-specific phrases that indicate LLM reasoning artifacts
+    const reasoningPhrases =
+      /\b(?:let me think|my reasoning|step[- ]by[- ]step|thought process|reasoning process|analysis process)\b/i;
+    // Multiple paragraph breaks suggesting stream-of-consciousness
+    const multipleBreaks = (combined.match(/\n\n/g) || []).length > 10;
+    if (reasoningPhrases.test(combined) || multipleBreaks) {
+      return true;
+    }
+  }
+  // High recall counts for "other" category (self-reinforcing garbage loop)
+  if (input.category === "other" && (input.recall_count ?? 0) > 500) {
+    return true;
+  }
+  return false;
+}
+
+/** Quality score for HOT injection: 0–1. Garbage facts score 0 and are excluded. */
+function hotQualityScore(entry: MemoryEntry): number {
+  if (
+    isLikelyGarbage({
+      text: entry.text,
+      summary: entry.summary,
+      source: entry.source,
+      category: entry.category,
+      recall_count: entry.recallCount,
+    })
+  )
+    return 0;
+  const text = entry.text ?? "";
+  // Penalise very long unconstrained text (likely full conversation dumps)
+  if (text.length > 8000) return 0.3;
+  return 1.0;
+}
+
 export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: ScopeFilter | null): SearchResult[] {
   const nowSec = Math.floor(Date.now() / 1000);
   const { clause: scopeClause, params: scopeParams } = scopeFilterClausePositional(scopeFilter);
@@ -362,12 +419,15 @@ export function getHotFacts(db: DatabaseSync, maxTokens: number, scopeFilter?: S
   for (const row of rows) {
     if (usedTokens >= maxTokens) break;
     const entry = rowToMemoryEntry(row);
+    // Apply quality filter: exclude reasoning traces, prompt artifacts, and garbage (#1559)
+    const score = hotQualityScore(entry);
+    if (score === 0) continue;
     const tokens = estimateTokensForDisplay(entry.summary || entry.text);
     if (usedTokens + tokens > maxTokens) {
       continue;
     }
     usedTokens += tokens;
-    results.push({ entry, score: 1.0, backend: "sqlite" as const });
+    results.push({ entry, score, backend: "sqlite" as const });
   }
   return results;
 }
