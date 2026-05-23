@@ -233,6 +233,8 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       warnContext?: string;
       /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
       suppressVectorFallbackWarning?: boolean;
+      /** Trusted edit path for re-storing already persisted legacy guarded facts. */
+      allowPreStoreGuardBypass?: boolean;
     },
   ): MemoryEntry {
     return this.storeWithResult(entry, options).entry;
@@ -249,6 +251,8 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       warnContext?: string;
       /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
       suppressVectorFallbackWarning?: boolean;
+      /** Trusted edit path for re-storing already persisted legacy guarded facts. */
+      allowPreStoreGuardBypass?: boolean;
     },
   ): StoreFactResult {
     const warnOnce = (key: string, message: string): void => {
@@ -270,6 +274,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
         warnOnce,
         warnOnceKey: options?.warnContext,
         suppressVectorFallbackWarning: options?.suppressVectorFallbackWarning,
+        allowPreStoreGuardBypass: options?.allowPreStoreGuardBypass,
       },
       entry,
     );

@@ -189,6 +189,36 @@ describe("FactsDB.store", () => {
       sqlite.prepare = originalPrepare;
     }
   });
+
+  it("does not persist entries blocked by pre-store guard", () => {
+    const before = db.count();
+    const blockedBySource = db.storeWithResult({
+      text: "NOOP classification output",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "remember",
+    });
+    const blockedByCategory = db.storeWithResult({
+      text: "artifact-like internal payload",
+      category: "artifact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    expect(blockedBySource.skipped).toBe(true);
+    expect(blockedBySource.entry.id).toBe("skipped");
+    expect(blockedBySource.entry.source).toBe("remember");
+    expect(blockedByCategory.skipped).toBe(true);
+    expect(blockedByCategory.entry.id).toBe("skipped");
+    expect(blockedByCategory.entry.category).toBe("artifact");
+    expect(db.count()).toBe(before);
+  });
 });
 
 // ---------------------------------------------------------------------------

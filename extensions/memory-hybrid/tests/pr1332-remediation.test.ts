@@ -88,6 +88,75 @@ describe("PR #1332 unresolved feedback remediation", () => {
     ).toBe(false);
   });
 
+  it("allows GraphQL updateFact to edit already-persisted guarded facts", async () => {
+    const existing = {
+      id: "legacy-compact",
+      text: "old compact text",
+      category: "fact",
+      importance: 0.5,
+      confidence: 0.9,
+      decayClass: "normal",
+      source: "compact",
+      tags: [],
+      entity: null,
+      key: null,
+      value: null,
+      scope: "global",
+      scopeTarget: null,
+      expiresAt: null,
+    };
+    const replacement = { ...existing, id: "updated", text: "edited text" };
+    const storeWithResult = vi.fn(() => ({ entry: replacement, skipped: false }));
+    const context = {
+      factsDb: {
+        getById: vi.fn((id: string) => (id === existing.id ? existing : null)),
+        storeWithResult,
+        supersede: vi.fn(() => true),
+      },
+    } as unknown as ResolverContext;
+
+    const updated = await resolvers.Mutation.updateFact(
+      null,
+      { input: { id: existing.id, text: "edited text" } } as ResolverArgs,
+      context,
+    );
+
+    expect(updated).toBe(replacement);
+    expect(storeWithResult).toHaveBeenCalledWith(expect.objectContaining({ source: "compact", text: "edited text" }), {
+      allowPreStoreGuardBypass: true,
+    });
+    expect(context.factsDb.supersede).toHaveBeenCalledWith(existing.id, replacement.id);
+  });
+
+  it("prevalidates GraphQL importFacts before storing guarded facts", async () => {
+    const storeWithResult = vi.fn((input: { text: string }) => ({
+      entry: { id: input.text, text: input.text },
+      skipped: false,
+    }));
+    const context = { factsDb: { storeWithResult } } as unknown as ResolverContext;
+
+    await expect(
+      resolvers.Mutation.importFacts(
+        null,
+        { facts: [{ text: "safe" }, { text: "blocked", source: "compact" }] } as ResolverArgs,
+        context,
+      ),
+    ).rejects.toThrow(/blocked by pre-store guard/);
+    expect(storeWithResult).not.toHaveBeenCalled();
+  });
+
+  it("cleans up evicted vectors from GraphQL createFact", async () => {
+    const entry = { id: "created", text: "created" };
+    const storeWithResult = vi.fn(() => ({ entry, skipped: false, evictedFactId: "evicted" }));
+    const vectorDb = { delete: vi.fn().mockResolvedValue(true) };
+    const context = { factsDb: { storeWithResult }, vectorDb } as unknown as ResolverContext;
+
+    await expect(
+      resolvers.Mutation.createFact(null, { input: { text: "created" } } as ResolverArgs, context),
+    ).resolves.toBe(entry);
+    expect(vectorDb.delete).toHaveBeenCalledWith("evicted");
+  });
+
   it("fails GraphQL supersede mutation when the old fact is missing or already superseded", () => {
     const facts = new Map([
       ["new", { id: "new", text: "new" }],

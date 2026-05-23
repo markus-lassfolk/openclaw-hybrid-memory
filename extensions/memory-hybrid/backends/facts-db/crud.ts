@@ -46,6 +46,15 @@ function runWithSqliteBusyRetry(db: DatabaseSync, run: () => void): void {
   }
 }
 
+// Pre-store guard constants: filter internal artifacts (#1560, #1561).
+// These categories and sources are not user-relevant memories.
+const BLOCKED_CATEGORIES = new Set(["noop", "classification", "artifact", "chain-of-thought", "prompt"]);
+const BLOCKED_SOURCES = new Set(["think", "classify", "remember", "noop", "compact", "derive"]);
+
+export function isPreStoreGuardBlocked(entry: Pick<StoreFactInput, "category" | "source">): boolean {
+  return BLOCKED_CATEGORIES.has(entry.category ?? "") || BLOCKED_SOURCES.has(entry.source ?? "");
+}
+
 /** Input shape for `FactsDB.store` / `storeFact`. */
 export type StoreFactInput = Omit<
   MemoryEntry,
@@ -112,6 +121,11 @@ export type StoreFactContext = {
   warnOnceKey?: string;
   suppressVectorFallbackWarning?: boolean;
   /**
+   * Allow trusted edit paths to re-store an already persisted fact whose legacy
+   * source/category is now blocked by the artifact guard (#1560/#1561).
+   */
+  allowPreStoreGuardBypass?: boolean;
+  /**
    * Pre-computed vector neighbour candidates for the new fact's embedding (#1186, #1194).
    * Caller is expected to populate this when the embedding is known and the policy has
    * `vectorThreshold` configured.
@@ -133,10 +147,39 @@ export type StoreFactResult = {
    * `entry.text` and replace the vector for `entry.id` in VectorDB.
    */
   embeddingStale?: boolean;
+  /**
+   * True when the pre-store guard filtered this entry as an internal artifact (#1560, #1561).
+   * Callers must skip post-store operations (vector upsert, supersession, logging) when true.
+   */
+  skipped?: boolean;
 };
 
 export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFactResult {
   validateStoreEntryInput(entry);
+
+  const entryCategory = entry.category ?? "";
+  const entrySource = entry.source ?? "";
+  if (!ctx.allowPreStoreGuardBypass && isPreStoreGuardBlocked({ category: entryCategory, source: entrySource })) {
+    // Return a minimal skipped result — caller should skip post-store operations.
+    const skippedEntry: MemoryEntry = {
+      id: "skipped",
+      text: entry.text,
+      category: entry.category ?? "noop",
+      importance: entry.importance ?? 0.5,
+      source: entry.source ?? "guard",
+      entity: entry.entity ?? null,
+      key: entry.key ?? null,
+      value: entry.value ?? null,
+      createdAt: Math.floor(Date.now() / 1000),
+      decayClass: entry.decayClass ?? "normal",
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 0,
+      tags: entry.tags ?? null,
+    };
+    return { entry: skippedEntry, evictedFactId: null, skipped: true };
+  }
+
   const sourceForPolicy = entry.source ?? "conversation";
   const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
   const nowSec = Math.floor(Date.now() / 1000);
