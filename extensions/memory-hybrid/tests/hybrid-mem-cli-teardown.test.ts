@@ -5,7 +5,7 @@ import { Command } from "commander";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hybridConfigSchema } from "../config.js";
-import { registerHybridMemCliWithApi, type HybridMemCliRegistrationContext } from "../setup/cli-context.js";
+import { type HybridMemCliRegistrationContext, registerHybridMemCliWithApi } from "../setup/cli-context.js";
 import { setEnv } from "../utils/env-manager.js";
 
 function makeCfg(goalsDir: string) {

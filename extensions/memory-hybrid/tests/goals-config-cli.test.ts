@@ -54,7 +54,7 @@ describe("goals config CLI", () => {
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit called");
-    }) as any);
+    }) as never);
     try {
       await program.parseAsync(["goals", "config", "--json"], { from: "user" });
       expect(exitSpy).not.toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe("goals config CLI", () => {
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
       throw new Error("process.exit called");
-    }) as any);
+    }) as never);
 
     try {
       await program.parseAsync(["goals", "config", "--json"], { from: "user" });
