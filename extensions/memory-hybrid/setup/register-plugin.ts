@@ -65,7 +65,7 @@ const runtimeRef: { value: PluginRuntime | null } = { value: null };
 async function performHybridMemCliTeardown(): Promise<void> {
   // Restore stdout before checking runtime ref, so teardown without runtime still cleans up (issue #1618).
   restoreStdoutAfterJsonCli();
-  
+
   const r = runtimeRef.value;
   if (!r) return;
   // Stop long-lived service timers first so one-shot CLI commands can exit promptly.
