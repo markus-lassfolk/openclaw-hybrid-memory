@@ -15,14 +15,15 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
-import { atomicWriteFile } from "../utils/atomic-write.js";
-import { distillMaxOutputTokens } from "../services/chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
+import { distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
@@ -33,7 +34,6 @@ import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants (self-correction-specific)
@@ -353,6 +353,9 @@ export async function runSelfCorrectionRunForCli(
             source: "self-correction",
             tags: Array.isArray(obj.tags) ? obj.tags : [],
           });
+          if (storeResult.skipped) {
+            continue;
+          }
           const entry = storeResult.entry;
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({

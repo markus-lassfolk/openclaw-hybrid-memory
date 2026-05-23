@@ -727,6 +727,9 @@ export async function runDistillForCli(
           sourceDate: sourceDateSec(fact.source_date),
           tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
         });
+        if (storeResult.skipped) {
+          continue;
+        }
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({

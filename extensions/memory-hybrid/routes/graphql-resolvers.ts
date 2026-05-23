@@ -316,11 +316,10 @@ export const resolvers: GraphQLResolvers = {
   Mutation: {
     createFact: async (_parent, args, context) => {
       const input = asRecord(asRecord(args).input);
-      const storeInput = createStoreInput(input);
-      if (isPreStoreGuardBlocked(storeInput)) {
-        throw new Error("Cannot create fact: blocked by pre-store guard (blocked category or source)");
+      const result = context.factsDb.storeWithResult(createStoreInput(input));
+      if (result.entry.id === "") {
+        throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
       }
-      const result = context.factsDb.storeWithResult(storeInput);
       await cleanupGraphqlEviction(context, result.evictedFactId);
       return result.entry;
     },
@@ -331,9 +330,10 @@ export const resolvers: GraphQLResolvers = {
       if (!id) throw new Error("Missing fact id");
       const existing = context.factsDb.getById(id);
       if (!existing) throw new Error(`Fact not found: ${id}`);
-      const storeResult = context.factsDb.storeWithResult(
+      const updatedText = asString(input.text) ?? existing.text;
+      const result = context.factsDb.storeWithResult(
         {
-          text: asString(input.text) ?? existing.text,
+          text: updatedText,
           category: asString(input.category) ?? existing.category,
           importance: asNumber(input.importance) ?? existing.importance,
           confidence: asNumber(input.confidence) ?? existing.confidence,
@@ -349,12 +349,12 @@ export const resolvers: GraphQLResolvers = {
         },
         { allowPreStoreGuardBypass: true },
       );
-      if (storeResult.skipped) {
-        throw new Error("Cannot update fact: blocked by pre-store guard (blocked category or source)");
+      // Skip supersede if store was rejected (artifact text)
+      if (result.entry.id !== "") {
+        context.factsDb.supersede(existing.id, result.entry.id);
       }
-      await cleanupGraphqlEviction(context, storeResult.evictedFactId);
-      context.factsDb.supersede(existing.id, storeResult.entry.id);
-      return storeResult.entry;
+      await cleanupGraphqlEviction(context, result.evictedFactId);
+      return result.entry;
     },
 
     deleteFact: (_parent, args, context) => {
@@ -397,14 +397,21 @@ export const resolvers: GraphQLResolvers = {
     importFacts: async (_parent, args, context) => {
       const facts = Array.isArray(asRecord(args).facts) ? (asRecord(args).facts as unknown[]) : [];
       const inputs = facts.map((raw) => createStoreInput(asRecord(raw)));
-      if (inputs.some((input) => isPreStoreGuardBlocked(input))) {
-        throw new Error("Cannot import fact: blocked by pre-store guard (blocked category or source)");
+      // Pre-validate all facts before storing any
+      for (const input of inputs) {
+        if (isPreStoreGuardBlocked(input)) {
+          throw new Error(
+            `Fact blocked by pre-store guard: category=${input.category ?? ""}, source=${input.source ?? ""}`,
+          );
+        }
       }
       const stored: MemoryEntry[] = [];
       for (const input of inputs) {
         const result = context.factsDb.storeWithResult(input);
+        if (result.entry.id !== "") {
+          stored.push(result.entry);
+        }
         await cleanupGraphqlEviction(context, result.evictedFactId);
-        stored.push(result.entry);
       }
       return stored;
     },

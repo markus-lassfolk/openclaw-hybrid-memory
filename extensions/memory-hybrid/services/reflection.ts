@@ -13,30 +13,30 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import {
-  REFLECTION_DEDUPE_THRESHOLD,
+  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_BACKOFF_MS,
+  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_THRESHOLD,
   REFLECTION_DEDUPE_LOAD_TIMEOUT_MS,
   REFLECTION_DEDUPE_MAX_ROWS_PER_RUN,
-  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_THRESHOLD,
-  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_BACKOFF_MS,
+  REFLECTION_DEDUPE_THRESHOLD,
   REFLECTION_IMPORTANCE,
-  REFLECTION_MAX_FACTS_PER_CATEGORY,
   REFLECTION_MAX_FACT_LENGTH,
+  REFLECTION_MAX_FACTS_PER_CATEGORY,
   REFLECTION_META_MAX_CHARS,
   REFLECTION_PATTERN_MAX_CHARS,
   REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { withTimeout } from "../utils/timeout.js";
-import { is429OrWrapped, is403QuotaOrRateLimitLike, LLMRetryError } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
+import { is403QuotaOrRateLimitLike, is429OrWrapped, LLMRetryError } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { recordMaintenanceTimestamp } from "./maintenance-timestamp.js";
 import type { ProvenanceService } from "./provenance.js";
-import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 const REFLECTION_PATTERN_MIN_CHARS = 20;
@@ -655,6 +655,9 @@ export async function runReflection(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
@@ -932,6 +935,9 @@ export async function runReflectionRules(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
@@ -1189,6 +1195,9 @@ export async function runReflectionMeta(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({

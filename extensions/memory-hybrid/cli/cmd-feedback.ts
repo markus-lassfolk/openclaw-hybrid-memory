@@ -546,6 +546,9 @@ export async function runExtractImplicitFeedbackForCli(
             tags: ["implicit-feedback", "negative", sig.type],
             decayClass: "normal",
           });
+          if (storeResult.skipped) {
+            continue;
+          }
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
             vectorDb: vectorDb,
@@ -661,6 +664,9 @@ export async function runExtractImplicitFeedbackForCli(
                   tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
                   decayClass: "normal",
                 });
+                if (storeResult.skipped) {
+                  continue;
+                }
                 // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
                 await cleanupEvictedVector({
                   vectorDb: vectorDb,
