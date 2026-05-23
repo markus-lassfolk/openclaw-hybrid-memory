@@ -64,7 +64,7 @@ export function evaluateStrictDuplicateClosureGuard(candidates: ClosureCandidate
     } satisfies ClosureAssessment;
   });
 
-  const decision: ClosureDecision = assessments.every((item) => item.decision === "safe")
+  const decision: ClosureDecision = assessments.length > 0 && assessments.every((item) => item.decision === "safe")
     ? "safe"
     : "needs-reconciliation";
 
