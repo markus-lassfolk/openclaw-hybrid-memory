@@ -882,7 +882,7 @@ export async function upsertProjectTaskKey(
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
   }
-  const text = `Task [${entity}] ${key}: ${value}`;
+  const text = `Task [${entity}] ${normalizedKey}: ${value}`;
   const entry = factsDb.store({
     text,
     category: TASK_LEDGER_CATEGORY,
