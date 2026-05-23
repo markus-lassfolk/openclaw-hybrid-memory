@@ -59,6 +59,18 @@ describe("vector-db/constants — env-driven runtime bounds", () => {
       const { VECTOR_QUERY_MAX_RESULTS } = await loadConstants();
       expect(VECTOR_QUERY_MAX_RESULTS).toBe(200);
     });
+
+    it("falls back to default when override is empty string", async () => {
+      process.env[ENV_VECTOR_QUERY_MAX_RESULTS] = "";
+      const { VECTOR_QUERY_MAX_RESULTS } = await loadConstants();
+      expect(VECTOR_QUERY_MAX_RESULTS).toBe(200);
+    });
+
+    it("falls back to default when override is whitespace", async () => {
+      process.env[ENV_VECTOR_QUERY_MAX_RESULTS] = "   ";
+      const { VECTOR_QUERY_MAX_RESULTS } = await loadConstants();
+      expect(VECTOR_QUERY_MAX_RESULTS).toBe(200);
+    });
   });
 
   describe("SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY (default 100, min 10, max 5000)", () => {
@@ -90,6 +102,12 @@ describe("vector-db/constants — env-driven runtime bounds", () => {
       const { SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY } = await loadConstants();
       expect(SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY).toBe(100);
     });
+
+    it("falls back to default when override is empty string or whitespace", async () => {
+      process.env[ENV_SEMANTIC_CACHE_MAX_ROWS] = "  ";
+      const { SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY } = await loadConstants();
+      expect(SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY).toBe(100);
+    });
   });
 
   describe("SEMANTIC_QUERY_CACHE_CANDIDATE_LIMIT_MAX (default 200, min 10, max 5000)", () => {
@@ -116,7 +134,7 @@ describe("vector-db/constants — env-driven runtime bounds", () => {
       expect(SEMANTIC_QUERY_CACHE_CANDIDATE_LIMIT_MAX).toBe(5000);
     });
 
-    it("falls back to default when override is not a valid integer", async () => {
+    it("clamps to minimum when override parses to value below min (e.g. '3.7' → parseInt=3 < min 10)", async () => {
       process.env[ENV_SEMANTIC_CACHE_CANDIDATE_LIMIT] = "3.7";
       // parseFloat("3.7") would be valid, but parseInt("3.7") floors to 3, which is below min → clamped to 10
       const { SEMANTIC_QUERY_CACHE_CANDIDATE_LIMIT_MAX } = await loadConstants();
