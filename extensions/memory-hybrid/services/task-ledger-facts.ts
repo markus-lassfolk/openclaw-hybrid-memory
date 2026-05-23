@@ -33,9 +33,10 @@ export function canonicalLabel(entity: string): string {
   return entity
     .trim()
     .toLowerCase()
-    .replace(/^-+|-+$/g, "")
-    .replace(/[\/_]+/g, "-")
-    .replace(/-+/g, "-");
+    .replace(/\s+(?:pr\s+queue|pull\s+request\s+queue|pr-stewardship|pull\s+request\s+stewardship)\s*$/i, "")
+    .replace(/[\s\/_]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 function factCanonicalLabel(fact: MemoryEntry): string {
@@ -95,12 +96,11 @@ export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map
     if (!f.entity?.trim()) continue;
     const canonical = factCanonicalLabel(f);
     if (!canonical) continue;
-    const ent = f.entity.trim().toLowerCase();
     const k = (f.key ?? "").trim() || "_body";
-    let km = byEntity.get(ent);
+    let km = byEntity.get(canonical);
     if (!km) {
       km = new Map();
-      byEntity.set(ent, km);
+      byEntity.set(canonical, km);
     }
     const prev = km.get(k);
     if (!prev || f.createdAt > prev.createdAt) {
