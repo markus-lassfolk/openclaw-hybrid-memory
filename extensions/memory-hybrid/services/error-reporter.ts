@@ -744,7 +744,13 @@ class GlitchTipReporter {
 
       const pruned = this.prunePendingReportsLocked();
       if (pruned > 0) {
-        await this.persistPendingReportsLocked();
+        try {
+          await this.persistPendingReportsLocked();
+        } catch (persistErr) {
+          logger.warn?.(
+            `[ErrorReporter] Failed persisting pruned queue during load (continuing): ${persistErr instanceof Error ? persistErr.message : String(persistErr)}`,
+          );
+        }
         logger.warn?.(`[ErrorReporter] Pruned ${pruned} oldest pending report(s) during queue load`);
       }
 

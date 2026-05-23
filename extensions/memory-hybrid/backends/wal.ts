@@ -103,7 +103,7 @@ export class WriteAheadLog {
         const entries = await this.readAll();
         this.activeIds = new Set(entries.map((e) => e.id));
       } catch (err) {
-        capturePluginError(err as Error, {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "wal-init",
           subsystem: "wal",
         });
