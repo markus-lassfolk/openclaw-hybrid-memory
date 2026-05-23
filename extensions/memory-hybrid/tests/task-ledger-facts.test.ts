@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
@@ -18,7 +18,9 @@ import {
   factStatusToDisplay,
   groupProjectFactsByEntity,
   loadTaskLedgerFromFacts,
+  loadTaskLedgerFromFactsWithMetrics,
   planActiveTaskHygiene,
+  renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
   taskEntityKey,
   upsertProjectTaskKey,
@@ -412,6 +414,146 @@ describe("task-ledger-facts", () => {
       // incomplete-task has no status key — must be excluded, not defaulted to in-progress.
       expect(allLabels).not.toContain("incomplete-task");
       expect(allLabels).toContain("proper-task");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loadTaskLedgerFromFactsWithMetrics reports fetched rows and collapsed duplicates", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-metrics-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "ship-release",
+        key: "status",
+        value: "open",
+        text: "Task [ship-release] status: open",
+        sourceDate: 1,
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "ship-release",
+        key: "status",
+        value: "in_progress",
+        text: "Task [ship-release] status: in_progress",
+        sourceDate: 2,
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "ship-release",
+        key: "title",
+        value: "Ship the release",
+        text: "Task [ship-release] title: Ship the release",
+        sourceDate: 3,
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "draft-docs",
+        key: "title",
+        value: "Draft docs",
+        text: "Task [draft-docs] title: Draft docs",
+        sourceDate: 4,
+      });
+
+      const result = loadTaskLedgerFromFactsWithMetrics(db);
+      expect(result.active).toHaveLength(1);
+      expect(result.completed).toHaveLength(0);
+      expect(result.metrics).toMatchObject({
+        projectRowsFetched: 4,
+        groupedEntityCount: 2,
+        duplicateRowsCollapsed: 1,
+        activeCandidates: 1,
+        completedCandidates: 0,
+        entitiesSkippedWithoutStatus: 1,
+      });
+      expect(result.metrics.elapsedMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renderActiveTaskMarkdownFile emits projection diagnostics when a logger is provided", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-render-metrics-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const logger = { debug: vi.fn() };
+    try {
+      const staleUpdated = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+      const freshUpdated = new Date().toISOString();
+      for (const [entity, title, updated] of [
+        ["fresh-task", "Fresh task", freshUpdated],
+        ["stale-task", "Stale task", staleUpdated],
+      ] as const) {
+        db.store({
+          category: "project",
+          importance: 0.7,
+          source: "active-task",
+          decayClass: "permanent",
+          entity,
+          key: "title",
+          value: title,
+          text: `Task [${entity}] title: ${title}`,
+        });
+        db.store({
+          category: "project",
+          importance: 0.7,
+          source: "active-task",
+          decayClass: "permanent",
+          entity,
+          key: "status",
+          value: "in_progress",
+          text: `Task [${entity}] status: in_progress`,
+        });
+        db.store({
+          category: "project",
+          importance: 0.7,
+          source: "active-task",
+          decayClass: "permanent",
+          entity,
+          key: "task_updated",
+          value: updated,
+          text: `Task [${entity}] task_updated: ${updated}`,
+        });
+      }
+
+      await renderActiveTaskMarkdownFile(
+        db,
+        60,
+        join(dir, "ACTIVE-TASKS.md"),
+        {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+        logger,
+      );
+
+      expect(logger.debug).toHaveBeenCalledTimes(1);
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.stringContaining("memory-hybrid: active-task projection rowsFetched=6"),
+      );
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("groupedEntities=2"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("activeCandidates=2"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("staleBucketed=1"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("renderedActive=1"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("renderedStale=1"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("elapsedMs="));
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });

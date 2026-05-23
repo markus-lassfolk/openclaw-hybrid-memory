@@ -32,6 +32,8 @@ The projection must not invent “when work started” or “last touch” from 
 
 Per-turn `prependContext` uses the same **readable** projection filters (`excludeGenericTitle`, `titleMinChars`, `dedupeBy`) and optional row caps (`injectionMaxTasks` or `projection.maxRowsPerSection`). Tasks are sorted **non-stale first**, then by relevance to the user message / session, then by **Updated**. Stale rows are detailed in the stale-warning block, not the `<active-tasks>` summary. All blocks share `activeTask.injectionBudget` (default 500 tokens).
 
+When plugin debug logging is enabled, facts-ledger selection and projection emit bounded diagnostics with fetched row counts, grouped entities / duplicate collapse, stale handling, rendered or injected task counts, and elapsed milliseconds. The detailed metrics stay on `debug` to keep normal production logs low-noise.
+
 ## Sections and filters (`activeTask.projection`)
 
 | Key | Meaning |

@@ -98,6 +98,17 @@ export type ActiveTaskProjectionStatus = {
   marker: ActiveTaskProjectionStaleMarker | null;
 };
 
+export type ActiveTaskLedgerSelectionMetrics = {
+  projectRowsFetched: number;
+  rowsDroppedMissingEntityOrCanonical: number;
+  groupedEntityCount: number;
+  duplicateRowsCollapsed: number;
+  activeCandidates: number;
+  completedCandidates: number;
+  entitiesSkippedWithoutStatus: number;
+  elapsedMs: number;
+};
+
 /** Latest value per entity+key from non-superseded project facts.
  *  Entity labels are normalised to lowercase (trim + toLowerCase) so that
  *  case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
@@ -272,10 +283,47 @@ export function loadTaskLedgerFromFacts(
   active: ActiveTaskEntry[];
   completed: ActiveTaskEntry[];
 } {
+  const { active, completed } = loadTaskLedgerFromFactsWithMetrics(factsDb, factLimit, scopeFilter);
+  return { active, completed };
+}
+
+export function loadTaskLedgerFromFactsWithMetrics(
+  factsDb: FactsDB,
+  factLimit = 8000,
+  scopeFilter?: ScopeFilter | null,
+): {
+  active: ActiveTaskEntry[];
+  completed: ActiveTaskEntry[];
+  metrics: ActiveTaskLedgerSelectionMetrics;
+} {
+  const startedAtMs = Date.now();
   // Use targeted query instead of loading all facts then filtering by category (#1553)
   const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
+  // groupProjectFactsByEntity silently drops rows with no entity or no canonical label;
+  // count those separately so duplicateRowsCollapsed only reflects true duplicates.
   const grouped = groupProjectFactsByEntity(facts);
-  return buildTaskEntriesFromGroupedFacts(grouped);
+  const { active, completed } = buildTaskEntriesFromGroupedFacts(grouped);
+  let groupedFactRows = 0;
+  for (const keyMap of grouped.values()) {
+    groupedFactRows += keyMap.size;
+  }
+  // The rows fed to groupProjectFactsByEntity = facts that passed entity/canonical guard.
+  // We infer dropped rows = facts.length - sum of sizes of all keyMaps.
+  // But keyMaps only count unique (entity,key) pairs — so true duplicates are also in groupedFactRows.
+  // Instead: track rows fed to grouping = only rows with entity AND canonicalLabel.
+  // Use canonicalLabel directly to determine eligibility.
+  const eligibleRows = facts.filter((f) => f.entity?.trim() && canonicalLabel(f.entity.trim())).length;
+  const metrics: ActiveTaskLedgerSelectionMetrics = {
+    projectRowsFetched: facts.length,
+    rowsDroppedMissingEntityOrCanonical: facts.length - eligibleRows,
+    groupedEntityCount: grouped.size,
+    duplicateRowsCollapsed: Math.max(0, eligibleRows - groupedFactRows),
+    activeCandidates: active.length,
+    completedCandidates: completed.length,
+    entitiesSkippedWithoutStatus: Math.max(0, grouped.size - active.length - completed.length),
+    elapsedMs: Date.now() - startedAtMs,
+  };
+  return { active, completed, metrics };
 }
 
 export function readActiveTaskRowsFromFacts(
@@ -1297,8 +1345,14 @@ export async function renderActiveTaskMarkdownFile(
   staleMinutes: number,
   filePath: string,
   projection: ActiveTaskProjectionConfig,
+  logger?: { debug?: (message: string) => void },
 ): Promise<void> {
-  let { active, completed } = loadTaskLedgerFromFacts(factsDb, 8000, ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER);
+  const renderStartMs = Date.now();
+  let { active, completed, metrics } = loadTaskLedgerFromFactsWithMetrics(
+    factsDb,
+    8000,
+    ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER,
+  );
   active = applyActiveTaskProjectionFilters(active, projection);
   completed = applyActiveTaskProjectionFilters(completed, projection);
   active = detectStaleTasks(active, staleMinutes);
@@ -1352,6 +1406,9 @@ export async function renderActiveTaskMarkdownFile(
   } catch {
     // Keep render success best-effort even when marker cleanup fails.
   }
+  logger?.debug?.(
+    `memory-hybrid: active-task projection rowsFetched=${metrics.projectRowsFetched} groupedEntities=${metrics.groupedEntityCount} duplicatesCollapsed=${metrics.duplicateRowsCollapsed} activeCandidates=${metrics.activeCandidates} staleBucketed=${staleRaw.length} renderedActive=${capAct.rows.length} renderedStale=${capStale.rows.length} renderedCompleted=${capDone.rows.length} elapsedMs=${Date.now() - renderStartMs}`,
+  );
 }
 
 /**
