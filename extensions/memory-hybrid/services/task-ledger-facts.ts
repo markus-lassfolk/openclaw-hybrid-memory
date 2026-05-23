@@ -5,6 +5,7 @@
 
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
