@@ -58,7 +58,17 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
   const aSrc = typeof a.sourceDate === "number" && Number.isFinite(a.sourceDate) ? a.sourceDate : null;
   const bSrc = typeof b.sourceDate === "number" && Number.isFinite(b.sourceDate) ? b.sourceDate : null;
   if (aSrc !== null && bSrc !== null && aSrc !== bSrc) return bSrc - aSrc;
-  // Final tie-break: lexicographic id comparison (higher id = newer)
+  // When only one fact has a finite sourceDate and createdAt is equal:
+  // - Prefer the fact WITHOUT sourceDate (fresh terminal update from live reconcile
+  //   does not set sourceDate, so no sourceDate = newer write).
+  // - A stale finite sourceDate loses to a fresh write with no sourceDate.
+  if (aSrc !== null && bSrc === null) return 1;
+  if (aSrc === null && bSrc !== null) return -1;
+  // Final tie-break: lexicographic id comparison (higher id = newer).
+  // NOTE: Fact ids are UUIDs (randomUUID v4), so lexicographic ordering is
+  // non-deterministic relative to write order. This is a last-resort tie-break
+  // only; meaningful timestamp collisions should be resolved by createdAt or
+  // sourceDate before reaching here.
   return b.id.localeCompare(a.id);
 }
 

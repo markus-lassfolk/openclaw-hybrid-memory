@@ -1726,7 +1726,6 @@ export async function reconcileActiveTaskLiveState(
   const toFetch = entries.slice(0, maxRequests);
 
   // Fetch live state in parallel, up to budget
-  const ac = new AbortController();
   const outerSignal = signal;
   const fetchPromise = (async () => {
     const results = await Promise.allSettled(
