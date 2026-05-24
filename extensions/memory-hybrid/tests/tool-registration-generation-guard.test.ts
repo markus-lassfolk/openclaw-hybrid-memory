@@ -158,10 +158,9 @@ describe("tool registration generation guard", () => {
       api as never,
     );
     registration.api.registerTool({ name: "memory_recall", execute: vi.fn() } as never, { name: "memory_recall" });
-    registration.api.registerTool(
-      { name: "active_task_checkpoint", execute: vi.fn() } as never,
-      { name: "active_task_checkpoint" },
-    );
+    registration.api.registerTool({ name: "active_task_checkpoint", execute: vi.fn() } as never, {
+      name: "active_task_checkpoint",
+    });
     registration.api.registerTool({ name: "memory_store", execute: vi.fn() } as never, { name: "memory_store" });
     expect(getHybridMemoryRegistrationState().toolExecutorsByName.size).toBeGreaterThan(0);
 

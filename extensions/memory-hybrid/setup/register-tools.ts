@@ -45,7 +45,11 @@ function collectUnregister(disposeCandidates: Array<() => void>, registrationRes
   }
 }
 
-function buildStaleToolSafeResult(toolName: string, ownerGeneration: number, currentGeneration: number): {
+function buildStaleToolSafeResult(
+  toolName: string,
+  ownerGeneration: number,
+  currentGeneration: number,
+): {
   content: Array<{ type: "text"; text: string }>;
   details: Record<string, unknown>;
 } {
