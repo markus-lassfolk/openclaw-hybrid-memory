@@ -119,7 +119,9 @@ describe("registerLifecycleHooks", () => {
     };
 
     registerLifecycleHooks(pluginApi as never, api as never);
-    const beforeCompaction = (api.on as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "before_compaction")?.[1];
+    const beforeCompaction = (api.on as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[0] === "before_compaction",
+    )?.[1];
 
     await beforeCompaction?.({ messageCount: 12, tokenCount: 345 }, { sessionId: "e2e-session", agentId: "e2e-agent" });
     await beforeCompaction?.({ messageCount: 22, tokenCount: 678 }, { sessionId: "e2e-session", agentId: "e2e-agent" });

@@ -41,7 +41,10 @@ describe("lifecycle startup memory checkpoint", () => {
     expect(recallHandler).toBeTypeOf("function");
 
     await recallHandler({ prompt: "recall this startup checkpoint" }, { sessionKey: "agent:main:startup-memory" });
-    await recallHandler({ prompt: "recall this startup checkpoint again" }, { sessionKey: "agent:main:startup-memory" });
+    await recallHandler(
+      { prompt: "recall this startup checkpoint again" },
+      { sessionKey: "agent:main:startup-memory" },
+    );
 
     const startupLogs = api.logger.info.mock.calls
       .reduce<unknown[]>((acc, args) => {

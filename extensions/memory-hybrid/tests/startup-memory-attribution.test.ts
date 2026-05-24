@@ -38,7 +38,10 @@ describe("startup memory attribution", () => {
         acc.push(...args);
         return acc;
       }, [])
-      .find((value): value is string => typeof value === "string" && value.includes("phase=startup.plugin-registration.begin"));
+      .find(
+        (value): value is string =>
+          typeof value === "string" && value.includes("phase=startup.plugin-registration.begin"),
+      );
     expect(bootstrapLog).toBeDefined();
     expect(bootstrapLog).toContain("owner=hybrid-memory");
     expect(bootstrapLog).toContain(`subsystem=${first?.subsystem}`);
