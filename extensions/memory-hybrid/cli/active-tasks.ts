@@ -649,6 +649,7 @@ export function registerActiveTaskCommands(
               log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
             });
             if (liveResult.updatedCount > 0) {
+              await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
               console.log(
                 `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
               );
