@@ -27,12 +27,16 @@ const entries: StartupMemoryCheckpointEntry[] = [];
 let baselineRssBytes: number | null = null;
 
 function getActiveHandlesCount(): number {
+  // Undocumented Node.js internals used for diagnostics-only attribution.
+  // Return -1 when not available on the current runtime.
   const proc = process as NodeJS.Process & { _getActiveHandles?: () => unknown[] };
   if (typeof proc._getActiveHandles !== "function") return -1;
   return proc._getActiveHandles()?.length ?? -1;
 }
 
 function getActiveRequestsCount(): number {
+  // Undocumented Node.js internals used for diagnostics-only attribution.
+  // Return -1 when not available on the current runtime.
   const proc = process as NodeJS.Process & { _getActiveRequests?: () => unknown[] };
   if (typeof proc._getActiveRequests !== "function") return -1;
   return proc._getActiveRequests()?.length ?? -1;
@@ -88,7 +92,7 @@ export function recordStartupMemoryCheckpoint(opts: {
     heapUsedBytes: usage.heapUsed,
     heapTotalBytes: usage.heapTotal,
     externalBytes: usage.external,
-    arrayBuffersBytes: usage.arrayBuffers ?? 0,
+    arrayBuffersBytes: usage.arrayBuffers,
     activeHandles: getActiveHandlesCount(),
     activeRequests: getActiveRequestsCount(),
     tags: opts.tags ?? {},

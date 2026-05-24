@@ -33,8 +33,17 @@ describe("startup memory attribution", () => {
     expect(first?.rssDeltaBytes).toBe(0);
     expect(second?.rssDeltaBytes ?? 0).toBeGreaterThanOrEqual(0);
     expect(getStartupMemoryAttributionEntries()).toHaveLength(2);
-    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("owner=hybrid-memory"));
-    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("subsystem=bootstrap"));
+    const bootstrapLog = logger.info.mock.calls
+      .reduce<unknown[]>((acc, args) => {
+        acc.push(...args);
+        return acc;
+      }, [])
+      .find((value): value is string => typeof value === "string" && value.includes("phase=startup.plugin-registration.begin"));
+    expect(bootstrapLog).toBeDefined();
+    expect(bootstrapLog).toContain("owner=hybrid-memory");
+    expect(bootstrapLog).toContain(`subsystem=${first?.subsystem}`);
+    expect(bootstrapLog).toContain(`operation=${first?.operation}`);
+    expect(bootstrapLog).toContain(`rssDeltaBytes=${first?.rssDeltaBytes}`);
   });
 
   it("deduplicates by onceKey", () => {
