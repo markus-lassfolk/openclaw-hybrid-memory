@@ -907,10 +907,16 @@ export async function upsertProjectTaskKey(
     // entry (which we must not supersede, but an active-task row may still exist), or
     // (c) this is a status write and cache missed (status must not become append-only).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+    const nowSec = Math.floor(Date.now() / 1000);
     // Supersede by canonical label to match grouping logic (strips suffixes, normalizes separators).
     // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
+    // Exclude expired facts to match projection logic (groupProjectFactsByEntity).
     const same = facts.filter(
-      (f) => f.source === "active-task" && canonicalLabel(f.entity ?? "") === canonical && (f.key ?? "") === key,
+      (f) =>
+        f.source === "active-task" &&
+        canonicalLabel(f.entity ?? "") === canonical &&
+        (f.key ?? "") === key &&
+        !(typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec),
     );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
@@ -1161,9 +1167,12 @@ export async function applyActiveTaskHygieneFacts(
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
   const latestByEntityKey = new Map<string, MemoryEntry>();
+  const nowSec = Math.floor(Date.now() / 1000);
   // Only index active-task ledger facts, not memory_store project facts.
+  // Exclude expired facts to match projection logic (groupProjectFactsByEntity).
   for (const fact of factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000)) {
     if (fact.source !== "active-task") continue;
+    if (typeof fact.expiresAt === "number" && Number.isFinite(fact.expiresAt) && fact.expiresAt <= nowSec) continue;
     const entity = fact.entity?.trim().toLowerCase();
     if (!entity) continue;
     const key = (fact.key ?? "").trim();

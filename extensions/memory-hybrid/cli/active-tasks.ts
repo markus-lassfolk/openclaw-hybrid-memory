@@ -866,14 +866,9 @@ export function registerActiveTaskCommands(
           console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
         }
       }
-      await renderActiveTaskMarkdownFile(
-        factsDb,
-        ctx.staleMinutes,
-        ctx.activeTaskFilePath,
-        ctx.projection,
-        undefined,
-        { includeCompleted: opts.includeCompleted === true },
-      );
+      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection, undefined, {
+        includeCompleted: opts.includeCompleted === true,
+      });
       console.log(`✅ Wrote ${ctx.activeTaskFilePath}`);
     });
 }
