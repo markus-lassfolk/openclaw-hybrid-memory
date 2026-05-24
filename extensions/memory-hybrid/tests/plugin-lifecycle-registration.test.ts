@@ -84,11 +84,9 @@ describe("registerLifecycleHooks", () => {
     const lifecycleCtx = buildGuardTestLifecycleContext(tmpDir, factsDb);
     const cfg = buildGuardTestConfig(tmpDir);
     const currentRegistrationGenerationRef = { value: 1 };
-    const unsubscribers: Array<ReturnType<typeof vi.fn>> = [];
+    const unsubscribers: Array<() => void> = [];
     const api = {
-      on: vi.fn((event: string, handler: unknown) => {
-        void event;
-        void handler;
+      on: vi.fn((_event: string, _handler: unknown) => {
         const unsubscribe = vi.fn();
         unsubscribers.push(unsubscribe);
         return unsubscribe;

@@ -96,25 +96,33 @@ function emitCompactionModelWatchdogAlert(
  * Returns a handle for cleanup (dispose).
  */
 export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi): LifecycleHooksHandle {
-  const registrationGeneration = ctx.registrationGeneration ?? 0;
-  const currentRegistrationGenerationRef = ctx.currentRegistrationGenerationRef ?? { value: registrationGeneration };
+  const registrationGeneration = ctx.registrationGeneration ?? -1;
+  const currentRegistrationGenerationRef = ctx.currentRegistrationGenerationRef;
+  if (!currentRegistrationGenerationRef) {
+    api.logger.warn?.(
+      "memory-hybrid: lifecycle generation ref missing; stale hooks may not be blocked on re-registration",
+    );
+  }
+  const effectiveRegistrationGenerationRef = currentRegistrationGenerationRef ?? { value: registrationGeneration };
   const hookUnsubscribers: Array<() => void> = [];
-  const registerGuardedHook = (event: unknown, handler: unknown): void => {
-    if (typeof handler !== "function") {
-      (api.on as (eventName: unknown, callback: unknown) => unknown)(event, handler);
-      return;
-    }
-    const guardedHandler = (...args: unknown[]): unknown => {
-      if (currentRegistrationGenerationRef.value !== registrationGeneration) return undefined;
-      return (handler as (...inner: unknown[]) => unknown)(...args);
-    };
-    const unsubscribe = (api.on as (eventName: unknown, callback: unknown) => unknown)(event, guardedHandler);
+  const trackUnsubscribe = (unsubscribe: unknown): void => {
     if (typeof unsubscribe === "function") {
       hookUnsubscribers.push(unsubscribe as () => void);
     }
   };
+  const registerGuardedHook = (event: unknown, handler: unknown): void => {
+    if (typeof handler !== "function") return;
+    const guardedHandler = (...args: unknown[]): unknown => {
+      if (effectiveRegistrationGenerationRef.value !== registrationGeneration) return undefined;
+      return (handler as (...inner: unknown[]) => unknown)(...args);
+    };
+    const unsubscribe = (api.on as (eventName: unknown, callback: unknown) => unknown)(event, guardedHandler);
+    trackUnsubscribe(unsubscribe);
+  };
   const disposeRegisteredHooks = (): void => {
-    for (const unsubscribe of hookUnsubscribers.splice(0)) {
+    const pendingUnsubscribers = [...hookUnsubscribers];
+    hookUnsubscribers.length = 0;
+    for (const unsubscribe of pendingUnsubscribers) {
       try {
         unsubscribe();
       } catch (err) {
