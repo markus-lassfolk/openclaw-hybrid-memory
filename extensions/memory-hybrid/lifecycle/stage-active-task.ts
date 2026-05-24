@@ -127,6 +127,7 @@ export function registerActiveTaskInjection(
       }
 
       if (activeForInjection.length === 0 && !longRunningBlock) {
+        logStartupProjectionCheckpoint("startup.first-active-task-projection.empty", 0);
         logFactsSelection(0);
         return undefined;
       }
