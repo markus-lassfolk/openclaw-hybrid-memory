@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import { resetStartupMemoryAttributionForTests } from "../services/startup-memory-attribution.js";
 import { runCaptureStage } from "../lifecycle/stage-capture.js";
 import { registerLifecycleHooks } from "../setup/register-hooks.js";
 import { buildGuardTestConfig, buildGuardTestLifecycleContext } from "./helpers/lifecycle-hook-harness.js";
@@ -29,6 +30,7 @@ describe("registerLifecycleHooks", () => {
   });
 
   afterEach(() => {
+    resetStartupMemoryAttributionForTests();
     factsDb.close();
     rmSync(tmpDir, { recursive: true, force: true });
   });
@@ -94,6 +96,7 @@ describe("registerLifecycleHooks", () => {
       logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
       context: { sessionId: "e2e-session", sessionKey: "e2e-session", agentId: "e2e-agent" },
     };
+
     const pluginApi = {
       ...lifecycleCtx,
       cfg,
@@ -150,5 +153,66 @@ describe("registerLifecycleHooks", () => {
     for (const unsubscribe of unsubscribers) {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("logs first agent_end compaction checkpoint with subsystem attribution", async () => {
+    const lifecycleCtx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const cfg = buildGuardTestConfig(tmpDir);
+
+    const api = {
+      on: vi.fn(),
+      resolvePath: (p: string) => p,
+      logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+      context: { sessionId: "e2e-session", agentId: "e2e-agent" },
+    };
+
+    const pluginApi = {
+      ...lifecycleCtx,
+      cfg,
+      embeddingRegistry: null,
+      credentialsDb: null,
+      aliasDb: null,
+      wal: null,
+      proposalsDb: null,
+      eventLog: null,
+      narrativesDb: null,
+      workflowStore: null,
+      issueStore: null,
+      crystallizationStore: null,
+      toolProposalStore: null,
+      verificationStore: null,
+      variantQueue: null,
+      pythonBridge: null,
+      apitapStore: null,
+      auditStore: null,
+      agentHealthStore: null,
+      provenanceService: null,
+      timers: { proposalsPruneTimer: { value: null } },
+      buildToolScopeFilter: () => undefined,
+      runReflection: vi.fn(),
+      runReflectionRules: vi.fn(),
+      runReflectionMeta: vi.fn(),
+      registrationGeneration: 1,
+      currentRegistrationGenerationRef: { value: 1 },
+    };
+
+    registerLifecycleHooks(pluginApi as never, api as never);
+    const beforeCompaction = (api.on as ReturnType<typeof vi.fn>).mock.calls.find(
+      (c) => c[0] === "before_compaction",
+    )?.[1];
+
+    await beforeCompaction?.({ messageCount: 12, tokenCount: 345 }, { sessionId: "e2e-session", agentId: "e2e-agent" });
+    await beforeCompaction?.({ messageCount: 22, tokenCount: 678 }, { sessionId: "e2e-session", agentId: "e2e-agent" });
+
+    const startupLogs = api.logger.info.mock.calls
+      .reduce<unknown[]>((acc, args) => {
+        acc.push(...args);
+        return acc;
+      }, [])
+      .filter((value): value is string => typeof value === "string")
+      .filter((msg) => msg.includes("startup-memory-checkpoint") && msg.includes("subsystem=compaction"));
+
+    expect(startupLogs).toHaveLength(1);
+    expect(startupLogs[0]).toContain("operation=first-agent-end-compaction");
   });
 });

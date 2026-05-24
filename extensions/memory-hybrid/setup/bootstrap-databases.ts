@@ -30,6 +30,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { installCoreBootstrapServices, installOptionalBootstrapServices } from "../services/index.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
+import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { invalidateClusterCache } from "../services/retrieval-orchestrator.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
@@ -185,6 +186,18 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
 
+  recordStartupMemoryCheckpoint({
+    logger: api.logger,
+    subsystem: "bootstrap",
+    operation: "plugin-registration",
+    phase: "startup.plugin-registration.begin",
+    onceKey: "startup.plugin-registration.begin",
+    tags: {
+      sqlitePath: resolvedSqlitePath,
+      lancedbPath: resolvedLancePath,
+    },
+  });
+
   patchEmbeddingEndpointFromGatewayProviders(cfg, api);
 
   const { factsDb, edictStore, vectorDb, embeddings, embeddingRegistry } = installCoreBootstrapServices({
@@ -192,6 +205,20 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     api,
     resolvedSqlitePath,
     resolvedLancePath,
+  });
+
+  recordStartupMemoryCheckpoint({
+    logger: api.logger,
+    subsystem: "bootstrap",
+    operation: "plugin-registration",
+    phase: "startup.plugin-registration.after-bootstrap",
+    onceKey: "startup.plugin-registration.after-bootstrap",
+    tags: {
+      sqlitePath: resolvedSqlitePath,
+      lancedbPath: resolvedLancePath,
+      lancedbInitialized: typeof vectorDb.isInitialized === "function" ? vectorDb.isInitialized() : undefined,
+      lancedbOpenReaders: typeof vectorDb.getOpenReaderCount === "function" ? vectorDb.getOpenReaderCount() : undefined,
+    },
   });
 
   // Merge gateway provider keys into plugin llm.providers BEFORE auto-derivation so canRoute
