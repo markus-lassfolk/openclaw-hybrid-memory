@@ -60,6 +60,7 @@ function detectCategory(text: string): MemoryCategory {
 }
 
 const runtimeRef: { value: PluginRuntime | null } = { value: null };
+const registrationGenerationRef: { value: number } = { value: 0 };
 
 /** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
 async function performHybridMemCliTeardown(): Promise<void> {
@@ -175,6 +176,9 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     });
     throw err;
   }
+
+  const registrationGeneration = registrationGenerationRef.value + 1;
+  registrationGenerationRef.value = registrationGeneration;
 
   if (old) {
     // Clear old timer handles to prevent leaks.
@@ -400,6 +404,8 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     restartPendingClearedRef: runtime.restartPendingClearedRef,
     recallInFlightRef: runtime.recallInFlightRef,
     lastAutoRecallPromptRef: runtime.lastAutoRecallPromptRef,
+    registrationGeneration,
+    currentRegistrationGenerationRef: registrationGenerationRef,
     pendingLLMWarnings: runtime.pendingLLMWarnings,
     resolvedSqlitePath: runtime.resolvedSqlitePath,
     timers: { proposalsPruneTimer: runtime.timers.proposalsPruneTimer },
