@@ -43,6 +43,7 @@ import type { PythonBridge } from "../services/python-bridge.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
+import type { ToolRegistrationHandle } from "../setup/register-tools.js";
 
 /** All mutable per-instance state for the memory-hybrid plugin. */
 export interface PluginRuntime {
@@ -88,6 +89,8 @@ export interface PluginRuntime {
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
   lifecycleHooksHandle: LifecycleHooksHandle | null;
+  /** Handle returned by registerTools; set after tool registration, null until then. */
+  toolRegistrationHandle: ToolRegistrationHandle | null;
   /**
    * Resolves when async bootstrap work from `initializeDatabases` finishes (embedding/vault checks, etc.).
    * Used to sequence CLI teardown so we do not close DBs while init I/O is still running (Issue #1039).

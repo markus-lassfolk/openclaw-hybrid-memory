@@ -29,6 +29,7 @@ import {
   applyGatewayEmbeddingInheritanceBeforeParse,
   shallowClonePluginConfigForGatewayMerge,
 } from "./provider-router.js";
+import { getHybridMemoryRegistrationState } from "./hybrid-memory-generation-state.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
@@ -61,6 +62,7 @@ function detectCategory(text: string): MemoryCategory {
 }
 
 const runtimeRef: { value: PluginRuntime | null } = { value: null };
+const registrationGenerationRef = getHybridMemoryRegistrationState().registrationGenerationRef;
 
 /** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
 async function performHybridMemCliTeardown(): Promise<void> {
@@ -84,6 +86,14 @@ async function performHybridMemCliTeardown(): Promise<void> {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",
       operation: "hybrid-mem-teardown:dispose-hooks",
+    });
+  }
+  try {
+    r.toolRegistrationHandle?.dispose();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "hybrid-mem-teardown:dispose-tools",
     });
   }
   try {
@@ -177,6 +187,9 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     throw err;
   }
 
+  const registrationGeneration = registrationGenerationRef.value + 1;
+  registrationGenerationRef.value = registrationGeneration;
+
   if (old) {
     // Clear old timer handles to prevent leaks.
     clearRuntimeTimers(old.timers);
@@ -184,6 +197,8 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     old.lifecycleHooksHandle?.dispose();
     // Issue #1630: Reset startup memory attribution so the new plugin generation can record fresh checkpoints.
     resetStartupMemoryAttribution();
+    // Dispose tool registrations when API exposes unregister/dispose handles.
+    old.toolRegistrationHandle?.dispose();
     // Close SQLite/Lance and related stores before opening new connections (issue #802 — same paths must not be double-opened).
     closeOldDatabases({
       factsDb: old.factsDb,
@@ -362,6 +377,7 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     auditStore,
     agentHealthStore,
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
+    toolRegistrationHandle: null, // set after registerTools below
     bootstrapAsyncInit: dbContext.initialized,
     pendingLLMWarnings: createPendingLLMWarnings(),
     currentAgentIdRef: { value: null },
@@ -403,6 +419,8 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     restartPendingClearedRef: runtime.restartPendingClearedRef,
     recallInFlightRef: runtime.recallInFlightRef,
     lastAutoRecallPromptRef: runtime.lastAutoRecallPromptRef,
+    registrationGeneration,
+    currentRegistrationGenerationRef: registrationGenerationRef,
     pendingLLMWarnings: runtime.pendingLLMWarnings,
     resolvedSqlitePath: runtime.resolvedSqlitePath,
     timers: { proposalsPruneTimer: runtime.timers.proposalsPruneTimer },
@@ -425,7 +443,7 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Tools
 
   try {
-    registerTools(pluginContext, logApi);
+    runtime.toolRegistrationHandle = registerTools(pluginContext, logApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",

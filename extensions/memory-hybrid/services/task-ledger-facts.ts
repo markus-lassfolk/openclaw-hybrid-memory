@@ -878,7 +878,7 @@ export function buildFactsSectionedMarkdownBody(
 }
 
 export function taskEntityKey(entity: string, key: string): string {
-  return `${entity}\u0000${key}`;
+  return `${canonicalLabel(entity)}\u0000${key.trim()}`;
 }
 
 export async function upsertProjectTaskKey(
@@ -902,14 +902,21 @@ export async function upsertProjectTaskKey(
   // memory_store rows must never be retired by active-task checkpoints.
   if (cached?.source === "active-task") {
     previous = cached;
-  } else if (!opts?.latestByEntityKey || cached) {
+  } else if (!opts?.latestByEntityKey || cached || key === "status") {
     // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
-    // entry (which we must not supersede, but an active-task row may still exist).
+    // entry (which we must not supersede, but an active-task row may still exist), or
+    // (c) this is a status write and cache missed (status must not become append-only).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+    const nowSec = Math.floor(Date.now() / 1000);
     // Supersede by canonical label to match grouping logic (strips suffixes, normalizes separators).
     // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
+    // Exclude expired facts to match projection logic (groupProjectFactsByEntity).
     const same = facts.filter(
-      (f) => f.source === "active-task" && canonicalLabel(f.entity ?? "") === canonical && (f.key ?? "") === key,
+      (f) =>
+        f.source === "active-task" &&
+        canonicalLabel(f.entity ?? "") === canonical &&
+        (f.key ?? "") === key &&
+        !(typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec),
     );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
@@ -1160,9 +1167,12 @@ export async function applyActiveTaskHygieneFacts(
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
   const latestByEntityKey = new Map<string, MemoryEntry>();
+  const nowSec = Math.floor(Date.now() / 1000);
   // Only index active-task ledger facts, not memory_store project facts.
+  // Exclude expired facts to match projection logic (groupProjectFactsByEntity).
   for (const fact of factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000)) {
     if (fact.source !== "active-task") continue;
+    if (typeof fact.expiresAt === "number" && Number.isFinite(fact.expiresAt) && fact.expiresAt <= nowSec) continue;
     const entity = fact.entity?.trim().toLowerCase();
     if (!entity) continue;
     const key = (fact.key ?? "").trim();
@@ -1267,15 +1277,17 @@ export async function renderActiveTaskMarkdownFile(
   filePath: string,
   projection: ActiveTaskProjectionConfig,
   logger?: { debug?: (message: string) => void },
+  opts: { includeCompleted?: boolean } = {},
 ): Promise<void> {
   const renderStartMs = Date.now();
+  const includeCompleted = opts.includeCompleted === true;
   let { active, completed, metrics } = loadTaskLedgerFromFactsWithMetrics(
     factsDb,
     8000,
     ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER,
   );
   active = applyActiveTaskProjectionFilters(active, projection);
-  completed = applyActiveTaskProjectionFilters(completed, projection);
+  completed = includeCompleted ? applyActiveTaskProjectionFilters(completed, projection) : [];
   active = detectStaleTasks(active, staleMinutes);
 
   const hotRaw = active.filter((t) => !t.stale);
@@ -1316,6 +1328,9 @@ export async function renderActiveTaskMarkdownFile(
     0,
     "",
     "> **Projection** of hybrid-memory `category:project` facts (`activeTask.ledger: facts`). Regenerate via `hybrid-mem active-tasks render`.",
+    includeCompleted
+      ? "> **History mode:** includes terminal rows (`--include-completed`) for audit context."
+      : "> **Default mode:** hides terminal rows; `ACTIVE-TASKS.md` is for active/stale work only. Use `active-tasks render --include-completed` for audit/history.",
     "> **Timestamps:** **Started** / **Updated** use stored fact fields (`started`, `task_started`, `task_updated`, …) or SQLite row times (min / max `createdAt` per task). The render clock is not used. Missing values show as **Unknown** and count as stale under `staleThreshold`.",
     "> **Operators:** Update or close tasks via `memory_store` / project facts; run `hybrid-mem active-tasks reconcile` when session rows are obsolete; then `active-tasks render`. See `docs/ACTIVE-TASKS-PROJECTION.md`.",
     "",
