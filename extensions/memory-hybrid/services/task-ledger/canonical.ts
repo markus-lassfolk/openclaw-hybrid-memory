@@ -48,8 +48,8 @@ export function activeTaskProvenance(canonical: string, existing?: string | null
 }
 
 /** Tie-break comparator: returns negative if a is newer than b, positive if b is newer than a.
- *  Comparison order: createdAt → sourceDate (when finite) → id (lexicographic, stable).
- *  This ensures deterministic selection even when multiple facts share the same timestamp bucket. */
+ *  Comparison order: createdAt → sourceDate (when finite).
+ *  When both timestamps are equal, returns 0 to let the caller decide (last-write-wins). */
 function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
   // Return < 0 when a is newer than b (a should win the slot).
   // createdAt: larger = newer
@@ -61,16 +61,17 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
   // If only one has sourceDate, prefer the one with sourceDate (it's more recent)
   if (aSrc !== null && bSrc === null) return -1;
   if (aSrc === null && bSrc !== null) return 1;
-  // Lexicographic id tie-break: larger id = newer write (deterministic, stable).
-  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+  // No meaningful tie-break available: facts have equal timestamps.
+  // Return 0 to signal a tie; caller uses last-write-wins semantics.
+  return 0;
 }
 
 /** Latest value per entity+key from non-superseded project facts.
  *  Entity labels are normalized via factCanonicalLabel() (provenance-aware + trim + toLowerCase + suffix/separator cleanup)
  *  so that case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group.
- *  When multiple facts for the same entity+key land in the same timestamp bucket, a deterministic
- *  tie-break (sourceDate then id) ensures newer writes always win — terminal status updates will
- *  not be silently dropped behind earlier non-terminal facts with equal createdAt. */
+ *  When multiple facts for the same entity+key have equal timestamps, last-write-wins ensures
+ *  newer writes always win — terminal status updates will not be silently dropped behind earlier
+ *  non-terminal facts with equal createdAt. */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
   for (const f of facts) {
@@ -84,7 +85,7 @@ export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map
       byEntity.set(canonical, km);
     }
     const prev = km.get(k);
-    if (!prev || factNewerThan(f, prev) < 0) {
+    if (!prev || factNewerThan(f, prev) <= 0) {
       km.set(k, f);
     }
   }
