@@ -28,6 +28,7 @@ import {
   planActiveTaskHygiene,
   readActiveTaskRowsFromFacts,
   reconcileActiveTaskInProgressSessionsFacts,
+  reconcileActiveTaskLiveState,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
@@ -632,15 +633,34 @@ export function registerActiveTaskCommands(
         );
         if (result.reconciledLabels.length === 0) {
           console.log("✅ No orphan in-progress subagent tasks to reconcile.");
-          return;
+        } else {
+          if (opts.dryRun) {
+            console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
+            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+          } else {
+            console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
+            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+          }
         }
-        if (opts.dryRun) {
-          console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
-          for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
-          return;
+        if (!opts.dryRun) {
+          try {
+            const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+              maxRequests: 20,
+              log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+            });
+            if (liveResult.updatedCount > 0) {
+              console.log(
+                `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+              );
+            } else {
+              console.log(
+                `✅ Live-state reconcile: no terminal states found (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+              );
+            }
+          } catch (liveErr) {
+            console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+          }
         }
-        console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
-        for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
         return;
       }
 
