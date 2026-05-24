@@ -3,7 +3,7 @@ import type { EventLog } from "../../backends/event-log.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
 
-// TODO(issue-1633): Deduplicate stale background-task completion notices after parent review
+// TODO(#1633): Deduplicate stale background-task completion notices after parent review
 import { chatCompleteWithRetry, is500OrWrapped, isAbortOrTransientLlmError } from "../../services/chat.js";
 import { CostFeature } from "../../services/cost-feature-labels.js";
 import { capturePluginError } from "../../services/error-reporter.js";
