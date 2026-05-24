@@ -47,10 +47,17 @@ export function activeTaskProvenance(canonical: string, existing?: string | null
   return JSON.stringify(base);
 }
 
+function readFactRowid(fact: MemoryEntry): number | null {
+  const rowid = (fact as MemoryEntry & { rowid?: unknown; _rowid?: unknown }).rowid;
+  if (typeof rowid === "number" && Number.isFinite(rowid)) return rowid;
+  const fallback = (fact as MemoryEntry & { _rowid?: unknown })._rowid;
+  return typeof fallback === "number" && Number.isFinite(fallback) ? fallback : null;
+}
+
 /** Tie-break comparator: returns negative if a is newer than b, positive if b is newer than a.
- *  Comparison order: createdAt → sourceDate (when finite) → id (lexicographic).
- *  The id tie-break ensures deterministic ordering when timestamps are equal. */
-function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
+ *  Comparison order: createdAt → sourceDate (when both finite) → rowid (when available) → insertion order.
+ *  Rowid/insertion-order fallback provides stable last-write wins semantics for timestamp ties. */
+function factNewerThan(a: MemoryEntry, b: MemoryEntry, aOrder: number, bOrder: number): number {
   // Return < 0 when a is newer than b (a should win the slot).
   // createdAt: larger = newer
   if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
@@ -59,15 +66,14 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
   const bSrc = typeof b.sourceDate === "number" && Number.isFinite(b.sourceDate) ? b.sourceDate : null;
   if (aSrc !== null && bSrc !== null && aSrc !== bSrc) return bSrc - aSrc;
   // When only one fact has a finite sourceDate and createdAt is equal:
-  // prefer the fact with a finite sourceDate as strictly newer than null.
-  if (aSrc !== null && bSrc === null) return -1;
-  if (aSrc === null && bSrc !== null) return 1;
-  // Final tie-break: lexicographic id comparison (higher id = newer).
-  // NOTE: Fact ids are UUIDs (randomUUID v4), so lexicographic ordering is
-  // non-deterministic relative to write order. This is a last-resort tie-break
-  // only; meaningful timestamp collisions should be resolved by createdAt or
-  // sourceDate before reaching here.
-  return b.id.localeCompare(a.id);
+  // prefer fresh local writes (no sourceDate) over stale external sourceDate events.
+  if (aSrc === null && bSrc !== null) return -1;
+  if (aSrc !== null && bSrc === null) return 1;
+  const aRowid = readFactRowid(a);
+  const bRowid = readFactRowid(b);
+  if (aRowid !== null && bRowid !== null && aRowid !== bRowid) return bRowid - aRowid;
+  // Last-resort deterministic tie-break when rowid is unavailable.
+  return bOrder - aOrder;
 }
 
 /** Latest value per entity+key from non-superseded project facts.
@@ -78,19 +84,29 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
  *  non-terminal facts with equal createdAt. */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
-  for (const f of facts) {
+  const winnerOrderByEntity = new Map<string, Map<string, number>>();
+  for (const [idx, f] of facts.entries()) {
     if (!f.entity?.trim()) continue;
     const canonical = factCanonicalLabel(f);
     if (!canonical) continue;
     const k = (f.key ?? "").trim() || "_body";
     let km = byEntity.get(canonical);
+    let winnerOrders = winnerOrderByEntity.get(canonical);
     if (!km) {
       km = new Map();
       byEntity.set(canonical, km);
+      winnerOrders = new Map();
+      winnerOrderByEntity.set(canonical, winnerOrders);
+    }
+    if (!winnerOrders) {
+      winnerOrders = new Map();
+      winnerOrderByEntity.set(canonical, winnerOrders);
     }
     const prev = km.get(k);
-    if (!prev || factNewerThan(f, prev) <= 0) {
+    const prevOrder = winnerOrders.get(k) ?? Number.NEGATIVE_INFINITY;
+    if (!prev || factNewerThan(f, prev, idx, prevOrder) < 0) {
       km.set(k, f);
+      winnerOrders.set(k, idx);
     }
   }
   return byEntity;

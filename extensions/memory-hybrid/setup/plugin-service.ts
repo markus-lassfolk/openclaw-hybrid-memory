@@ -828,6 +828,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               });
               reconciledLabels = r.reconciledLabels;
               wrote = r.wrote;
+              // Gate is intentional: live GitHub reconciliation only runs when explicitly enabled in config.
               if (cfg.activeTask.liveStateReconcile.enabled) {
                 try {
                   const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {

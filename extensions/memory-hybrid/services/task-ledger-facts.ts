@@ -5,7 +5,7 @@
 
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
+import { execFile as execFileAsync } from "node:child_process/promises";
 import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
@@ -13,7 +13,6 @@ import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
-import { execFile } from "../utils/process-runner.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
@@ -43,7 +42,6 @@ import {
   readCanonicalLabelFromFact,
 } from "./task-ledger/canonical.js";
 
-const execFileAsync = promisify(execFile);
 export {
   canonicalLabel,
   displayStatusToFact,
@@ -1587,20 +1585,48 @@ interface LiveStateRef {
 type LiveStateFetchStatus = "merged" | "closed" | "open" | "unknown" | "unavailable";
 
 const LIVE_STATE_GH_TIMEOUT_MS = 20_000;
+let liveStateBudgetCursor = 0;
 
 function hasGitHubToken(): boolean {
   return (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim().length > 0;
 }
 
 async function runGhJsonCommand(args: string[], signal?: AbortSignal): Promise<unknown> {
-  const { stdout } = (await execFileAsync("gh", args, {
-    encoding: "utf-8",
-    signal,
-    timeout: LIVE_STATE_GH_TIMEOUT_MS,
-  })) as { stdout?: string };
-  const raw = typeof stdout === "string" ? stdout.trim() : "";
-  if (!raw) return null;
-  return JSON.parse(raw);
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), LIVE_STATE_GH_TIMEOUT_MS);
+  const onAbort = (): void => ac.abort();
+  if (signal) {
+    if (signal.aborted) ac.abort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      encoding: "utf-8",
+      signal: ac.signal,
+      timeout: LIVE_STATE_GH_TIMEOUT_MS,
+    });
+    const raw = typeof stdout === "string" ? stdout.trim() : "";
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } finally {
+    clearTimeout(timeout);
+    if (signal) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function selectRoundRobinEntries<T>(entries: T[], maxRequests: number): T[] {
+  if (entries.length === 0 || maxRequests <= 0) return [];
+  if (entries.length <= maxRequests) {
+    liveStateBudgetCursor = 0;
+    return entries;
+  }
+  const start = ((liveStateBudgetCursor % entries.length) + entries.length) % entries.length;
+  const selected: T[] = [];
+  for (let i = 0; i < maxRequests; i++) {
+    selected.push(entries[(start + i) % entries.length]);
+  }
+  liveStateBudgetCursor = (start + maxRequests) % entries.length;
+  return selected;
 }
 
 /** Extract "owner/repo#N" references from a task label or description.
@@ -1663,7 +1689,7 @@ async function fetchLiveIssueState(
   repo: string,
   issueNumber: number,
   signal?: AbortSignal,
-): Promise<"closed" | "open" | "unknown" | "unavailable"> {
+): Promise<LiveStateFetchStatus> {
   if (!hasGitHubToken()) return "unavailable";
   try {
     const payload = await runGhJsonCommand(
@@ -1689,9 +1715,8 @@ async function fetchLiveIssueState(
  *  - If live state is non-terminal/unknown, leave the task unchanged.
  *
  *  This is intended to run during normal reconcile/hygiene/render cycles when enabled.
- *  The function is safe to call
- *  repeatedly: it only writes when the live state differs from the local task status,
- *  and it degrades gracefully when GitHub is unavailable.
+ *  The function is safe to call repeatedly: it only checkpoints terminal
+ *  live-state transitions (merged/closed) and degrades gracefully when GitHub is unavailable.
  *
  *  Returns the number of tasks that were updated (for telemetry).
  */
@@ -1727,7 +1752,7 @@ export async function reconcileActiveTaskLiveState(
   }
 
   const entries = [...refMap.entries()];
-  const toFetch = entries.slice(0, maxRequests);
+  const toFetch = selectRoundRobinEntries(entries, maxRequests);
   skippedCount += Math.max(0, entries.length - toFetch.length);
 
   // Fetch live state in parallel, up to budget

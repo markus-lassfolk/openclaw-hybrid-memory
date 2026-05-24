@@ -2,6 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+
+const execFileMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process/promises", () => ({ execFile: execFileMock }));
+
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
@@ -20,6 +24,7 @@ import {
   loadTaskLedgerFromFacts,
   loadTaskLedgerFromFactsWithMetrics,
   planActiveTaskHygiene,
+  reconcileActiveTaskLiveState,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
   taskEntityKey,
@@ -39,6 +44,53 @@ function fact(partial: Partial<MemoryEntry> & { id: string; entity: string; key:
     confidence: 1,
     ...partial,
   } as MemoryEntry;
+}
+
+function activeTaskStubs(): { vectorDb: VectorDB; embeddings: EmbeddingProvider } {
+  return {
+    vectorDb: {
+      hasDuplicate: async () => true,
+      store: async () => {},
+    } as unknown as VectorDB,
+    embeddings: {
+      modelName: "test-model",
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingProvider,
+  };
+}
+
+function storeActiveTaskFactRow(db: FactsDB, entity: string, title: string, status = "in_progress"): void {
+  const nowIso = new Date().toISOString();
+  db.store({
+    category: "project",
+    importance: 0.7,
+    source: "active-task",
+    decayClass: "permanent",
+    entity,
+    key: "title",
+    value: title,
+    text: `Task [${entity}] title: ${title}`,
+  });
+  db.store({
+    category: "project",
+    importance: 0.7,
+    source: "active-task",
+    decayClass: "permanent",
+    entity,
+    key: "status",
+    value: status,
+    text: `Task [${entity}] status: ${status}`,
+  });
+  db.store({
+    category: "project",
+    importance: 0.7,
+    source: "active-task",
+    decayClass: "permanent",
+    entity,
+    key: "task_updated",
+    value: nowIso,
+    text: `Task [${entity}] task_updated: ${nowIso}`,
+  });
 }
 
 describe("task-ledger-facts", () => {
@@ -673,22 +725,21 @@ it("groupProjectFactsByEntity uses sourceDate tie-break when createdAt is equal"
   expect(row?.get("next")?.value).toBe("Closed by live audit");
 });
 
-it("groupProjectFactsByEntity prefers finite sourceDate over null when createdAt is equal", () => {
+it("groupProjectFactsByEntity prefers missing sourceDate over stale sourceDate when createdAt is equal", () => {
   const rows: MemoryEntry[] = [
-    fact({ id: "a1", entity: "proj-source-null", key: "status", value: "in_progress", createdAt: 1000 }),
-    fact({ id: "a2", entity: "proj-source-null", key: "status", value: "done", createdAt: 1000, sourceDate: 1001 }),
+    fact({ id: "a1", entity: "proj-source-null", key: "status", value: "done", createdAt: 1000 }),
+    fact({ id: "a2", entity: "proj-source-null", key: "status", value: "in_progress", createdAt: 1000, sourceDate: 1001 }),
   ];
   const g = groupProjectFactsByEntity(rows);
   const row = g.get("proj-source-null");
   expect(row?.get("status")?.value).toBe("done");
 });
 
-it("groupProjectFactsByEntity uses id tie-break when createdAt and sourceDate are equal", () => {
-  // Id is the final deterministic tie-break; higher lexicographic id wins.
+it("groupProjectFactsByEntity uses insertion order tie-break when createdAt and sourceDate are equal", () => {
+  // Last-write wins by insertion order when timestamps tie and rowid is unavailable.
   const rows: MemoryEntry[] = [
-    // Both have identical createdAt and no sourceDate; id "b1" > "a1", so b1 wins
-    fact({ id: "a1", entity: "proj-tie", key: "status", value: "in_progress", createdAt: 500, sourceDate: undefined }),
-    fact({ id: "b1", entity: "proj-tie", key: "status", value: "done", createdAt: 500, sourceDate: undefined }),
+    fact({ id: "z9", entity: "proj-tie", key: "status", value: "in_progress", createdAt: 500, sourceDate: undefined }),
+    fact({ id: "a1", entity: "proj-tie", key: "status", value: "done", createdAt: 500, sourceDate: undefined }),
   ];
   const g = groupProjectFactsByEntity(rows);
   const row = g.get("proj-tie");
@@ -697,9 +748,7 @@ it("groupProjectFactsByEntity uses id tie-break when createdAt and sourceDate ar
 
 it("groupProjectFactsByEntity keeps terminal status over non-terminal when all timestamps equal", () => {
   // This is the exact bug from #1624: in_progress and done share createdAt.
-  // With the fix, the one with the higher id (b > a) wins — but that means
-  // we need the DONE fact to have the higher id. The test below verifies
-  // that when the terminal fact has the higher id, it wins.
+  // With insertion-order tie-break, the later write wins for each key.
   const rows: MemoryEntry[] = [
     fact({ id: "aa", entity: "proj-1624-bug", key: "status", value: "in_progress", createdAt: 2000 }),
     fact({ id: "bb", entity: "proj-1624-bug", key: "status", value: "done", createdAt: 2000 }),
@@ -708,9 +757,9 @@ it("groupProjectFactsByEntity keeps terminal status over non-terminal when all t
   ];
   const g = groupProjectFactsByEntity(rows);
   const row = g.get("proj-1624-bug");
-  // Status: id "bb" > "aa" so done wins
+  // Status: later "done" write wins.
   expect(row?.get("status")?.value).toBe("done");
-  // Next: id "bb" > "aa" so "Still active..." wins — which is the newer fact for that key
+  // Next: later write for "next" also wins.
   expect(row?.get("next")?.value).toBe("Still active...");
 });
 
@@ -950,4 +999,103 @@ it("terminal status supersession does not supersede title fact created in same s
     db.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+describe("reconcileActiveTaskLiveState", () => {
+  it("parses PR/issue refs correctly and defaults bare owner/repo#N to issue", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-live-state-parse-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const previousToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "test-token";
+    execFileMock.mockReset();
+    execFileMock.mockImplementation(async (_file: string, args: string[]) => {
+      if (args[0] === "pr") {
+        return { stdout: JSON.stringify({ state: "OPEN", mergedAt: null, closedAt: null }) };
+      }
+      return { stdout: JSON.stringify({ state: "OPEN" }) };
+    });
+
+    try {
+      storeActiveTaskFactRow(db, "task-pr", "Track markus-lassfolk/openclaw-hybrid-memory pull request #101");
+      storeActiveTaskFactRow(db, "task-issue-1", "Track markus-lassfolk/openclaw-hybrid-memory issue #102");
+      storeActiveTaskFactRow(db, "task-issue-2", "Track markus-lassfolk/openclaw-hybrid-memory#103");
+
+      const result = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 10 });
+      expect(result.checkedCount).toBe(3);
+      expect(result.updatedCount).toBe(0);
+
+      const calls = execFileMock.mock.calls.map((call) => call[1] as string[]);
+      expect(calls.some((args) => args[0] === "pr" && args[2] === "101")).toBe(true);
+      expect(calls.some((args) => args[0] === "issue" && args[2] === "102")).toBe(true);
+      expect(calls.some((args) => args[0] === "issue" && args[2] === "103")).toBe(true);
+    } finally {
+      process.env.GITHUB_TOKEN = previousToken;
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates live-state checks across runs when budget is smaller than refs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-live-state-budget-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const previousToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "test-token";
+    execFileMock.mockReset();
+    const queriedNumbers: number[] = [];
+    execFileMock.mockImplementation(async (_file: string, args: string[]) => {
+      queriedNumbers.push(Number(args[2] ?? 0));
+      return { stdout: JSON.stringify({ state: "OPEN" }) };
+    });
+
+    try {
+      storeActiveTaskFactRow(db, "task-1", "Track markus-lassfolk/openclaw-hybrid-memory#201");
+      storeActiveTaskFactRow(db, "task-2", "Track markus-lassfolk/openclaw-hybrid-memory#202");
+      storeActiveTaskFactRow(db, "task-3", "Track markus-lassfolk/openclaw-hybrid-memory#203");
+
+      const run1 = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 1 });
+      const run2 = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 1 });
+      const run3 = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 1 });
+
+      expect(run1.checkedCount).toBe(1);
+      expect(run2.checkedCount).toBe(1);
+      expect(run3.checkedCount).toBe(1);
+      expect(queriedNumbers).toEqual([201, 202, 203]);
+    } finally {
+      process.env.GITHUB_TOKEN = previousToken;
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks all tasks done for a shared terminal PR ref", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-live-state-terminal-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const previousToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "test-token";
+    execFileMock.mockReset();
+    execFileMock.mockImplementation(async () => {
+      return { stdout: JSON.stringify({ state: "CLOSED", mergedAt: "2026-01-01T00:00:00Z", closedAt: "2026-01-01T00:00:00Z" }) };
+    });
+
+    try {
+      storeActiveTaskFactRow(db, "task-a", "Follow markus-lassfolk/openclaw-hybrid-memory pull request #301");
+      storeActiveTaskFactRow(db, "task-b", "Also track markus-lassfolk/openclaw-hybrid-memory pull request #301");
+
+      const result = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 10 });
+      expect(result.checkedCount).toBe(1);
+      expect(result.updatedCount).toBe(2);
+
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      expect(active.some((t) => t.label === "task-a" || t.label === "task-b")).toBe(false);
+      expect(completed.some((t) => t.label === "task-a" && t.status === "Done")).toBe(true);
+      expect(completed.some((t) => t.label === "task-b" && t.status === "Done")).toBe(true);
+    } finally {
+      process.env.GITHUB_TOKEN = previousToken;
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
