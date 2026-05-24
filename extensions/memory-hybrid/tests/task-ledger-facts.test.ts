@@ -1040,11 +1040,12 @@ describe("reconcileActiveTaskLiveState", () => {
     const previousToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = "test-token";
     execFileMock.mockReset();
-    execFileMock.mockImplementation(async (_file: string, args: string[]) => {
+    execFileMock.mockImplementation((_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
       if (args[0] === "pr") {
-        return { stdout: JSON.stringify({ state: "OPEN", mergedAt: null, closedAt: null }) };
+        cb(null, { stdout: JSON.stringify({ state: "OPEN", mergedAt: null, closedAt: null }) });
+      } else {
+        cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
       }
-      return { stdout: JSON.stringify({ state: "OPEN" }) };
     });
 
     try {
@@ -1075,9 +1076,9 @@ describe("reconcileActiveTaskLiveState", () => {
     process.env.GITHUB_TOKEN = "test-token";
     execFileMock.mockReset();
     const queriedNumbers: number[] = [];
-    execFileMock.mockImplementation(async (_file: string, args: string[]) => {
+    execFileMock.mockImplementation((_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
       queriedNumbers.push(Number(args[2] ?? 0));
-      return { stdout: JSON.stringify({ state: "OPEN" }) };
+      cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
     });
 
     try {
@@ -1107,10 +1108,8 @@ describe("reconcileActiveTaskLiveState", () => {
     const previousToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = "test-token";
     execFileMock.mockReset();
-    execFileMock.mockImplementation(async () => {
-      return {
-        stdout: JSON.stringify({ state: "CLOSED", mergedAt: "2026-01-01T00:00:00Z", closedAt: "2026-01-01T00:00:00Z" }),
-      };
+    execFileMock.mockImplementation((_file: string, _args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
+      cb(null, { stdout: JSON.stringify({ state: "CLOSED", mergedAt: "2026-01-01T00:00:00Z", closedAt: "2026-01-01T00:00:00Z" }) });
     });
 
     try {
