@@ -1040,13 +1040,15 @@ describe("reconcileActiveTaskLiveState", () => {
     const previousToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = "test-token";
     execFileMock.mockReset();
-    execFileMock.mockImplementation((_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
-      if (args[0] === "pr") {
-        cb(null, { stdout: JSON.stringify({ state: "OPEN", mergedAt: null, closedAt: null }) });
-      } else {
-        cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
-      }
-    });
+    execFileMock.mockImplementation(
+      (_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
+        if (args[0] === "pr") {
+          cb(null, { stdout: JSON.stringify({ state: "OPEN", mergedAt: null, closedAt: null }) });
+        } else {
+          cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
+        }
+      },
+    );
 
     try {
       storeActiveTaskFactRow(db, "task-pr", "Track markus-lassfolk/openclaw-hybrid-memory pull request #101");
@@ -1076,10 +1078,12 @@ describe("reconcileActiveTaskLiveState", () => {
     process.env.GITHUB_TOKEN = "test-token";
     execFileMock.mockReset();
     const queriedNumbers: number[] = [];
-    execFileMock.mockImplementation((_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
-      queriedNumbers.push(Number(args[2] ?? 0));
-      cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
-    });
+    execFileMock.mockImplementation(
+      (_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
+        queriedNumbers.push(Number(args[2] ?? 0));
+        cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
+      },
+    );
 
     try {
       storeActiveTaskFactRow(db, "task-1", "Track markus-lassfolk/openclaw-hybrid-memory#201");
@@ -1108,9 +1112,17 @@ describe("reconcileActiveTaskLiveState", () => {
     const previousToken = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = "test-token";
     execFileMock.mockReset();
-    execFileMock.mockImplementation((_file: string, _args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
-      cb(null, { stdout: JSON.stringify({ state: "CLOSED", mergedAt: "2026-01-01T00:00:00Z", closedAt: "2026-01-01T00:00:00Z" }) });
-    });
+    execFileMock.mockImplementation(
+      (_file: string, _args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
+        cb(null, {
+          stdout: JSON.stringify({
+            state: "CLOSED",
+            mergedAt: "2026-01-01T00:00:00Z",
+            closedAt: "2026-01-01T00:00:00Z",
+          }),
+        });
+      },
+    );
 
     try {
       storeActiveTaskFactRow(db, "task-a", "Follow markus-lassfolk/openclaw-hybrid-memory pull request #301");

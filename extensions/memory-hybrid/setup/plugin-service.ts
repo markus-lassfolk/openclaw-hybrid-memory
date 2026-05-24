@@ -840,7 +840,12 @@ export function createPluginService(ctx: PluginServiceContext) {
                     api.logger.info?.(
                       `memory-hybrid: live-state reconcile — marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
                     );
-                    await renderActiveTaskMarkdownFile(factsDb, staleMinutes, activeTaskFilePath, cfg.activeTask.projection);
+                    await renderActiveTaskMarkdownFile(
+                      factsDb,
+                      staleMinutes,
+                      activeTaskFilePath,
+                      cfg.activeTask.projection,
+                    );
                   }
                 } catch (liveErr) {
                   api.logger.warn?.(`memory-hybrid: live-state reconcile failed (non-fatal): ${liveErr}`);
