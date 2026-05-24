@@ -1577,7 +1577,6 @@ export interface ReconcileLiveStateOptions {
 }
 
 interface LiveStateRef {
-  label: string;
   owner: string;
   repo: string;
   number: number;
@@ -1743,10 +1742,8 @@ export async function reconcileActiveTaskLiveState(
       }),
     );
     return results
-      .filter(
-        (r): r is PromiseFulfilledResult<{ key: string; ref: LiveStateRef; state: string }> => r.status === "fulfilled",
-      )
-      .map((r) => r.value);
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value as { key: string; ref: LiveStateRef; state: string });
   })();
 
   let fetchedResults: Array<{ key: string; ref: LiveStateRef; state: string }> = [];
