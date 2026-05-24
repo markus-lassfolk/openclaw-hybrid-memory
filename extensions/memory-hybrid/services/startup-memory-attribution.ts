@@ -57,6 +57,11 @@ export function resetStartupMemoryAttributionForTests(): void {
   baselineRssBytes = null;
 }
 
+export function resetStartupMemoryAttribution(): void {
+  emittedOnceKeys.clear();
+  baselineRssBytes = null;
+}
+
 export function getStartupMemoryAttributionEntries(): StartupMemoryCheckpointEntry[] {
   return [...entries];
 }

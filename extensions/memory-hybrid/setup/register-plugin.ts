@@ -16,6 +16,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
+import { resetStartupMemoryAttribution } from "../services/startup-memory-attribution.js";
 import { walRemove, walWrite } from "../services/wal-helpers.js";
 import {
   registerHybridMemCliHelpOnlyWithApi,
@@ -181,6 +182,8 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     clearRuntimeTimers(old.timers);
     // Issue #463: Dispose lifecycle hooks (stale session sweep timer, per-session state)
     old.lifecycleHooksHandle?.dispose();
+    // Issue #1630: Reset startup memory attribution so the new plugin generation can record fresh checkpoints.
+    resetStartupMemoryAttribution();
     // Close SQLite/Lance and related stores before opening new connections (issue #802 — same paths must not be double-opened).
     closeOldDatabases({
       factsDb: old.factsDb,
