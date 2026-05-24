@@ -1616,9 +1616,9 @@ async function fetchLivePrState(
 ): Promise<"merged" | "closed" | "open" | "unknown" | "unavailable"> {
   const token = (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim();
   if (!token) return "unavailable";
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 15_000);
   try {
-    const ac = new AbortController();
-    const timeout = setTimeout(() => ac.abort(), 15_000);
     const outerSignal = signal ?? ac.signal;
     const { stdout } = await execFileAsync(
       "gh",
@@ -1635,7 +1635,6 @@ async function fetchLivePrState(
       ],
       { encoding: "utf-8", signal: outerSignal, timeout: 20_000 },
     );
-    clearTimeout(timeout);
     const state: string = stdout.trim().toUpperCase();
     if (state === "MERGED") return "merged";
     if (state === "CLOSED") return "closed";
@@ -1643,6 +1642,8 @@ async function fetchLivePrState(
     return "unknown";
   } catch {
     return "unknown";
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -1657,20 +1658,21 @@ async function fetchLiveIssueState(
 ): Promise<"closed" | "open" | "unknown" | "unavailable"> {
   const token = (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim();
   if (!token) return "unavailable";
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 15_000);
   try {
-    const ac = new AbortController();
-    const timeout = setTimeout(() => ac.abort(), 15_000);
     const outerSignal = signal ?? ac.signal;
     const { stdout } = await execFileAsync(
       "gh",
       ["issue", "view", String(issueNumber), "--repo", `${owner}/${repo}`, "--json", "state", "--jq", ".state"],
       { encoding: "utf-8", signal: outerSignal, timeout: 20_000 },
     );
-    clearTimeout(timeout);
     const state: string = stdout.trim().toLowerCase();
     return state === "closed" ? "closed" : "open";
   } catch {
     return "unknown";
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

@@ -58,6 +58,9 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
   const aSrc = typeof a.sourceDate === "number" && Number.isFinite(a.sourceDate) ? a.sourceDate : null;
   const bSrc = typeof b.sourceDate === "number" && Number.isFinite(b.sourceDate) ? b.sourceDate : null;
   if (aSrc !== null && bSrc !== null && aSrc !== bSrc) return bSrc - aSrc;
+  // If only one has sourceDate, prefer the one with sourceDate (it's more recent)
+  if (aSrc !== null && bSrc === null) return -1;
+  if (aSrc === null && bSrc !== null) return 1;
   // Lexicographic id tie-break: larger id = newer write (deterministic, stable).
   return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
 }
