@@ -31,7 +31,7 @@ describe("startup memory attribution", () => {
     expect(first).not.toBeNull();
     expect(second).not.toBeNull();
     expect(first?.rssDeltaBytes).toBe(0);
-    expect(second?.rssDeltaBytes ?? 0).toBeGreaterThanOrEqual(0);
+    expect(Number.isFinite(second?.rssDeltaBytes)).toBe(true);
     expect(getStartupMemoryAttributionEntries()).toHaveLength(2);
     const bootstrapLog = logger.info.mock.calls
       .reduce<unknown[]>((acc, args) => {

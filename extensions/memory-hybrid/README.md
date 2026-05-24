@@ -237,7 +237,7 @@ openclaw hybrid-mem vectordb-health
 openclaw hybrid-mem vectordb-health --json
 ```
 
-On startup, hybrid-memory now emits one-time `startup-memory-checkpoint` log lines for plugin registration, first recall, first active-task projection, and first compaction. Each line includes `owner`, `subsystem`, `operation`, RSS bytes/delta, and active handle/request counts for faster attribution during gateway memory pressure incidents.
+Hybrid-memory emits one-time `startup-memory-checkpoint` log lines for plugin registration, first recall, first active-task projection, and first compaction (recorded on the first `before_compaction` hook). Each line includes `owner`, `subsystem`, `operation`, RSS bytes/delta, and active handle/request counts for faster attribution during gateway memory pressure incidents.
 
 Vector search and semantic-cache result materialization are bounded at runtime to prevent unbounded
 Arrow/Lance memory use under heavy recall workloads. The defaults can be tuned via environment

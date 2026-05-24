@@ -55,18 +55,21 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
         const rApi = withHookResolutionApi(api, hookCtx);
         const shouldCaptureFirstRecall = !firstRecallCheckpointCaptured;
-        if (shouldCaptureFirstRecall) {
+        const capturedFirstRecallBegin =
+          shouldCaptureFirstRecall &&
           recordStartupMemoryCheckpoint({
             logger: api.logger,
             subsystem: "auto-recall",
             operation: "first-recall",
             phase: "startup.first-recall.begin",
             onceKey: "startup.first-recall.begin",
-          });
+          }) !== null;
+        if (capturedFirstRecallBegin) {
+          firstRecallCheckpointCaptured = true;
         }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
-          if (shouldCaptureFirstRecall) {
+          if (capturedFirstRecallBegin) {
             recordStartupMemoryCheckpoint({
               logger: api.logger,
               subsystem: "auto-recall",
@@ -77,7 +80,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 resultKind: recallStageResult?.kind ?? "timeout",
               },
             });
-            firstRecallCheckpointCaptured = true;
           }
           if (!recallStageResult) return undefined;
           if (recallStageResult.kind === "degraded") {
@@ -89,7 +91,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
           return inj ?? undefined;
         } catch (err) {
-          if (shouldCaptureFirstRecall) {
+          if (capturedFirstRecallBegin) {
             recordStartupMemoryCheckpoint({
               logger: api.logger,
               subsystem: "auto-recall",
@@ -100,7 +102,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 error: err instanceof Error ? err.name : "unknown",
               },
             });
-            firstRecallCheckpointCaptured = true;
           }
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "recall",
