@@ -69,6 +69,52 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
+          if (!recallStageResult) {
+            if (capturedFirstRecallBegin) {
+              recordStartupMemoryCheckpoint({
+                logger: api.logger,
+                subsystem: "auto-recall",
+                operation: "first-recall",
+                phase: "startup.first-recall.after",
+                onceKey: "startup.first-recall.after",
+                tags: {
+                  resultKind: "timeout",
+                },
+              });
+            }
+            return undefined;
+          }
+          if (recallStageResult.kind === "degraded") {
+            if (capturedFirstRecallBegin) {
+              recordStartupMemoryCheckpoint({
+                logger: api.logger,
+                subsystem: "auto-recall",
+                operation: "first-recall",
+                phase: "startup.first-recall.after",
+                onceKey: "startup.first-recall.after",
+                tags: {
+                  resultKind: recallStageResult.kind,
+                },
+              });
+            }
+            return { prependContext: recallStageResult.prependContext };
+          }
+          if (recallStageResult.kind === "empty") {
+            if (capturedFirstRecallBegin) {
+              recordStartupMemoryCheckpoint({
+                logger: api.logger,
+                subsystem: "auto-recall",
+                operation: "first-recall",
+                phase: "startup.first-recall.after",
+                onceKey: "startup.first-recall.after",
+                tags: {
+                  resultKind: recallStageResult.kind,
+                },
+              });
+            }
+            return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
+          }
+          const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
           if (capturedFirstRecallBegin) {
             recordStartupMemoryCheckpoint({
               logger: api.logger,
@@ -77,18 +123,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
               phase: "startup.first-recall.after",
               onceKey: "startup.first-recall.after",
               tags: {
-                resultKind: recallStageResult?.kind ?? "timeout",
+                resultKind: recallStageResult.kind,
               },
             });
           }
-          if (!recallStageResult) return undefined;
-          if (recallStageResult.kind === "degraded") {
-            return { prependContext: recallStageResult.prependContext };
-          }
-          if (recallStageResult.kind === "empty") {
-            return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
-          }
-          const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
           return inj ?? undefined;
         } catch (err) {
           if (capturedFirstRecallBegin) {
