@@ -9,6 +9,7 @@ import { hybridConfigSchema } from "../config.js";
 import { registerActiveTaskInjection } from "../lifecycle/stage-active-task.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
 import { readActiveTaskFile } from "../services/active-task.js";
+import { resetStartupMemoryAttributionForTests } from "../services/startup-memory-attribution.js";
 import { createMockPluginApi } from "./harness/mock-plugin-api.js";
 
 function parseCfg(overrides: Record<string, unknown>) {
@@ -41,6 +42,7 @@ describe("stage-active-task long-running registration", () => {
   });
 
   afterEach(async () => {
+    resetStartupMemoryAttributionForTests();
     await rm(workspaceRoot, { recursive: true, force: true });
   });
 
@@ -238,5 +240,45 @@ describe("stage-active-task long-running registration", () => {
     } finally {
       factsDb.close();
     }
+  });
+
+  it("emits first active-task projection memory attribution only once", async () => {
+    const cfg = parseCfg({});
+    const ctx = { cfg } as LifecycleContext;
+    const api = createMockPluginApi();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      debug: vi.fn(),
+    };
+    const apiWithLogger = { ...api, logger, context: {} } as unknown as ClawdbotPluginApi;
+
+    registerActiveTaskInjection(apiWithLogger, ctx, activeTaskPath, workspaceRoot);
+
+    await api.emitFirstResult(
+      "before_agent_start",
+      {
+        messages: [{ role: "user", content: "status?" }],
+      },
+      { sessionKey: "agent:forge:main" },
+    );
+    await api.emitFirstResult(
+      "before_agent_start",
+      {
+        messages: [{ role: "user", content: "status again?" }],
+      },
+      { sessionKey: "agent:forge:main" },
+    );
+
+    const startupLogs = logger.info.mock.calls
+      .reduce<unknown[]>((acc, args) => {
+        acc.push(...args);
+        return acc;
+      }, [])
+      .filter((value): value is string => typeof value === "string")
+      .filter((msg) => msg.includes("startup-memory-checkpoint") && msg.includes("subsystem=active-task"));
+
+    expect(startupLogs).toHaveLength(1);
+    expect(startupLogs[0]).toContain("operation=first-projection");
   });
 });

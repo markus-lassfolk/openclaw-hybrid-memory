@@ -16,6 +16,7 @@ import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import {
   buildUnsupportedPerAgentCompactionWarning,
@@ -96,6 +97,7 @@ function emitCompactionModelWatchdogAlert(
  * Returns a handle for cleanup (dispose).
  */
 export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi): LifecycleHooksHandle {
+  let firstAgentEndCompactionCaptured = false;
   let lifecycleContext: LifecycleContext;
   try {
     lifecycleContext = {
@@ -301,6 +303,21 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       api.logger.info?.(
         `memory-hybrid: before_compaction — messages=${msgCount} tokens≈${tokenCount} compacting=${ev.compactingCount ?? "?"}`,
       );
+      if (!firstAgentEndCompactionCaptured) {
+        firstAgentEndCompactionCaptured = true;
+        recordStartupMemoryCheckpoint({
+          logger: api.logger,
+          subsystem: "compaction",
+          operation: "first-agent-end-compaction",
+          phase: "startup.first-agent-end-compaction",
+          onceKey: "startup.first-agent-end-compaction",
+          tags: {
+            messageCount: msgCount,
+            tokenCount,
+            compactingCount: ev.compactingCount ?? "unknown",
+          },
+        });
+      }
 
       let injectedContext = "";
 

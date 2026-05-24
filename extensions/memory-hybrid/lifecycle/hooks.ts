@@ -13,6 +13,7 @@ import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
+import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { createSessionState } from "./session-state.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
@@ -35,6 +36,7 @@ export type { LifecycleContext } from "./types.js";
 export function createLifecycleHooks(ctx: LifecycleContext) {
   const sessionState = createSessionState();
   const staleSweepTimer = createStaleSweepTimer(sessionState);
+  let firstRecallCheckpointCaptured = false;
 
   const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const resolvedActiveTaskPath = isAbsolute(ctx.cfg.activeTask.filePath)
@@ -52,8 +54,31 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     if (ctx.cfg.autoRecall.enabled) {
       api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
         const rApi = withHookResolutionApi(api, hookCtx);
+        const shouldCaptureFirstRecall = !firstRecallCheckpointCaptured;
+        if (shouldCaptureFirstRecall) {
+          recordStartupMemoryCheckpoint({
+            logger: api.logger,
+            subsystem: "auto-recall",
+            operation: "first-recall",
+            phase: "startup.first-recall.begin",
+            onceKey: "startup.first-recall.begin",
+          });
+        }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
+          if (shouldCaptureFirstRecall) {
+            recordStartupMemoryCheckpoint({
+              logger: api.logger,
+              subsystem: "auto-recall",
+              operation: "first-recall",
+              phase: "startup.first-recall.after",
+              onceKey: "startup.first-recall.after",
+              tags: {
+                resultKind: recallStageResult?.kind ?? "timeout",
+              },
+            });
+            firstRecallCheckpointCaptured = true;
+          }
           if (!recallStageResult) return undefined;
           if (recallStageResult.kind === "degraded") {
             return { prependContext: recallStageResult.prependContext };
@@ -64,6 +89,19 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
           return inj ?? undefined;
         } catch (err) {
+          if (shouldCaptureFirstRecall) {
+            recordStartupMemoryCheckpoint({
+              logger: api.logger,
+              subsystem: "auto-recall",
+              operation: "first-recall",
+              phase: "startup.first-recall.error",
+              onceKey: "startup.first-recall.error",
+              tags: {
+                error: err instanceof Error ? err.name : "unknown",
+              },
+            });
+            firstRecallCheckpointCaptured = true;
+          }
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "recall",
             subsystem: "auto-recall",
