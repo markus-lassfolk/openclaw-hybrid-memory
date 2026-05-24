@@ -101,7 +101,10 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry, aOrder: number, bOrder: n
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
   const winnerOrderByEntity = new Map<string, Map<string, number>>();
+  const nowSec = Math.floor(Date.now() / 1000);
   for (const [idx, f] of facts.entries()) {
+    if (typeof f.supersededAt === "number" && Number.isFinite(f.supersededAt)) continue;
+    if (typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec) continue;
     if (!f.entity?.trim()) continue;
     const canonical = factCanonicalLabel(f);
     if (!canonical) continue;

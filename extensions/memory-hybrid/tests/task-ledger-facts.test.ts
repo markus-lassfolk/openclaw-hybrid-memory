@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -116,6 +116,37 @@ describe("task-ledger-facts", () => {
     const t1 = g.get("t1");
     expect(t1?.get("status")?.value).toBe("in_progress");
     expect(t1?.get("title")?.value).toBe("Hello");
+  });
+
+  it("groupProjectFactsByEntity ignores superseded and expired rows when selecting current state", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows: MemoryEntry[] = [
+      fact({ id: "s-old", entity: "task-1633", key: "status", value: "in_progress", createdAt: 100 }),
+      fact({
+        id: "s-superseded",
+        entity: "task-1633",
+        key: "status",
+        value: "done",
+        createdAt: 500,
+        supersededAt: nowSec - 5,
+      }),
+      fact({
+        id: "s-expired",
+        entity: "task-1633",
+        key: "status",
+        value: "waiting",
+        createdAt: 600,
+        expiresAt: nowSec - 1,
+      }),
+      fact({ id: "s-current", entity: "task-1633", key: "status", value: "done", createdAt: 300 }),
+      fact({ id: "t1", entity: "task-1633", key: "title", value: "Close stale projection bug", createdAt: 300 }),
+    ];
+    const grouped = groupProjectFactsByEntity(rows);
+    expect(grouped.get("task-1633")?.get("status")?.id).toBe("s-current");
+    const { active, completed } = buildTaskEntriesFromGroupedFacts(grouped);
+    expect(active).toHaveLength(0);
+    expect(completed).toHaveLength(1);
+    expect(completed[0].label).toBe("task-1633");
   });
 
   it("buildTaskEntriesFromGroupedFacts splits active vs terminal", () => {
@@ -612,6 +643,73 @@ describe("task-ledger-facts", () => {
     }
   });
 
+  it("renderActiveTaskMarkdownFile excludes completed rows by default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-render-default-active-only-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      storeActiveTaskFactRow(db, "active-task-1633", "Active task", "in_progress");
+      storeActiveTaskFactRow(db, "done-task-1633", "Done task", "done");
+
+      const outPath = join(dir, "ACTIVE-TASKS.md");
+      await renderActiveTaskMarkdownFile(
+        db,
+        60,
+        outPath,
+        {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+        undefined,
+      );
+
+      const rendered = await readFile(outPath, "utf-8");
+      expect(rendered).toContain("## Active");
+      expect(rendered).toContain("[active-task-1633]");
+      expect(rendered).not.toContain("## Completed");
+      expect(rendered).not.toContain("[done-task-1633]");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renderActiveTaskMarkdownFile includes completed rows in explicit history mode", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-render-history-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      storeActiveTaskFactRow(db, "active-task-history", "Active task", "in_progress");
+      storeActiveTaskFactRow(db, "done-task-history", "Done task", "done");
+
+      const outPath = join(dir, "ACTIVE-TASKS.md");
+      await renderActiveTaskMarkdownFile(
+        db,
+        60,
+        outPath,
+        {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+        undefined,
+        { includeCompleted: true },
+      );
+
+      const rendered = await readFile(outPath, "utf-8");
+      expect(rendered).toContain("## Active");
+      expect(rendered).toContain("[active-task-history]");
+      expect(rendered).toContain("## Completed");
+      expect(rendered).toContain("[done-task-history]");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("upsertProjectTaskKey does not supersede cached memory_store rows", async () => {
     const dir = await mkdtemp(join(tmpdir(), "task-ledger-upsert-source-filter-"));
     const db = new FactsDB(join(dir, "facts.db"));
@@ -648,6 +746,46 @@ describe("task-ledger-facts", () => {
         .listFactsByCategory("project", 100)
         .filter((row) => row.entity === "proj-1273" && row.key === "status" && row.source === "active-task");
       expect(activeRows.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("upsertProjectTaskKey status writes supersede canonical-variant active-task rows even when cache misses", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-upsert-status-canonical-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const vectorDb = {
+      hasDuplicate: async () => true,
+      store: async () => {},
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "test-model",
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingProvider;
+    try {
+      const prior = db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "proj-1633 pr queue",
+        key: "status",
+        value: "in_progress",
+        text: "Task [proj-1633 pr queue] status: in_progress",
+      });
+
+      await upsertProjectTaskKey(db, vectorDb, embeddings, "proj-1633", "status", "done", undefined, {
+        latestByEntityKey: new Map<string, MemoryEntry>(),
+      });
+
+      const priorAfter = db.getById(prior.id);
+      expect(priorAfter?.supersededBy).toBeTruthy();
+      expect(priorAfter?.supersededAt).toBeTypeOf("number");
+
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      expect(active.some((task) => canonicalLabel(task.label) === "proj-1633")).toBe(false);
+      expect(completed.some((task) => canonicalLabel(task.label) === "proj-1633")).toBe(true);
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });

@@ -838,7 +838,8 @@ export function registerActiveTaskCommands(
     .description(
       "Write ACTIVE-TASKS.md projection from facts ledger (no-op when ledger is markdown; use with activeTask.ledger: facts)",
     )
-    .action(async () => {
+    .option("--include-completed", "Include terminal/completed rows for history/audit output")
+    .action(async (opts: { includeCompleted?: boolean }) => {
       if (ctx.ledger !== "facts") {
         console.log(
           "ℹ️  render applies when activeTask.ledger is 'facts'. With markdown ledger, ACTIVE-TASKS.md is already the source.",
@@ -865,7 +866,14 @@ export function registerActiveTaskCommands(
           console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
         }
       }
-      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+      await renderActiveTaskMarkdownFile(
+        factsDb,
+        ctx.staleMinutes,
+        ctx.activeTaskFilePath,
+        ctx.projection,
+        undefined,
+        { includeCompleted: opts.includeCompleted === true },
+      );
       console.log(`✅ Wrote ${ctx.activeTaskFilePath}`);
     });
 }

@@ -878,7 +878,7 @@ export function buildFactsSectionedMarkdownBody(
 }
 
 export function taskEntityKey(entity: string, key: string): string {
-  return `${entity}\u0000${key}`;
+  return `${canonicalLabel(entity)}\u0000${key.trim()}`;
 }
 
 export async function upsertProjectTaskKey(
@@ -902,9 +902,10 @@ export async function upsertProjectTaskKey(
   // memory_store rows must never be retired by active-task checkpoints.
   if (cached?.source === "active-task") {
     previous = cached;
-  } else if (!opts?.latestByEntityKey || cached) {
+  } else if (!opts?.latestByEntityKey || cached || key === "status") {
     // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
-    // entry (which we must not supersede, but an active-task row may still exist).
+    // entry (which we must not supersede, but an active-task row may still exist), or
+    // (c) this is a status write and cache missed (status must not become append-only).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
     // Supersede by canonical label to match grouping logic (strips suffixes, normalizes separators).
     // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
@@ -1267,15 +1268,17 @@ export async function renderActiveTaskMarkdownFile(
   filePath: string,
   projection: ActiveTaskProjectionConfig,
   logger?: { debug?: (message: string) => void },
+  opts: { includeCompleted?: boolean } = {},
 ): Promise<void> {
   const renderStartMs = Date.now();
+  const includeCompleted = opts.includeCompleted === true;
   let { active, completed, metrics } = loadTaskLedgerFromFactsWithMetrics(
     factsDb,
     8000,
     ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER,
   );
   active = applyActiveTaskProjectionFilters(active, projection);
-  completed = applyActiveTaskProjectionFilters(completed, projection);
+  completed = includeCompleted ? applyActiveTaskProjectionFilters(completed, projection) : [];
   active = detectStaleTasks(active, staleMinutes);
 
   const hotRaw = active.filter((t) => !t.stale);
@@ -1316,6 +1319,9 @@ export async function renderActiveTaskMarkdownFile(
     0,
     "",
     "> **Projection** of hybrid-memory `category:project` facts (`activeTask.ledger: facts`). Regenerate via `hybrid-mem active-tasks render`.",
+    includeCompleted
+      ? "> **History mode:** includes terminal rows (`--include-completed`) for audit context."
+      : "> **Default mode:** hides terminal rows; `ACTIVE-TASKS.md` is for active/stale work only. Use `active-tasks render --include-completed` for audit/history.",
     "> **Timestamps:** **Started** / **Updated** use stored fact fields (`started`, `task_started`, `task_updated`, …) or SQLite row times (min / max `createdAt` per task). The render clock is not used. Missing values show as **Unknown** and count as stale under `staleThreshold`.",
     "> **Operators:** Update or close tasks via `memory_store` / project facts; run `hybrid-mem active-tasks reconcile` when session rows are obsolete; then `active-tasks render`. See `docs/ACTIVE-TASKS-PROJECTION.md`.",
     "",
