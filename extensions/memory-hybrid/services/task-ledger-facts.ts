@@ -5,7 +5,8 @@
 
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { execFile as execFileAsync } from "node:child_process/promises";
+import { promisify } from "node:util";
+import { execFile } from "../utils/process-runner.js";
 import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
@@ -41,6 +42,8 @@ import {
   isTerminalFactStatus,
   readCanonicalLabelFromFact,
 } from "./task-ledger/canonical.js";
+
+const execFileAsync = promisify(execFile);
 
 export {
   canonicalLabel,

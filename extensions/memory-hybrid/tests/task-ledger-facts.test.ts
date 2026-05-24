@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const execFileMock = vi.hoisted(() => vi.fn());
-vi.mock("node:child_process/promises", () => ({ execFile: execFileMock }));
+vi.mock("../utils/process-runner.js", () => ({ execFile: execFileMock }));
 
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
