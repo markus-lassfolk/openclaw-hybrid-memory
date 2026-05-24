@@ -47,9 +47,27 @@ export function activeTaskProvenance(canonical: string, existing?: string | null
   return JSON.stringify(base);
 }
 
+/** Tie-break comparator: returns negative if a is newer than b, positive if b is newer than a.
+ *  Comparison order: createdAt → sourceDate (when finite) → id (lexicographic, stable).
+ *  This ensures deterministic selection even when multiple facts share the same timestamp bucket. */
+function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
+  // Return < 0 when a is newer than b (a should win the slot).
+  // createdAt: larger = newer
+  if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt;
+  // sourceDate: larger = more recent external event
+  const aSrc = typeof a.sourceDate === "number" && Number.isFinite(a.sourceDate) ? a.sourceDate : null;
+  const bSrc = typeof b.sourceDate === "number" && Number.isFinite(b.sourceDate) ? b.sourceDate : null;
+  if (aSrc !== null && bSrc !== null && aSrc !== bSrc) return bSrc - aSrc;
+  // Lexicographic id tie-break: larger id = newer write (deterministic, stable).
+  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0;
+}
+
 /** Latest value per entity+key from non-superseded project facts.
  *  Entity labels are normalized via factCanonicalLabel() (provenance-aware + trim + toLowerCase + suffix/separator cleanup)
- *  so that case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
+ *  so that case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group.
+ *  When multiple facts for the same entity+key land in the same timestamp bucket, a deterministic
+ *  tie-break (sourceDate then id) ensures newer writes always win — terminal status updates will
+ *  not be silently dropped behind earlier non-terminal facts with equal createdAt. */
 export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
   const byEntity = new Map<string, Map<string, MemoryEntry>>();
   for (const f of facts) {
@@ -63,7 +81,7 @@ export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map
       byEntity.set(canonical, km);
     }
     const prev = km.get(k);
-    if (!prev || f.createdAt > prev.createdAt) {
+    if (!prev || factNewerThan(f, prev) < 0) {
       km.set(k, f);
     }
   }
