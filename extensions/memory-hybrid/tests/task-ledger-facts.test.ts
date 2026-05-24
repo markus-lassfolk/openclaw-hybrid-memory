@@ -673,6 +673,16 @@ it("groupProjectFactsByEntity uses sourceDate tie-break when createdAt is equal"
   expect(row?.get("next")?.value).toBe("Closed by live audit");
 });
 
+it("groupProjectFactsByEntity prefers finite sourceDate over null when createdAt is equal", () => {
+  const rows: MemoryEntry[] = [
+    fact({ id: "a1", entity: "proj-source-null", key: "status", value: "in_progress", createdAt: 1000 }),
+    fact({ id: "a2", entity: "proj-source-null", key: "status", value: "done", createdAt: 1000, sourceDate: 1001 }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  const row = g.get("proj-source-null");
+  expect(row?.get("status")?.value).toBe("done");
+});
+
 it("groupProjectFactsByEntity uses id tie-break when createdAt and sourceDate are equal", () => {
   // Id is the final deterministic tie-break; higher lexicographic id wins.
   const rows: MemoryEntry[] = [
