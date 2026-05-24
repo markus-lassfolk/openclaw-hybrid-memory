@@ -25,6 +25,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.5.242] - 2026-05-24
+
+### Changed
+
+- Bump plugin package, plugin manifest, installer package, and lockfile versions to **2026.5.242**.
+- Added release notes for **2026.5.242** at `release-notes/release-notes-2026.5.242.md`.
+
+---
+
 ## [2026.5.241] - 2026-05-24
 
 ### Changed
