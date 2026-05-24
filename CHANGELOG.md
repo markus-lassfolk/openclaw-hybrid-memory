@@ -21,27 +21,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+- Nothing yet.
+
+---
+
+## [2026.5.240] - 2026-05-24
+
 ### Added
 
-- **Auto-skill generation hardening** ([#1537](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1537)–[#1548](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1548)): shared OpenClaw-aligned size limits (`config/skill-size-limits.ts`), bounded `recipe.json` summarization, Skill Creator-compatible YAML frontmatter under `metadata`, actionable workflow synthesis, deterministic usefulness evals (`evals/results.json`), progressive disclosure via `references/workflow.md`, generation diagnostics in `proposal-metadata.json`, `openclaw hybrid-mem skills audit [--quarantine]`, and publish/dist smoke tests in `verify-publish.cjs`.
-- **Skill quality v2 (Anthropic Skill Creator alignment):** gerund `name` + pushy multi-paraphrase `description`, 8+8 `evals/trigger-eval.json`, replay-based functional eval, procedure clustering (`procedure-cluster.ts`), selection metrics (`procedure_too_obvious`, `low_concreteness`), risk-tiered workflows with checklists, concrete Examples, optional `scripts/replay.sh`, `references/telemetry.md`, and validator lint for Windows paths / nested references.
-- **Skill quality v2.1 hardening + Skill Creator gap closures** ([#1538](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1538), [#1539](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1539), [#1540](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1540), [#1545](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1545), [#1546](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1546), [#1548](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1548)):
-  - **Active prompt-injection sanitization** (`services/skill-prompt-injection.ts`): scans + sanitizes recipe text for override-instruction / role-pivot / jailbreak markers; promotion fails closed with `unsafe_trace_content` when the source recipe contained a hard injection marker.
-  - **In-repo Skill Creator `quick_validate` equivalent** (`services/skill-creator-validator.ts`): enforces name/description/top-level-key rules and Windows-path lint as a hard gate; covered by both source and built-`dist` tests.
-  - **Aggressive 96 KB progressive-disclosure target** (`MAX_SKILL_FILE_BYTES_AGGRESSIVE_TARGET`): SKILL.md is offloaded to `references/workflow.md` at ~96 KB instead of waiting for the 200 KB safe target.
-  - **Enriched `evals/results.json` schema** (#1546): now includes `functionalPrompts[]`, `expectedVerification`, `safetyAssertions[]`, `humanReviewRequired`, and `humanReviewReasons[]`.
-  - **`allowed-tools` frontmatter** mined from recipe; preserves MCP-qualified `Server:tool` names per Anthropic guidance.
-  - **`scripts/replay.sh` hardening**: explicit `ERR` trap with line-number reporting (Anthropic "solve, don't punt") and justified-constant comments.
-  - **Recipe stress tests**: 1,000+ step recipes, multibyte UTF-8 content, high-risk tool redaction (`sessions_spawn`, `write`, `exec`), and known secret arg keys (`api_key`, `authorization`, etc.) are all bounded and scrubbed (`tests/skill-quality-hardening.test.ts`).
-  - **Dist import-smoke** (#1548): `verify-publish.cjs` now actually probes for `SkillValidator`, `ACTION_VERB_PATTERN`, `stripLeadingHtmlComments`, `FactsDB`, `quickValidateSkillMarkdown`, `scanRecipeForPromptInjection`, and `sanitizeRecipePromptInjection` in built dist — not just grep for legacy strings.
-  - **`openclaw hybrid-mem skills suggest`** CLI for proactive promotion-candidate triage; surfaces blocking gates + defer-reason histogram so operators can see *why* a procedure is not promoting.
-  - **Aggregate metrics in `generate-auto-skills` JSON**: `summary.clustersMerged` and `summary.defersByReason` for operator visibility.
-- **Active-task prompt injection hardening:** unified `buildActiveTaskContextBundle` (`services/active-task-injection.ts`) applies projection filters, relevance/session sort, optional `injectionMaxTasks` cap, and a shared char budget across `<active-tasks>`, stale warnings, heartbeat task-hygiene, and goal-escalation blocks; context-audit reports ledger vs injected counts.
+- **Active-task live-state reconciliation** ([#1625](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1625), [#1628](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1628)): added an opt-in reconciliation path that can check referenced GitHub issues and PRs during normal active-task render/hygiene flows, then checkpoint terminal rows when the live issue or PR is already closed or merged. This reduces the stale-task window without waiting for the next deep verification pass.
+- **Active-task selection diagnostics** ([#1617](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1617), [#1553](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1607)): added targeted project-fact querying and instrumentation around active-task selection so operators can see how ledger facts collapse into injected rows and where stale candidates are filtered.
+- **Memory pressure diagnostics** ([#1551](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1551), [#1597](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1597)): added a native-memory pressure snapshot to help diagnose recall-budget exhaustion, LanceDB/vector pressure, and fixed-block behavior before it becomes an outage.
+- **FTS and verification repair tools** ([#1601](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1601)): added doctor checks for FTS consistency and safer verified-reconcile delete confirmation, giving operators a clearer path to repair index drift without accidental data loss.
+- **Operator architecture map** ([#1599](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1599)): added a compact operator-facing architecture map for the plugin, making the moving parts easier to inspect during incident response and maintenance.
+- **Auto-skill generation hardening and Skill Creator v2 alignment** ([#1549](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1549)): added stricter generated-skill shape, recipe validation, prompt-injection scanning, aggressive progressive disclosure, eval sidecars, and publish/dist smoke coverage.
 
 ### Changed
 
-- **Procedure promotion:** defers on `insufficient_actionable_workflow`, `recipe_too_large`, `skill_exceeds_openclaw_limit`, `trigger_eval_failed`, `functional_eval_failed`, and `skill_creator_validation_failed`; `SkillValidator` enforces UTF-8 byte budget and rejects legacy raw tool dumps.
-- **Generated `SKILL.md` shape:** ~6 agent-facing sections (telemetry/rollback/provenance moved to sidecars); policy version `procedure-promotion-policy-v3`.
+- **Active-task fact grouping is deterministic** ([#1624](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1624), [#1628](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1628)): task facts with tied timestamps now use stable secondary ordering and terminal-status preference so stale in-progress rows cannot beat a same-bucket done checkpoint.
+- **Capability hints are session-only by default** ([#1604](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1604)): reduced the risk of capability hint content being treated as durable memory or leaking into contexts where it does not belong.
+- **Active-task injection is stricter**: active-task projection now skips stale rows, filters by active-task source, requires a real status key, and canonicalizes fact labels before injection.
+- **Large core areas were split into focused modules** ([#1619](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1619)): refactored conflict-prone core modules so future maintenance and PR repair work can be smaller, more reviewable, and less likely to collide.
+- **Fixed-block and recall-budget handling is more bounded**: added fixed-block caps and context-audit reporting so recall pressure is visible instead of silently consuming the prompt budget.
+- **Plugin, manifest, installer, and lockfile versions** are aligned to **2026.5.240**.
+
+### Fixed
+
+- **Goal lifecycle crash** ([#1623](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1623)): fixed a TypeError in updateGoalOnSubagentEnd that could crash goal finalization when subagent completion data was incomplete.
+- **JSON stdout cleanliness** ([#1618](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1618), [#1621](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1621)): tee output now goes to stderr in JSON mode so scripts can safely parse stdout.
+- **Credential-like fallback storage** ([#1591](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1591), [#1590](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1590)): prevented credential-looking content and credential_get secrets from being captured through normal memory fallback/tool-result paths.
+- **NOOP/classification/artifact memory pollution** ([#1560](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1560), [#1561](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1561), [#1596](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1596), [#1610](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1610)): added universal pre-store guards so classification decisions, NOOP notes, and generated artifacts do not become durable memories.
+- **memory_store validation path** ([#1589](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1589)): added early input validation before WAL, embedding, or DB writes, avoiding partial side effects for invalid input.
+- **Hot/progressive recall self-reinforcement** ([#1559](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1559), [#1595](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1595)): fixed a path where recalled memory blocks could reinforce low-value or garbage memories back into hot/progressive context.
+- **Prompt-injection hardening for recalled memory** ([#1592](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1592)): hardened recalled memory blocks so retrieved facts are presented as data, not executable instructions.
+- **WAL replay and breaker persistence**: fixed WAL replay metadata handling, health checks, and breaker persistence; also prevented WAL replay from globalizing scoped facts ([#1574](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1574), [#1588](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1588)).
+- **Pending error visibility** ([#1600](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1600)): persisted pending error reports and surfaced WAL initialization failures more clearly.
+- **Duplicate SQLite handles** ([#1564](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1564)): prevented duplicate SQLite handles after hybrid-memory plugin re-registration.
+- **PR hygiene accuracy** ([#1555](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1555), [#1598](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1598)): PR hygiene now verifies live review threads before marking a PR as waiting.
+- **Dependency security updates**: bumped qs to 6.15.2 and protobufjs in the plugin dependency tree ([#1612](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1612), [#1613](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1613)).
+
+### Notes
+
+- This release includes the full delta from v2026.5.190 through merged PR #1628.
+- The active-task live-state reconciliation is intentionally bounded and failure-tolerant: missing GitHub credentials or exhausted request budget should degrade to the previous behavior rather than break projection.
 
 ---
 
