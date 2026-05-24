@@ -742,6 +742,30 @@ it("groupProjectFactsByEntity prefers missing sourceDate over stale sourceDate w
   expect(row?.get("status")?.value).toBe("done");
 });
 
+it("groupProjectFactsByEntity preserves terminal status even when it has sourceDate and non-terminal lacks it", () => {
+  // Bug #1624/#1625: terminal status with sourceDate should beat non-terminal without sourceDate
+  const rows: MemoryEntry[] = [
+    fact({
+      id: "a1",
+      entity: "proj-terminal-sourcedate",
+      key: "status",
+      value: "done",
+      createdAt: 1000,
+      sourceDate: 999,
+    }),
+    fact({
+      id: "a2",
+      entity: "proj-terminal-sourcedate",
+      key: "status",
+      value: "in_progress",
+      createdAt: 1000,
+    }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  const row = g.get("proj-terminal-sourcedate");
+  expect(row?.get("status")?.value).toBe("done");
+});
+
 it("groupProjectFactsByEntity uses insertion order tie-break when createdAt and sourceDate are equal", () => {
   // Last-write wins by insertion order when timestamps tie and rowid is unavailable.
   const rows: MemoryEntry[] = [

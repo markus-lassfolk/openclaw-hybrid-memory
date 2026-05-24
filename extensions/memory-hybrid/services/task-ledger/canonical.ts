@@ -66,9 +66,25 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry, aOrder: number, bOrder: n
   const bSrc = typeof b.sourceDate === "number" && Number.isFinite(b.sourceDate) ? b.sourceDate : null;
   if (aSrc !== null && bSrc !== null && aSrc !== bSrc) return bSrc - aSrc;
   // When only one fact has a finite sourceDate and createdAt is equal:
-  // prefer fresh local writes (no sourceDate) over stale external sourceDate events.
-  if (aSrc === null && bSrc !== null) return -1;
-  if (aSrc !== null && bSrc === null) return 1;
+  // Check if this is a status comparison where one is terminal and the other is not.
+  // Terminal status should always win, regardless of sourceDate.
+  if ((aSrc === null) !== (bSrc === null)) {
+    const aKey = (a.key ?? "").trim() || "_body";
+    const bKey = (b.key ?? "").trim() || "_body";
+    if (aKey === bKey && aKey === "status") {
+      const aVal = a.value ?? "";
+      const bVal = b.value ?? "";
+      const aIsTerminal = isTerminalFactStatus(aVal);
+      const bIsTerminal = isTerminalFactStatus(bVal);
+      if (aIsTerminal !== bIsTerminal) {
+        // Prefer terminal status over non-terminal.
+        return aIsTerminal ? -1 : 1;
+      }
+    }
+    // Otherwise, prefer fresh local writes (no sourceDate) over stale external sourceDate events.
+    if (aSrc === null && bSrc !== null) return -1;
+    if (aSrc !== null && bSrc === null) return 1;
+  }
   const aRowid = readFactRowid(a);
   const bRowid = readFactRowid(b);
   if (aRowid !== null && bRowid !== null && aRowid !== bRowid) return bRowid - aRowid;
