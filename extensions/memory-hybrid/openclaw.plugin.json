@@ -2176,6 +2176,17 @@
             "minimum": 1,
             "description": "[DEPRECATED — use staleThreshold] Legacy stale task threshold in hours (integer > 0). Mapped internally to staleThreshold as \"{N}h\".",
             "deprecated": true
+          },
+          "liveStateReconcile": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable live-state reconciliation: periodic GitHub API/CLI checks to mark tasks done when external PRs/issues close (default: false). Requires activeTask.enabled and ledger: facts."
+              }
+            },
+            "description": "Live-state reconciliation: periodic checks to sync task state with external GitHub PRs/issues. Requires explicit opt-in due to external network calls."
           }
         },
         "description": "Working memory file ACTIVE-TASKS.md: injection, stale warnings, optional heartbeat hygiene"

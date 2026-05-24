@@ -319,6 +319,7 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
         : undefined,
     sectioned: projRaw?.sectioned !== false,
   };
+  const liveStateReconcileRaw = activeTaskRaw?.liveStateReconcile as Record<string, unknown> | undefined;
   return {
     enabled: activeTaskRaw?.enabled !== false,
     ledger,
@@ -350,6 +351,9 @@ export function parseActiveTaskConfig(cfg: Record<string, unknown>): ActiveTaskC
       },
     },
     projection,
+    liveStateReconcile: {
+      enabled: liveStateReconcileRaw?.enabled === true,
+    },
   };
 }
 

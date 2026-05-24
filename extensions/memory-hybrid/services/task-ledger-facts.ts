@@ -5,12 +5,15 @@
 
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+import { execFile } from "../utils/process-runner.js";
 import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { getEnv } from "../utils/env-manager.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
@@ -39,6 +42,9 @@ import {
   isTerminalFactStatus,
   readCanonicalLabelFromFact,
 } from "./task-ledger/canonical.js";
+
+const execFileAsync = promisify(execFile);
+
 export {
   canonicalLabel,
   displayStatusToFact,
@@ -1551,4 +1557,261 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   }
 
   return { reconciledLabels, wrote: true };
+}
+
+// -----------------------------------------------------------------------------------------
+// Issue #1625: live-state reconciliation
+// Fetches live GitHub issue/PR state for active tasks that reference external resources
+// and checkpoints terminal live state into the task ledger so agents don't repeat audits.
+// -----------------------------------------------------------------------------------------
+
+export interface ReconcileLiveStateOptions {
+  /** Maximum GitHub API calls per invocation (budget guard). */
+  maxRequests?: number;
+  /** AbortSignal for cancellation. */
+  signal?: AbortSignal;
+  log?: {
+    debug?: (m: string) => void;
+    warn?: (m: string) => void;
+    info?: (m: string) => void;
+  };
+}
+
+interface LiveStateRef {
+  owner: string;
+  repo: string;
+  number: number;
+  /** "pr" or "issue" */
+  kind: "pr" | "issue";
+}
+
+type LiveStateFetchStatus = "merged" | "closed" | "open" | "unknown" | "unavailable";
+
+const LIVE_STATE_GH_TIMEOUT_MS = 20_000;
+let liveStateBudgetCursor = 0;
+
+function hasGitHubToken(): boolean {
+  return (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim().length > 0;
+}
+
+async function runGhJsonCommand(args: string[], signal?: AbortSignal): Promise<unknown> {
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), LIVE_STATE_GH_TIMEOUT_MS);
+  const onAbort = (): void => ac.abort();
+  if (signal) {
+    if (signal.aborted) ac.abort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      encoding: "utf-8",
+      signal: ac.signal,
+      timeout: LIVE_STATE_GH_TIMEOUT_MS,
+    });
+    const raw = typeof stdout === "string" ? stdout.trim() : "";
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } finally {
+    clearTimeout(timeout);
+    if (signal) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function selectRoundRobinEntries<T>(entries: T[], maxRequests: number): T[] {
+  if (entries.length === 0 || maxRequests <= 0) return [];
+  if (entries.length <= maxRequests) {
+    liveStateBudgetCursor = 0;
+    return entries;
+  }
+  const start = ((liveStateBudgetCursor % entries.length) + entries.length) % entries.length;
+  const selected: T[] = [];
+  for (let i = 0; i < maxRequests; i++) {
+    selected.push(entries[(start + i) % entries.length]);
+  }
+  liveStateBudgetCursor = (start + maxRequests) % entries.length;
+  return selected;
+}
+
+/** Extract "owner/repo#N" references from a task label or description.
+ *  Handles: "owner/repo#123", "owner/repo pull request #123" (case-insensitive).
+ *  Returns one ref per task (first match wins). */
+function extractLiveStateRef(task: ActiveTaskEntry): LiveStateRef | null {
+  const text = `${task.label} ${task.description}`;
+  // Pattern: "owner/repo issue #123" or "owner/repo pull request #123" (GitHub's own URL form)
+  // Check this first to avoid ambiguity with the bare owner/repo#N pattern
+  const issueMatch = text.match(/\b([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\s+(issue|pull\s+request|pr)\s*#(\d+)\b/i);
+  if (issueMatch) {
+    const number = Number(issueMatch[4]);
+    if (!Number.isFinite(number) || number < 1) return null;
+    const kindString = issueMatch[3];
+    const kind: "pr" | "issue" = /pull\s*request|pr/i.test(kindString) ? "pr" : "issue";
+    return { owner: issueMatch[1], repo: issueMatch[2], number, kind };
+  }
+  // Pattern: owner/repo#number (most common - defaults to issue as per GitHub convention)
+  const refMatch = text.match(/\b([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\s*#(\d+)\b/i);
+  if (refMatch) {
+    const number = Number(refMatch[3]);
+    if (!Number.isFinite(number) || number < 1) return null;
+    return { owner: refMatch[1], repo: refMatch[2], number, kind: "issue" };
+  }
+  return null;
+}
+
+/** Fetch live state for a GitHub PR via `gh pr view`.
+ *  Returns "merged", "closed", "open", "unknown", or "unavailable". */
+async function fetchLivePrState(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  signal?: AbortSignal,
+): Promise<LiveStateFetchStatus> {
+  if (!hasGitHubToken()) return "unavailable";
+  try {
+    const payload = await runGhJsonCommand(
+      ["pr", "view", String(prNumber), "--repo", `${owner}/${repo}`, "--json", "state,mergedAt,closedAt"],
+      signal,
+    );
+    const data = payload as { state?: unknown; mergedAt?: unknown; closedAt?: unknown } | null;
+    const state = typeof data?.state === "string" ? data.state.trim().toUpperCase() : "";
+    const mergedAt = typeof data?.mergedAt === "string" && data.mergedAt.trim().length > 0;
+    const closedAt = typeof data?.closedAt === "string" && data.closedAt.trim().length > 0;
+    if (state === "MERGED" || mergedAt) return "merged";
+    if (state === "CLOSED" || (closedAt && !mergedAt)) return "closed";
+    if (state === "OPEN") return "open";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** Fetch live state for a GitHub issue.
+ *  Returns "closed" when the issue is closed, "open" when still open, "unknown" when
+ *  state cannot be determined, or "unavailable" when the token/network is missing. */
+async function fetchLiveIssueState(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  signal?: AbortSignal,
+): Promise<LiveStateFetchStatus> {
+  if (!hasGitHubToken()) return "unavailable";
+  try {
+    const payload = await runGhJsonCommand(
+      ["issue", "view", String(issueNumber), "--repo", `${owner}/${repo}`, "--json", "state"],
+      signal,
+    );
+    const data = payload as { state?: unknown } | null;
+    const state = typeof data?.state === "string" ? data.state.trim().toUpperCase() : "";
+    if (state === "CLOSED") return "closed";
+    if (state === "OPEN") return "open";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** Reconcile active tasks with live GitHub state.
+ *
+ *  For each active task that references an external GitHub issue or PR:
+ *  - Fetch the current live state from GitHub.
+ *  - If the live state is terminal (issue closed, PR merged/closed), checkpoint the
+ *    task as "Done" in the facts ledger with evidence in `next` and `task_updated`.
+ *  - If live state is non-terminal/unknown, leave the task unchanged.
+ *
+ *  This is intended to run during normal reconcile/hygiene/render cycles when enabled.
+ *  The function is safe to call repeatedly: it only checkpoints terminal
+ *  live-state transitions (merged/closed) and degrades gracefully when GitHub is unavailable.
+ *
+ *  Returns the number of tasks that were updated (for telemetry).
+ */
+export async function reconcileActiveTaskLiveState(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: EmbeddingProvider,
+  opts: ReconcileLiveStateOptions = {},
+): Promise<{ updatedCount: number; checkedCount: number; skippedCount: number }> {
+  const maxRequests = Math.max(1, Math.min(opts.maxRequests ?? 20, 50));
+  const signal = opts.signal;
+
+  const { active } = loadTaskLedgerFromFacts(factsDb);
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  // Collect all tasks with refs (allow multiple tasks per ref)
+  const refMap = new Map<string, { tasks: ActiveTaskEntry[]; ref: LiveStateRef }>();
+  for (const task of active) {
+    if (task.status === "Done" || task.status === "Failed") continue;
+    const ref = extractLiveStateRef(task);
+    if (!ref) {
+      skippedCount++;
+      continue;
+    }
+    const key = `${ref.kind}:${ref.owner}/${ref.repo}#${ref.number}`;
+    const existing = refMap.get(key);
+    if (existing) {
+      existing.tasks.push(task);
+    } else {
+      refMap.set(key, { tasks: [task], ref });
+    }
+  }
+
+  const entries = [...refMap.entries()];
+  const toFetch = selectRoundRobinEntries(entries, maxRequests);
+  skippedCount += Math.max(0, entries.length - toFetch.length);
+
+  // Fetch live state in parallel, up to budget
+  let fetchedResults: Array<{ key: string; ref: LiveStateRef; state: LiveStateFetchStatus }> = [];
+  try {
+    const settled = await Promise.allSettled(
+      toFetch.map(async ([key, { ref }]) => {
+        const state: LiveStateFetchStatus =
+          ref.kind === "pr"
+            ? await fetchLivePrState(ref.owner, ref.repo, ref.number, signal)
+            : await fetchLiveIssueState(ref.owner, ref.repo, ref.number, signal);
+        return { key, ref, state };
+      }),
+    );
+    fetchedResults = settled
+      .filter(
+        (result): result is PromiseFulfilledResult<{ key: string; ref: LiveStateRef; state: LiveStateFetchStatus }> =>
+          result.status === "fulfilled",
+      )
+      .map((result) => result.value);
+  } catch {
+    opts.log?.debug?.("memory-hybrid: live-state reconcile fetch failed, skipping update");
+    return { updatedCount, checkedCount: fetchedResults.length, skippedCount };
+  }
+  const checkedCount = fetchedResults.length;
+
+  const terminalRefKeys = new Set<string>();
+  for (const { key, state } of fetchedResults) {
+    const isTerminal = state === "merged" || state === "closed";
+    if (isTerminal) terminalRefKeys.add(key);
+  }
+
+  // Apply updates: for each terminal ref, update ALL tasks that point to it
+  for (const [key, { tasks }] of entries) {
+    if (!terminalRefKeys.has(key)) continue;
+    const { ref } = refMap.get(key)!;
+    const state = fetchedResults.find((r) => r.key === key)?.state ?? "unknown";
+    const isTerminal = state === "merged" || state === "closed";
+    if (!isTerminal) continue;
+
+    const now = new Date().toISOString();
+    const terminalState = state === "merged" ? "merged" : "closed";
+    const next = `Auto-reconciled from live GitHub (${ref.owner}/${ref.repo} ${ref.kind} #${ref.number}): ${terminalState}.`;
+
+    for (const task of tasks) {
+      const doneEntry: ActiveTaskEntry = {
+        ...task,
+        status: "Done",
+        updated: now,
+        next,
+      };
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log);
+      updatedCount++;
+      opts.log?.info?.(`memory-hybrid: live-state reconcile marked "${task.label}" done (${terminalState})`);
+    }
+  }
+
+  return { updatedCount, checkedCount, skippedCount };
 }

@@ -356,6 +356,14 @@ export type ActiveTaskConfig = {
   taskHygiene: ActiveTaskHygieneConfig;
   /** Markdown projection when `ledger` is `facts` (render path, filters, sectioning). */
   projection: ActiveTaskProjectionConfig;
+  /**
+   * Live-state reconciliation: periodic GitHub API/CLI checks to mark tasks done when external PRs/issues close.
+   * Requires explicit opt-in (default: false) due to external network calls.
+   */
+  liveStateReconcile: {
+    /** Enable live-state reconciliation (default: false). Requires activeTask.enabled and ledger: facts. */
+    enabled: boolean;
+  };
 };
 
 /** Goal stewardship — autonomous pursuit of long-running goals (docs/GOAL-STEWARDSHIP-DESIGN.md). */
