@@ -728,7 +728,14 @@ it("groupProjectFactsByEntity uses sourceDate tie-break when createdAt is equal"
 it("groupProjectFactsByEntity prefers missing sourceDate over stale sourceDate when createdAt is equal", () => {
   const rows: MemoryEntry[] = [
     fact({ id: "a1", entity: "proj-source-null", key: "status", value: "done", createdAt: 1000 }),
-    fact({ id: "a2", entity: "proj-source-null", key: "status", value: "in_progress", createdAt: 1000, sourceDate: 1001 }),
+    fact({
+      id: "a2",
+      entity: "proj-source-null",
+      key: "status",
+      value: "in_progress",
+      createdAt: 1000,
+      sourceDate: 1001,
+    }),
   ];
   const g = groupProjectFactsByEntity(rows);
   const row = g.get("proj-source-null");
@@ -1077,7 +1084,9 @@ describe("reconcileActiveTaskLiveState", () => {
     process.env.GITHUB_TOKEN = "test-token";
     execFileMock.mockReset();
     execFileMock.mockImplementation(async () => {
-      return { stdout: JSON.stringify({ state: "CLOSED", mergedAt: "2026-01-01T00:00:00Z", closedAt: "2026-01-01T00:00:00Z" }) };
+      return {
+        stdout: JSON.stringify({ state: "CLOSED", mergedAt: "2026-01-01T00:00:00Z", closedAt: "2026-01-01T00:00:00Z" }),
+      };
     });
 
     try {
