@@ -48,8 +48,8 @@ export function activeTaskProvenance(canonical: string, existing?: string | null
 }
 
 /** Tie-break comparator: returns negative if a is newer than b, positive if b is newer than a.
- *  Comparison order: createdAt → sourceDate (when finite).
- *  When both timestamps are equal, returns 0 to let the caller decide (last-write-wins). */
+ *  Comparison order: createdAt → sourceDate (when finite) → id (lexicographic).
+ *  The id tie-break ensures deterministic ordering when timestamps are equal. */
 function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
   // Return < 0 when a is newer than b (a should win the slot).
   // createdAt: larger = newer
@@ -61,9 +61,8 @@ function factNewerThan(a: MemoryEntry, b: MemoryEntry): number {
   // If only one has sourceDate, prefer the one with sourceDate (it's more recent)
   if (aSrc !== null && bSrc === null) return -1;
   if (aSrc === null && bSrc !== null) return 1;
-  // No meaningful tie-break available: facts have equal timestamps.
-  // Return 0 to signal a tie; caller uses last-write-wins semantics.
-  return 0;
+  // Final tie-break: lexicographic id comparison (higher id = newer)
+  return b.id.localeCompare(a.id);
 }
 
 /** Latest value per entity+key from non-superseded project facts.

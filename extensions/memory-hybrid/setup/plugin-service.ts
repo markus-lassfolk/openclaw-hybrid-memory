@@ -828,18 +828,20 @@ export function createPluginService(ctx: PluginServiceContext) {
               });
               reconciledLabels = r.reconciledLabels;
               wrote = r.wrote;
-              try {
-                const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
-                  maxRequests: 20,
-                  log: api.logger,
-                });
-                if (liveResult.updatedCount > 0) {
-                  api.logger.info?.(
-                    `memory-hybrid: live-state reconcile — marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
-                  );
+              if (cfg.activeTask.liveStateReconcile.enabled) {
+                try {
+                  const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+                    maxRequests: 20,
+                    log: api.logger,
+                  });
+                  if (liveResult.updatedCount > 0) {
+                    api.logger.info?.(
+                      `memory-hybrid: live-state reconcile — marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+                    );
+                  }
+                } catch (liveErr) {
+                  api.logger.warn?.(`memory-hybrid: live-state reconcile failed (non-fatal): ${liveErr}`);
                 }
-              } catch (liveErr) {
-                api.logger.warn?.(`memory-hybrid: live-state reconcile failed (non-fatal): ${liveErr}`);
               }
             } else {
               const r = await reconcileActiveTaskInProgressSessions(activeTaskFilePath, staleMinutes, {

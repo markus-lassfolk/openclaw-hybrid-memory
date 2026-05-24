@@ -642,7 +642,7 @@ export function registerActiveTaskCommands(
             for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
           }
         }
-        if (!opts.dryRun) {
+        if (!opts.dryRun && cfg.activeTask.liveStateReconcile.enabled) {
           try {
             const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
               maxRequests: 20,
