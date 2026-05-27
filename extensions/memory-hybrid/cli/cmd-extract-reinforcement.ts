@@ -448,8 +448,8 @@ export async function runExtractReinforcementForCli(
         annotationStatus = "failed_annotation";
       }
     } else if (!opts.dryRun && llmAnalysisFailed && result.incidents.length > 0) {
-      // LLM analysis failed but some facts were still reinforced via recalled IDs
-      annotationStatus = "degraded_model_or_parser";
+      // LLM analysis failed but some facts were still reinforced via recalled IDs.
+      // Do not override a successful annotation with a failure status — leave undefined.
     }
 
     // Attach annotation results to the returned value

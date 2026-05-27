@@ -38,15 +38,13 @@ export type AnnotationReasons = {
 
 /**
  * Semantic status for the case where incidentsFound > 0 && annotated == 0.
- * - `success_no_action_expected`: incidents found but all are benign no-ops (e.g. no recalled IDs,
- *   LLM remediation loop ran and processed items despite no fact reinforcement).
  * - `partial_no_matches`: all incidents had no recalled memory IDs — agent did not use
- *   memory_recall in the praised sessions, so no facts could be linked.
+ *   memory_recall in the praised sessions, so no facts could be linked. Benign.
  * - `failed_annotation`: some incidents had recalled IDs but reinforceFact() calls all failed.
- * - `degraded_model_or_parser`: LLM analysis failed or produced unparseable output.
+ * - `degraded_model_or_parser`: LLM analysis failed or produced unparseable output and
+ *   no facts were reinforced.
  */
 export type ReinforcementAnnotationStatus =
-  | "success_no_action_expected"
   | "partial_no_matches"
   | "failed_annotation"
   | "degraded_model_or_parser";
