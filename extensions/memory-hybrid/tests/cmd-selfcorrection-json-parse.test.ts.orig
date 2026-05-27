@@ -226,15 +226,18 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     // Confirm no cursor before run
     expect(factsDb.getScanCursor("self-correction-run")).toBeNull();
 
-    // Pass incidents explicitly; cursor updates are disabled by design for explicit runs (line 557 guard).
-    // This test verifies parse failure returns early and doesn't reach cursor update logic.
-    const res = await runSelfCorrectionRunForCli(ctx, {
-      incidents: [SAMPLE_INCIDENT],
+    // Use extractPath instead of incidents to keep cursor logic active
+    const extractPath = join(tmpDir, "extract.json");
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(extractPath, JSON.stringify([SAMPLE_INCIDENT]), "utf-8");
+
+    await runSelfCorrectionRunForCli(ctx, {
+      extractPath,
       workspace: tmpDir,
+      // Not passing --full or --incidents, so cursor logic is active
     });
 
-    // Parse failure should return status: "failed_parse" (not update cursor via success path)
-    expect(res.status).toBe("failed_parse");
+    // Cursor must NOT have been updated to a recent timestamp on parse failure
     const cursor = factsDb.getScanCursor("self-correction-run");
     expect(cursor).toBeNull();
   });

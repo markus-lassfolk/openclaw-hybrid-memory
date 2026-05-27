@@ -317,9 +317,11 @@ export async function runSelfCorrectionRunForCli(
         logger.warn?.(
           `memory-hybrid: self-correction-run — LLM response could not be parsed as JSON array (strategies: stripFence, balancedSlice, skipInvalidSpans); excerpt: "${excerpt}"`,
         );
-        throw new Error(
+        const parseError = new Error(
           `Self-correction analysis: LLM response could not be parsed as a JSON array. excerpt="${excerpt}"`,
         );
+        (parseError as any).isParseFailure = true;
+        throw parseError;
       }
       if (opts.verbose && analysed.length > 0) {
         logger.info?.(
@@ -328,6 +330,7 @@ export async function runSelfCorrectionRunForCli(
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
+      const isParseFailure = (e as any).isParseFailure === true;
       return {
         incidentsFound: incidents.length,
         analysed: 0,
@@ -335,7 +338,7 @@ export async function runSelfCorrectionRunForCli(
         proposals: [],
         reportPath: null,
         error: String(e),
-        status: "failed_parse",
+        status: isParseFailure ? "failed_parse" : undefined,
       };
     }
     const proposals: string[] = [];
