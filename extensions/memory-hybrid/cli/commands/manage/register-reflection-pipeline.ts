@@ -362,6 +362,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   carryCanonical = res.carryCanonical;
                   if (res.scanned < limit || res.resumeAfterRowid == null) break;
                   afterRowid = res.resumeAfterRowid;
+                  await new Promise((resolve) => setImmediate(resolve));
                 }
               },
               {

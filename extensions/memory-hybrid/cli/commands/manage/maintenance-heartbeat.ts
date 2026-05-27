@@ -1,13 +1,74 @@
-function formatMaintenanceError(err: unknown): string {
+function formatError(err: unknown): string {
   return err instanceof Error ? (err.stack ?? err.message) : String(err);
 }
 
-export type MaintenanceProgressSupplier = () => string | undefined;
+export type ProgressSupplier = () => string | undefined;
+
+export interface RunHeartbeatOptions {
+  progressSupplier?: ProgressSupplier;
+  heartbeatIntervalMs?: number;
+  forceHeartbeat?: boolean;
+  jsonMode?: boolean;
+  logPrefix?: string;
+  progressSeparator?: string;
+}
+
+async function runHeartbeat<T>(
+  label: string,
+  verbose: boolean,
+  fn: () => Promise<T> | T,
+  opts: RunHeartbeatOptions = {},
+): Promise<T> {
+  const emit = verbose || opts.forceHeartbeat === true;
+  const logStream = opts.jsonMode ? console.error : console.log;
+  const prefix = opts.logPrefix ?? "memory-hybrid:";
+  const progressSep = opts.progressSeparator ?? "; ";
+  const started = Date.now();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  if (emit) {
+    logStream(`${prefix} ${label} — start`);
+    heartbeat = setInterval(() => {
+      const elapsedSec = Math.floor((Date.now() - started) / 1000);
+      let progressSuffix = "";
+      if (opts.progressSupplier) {
+        try {
+          const progress = opts.progressSupplier();
+          if (progress) progressSuffix = `${progressSep}${progress}`;
+        } catch {
+          // Heartbeat logging must never fail the command.
+        }
+      }
+      logStream(`${prefix} ${label} — still running after ${elapsedSec}s${progressSuffix}`);
+    }, opts.heartbeatIntervalMs ?? 60_000);
+    heartbeat.unref?.();
+  }
+  try {
+    const result = await fn();
+    if (emit) {
+      const elapsedSec = Math.floor((Date.now() - started) / 1000);
+      logStream(`${prefix} ${label} — complete in ${elapsedSec}s`);
+    }
+    return result;
+  } catch (err) {
+    if (emit) {
+      const elapsedSec = Math.floor((Date.now() - started) / 1000);
+      console.error(`${prefix} ${label} — failed after ${elapsedSec}s: ${formatError(err)}`);
+    }
+    throw err;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+  }
+}
+
+export type MaintenanceProgressSupplier = ProgressSupplier;
 
 export interface RunMaintenanceHeartbeatOptions {
   progressSupplier?: MaintenanceProgressSupplier;
   heartbeatIntervalMs?: number;
   forceHeartbeat?: boolean;
+  jsonMode?: boolean;
+  logPrefix?: string;
+  progressSeparator?: string;
 }
 
 export async function runMaintenanceHeartbeat<T>(
@@ -16,40 +77,12 @@ export async function runMaintenanceHeartbeat<T>(
   fn: () => Promise<T> | T,
   opts: RunMaintenanceHeartbeatOptions = {},
 ): Promise<T> {
-  const emit = verbose || opts.forceHeartbeat === true;
-  const started = Date.now();
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  if (emit) {
-    console.log(`memory-hybrid: ${label} — start`);
-    heartbeat = setInterval(() => {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      let progressSuffix = "";
-      if (opts.progressSupplier) {
-        try {
-          const progress = opts.progressSupplier();
-          if (progress) progressSuffix = `; ${progress}`;
-        } catch {
-          // Heartbeat logging must never fail the command.
-        }
-      }
-      console.log(`memory-hybrid: ${label} — still running after ${elapsedSec}s${progressSuffix}`);
-    }, opts.heartbeatIntervalMs ?? 60_000);
-    heartbeat.unref?.();
-  }
-  try {
-    const result = await fn();
-    if (emit) {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.log(`memory-hybrid: ${label} — complete in ${elapsedSec}s`);
-    }
-    return result;
-  } catch (err) {
-    if (emit) {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.error(`memory-hybrid: ${label} — failed after ${elapsedSec}s: ${formatMaintenanceError(err)}`);
-    }
-    throw err;
-  } finally {
-    if (heartbeat) clearInterval(heartbeat);
-  }
+  return runHeartbeat(label, verbose, fn, {
+    progressSupplier: opts.progressSupplier,
+    heartbeatIntervalMs: opts.heartbeatIntervalMs,
+    forceHeartbeat: opts.forceHeartbeat,
+    jsonMode: opts.jsonMode,
+    logPrefix: opts.logPrefix ?? "memory-hybrid:",
+    progressSeparator: opts.progressSeparator ?? "; ",
+  });
 }

@@ -1,9 +1,7 @@
 /** Dream-cycle follow-up progress formatting and verbose stage runner. */
 
 import type { ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
-function formatFollowUpError(err: unknown): string {
-  return err instanceof Error ? (err.stack ?? err.message) : String(err);
-}
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 export type FollowUpProgressSupplier = () => string | undefined;
 
@@ -48,42 +46,15 @@ export async function runVerboseFollowUp<T>(
   fn: () => Promise<T> | T,
   opts: RunVerboseFollowUpOptions = {},
 ): Promise<T> {
-  const started = Date.now();
   const stagePrefix =
     opts.stageIndex && opts.stageTotal && opts.stageTotal > 0 ? `stage ${opts.stageIndex}/${opts.stageTotal} ` : "";
   const stageLabel = `${stagePrefix}${label}`.trim();
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  if (verbose) {
-    console.log(`[dream-cycle] ${stageLabel} — start`);
-    heartbeat = setInterval(() => {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      let progressSuffix = "";
-      if (opts.progressSupplier) {
-        try {
-          const progress = opts.progressSupplier();
-          if (progress) progressSuffix = ` — ${progress}`;
-        } catch {
-          // Ignore progress supplier failures; heartbeat should never crash the process.
-        }
-      }
-      console.log(`[dream-cycle] ${stageLabel} — still running after ${elapsedSec}s${progressSuffix}`);
-    }, opts.heartbeatIntervalMs ?? 60_000);
-    heartbeat.unref?.();
-  }
-  try {
-    const result = await fn();
-    if (verbose) {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.log(`[dream-cycle] ${stageLabel} — complete in ${elapsedSec}s`);
-    }
-    return result;
-  } catch (err) {
-    if (verbose) {
-      const elapsedSec = Math.floor((Date.now() - started) / 1000);
-      console.error(`[dream-cycle] ${stageLabel} — failed after ${elapsedSec}s: ${formatFollowUpError(err)}`);
-    }
-    throw err;
-  } finally {
-    if (heartbeat) clearInterval(heartbeat);
-  }
+  return runMaintenanceHeartbeat(stageLabel, verbose, fn, {
+    progressSupplier: opts.progressSupplier,
+    heartbeatIntervalMs: opts.heartbeatIntervalMs,
+    forceHeartbeat: true,
+    jsonMode: false,
+    logPrefix: "[dream-cycle]",
+    progressSeparator: " — ",
+  });
 }

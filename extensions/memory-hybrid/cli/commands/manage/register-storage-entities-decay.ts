@@ -86,6 +86,7 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
         const before = factsDb.statsBreakdownByDecayClass();
         const updated = await runMaintenanceHeartbeat("backfill-decay", verbose, () => factsDb.backfillDecay(), {
           progressSupplier: () => "stage=reclassify-stable-facts",
+          jsonMode: opts?.json === true,
         });
         const after = factsDb.statsBreakdownByDecayClass();
         const total = Object.values(updated).reduce((a, b) => a + b, 0);

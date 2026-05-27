@@ -689,6 +689,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               {
                 progressSupplier: () =>
                   `stage=embed-and-store; processed=${processed}/${candidates.length}; embedded=${embedded}; skipped=${skipped}; embedFailures=${embedFailures}; storeFailures=${storeFailures}; batch=${batchNumber}/${totalBatches}`,
+                jsonMode: opts?.json === true,
               },
             );
           }
