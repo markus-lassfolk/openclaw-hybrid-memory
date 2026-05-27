@@ -1,0 +1,111 @@
+/**
+ * Tests for parseSelfCorrectionLLMResponse — the parser that extracts the
+ * remediation JSON array from self-correction LLM model output.
+ *
+ * Covers: strict JSON, fenced JSON, trailing text, invalid JSON, placeholder tokens.
+ * These tests exercise the robustness guarantees described in the JSDoc of
+ * parseSelfCorrectionLLMResponse (cmd-selfcorrection.ts) and the underlying
+ * tryParseFirstJsonArray utility (utils/llm-json-array.ts).
+ */
+
+import { describe, expect, it } from "vitest";
+import { parseSelfCorrectionLLMResponse } from "../cli/cmd-selfcorrection.js";
+
+// Representative remediation item shape used across tests
+const sampleItem = {
+  remediationType: "MEMORY_STORE",
+  content: "Always confirm destructive operations before proceeding.",
+  confidence: 0.9,
+  reasoning: "User asked copilot to avoid deleting files without confirmation.",
+};
+
+describe("parseSelfCorrectionLLMResponse", () => {
+  it("parses a strict bare JSON array", () => {
+    const input = JSON.stringify([sampleItem]);
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(1);
+    expect((result as typeof sampleItem[])[0].remediationType).toBe("MEMORY_STORE");
+  });
+
+  it("parses a JSON array wrapped in a ```json fenced code block", () => {
+    const input = `Here are the remediation items:\n\`\`\`json\n${JSON.stringify([sampleItem])}\n\`\`\``;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(1);
+  });
+
+  it("parses a JSON array wrapped in a plain ``` fenced code block", () => {
+    const input = `\`\`\`\n${JSON.stringify([sampleItem])}\n\`\`\``;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("extracts the JSON array when the model appends trailing prose explanation", () => {
+    const array = JSON.stringify([sampleItem]);
+    const input = `${array}\n\nThe above items address the identified correction signals. Let me know if you want more details.`;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(1);
+  });
+
+  it("extracts the JSON array when there is preamble prose before the array", () => {
+    const array = JSON.stringify([sampleItem]);
+    const input = `Based on my analysis, here are the recommended corrections:\n${array}`;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(1);
+  });
+
+  it("returns null for invalid/non-JSON content", () => {
+    const result = parseSelfCorrectionLLMResponse("I was unable to identify any correction signals.");
+    expect(result).toBeNull();
+  });
+
+  it("returns null for truncated/malformed JSON array", () => {
+    // Truncated mid-object — a real LLM failure mode when output is too long
+    const input = '[{"remediationType":"MEMORY_STORE","content":"Always confirm dest';
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).toBeNull();
+  });
+
+  it("returns null for model placeholder tokens (e.g. [[reply_to_current]])", () => {
+    const result = parseSelfCorrectionLLMResponse("[[reply_to_current]]");
+    expect(result).toBeNull();
+  });
+
+  it("returns null for empty string input", () => {
+    const result = parseSelfCorrectionLLMResponse("");
+    expect(result).toBeNull();
+  });
+
+  it("parses an empty JSON array (model found no incidents to correct)", () => {
+    const result = parseSelfCorrectionLLMResponse("[]");
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(0);
+  });
+
+  it("parses a multi-item array correctly", () => {
+    const items = [
+      sampleItem,
+      { remediationType: "TOOLS_RULE", content: "Prefer read-only ops first.", confidence: 0.8, reasoning: "..." },
+    ];
+    const result = parseSelfCorrectionLLMResponse(JSON.stringify(items));
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(2);
+  });
+
+  it("handles a fenced block with trailing text (combined)", () => {
+    const array = JSON.stringify([sampleItem]);
+    const input = `\`\`\`json\n${array}\n\`\`\`\n\nI have summarized 1 correction item above.`;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+  });
+});

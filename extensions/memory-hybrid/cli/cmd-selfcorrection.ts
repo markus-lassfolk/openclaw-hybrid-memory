@@ -66,6 +66,33 @@ function sanitizeLlmResponseExcerpt(content: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Self-correction LLM response parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the JSON array of remediation items from a self-correction LLM response.
+ *
+ * The model is instructed to return a bare JSON array, but in practice it may:
+ *   - wrap the array in a markdown code fence (```json ... ```)
+ *   - add prose before or after the array
+ *   - emit placeholder tokens instead of JSON
+ *   - return invalid/truncated JSON
+ *
+ * This function handles all of those cases robustly via `tryParseFirstJsonArray`.
+ * Returns `null` when no valid array can be extracted (callers treat this as
+ * `failed_parse` — no remediations are applied and the error is reported).
+ *
+ * Scenarios and expected behaviour:
+ *   - **strict JSON**: `[{"remediationType":"MEMORY_STORE",...}]` → parsed directly
+ *   - **fenced JSON**: `` ```json\n[...]\n``` `` → fence stripped, array parsed
+ *   - **trailing text**: `[...]\n\nHere is my explanation` → array extracted, text ignored
+ *   - **invalid JSON**: `[not valid]` / truncated → null returned, caller handles error
+ */
+export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
+  return tryParseFirstJsonArray(content);
+}
+
+// ---------------------------------------------------------------------------
 // self-correction extract
 // ---------------------------------------------------------------------------
 

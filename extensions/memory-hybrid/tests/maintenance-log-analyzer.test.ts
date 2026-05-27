@@ -75,6 +75,22 @@ describe("maintenance log analyzer", () => {
     }
   });
 
+  it("classifies cron wrapper PATH failure (openclaw binary not in PATH) as env-misconfig", () => {
+    // This reproduces the real-world cron failure:
+    //   /usr/bin/timeout: failed to run command 'openclaw': No such file or directory
+    const cronPathFailures = [
+      "/usr/bin/timeout: failed to run command 'openclaw': No such file or directory",
+      "bash: openclaw: command not found",
+      "command not found: openclaw",
+      "/usr/bin/env: 'openclaw': No such file or directory",
+    ];
+    for (const logContent of cronPathFailures) {
+      const result = classifyMaintenanceFailure({ step: "nightly-memory-sweep", exitCode: 127, logContent });
+      expect(result.classification).toBe("env-misconfig");
+      expect(result.severity).toBe("high");
+    }
+  });
+
   it("distinguishes audit-health strict failures from command crashes", () => {
     const strictWarnings = JSON.stringify(
       {
@@ -144,6 +160,24 @@ describe("maintenance log analyzer", () => {
 
     expect(result.classification).toBe("health-warnings");
     expect(result.id).toBe("audit-health-strict-warnings");
+  });
+
+  it("classifies audit-health json-parse-failure as json-parse-failure class (not command-crash)", () => {
+    // Reproduces the real-world failure from issue #1637:
+    // audit-health exits 2 and the log contains a recognisable but truncated/malformed JSON block.
+    // extractAuditHealthJsonFromLog triggers parse_error when both "schemaVersion":1 AND "activeFacts":
+    // are present but no valid JSON object can be extracted — matching the real broken-output scenario.
+    const malformedLog = [
+      "preamble from openclaw audit health",
+      // Truncated mid-object — contains the two heuristic markers but closing brace is missing
+      '{"schemaVersion":1,"activeFacts":42,"generatedAt":"2026-05-09T15:06:34Z","status":"partial","ok":false,',
+      "tail: process exited unexpectedly",
+    ].join("\n");
+
+    const result = classifyMaintenanceFailure({ step: "audit-health", exitCode: 2, logContent: malformedLog });
+    expect(result.classification).toBe("json-parse-failure");
+    expect(result.id).toBe("audit-health-json-parse-failure");
+    expect(result.severity).toBe("high");
   });
 
   it("walks exit/log siblings, detects non-zero and exit=0 orchestration heuristics, and emits digest JSON shape", () => {
