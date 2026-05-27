@@ -824,7 +824,12 @@ export async function runDreamCycle(
   // ── Stage 2: Episodic consolidation + event log maintenance ──────────────
   let eventsConsolidated = 0;
   let factsCreated = 0;
-  const stageEventLog = beginStage("episodic consolidation + event log maintenance");
+  let eventLogPhase = "consolidation";
+  const stageEventLog = beginStage("episodic consolidation + event log maintenance", {
+    heartbeat: true,
+    progressSupplier: () =>
+      `phase=${eventLogPhase}; eventsConsolidated=${eventsConsolidated}; factsCreated=${factsCreated}`,
+  });
   if (eventLog) {
     try {
       const consolidationResult = await runEpisodicConsolidation(
@@ -853,6 +858,7 @@ export async function runDreamCycle(
 
   // ── Step 2b: Archive stale event log entries ─────────────────────────────
   if (eventLog && config.eventLogArchivalDays > 0) {
+    eventLogPhase = "archive-consolidated";
     try {
       const result = await eventLog.archiveConsolidated(config.eventLogArchivalDays, config.eventLogArchivePath);
       if (result.archived > 0) {
@@ -871,6 +877,7 @@ export async function runDreamCycle(
 
   // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
   if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
+    eventLogPhase = "archive-old";
     try {
       const deleted = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
       if (deleted > 0) {
@@ -889,8 +896,11 @@ export async function runDreamCycle(
   stageEventLog.complete(`eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}`);
 
   // ── Stage 3: Reflection (patterns) ────────────────────────────────────────
-  const stageReflection = beginStage("reflection (patterns)");
   let patternsFound = 0;
+  const stageReflection = beginStage("reflection (patterns)", {
+    heartbeat: true,
+    progressSupplier: () => `phase=extract-patterns; patternsStored=${patternsFound}`,
+  });
   const reflectionConfig: ReflectionConfig = {
     enabled: true,
     defaultWindow: config.reflectWindowDays,
@@ -931,7 +941,10 @@ export async function runDreamCycle(
   let rulesGenerated = 0;
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
   if (enableReflectionRules && patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
-    const stageReflectRules = beginStage("reflect-rules");
+    const stageReflectRules = beginStage("reflect-rules", {
+      heartbeat: true,
+      progressSupplier: () => `phase=extract-rules; rulesStored=${rulesGenerated}`,
+    });
     try {
       const rulesResult = await runReflectionRules(
         factsDb,
@@ -961,7 +974,10 @@ export async function runDreamCycle(
   }
 
   // ── Stage 5: Refresh memory awareness index ───────────────────────────────
-  const stageMemoryIndex = beginStage("MEMORY_INDEX.md refresh");
+  const stageMemoryIndex = beginStage("MEMORY_INDEX.md refresh", {
+    heartbeat: true,
+    progressSupplier: () => "phase=refresh-index",
+  });
   try {
     await writeMemoryIndex(
       factsDb,
@@ -984,8 +1000,14 @@ export async function runDreamCycle(
   stageMemoryIndex.complete();
 
   // ── Stage 6: Operational table/index cleanup ──────────────────────────────
-  const stageOperational = beginStage("prune operational logs + FTS optimize + optional vacuum");
   let logRowsPruned = 0;
+  let vacuumRan = false;
+  let walCheckpointRan = false;
+  const stageOperational = beginStage("prune operational logs + FTS optimize + optional vacuum", {
+    heartbeat: true,
+    progressSupplier: () =>
+      `phase=cleanup; logRowsPruned=${logRowsPruned}; vacuumRan=${vacuumRan ? "yes" : "no"}; walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`,
+  });
   if (config.logRetentionDays > 0) {
     try {
       logRowsPruned = factsDb.pruneLogTables(config.logRetentionDays);
@@ -1018,8 +1040,6 @@ export async function runDreamCycle(
   optimizeFtsStep.complete();
 
   // ── Step 5c: VACUUM + WAL checkpoint ────────────────────────────────────
-  let vacuumRan = false;
-  let walCheckpointRan = false;
   if (config.vacuumOnCycle) {
     const vacuumStep = beginSubstep("VACUUM + WAL checkpoint");
     try {

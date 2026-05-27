@@ -14,6 +14,7 @@ import {
   runVerboseFollowUp,
   type RunVerboseFollowUpOptions,
 } from "./dream-cycle-followup.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindings): void {
   const {
@@ -341,21 +342,34 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             let scanned = 0;
             let collapsed = 0;
             let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
-            for (;;) {
-              const res = cleanupImplicitFeedbackDuplicates(factsDb, {
-                threshold,
-                limit,
-                afterRowid,
-                dryRun,
-                seedCanonical: carryCanonical,
-                includeLegacy: opts?.includeLegacy === true,
-              });
-              scanned += res.scanned;
-              collapsed += res.collapsed;
-              carryCanonical = res.carryCanonical;
-              if (res.scanned < limit || res.resumeAfterRowid == null) break;
-              afterRowid = res.resumeAfterRowid;
-            }
+            let batches = 0;
+            await runMaintenanceHeartbeat(
+              "reflect-meta-collapse",
+              verbose,
+              async () => {
+                for (;;) {
+                  batches++;
+                  const res = cleanupImplicitFeedbackDuplicates(factsDb, {
+                    threshold,
+                    limit,
+                    afterRowid,
+                    dryRun,
+                    seedCanonical: carryCanonical,
+                    includeLegacy: opts?.includeLegacy === true,
+                  });
+                  scanned += res.scanned;
+                  collapsed += res.collapsed;
+                  carryCanonical = res.carryCanonical;
+                  if (res.scanned < limit || res.resumeAfterRowid == null) break;
+                  afterRowid = res.resumeAfterRowid;
+                }
+              },
+              {
+                forceHeartbeat: true,
+                progressSupplier: () =>
+                  `stage=scan; batches=${batches}; scanned=${scanned}; collapsed=${collapsed}; includeLegacy=${opts?.includeLegacy === true ? "yes" : "no"}`,
+              },
+            );
             console.log(
               `Implicit-feedback collapse complete: scanned ${scanned}, collapsed ${collapsed} ${dryRun ? "(dry-run)" : ""}`,
             );
@@ -363,7 +377,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           }
           let res;
           try {
-            res = await runReflectionMeta({ dryRun, model, verbose });
+            res = await runMaintenanceHeartbeat(
+              "reflect-meta",
+              verbose,
+              () => runReflectionMeta({ dryRun, model, verbose }),
+              {
+                progressSupplier: () => `stage=extract-meta-patterns; dryRun=${dryRun ? "yes" : "no"}`,
+              },
+            );
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
@@ -792,13 +813,17 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     )
     .option("--model <m>", "LLM model (default from autoClassify config)")
     .option("--dry-run", "Show what would be generated without writing")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .action(
-      withExit(async (opts?: { model?: string; dryRun?: boolean }) => {
+      withExit(async (opts?: { model?: string; dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const model = opts?.model ?? ctx.autoClassifyConfig.model;
         const dryRun = !!opts?.dryRun;
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         let res;
         try {
-          res = await runBuildLanguageKeywords({ model, dryRun });
+          res = await runMaintenanceHeartbeat("build-languages", verbose, () => runBuildLanguageKeywords({ model, dryRun }), {
+            progressSupplier: () => `stage=detect+generate; dryRun=${dryRun ? "yes" : "no"}`,
+          });
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",

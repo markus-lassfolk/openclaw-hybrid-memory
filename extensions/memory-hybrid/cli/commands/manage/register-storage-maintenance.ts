@@ -29,6 +29,7 @@ import {
   recordStorageGrowthSample,
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 type FactsDbWithBatch = {
   getBatch: (
@@ -589,12 +590,17 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--source <s>", "Only process facts from this source")
     .option("--apply", "Actually embed and write LanceDB/fact_embeddings rows; default is dry-run")
     .option("--batch-size <n>", "Embedding batch size", "40")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .option("--json", "Emit JSON")
     .action(
       withExit(
-        async (opts?: { limit?: string; source?: string; apply?: boolean; batchSize?: string; json?: boolean }) => {
+        async (
+          opts?: { limit?: string; source?: string; apply?: boolean; batchSize?: string; verbose?: boolean; json?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
           const limit = Number.parseInt(opts?.limit ?? "100", 10);
           const batchSize = Number.parseInt(opts?.batchSize ?? "40", 10);
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           if (!Number.isFinite(limit) || limit < 1) {
             console.error("error: --limit must be a positive integer");
             process.exitCode = 1;
@@ -612,62 +618,79 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           let skipped = 0;
           let storeFailures = 0;
           let embedFailures = 0;
+          const totalBatches = batchSize > 0 ? Math.ceil(candidates.length / batchSize) : 0;
+          let processed = 0;
+          let batchNumber = 0;
           if (opts?.apply) {
-            await vectorDb.runWithAutoOptimizePaused(async () => {
-              for (let offset = 0; offset < candidates.length; offset += batchSize) {
-                const batch = candidates.slice(offset, offset + batchSize);
-                let vectors: (number[] | null)[];
-                try {
-                  vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
-                } catch (_err) {
-                  vectors = [];
-                  for (const fact of batch) {
+            await runMaintenanceHeartbeat(
+              "reembed-vectorless",
+              verbose,
+              async () => {
+                await vectorDb.runWithAutoOptimizePaused(async () => {
+                  for (let offset = 0; offset < candidates.length; offset += batchSize) {
+                    batchNumber = Math.floor(offset / batchSize) + 1;
+                    const batch = candidates.slice(offset, offset + batchSize);
+                    let vectors: (number[] | null)[];
                     try {
-                      vectors.push(await embeddings.embed(fact.text));
-                    } catch (singleErr) {
-                      errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
-                      embedFailures++;
-                      vectors.push(null);
+                      vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
+                    } catch (_err) {
+                      vectors = [];
+                      for (const fact of batch) {
+                        try {
+                          vectors.push(await embeddings.embed(fact.text));
+                        } catch (singleErr) {
+                          errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
+                          embedFailures++;
+                          vectors.push(null);
+                        }
+                      }
+                    }
+                    for (let i = 0; i < batch.length; i++) {
+                      const fact = batch[i];
+                      const vec = vectors[i];
+                      if (!vec || vec.length === 0) {
+                        skipped++;
+                        processed++;
+                        continue;
+                      }
+                      try {
+                        try {
+                          await vectorDb.delete(fact.id);
+                        } catch {
+                          // Missing Lance row is the normal case for vectorless repair.
+                        }
+                        await vectorDb.store({
+                          id: fact.id,
+                          text: fact.text,
+                          vector: vec,
+                          importance: 0.5,
+                          category: fact.category,
+                        });
+                        factsDb.storeEmbedding(
+                          fact.id,
+                          embeddings.modelName,
+                          "canonical",
+                          new Float32Array(vec),
+                          vec.length,
+                        );
+                        factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+                        embedded++;
+                      } catch (err) {
+                        errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
+                        storeFailures++;
+                        skipped++;
+                      } finally {
+                        processed++;
+                      }
                     }
                   }
-                }
-                for (let i = 0; i < batch.length; i++) {
-                  const fact = batch[i];
-                  const vec = vectors[i];
-                  if (!vec || vec.length === 0) {
-                    skipped++;
-                    continue;
-                  }
-                  try {
-                    try {
-                      await vectorDb.delete(fact.id);
-                    } catch {
-                      // Missing Lance row is the normal case for vectorless repair.
-                    }
-                    await vectorDb.store({
-                      id: fact.id,
-                      text: fact.text,
-                      vector: vec,
-                      importance: 0.5,
-                      category: fact.category,
-                    });
-                    factsDb.storeEmbedding(
-                      fact.id,
-                      embeddings.modelName,
-                      "canonical",
-                      new Float32Array(vec),
-                      vec.length,
-                    );
-                    factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
-                    embedded++;
-                  } catch (err) {
-                    errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
-                    storeFailures++;
-                    skipped++;
-                  }
-                }
-              }
-            });
+                });
+              },
+              {
+                progressSupplier: () =>
+                  `stage=embed-and-store; processed=${processed}/${candidates.length}; embedded=${embedded}; skipped=${skipped}; embedFailures=${embedFailures}; storeFailures=${storeFailures}; batch=${batchNumber}/${totalBatches}`,
+              },
+            );
           }
           const after = opts?.apply ? factsDb.countVectorlessActiveFacts(opts?.source) : before;
           const report = {

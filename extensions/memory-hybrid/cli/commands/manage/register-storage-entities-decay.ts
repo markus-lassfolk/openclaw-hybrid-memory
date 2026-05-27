@@ -9,8 +9,10 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import type { ScopeFilter } from "../../../types/memory.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
 import { entryMatchesHybridSearchFilters } from "./storage-stats-helpers.js";
 
@@ -77,10 +79,14 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
     .command("backfill-decay")
     .description("Backfill legacy stable decay classes (compat alias for decay reclassify --stable-only --apply)")
     .option("--json", "Emit JSON")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .action(
-      withExit(async (opts?: { json?: boolean }) => {
+      withExit(async (opts?: { json?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         const before = factsDb.statsBreakdownByDecayClass();
-        const updated = factsDb.backfillDecay();
+        const updated = await runMaintenanceHeartbeat("backfill-decay", verbose, () => factsDb.backfillDecay(), {
+          progressSupplier: () => "stage=reclassify-stable-facts",
+        });
         const after = factsDb.statsBreakdownByDecayClass();
         const total = Object.values(updated).reduce((a, b) => a + b, 0);
         const totalBefore = Object.values(before).reduce((sum, count) => sum + count, 0);
