@@ -113,9 +113,15 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           }
           if (res.skipped) {
             const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);
-            console.log(
-              `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --full to override. status=skipped_cooldown`,
-            );
+            if (res.status === "skipped_concurrency") {
+              console.log(
+                `Skipping self-correction-run: scan already in progress. status=skipped_concurrency`,
+              );
+            } else {
+              console.log(
+                `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --full to override. status=skipped_cooldown`,
+              );
+            }
             return;
           }
           console.log(

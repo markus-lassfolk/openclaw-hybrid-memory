@@ -142,6 +142,7 @@ export async function runSelfCorrectionRunForCli(
     const cursor = factsDb.getScanCursor(SCAN_TYPE);
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip) {
+      const isConcurrency = skip.includes("already running");
       return {
         incidentsFound: 0,
         analysed: 0,
@@ -149,7 +150,7 @@ export async function runSelfCorrectionRunForCli(
         proposals: [],
         reportPath: null,
         skipped: true,
-        status: "skipped_cooldown",
+        status: isConcurrency ? "skipped_concurrency" : "skipped_cooldown",
       };
     }
   }

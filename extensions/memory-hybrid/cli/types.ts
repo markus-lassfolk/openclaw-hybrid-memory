@@ -223,9 +223,10 @@ export type SelfCorrectionRunResult = {
    * - `success_analyzed`    — incidents found and LLM analysis completed
    * - `success_no_incidents`— scan ran to completion, no incidents found
    * - `skipped_cooldown`    — 23 h cooldown guard fired; no analysis performed
+   * - `skipped_concurrency` — scan already in progress; no analysis performed
    * - `failed_parse`        — LLM responded but response could not be parsed as JSON
    */
-  status?: "success_analyzed" | "success_no_incidents" | "skipped_cooldown" | "failed_parse";
+  status?: "success_analyzed" | "success_no_incidents" | "skipped_cooldown" | "skipped_concurrency" | "failed_parse";
 };
 
 export type AnalyzeFeedbackPhrasesResult = {
