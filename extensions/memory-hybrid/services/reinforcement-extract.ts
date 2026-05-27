@@ -44,10 +44,7 @@ export type AnnotationReasons = {
  * - `degraded_model_or_parser`: LLM analysis failed or produced unparseable output and
  *   no facts were reinforced.
  */
-export type ReinforcementAnnotationStatus =
-  | "partial_no_matches"
-  | "failed_annotation"
-  | "degraded_model_or_parser";
+export type ReinforcementAnnotationStatus = "partial_no_matches" | "failed_annotation" | "degraded_model_or_parser";
 
 export type ReinforcementExtractResult = {
   incidents: ReinforcementIncident[];

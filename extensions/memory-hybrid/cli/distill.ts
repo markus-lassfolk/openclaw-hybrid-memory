@@ -67,7 +67,12 @@ export type DistillContext = {
     stored?: number;
     skipped?: boolean;
   }>;
-  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<ReinforcementExtractResult>;
+  runExtractReinforcement: (opts: {
+    days?: number;
+    verbose?: boolean;
+    dryRun?: boolean;
+    full?: boolean;
+  }) => Promise<ReinforcementExtractResult>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 

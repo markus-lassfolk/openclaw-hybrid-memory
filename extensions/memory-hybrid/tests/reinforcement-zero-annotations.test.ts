@@ -171,11 +171,7 @@ function writeSessionWithoutMemoryRecall(path: string): void {
  * Store a fact in factsDb and return the generated ID.
  * FactsDB.store() omits `id` from StoreFactInput; IDs are always generated internally.
  */
-function storeFactGetId(
-  db: FactsDB,
-  text: string,
-  extra?: { category?: string; importance?: number },
-): string {
+function storeFactGetId(db: FactsDB, text: string, extra?: { category?: string; importance?: number }): string {
   const entry = db.store({
     text,
     category: extra?.category ?? "technical",
