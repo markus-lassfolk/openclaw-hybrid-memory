@@ -142,7 +142,15 @@ export async function runSelfCorrectionRunForCli(
     const cursor = factsDb.getScanCursor(SCAN_TYPE);
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip) {
-      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, skipped: true, status: "skipped_cooldown" };
+      return {
+        incidentsFound: 0,
+        analysed: 0,
+        autoFixed: 0,
+        proposals: [],
+        reportPath: null,
+        skipped: true,
+        status: "skipped_cooldown",
+      };
     }
   }
 
@@ -204,7 +212,14 @@ export async function runSelfCorrectionRunForCli(
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
       }
-      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath, status: "success_no_incidents" };
+      return {
+        incidentsFound: 0,
+        analysed: 0,
+        autoFixed: 0,
+        proposals: [],
+        reportPath,
+        status: "success_no_incidents",
+      };
     }
     if (opts.verbose) {
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} — ${incidents.length} incident(s); building LLM prompt…`);
