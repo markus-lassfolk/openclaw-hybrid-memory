@@ -535,6 +535,7 @@ export function createHybridMemCliContext(
     runDreamCycle: services.runDreamCycle,
     runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,
+    runResolveContradictionsProjectStateLww: services.runResolveContradictionsProjectStateLww,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
       model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "maintenance"),

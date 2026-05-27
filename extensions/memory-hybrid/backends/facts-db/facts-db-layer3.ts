@@ -17,17 +17,20 @@ import {
   addTag as addTagImpl,
   contradictionsCount as contradictionsCountImpl,
   detectContradictions as detectContradictionsImpl,
+  evaluateLwwEligibility,
   findConflictingFacts as findConflictingFactsImpl,
   getContradictedIds as getContradictedIdsImpl,
   getContradictions as getContradictionsImpl,
   isContradicted as isContradictedImpl,
+  PROJECT_STATE_LWW_KEYS,
   recordContradiction as recordContradictionImpl,
   resolveContradiction as resolveContradictionImpl,
   resolveContradictionsAuto as resolveContradictionsAutoImpl,
+  resolveProjectStateLww as resolveProjectStateLwwImpl,
   setConfidenceTo as setConfidenceToImpl,
   updateConfidence as updateConfidenceImpl,
 } from "./contradictions.js";
-import type { ContradictionRecord } from "./contradictions.js";
+import type { ContradictionRecord, ProjectStateLwwResult } from "./contradictions.js";
 import {
   autoDetectInstanceOf as autoDetectInstanceOfImpl,
   autoLinkEntities as autoLinkEntitiesImpl,
@@ -233,9 +236,33 @@ export class FactsDB extends FactsDBLayer2 {
     scope?: string | null,
     scopeTarget?: string | null,
   ): Array<{ contradictionId: string; oldFactId: string }> {
-    return detectContradictionsImpl(this.liveDb, newFactId, entity, key, value, scope, scopeTarget, (a, b, t, s) =>
+    const results = detectContradictionsImpl(this.liveDb, newFactId, entity, key, value, scope, scopeTarget, (a, b, t, s) =>
       this.createLink(a, b, t, s ?? 1.0),
     );
+
+    // Project-state LWW: immediately resolve contradictions for known mutable keys so
+    // active-task/project writes do not leave avoidable unresolved contradictions (#1636).
+    if (results.length > 0 && key != null) {
+      const keyLower = key.toLowerCase();
+      if (PROJECT_STATE_LWW_KEYS.has(keyLower)) {
+        const newFact = this.getById(newFactId);
+        if (newFact) {
+          for (const { contradictionId, oldFactId } of results) {
+            const oldFact = this.getById(oldFactId);
+            if (!oldFact) continue;
+            const rec = this.getContradictions(oldFactId).find((c) => c.id === contradictionId);
+            if (!rec) continue;
+            const lww = evaluateLwwEligibility(newFact, oldFact, rec.oldFactOriginalConfidence);
+            if (lww.eligible && lww.qualifies) {
+              this.resolveContradiction(contradictionId, "superseded");
+              this.supersede(oldFactId, newFactId);
+            }
+          }
+        }
+      }
+    }
+
+    return results;
   }
 
   getContradictions(factId?: string): ContradictionRecord[] {
@@ -259,6 +286,22 @@ export class FactsDB extends FactsDBLayer2 {
       this.liveDb,
       (id) => this.getById(id),
       (o, n) => this.supersede(o, n),
+    );
+  }
+
+  /**
+   * Project-state latest-wins resolution pass (Issue #1636).
+   * Safely resolves stale `project` contradictions for known mutable keys when the newer
+   * trusted fact is strictly newer and has equal or higher confidence.
+   *
+   * Pass `{ dryRun: true }` to inspect candidates without mutating any data.
+   */
+  resolveContradictionsProjectStateLww(opts: { dryRun?: boolean } = {}): ProjectStateLwwResult {
+    return resolveProjectStateLwwImpl(
+      this.liveDb,
+      (id) => this.getById(id),
+      (o, n) => this.supersede(o, n),
+      opts,
     );
   }
 

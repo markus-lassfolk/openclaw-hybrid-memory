@@ -231,6 +231,9 @@ export type HybridMemCliContext = {
       factIdOld: string;
     }>;
   }>;
+  runResolveContradictionsProjectStateLww: (opts: { dryRun?: boolean }) => Promise<
+    import("../backends/facts-db/contradictions.js").ProjectStateLwwResult
+  >;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
