@@ -436,7 +436,7 @@ export async function runSelfCorrectionRunForCli(
         }
         content = detail.content;
       }
-      const parsedArray = tryParseFirstJsonArray(content);
+      const parsedArray = parseSelfCorrectionLLMResponse(content);
       if (parsedArray !== null) {
         analysed = parsedArray as typeof analysed;
       } else if (content.trim().length > 0) {
