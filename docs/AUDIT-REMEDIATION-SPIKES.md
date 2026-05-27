@@ -15,11 +15,14 @@ Execute **in order**:
    openclaw hybrid-mem reflect-meta --collapse-implicit-feedback --include-legacy --threshold 0.8 --limit 1000
    ```
 
-2. **Categories** — defaults now include `forge`, `monitoring`, `ops_*`, etc. For legacy rows still tagged `forge_busy` / `forge_dispatch` / `forge_ops`, remap into `forge`:
+2. **Categories** — defaults now include `forge`, `monitoring`, `ops_*`, etc. Apply the legacy remap policy (`forge_* → forge`, `episode → ops_summary`):
 
    ```bash
    openclaw hybrid-mem categories audit
-   openclaw hybrid-mem categories remap --apply   # after configuring mappings for forge_* → forge
+   openclaw hybrid-mem categories remap --from forge_busy --to forge --apply
+   openclaw hybrid-mem categories remap --from forge_dispatch --to forge --apply
+   openclaw hybrid-mem categories remap --from forge_ops --to forge --apply
+   openclaw hybrid-mem categories remap --from episode --to ops_summary --apply
    ```
 
 3. **Re-embed vectorless facts** (after collapse):
