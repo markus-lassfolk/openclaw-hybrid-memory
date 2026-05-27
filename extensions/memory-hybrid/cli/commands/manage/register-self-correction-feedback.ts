@@ -111,8 +111,14 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             process.exitCode = 1;
             return;
           }
+          if (res.skipped) {
+            console.log(
+              "Skipping self-correction-run: cooldown active (last run < 23h ago). Use --full to override. status=skipped_cooldown",
+            );
+            return;
+          }
           console.log(
-            `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}`,
+            `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}${res.status ? ` status=${res.status}` : ""}`,
           );
           if (res.proposals.length > 0) {
             console.log(`Proposals (${res.proposals.length}):`);

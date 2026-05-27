@@ -218,6 +218,14 @@ export type SelfCorrectionRunResult = {
   toolsApplied?: number;
   error?: string;
   skipped?: boolean;
+  /**
+   * Fine-grained outcome for cron/wrapper ledger reporting.
+   * - `success_analyzed`    — incidents found and LLM analysis completed
+   * - `success_no_incidents`— scan ran to completion, no incidents found
+   * - `skipped_cooldown`    — 23 h cooldown guard fired; no analysis performed
+   * - `failed_parse`        — LLM responded but response could not be parsed as JSON
+   */
+  status?: "success_analyzed" | "success_no_incidents" | "skipped_cooldown" | "failed_parse";
 };
 
 export type AnalyzeFeedbackPhrasesResult = {

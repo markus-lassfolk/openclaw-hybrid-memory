@@ -27,6 +27,7 @@ import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
+import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
@@ -141,7 +142,7 @@ export async function runSelfCorrectionRunForCli(
     const cursor = factsDb.getScanCursor(SCAN_TYPE);
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip) {
-      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, skipped: true };
+      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, skipped: true, status: "skipped_cooldown" };
     }
   }
 
@@ -203,7 +204,7 @@ export async function runSelfCorrectionRunForCli(
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
       }
-      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
+      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath, status: "success_no_incidents" };
     }
     if (opts.verbose) {
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} — ${incidents.length} incident(s); building LLM prompt…`);
@@ -292,9 +293,18 @@ export async function runSelfCorrectionRunForCli(
         }
         content = detail.content;
       }
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
+      const parsedArray = tryParseFirstJsonArray(content);
+      if (parsedArray !== null) {
+        analysed = parsedArray as typeof analysed;
+      } else if (content.trim().length > 0) {
+        // Log a sanitized excerpt (no private session data) so operators can diagnose
+        const excerpt = content.trim().slice(0, 200).replace(/\s+/g, " ");
+        logger.warn?.(
+          `memory-hybrid: self-correction-run — LLM response could not be parsed as JSON array (strategies: stripFence, balancedSlice, skipInvalidSpans); excerpt: "${excerpt}"`,
+        );
+        throw new Error(
+          `Self-correction analysis: LLM response could not be parsed as a JSON array. excerpt="${excerpt.slice(0, 100)}"`,
+        );
       }
       if (opts.verbose && analysed.length > 0) {
         logger.info?.(
@@ -310,6 +320,7 @@ export async function runSelfCorrectionRunForCli(
         proposals: [],
         reportPath: null,
         error: String(e),
+        status: "failed_parse",
       };
     }
     const proposals: string[] = [];
@@ -540,6 +551,7 @@ export async function runSelfCorrectionRunForCli(
       reportPath,
       toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
       toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
+      status: "success_analyzed",
     };
   } finally {
     if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);
