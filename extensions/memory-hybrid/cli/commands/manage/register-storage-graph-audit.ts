@@ -30,15 +30,6 @@ const LEGACY_CATEGORY_REMAP_POLICY: Readonly<Record<string, string>> = {
   episode: "ops_summary",
 };
 
-function buildLegacyCategoryRemapCommands(categories: readonly string[]): string[] {
-  return categories
-    .filter((category) => Object.hasOwn(LEGACY_CATEGORY_REMAP_POLICY, category))
-    .map(
-      (category) =>
-        `openclaw hybrid-mem categories remap --from ${category} --to ${LEGACY_CATEGORY_REMAP_POLICY[category]} --apply`,
-    );
-}
-
 export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
@@ -719,7 +710,10 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           console.log(
             `Labels in DB but not in your config (${report.unknown.length}): ${report.unknown.map((u) => u.category).join(", ")}`,
           );
-          const legacyRemapCommands = buildLegacyCategoryRemapCommands(report.unknown.map((u) => u.category));
+          const unknownCategories = new Set(report.unknown.map((u) => u.category));
+          const legacyRemapCommands = Object.entries(LEGACY_CATEGORY_REMAP_POLICY)
+            .filter(([from]) => unknownCategories.has(from))
+            .map(([from, to]) => `openclaw hybrid-mem categories remap --from ${from} --to ${to} --apply`);
           if (legacyRemapCommands.length > 0) {
             console.log("Legacy category remap policy:");
             for (const command of legacyRemapCommands) {
