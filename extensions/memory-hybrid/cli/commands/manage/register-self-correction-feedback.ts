@@ -1,6 +1,6 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, withExit } from "../../shared.js";
+import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBindings): void {
@@ -112,8 +112,9 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             return;
           }
           if (res.skipped) {
+            const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);
             console.log(
-              "Skipping self-correction-run: cooldown active (last run < 23h ago). Use --full to override. status=skipped_cooldown",
+              `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --full to override. status=skipped_cooldown`,
             );
             return;
           }

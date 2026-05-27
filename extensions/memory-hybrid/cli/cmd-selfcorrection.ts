@@ -303,7 +303,7 @@ export async function runSelfCorrectionRunForCli(
           `memory-hybrid: self-correction-run — LLM response could not be parsed as JSON array (strategies: stripFence, balancedSlice, skipInvalidSpans); excerpt: "${excerpt}"`,
         );
         throw new Error(
-          `Self-correction analysis: LLM response could not be parsed as a JSON array. excerpt="${excerpt.slice(0, 100)}"`,
+          `Self-correction analysis: LLM response could not be parsed as a JSON array. excerpt="${excerpt}"`,
         );
       }
       if (opts.verbose && analysed.length > 0) {
