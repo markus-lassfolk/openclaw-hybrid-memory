@@ -822,9 +822,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         let res;
         try {
-          res = await runMaintenanceHeartbeat("build-languages", verbose, () => runBuildLanguageKeywords({ model, dryRun }), {
-            progressSupplier: () => `stage=detect+generate; dryRun=${dryRun ? "yes" : "no"}`,
-          });
+          res = await runMaintenanceHeartbeat(
+            "build-languages",
+            verbose,
+            () => runBuildLanguageKeywords({ model, dryRun }),
+            {
+              progressSupplier: () => `stage=detect+generate; dryRun=${dryRun ? "yes" : "no"}`,
+            },
+          );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",

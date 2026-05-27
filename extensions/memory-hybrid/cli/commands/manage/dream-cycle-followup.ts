@@ -52,7 +52,6 @@ export async function runVerboseFollowUp<T>(
   return runMaintenanceHeartbeat(stageLabel, verbose, fn, {
     progressSupplier: opts.progressSupplier,
     heartbeatIntervalMs: opts.heartbeatIntervalMs,
-    forceHeartbeat: true,
     jsonMode: false,
     logPrefix: "[dream-cycle]",
     progressSeparator: " — ",

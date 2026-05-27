@@ -595,7 +595,14 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .action(
       withExit(
         async (
-          opts?: { limit?: string; source?: string; apply?: boolean; batchSize?: string; verbose?: boolean; json?: boolean },
+          opts?: {
+            limit?: string;
+            source?: string;
+            apply?: boolean;
+            batchSize?: string;
+            verbose?: boolean;
+            json?: boolean;
+          },
           cmd?: CommanderOptsParent,
         ) => {
           const limit = Number.parseInt(opts?.limit ?? "100", 10);

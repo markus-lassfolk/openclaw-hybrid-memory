@@ -4,7 +4,7 @@ function formatError(err: unknown): string {
 
 export type ProgressSupplier = () => string | undefined;
 
-export interface RunHeartbeatOptions {
+export interface RunMaintenanceHeartbeatOptions {
   progressSupplier?: ProgressSupplier;
   heartbeatIntervalMs?: number;
   forceHeartbeat?: boolean;
@@ -13,11 +13,11 @@ export interface RunHeartbeatOptions {
   progressSeparator?: string;
 }
 
-async function runHeartbeat<T>(
+export async function runMaintenanceHeartbeat<T>(
   label: string,
   verbose: boolean,
   fn: () => Promise<T> | T,
-  opts: RunHeartbeatOptions = {},
+  opts: RunMaintenanceHeartbeatOptions = {},
 ): Promise<T> {
   const emit = verbose || opts.forceHeartbeat === true;
   const logStream = opts.jsonMode ? console.error : console.log;
@@ -58,31 +58,4 @@ async function runHeartbeat<T>(
   } finally {
     if (heartbeat) clearInterval(heartbeat);
   }
-}
-
-export type MaintenanceProgressSupplier = ProgressSupplier;
-
-export interface RunMaintenanceHeartbeatOptions {
-  progressSupplier?: MaintenanceProgressSupplier;
-  heartbeatIntervalMs?: number;
-  forceHeartbeat?: boolean;
-  jsonMode?: boolean;
-  logPrefix?: string;
-  progressSeparator?: string;
-}
-
-export async function runMaintenanceHeartbeat<T>(
-  label: string,
-  verbose: boolean,
-  fn: () => Promise<T> | T,
-  opts: RunMaintenanceHeartbeatOptions = {},
-): Promise<T> {
-  return runHeartbeat(label, verbose, fn, {
-    progressSupplier: opts.progressSupplier,
-    heartbeatIntervalMs: opts.heartbeatIntervalMs,
-    forceHeartbeat: opts.forceHeartbeat,
-    jsonMode: opts.jsonMode,
-    logPrefix: opts.logPrefix ?? "memory-hybrid:",
-    progressSeparator: opts.progressSeparator ?? "; ",
-  });
 }

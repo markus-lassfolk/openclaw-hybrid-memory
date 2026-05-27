@@ -36,15 +36,15 @@ describe("maintenance heartbeat logging", () => {
     );
 
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(logs.some((line) => line.includes("build-languages — still running after 1s") && line.includes("processed=0/2"))).toBe(
-      true,
-    );
+    expect(
+      logs.some((line) => line.includes("build-languages — still running after 1s") && line.includes("processed=0/2")),
+    ).toBe(true);
 
     progress = "stage=scan; processed=1/2";
     await vi.advanceTimersByTimeAsync(1_000);
-    expect(logs.some((line) => line.includes("build-languages — still running after 2s") && line.includes("processed=1/2"))).toBe(
-      true,
-    );
+    expect(
+      logs.some((line) => line.includes("build-languages — still running after 2s") && line.includes("processed=1/2")),
+    ).toBe(true);
 
     resolveWork?.();
     await run;
@@ -56,14 +56,9 @@ describe("maintenance heartbeat logging", () => {
       logs.push(args.map(String).join(" "));
     });
 
-    await runMaintenanceHeartbeat(
-      "reflect-meta-collapse",
-      false,
-      async () => undefined,
-      {
-        forceHeartbeat: true,
-      },
-    );
+    await runMaintenanceHeartbeat("reflect-meta-collapse", false, async () => undefined, {
+      forceHeartbeat: true,
+    });
 
     expect(logs.some((line) => line.includes("reflect-meta-collapse — start"))).toBe(true);
     expect(logs.some((line) => line.includes("reflect-meta-collapse — complete in"))).toBe(true);
