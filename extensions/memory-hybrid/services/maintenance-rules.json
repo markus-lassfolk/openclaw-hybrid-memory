@@ -89,7 +89,7 @@
   },
   {
     "id": "cron-path-missing",
-    "pattern": "failed to run command 'openclaw'|failed to run command \"openclaw\"|openclaw: command not found|command not found.*openclaw|openclaw.*not found|no such file or directory.*openclaw|openclaw.*no such file or directory",
+    "pattern": "failed to run command ['\"]openclaw['\"]|command not found.*openclaw|openclaw.*(command )?not found|openclaw.*no such file or directory",
     "classification": "env-misconfig",
     "defaultAction": "escalate-user",
     "severity": "high",
