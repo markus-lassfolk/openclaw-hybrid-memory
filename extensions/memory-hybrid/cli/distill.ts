@@ -4,6 +4,7 @@
 
 import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
 import { type Chainable, withExit } from "./shared.js";
+import type { ReinforcementExtractResult } from "../services/reinforcement-extract.js";
 import type {
   DistillCliResult,
   DistillCliSink,
@@ -66,19 +67,7 @@ export type DistillContext = {
     stored?: number;
     skipped?: boolean;
   }>;
-  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
-    incidents: Array<{
-      userMessage: string;
-      agentBehavior: string;
-      recalledMemoryIds: string[];
-      toolCallSequence: string[];
-      confidence: number;
-      timestamp?: string;
-      sessionFile: string;
-    }>;
-    sessionsScanned: number;
-    skipped?: boolean;
-  }>;
+  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<ReinforcementExtractResult>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
