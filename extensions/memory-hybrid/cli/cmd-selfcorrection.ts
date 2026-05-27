@@ -436,9 +436,9 @@ export async function runSelfCorrectionRunForCli(
         }
         content = detail.content;
       }
-      const parsedArray = parseSelfCorrectionLLMResponse(content);
-      if (parsedArray !== null) {
-        analysed = parsedArray as typeof analysed;
+      const parsedRemediations = parseSelfCorrectionLLMResponse(content);
+      if (parsedRemediations !== null) {
+        analysed = parsedRemediations as typeof analysed;
       } else if (content.trim().length > 0) {
         // Log a sanitized excerpt (no private session data) so operators can diagnose.
         const excerpt = sanitizeLlmResponseExcerpt(content);
