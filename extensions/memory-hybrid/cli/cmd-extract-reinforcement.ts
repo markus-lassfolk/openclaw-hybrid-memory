@@ -4,12 +4,17 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ReinforcementContext } from "../backends/facts-db.js";
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { type ReinforcementExtractResult, runReinforcementExtract } from "../services/reinforcement-extract.js";
+import {
+  type AnnotationReasons,
+  type ReinforcementAnnotationStatus,
+  type ReinforcementExtractResult,
+  runReinforcementExtract,
+} from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
@@ -93,6 +98,7 @@ export async function runExtractReinforcementForCli(
       }
     }
 
+    let llmAnalysisFailed = false;
     const scCfg = cfg.selfCorrection;
     const runLLMAnalysis = scCfg?.reinforcementLLMAnalysis !== false && result.incidents.length > 0 && !opts.dryRun;
     let analysisCategory: string | undefined;
@@ -128,7 +134,11 @@ export async function runExtractReinforcementForCli(
         const cronCfg = getCronModelConfig(cfg);
         const tierPref = getLLMModelPreference(cronCfg, extractionTier);
         const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
-        const fallbackModels = tierPref.length > 1 ? tierPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+        // Derive fallback chain from the full tier preference list; when only one model is
+        // configured, fall through to resolveReflectionModelAndFallbacks which picks up
+        // llm.fallbackModel and distill.fallbackModels (mirrors the distill/self-correction fix).
+        const tierResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier as "nano" | "default" | "heavy");
+        const fallbackModels = tierResolved.fallbackModels ?? [];
         const modelSource =
           tierPrefWithSources.models[0] === model ? (tierPrefWithSources.sources[0] ?? "built-in") : "built-in";
         logger.info?.(`memory-hybrid: extract-reinforcement analysis tier = ${extractionTier}`);
@@ -169,6 +179,7 @@ export async function runExtractReinforcementForCli(
           analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
         }
       } catch (e) {
+        llmAnalysisFailed = true;
         capturePluginError(e as Error, {
           subsystem: "cli",
           operation: "runExtractReinforcementForCli:llm-analysis",
@@ -336,10 +347,40 @@ export async function runExtractReinforcementForCli(
     }
 
     // Annotate facts/procedures with reinforcement if not dry-run
+    let annotated = 0;
+    const annotationReasons: AnnotationReasons = { noRecalledIds: 0, reinforced: 0, errors: 0 };
+
     if (!opts.dryRun) {
       const trackContext = cfg.reinforcement?.trackContext !== false;
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const incident of result.incidents) {
+        if (incident.recalledMemoryIds.length === 0) {
+          annotationReasons.noRecalledIds++;
+          // Still process procedure boosts even without recalled fact IDs
+          try {
+            if (incident.toolCallSequence.length >= 2) {
+              const taskPattern = incident.toolCallSequence.join(" -> ");
+              const procedures = factsDb.searchProcedures(
+                taskPattern,
+                3,
+                cfg.distill?.reinforcementProcedureBoost ?? 0.1,
+              );
+              for (const proc of procedures) {
+                factsDb.reinforceProcedure(
+                  proc.id,
+                  incident.userMessage,
+                  cfg.distill?.reinforcementPromotionThreshold ?? 2,
+                );
+              }
+            }
+          } catch (err) {
+            capturePluginError(err as Error, {
+              subsystem: "cli",
+              operation: "runExtractReinforcementForCli:procedure-boost",
+            });
+          }
+          continue;
+        }
         try {
           const context: ReinforcementContext = {
             querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
@@ -351,15 +392,19 @@ export async function runExtractReinforcementForCli(
           // Reinforce recalled memories with rich context, boosted by diversity score (#259)
           const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
           const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
+          let incidentAnnotated = 0;
           for (const memId of incident.recalledMemoryIds) {
             const diversityScore = factsDb.calculateDiversityScore(memId);
             const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
-            factsDb.reinforceFact(memId, incident.userMessage, context, {
+            const reinforced = factsDb.reinforceFact(memId, incident.userMessage, context, {
               trackContext,
               maxEventsPerFact,
               boostAmount: effectiveBoost,
             });
+            if (reinforced) incidentAnnotated++;
           }
+          annotated += incidentAnnotated;
+          if (incidentAnnotated > 0) annotationReasons.reinforced++;
 
           // Reinforce procedures based on tool call sequence
           if (incident.toolCallSequence.length >= 2) {
@@ -378,6 +423,7 @@ export async function runExtractReinforcementForCli(
             }
           }
         } catch (err) {
+          annotationReasons.errors++;
           capturePluginError(err as Error, {
             subsystem: "cli",
             operation: "runExtractReinforcementForCli",
@@ -385,6 +431,31 @@ export async function runExtractReinforcementForCli(
         }
       }
     }
+
+    // Derive annotation status for the incidentsFound > 0 && annotated == 0 case
+    let annotationStatus: ReinforcementAnnotationStatus | undefined;
+    if (!opts.dryRun && result.incidents.length > 0 && annotated === 0) {
+      if (llmAnalysisFailed && annotationReasons.noRecalledIds === result.incidents.length) {
+        annotationStatus = "degraded_model_or_parser";
+      } else if (annotationReasons.errors > 0) {
+        annotationStatus = "failed_annotation";
+      } else if (annotationReasons.noRecalledIds === result.incidents.length) {
+        // All incidents had no recalled memory IDs — agent did not call memory_recall in
+        // these sessions. This is expected when sessions don't involve explicit memory recall.
+        annotationStatus = "partial_no_matches";
+      } else {
+        // Some incidents had recalled IDs but none were reinforced (unexpected)
+        annotationStatus = "failed_annotation";
+      }
+    } else if (!opts.dryRun && llmAnalysisFailed && result.incidents.length > 0) {
+      // LLM analysis failed but some facts were still reinforced via recalled IDs
+      annotationStatus = "degraded_model_or_parser";
+    }
+
+    // Attach annotation results to the returned value
+    result.annotated = annotated;
+    result.annotationReasons = annotationReasons;
+    if (annotationStatus !== undefined) result.annotationStatus = annotationStatus;
 
     if (!opts.dryRun) {
       const lastSessionTs = getMaxMtime(filePaths);

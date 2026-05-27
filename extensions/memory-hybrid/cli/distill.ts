@@ -422,8 +422,23 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           if (opts.dryRun) {
             console.log("[dry-run] Would annotate facts/procedures with reinforcement data.");
           } else {
-            const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
+            const factsReinforced = result.annotated ?? result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
             console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
+            if (result.incidents.length > 0 && factsReinforced === 0) {
+              const reasons = result.annotationReasons;
+              if (reasons) {
+                console.log(
+                  `Annotation reason breakdown: noRecalledIds=${reasons.noRecalledIds} reinforced=${reasons.reinforced} errors=${reasons.errors}`,
+                );
+              }
+              const status = result.annotationStatus;
+              if (status) {
+                console.log(`Annotation status: ${status}`);
+                if (status === "failed_annotation" || status === "degraded_model_or_parser") {
+                  process.exitCode = 1;
+                }
+              }
+            }
           }
         },
       ),
