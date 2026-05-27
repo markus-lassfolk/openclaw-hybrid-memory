@@ -1,7 +1,11 @@
 /** Directive extraction CLI (`runExtractDirectivesForCli`). Split from cmd-extract.ts. */
 import type { MemoryCategory } from "../config.js";
 import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
-import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
+import {
+  DIRECTIVE_EXTRACTION_METHOD,
+  type DirectiveExtractResult,
+  runDirectiveExtract,
+} from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
@@ -122,7 +126,7 @@ export async function runExtractDirectivesForCli(
               value: null,
               source,
               confidence: incident.confidence,
-              extractionMethod: "directive-extract:regex-heuristic-v2",
+              extractionMethod: DIRECTIVE_EXTRACTION_METHOD,
               extractionConfidence: incident.confidence,
               tags: ["directive-extract", ...incident.categories.map((c) => `directive:${c}`)],
             },

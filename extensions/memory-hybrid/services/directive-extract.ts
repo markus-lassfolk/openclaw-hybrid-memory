@@ -48,6 +48,8 @@ export type DirectiveExtractResult = {
   rejected?: number;
 };
 
+export const DIRECTIVE_EXTRACTION_METHOD = "directive-extract:regex-heuristic-v2";
+
 const MAX_USER_MSG = 800;
 const MAX_ASSISTANT_MSG = 500;
 
@@ -97,10 +99,13 @@ const UNTRUSTED_METADATA_MARKERS = [
 ];
 const UNTRUSTED_METADATA_KEYS_RE =
   /\b(chat_id|message_id|sender_id|timestamp|inbound_event_kind|conversation_id)\b/i;
+const UNTRUSTED_METADATA_ENVELOPE_BLOCK_RE =
+  /(?:Conversation info|Sender)\s*\(untrusted metadata\)\s*:\s*```(?:json)?[\s\S]*?```/gi;
 const CODE_FENCE_RE = /```[\s\S]*?```/g;
 const GITHUB_LINK_RE = /https?:\/\/github\.com\/[^\s)]+/gi;
-const GITHUB_ISSUE_PR_RE = /(?:^|\s)#\d{2,6}(?:\s|$)|\b(?:issue|issues|pr|pull request)\b/i;
-const SELECTED_CONTEXT_RE = /(?:^|\s)#\d{2,6}\s+(?:mon|tue|wed|thu|fri|sat|sun)\b/i;
+const GITHUB_ISSUE_PR_RE = /(?:^|\s)#\d+(?:\s|$)|\b(?:issue|issues|pr|pull request)\b/i;
+const SELECTED_CONTEXT_RE = /(?:^|\s)#\d+\s+(?:mon|tue|wed|thu|fri|sat|sun)\b/i;
+const QUESTION_MARK_RE = /\?/;
 const ONE_OFF_COMMAND_RE =
   /\b(file|open|create|submit)\s+(?:a\s+)?(?:detailed\s+)?(?:issue|pr|pull request)\b/i;
 const DURABLE_RULE_SIGNAL_RE =
@@ -108,10 +113,7 @@ const DURABLE_RULE_SIGNAL_RE =
 
 function sanitizeDirectiveCandidate(rawRule: string): string {
   return rawRule
-    .replace(
-      /(?:Conversation info|Sender)\s*\(untrusted metadata\)\s*:\s*```(?:json)?[\s\S]*?```/gi,
-      " ",
-    )
+    .replace(UNTRUSTED_METADATA_ENVELOPE_BLOCK_RE, " ")
     .replace(CODE_FENCE_RE, " ")
     .replace(/(?:Conversation info|Sender)\s*\(untrusted metadata\)\s*:/gi, " ")
     .replace(/\s+/g, " ")
@@ -134,13 +136,15 @@ function classifyDirectiveCandidate(
   const sanitizedRule = sanitizeDirectiveCandidate(rawRule);
   if (!sanitizedRule) return { accepted: false, reason: "missing_durable_signal" };
   if (UNTRUSTED_METADATA_KEYS_RE.test(sanitizedRule)) return { accepted: false, reason: "untrusted_metadata" };
-  if (/^\s*[{[][\s\S]*[}\]]\s*$/m.test(sanitizedRule) || /^\s*```(?:json)?/i.test(rawRule)) {
+  const looksLikeRawJsonEnvelope = /^\s*```(?:json)?/i.test(rawRule);
+  const looksLikeJsonDocument = /^\s*[{[][\s\S]*[}\]]\s*$/m.test(sanitizedRule);
+  if (looksLikeRawJsonEnvelope || looksLikeJsonDocument) {
     return { accepted: false, reason: "json_envelope" };
   }
 
   const githubLinks = sanitizedRule.match(GITHUB_LINK_RE) ?? [];
   const looksLikeUrlList = githubLinks.length >= 2;
-  if (looksLikeUrlList || SELECTED_CONTEXT_RE.test(sanitizedRule) || /\?/.test(sanitizedRule)) {
+  if (looksLikeUrlList || SELECTED_CONTEXT_RE.test(sanitizedRule) || QUESTION_MARK_RE.test(sanitizedRule)) {
     return { accepted: false, reason: "chat_fragment" };
   }
   if (ONE_OFF_COMMAND_RE.test(sanitizedRule) && GITHUB_ISSUE_PR_RE.test(sanitizedRule)) {
