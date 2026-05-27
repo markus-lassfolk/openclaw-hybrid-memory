@@ -10,6 +10,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { IdentityFileType } from "../config/types/agents.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { uniqueStrings } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -28,6 +29,9 @@ interface PersonaStateRow {
   last_seen_at: number;
   promoted_at: number;
   updated_at: number;
+  scope_user_id: string | null;
+  scope_agent_id: string | null;
+  scope_session_id: string | null;
 }
 
 export interface PersonaStateEntry {
@@ -59,6 +63,7 @@ interface UpsertPersonaStateInput {
   sourceReflectionIds?: string[];
   firstSeenAt: number;
   lastSeenAt: number;
+  scopeFilter?: ScopeFilter;
 }
 
 type UpsertPersonaStateResult = {
@@ -87,7 +92,10 @@ export class PersonaStateStore extends BaseSqliteStore {
         first_seen_at        INTEGER NOT NULL,
         last_seen_at         INTEGER NOT NULL,
         promoted_at          INTEGER NOT NULL,
-        updated_at           INTEGER NOT NULL
+        updated_at           INTEGER NOT NULL,
+        scope_user_id        TEXT,
+        scope_agent_id       TEXT,
+        scope_session_id     TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_persona_state_updated
@@ -95,6 +103,25 @@ export class PersonaStateStore extends BaseSqliteStore {
 
       CREATE INDEX IF NOT EXISTS idx_persona_state_question
         ON persona_state(question_key, updated_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_persona_state_scope
+        ON persona_state(scope_user_id, scope_agent_id, scope_session_id, updated_at DESC);
+    `);
+
+    const tableInfo = this.liveDb.prepare("PRAGMA table_info(persona_state)").all() as Array<{ name: string }>;
+    const hasColumn = (name: string) => tableInfo.some((column) => column.name === name);
+    if (!hasColumn("scope_user_id")) {
+      this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_user_id TEXT");
+    }
+    if (!hasColumn("scope_agent_id")) {
+      this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_agent_id TEXT");
+    }
+    if (!hasColumn("scope_session_id")) {
+      this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_session_id TEXT");
+    }
+    this.liveDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_persona_state_scope
+      ON persona_state(scope_user_id, scope_agent_id, scope_session_id, updated_at DESC)
     `);
   }
 
@@ -102,22 +129,28 @@ export class PersonaStateStore extends BaseSqliteStore {
     return "persona-state-store";
   }
 
-  getByStateKey(stateKey: string): PersonaStateEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM persona_state WHERE state_key = ?").get(stateKey) as
-      | PersonaStateRow
-      | undefined;
+  getByStateKey(stateKey: string, opts?: { scopeFilter?: ScopeFilter }): PersonaStateEntry | null {
+    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
+    const scopeCondition = scopeWhere.clause ? ` AND ${scopeWhere.clause.replace(/^ WHERE /, "")}` : "";
+    const row = this.liveDb
+      .prepare(`SELECT * FROM persona_state WHERE state_key = ?${scopeCondition}`)
+      .get(stateKey, ...scopeWhere.params) as PersonaStateRow | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
-  listRecent(limit = 50): PersonaStateEntry[] {
+  listRecent(limit = 50, opts?: { scopeFilter?: ScopeFilter }): PersonaStateEntry[] {
+    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
     const rows = this.liveDb
-      .prepare("SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?")
-      .all(limit) as unknown as PersonaStateRow[];
+      .prepare(`SELECT * FROM persona_state${scopeWhere.clause} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...scopeWhere.params, limit) as unknown as PersonaStateRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
-  count(): number {
-    const row = this.liveDb.prepare("SELECT COUNT(*) AS count FROM persona_state").get() as
+  count(opts?: { scopeFilter?: ScopeFilter }): number {
+    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
+    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state${scopeWhere.clause}`).get(
+      ...scopeWhere.params,
+    ) as
       | { count?: number }
       | undefined;
     return row?.count ?? 0;
@@ -125,7 +158,10 @@ export class PersonaStateStore extends BaseSqliteStore {
 
   upsert(entry: UpsertPersonaStateInput): UpsertPersonaStateResult {
     const now = Math.floor(Date.now() / 1000);
-    const existing = this.getByStateKey(entry.stateKey);
+    const scopeUserId = normalizeScopeValue(entry.scopeFilter?.userId);
+    const scopeAgentId = normalizeScopeValue(entry.scopeFilter?.agentId);
+    const scopeSessionId = normalizeScopeValue(entry.scopeFilter?.sessionId);
+    const existing = this.getByStateKey(entry.stateKey, { scopeFilter: entry.scopeFilter });
     const evidence = uniqueStrings(entry.evidence ?? []);
     const sourceReflectionIds = uniqueStrings(entry.sourceReflectionIds ?? []);
 
@@ -136,8 +172,9 @@ export class PersonaStateStore extends BaseSqliteStore {
           `INSERT INTO persona_state (
              id, state_key, question_key, target_file, insight, normalized_insight,
              confidence, durable_count, evidence, source_reflection_ids,
-             first_seen_at, last_seen_at, promoted_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             first_seen_at, last_seen_at, promoted_at, updated_at,
+             scope_user_id, scope_agent_id, scope_session_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -154,6 +191,9 @@ export class PersonaStateStore extends BaseSqliteStore {
           entry.lastSeenAt,
           now,
           now,
+          scopeUserId,
+          scopeAgentId,
+          scopeSessionId,
         );
       const created: PersonaStateEntry = {
         id,
@@ -269,4 +309,43 @@ export class PersonaStateStore extends BaseSqliteStore {
       return [];
     }
   }
+}
+
+function normalizeScopeValue(value: string | null | undefined): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function buildScopeWhereClause(scopeFilter?: ScopeFilter): { clause: string; params: string[] } {
+  const userId = normalizeScopeValue(scopeFilter?.userId);
+  const agentId = normalizeScopeValue(scopeFilter?.agentId);
+  const sessionId = normalizeScopeValue(scopeFilter?.sessionId);
+  if (!userId && !agentId && !sessionId) {
+    return { clause: "", params: [] };
+  }
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (userId) {
+    clauses.push("scope_user_id = ?");
+    params.push(userId);
+  } else {
+    clauses.push("scope_user_id IS NULL");
+  }
+  if (agentId) {
+    clauses.push("scope_agent_id = ?");
+    params.push(agentId);
+  } else {
+    clauses.push("scope_agent_id IS NULL");
+  }
+  if (sessionId) {
+    clauses.push("scope_session_id = ?");
+    params.push(sessionId);
+  } else {
+    clauses.push("scope_session_id IS NULL");
+  }
+  return {
+    clause: ` WHERE ${clauses.join(" AND ")}`,
+    params,
+  };
 }
