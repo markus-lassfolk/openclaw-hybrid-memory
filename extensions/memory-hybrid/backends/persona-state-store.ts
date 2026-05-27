@@ -13,6 +13,7 @@ import type { IdentityFileType } from "../config/types/agents.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { uniqueStrings } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { buildExactScopeWhereClause, normalizeScopeValue } from "./scope-filter-sql.js";
 
 interface PersonaStateRow {
   id: string;
@@ -103,20 +104,17 @@ export class PersonaStateStore extends BaseSqliteStore {
 
       CREATE INDEX IF NOT EXISTS idx_persona_state_question
         ON persona_state(question_key, updated_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_persona_state_scope
-        ON persona_state(scope_user_id, scope_agent_id, scope_session_id, updated_at DESC);
     `);
 
     const tableInfo = this.liveDb.prepare("PRAGMA table_info(persona_state)").all() as Array<{ name: string }>;
-    const hasColumn = (name: string) => tableInfo.some((column) => column.name === name);
-    if (!hasColumn("scope_user_id")) {
+    const columns = new Set(tableInfo.map((column) => column.name));
+    if (!columns.has("scope_user_id")) {
       this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_user_id TEXT");
     }
-    if (!hasColumn("scope_agent_id")) {
+    if (!columns.has("scope_agent_id")) {
       this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_agent_id TEXT");
     }
-    if (!hasColumn("scope_session_id")) {
+    if (!columns.has("scope_session_id")) {
       this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_session_id TEXT");
     }
     this.liveDb.exec(`
@@ -130,25 +128,24 @@ export class PersonaStateStore extends BaseSqliteStore {
   }
 
   getByStateKey(stateKey: string, opts?: { scopeFilter?: ScopeFilter }): PersonaStateEntry | null {
-    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
-    const scopeCondition = scopeWhere.clause ? ` AND ${scopeWhere.clause.replace(/^ WHERE /, "")}` : "";
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
     const row = this.liveDb
-      .prepare(`SELECT * FROM persona_state WHERE state_key = ?${scopeCondition}`)
+      .prepare(`SELECT * FROM persona_state WHERE state_key = ?${scopeWhere.andClause}`)
       .get(stateKey, ...scopeWhere.params) as PersonaStateRow | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
   listRecent(limit = 50, opts?: { scopeFilter?: ScopeFilter }): PersonaStateEntry[] {
-    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
     const rows = this.liveDb
-      .prepare(`SELECT * FROM persona_state${scopeWhere.clause} ORDER BY updated_at DESC LIMIT ?`)
+      .prepare(`SELECT * FROM persona_state${scopeWhere.whereClause} ORDER BY updated_at DESC LIMIT ?`)
       .all(...scopeWhere.params, limit) as unknown as PersonaStateRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
   count(opts?: { scopeFilter?: ScopeFilter }): number {
-    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
-    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state${scopeWhere.clause}`).get(
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
+    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state${scopeWhere.whereClause}`).get(
       ...scopeWhere.params,
     ) as
       | { count?: number }
@@ -309,43 +306,4 @@ export class PersonaStateStore extends BaseSqliteStore {
       return [];
     }
   }
-}
-
-function normalizeScopeValue(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function buildScopeWhereClause(scopeFilter?: ScopeFilter): { clause: string; params: string[] } {
-  const userId = normalizeScopeValue(scopeFilter?.userId);
-  const agentId = normalizeScopeValue(scopeFilter?.agentId);
-  const sessionId = normalizeScopeValue(scopeFilter?.sessionId);
-  if (!userId && !agentId && !sessionId) {
-    return { clause: "", params: [] };
-  }
-  const clauses: string[] = [];
-  const params: string[] = [];
-  if (userId) {
-    clauses.push("scope_user_id = ?");
-    params.push(userId);
-  } else {
-    clauses.push("scope_user_id IS NULL");
-  }
-  if (agentId) {
-    clauses.push("scope_agent_id = ?");
-    params.push(agentId);
-  } else {
-    clauses.push("scope_agent_id IS NULL");
-  }
-  if (sessionId) {
-    clauses.push("scope_session_id = ?");
-    params.push(sessionId);
-  } else {
-    clauses.push("scope_session_id IS NULL");
-  }
-  return {
-    clause: ` WHERE ${clauses.join(" AND ")}`,
-    params,
-  };
 }

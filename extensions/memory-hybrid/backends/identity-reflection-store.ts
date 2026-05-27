@@ -11,6 +11,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ScopeFilter } from "../types/memory.js";
+import { buildExactScopeWhereClause, normalizeScopeValue } from "./scope-filter-sql.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 type Durability = "durable" | "temporary";
@@ -78,20 +79,17 @@ export class IdentityReflectionStore extends BaseSqliteStore {
 
       CREATE INDEX IF NOT EXISTS idx_identity_reflections_question
         ON identity_reflections(question_key, created_at DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_identity_reflections_scope
-        ON identity_reflections(scope_user_id, scope_agent_id, scope_session_id, created_at DESC);
     `);
 
     const tableInfo = this.liveDb.prepare("PRAGMA table_info(identity_reflections)").all() as Array<{ name: string }>;
-    const hasColumn = (name: string) => tableInfo.some((column) => column.name === name);
-    if (!hasColumn("scope_user_id")) {
+    const columns = new Set(tableInfo.map((column) => column.name));
+    if (!columns.has("scope_user_id")) {
       this.liveDb.exec("ALTER TABLE identity_reflections ADD COLUMN scope_user_id TEXT");
     }
-    if (!hasColumn("scope_agent_id")) {
+    if (!columns.has("scope_agent_id")) {
       this.liveDb.exec("ALTER TABLE identity_reflections ADD COLUMN scope_agent_id TEXT");
     }
-    if (!hasColumn("scope_session_id")) {
+    if (!columns.has("scope_session_id")) {
       this.liveDb.exec("ALTER TABLE identity_reflections ADD COLUMN scope_session_id TEXT");
     }
     this.liveDb.exec(`
@@ -163,21 +161,20 @@ export class IdentityReflectionStore extends BaseSqliteStore {
   }
 
   listRecent(limit = 50, opts?: { scopeFilter?: ScopeFilter }): IdentityReflectionEntry[] {
-    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
     const rows = this.liveDb
       .prepare(
-        `SELECT * FROM identity_reflections${scopeWhere.clause} ORDER BY created_at DESC LIMIT ?`,
+        `SELECT * FROM identity_reflections${scopeWhere.whereClause} ORDER BY created_at DESC LIMIT ?`,
       )
       .all(...scopeWhere.params, limit) as unknown as IdentityReflectionRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
   getLatestByQuestion(questionKey: string, opts?: { scopeFilter?: ScopeFilter }): IdentityReflectionEntry | null {
-    const scopeWhere = buildScopeWhereClause(opts?.scopeFilter);
-    const scopeCondition = scopeWhere.clause ? ` AND ${scopeWhere.clause.replace(/^ WHERE /, "")}` : "";
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
     const row = this.liveDb
       .prepare(
-        `SELECT * FROM identity_reflections WHERE question_key = ?${scopeCondition} ORDER BY created_at DESC LIMIT 1`,
+        `SELECT * FROM identity_reflections WHERE question_key = ?${scopeWhere.andClause} ORDER BY created_at DESC LIMIT 1`,
       )
       .get(questionKey, ...scopeWhere.params) as IdentityReflectionRow | undefined;
     if (!row) return null;
@@ -210,43 +207,4 @@ export class IdentityReflectionStore extends BaseSqliteStore {
       createdAt: row.created_at,
     };
   }
-}
-
-function normalizeScopeValue(value: string | null | undefined): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function buildScopeWhereClause(scopeFilter?: ScopeFilter): { clause: string; params: string[] } {
-  const userId = normalizeScopeValue(scopeFilter?.userId);
-  const agentId = normalizeScopeValue(scopeFilter?.agentId);
-  const sessionId = normalizeScopeValue(scopeFilter?.sessionId);
-  if (!userId && !agentId && !sessionId) {
-    return { clause: "", params: [] };
-  }
-  const clauses: string[] = [];
-  const params: string[] = [];
-  if (userId) {
-    clauses.push("scope_user_id = ?");
-    params.push(userId);
-  } else {
-    clauses.push("scope_user_id IS NULL");
-  }
-  if (agentId) {
-    clauses.push("scope_agent_id = ?");
-    params.push(agentId);
-  } else {
-    clauses.push("scope_agent_id IS NULL");
-  }
-  if (sessionId) {
-    clauses.push("scope_session_id = ?");
-    params.push(sessionId);
-  } else {
-    clauses.push("scope_session_id IS NULL");
-  }
-  return {
-    clause: ` WHERE ${clauses.join(" AND ")}`,
-    params,
-  };
 }
