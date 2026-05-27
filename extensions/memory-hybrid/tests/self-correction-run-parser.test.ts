@@ -26,7 +26,7 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).not.toBeNull();
     expect(Array.isArray(result)).toBe(true);
     expect(result).toHaveLength(1);
-    expect((result as typeof sampleItem[])[0].remediationType).toBe("MEMORY_STORE");
+    expect((result as (typeof sampleItem)[])[0].remediationType).toBe("MEMORY_STORE");
   });
 
   it("parses a JSON array wrapped in a ```json fenced code block", () => {
