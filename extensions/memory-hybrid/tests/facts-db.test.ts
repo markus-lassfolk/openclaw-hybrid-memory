@@ -2290,6 +2290,40 @@ describe("FactsDB category drift audit/remap", () => {
     expect(dashboard.total).toBe(1);
     expect(dashboard.facts[0]?.id).toBe(entry.id);
   });
+
+  it("supports legacy forge/episode remap policy end-to-end", () => {
+    const legacyForge = db.store({
+      text: "Legacy forge busy fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const legacyEpisode = db.store({
+      text: "Legacy episode fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("forge_busy", legacyForge.id);
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("episode", legacyEpisode.id);
+
+    const report = db.auditCategories(["forge", "ops_summary", "other"], 2);
+    expect(report.unknown.map((row) => row.category)).toEqual(["episode", "forge_busy"]);
+
+    expect(db.remapCategory("forge_busy", "forge", true).changed).toBe(1);
+    expect(db.remapCategory("episode", "ops_summary", true).changed).toBe(1);
+
+    const after = db.auditCategories(["forge", "ops_summary", "other"], 2);
+    expect(after.unknown).toEqual([]);
+    expect(db.getById(legacyForge.id)?.category).toBe("forge");
+    expect(db.getById(legacyEpisode.id)?.category).toBe("ops_summary");
+  });
 });
 
 describe("FactsDB.proceduresCount / proceduresValidatedCount / proceduresPromotedCount", () => {
