@@ -103,8 +103,27 @@ const GITHUB_ISSUE_PR_RE = /(?:^|\s)#\d+(?:\s|$)|\b(?:issue|issues|pr|pull reque
 const SELECTED_CONTEXT_RE = /(?:^|\s)#\d+\s+(?:mon|tue|wed|thu|fri|sat|sun)\b/i;
 const QUESTION_MARK_RE = /^\s*\?|[?]{2,}/;
 const ONE_OFF_COMMAND_RE = /\b(file|open|create|submit)\s+(?:a\s+)?(?:detailed\s+)?(?:issue|pr|pull request)\b/i;
-const DURABLE_RULE_SIGNAL_RE =
-  /\b(always|never|from now on|remember|make sure|must|should|prefer|avoid|do not|don't|when|if|first check|first)\b/i;
+const RULE_LIKE_CATEGORIES = new Set<DirectiveCategory>([
+  "explicit_memory",
+  "future_behavior",
+  "absolute_rule",
+  "correction",
+  "preference",
+  "warning",
+  "procedural",
+  "implicit_correction",
+  "conditional_rule",
+]);
+
+function hasRuleLikeCategory(categories: readonly DirectiveCategory[]): boolean {
+  return categories.some((category) => RULE_LIKE_CATEGORIES.has(category));
+}
+
+function hasLocalizedDurableSignal(categories: readonly DirectiveCategory[], text: string): boolean {
+  if (hasRuleLikeCategory(categories)) return true;
+  const detected = detectDirectiveCategories(text);
+  return hasRuleLikeCategory(detected.categories);
+}
 
 function sanitizeDirectiveCandidate(rawRule: string): string {
   return rawRule
@@ -118,6 +137,7 @@ function sanitizeDirectiveCandidate(rawRule: string): string {
 function classifyDirectiveCandidate(
   rawRule: string,
   userText: string,
+  categories: readonly DirectiveCategory[],
 ): { accepted: true; sanitizedRule: string } | { accepted: false; reason: DirectiveRejectionReason } {
   if (!rawRule.trim()) return { accepted: false, reason: "missing_durable_signal" };
   if (
@@ -142,10 +162,12 @@ function classifyDirectiveCandidate(
   if (looksLikeUrlList || SELECTED_CONTEXT_RE.test(sanitizedRule) || QUESTION_MARK_RE.test(sanitizedRule)) {
     return { accepted: false, reason: "chat_fragment" };
   }
-  if (ONE_OFF_COMMAND_RE.test(sanitizedRule) && GITHUB_ISSUE_PR_RE.test(sanitizedRule)) {
+  const hasDurableSignal =
+    hasLocalizedDurableSignal(categories, sanitizedRule) || hasLocalizedDurableSignal(categories, userText);
+  if (ONE_OFF_COMMAND_RE.test(sanitizedRule) && GITHUB_ISSUE_PR_RE.test(sanitizedRule) && !hasDurableSignal) {
     return { accepted: false, reason: "one_off_command" };
   }
-  if (!DURABLE_RULE_SIGNAL_RE.test(sanitizedRule) && !DURABLE_RULE_SIGNAL_RE.test(userText)) {
+  if (!hasDurableSignal) {
     return { accepted: false, reason: "missing_durable_signal" };
   }
 
@@ -362,7 +384,7 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
 
       const precedingAssistant = i > 0 && messages[i - 1].role === "assistant" ? messages[i - 1].text : "";
       const extractedRule = extractRule(userText);
-      const candidate = classifyDirectiveCandidate(extractedRule, userText);
+      const candidate = classifyDirectiveCandidate(extractedRule, userText, categories);
       if (!candidate.accepted) {
         rejected++;
         continue;

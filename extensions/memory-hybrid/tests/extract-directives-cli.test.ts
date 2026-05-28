@@ -99,4 +99,36 @@ describe("runExtractDirectivesForCli", () => {
     expect(db.getScanCursor("extract-directives")).not.toBeNull();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
   });
+
+  it("dedupes near-duplicate directives on the CLI extraction path", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"), { fuzzyDedupe: true });
+    writeSession(dir, "2026-05-27-directives-dupe.jsonl", [
+      "From now on, always run lint before build and before deployment locally.",
+      "Noted.",
+      "From now on, always run lint before build and before deployment locally nightly.",
+      "Understood.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb: { delete: vi.fn().mockResolvedValue(false) },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as any,
+      { days: 30 },
+    );
+
+    expect(result.incidents.length).toBe(2);
+    expect(result.stored).toBe(1);
+    expect(result.rejected).toBe(0);
+    expect(db.directivesCount()).toBe(1);
+  });
 });
