@@ -107,7 +107,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             throw err;
           }
           if (res.error) {
-            console.error(`Error: ${res.error}`);
+            console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
             process.exitCode = 1;
             return;
           }
