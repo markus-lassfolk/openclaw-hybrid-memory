@@ -403,13 +403,23 @@ export async function runExtractReinforcementForCli(
               maxEventsPerFact,
               boostAmount: effectiveBoost,
             });
-            if (reinforced) incidentAnnotated++;
+            if (reinforced) {
+              incidentAnnotated++;
+              annotated++;
+            }
           }
-          annotated += incidentAnnotated;
           if (incidentAnnotated > 0) annotationReasons.reinforced++;
           else annotationReasons.recalledIdsNoMatch++;
+        } catch (err) {
+          annotationReasons.errors++;
+          capturePluginError(err as Error, {
+            subsystem: "cli",
+            operation: "runExtractReinforcementForCli",
+          });
+        }
 
-          // Reinforce procedures based on tool call sequence
+        // Reinforce procedures based on tool call sequence (separate try-catch to avoid double-counting)
+        try {
           if (incident.toolCallSequence.length >= 2) {
             const taskPattern = incident.toolCallSequence.join(" -> ");
             const procedures = factsDb.searchProcedures(
@@ -426,7 +436,6 @@ export async function runExtractReinforcementForCli(
             }
           }
         } catch (err) {
-          annotationReasons.errors++;
           capturePluginError(err as Error, {
             subsystem: "cli",
             operation: "runExtractReinforcementForCli",
