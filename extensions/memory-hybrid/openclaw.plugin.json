@@ -777,6 +777,26 @@
                 ],
                 "description": "Structured recall timing logs: false/off=disabled, true/basic=completed events only, verbose=started+completed with timestamps."
               },
+              "hotMaxTokens": {
+                "type": "number",
+                "description": "Optional cap for HOT fixed block tokens before recall candidates are packed"
+              },
+              "narrativeMaxTokens": {
+                "type": "number",
+                "description": "Optional cap for narrative fixed block tokens before recall candidates are packed"
+              },
+              "procedureMaxTokens": {
+                "type": "number",
+                "description": "Optional cap for procedural fixed block tokens before recall candidates are packed"
+              },
+              "activeTaskMaxTokens": {
+                "type": "number",
+                "description": "Optional reserve for active-task context added by other before_agent_start hooks"
+              },
+              "staleWarningMaxTokens": {
+                "type": "number",
+                "description": "Optional reserve for stale-warning context in active-task injection"
+              },
               "progressiveMaxCandidates": {
                 "type": "number"
               },
