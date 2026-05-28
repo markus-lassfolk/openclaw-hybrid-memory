@@ -100,7 +100,7 @@ export function parseSelfCorrectionLLMResponse(content: string): unknown[] | nul
 
   while (searchFrom < normalized.length) {
     const start = normalized.indexOf("[", searchFrom);
-    if (start === -1) return null;
+    if (start === -1) break;
     const slice = extractBalancedArraySlice(normalized, start);
     if (!slice) {
       searchFrom = start + 1;

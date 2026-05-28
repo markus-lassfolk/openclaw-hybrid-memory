@@ -117,6 +117,13 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).toHaveLength(0);
   });
 
+  it("parses an empty JSON array followed by trailing text", () => {
+    const result = parseSelfCorrectionLLMResponse("[] No corrections needed.");
+    expect(result).not.toBeNull();
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toHaveLength(0);
+  });
+
   it("parses a multi-item array correctly", () => {
     const items = [
       sampleItem,
