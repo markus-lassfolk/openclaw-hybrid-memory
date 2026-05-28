@@ -351,15 +351,17 @@ describe("project-state-lww: older-wins prevents auto-supersede", () => {
       text: "Next step A",
       confidence: 1.0,
     });
-    // Same created_at as older (no offset) → not strictly newer
-    const newer = storeProjectFact({
+    // Force same created_at as older to avoid wall-clock timing flake.
+    const newerInitial = storeProjectFact({
       entity: "proj-b",
       key: "next",
       value: "step B",
       text: "Next step B",
       confidence: 1.0,
-      createdAtOffset: 0,
     });
+    // @ts-expect-error accessing internal liveDb for deterministic test setup only
+    db.liveDb.prepare("UPDATE facts SET created_at = ? WHERE id = ?").run(older.createdAt, newerInitial.id);
+    const newer = db.getById(newerInitial.id)!;
 
     // Manually record the contradiction since detectContradictions at write time may auto-resolve
     // strictly newer project facts; here they have the same timestamp so it won't auto-resolve.

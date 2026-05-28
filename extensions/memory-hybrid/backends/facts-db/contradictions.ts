@@ -493,9 +493,11 @@ export function resolveProjectStateLww(
     });
 
     if (!dryRun && action === "supersede") {
-      resolveContradiction(db, c.id, "superseded");
-      supersede(c.factIdOld, c.factIdNew);
-      applied++;
+      const resolved = resolveContradiction(db, c.id, "superseded");
+      const superseded = supersede(c.factIdOld, c.factIdNew);
+      if (resolved && superseded) {
+        applied++;
+      }
     }
   }
 

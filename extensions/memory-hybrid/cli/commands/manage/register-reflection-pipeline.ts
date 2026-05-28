@@ -754,12 +754,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 for (const cand of group.candidates) {
                   const overloadNote = cand.possibleOverloadedEntity ? " [!] possible-entity-reuse" : "";
                   const actionLabel = cand.action === "supersede" ? "auto-safe: project-state-lww" : "manual: non-qualifying";
+                  const keepLabel = cand.action === "supersede" ? "keep" : "newer";
+                  const supersedeLabel = cand.action === "supersede" ? "supersede" : "older";
                   console.log(`    [${actionLabel}]${overloadNote}`);
                   console.log(
-                    `      keep:      ${formatEpochTimestamp(cand.newFactDate)} src=${cand.newSource} conf=${cand.newConf.toFixed(2)} "${cand.newValueExcerpt}"`,
+                    `      ${keepLabel.padEnd(10)}: ${formatEpochTimestamp(cand.newFactDate)} src=${cand.newSource} conf=${cand.newConf.toFixed(2)} "${cand.newValueExcerpt}"`,
                   );
                   console.log(
-                    `      supersede: ${formatEpochTimestamp(cand.oldFactDate)} src=${cand.oldSource} conf=${cand.oldConf.toFixed(2)} "${cand.oldValueExcerpt}"`,
+                    `      ${supersedeLabel.padEnd(10)}: ${formatEpochTimestamp(cand.oldFactDate)} src=${cand.oldSource} conf=${cand.oldConf.toFixed(2)} "${cand.oldValueExcerpt}"`,
                   );
                   console.log(`      contradiction: ${cand.contradictionId}`);
                 }

@@ -243,7 +243,7 @@ export class FactsDB extends FactsDBLayer2 {
     // Project-state LWW: immediately resolve contradictions for known mutable keys so
     // active-task/project writes do not leave avoidable unresolved contradictions (#1636).
     if (results.length > 0 && key != null) {
-      const keyLower = key.toLowerCase();
+      const keyLower = key.trim().toLowerCase();
       if (PROJECT_STATE_LWW_KEYS.has(keyLower)) {
         const newFact = this.getById(newFactId);
         if (newFact) {
