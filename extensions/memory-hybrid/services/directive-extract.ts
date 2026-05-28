@@ -94,14 +94,14 @@ type DirectiveRejectionReason =
   | "missing_durable_signal";
 
 const UNTRUSTED_METADATA_MARKERS = [/conversation info\s*\(untrusted metadata\)/i, /sender\s*\(untrusted metadata\)/i];
-const UNTRUSTED_METADATA_KEYS_RE = /\b(chat_id|message_id|sender_id|timestamp|inbound_event_kind|conversation_id)\b/i;
+const UNTRUSTED_METADATA_KEYS_RE = /\b(chat_id|message_id|sender_id|inbound_event_kind|conversation_id)\b/i;
 const UNTRUSTED_METADATA_ENVELOPE_BLOCK_RE =
   /(?:Conversation info|Sender)\s*\(untrusted metadata\)\s*:\s*```(?:json)?[\s\S]*?```/gi;
 const CODE_FENCE_RE = /```[\s\S]*?```/g;
 const GITHUB_LINK_RE = /https?:\/\/github\.com\/[^\s)]+/gi;
 const GITHUB_ISSUE_PR_RE = /(?:^|\s)#\d+(?:\s|$)|\b(?:issue|issues|pr|pull request)\b/i;
 const SELECTED_CONTEXT_RE = /(?:^|\s)#\d+\s+(?:mon|tue|wed|thu|fri|sat|sun)\b/i;
-const QUESTION_MARK_RE = /\?/;
+const QUESTION_MARK_RE = /^\s*\?|[?]{2,}/;
 const ONE_OFF_COMMAND_RE = /\b(file|open|create|submit)\s+(?:a\s+)?(?:detailed\s+)?(?:issue|pr|pull request)\b/i;
 const DURABLE_RULE_SIGNAL_RE =
   /\b(always|never|from now on|remember|make sure|must|should|prefer|avoid|do not|don't|when|if|first check|first)\b/i;

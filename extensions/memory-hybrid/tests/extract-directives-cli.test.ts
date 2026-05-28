@@ -59,7 +59,7 @@ describe("runExtractDirectivesForCli", () => {
     expect(result.stored).toBe(1);
     expect(result.rejected).toBe(1);
     expect(result.partial).toBe(true);
-    expect(db.getScanCursor("extract-directives")).toBeNull();
+    expect(db.getScanCursor("extract-directives")).not.toBeNull();
 
     const matches = db.search("verify backups", 5, { includeSuperseded: true, tierFilter: "all" });
     const stored = matches.find((item) => item.entry.source.startsWith("directive:"))?.entry;
