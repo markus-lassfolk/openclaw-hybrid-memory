@@ -257,9 +257,9 @@ function extractJobFromPath(path: string, suffix: string): string {
 }
 
 const DREAM_CYCLE_PROGRESS_MARKER_RE =
-  /(?:\[dream-cycle\].*(?:start|still running after|complete)|memory-hybrid:\s*dream-cycle\s*[—-].*(?:start|still running after|complete|episodic consolidation progress)|Dream cycle complete:|Extract-implicit:|Closed-loop analysis:|Cross-agent learning:|Tool effectiveness:|Cost log:)/im;
+  /(?:\[dream-cycle\].*(?:start|still running after|complete)|memory-hybrid:\s*(?:dream-cycle|reflect-meta(?:-collapse)?|build-languages|backfill-decay|reembed-vectorless|enrich-entities)\s*[—-].*(?:start|still running after|complete|episodic consolidation progress)|Dream cycle complete:|Extract-implicit:|Closed-loop analysis:|Cross-agent learning:|Tool effectiveness:|Cost log:)/im;
 const DREAM_CYCLE_STILL_RUNNING_RE =
-  /(?:\[dream-cycle\].*still running after \d+s|memory-hybrid:\s*dream-cycle\s*[—-].*still running after \d+s)/im;
+  /(?:\[dream-cycle\].*still running after \d+s|memory-hybrid:\s*(?:dream-cycle|reflect-meta(?:-collapse)?|build-languages|backfill-decay|reembed-vectorless|enrich-entities)\s*[—-].*still running after \d+s)/im;
 
 function logHasDreamCycleProgress(logContent: string): boolean {
   if (!logContent) return false;

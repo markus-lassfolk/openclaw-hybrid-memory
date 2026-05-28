@@ -290,6 +290,36 @@ describe("maintenance log analyzer", () => {
     expect(steps[0].step).toBe("orchestration-stale-running");
   });
 
+  it("treats build-languages heartbeat lines as progress markers for empty ledgers", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "monthly-consolidation-20260517T155138Z-24030.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(logPath, "memory-hybrid: build-languages — still running after 60s; stage=detect+generate");
+
+    const nowMs = Date.UTC(2026, 4, 17, 16, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
+    expect(steps[0].line).toContain("progress-marker=present");
+  });
+
+  it("treats enrich-entities heartbeat lines as progress markers for empty ledgers", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "monthly-consolidation-20260517T155138Z-24030.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "");
+    writeFileSync(logPath, "memory-hybrid: enrich-entities — still running after 60s; stage=entity-enrichment");
+
+    const nowMs = Date.UTC(2026, 4, 17, 16, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
+    expect(steps[0].line).toContain("progress-marker=present");
+  });
+
   it("keeps normal successful verbose dream-cycle runs as OK", () => {
     const root = tmpRoot();
     const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
