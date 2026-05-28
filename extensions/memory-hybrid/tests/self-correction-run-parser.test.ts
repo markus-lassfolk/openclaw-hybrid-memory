@@ -13,8 +13,14 @@ import { parseSelfCorrectionLLMResponse } from "../cli/cmd-selfcorrection.js";
 
 // Representative remediation item shape used across tests
 const sampleItem = {
+  category: "WRONG_APPROACH",
+  severity: "MEDIUM",
   remediationType: "MEMORY_STORE",
-  content: "Always confirm destructive operations before proceeding.",
+  remediationContent: {
+    text: "Always confirm destructive operations before proceeding.",
+    entity: "Behavior",
+    tags: ["safety"],
+  },
   confidence: 0.9,
   reasoning: "User asked copilot to avoid deleting files without confirmation.",
 };
@@ -127,11 +133,27 @@ describe("parseSelfCorrectionLLMResponse", () => {
   it("parses a multi-item array correctly", () => {
     const items = [
       sampleItem,
-      { remediationType: "TOOLS_RULE", content: "Prefer read-only ops first.", confidence: 0.8, reasoning: "..." },
+      {
+        category: "WRONG_APPROACH",
+        severity: "LOW",
+        remediationType: "TOOLS_RULE",
+        remediationContent: "Prefer read-only ops first.",
+        confidence: 0.8,
+        reasoning: "...",
+      },
     ];
     const result = parseSelfCorrectionLLMResponse(JSON.stringify(items));
     expect(result).not.toBeNull();
     expect(result).toHaveLength(2);
+  });
+
+  it("skips remediationType-only object arrays and parses a later valid remediation array", () => {
+    const malformed = [{ remediationType: "MEMORY_STORE" }];
+    const input = `${JSON.stringify(malformed)}\n${JSON.stringify([sampleItem])}`;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+    expect((result as (typeof sampleItem)[])[0].remediationType).toBe("MEMORY_STORE");
   });
 
   it("handles a fenced block with trailing text (combined)", () => {

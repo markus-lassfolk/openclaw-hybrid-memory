@@ -83,7 +83,8 @@ function sanitizeLlmResponseExcerpt(content: string): string {
  *   - emit placeholder tokens instead of JSON
  *   - return invalid/truncated JSON
  *
- * This function handles all of those cases robustly via `tryParseFirstJsonArray`.
+ * This function handles all of those cases robustly by scanning balanced `[...]`
+ * spans and only accepting arrays that match expected remediation object shape.
  * Returns `null` when no valid array can be extracted (callers treat this as
  * `failed_parse` — no remediations are applied and the error is reported).
  *
@@ -125,12 +126,30 @@ export function parseSelfCorrectionLLMResponse(content: string): unknown[] | nul
 }
 
 function isSelfCorrectionRemediationArray(items: unknown[]): boolean {
-  return items.every(
-    (item) =>
-      typeof item === "object" &&
-      item !== null &&
-      typeof (item as Record<string, unknown>).remediationType === "string",
-  );
+  return items.every((item) => isSelfCorrectionRemediationItem(item));
+}
+
+function isSelfCorrectionRemediationItem(item: unknown): boolean {
+  if (typeof item !== "object" || item === null) return false;
+  const candidate = item as Record<string, unknown>;
+  const remediationType = candidate.remediationType;
+  if (typeof remediationType !== "string" || remediationType.trim().length === 0) return false;
+
+  const remediationContent = candidate.remediationContent;
+  if (
+    !(
+      typeof remediationContent === "string" ||
+      (typeof remediationContent === "object" && remediationContent !== null)
+    )
+  ) {
+    return false;
+  }
+
+  if ("category" in candidate && typeof candidate.category !== "string") return false;
+  if ("severity" in candidate && typeof candidate.severity !== "string") return false;
+  if ("repeated" in candidate && typeof candidate.repeated !== "boolean") return false;
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
