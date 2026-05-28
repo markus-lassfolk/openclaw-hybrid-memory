@@ -635,7 +635,7 @@ export async function runCapture(
             },
             api.logger,
           );
-          const storedEntry = ctx.factsDb.store({
+          const storeResult = ctx.factsDb.storeWithResult({
             text: textToStore,
             category,
             importance: CLI_STORE_IMPORTANCE,
@@ -650,6 +650,11 @@ export async function runCapture(
             extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
             extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
           });
+          if (storeResult.skipped) {
+            await ctx.walRemove(walEntryId, api.logger);
+            continue;
+          }
+          const storedEntry = storeResult.entry;
           try {
             if (vector) {
               ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
