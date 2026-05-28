@@ -26,6 +26,7 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
+import { extractBalancedArraySlice, stripBracketContextPreamble, stripMarkdownCodeFence } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
@@ -89,7 +90,36 @@ function sanitizeLlmResponseExcerpt(content: string): string {
  *   - **invalid JSON**: `[not valid]` / truncated → null returned, caller handles error
  */
 export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
-  return tryParseFirstJsonArray(content);
+  const normalized = stripBracketContextPreamble(stripMarkdownCodeFence(content));
+  let searchFrom = 0;
+
+  while (searchFrom < normalized.length) {
+    const start = normalized.indexOf("[", searchFrom);
+    if (start === -1) return null;
+    const slice = extractBalancedArraySlice(normalized, start);
+    if (!slice) {
+      searchFrom = start + 1;
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(slice);
+      if (Array.isArray(parsed) && isSelfCorrectionRemediationArray(parsed)) {
+        return parsed;
+      }
+    } catch {
+      /* try next balanced span */
+    }
+    searchFrom = start + slice.length;
+  }
+
+  return null;
+}
+
+function isSelfCorrectionRemediationArray(items: unknown[]): boolean {
+  if (items.length === 0) return true;
+  return items.every(
+    (item) => typeof item === "object" && item !== null && typeof (item as Record<string, unknown>).remediationType === "string",
+  );
 }
 
 // ---------------------------------------------------------------------------

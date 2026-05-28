@@ -79,6 +79,18 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).toBeNull();
   });
 
+  it("skips preamble numeric arrays and parses the remediation array", () => {
+    const input = `I found [1] issue:\n${JSON.stringify([sampleItem])}`;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+  });
+
+  it("returns null when only non-remediation arrays are present", () => {
+    const result = parseSelfCorrectionLLMResponse("I found [1] issue.");
+    expect(result).toBeNull();
+  });
+
   it("returns null for empty string input", () => {
     const result = parseSelfCorrectionLLMResponse("");
     expect(result).toBeNull();
