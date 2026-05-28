@@ -221,6 +221,40 @@ function isAutoResolvableContradiction(
   return !isFactVerified(db, contradiction.factIdOld);
 }
 
+type AutoResolutionDecision =
+  | { autoResolvable: false }
+  | {
+      autoResolvable: true;
+      resolution: "superseded" | "kept";
+      requiresSupersede: boolean;
+    };
+
+function getAutoResolutionDecision(
+  db: DatabaseSync,
+  contradiction: ContradictionRecord,
+  newFact: MemoryEntry | null,
+  oldFact: MemoryEntry | null,
+): AutoResolutionDecision {
+  if (!newFact && !oldFact) {
+    return { autoResolvable: true, resolution: "superseded", requiresSupersede: false };
+  }
+  if (!newFact && oldFact) {
+    return { autoResolvable: true, resolution: "kept", requiresSupersede: false };
+  }
+  if (newFact && !oldFact) {
+    return { autoResolvable: true, resolution: "superseded", requiresSupersede: false };
+  }
+  if (!newFact || !oldFact) return { autoResolvable: false };
+  if (!isAutoResolvableContradiction(db, contradiction, newFact, oldFact)) {
+    return { autoResolvable: false };
+  }
+  return {
+    autoResolvable: true,
+    resolution: "superseded",
+    requiresSupersede: oldFact.supersededAt == null,
+  };
+}
+
 export function previewResolveContradictionsAuto(
   db: DatabaseSync,
   getById: (id: string) => MemoryEntry | null,
@@ -251,17 +285,8 @@ export function previewResolveContradictionsAuto(
   for (const c of unresolved) {
     const newFact = getById(c.factIdNew);
     const oldFact = getById(c.factIdOld);
-
-    if (!newFact || !oldFact) {
-      autoResolvable.push({
-        contradictionId: c.id,
-        factIdNew: c.factIdNew,
-        factIdOld: c.factIdOld,
-      });
-      continue;
-    }
-
-    if (isAutoResolvableContradiction(db, c, newFact, oldFact)) {
+    const decision = getAutoResolutionDecision(db, c, newFact, oldFact);
+    if (decision.autoResolvable) {
       autoResolvable.push({
         contradictionId: c.id,
         factIdNew: c.factIdNew,
@@ -310,76 +335,37 @@ export function resolveContradictionsAuto(
   for (const c of unresolved) {
     const newFact = getById(c.factIdNew);
     const oldFact = getById(c.factIdOld);
-
-    if (!newFact && !oldFact) {
-      resolveContradiction(db, c.id, "superseded");
-      autoResolved.push({
-        contradictionId: c.id,
-        factIdNew: c.factIdNew,
-        factIdOld: c.factIdOld,
-      });
-      continue;
-    }
-
-    if (!newFact && oldFact) {
-      resolveContradiction(db, c.id, "kept");
-      if (c.oldFactOriginalConfidence != null) {
-        db.prepare("UPDATE facts SET confidence = ? WHERE id = ?").run(c.oldFactOriginalConfidence, c.factIdOld);
-      }
-      autoResolved.push({
-        contradictionId: c.id,
-        factIdNew: c.factIdNew,
-        factIdOld: c.factIdOld,
-      });
-      continue;
-    }
-
-    if (newFact && !oldFact) {
-      resolveContradiction(db, c.id, "superseded");
-      autoResolved.push({
-        contradictionId: c.id,
-        factIdNew: c.factIdNew,
-        factIdOld: c.factIdOld,
-      });
-      continue;
-    }
-
-    // Both facts exist at this point (previous conditions handle null cases)
-    if (!newFact || !oldFact) continue;
-    const resolvedNew = newFact;
-    const resolvedOld = oldFact;
-    if (isAutoResolvableContradiction(db, c, resolvedNew, resolvedOld)) {
-      if (resolvedOld.supersededAt != null) {
-        resolveContradiction(db, c.id, "superseded");
-        autoResolved.push({
-          contradictionId: c.id,
-          factIdNew: c.factIdNew,
-          factIdOld: c.factIdOld,
-        });
-      } else {
-        const superseded = supersede(c.factIdOld, c.factIdNew);
-        if (superseded) {
-          resolveContradiction(db, c.id, "superseded");
-          autoResolved.push({
-            contradictionId: c.id,
-            factIdNew: c.factIdNew,
-            factIdOld: c.factIdOld,
-          });
-        } else {
-          ambiguous.push({
-            contradictionId: c.id,
-            factIdNew: c.factIdNew,
-            factIdOld: c.factIdOld,
-          });
-        }
-      }
-    } else {
+    const decision = getAutoResolutionDecision(db, c, newFact, oldFact);
+    if (!decision.autoResolvable) {
       ambiguous.push({
         contradictionId: c.id,
         factIdNew: c.factIdNew,
         factIdOld: c.factIdOld,
       });
+      continue;
     }
+
+    if (decision.requiresSupersede) {
+      const superseded = supersede(c.factIdOld, c.factIdNew);
+      if (!superseded) {
+        ambiguous.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
+        continue;
+      }
+    }
+
+    resolveContradiction(db, c.id, decision.resolution);
+    if (decision.resolution === "kept" && c.oldFactOriginalConfidence != null) {
+      db.prepare("UPDATE facts SET confidence = ? WHERE id = ?").run(c.oldFactOriginalConfidence, c.factIdOld);
+    }
+    autoResolved.push({
+      contradictionId: c.id,
+      factIdNew: c.factIdNew,
+      factIdOld: c.factIdOld,
+    });
   }
 
   return { autoResolved, ambiguous };
