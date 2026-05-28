@@ -163,7 +163,8 @@ function classifyDirectiveCandidate(
     return { accepted: false, reason: "chat_fragment" };
   }
   const hasDurableSignal =
-    hasLocalizedDurableSignal(categories, sanitizedRule) || hasLocalizedDurableSignal(categories, userText);
+    hasLocalizedDurableSignal(categories, sanitizedRule) ||
+    hasRuleLikeCategory(detectDirectiveCategories(userText).categories);
   if (ONE_OFF_COMMAND_RE.test(sanitizedRule) && GITHUB_ISSUE_PR_RE.test(sanitizedRule) && !hasDurableSignal) {
     return { accepted: false, reason: "one_off_command" };
   }
