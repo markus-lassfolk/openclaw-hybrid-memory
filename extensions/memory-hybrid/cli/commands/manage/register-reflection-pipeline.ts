@@ -8,6 +8,7 @@ import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 
 import {
   formatExtractImplicitFeedbackProgress,
@@ -850,7 +851,15 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             if (!details) {
               console.log("  3. Easier scan: openclaw hybrid-mem resolve-contradictions --details");
             }
-            if (res.ambiguous.length > 0) {
+            const hasProjectStatePairs = res.ambiguous.some((a) => {
+              const newF = factsDb.getById(a.factIdNew);
+              const oldF = factsDb.getById(a.factIdOld);
+              if (!newF || !oldF) return false;
+              if (newF.category !== "project" || oldF.category !== "project") return false;
+              const keyLower = (newF.key ?? oldF.key ?? "").toLowerCase();
+              return PROJECT_STATE_LWW_KEYS.has(keyLower);
+            });
+            if (hasProjectStatePairs) {
               console.log(
                 "  4. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
               );
