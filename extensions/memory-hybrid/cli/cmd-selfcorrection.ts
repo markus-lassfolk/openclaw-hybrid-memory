@@ -32,7 +32,6 @@ import {
   stripMarkdownCodeFence,
 } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
-import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
@@ -137,7 +136,10 @@ function isSelfCorrectionRemediationItem(item: unknown): boolean {
 
   const remediationContent = candidate.remediationContent;
   if (
-    !(typeof remediationContent === "string" || (typeof remediationContent === "object" && remediationContent !== null))
+    !(
+      typeof remediationContent === "string" ||
+      (typeof remediationContent === "object" && remediationContent !== null)
+    )
   ) {
     return false;
   }
@@ -372,7 +374,7 @@ export async function runSelfCorrectionRunForCli(
               : undefined,
           enabled: adaptiveEnabled,
         });
-        const repaired = tryParseFirstJsonArray(detail.content);
+        const repaired = parseSelfCorrectionLLMResponse(detail.content);
         return repaired === null ? null : (repaired as typeof analysed);
       };
 
