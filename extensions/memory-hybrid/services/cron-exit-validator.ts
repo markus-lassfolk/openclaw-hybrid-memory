@@ -243,9 +243,10 @@ export function validateMaintenanceExecution(
   let maintenanceStatus: "success" | "skipped" | "partial" | "failed";
 
   if (missingSteps.length === 0 && failedSteps.length === 0) {
-    // All required steps present and succeeded.
-    // Preserve machine-readable skipped semantics (e.g. self-correction cooldown skips).
-    maintenanceStatus = skippedSteps.length > 0 ? "skipped" : "success";
+    // All required steps present and succeeded (exit=0).
+    // Only mark as "skipped" if ALL required steps were skipped; otherwise treat as "success".
+    // This prevents wasteful re-runs when only a subset of steps are skipped (e.g., cooldown).
+    maintenanceStatus = skippedSteps.length > 0 && skippedSteps.length === requiredSteps.length ? "skipped" : "success";
   } else if (missingSteps.length === requiredSteps.length) {
     // Every required step absent — usually a hard failure (shell died before hm_step).
     // Exception: cron preambles that tell the agent to skip the whole script when a feature
