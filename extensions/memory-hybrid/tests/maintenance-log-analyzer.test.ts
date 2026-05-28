@@ -353,7 +353,6 @@ describe("maintenance log analyzer", () => {
     expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
     expect(steps[0].line).toContain("progress-marker=present");
   });
-
   it("classifies missing .exit.txt ledgers as orchestration failures", () => {
     const root = tmpRoot();
     const logPath = join(root, "nightly-memory-sweep-20260511T030000Z-555.log");
