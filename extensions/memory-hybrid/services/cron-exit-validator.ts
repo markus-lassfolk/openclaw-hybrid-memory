@@ -224,10 +224,7 @@ export function validateMaintenanceExecution(
       missingSteps.push(required);
     } else if (step.exitCode !== 0) {
       failedSteps.push(step);
-    } else if (
-      allowSkip &&
-      (step.reason === SKIP_REASON_COOLDOWN || step.reason === SKIP_REASON_CONCURRENCY)
-    ) {
+    } else if (allowSkip && (step.reason === SKIP_REASON_COOLDOWN || step.reason === SKIP_REASON_CONCURRENCY)) {
       skippedSteps.push(step);
     }
   }

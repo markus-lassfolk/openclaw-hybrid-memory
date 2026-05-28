@@ -252,7 +252,10 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
 
   it("uses configured fallback chain when model is overridden via --model", async () => {
     const ctx = makeCtx(makeOpenAIMock("[]"));
-    (ctx.cfg as any).llm = { default: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"], heavy: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"] };
+    (ctx.cfg as any).llm = {
+      default: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"],
+      heavy: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"],
+    };
 
     const res = await runSelfCorrectionRunForCli(ctx, {
       incidents: [SAMPLE_INCIDENT],
@@ -263,7 +266,11 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
 
     expect(res.error).toBeUndefined();
     const infoCalls = ((ctx.logger.info as any).mock?.calls ?? []).flat();
-    expect(infoCalls.some((line: unknown) => String(line).includes("fallback chain = [heavy-primary, heavy-fallback-1, heavy-fallback-2]"))).toBe(true);
+    expect(
+      infoCalls.some((line: unknown) =>
+        String(line).includes("fallback chain = [heavy-primary, heavy-fallback-1, heavy-fallback-2]"),
+      ),
+    ).toBe(true);
   });
 
   it("parse failure with incidents does not update scan cursor as if analysis succeeded", async () => {
