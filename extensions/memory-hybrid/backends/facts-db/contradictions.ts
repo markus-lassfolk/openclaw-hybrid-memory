@@ -496,9 +496,11 @@ export function resolveProjectStateLww(
 
     if (!dryRun && action === "supersede") {
       const resolved = resolveContradiction(db, c.id, "superseded");
-      const superseded = supersede(c.factIdOld, c.factIdNew);
-      if (resolved && superseded) {
-        applied++;
+      if (resolved) {
+        const superseded = supersede(c.factIdOld, c.factIdNew);
+        if (superseded) {
+          applied++;
+        }
       }
     }
   }
