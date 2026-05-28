@@ -278,6 +278,12 @@ export function resolveContradictionsAuto(
           factIdNew: c.factIdNew,
           factIdOld: c.factIdOld,
         });
+      } else {
+        ambiguous.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
       }
     } else {
       ambiguous.push({
