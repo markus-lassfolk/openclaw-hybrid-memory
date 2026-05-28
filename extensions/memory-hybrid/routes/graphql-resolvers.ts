@@ -331,10 +331,10 @@ export const resolvers: GraphQLResolvers = {
         scopeTarget: existing.scopeTarget ?? null,
         expiresAt: asNumber(input.expiresAt) ?? existing.expiresAt ?? null,
       });
-      // Skip supersede if store was rejected (artifact text)
-      if (updated.id !== "") {
-        context.factsDb.supersede(existing.id, updated.id);
+      if (updated.id === "") {
+        throw new Error("Fact rejected: artifact or reasoning trace text cannot be stored");
       }
+      context.factsDb.supersede(existing.id, updated.id);
       return updated;
     },
 

@@ -123,8 +123,8 @@ async function ensureVectorAndEmbeddingMeta(opts: {
     }
   };
 
-  try {
-    if (vector && vector.length > 0) {
+  if (vector && vector.length > 0) {
+    try {
       await vectorDb.store({
         id: factId,
         text,
@@ -132,15 +132,27 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         importance,
         category,
       });
+    } catch {
+      // Vector store failed: fall back to re-embed if possible.
+      await embedAndStore();
+      return;
+    }
+
+    // Vector stored successfully. Now store metadata (non-fatal if it fails).
+    try {
       const effectiveModel = embeddingModelName ?? embeddings?.modelName;
       if (effectiveModel) {
         factsDb.setEmbeddingModel(factId, effectiveModel);
         factsDb.storeEmbedding(factId, effectiveModel, "canonical", new Float32Array(vector), vector.length);
       }
-      return;
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "wal-replay",
+        operation: "store-embedding-metadata",
+        factId,
+      });
     }
-  } catch {
-    // Non-fatal: fall back to re-embed if possible.
+    return;
   }
 
   await embedAndStore();
@@ -173,6 +185,13 @@ export async function replayWalEntries(
 
   for (const entry of walEntries) {
     try {
+      // Skip diagnostic probe entries (e.g., doctor command durability tests).
+      if (entry.data?.probe) {
+        skipped++;
+        await wal.remove(entry.id);
+        continue;
+      }
+
       if (entry.operation === "store" && isSafeWalText(entry.data?.text)) {
         const text = safeString(entry.data.text);
         if (!text) continue;
