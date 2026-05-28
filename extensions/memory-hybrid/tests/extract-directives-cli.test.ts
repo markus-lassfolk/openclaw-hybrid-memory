@@ -74,10 +74,7 @@ describe("runExtractDirectivesForCli", () => {
   it("reports degraded dedupe when lexical-only fallback is used", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     db = new FactsDB(join(dir, "facts.db"));
-    writeSession(dir, "2026-05-27-directives-ok.jsonl", [
-      "From now on, always run lint before build.",
-      "Got it.",
-    ]);
+    writeSession(dir, "2026-05-27-directives-ok.jsonl", ["From now on, always run lint before build.", "Got it."]);
     const logger = { info: vi.fn(), warn: vi.fn() };
 
     const result = await runExtractDirectivesForCli(
