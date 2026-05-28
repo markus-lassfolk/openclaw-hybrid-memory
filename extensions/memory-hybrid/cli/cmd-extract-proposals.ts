@@ -3,6 +3,7 @@ import { getEnv } from "../utils/env-manager.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { hasAnyScopeFilter } from "../backends/scope-filter-sql.js";
 import { getCronModelConfig, getLLMModelPreference, resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithRetryDetailed } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
@@ -28,6 +29,7 @@ export async function runGenerateProposalsForCli(
   }
   const nowSec = Math.floor(Date.now() / 1000);
   const scopeFilter = cfg.autoRecall?.scopeFilter ?? undefined;
+  const hasScopeFilter = hasAnyScopeFilter(scopeFilter);
   const allRelevant = factsDb
     .getAll({ scopeFilter })
     .filter(
@@ -36,7 +38,8 @@ export async function runGenerateProposalsForCli(
         !f.supersededAt &&
         (f.expiresAt === null || f.expiresAt > nowSec),
     );
-  if (!scopeFilter && allRelevant.length > 0) {
+  const hasNonGlobalScopedFacts = allRelevant.some((fact) => fact.scope && fact.scope !== "global");
+  if (!hasScopeFilter && hasNonGlobalScopedFacts) {
     ctx.logger.warn?.(
       "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.",
     );
@@ -48,7 +51,7 @@ export async function runGenerateProposalsForCli(
   let personaStateBlock = "";
   if (ctx.personaStateStore) {
     const personaStateEntries = new Map(
-      ctx.personaStateStore.listRecent(12).map((entry) => [entry.stateKey, entry] as const),
+      ctx.personaStateStore.listRecent(12, { scopeFilter }).map((entry) => [entry.stateKey, entry] as const),
     );
 
     if (ctx.identityReflectionStore) {
@@ -78,7 +81,7 @@ export async function runGenerateProposalsForCli(
           ctx.identityReflectionStore,
           ctx.personaStateStore,
           cfg.identityPromotion,
-          { dryRun: opts.dryRun },
+          { dryRun: opts.dryRun, scopeFilter },
         );
         for (const entry of promotion.entries) {
           personaStateEntries.set(entry.stateKey, entry);

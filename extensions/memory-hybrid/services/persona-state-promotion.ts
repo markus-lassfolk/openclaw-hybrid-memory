@@ -1,7 +1,9 @@
 import type { IdentityReflectionEntry, IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { PersonaStateEntry, PersonaStateStore } from "../backends/persona-state-store.js";
+import { hasAnyScopeFilter, normalizeScopeValue } from "../backends/scope-filter-sql.js";
 import type { IdentityFileType } from "../config/types/agents.js";
 import type { IdentityPromotionConfig } from "../config/types/capture.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { uniqueStrings } from "../utils/text.js";
 
 const INSIGHT_STOPWORDS = new Set([
@@ -220,7 +222,7 @@ export function promotePersonaStateFromReflections(
   reflectionStore: IdentityReflectionStore,
   personaStateStore: PersonaStateStore,
   config: IdentityPromotionConfig,
-  opts?: { dryRun?: boolean; limit?: number },
+  opts?: { dryRun?: boolean; limit?: number; scopeFilter?: ScopeFilter },
 ): PersonaPromotionResult {
   if (!config.enabled) {
     return {
@@ -234,7 +236,8 @@ export function promotePersonaStateFromReflections(
     };
   }
 
-  const reflections = reflectionStore.listRecent(opts?.limit ?? 250);
+  const scopeFilter = opts?.scopeFilter;
+  const reflections = reflectionStore.listRecent(opts?.limit ?? 250, { scopeFilter });
   const durableReflections = reflections.filter((entry) => entry.durability === "durable");
   const candidates = collectPersonaPromotionCandidates(reflections, config);
   const entries: PersonaStateEntry[] = [];
@@ -242,22 +245,23 @@ export function promotePersonaStateFromReflections(
   let updated = 0;
   let unchanged = 0;
 
-  const existingEntries = personaStateStore.listRecent(100);
+  const existingEntries = personaStateStore.listRecent(100, { scopeFilter });
 
   for (const candidate of candidates) {
+    let stateKey = withScopePrefix(candidate.stateKey, scopeFilter);
     const matchingEntry = existingEntries.find(
       (entry) =>
         entry.questionKey === candidate.questionKey &&
         calculatePersonaInsightSimilarity(entry.insight, candidate.insight) >= config.similarityThreshold,
     );
     if (matchingEntry) {
-      candidate.stateKey = matchingEntry.stateKey;
+      stateKey = matchingEntry.stateKey;
     }
 
     if (opts?.dryRun) {
       entries.push({
-        id: candidate.stateKey,
-        stateKey: candidate.stateKey,
+        id: stateKey,
+        stateKey,
         questionKey: candidate.questionKey,
         targetFile: candidate.targetFile,
         insight: candidate.insight,
@@ -280,7 +284,7 @@ export function promotePersonaStateFromReflections(
     }
 
     const result = personaStateStore.upsert({
-      stateKey: candidate.stateKey,
+      stateKey,
       questionKey: candidate.questionKey,
       targetFile: candidate.targetFile,
       insight: candidate.insight,
@@ -291,6 +295,7 @@ export function promotePersonaStateFromReflections(
       sourceReflectionIds: candidate.sourceReflectionIds,
       firstSeenAt: candidate.firstSeenAt,
       lastSeenAt: candidate.lastSeenAt,
+      scopeFilter,
     });
     if (result.action === "created") promoted++;
     else if (result.action === "updated") updated++;
@@ -307,4 +312,16 @@ export function promotePersonaStateFromReflections(
     unchanged,
     entries,
   };
+}
+
+function withScopePrefix(stateKey: string, scopeFilter?: ScopeFilter): string {
+  if (!hasAnyScopeFilter(scopeFilter)) return stateKey;
+  const scopeParts: string[] = [];
+  const userId = normalizeScopeValue(scopeFilter?.userId);
+  if (userId) scopeParts.push(`u=${userId}`);
+  const agentId = normalizeScopeValue(scopeFilter?.agentId);
+  if (agentId) scopeParts.push(`a=${agentId}`);
+  const sessionId = normalizeScopeValue(scopeFilter?.sessionId);
+  if (sessionId) scopeParts.push(`s=${sessionId}`);
+  return `scope[${scopeParts.join("|")}]::${stateKey}`;
 }
