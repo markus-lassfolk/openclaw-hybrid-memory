@@ -396,7 +396,7 @@ export async function captureMemoryPressureSnapshot(
         lancedbOptimizing,
       },
       hybridMemory,
-      cooldownRemainingSec: 0,
+      cooldownRemainingSec: config.cooldownSec,
     };
 
     if (config.writeArtifact) {
