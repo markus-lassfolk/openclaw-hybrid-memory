@@ -10,8 +10,10 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { IdentityFileType } from "../config/types/agents.js";
+import type { ScopeFilter } from "../types/memory.js";
 import { uniqueStrings } from "../utils/text.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { buildExactScopeWhereClause, normalizeScopeValue } from "./scope-filter-sql.js";
 
 interface PersonaStateRow {
   id: string;
@@ -28,6 +30,9 @@ interface PersonaStateRow {
   last_seen_at: number;
   promoted_at: number;
   updated_at: number;
+  scope_user_id: string | null;
+  scope_agent_id: string | null;
+  scope_session_id: string | null;
 }
 
 export interface PersonaStateEntry {
@@ -59,6 +64,7 @@ interface UpsertPersonaStateInput {
   sourceReflectionIds?: string[];
   firstSeenAt: number;
   lastSeenAt: number;
+  scopeFilter?: ScopeFilter;
 }
 
 type UpsertPersonaStateResult = {
@@ -87,7 +93,10 @@ export class PersonaStateStore extends BaseSqliteStore {
         first_seen_at        INTEGER NOT NULL,
         last_seen_at         INTEGER NOT NULL,
         promoted_at          INTEGER NOT NULL,
-        updated_at           INTEGER NOT NULL
+        updated_at           INTEGER NOT NULL,
+        scope_user_id        TEXT,
+        scope_agent_id       TEXT,
+        scope_session_id     TEXT
       );
 
       CREATE INDEX IF NOT EXISTS idx_persona_state_updated
@@ -96,36 +105,58 @@ export class PersonaStateStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_persona_state_question
         ON persona_state(question_key, updated_at DESC);
     `);
+
+    const tableInfo = this.liveDb.prepare("PRAGMA table_info(persona_state)").all() as Array<{ name: string }>;
+    const columns = new Set(tableInfo.map((column) => column.name));
+    if (!columns.has("scope_user_id")) {
+      this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_user_id TEXT");
+    }
+    if (!columns.has("scope_agent_id")) {
+      this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_agent_id TEXT");
+    }
+    if (!columns.has("scope_session_id")) {
+      this.liveDb.exec("ALTER TABLE persona_state ADD COLUMN scope_session_id TEXT");
+    }
+    this.liveDb.exec(`
+      CREATE INDEX IF NOT EXISTS idx_persona_state_scope
+      ON persona_state(scope_user_id, scope_agent_id, scope_session_id, updated_at DESC)
+    `);
   }
 
   protected getSubsystemName(): string {
     return "persona-state-store";
   }
 
-  getByStateKey(stateKey: string): PersonaStateEntry | null {
-    const row = this.liveDb.prepare("SELECT * FROM persona_state WHERE state_key = ?").get(stateKey) as
-      | PersonaStateRow
-      | undefined;
+  getByStateKey(stateKey: string, opts?: { scopeFilter?: ScopeFilter }): PersonaStateEntry | null {
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
+    const row = this.liveDb
+      .prepare(`SELECT * FROM persona_state WHERE state_key = ?${scopeWhere.andClause}`)
+      .get(stateKey, ...scopeWhere.params) as PersonaStateRow | undefined;
     return row ? this.rowToEntry(row) : null;
   }
 
-  listRecent(limit = 50): PersonaStateEntry[] {
+  listRecent(limit = 50, opts?: { scopeFilter?: ScopeFilter }): PersonaStateEntry[] {
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
     const rows = this.liveDb
-      .prepare("SELECT * FROM persona_state ORDER BY updated_at DESC LIMIT ?")
-      .all(limit) as unknown as PersonaStateRow[];
+      .prepare(`SELECT * FROM persona_state${scopeWhere.whereClause} ORDER BY updated_at DESC LIMIT ?`)
+      .all(...scopeWhere.params, limit) as unknown as PersonaStateRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
 
-  count(): number {
-    const row = this.liveDb.prepare("SELECT COUNT(*) AS count FROM persona_state").get() as
-      | { count?: number }
-      | undefined;
+  count(opts?: { scopeFilter?: ScopeFilter }): number {
+    const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
+    const row = this.liveDb
+      .prepare(`SELECT COUNT(*) AS count FROM persona_state${scopeWhere.whereClause}`)
+      .get(...scopeWhere.params) as { count?: number } | undefined;
     return row?.count ?? 0;
   }
 
   upsert(entry: UpsertPersonaStateInput): UpsertPersonaStateResult {
     const now = Math.floor(Date.now() / 1000);
-    const existing = this.getByStateKey(entry.stateKey);
+    const scopeUserId = normalizeScopeValue(entry.scopeFilter?.userId);
+    const scopeAgentId = normalizeScopeValue(entry.scopeFilter?.agentId);
+    const scopeSessionId = normalizeScopeValue(entry.scopeFilter?.sessionId);
+    const existing = this.getByStateKey(entry.stateKey, { scopeFilter: entry.scopeFilter });
     const evidence = uniqueStrings(entry.evidence ?? []);
     const sourceReflectionIds = uniqueStrings(entry.sourceReflectionIds ?? []);
 
@@ -136,8 +167,9 @@ export class PersonaStateStore extends BaseSqliteStore {
           `INSERT INTO persona_state (
              id, state_key, question_key, target_file, insight, normalized_insight,
              confidence, durable_count, evidence, source_reflection_ids,
-             first_seen_at, last_seen_at, promoted_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             first_seen_at, last_seen_at, promoted_at, updated_at,
+             scope_user_id, scope_agent_id, scope_session_id
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -154,6 +186,9 @@ export class PersonaStateStore extends BaseSqliteStore {
           entry.lastSeenAt,
           now,
           now,
+          scopeUserId,
+          scopeAgentId,
+          scopeSessionId,
         );
       const created: PersonaStateEntry = {
         id,
