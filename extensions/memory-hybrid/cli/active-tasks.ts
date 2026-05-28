@@ -28,6 +28,7 @@ import {
   planActiveTaskHygiene,
   readActiveTaskRowsFromFacts,
   reconcileActiveTaskInProgressSessionsFacts,
+  reconcileActiveTaskLiveState,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
@@ -632,15 +633,35 @@ export function registerActiveTaskCommands(
         );
         if (result.reconciledLabels.length === 0) {
           console.log("✅ No orphan in-progress subagent tasks to reconcile.");
-          return;
+        } else {
+          if (opts.dryRun) {
+            console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
+            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+          } else {
+            console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
+            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+          }
         }
-        if (opts.dryRun) {
-          console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
-          for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
-          return;
+        if (!opts.dryRun && cfg.activeTask.liveStateReconcile.enabled) {
+          try {
+            const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+              maxRequests: 20,
+              log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+            });
+            if (liveResult.updatedCount > 0) {
+              await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+              console.log(
+                `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+              );
+            } else {
+              console.log(
+                `✅ Live-state reconcile: no terminal states found (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+              );
+            }
+          } catch (liveErr) {
+            console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+          }
         }
-        console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
-        for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
         return;
       }
 
@@ -701,12 +722,43 @@ export function registerActiveTaskCommands(
         console.log("\nDry run only. Re-run with --apply to persist hygiene actions.");
         return;
       }
+      let liveUpdatedCount = 0;
+      let liveCheckedCount = 0;
+      let liveSkippedCount = 0;
+      if (ctx.ledger === "facts" && cfg.activeTask.liveStateReconcile.enabled) {
+        const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+        try {
+          const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+            maxRequests: 20,
+            log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+          });
+          liveUpdatedCount = liveResult.updatedCount;
+          liveCheckedCount = liveResult.checkedCount;
+          liveSkippedCount = liveResult.skippedCount;
+          if (liveResult.updatedCount > 0) {
+            await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+          }
+        } catch (liveErr) {
+          console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+        }
+      }
       console.log(`\nApplied ${result.appliedCount} action(s).`);
       if (result.auditFactId) {
         console.log(`Audit fact: ${result.auditFactId}`);
       }
       if (result.ledger === "facts") {
         console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
+        if (cfg.activeTask.liveStateReconcile.enabled) {
+          if (liveUpdatedCount > 0) {
+            console.log(
+              `Live-state reconcile: marked ${liveUpdatedCount} task(s) done (checked ${liveCheckedCount}, skipped ${liveSkippedCount}).`,
+            );
+          } else {
+            console.log(
+              `Live-state reconcile: no terminal states found (checked ${liveCheckedCount}, skipped ${liveSkippedCount}).`,
+            );
+          }
+        }
       }
     });
 
@@ -786,15 +838,37 @@ export function registerActiveTaskCommands(
     .description(
       "Write ACTIVE-TASKS.md projection from facts ledger (no-op when ledger is markdown; use with activeTask.ledger: facts)",
     )
-    .action(async () => {
+    .option("--include-completed", "Include terminal/completed rows for history/audit output")
+    .action(async (opts: { includeCompleted?: boolean }) => {
       if (ctx.ledger !== "facts") {
         console.log(
           "ℹ️  render applies when activeTask.ledger is 'facts'. With markdown ledger, ACTIVE-TASKS.md is already the source.",
         );
         return;
       }
-      const { factsDb } = requireFacts(ctx);
-      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+      const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+      if (cfg.activeTask.liveStateReconcile.enabled) {
+        try {
+          const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+            maxRequests: 20,
+            log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+          });
+          if (liveResult.updatedCount > 0) {
+            console.log(
+              `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+            );
+          } else {
+            console.log(
+              `✅ Live-state reconcile: no terminal states found (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+            );
+          }
+        } catch (liveErr) {
+          console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+        }
+      }
+      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection, undefined, {
+        includeCompleted: opts.includeCompleted === true,
+      });
       console.log(`✅ Wrote ${ctx.activeTaskFilePath}`);
     });
 }

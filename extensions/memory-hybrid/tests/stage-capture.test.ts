@@ -119,6 +119,7 @@ function makeSessionState(): SessionState {
     frustrationStateMap: new Map(),
     authFailureRecallsThisSession: new Map(),
     sessionLastActivity: new Map(),
+    capabilityHintsSessionsSeen: new Set(),
     touchSession: vi.fn(),
     clearSessionState: vi.fn(),
     pruneSessionMaps: vi.fn(),

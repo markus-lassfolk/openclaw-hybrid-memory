@@ -7,7 +7,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type OpenAI from "openai";
@@ -16,11 +16,11 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import {
-  type HybridMemoryConfig,
-  type MemoryCategory,
   getCronModelConfig,
   getLLMModelPreference,
   getMemoryCategories,
+  type HybridMemoryConfig,
+  type MemoryCategory,
 } from "../config.js";
 import { chunkMarkdown } from "../services/document-chunker.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
@@ -29,6 +29,7 @@ import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { cleanupEvictedVector, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
+import type { MemoryEntry } from "../types/memory.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
 
@@ -569,7 +570,7 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
       const chunkTags = [...baseTags, ...(headingTag ? [headingTag] : []), ...extractTags(chunk.text, title)];
 
       const chunkText = chunk.text;
-      let entry;
+      let entry: MemoryEntry;
       try {
         const storeResult = factsDb.storeWithResult({
           text: chunkText,
@@ -584,6 +585,9 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           tags: chunkTags,
           decayClass: "stable",
         });
+        if (storeResult.skipped) {
+          continue;
+        }
         entry = storeResult.entry;
         await cleanupEvictedVector({
           vectorDb,

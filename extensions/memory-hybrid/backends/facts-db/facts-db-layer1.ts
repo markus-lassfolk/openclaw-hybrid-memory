@@ -13,13 +13,13 @@ import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
 import {
-  type StoreFactInput,
-  type StoreFactResult,
   deleteFact,
   getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
   refreshIndexedFacts as refreshIndexedFactsImpl,
+  type StoreFactInput,
+  type StoreFactResult,
   statsDailyWrites as statsDailyWritesImpl,
   storeFact,
 } from "./crud.js";
@@ -45,14 +45,14 @@ import {
 import {
   logRecall as logRecallImpl,
   pruneRecallLog as pruneRecallLogImpl,
+  type RetierReport,
   retierFacts as retierFactsImpl,
   runCompaction as runCompactionImpl,
   setFactTier,
   setPreserveTags as setPreserveTagsImpl,
   setPreserveUntil as setPreserveUntilImpl,
-  trimToBudget as trimToBudgetImpl,
-  type RetierReport,
   type TieringOptions,
+  trimToBudget as trimToBudgetImpl,
 } from "./maintenance.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
@@ -238,7 +238,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       allowPreStoreGuardBypass?: boolean;
     },
   ): MemoryEntry {
-    return this.storeWithResult(entry, options).entry;
+    const result = this.storeWithResult(entry, options);
+    // Skipped results carry a non-addressable placeholder entry (id === "") for
+    // legacy store() callers. storeWithResult() callers must check result.skipped
+    // before vector, supersession, provenance, or event side effects.
+    return result.entry;
   }
 
   storeWithResult(

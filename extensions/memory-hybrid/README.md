@@ -237,6 +237,8 @@ openclaw hybrid-mem vectordb-health
 openclaw hybrid-mem vectordb-health --json
 ```
 
+Hybrid-memory emits one-time `startup-memory-checkpoint` log lines for plugin registration, first recall, first active-task projection, and first compaction (recorded on the first `before_compaction` hook). Each line includes `owner`, `subsystem`, `operation`, RSS bytes/delta, and active handle/request counts for faster attribution during gateway memory pressure incidents.
+
 Vector search and semantic-cache result materialization are bounded at runtime to prevent unbounded
 Arrow/Lance memory use under heavy recall workloads. The defaults can be tuned via environment
 variables:
@@ -286,6 +288,7 @@ Each `.exit.txt` file contains one line per step:
 ```text
 2026-05-07T02:10:21Z prune exit=0
 2026-05-07T02:11:02Z distill exit=1
+2026-05-07T02:12:10Z self-correct exit=0 status=skipped reason=skipped_cooldown
 ```
 
 Use the analyzer to classify failures, persist regression history, emit an operator digest, and optionally report plugin/orchestration bugs through the existing GlitchTip path:

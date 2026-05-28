@@ -6,10 +6,41 @@
  * or only partially complete.
  *
  * Issue: hybrid-memory cron jobs report OK despite failed or partial maintenance
+ *
+ * ## Maintenance result vocabulary
+ *
+ * `maintenanceStatus` in {@link ExitValidationResult} uses the following values:
+ *
+ * - `"success"` — All required steps are present in the HM_EXIT ledger and every
+ *   step exited 0 (or a permitted skip variant matched). The guard file MAY be
+ *   updated after a `"success"` result.
+ *
+ * - `"skipped"` — The exit ledger is empty AND the HM_LOG contains a recognised
+ *   feature-gate phrase (e.g. "reflection.enabled is false"). No hm_step lines ran.
+ *   The guard file MUST NOT be updated; the skip is recorded for audit but is not
+ *   treated as a failure.
+ *
+ * - `"partial"` — Some but not all required steps are present in the ledger and the
+ *   present steps all exited 0. The guard file MUST NOT be updated; the job should
+ *   be requeued or investigated.
+ *
+ * - `"failed"` — At least one step exited non-zero, or all required steps are absent
+ *   and the log does not indicate an intentional feature skip, or an unknown command
+ *   was detected in the log. The guard file MUST NOT be updated.
+ *
+ * ## Guard update rule
+ *
+ * `guardUpdated` is `true` only when `maintenanceStatus === "success"`.  Callers
+ * MUST NOT write a success guard for `"skipped"`, `"partial"`, or `"failed"` runs.
+ * This ensures that a shell-exited-0 cron wrapper cannot silently masquerade as a
+ * healthy run when the semantic work did not complete.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
+
+const SKIP_REASON_COOLDOWN = "skipped_cooldown";
+const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
 
 export interface ExitStep {
   timestamp: string;
@@ -207,6 +238,7 @@ export function validateMaintenanceExecution(
   // Check for missing required steps
   const missingSteps: string[] = [];
   const failedSteps: ExitStep[] = [];
+  const skippedSteps: ExitStep[] = [];
 
   for (const required of requiredSteps) {
     const step = stepMap.get(required);
@@ -220,6 +252,8 @@ export function validateMaintenanceExecution(
       missingSteps.push(required);
     } else if (step.exitCode !== 0) {
       failedSteps.push(step);
+    } else if (allowSkip && (step.reason === SKIP_REASON_COOLDOWN || step.reason === SKIP_REASON_CONCURRENCY)) {
+      skippedSteps.push(step);
     }
   }
 
@@ -237,8 +271,10 @@ export function validateMaintenanceExecution(
   let maintenanceStatus: "success" | "skipped" | "partial" | "failed";
 
   if (missingSteps.length === 0 && failedSteps.length === 0) {
-    // All required steps present and succeeded
-    maintenanceStatus = "success";
+    // All required steps present and succeeded (exit=0).
+    // Only mark as "skipped" if ALL required steps were skipped; otherwise treat as "success".
+    // This prevents wasteful re-runs when only a subset of steps are skipped (e.g., cooldown).
+    maintenanceStatus = skippedSteps.length > 0 && skippedSteps.length === requiredSteps.length ? "skipped" : "success";
   } else if (missingSteps.length === requiredSteps.length) {
     // Every required step absent — usually a hard failure (shell died before hm_step).
     // Exception: cron preambles that tell the agent to skip the whole script when a feature
@@ -274,7 +310,10 @@ export function validateMaintenanceExecution(
     }
     error = parts.join("; ");
   } else if (maintenanceStatus === "skipped") {
-    error = "Feature-gated skip: no hm_step lines in HM_EXIT; log indicates disabled feature (guard not updated).";
+    error =
+      skippedSteps.length > 0
+        ? `Skipped steps: ${skippedSteps.map((s) => `${s.step}${s.reason ? ` (${s.reason})` : ""}`).join(", ")}`
+        : "Feature-gated skip: no hm_step lines in HM_EXIT; log indicates disabled feature (guard not updated).";
   }
 
   return {

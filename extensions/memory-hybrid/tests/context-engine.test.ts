@@ -617,12 +617,15 @@ describe("buildContextBlock()", () => {
 
     expect(blockFull).not.toBeNull();
     expect(blockSmall).not.toBeNull();
+    if (blockFull === null || blockSmall === null) {
+      throw new Error("Expected context blocks to be generated");
+    }
 
-    const smallTokens = estimateTokenCount(blockSmall!);
+    const smallTokens = estimateTokenCount(blockSmall);
     expect(smallTokens).toBeLessThanOrEqual(100);
 
     // Ensure blockSmall has fewer entries
-    expect(blockSmall!.length).toBeLessThan(blockFull!.length);
+    expect(blockSmall?.length ?? 0).toBeLessThan(blockFull?.length ?? 0);
     expect(blockFull).toContain("Fact 19");
     expect(blockSmall).not.toContain("Fact 19");
 

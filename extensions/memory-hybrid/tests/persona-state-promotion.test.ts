@@ -157,6 +157,64 @@ describe("persona-state promotion pipeline", () => {
     expect(block).toContain("IDENTITY.md");
     expect(block).toContain("durable_count=2");
   });
+
+  it("scopes identity reflection promotion and persona state reads by scopeFilter", () => {
+    reflectionStore.create({
+      runId: "run-alice-1",
+      questionKey: "partnership",
+      questionText: "What patterns define good partnership with the user?",
+      insight: "I partner best with Alice when I explain tradeoffs and keep decisions explicit.",
+      durability: "durable",
+      confidence: 0.84,
+      evidence: ["Alice tradeoffs"],
+      scopeFilter: { userId: "alice" },
+    });
+    reflectionStore.create({
+      runId: "run-alice-2",
+      questionKey: "partnership",
+      questionText: "What patterns define good partnership with the user?",
+      insight: "Strong partnership with Alice means explicit tradeoffs and collaborative decisions.",
+      durability: "durable",
+      confidence: 0.86,
+      evidence: ["Alice collaboration"],
+      scopeFilter: { userId: "alice" },
+    });
+    reflectionStore.create({
+      runId: "run-bob-1",
+      questionKey: "partnership",
+      questionText: "What patterns define good partnership with the user?",
+      insight: "With Bob I should keep communication direct and confirm assumptions early.",
+      durability: "durable",
+      confidence: 0.85,
+      evidence: ["Bob communication"],
+      scopeFilter: { userId: "bob" },
+    });
+    reflectionStore.create({
+      runId: "run-bob-2",
+      questionKey: "partnership",
+      questionText: "What patterns define good partnership with the user?",
+      insight: "Partnership with Bob is strongest when assumptions are confirmed early and directly.",
+      durability: "durable",
+      confidence: 0.87,
+      evidence: ["Bob assumptions"],
+      scopeFilter: { userId: "bob" },
+    });
+
+    const alicePromotion = promotePersonaStateFromReflections(reflectionStore, personaStateStore, PROMOTION_CFG, {
+      scopeFilter: { userId: "alice" },
+    });
+    const bobPromotion = promotePersonaStateFromReflections(reflectionStore, personaStateStore, PROMOTION_CFG, {
+      scopeFilter: { userId: "bob" },
+    });
+
+    expect(alicePromotion.promoted).toBe(1);
+    expect(bobPromotion.promoted).toBe(1);
+    expect(personaStateStore.count()).toBe(2);
+    expect(personaStateStore.count({ scopeFilter: { userId: "alice" } })).toBe(1);
+    expect(personaStateStore.count({ scopeFilter: { userId: "bob" } })).toBe(1);
+    expect(personaStateStore.listRecent(10, { scopeFilter: { userId: "alice" } })[0].insight).toContain("Alice");
+    expect(personaStateStore.listRecent(10, { scopeFilter: { userId: "bob" } })[0].insight).toContain("Bob");
+  });
 });
 
 describe("calculatePersonaInsightSimilarity", () => {

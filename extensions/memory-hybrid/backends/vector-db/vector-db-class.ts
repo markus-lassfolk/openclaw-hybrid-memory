@@ -41,6 +41,19 @@ import {
   type VectorDBLogger,
 } from "./constants.js";
 import { isPathInsideDir, resolvedPathOrFallback } from "./path-utils.js";
+import {
+  activeReadersByPath,
+  decrementActiveReaderCount,
+  decrementReindexLockCount,
+  getActiveReaderCount,
+  getReindexLockCount,
+  incrementActiveReaderCount,
+  incrementReindexLockCount,
+  isOptimizeLocked,
+  optimizeExclusiveLockByPath,
+  reindexExclusiveLockByPath,
+  setOptimizeLock,
+} from "./runtime-locks.js";
 
 export class VectorDB {
   private db: lancedb.Connection | null = null;
@@ -172,9 +185,10 @@ export class VectorDB {
    *
    * Module-level by dbPath so multiple VectorDB instances on the same path cooperate.
    */
-  private static _activeReadersByPath = new Map<string, number>();
-  private static _optimizeExclusiveLockByPath = new Map<string, boolean>();
-  private static _reindexExclusiveLockByPath = new Map<string, number>();
+  // Back-compat for tests/diagnostics that inspect lock maps directly.
+  private static _activeReadersByPath = activeReadersByPath;
+  private static _optimizeExclusiveLockByPath = optimizeExclusiveLockByPath;
+  private static _reindexExclusiveLockByPath = reindexExclusiveLockByPath;
 
   constructor(
     private readonly dbPath: string,
@@ -213,7 +227,7 @@ export class VectorDB {
 
   private async waitForReindexLockRelease(maxWaitMs = 30_000): Promise<void> {
     const started = Date.now();
-    while ((VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 0) > 0) {
+    while (getReindexLockCount(this.dbPath) > 0) {
       if (Date.now() - started > maxWaitMs) {
         throw new Error(
           `VectorDB operation blocked by active re-index lock for >${maxWaitMs}ms. Retry after re-index completes.`,
@@ -224,14 +238,11 @@ export class VectorDB {
   }
 
   async runWithReindexLock<T>(fn: () => Promise<T>): Promise<T> {
-    const current = VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 0;
-    VectorDB._reindexExclusiveLockByPath.set(this.dbPath, current + 1);
+    incrementReindexLockCount(this.dbPath);
     try {
       return await fn();
     } finally {
-      const next = (VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 1) - 1;
-      if (next <= 0) VectorDB._reindexExclusiveLockByPath.delete(this.dbPath);
-      else VectorDB._reindexExclusiveLockByPath.set(this.dbPath, next);
+      decrementReindexLockCount(this.dbPath);
     }
   }
 
@@ -259,9 +270,8 @@ export class VectorDB {
   private acquireReader(): boolean {
     // Skip reader count if an exclusive optimize is in progress — those readers
     // will see whatever version was current when they started, which is fine.
-    if (VectorDB._optimizeExclusiveLockByPath.get(this.dbPath) === true) return false;
-    const current = (VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) + 1;
-    VectorDB._activeReadersByPath.set(this.dbPath, current);
+    if (isOptimizeLocked(this.dbPath)) return false;
+    incrementActiveReaderCount(this.dbPath);
     return true;
   }
 
@@ -273,8 +283,7 @@ export class VectorDB {
    */
   private releaseReader(acquired: boolean): void {
     if (!acquired) return;
-    const current = VectorDB._activeReadersByPath.get(this.dbPath) ?? 1;
-    VectorDB._activeReadersByPath.set(this.dbPath, Math.max(0, current - 1));
+    decrementActiveReaderCount(this.dbPath);
   }
 
   private beginSearch(requestedLimit: number, effectiveLimit: number): void {
@@ -304,7 +313,7 @@ export class VectorDB {
    */
   private async waitForReadersToDrain(): Promise<void> {
     const start = Date.now();
-    while ((VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) > 0) {
+    while (getActiveReaderCount(this.dbPath) > 0) {
       if (Date.now() - start > VECTORDB_READER_DRAIN_TIMEOUT_MS) {
         this.logWarn(
           `memory-hybrid: waitForReadersToDrain timed out after ${VECTORDB_READER_DRAIN_TIMEOUT_MS}ms — proceeding with optimize() to avoid indefinite starvation under sustained read load.`,
@@ -1500,7 +1509,7 @@ export class VectorDB {
     // cleanupOlderThan removes data versions that a concurrent search/hasDuplicate is
     // still reading. The exclusive lock also prevents new readers from incrementing
     // the count while we are waiting for drain.
-    VectorDB._optimizeExclusiveLockByPath.set(this.dbPath, true);
+    setOptimizeLock(this.dbPath, true);
 
     let promiseRef: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
     const optimizePromise = (async () => {
@@ -1526,7 +1535,7 @@ export class VectorDB {
         };
         return out;
       } finally {
-        VectorDB._optimizeExclusiveLockByPath.set(this.dbPath, false);
+        setOptimizeLock(this.dbPath, false);
         optimizingByPath.set(this.dbPath, false);
         if (this.optimizePromise === promiseRef) {
           this.optimizePromise = null;
@@ -2130,26 +2139,6 @@ export class VectorDB {
     return this.closeGeneration;
   }
 
-  /** LanceDB root path for this backend instance. */
-  getPath(): string {
-    return this.dbPath;
-  }
-
-  /** Reader slots currently held for this Lance path (search/count/getVectors, etc.). */
-  getOpenReaderCount(): number {
-    return VectorDB._activeReadersByPath.get(this.dbPath) ?? 0;
-  }
-
-  /** True while optimize() holds/awaits the exclusive maintenance lock for this path. */
-  isOptimizing(): boolean {
-    return optimizingByPath.get(this.dbPath) === true;
-  }
-
-  /** True when a live db/table handle exists and the instance is not closed/degraded-init-failed. */
-  isInitialized(): boolean {
-    return !this.closed && this.db != null && this.table != null && !this.lanceInitFailed;
-  }
-
   /** Lightweight search telemetry for diagnostics/health surfaces. */
   getSearchTelemetry(): {
     active: number;
@@ -2245,26 +2234,29 @@ export class VectorDB {
     return this.storeCount;
   }
 
-  /** Whether an optimize() pass is currently in progress. */
-  isOptimizing(): boolean {
-    return optimizingByPath.get(this.dbPath) ?? false;
-  }
-
-  /** Whether LanceDB has been successfully initialized (connection established and table ready). */
-  isInitialized(): boolean {
-    return this.lanceDbAvailable && !this.lanceInitFailed && this.table !== null;
-  }
-
-  /** Estimated number of open LanceDB reader handles (mirrors sessionCount). */
-  getOpenReaderCount(): number {
-    if (this.isPersistent) {
-      return this.isInitialized() ? 1 : 0;
-    }
-    return Math.max(0, this.sessionCount);
-  }
-
-  /** Base path to the LanceDB directory. */
+  /** LanceDB root path for this backend instance. */
   getPath(): string {
     return this.dbPath;
+  }
+
+  /** Returns true if the VectorDB table and semantic query cache table are initialized and ready. */
+  isInitialized(): boolean {
+    return (
+      !this.closed &&
+      this.db !== null &&
+      this.table !== null &&
+      this.semanticQueryCacheTable !== null &&
+      !this.lanceInitFailed
+    );
+  }
+
+  /** Returns true if an optimize operation is currently in progress. */
+  isOptimizing(): boolean {
+    return this.optimizePromise !== null;
+  }
+
+  /** Returns the current number of active readers (for exclusive lock coordination with optimize). */
+  getOpenReaderCount(): number {
+    return getActiveReaderCount(this.dbPath);
   }
 }

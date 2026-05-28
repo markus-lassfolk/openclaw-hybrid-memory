@@ -9,8 +9,10 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { runMemoryDiagnostics } from "../../../services/memory-diagnostics.js";
 import { filterByScope } from "../../../services/merge-results.js";
 import type { ScopeFilter } from "../../../types/memory.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 import { registerEntityLifecycleCommands } from "./register-lifecycle.js";
 import { entryMatchesHybridSearchFilters } from "./storage-stats-helpers.js";
 
@@ -77,10 +79,29 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
     .command("backfill-decay")
     .description("Backfill legacy stable decay classes (compat alias for decay reclassify --stable-only --apply)")
     .option("--json", "Emit JSON")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .action(
-      withExit(async (opts?: { json?: boolean }) => {
+      withExit(async (opts?: { json?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         const before = factsDb.statsBreakdownByDecayClass();
-        const updated = factsDb.backfillDecay();
+        let progress = { scanned: 0, total: 0, updated: 0 };
+        const updated = await runMaintenanceHeartbeat(
+          "backfill-decay",
+          verbose,
+          (heartbeat) =>
+            factsDb.backfillDecay({
+              reportEvery: 250,
+              onProgress: (next) => {
+                progress = next;
+                heartbeat.heartbeat();
+              },
+            }),
+          {
+            progressSupplier: () =>
+              `stage=reclassify-stable-facts; scanned=${progress.scanned}/${progress.total}; updated=${progress.updated}`,
+            jsonMode: opts?.json === true,
+          },
+        );
         const after = factsDb.statsBreakdownByDecayClass();
         const total = Object.values(updated).reduce((a, b) => a + b, 0);
         const totalBefore = Object.values(before).reduce((sum, count) => sum + count, 0);
@@ -275,6 +296,14 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
         console.log(
           `Auto-recall: ${audit.autoRecall.enabled ? `${audit.autoRecall.budgetTokens} token budget` : "disabled"} (format: ${audit.autoRecall.injectionFormat}, hot: ${audit.autoRecall.hotTokens})`,
         );
+        if (audit.autoRecall.enabled) {
+          console.log(
+            `  fixed caps: hot=${audit.autoRecall.fixedBlocks.caps.hotMaxTokens}, narrative=${audit.autoRecall.fixedBlocks.caps.narrativeMaxTokens}, procedures=${audit.autoRecall.fixedBlocks.caps.procedureMaxTokens}, active-task=${audit.autoRecall.fixedBlocks.caps.activeTaskMaxTokens}, stale-warning=${audit.autoRecall.fixedBlocks.caps.staleWarningMaxTokens}`,
+          );
+          console.log(
+            `  fixed estimate: ${audit.autoRecall.fixedBlocks.estimatedTokens.total} tokens, recall headroom: ${audit.autoRecall.fixedBlocks.estimatedTokens.remainingForRecall}${audit.autoRecall.fixedBlocks.estimatedTokens.wouldExhaustRecall ? " (exhausted)" : ""}`,
+          );
+        }
         console.log(
           `Procedures: ${audit.procedures.enabled ? `${audit.procedures.tokens} tokens` : "disabled"} (lines: ${audit.procedures.lines})`,
         );

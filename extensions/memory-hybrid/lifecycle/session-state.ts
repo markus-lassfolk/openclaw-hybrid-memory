@@ -55,6 +55,7 @@ export function createSessionState(): SessionState {
   const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
   const ambientLastEmbeddingMap = new Map<string, number[] | null>();
   const sessionLastActivity = new Map<string, number>();
+  const capabilityHintsSessionsSeen = new Set<string>();
 
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
@@ -66,6 +67,8 @@ export function createSessionState(): SessionState {
     ambientLastEmbeddingMap.delete(sessionKey);
     frustrationStateMap.delete(sessionKey);
     sessionLastActivity.delete(sessionKey);
+    // Do NOT clear capabilityHintsSessionsSeen here — that set persists across agent turns
+    // within the same chat session so "session" mode injects once per chat, not once per turn.
     const prefix = `${sessionKey}:`;
     for (const key of authFailureRecallsThisSession.keys()) {
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
@@ -100,6 +103,14 @@ export function createSessionState(): SessionState {
         if (value) sessionStartSeen.delete(value);
       }
     }
+    if (capabilityHintsSessionsSeen.size > MAX_TRACKED_SESSIONS) {
+      const excess = capabilityHintsSessionsSeen.size - MAX_TRACKED_SESSIONS;
+      const keys = capabilityHintsSessionsSeen.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) capabilityHintsSessionsSeen.delete(value);
+      }
+    }
     if (authFailureRecallsThisSession.size > MAX_TRACKED_SESSIONS * 3) {
       const excess = authFailureRecallsThisSession.size - MAX_TRACKED_SESSIONS * 3;
       const keys = authFailureRecallsThisSession.keys();
@@ -129,6 +140,7 @@ export function createSessionState(): SessionState {
     frustrationStateMap.clear();
     authFailureRecallsThisSession.clear();
     sessionLastActivity.clear();
+    capabilityHintsSessionsSeen.clear();
   };
 
   return {
@@ -138,6 +150,7 @@ export function createSessionState(): SessionState {
     frustrationStateMap,
     authFailureRecallsThisSession,
     sessionLastActivity,
+    capabilityHintsSessionsSeen,
     touchSession,
     clearSessionState,
     pruneSessionMaps,

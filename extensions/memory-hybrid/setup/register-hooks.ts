@@ -10,10 +10,13 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
 import { getMemoryCategories } from "../config.js";
+import { withHookResolutionApi } from "../lifecycle/hook-resolution-api.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
+import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import {
   buildUnsupportedPerAgentCompactionWarning,
@@ -94,6 +97,49 @@ function emitCompactionModelWatchdogAlert(
  * Returns a handle for cleanup (dispose).
  */
 export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi): LifecycleHooksHandle {
+  let firstAgentEndCompactionCaptured = false;
+  const registrationGeneration = ctx.registrationGeneration ?? -1;
+  const currentRegistrationGenerationRef = ctx.currentRegistrationGenerationRef;
+  if (!currentRegistrationGenerationRef) {
+    api.logger.warn?.(
+      "memory-hybrid: lifecycle generation ref missing; stale hooks may not be blocked on re-registration",
+    );
+  }
+  const effectiveRegistrationGenerationRef = currentRegistrationGenerationRef ?? { value: registrationGeneration };
+  const hookUnsubscribers: Array<() => void> = [];
+  const trackUnsubscribe = (unsubscribe: unknown): void => {
+    if (typeof unsubscribe === "function") {
+      hookUnsubscribers.push(unsubscribe as () => void);
+    }
+  };
+  const registerGuardedHook = (event: unknown, handler: unknown): void => {
+    if (typeof handler !== "function") return;
+    const guardedHandler = (...args: unknown[]): unknown => {
+      if (effectiveRegistrationGenerationRef.value !== registrationGeneration) return undefined;
+      return (handler as (...inner: unknown[]) => unknown)(...args);
+    };
+    const unsubscribe = (api.on as (eventName: unknown, callback: unknown) => unknown)(event, guardedHandler);
+    trackUnsubscribe(unsubscribe);
+  };
+  const disposeRegisteredHooks = (): void => {
+    const pendingUnsubscribers = [...hookUnsubscribers];
+    hookUnsubscribers.length = 0;
+    for (const unsubscribe of pendingUnsubscribers) {
+      try {
+        unsubscribe();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "registration",
+          operation: "register-hooks:unsubscribe",
+          severity: "warning",
+        });
+      }
+    }
+  };
+  const guardedApi = {
+    ...api,
+    on: ((event: unknown, handler: unknown) => registerGuardedHook(event, handler)) as ClawdbotPluginApi["on"],
+  } as ClawdbotPluginApi;
   let lifecycleContext: LifecycleContext;
   try {
     lifecycleContext = {
@@ -151,14 +197,15 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     throw err;
   }
   try {
-    hooks.onAgentStart(api);
-    hooks.onAgentEnd(api);
-    hooks.onFrustrationDetect?.(api);
+    hooks.onAgentStart(guardedApi);
+    hooks.onAgentEnd(guardedApi);
+    hooks.onFrustrationDetect?.(guardedApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
       operation: "register-hooks:attach",
     });
+    disposeRegisteredHooks();
     hooks.dispose();
     throw err;
   }
@@ -166,7 +213,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Inject pending LLM config warnings into the agent's context once per occurrence.
   // Fires when all models in a tier fail due to missing provider API keys, so the AI
   // can relay the issue to the user in its response.
-  api.on("before_prompt_build", (): undefined | { prependContext: string } => {
+  guardedApi.on("before_prompt_build", (): undefined | { prependContext: string } => {
     if (!ctx.pendingLLMWarnings) return;
     const warnings = ctx.pendingLLMWarnings.drain();
     if (warnings.length === 0) return;
@@ -185,7 +232,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
   // Strip OpenAI Responses `reasoning` blocks (rs_*) so replay does not 400 (openclaw-maeve#23).
   // Mutates event.historyMessages in place so OpenClaw core uses the sanitized array.
-  api.on("llm_input", (ev: unknown) => {
+  guardedApi.on("llm_input", (ev: unknown) => {
     const event = ev as { historyMessages?: unknown[] };
     if (!event?.historyMessages || !Array.isArray(event.historyMessages)) return;
     let sanitized = sanitizeMessagesForClaude(event.historyMessages as MessageLike[]);
@@ -211,8 +258,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   //     it is supported by all OpenClaw versions and produces the correct runtime behaviour.
   //
   // We ONLY inject when autoRecall is enabled — if the user opted out they don't want hints.
-  // Silent mode suppresses all unsolicited output including capability hints (Issue #317).
-  if (ctx.cfg.autoRecall.enabled && ctx.cfg.verbosity !== "silent") {
+  // Silent mode suppresses capability hints (VerbosityLevel docs) regardless of explicit capabilityHints setting.
+  const capabilityHintsMode = ctx.cfg.autoRecall.capabilityHints ?? "off";
+  if (ctx.cfg.autoRecall.enabled && capabilityHintsMode !== "off" && ctx.cfg.verbosity !== "silent") {
     let staticMemoryInstructions: string | null = null;
 
     // Build once and cache — these never change within a gateway session.
@@ -236,9 +284,18 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // the prompt build. When a reliable capability signal for `appendSystemContext`
     // becomes available in the plugin SDK, this hook can be extended to prefer that
     // field without risking duplicate instructions.
-    api.on("before_prompt_build", (): undefined | { prependContext: string } => {
+    guardedApi.on("before_prompt_build", (event: unknown, hookCtx: unknown): undefined | { prependContext: string } => {
       if (!staticMemoryInstructions) {
         staticMemoryInstructions = buildStaticInstructions();
+      }
+      if (capabilityHintsMode === "session") {
+        const rApi = withHookResolutionApi(api, hookCtx);
+        const sessionKey =
+          resolveSessionKeyFromHookEvent(event, rApi) ?? lifecycleContext.currentAgentIdRef.value ?? "default";
+        if (hooks.sessionState.capabilityHintsSessionsSeen.has(sessionKey)) return;
+        hooks.sessionState.capabilityHintsSessionsSeen.add(sessionKey);
+        hooks.sessionState.touchSession(sessionKey);
+        hooks.sessionState.pruneSessionMaps();
       }
       return { prependContext: staticMemoryInstructions };
     });
@@ -253,7 +310,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // Feature detection: if the hook name is not recognised by this OpenClaw version
   // the api.on() call will silently no-op (unknown hooks are ignored by the registry).
   try {
-    api.on("before_compaction", async (event: unknown, hookCtx: unknown) => {
+    guardedApi.on("before_compaction", async (event: unknown, hookCtx: unknown) => {
       const ev = event as {
         messageCount?: number;
         tokenCount?: number;
@@ -289,6 +346,21 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       api.logger.info?.(
         `memory-hybrid: before_compaction — messages=${msgCount} tokens≈${tokenCount} compacting=${ev.compactingCount ?? "?"}`,
       );
+      if (!firstAgentEndCompactionCaptured) {
+        firstAgentEndCompactionCaptured = true;
+        recordStartupMemoryCheckpoint({
+          logger: api.logger,
+          subsystem: "compaction",
+          operation: "first-agent-end-compaction",
+          phase: "startup.first-agent-end-compaction",
+          onceKey: "startup.first-agent-end-compaction",
+          tags: {
+            messageCount: msgCount,
+            tokenCount,
+            compactingCount: ev.compactingCount ?? "unknown",
+          },
+        });
+      }
 
       let injectedContext = "";
 
@@ -346,7 +418,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // WAL flush before compaction-style work is handled solely by `before_compaction` above (runPreConsolidationFlush).
 
   try {
-    api.on(
+    guardedApi.on(
       "after_compaction",
       async (event: unknown, hookCtx: unknown): Promise<undefined | { prependContext: string }> => {
         const ev = event as {
@@ -482,7 +554,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   // The hooks update ctx.currentAgentId and ctx.lastProgressiveIndexIds internally.
 
   // Issue #463: Return handle for cleanup
+  let disposed = false;
   return {
-    dispose: hooks.dispose,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      disposeRegisteredHooks();
+      hooks.dispose();
+    },
   };
 }

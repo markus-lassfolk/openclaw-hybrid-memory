@@ -106,6 +106,9 @@ export async function runExtractDailyForCli(
               validFrom: sourceDateSec,
               supersedesId: classification.targetId,
             });
+            if (storeResult.skipped) {
+              continue;
+            }
             const newEntry = storeResult.entry;
             // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
             await cleanupEvictedVector({
@@ -145,6 +148,9 @@ export async function runExtractDailyForCli(
           }
         }
         const storeResult = factsDb.storeWithResult(storePayload);
+        if (storeResult.skipped) {
+          continue;
+        }
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({
@@ -225,6 +231,21 @@ export async function runExtractDailyForCli(
                   sourceDate: sourceDateSec,
                   tags: ["auth", ...extractTags(pointerText, "Credentials")],
                 });
+                if (pointerStoreResult.skipped) {
+                  // Compensating delete: vault write succeeded but pointer rejected
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (cleanupErr) {
+                    sink.warn(
+                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
+                    );
+                    capturePluginError(cleanupErr as Error, {
+                      subsystem: "cli",
+                      operation: "runExtractDailyForCli:credential-compensating-delete-skip",
+                    });
+                  }
+                  continue;
+                }
                 const pointerEntry = pointerStoreResult.entry;
                 await cleanupEvictedVector({
                   vectorDb,
@@ -347,6 +368,9 @@ export async function runExtractDailyForCli(
       }
       await flushPendingExtractClassify();
       const storeResult = factsDb.storeWithResult(storePayload);
+      if (storeResult.skipped) {
+        continue;
+      }
       const entry = storeResult.entry;
       await cleanupEvictedVector({
         vectorDb,

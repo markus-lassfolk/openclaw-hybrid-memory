@@ -4,6 +4,7 @@
 
 import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
 import { type Chainable, withExit } from "./shared.js";
+import type { ReinforcementExtractResult } from "../services/reinforcement-extract.js";
 import type {
   DistillCliResult,
   DistillCliSink,
@@ -64,21 +65,17 @@ export type DistillContext = {
     }>;
     sessionsScanned: number;
     stored?: number;
+    rejected?: number;
+    partial?: boolean;
+    dedupeDegraded?: boolean;
     skipped?: boolean;
   }>;
-  runExtractReinforcement: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
-    incidents: Array<{
-      userMessage: string;
-      agentBehavior: string;
-      recalledMemoryIds: string[];
-      toolCallSequence: string[];
-      confidence: number;
-      timestamp?: string;
-      sessionFile: string;
-    }>;
-    sessionsScanned: number;
-    skipped?: boolean;
-  }>;
+  runExtractReinforcement: (opts: {
+    days?: number;
+    verbose?: boolean;
+    dryRun?: boolean;
+    full?: boolean;
+  }) => Promise<ReinforcementExtractResult>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
@@ -386,6 +383,15 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             console.log(
               `Stored ${stored} directives as facts${skipped > 0 ? ` (${skipped} duplicates skipped)` : ""}.`,
             );
+            if ((result.rejected ?? 0) > 0) {
+              console.log(`Rejected ${result.rejected} non-durable/untrusted directive candidate(s).`);
+            }
+            if (result.partial) {
+              console.log("Status: partial (rejections detected; cursor not advanced).");
+            }
+            if (result.dedupeDegraded) {
+              console.log("Status: degraded dedupe (lexical-only fallback used).");
+            }
           }
         },
       ),
@@ -422,8 +428,25 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           if (opts.dryRun) {
             console.log("[dry-run] Would annotate facts/procedures with reinforcement data.");
           } else {
-            const factsReinforced = result.incidents.reduce((sum, i) => sum + i.recalledMemoryIds.length, 0);
+            const factsReinforced = result.annotated ?? 0;
             console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
+            if (result.incidents.length > 0 && factsReinforced === 0) {
+              const reasons = result.annotationReasons;
+              if (reasons) {
+                console.log(
+                  `Annotation reason breakdown: noRecalledIds=${reasons.noRecalledIds} reinforced=${reasons.reinforced} recalledIdsNoMatch=${reasons.recalledIdsNoMatch} errors=${reasons.errors}`,
+                );
+              }
+              const status = result.annotationStatus;
+              if (status) {
+                console.log(`Annotation status: ${status}`);
+                if (status === "failed_annotation" || status === "degraded_model_or_parser") {
+                  process.exitCode = 1;
+                }
+              }
+            } else if (factsReinforced > 0 && result.annotationReasons?.errors && result.annotationReasons.errors > 0) {
+              process.exitCode = 2;
+            }
           }
         },
       ),

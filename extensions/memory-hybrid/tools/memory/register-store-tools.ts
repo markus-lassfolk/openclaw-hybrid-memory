@@ -331,6 +331,18 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   extractionConfidence: importance,
                 });
                 const pointerEntry = pointerStoreResult.entry;
+                // Guard: if the pointer was rejected by the pre-store guard, undo the vault store and return rejected artifact
+                if (pointerStoreResult.rejected) {
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (_cleanupErr) {
+                    // best-effort cleanup
+                  }
+                  return {
+                    content: [{ type: "text", text: "Credential-like content rejected by pre-store guard." }],
+                    details: { action: "credential_rejected_artifact" },
+                  };
+                }
                 await cleanupEvictedVector({
                   vectorDb,
                   evictedFactId: pointerStoreResult.evictedFactId,
