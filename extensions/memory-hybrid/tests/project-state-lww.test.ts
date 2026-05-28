@@ -64,9 +64,7 @@ function storeProjectFact(opts: StoreOpts) {
   if (opts.createdAtOffset != null && opts.createdAtOffset !== 0) {
     // Directly adjust created_at so we can test ordering without real sleep.
     // @ts-expect-error accessing internal liveDb for test setup only
-    db.liveDb
-      .prepare("UPDATE facts SET created_at = created_at + ? WHERE id = ?")
-      .run(opts.createdAtOffset, entry.id);
+    db.liveDb.prepare("UPDATE facts SET created_at = created_at + ? WHERE id = ?").run(opts.createdAtOffset, entry.id);
   }
   return db.getById(entry.id)!;
 }
@@ -405,9 +403,9 @@ describe("project-state-lww: write-time auto-supersede", () => {
     db.detectContradictions(newer.id, "proj-write-time", "status", "done");
 
     // After write-time auto-supersede, no unresolved contradiction should remain
-    const unresolved = db.getContradictions().filter(
-      (c) => (c.factIdNew === newer.id || c.factIdOld === older.id) && !c.resolved,
-    );
+    const unresolved = db
+      .getContradictions()
+      .filter((c) => (c.factIdNew === newer.id || c.factIdOld === older.id) && !c.resolved);
     expect(unresolved).toHaveLength(0);
 
     // Old fact should be marked superseded

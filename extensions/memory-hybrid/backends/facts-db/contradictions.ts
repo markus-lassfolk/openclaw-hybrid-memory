@@ -318,11 +318,7 @@ export const PROJECT_STATE_LWW_KEYS: ReadonlySet<string> = new Set([
  * Sources trusted for project-state LWW resolution.
  * `distillation` is excluded by default to keep automated distilled facts conservative.
  */
-export const PROJECT_STATE_LWW_TRUSTED_SOURCES: ReadonlySet<string> = new Set([
-  "conversation",
-  "cli",
-  "active-task",
-]);
+export const PROJECT_STATE_LWW_TRUSTED_SOURCES: ReadonlySet<string> = new Set(["conversation", "cli", "active-task"]);
 
 /** A single candidate contradiction eligible for project-state LWW resolution. */
 export interface ProjectStateLwwCandidate {
@@ -445,7 +441,13 @@ export function resolveProjectStateLww(
 
   const groupMap = new Map<
     string,
-    { entity: string; key: string; scope: string | null; scopeTarget: string | null; candidates: ProjectStateLwwCandidate[] }
+    {
+      entity: string;
+      key: string;
+      scope: string | null;
+      scopeTarget: string | null;
+      candidates: ProjectStateLwwCandidate[];
+    }
   >();
   let applied = 0;
 

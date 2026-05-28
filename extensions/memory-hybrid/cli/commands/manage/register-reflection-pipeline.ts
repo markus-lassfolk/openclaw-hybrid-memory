@@ -704,10 +704,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "--project-state-lww",
       "Apply project-state latest-wins (LWW) policy: safely resolve stale project/task contradictions for known mutable keys",
     )
-    .option(
-      "--dry-run",
-      "With --project-state-lww: report candidates and grouped details without mutating any facts",
-    )
+    .option("--dry-run", "With --project-state-lww: report candidates and grouped details without mutating any facts")
     .action(
       withExit(
         async (
@@ -744,7 +741,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             }
 
             if (lwwRes.groups.length > 0) {
-              const formatEpochTimestamp = (t: number) => new Date(t * 1000).toISOString().replace("T", " ").slice(0, 19);
+              const formatEpochTimestamp = (t: number) =>
+                new Date(t * 1000).toISOString().replace("T", " ").slice(0, 19);
               for (const group of lwwRes.groups) {
                 const scopeLabel =
                   group.scope && group.scope !== "global"
@@ -753,7 +751,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 console.log(`\n  ${group.entity} / ${group.key}${scopeLabel}`);
                 for (const cand of group.candidates) {
                   const overloadNote = cand.possibleOverloadedEntity ? " [!] possible-entity-reuse" : "";
-                  const actionLabel = cand.action === "supersede" ? "auto-safe: project-state-lww" : "manual: non-qualifying";
+                  const actionLabel =
+                    cand.action === "supersede" ? "auto-safe: project-state-lww" : "manual: non-qualifying";
                   const keepLabel = cand.action === "supersede" ? "keep" : "newer";
                   const supersedeLabel = cand.action === "supersede" ? "supersede" : "older";
                   console.log(`    [${actionLabel}]${overloadNote}`);

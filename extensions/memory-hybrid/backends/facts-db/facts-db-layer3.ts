@@ -236,8 +236,15 @@ export class FactsDB extends FactsDBLayer2 {
     scope?: string | null,
     scopeTarget?: string | null,
   ): Array<{ contradictionId: string; oldFactId: string }> {
-    const results = detectContradictionsImpl(this.liveDb, newFactId, entity, key, value, scope, scopeTarget, (a, b, t, s) =>
-      this.createLink(a, b, t, s ?? 1.0),
+    const results = detectContradictionsImpl(
+      this.liveDb,
+      newFactId,
+      entity,
+      key,
+      value,
+      scope,
+      scopeTarget,
+      (a, b, t, s) => this.createLink(a, b, t, s ?? 1.0),
     );
 
     // Project-state LWW: immediately resolve contradictions for known mutable keys so

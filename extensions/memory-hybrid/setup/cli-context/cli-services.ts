@@ -97,9 +97,9 @@ interface CliContextServices {
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
   }>;
-  runResolveContradictionsProjectStateLww: (opts: { dryRun?: boolean }) => Promise<
-    import("../../backends/facts-db/contradictions.js").ProjectStateLwwResult
-  >;
+  runResolveContradictionsProjectStateLww: (opts: {
+    dryRun?: boolean;
+  }) => Promise<import("../../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
   getMemoryCategories: () => string[];
   mergeResults: HybridMemCliContext["mergeResults"];
   parseSourceDate: (v: string | number | null | undefined) => number | null;
