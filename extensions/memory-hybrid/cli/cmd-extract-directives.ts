@@ -164,14 +164,14 @@ export async function runExtractDirectivesForCli(
     const partial = (result.rejected ?? 0) > 0;
     const dedupeDegraded = storeDedupeVectorFallbackSuppressed > 0;
     const returnVal = { ...result, stored, partial, dedupeDegraded };
-    if (!opts.dryRun) {
+    if (!opts.dryRun && !partial) {
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
-      if (partial) {
-        logger.info?.(
-          `memory-hybrid: extract-directives — ${result.rejected ?? 0} directive candidate(s) rejected, cursor advanced`,
-        );
-      }
+    }
+    if (!opts.dryRun && partial) {
+      logger.info?.(
+        `memory-hybrid: extract-directives — ${result.rejected ?? 0} directive candidate(s) rejected, cursor not advanced`,
+      );
     }
     return returnVal;
   } finally {
