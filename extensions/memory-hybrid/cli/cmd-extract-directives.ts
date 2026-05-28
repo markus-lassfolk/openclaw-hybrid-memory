@@ -1,7 +1,11 @@
 /** Directive extraction CLI (`runExtractDirectivesForCli`). Split from cmd-extract.ts. */
 import type { MemoryCategory } from "../config.js";
 import { shouldReportVectorDedupeFallback } from "../services/dedupe-policy.js";
-import { type DirectiveExtractResult, runDirectiveExtract } from "../services/directive-extract.js";
+import {
+  DIRECTIVE_EXTRACTION_METHOD,
+  type DirectiveExtractResult,
+  runDirectiveExtract,
+} from "../services/directive-extract.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
@@ -14,7 +18,7 @@ import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
-): Promise<DirectiveExtractResult & { stored?: number }> {
+): Promise<DirectiveExtractResult & { stored?: number; partial?: boolean; dedupeDegraded?: boolean }> {
   const { factsDb, vectorDb, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-directives";
   logger.info?.("memory-hybrid: extract-directives — regex extraction (no LLM model selection)");
@@ -29,10 +33,15 @@ export async function runExtractDirectivesForCli(
       return {
         incidents: [],
         sessionsScanned: 0,
+        rejected: 0,
         stored: 0,
+        partial: false,
+        dedupeDegraded: false,
         skipped: true,
       } as DirectiveExtractResult & {
         stored?: number;
+        partial?: boolean;
+        dedupeDegraded?: boolean;
         skipped?: boolean;
       };
   }
@@ -117,6 +126,9 @@ export async function runExtractDirectivesForCli(
               value: null,
               source,
               confidence: incident.confidence,
+              extractionMethod: DIRECTIVE_EXTRACTION_METHOD,
+              extractionConfidence: incident.confidence,
+              tags: ["directive-extract", ...incident.categories.map((c) => `directive:${c}`)],
             },
             {
               warnContext: "extract-directives",
@@ -145,14 +157,21 @@ export async function runExtractDirectivesForCli(
     }
 
     if (storeDedupeVectorFallbackSuppressed > 0) {
-      logger.info?.(
-        `memory-hybrid: extract-directives — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectorCandidates not wired for this CLI path yet)`,
+      logger.warn?.(
+        `memory-hybrid: extract-directives DEGRADED — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectorCandidates not wired for this CLI path yet)`,
       );
     }
-    const returnVal = { ...result, stored };
-    if (!opts.dryRun) {
+    const partial = (result.rejected ?? 0) > 0;
+    const dedupeDegraded = storeDedupeVectorFallbackSuppressed > 0;
+    const returnVal = { ...result, stored, partial, dedupeDegraded };
+    if (!opts.dryRun && !partial) {
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
+    }
+    if (!opts.dryRun && partial) {
+      logger.info?.(
+        `memory-hybrid: extract-directives — ${result.rejected ?? 0} directive candidate(s) rejected, cursor not advanced`,
+      );
     }
     return returnVal;
   } finally {

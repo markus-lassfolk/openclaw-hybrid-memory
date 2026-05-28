@@ -65,6 +65,9 @@ export type DistillContext = {
     }>;
     sessionsScanned: number;
     stored?: number;
+    rejected?: number;
+    partial?: boolean;
+    dedupeDegraded?: boolean;
     skipped?: boolean;
   }>;
   runExtractReinforcement: (opts: {
@@ -380,6 +383,15 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             console.log(
               `Stored ${stored} directives as facts${skipped > 0 ? ` (${skipped} duplicates skipped)` : ""}.`,
             );
+            if ((result.rejected ?? 0) > 0) {
+              console.log(`Rejected ${result.rejected} non-durable/untrusted directive candidate(s).`);
+            }
+            if (result.partial) {
+              console.log("Status: partial (rejections detected; cursor not advanced).");
+            }
+            if (result.dedupeDegraded) {
+              console.log("Status: degraded dedupe (lexical-only fallback used).");
+            }
           }
         },
       ),
