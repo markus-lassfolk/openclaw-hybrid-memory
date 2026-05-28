@@ -705,7 +705,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "--project-state-lww",
       "Apply project-state latest-wins (LWW) policy: safely resolve stale project/task contradictions for known mutable keys",
     )
-    .option("--dry-run", "With --project-state-lww: report candidates and grouped details without mutating any facts")
+    .option("--dry-run", "Report contradiction-resolution candidates without mutating any facts")
     .action(
       withExit(
         async (
@@ -777,6 +777,35 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 `${lwwRes.wouldManualReview} project-state pair(s) require manual review (non-qualifying for LWW).`,
               );
               console.log("  Inspect with: openclaw hybrid-mem resolve-contradictions --details");
+            }
+            return;
+          }
+
+          if (dryRun) {
+            let res;
+            try {
+              res = await ctx.runResolveContradictionsDryRun();
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "resolve-contradictions-dry-run",
+              });
+              throw err;
+            }
+            console.log(
+              `Contradictions dry-run: would auto-resolve ${res.autoResolvable.length}, ${res.ambiguous.length} ambiguous.`,
+            );
+            if (res.autoResolvable.length > 0) {
+              console.log("Would auto-resolve:");
+              for (const a of res.autoResolvable) {
+                console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+              }
+              console.log("Run without --dry-run to apply these conservative auto-resolutions.");
+            }
+            if (res.ambiguous.length > 0) {
+              console.log(
+                "Ambiguous pairs require manual review. Re-run with --details for entity/key/value summaries, or use --project-state-lww --dry-run for project-state candidates.",
+              );
             }
             return;
           }

@@ -90,27 +90,28 @@ export function recordContradiction(
   factIdNew: string,
   factIdOld: string,
   createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
-): string {
+): { id: string; oldFactOriginalConfidence: number } {
   const id = randomUUID();
   const detectedAt = new Date().toISOString();
+  let oldFactOriginalConfidence = 1.0;
 
   const tx = createTransaction(db, () => {
     const oldFactRow = db.prepare("SELECT confidence FROM facts WHERE id = ?").get(factIdOld) as
       | { confidence: number }
       | undefined;
-    const originalConfidence = oldFactRow?.confidence ?? 1.0;
+    oldFactOriginalConfidence = oldFactRow?.confidence ?? 1.0;
 
     db.prepare(
       `INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at, resolved, resolution, old_fact_original_confidence)
            VALUES (?, ?, ?, ?, 0, NULL, ?)`,
-    ).run(id, factIdNew, factIdOld, detectedAt, originalConfidence);
+    ).run(id, factIdNew, factIdOld, detectedAt, oldFactOriginalConfidence);
 
     createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
 
     updateConfidence(db, factIdOld, -0.2);
   });
   tx();
-  return id;
+  return { id, oldFactOriginalConfidence };
 }
 
 export function detectContradictions(
@@ -122,16 +123,20 @@ export function detectContradictions(
   scope: string | null | undefined,
   scopeTarget: string | null | undefined,
   createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
-): Array<{ contradictionId: string; oldFactId: string }> {
+): Array<{ contradictionId: string; oldFactId: string; oldFactOriginalConfidence: number }> {
   if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
 
   const conflicting = findConflictingFacts(db, entity.trim(), key.trim(), value.trim(), newFactId, scope, scopeTarget);
-  const results: Array<{ contradictionId: string; oldFactId: string }> = [];
+  const results: Array<{ contradictionId: string; oldFactId: string; oldFactOriginalConfidence: number }> = [];
 
   for (const old of conflicting) {
     if (old.value?.toLowerCase() === value.trim().toLowerCase()) continue;
-    const contradictionId = recordContradiction(db, newFactId, old.id, createLink);
-    results.push({ contradictionId, oldFactId: old.id });
+    const contradiction = recordContradiction(db, newFactId, old.id, createLink);
+    results.push({
+      contradictionId: contradiction.id,
+      oldFactId: old.id,
+      oldFactOriginalConfidence: contradiction.oldFactOriginalConfidence,
+    });
   }
 
   return results;
@@ -192,6 +197,70 @@ export function getContradictedIds(db: DatabaseSync, factIds: string[]): Set<str
     for (const r of rows) result.add(r.id);
   }
   return result;
+}
+
+export function previewResolveContradictionsAuto(
+  db: DatabaseSync,
+  getById: (id: string) => MemoryEntry | null,
+): {
+  autoResolvable: Array<{
+    contradictionId: string;
+    factIdNew: string;
+    factIdOld: string;
+  }>;
+  ambiguous: Array<{
+    contradictionId: string;
+    factIdNew: string;
+    factIdOld: string;
+  }>;
+} {
+  const unresolved = getContradictions(db);
+  const autoResolvable: Array<{
+    contradictionId: string;
+    factIdNew: string;
+    factIdOld: string;
+  }> = [];
+  const ambiguous: Array<{
+    contradictionId: string;
+    factIdNew: string;
+    factIdOld: string;
+  }> = [];
+
+  for (const c of unresolved) {
+    const newFact = getById(c.factIdNew);
+    const oldFact = getById(c.factIdOld);
+
+    if (!newFact || !oldFact) {
+      autoResolvable.push({
+        contradictionId: c.id,
+        factIdNew: c.factIdNew,
+        factIdOld: c.factIdOld,
+      });
+      continue;
+    }
+
+    const newConf = newFact.confidence ?? 1.0;
+    const oldConf = c.oldFactOriginalConfidence ?? oldFact.confidence ?? 1.0;
+    const newIsNewer = newFact.createdAt >= oldFact.createdAt;
+    const newIsHigherConf = newConf > oldConf;
+    const newIsFromUser = newFact.source === "conversation" || newFact.source === "cli";
+
+    if (newIsNewer && newIsHigherConf && newIsFromUser) {
+      autoResolvable.push({
+        contradictionId: c.id,
+        factIdNew: c.factIdNew,
+        factIdOld: c.factIdOld,
+      });
+    } else {
+      ambiguous.push({
+        contradictionId: c.id,
+        factIdNew: c.factIdNew,
+        factIdOld: c.factIdOld,
+      });
+    }
+  }
+
+  return { autoResolvable, ambiguous };
 }
 
 export function resolveContradictionsAuto(

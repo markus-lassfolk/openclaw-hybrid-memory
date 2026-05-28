@@ -25,6 +25,7 @@ import {
   PROJECT_STATE_LWW_KEYS,
   recordContradiction as recordContradictionImpl,
   resolveContradiction as resolveContradictionImpl,
+  previewResolveContradictionsAuto as previewResolveContradictionsAutoImpl,
   resolveContradictionsAuto as resolveContradictionsAutoImpl,
   resolveProjectStateLww as resolveProjectStateLwwImpl,
   setConfidenceTo as setConfidenceToImpl,
@@ -223,9 +224,12 @@ export class FactsDB extends FactsDBLayer2 {
   }
 
   recordContradiction(factIdNew: string, factIdOld: string): string {
-    return recordContradictionImpl(this.liveDb, factIdNew, factIdOld, (a, b, t, s) =>
-      this.createLink(a, b, t, s ?? 1.0),
-    );
+    return recordContradictionImpl(
+      this.liveDb,
+      factIdNew,
+      factIdOld,
+      (a, b, t, s) => this.createLink(a, b, t, s ?? 1.0),
+    ).id;
   }
 
   detectContradictions(
@@ -235,7 +239,7 @@ export class FactsDB extends FactsDBLayer2 {
     value: string | null | undefined,
     scope?: string | null,
     scopeTarget?: string | null,
-  ): Array<{ contradictionId: string; oldFactId: string }> {
+  ): Array<{ contradictionId: string; oldFactId: string; oldFactOriginalConfidence: number }> {
     const results = detectContradictionsImpl(
       this.liveDb,
       newFactId,
@@ -254,12 +258,10 @@ export class FactsDB extends FactsDBLayer2 {
       if (PROJECT_STATE_LWW_KEYS.has(keyLower)) {
         const newFact = this.getById(newFactId);
         if (newFact) {
-          for (const { contradictionId, oldFactId } of results) {
+          for (const { contradictionId, oldFactId, oldFactOriginalConfidence } of results) {
             const oldFact = this.getById(oldFactId);
             if (!oldFact) continue;
-            const rec = this.getContradictions(oldFactId).find((c) => c.id === contradictionId);
-            if (!rec) continue;
-            const lww = evaluateLwwEligibility(newFact, oldFact, rec.oldFactOriginalConfidence);
+            const lww = evaluateLwwEligibility(newFact, oldFact, oldFactOriginalConfidence);
             if (lww.eligible && lww.qualifies) {
               const superseded = this.supersede(oldFactId, newFactId);
               if (superseded) {
@@ -296,6 +298,10 @@ export class FactsDB extends FactsDBLayer2 {
       (id) => this.getById(id),
       (o, n) => this.supersede(o, n),
     );
+  }
+
+  previewResolveContradictions(): ReturnType<typeof previewResolveContradictionsAutoImpl> {
+    return previewResolveContradictionsAutoImpl(this.liveDb, (id) => this.getById(id));
   }
 
   /**

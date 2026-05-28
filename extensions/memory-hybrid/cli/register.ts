@@ -231,6 +231,18 @@ export type HybridMemCliContext = {
       factIdOld: string;
     }>;
   }>;
+  runResolveContradictionsDryRun: () => Promise<{
+    autoResolvable: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
+    ambiguous: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
+  }>;
   runResolveContradictionsProjectStateLww: (opts: {
     dryRun?: boolean;
   }) => Promise<import("../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
