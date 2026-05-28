@@ -52,7 +52,7 @@ export type DuplicateClosureDecision = "safe" | "needs-reconciliation";
 
 export interface DuplicateClosureAssessment {
   candidateRef: string;
-  replacementRef?: string;
+  replacementRef?: string | null;
   decision: DuplicateClosureDecision;
   reasons: string[];
 }
