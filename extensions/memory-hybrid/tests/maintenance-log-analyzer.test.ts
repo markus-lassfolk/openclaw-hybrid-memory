@@ -354,6 +354,34 @@ describe("maintenance log analyzer", () => {
     expect(steps[0].line).toContain("progress-marker=present");
   });
 
+  it("classifies missing .exit.txt ledgers as orchestration failures", () => {
+    const root = tmpRoot();
+    const logPath = join(root, "nightly-memory-sweep-20260511T030000Z-555.log");
+    writeFileSync(
+      logPath,
+      [
+        "[nightly-memory-sweep] prune completed",
+        "[nightly-memory-sweep] distill completed",
+        "validate-cron-exit marker missing because wrapper failed before ledger flush",
+      ].join("\n"),
+    );
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].line).toContain("matching .exit.txt ledger is missing");
+
+    const rule = classifyMaintenanceFailure(steps[0]);
+    expect(rule.id).toBe("orchestration-missing-exit-ledger");
+    expect(rule.classification).toBe("orchestration-bug");
+
+    const findings = analyzeMaintenanceSteps(steps);
+    expect(findings).toHaveLength(1);
+    expect(findings[0].classification).toBe("orchestration-bug");
+    expect(findings[0].ruleId).toBe("orchestration-missing-exit-ledger");
+  });
+
   it("keeps normal successful verbose dream-cycle runs as OK", () => {
     const root = tmpRoot();
     const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
