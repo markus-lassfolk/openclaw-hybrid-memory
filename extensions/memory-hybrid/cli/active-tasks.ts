@@ -421,6 +421,7 @@ export async function runActiveTaskHygiene(
   const newCompleted: ActiveTaskEntry[] = [...completed];
   const now = new Date().toISOString();
   const toFlush: ActiveTaskEntry[] = [];
+  let appliedCount = 0;
   for (const task of active) {
     const action = actionByLabel.get(task.label);
     if (!action) {
@@ -436,6 +437,7 @@ export async function runActiveTaskHygiene(
         subagent: task.subagent,
       };
       newActive.push(waitingEntry);
+      appliedCount++;
       continue;
     }
     const completedEntry: ActiveTaskEntry = {
@@ -447,6 +449,7 @@ export async function runActiveTaskHygiene(
     };
     newCompleted.push(completedEntry);
     toFlush.push(completedEntry);
+    appliedCount++;
   }
   await writeActiveTaskFile(ctx.activeTaskFilePath, newActive, newCompleted);
   if (ctx.flushOnComplete) {
@@ -461,7 +464,7 @@ export async function runActiveTaskHygiene(
     duplicates: plan.duplicates,
     stale: plan.stale,
     actions: plan.actions,
-    appliedCount: toFlush.length,
+    appliedCount,
   };
 }
 
