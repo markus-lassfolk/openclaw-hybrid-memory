@@ -55,6 +55,16 @@ const DEFAULT_SELF_CORRECTION = {
   spawnModel: "",
 } as const;
 
+function sanitizeLlmResponseExcerpt(content: string): string {
+  return content
+    .trim()
+    .slice(0, 200)
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
+    .replace(/\b(?:sk|gh[pousr]|xox[baprs])-[A-Za-z0-9_=-]{8,}\b/g, "[redacted-token]")
+    .replace(/\b(?:api[_-]?key|password|secret|token)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/\s+/g, " ");
+}
+
 // ---------------------------------------------------------------------------
 // self-correction extract
 // ---------------------------------------------------------------------------
@@ -162,7 +172,7 @@ export async function runSelfCorrectionRunForCli(
     const today = new Date().toISOString().slice(0, 10);
     const reportPath = join(reportDir, `self-correction-${today}.md`);
     let incidents: CorrectionIncident[];
-    if (opts.incidents && opts.incidents.length > 0) {
+    if (opts.incidents !== undefined) {
       incidents = opts.incidents;
     } else if (opts.extractPath) {
       try {
@@ -314,7 +324,7 @@ export async function runSelfCorrectionRunForCli(
         analysed = parsedArray as typeof analysed;
       } else if (content.trim().length > 0) {
         // Log a sanitized excerpt (no private session data) so operators can diagnose
-        const excerpt = content.trim().slice(0, 200).replace(/\s+/g, " ");
+        const excerpt = sanitizeLlmResponseExcerpt(content);
         logger.warn?.(
           `memory-hybrid: self-correction-run — LLM response could not be parsed as JSON array (strategies: stripFence, balancedSlice, skipInvalidSpans); excerpt: "${excerpt}"`,
         );

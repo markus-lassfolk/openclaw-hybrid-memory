@@ -248,8 +248,8 @@ describe("self-correction-run — cooldown skip vs zero-incident status (#1637)"
   it("returns status=skipped_cooldown when 23h cooldown fires", async () => {
     const ctx = makeCtx(makeOpenAIMock("[]"));
 
-    // Simulate a recent run (15 minutes ago) — within the 23h guard window
-    factsDb.updateScanCursor("self-correction-run", Date.now() - 15 * 60 * 1000, 0);
+    // Mark this scan as recently run; updateScanCursor records last_run_at as Date.now().
+    factsDb.updateScanCursor("self-correction-run", 0, 0);
 
     const res = await runSelfCorrectionRunForCli(ctx, {
       workspace: tmpDir,
@@ -280,8 +280,8 @@ describe("self-correction-run — cooldown skip vs zero-incident status (#1637)"
   it("skipped_cooldown and success_no_incidents are distinguishable", async () => {
     const ctx = makeCtx(makeOpenAIMock("[]"));
 
-    // Cooldown path
-    factsDb.updateScanCursor("self-correction-run", Date.now() - 15 * 60 * 1000, 0);
+    // Cooldown path: mark this scan as recently run.
+    factsDb.updateScanCursor("self-correction-run", 0, 0);
     const skippedRes = await runSelfCorrectionRunForCli(ctx, { workspace: tmpDir });
 
     // Zero-incident path (forced --full with no actual incidents)
