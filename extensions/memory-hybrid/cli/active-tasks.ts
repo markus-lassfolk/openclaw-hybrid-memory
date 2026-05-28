@@ -421,6 +421,7 @@ export async function runActiveTaskHygiene(
   const newCompleted: ActiveTaskEntry[] = [...completed];
   const now = new Date().toISOString();
   const toFlush: ActiveTaskEntry[] = [];
+  const prBlockerTasks: string[] = [];
   let appliedCount = 0;
   for (const task of active) {
     const action = actionByLabel.get(task.label);
@@ -437,6 +438,7 @@ export async function runActiveTaskHygiene(
         subagent: task.subagent,
       };
       newActive.push(waitingEntry);
+      prBlockerTasks.push(task.label);
       appliedCount++;
       continue;
     }
@@ -465,6 +467,7 @@ export async function runActiveTaskHygiene(
     stale: plan.stale,
     actions: plan.actions,
     appliedCount,
+    prBlockerTasks,
   };
 }
 

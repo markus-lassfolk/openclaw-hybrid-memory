@@ -5,11 +5,11 @@
 
 import { basename } from "node:path";
 import { promisify } from "node:util";
-import type { ActiveTaskEntry } from "./active-task.js";
-import { isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
 import { execFile } from "../utils/process-runner.js";
+import type { ActiveTaskEntry } from "./active-task.js";
+import { isSubagentSession } from "./active-task.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
 export type LongRunningRegistrationMode = ActiveTaskLongRunningRegistrationMode;
@@ -50,12 +50,13 @@ interface GhPrViewJson {
   mergeable?: string;
   statusCheckRollup?: Array<{
     state?: string;
-    conclusion?: string;
+    conclusion?: string | null;
     status?: string;
   }>;
-  commits?: {
-    nodes: Array<{ commit: { checkSuites?: { nodes: Array<{ conclusion?: string; status?: string }> } } }>;
-  };
+  commits?: Array<{
+    oid?: string;
+    messageHeadline?: string;
+  }>;
 }
 
 const BLOCKING_CONCLUSIONS = new Set(["FAILURE", "TIMED_OUT", "STARTUP_FAILURE"]);
@@ -151,21 +152,20 @@ export async function fetchLivePrBlockerStatus(
       return "unresolved_review_threads";
     }
 
-    // 2. Check CI (from statusCheckRollup + checkSuites on latest commit)
+    // 2. Check CI (from statusCheckRollup)
     const statusCheckRollup = pr.statusCheckRollup ?? [];
-    const commitNodes = pr.commits?.nodes ?? [];
-    const latestCommit = commitNodes[commitNodes.length - 1]?.commit;
-    const checkSuites = latestCommit?.checkSuites?.nodes ?? [];
 
-    const hasFailure =
-      statusCheckRollup.some(
-        (c) =>
-          c.state === "FAILURE" || c.state === "TIMED_OUT" || (c.conclusion && BLOCKING_CONCLUSIONS.has(c.conclusion)),
-      ) || checkSuites.some((cs) => cs.conclusion && BLOCKING_CONCLUSIONS.has(cs.conclusion));
-    const hasPending =
-      statusCheckRollup.some(
-        (c) => c.state === "PENDING" || c.state === "IN_PROGRESS" || (c.status && PENDING_CHECK_STATES.has(c.status)),
-      ) || checkSuites.some((cs) => cs.status && PENDING_CHECK_STATES.has(cs.status));
+    const hasFailure = statusCheckRollup.some(
+      (c) =>
+        c.state === "FAILURE" || c.state === "TIMED_OUT" || (c.conclusion && BLOCKING_CONCLUSIONS.has(c.conclusion)),
+    );
+    const hasPending = statusCheckRollup.some(
+      (c) =>
+        c.state === "PENDING" ||
+        c.state === "IN_PROGRESS" ||
+        (c.status && PENDING_CHECK_STATES.has(c.status)) ||
+        c.conclusion === null,
+    );
 
     if (hasFailure) return "red_ci";
     if (hasPending) return "pending_ci";
