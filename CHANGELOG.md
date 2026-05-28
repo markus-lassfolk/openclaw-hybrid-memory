@@ -25,6 +25,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.5.280] - 2026-05-28
+
+### Added
+
+- Added detailed release notes at `release-notes/release-notes-2026.5.280.md`.
+- Added/packaged comprehensive maintenance semantics coverage for wrapper/ledger/guard behaviours.
+- Added progress heartbeat logging for silent maintenance phases.
+
+### Changed
+
+- Bumped plugin package, lockfile, plugin manifest, and installer package versions to **2026.5.280**.
+- Clarified legacy category remap policy for forge/episode-style categories.
+- Improved operator-facing maintenance result vocabulary and evidence quality.
+
+### Fixed
+
+- Fixed self-correction handling of non-strict LLM JSON and cooldown-skip reporting.
+- Fixed extract-reinforcement degraded-success semantics when incidents produce no annotations/fallback.
+- Hardened extract-directives against untrusted metadata/chat fragments being stored as durable rules.
+- Scoped persona proposal generation to avoid cross-agent/user contamination.
+
+### Notes
+
+- Packages merged work from PRs #1642, #1643, #1644, #1648, #1649, #1650, and #1651.
+
+---
+
 ## [2026.5.242] - 2026-05-24
 
 ### Changed
