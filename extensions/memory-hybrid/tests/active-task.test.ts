@@ -411,14 +411,14 @@ describe("buildActiveTaskInjection", () => {
     expect(result.text).toContain("Deploy the fix");
   });
 
-  it("excludes stale tasks from active-task injection", () => {
+  it("excludes stale tasks from active-task injection when excludeStale is true", () => {
     const tasks = [makeEntry({ stale: true })];
-    const result = buildActiveTaskInjection(tasks, 500);
+    const result = buildActiveTaskInjection(tasks, 500, { excludeStale: true });
     expect(result.text).toBe("");
     expect(result.injectedCount).toBe(0);
   });
 
-  it("does not let stale tasks consume the active-task injection budget", () => {
+  it("does not let stale tasks consume the active-task injection budget when excludeStale is true", () => {
     const tasks = [
       ...Array.from({ length: 10 }, (_, i) =>
         makeEntry({
@@ -431,7 +431,7 @@ describe("buildActiveTaskInjection", () => {
       ),
       makeEntry({ label: "fresh", description: "Fresh task", status: "In progress", stale: false }),
     ];
-    const result = buildActiveTaskInjection(tasks, 100);
+    const result = buildActiveTaskInjection(tasks, 100, { excludeStale: true });
     expect(result.text).toContain("[fresh]");
     expect(result.text).not.toContain("[stale-");
     expect(result.injectedCount).toBe(1);
