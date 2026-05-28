@@ -137,10 +137,7 @@ function isSelfCorrectionRemediationItem(item: unknown): boolean {
 
   const remediationContent = candidate.remediationContent;
   if (
-    !(
-      typeof remediationContent === "string" ||
-      (typeof remediationContent === "object" && remediationContent !== null)
-    )
+    !(typeof remediationContent === "string" || (typeof remediationContent === "object" && remediationContent !== null))
   ) {
     return false;
   }

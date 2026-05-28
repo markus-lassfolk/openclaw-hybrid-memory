@@ -480,8 +480,10 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
       autoFixed: 0,
       proposals: [],
       reportPath: null,
-      error: "Failed to parse LLM response as JSON array",
     });
+    expect(result.error).toContain(
+      "Self-correction analysis: LLM response could not be parsed as a JSON array (repair failed)",
+    );
   });
 
   it("creates proposal when AGENTS_RULE remediation is returned", async () => {
