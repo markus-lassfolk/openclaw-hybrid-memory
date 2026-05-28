@@ -22,15 +22,13 @@ function makeBindings(overrides: Partial<ManageBindings> = {}): ManageBindings {
     runEntityEnrichment: vi.fn().mockResolvedValue({ pending: 0, processed: 0, factsEnriched: 0 }),
     runDreamCycle: vi.fn().mockResolvedValue({ skipped: true }),
     runContinuousVerification: vi.fn().mockResolvedValue({ skipped: true }),
-    runExtractImplicitFeedback: vi
-      .fn()
-      .mockResolvedValue({
-        signalsExtracted: 0,
-        positiveCount: 0,
-        negativeCount: 0,
-        trajectoriesBuilt: 0,
-        sessionsScanned: 0,
-      }),
+    runExtractImplicitFeedback: vi.fn().mockResolvedValue({
+      signalsExtracted: 0,
+      positiveCount: 0,
+      negativeCount: 0,
+      trajectoriesBuilt: 0,
+      sessionsScanned: 0,
+    }),
     runCrossAgentLearning: vi.fn().mockResolvedValue({ stored: 0 }),
     runToolEffectiveness: vi.fn().mockResolvedValue("ok"),
     pruneCostLog: vi.fn().mockReturnValue(0),

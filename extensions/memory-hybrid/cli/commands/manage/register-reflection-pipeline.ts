@@ -727,7 +727,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           //   resolve-contradictions --dry-run
           //   resolve-contradictions --apply
           // Legacy compatibility: --project-state-lww keeps working as explicit LWW mode.
-          const projectStateLwwContractMode = projectStateLww || apply;
+          const projectStateLwwContractMode = projectStateLww || apply || dryRun;
           if (projectStateLwwContractMode) {
             const lwwDryRun = dryRun;
             // Project-state LWW mode: grouped, human-readable output.
