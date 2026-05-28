@@ -199,6 +199,11 @@ export function getContradictedIds(db: DatabaseSync, factIds: string[]): Set<str
   return result;
 }
 
+function isFactVerified(db: DatabaseSync, factId: string): boolean {
+  const row = db.prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1").get(factId);
+  return row != null;
+}
+
 export function previewResolveContradictionsAuto(
   db: DatabaseSync,
   getById: (id: string) => MemoryEntry | null,
@@ -245,7 +250,7 @@ export function previewResolveContradictionsAuto(
     const newIsHigherConf = newConf > oldConf;
     const newIsFromUser = newFact.source === "conversation" || newFact.source === "cli";
 
-    if (newIsNewer && newIsHigherConf && newIsFromUser) {
+    if (newIsNewer && newIsHigherConf && newIsFromUser && !isFactVerified(db, c.factIdOld)) {
       autoResolvable.push({
         contradictionId: c.id,
         factIdNew: c.factIdNew,
