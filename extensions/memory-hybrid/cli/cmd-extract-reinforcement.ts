@@ -393,6 +393,7 @@ export async function runExtractReinforcementForCli(
           }
           continue;
         }
+        let incidentAnnotated = 0;
         try {
           const context: ReinforcementContext = {
             querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
@@ -404,7 +405,6 @@ export async function runExtractReinforcementForCli(
           // Reinforce recalled memories with rich context, boosted by diversity score (#259)
           const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
           const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
-          let incidentAnnotated = 0;
           for (const memId of incident.recalledMemoryIds) {
             const diversityScore = factsDb.calculateDiversityScore(memId);
             const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
@@ -418,8 +418,6 @@ export async function runExtractReinforcementForCli(
               annotated++;
             }
           }
-          if (incidentAnnotated > 0) annotationReasons.reinforced++;
-          else annotationReasons.recalledIdsNoMatch++;
         } catch (err) {
           annotationReasons.errors++;
           capturePluginError(err as Error, {
@@ -427,6 +425,8 @@ export async function runExtractReinforcementForCli(
             operation: "runExtractReinforcementForCli",
           });
         }
+        if (incidentAnnotated > 0) annotationReasons.reinforced++;
+        else annotationReasons.recalledIdsNoMatch++;
 
         // Reinforce procedures based on tool call sequence (separate try-catch to avoid double-counting)
         try {
