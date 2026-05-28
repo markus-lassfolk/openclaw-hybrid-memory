@@ -74,7 +74,7 @@ function trimBlockToBudget(
   const lastTagMatch = last.match(/^<\/([^>\s]+)>$/);
   if (lines.length >= 3 && firstTagMatch && lastTagMatch && firstTagMatch[1] === lastTagMatch[1]) {
     const middle = lines.slice(1, -1);
-    for (let keep = middle.length; keep >= 0; keep--) {
+    for (let keep = middle.length; keep >= 1; keep--) {
       const candidate = [first, ...middle.slice(0, keep), last].join("\n") + trailingNewlines;
       const candidateTokens = estimateTokens(candidate);
       if (candidateTokens <= maxTokens) {
