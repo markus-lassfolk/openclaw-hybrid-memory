@@ -214,8 +214,10 @@ export async function runContextAudit(opts: {
   const autoRecallBudget = cfg.autoRecall.enabled
     ? Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens)
     : 0;
+  const hasNarrativesDb = cfg.eventLog.enabled;
   const issueCapTokens = Math.max(80, Math.floor(autoRecallBudget * 0.15));
-  const narrativeMaxTokens = cfg.autoRecall.narrativeMaxTokens ?? 0;
+  const narrativeMaxTokens =
+    cfg.autoRecall.narrativeMaxTokens ?? (hasNarrativesDb ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0);
   const hotMaxTokens =
     cfg.autoRecall.hotMaxTokens ?? (hotTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.25)) : 0);
   const defaultProcedureCap = proceduresTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0;
@@ -235,12 +237,14 @@ export async function runContextAudit(opts: {
 
   const issueEstimateTokens = cfg.ambient.enabled ? issueCapTokens : 0;
   const narrativeEstimateTokens = narrativeMaxTokens;
+  const staleWarningEstimateTokens = staleWarningMaxTokens;
   const fixedBlockEstimatedTokens =
     issueEstimateTokens +
     narrativeEstimateTokens +
     Math.min(hotTokens, hotMaxTokens) +
     Math.min(proceduresTokens, procedureMaxTokens) +
-    Math.min(activeTasksTokens, activeTaskMaxTokens);
+    Math.min(activeTasksTokens, activeTaskMaxTokens) +
+    staleWarningEstimateTokens;
   const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
   const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
 
