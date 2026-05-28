@@ -147,6 +147,32 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).toHaveLength(2);
   });
 
+  it("accepts NO_ACTION items without remediationContent", () => {
+    const input = JSON.stringify([
+      {
+        category: "NO_ISSUE",
+        severity: "LOW",
+        remediationType: "NO_ACTION",
+      },
+    ]);
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+    expect((result as Array<{ remediationType: string }>)[0].remediationType).toBe("NO_ACTION");
+  });
+
+  it("returns null when only actionable items are missing remediationContent", () => {
+    const input = JSON.stringify([
+      {
+        category: "WRONG_APPROACH",
+        severity: "MEDIUM",
+        remediationType: "MEMORY_STORE",
+      },
+    ]);
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).toBeNull();
+  });
+
   it("skips remediationType-only object arrays and parses a later valid remediation array", () => {
     const malformed = [{ remediationType: "MEMORY_STORE" }];
     const input = `${JSON.stringify(malformed)}\n${JSON.stringify([sampleItem])}`;
