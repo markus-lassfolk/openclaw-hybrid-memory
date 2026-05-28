@@ -980,6 +980,15 @@ export async function applyActiveTaskHygieneFacts(
     if (!prev || fact.createdAt > prev.createdAt) {
       latestByEntityKey.set(cacheKey, fact);
     }
+    // Also index by canonical label to handle suffix variants (e.g., "pr queue")
+    const canonical = canonicalLabel(entity);
+    if (canonical !== entity) {
+      const canonicalCacheKey = taskEntityKey(canonical, key);
+      const prevCanonical = latestByEntityKey.get(canonicalCacheKey);
+      if (!prevCanonical || fact.createdAt > prevCanonical.createdAt) {
+        latestByEntityKey.set(canonicalCacheKey, fact);
+      }
+    }
   }
   let appliedCount = 0;
   for (const action of plan.actions) {
