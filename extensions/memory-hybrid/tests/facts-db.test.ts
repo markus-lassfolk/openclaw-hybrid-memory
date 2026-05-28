@@ -189,6 +189,36 @@ describe("FactsDB.store", () => {
       sqlite.prepare = originalPrepare;
     }
   });
+
+  it("does not persist entries blocked by pre-store guard", () => {
+    const before = db.count();
+    const blockedBySource = db.storeWithResult({
+      text: "NOOP classification output",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "remember",
+    });
+    const blockedByCategory = db.storeWithResult({
+      text: "artifact-like internal payload",
+      category: "artifact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    expect(blockedBySource.skipped).toBe(true);
+    expect(blockedBySource.entry.id).toBe("");
+    expect(blockedBySource.entry.source).toBe("remember");
+    expect(blockedByCategory.skipped).toBe(true);
+    expect(blockedByCategory.entry.id).toBe("");
+    expect(blockedByCategory.entry.category).toBe("artifact");
+    expect(db.count()).toBe(before);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -720,6 +750,51 @@ describe("FactsDB tiering", () => {
     expect(hot.length).toBeLessThanOrEqual(2);
   });
 
+  it("getHotFacts filters garbage prefixes and down-scores long hot facts", () => {
+    const longHotText = "longfact ".repeat(Math.ceil(8001 / "longfact ".length));
+    const clean = db.store({
+      text: "Operational runbook summary",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const garbage = db.store({
+      text: "Capability hint artifact",
+      summary: "[hot/fact] generated hot-memory wrapper",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const long = db.store({
+      text: longHotText,
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    db.setTier(clean.id, "hot");
+    db.setTier(garbage.id, "hot");
+    db.setTier(long.id, "hot");
+
+    const hot = db.getHotFacts(10_000);
+    const ids = hot.map((row) => row.entry.id);
+
+    expect(ids).toContain(clean.id);
+    expect(ids).toContain(long.id);
+    expect(ids).not.toContain(garbage.id);
+    expect(hot.find((row) => row.entry.id === clean.id)?.score).toBe(1);
+    expect(hot.find((row) => row.entry.id === long.id)?.score).toBe(0.3);
+  });
+
   it("search with tierFilter warm excludes cold", () => {
     const w = db.store({
       text: "Warm preference",
@@ -861,6 +936,23 @@ describe("FactsDB tiering", () => {
 
     expect(counts.hot).toBeGreaterThanOrEqual(1);
     expect(db.getById(fact.id)?.tier).toBe("hot");
+  });
+
+  it("runCompaction keeps garbage artifacts out of HOT after retiering", () => {
+    const garbage = db.storeWithResult({
+      text: "<thinking>internal reasoning trace</thinking>",
+      category: "fact",
+      importance: 0.8,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    expect(garbage.skipped).toBe(true);
+
+    db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
+
+    expect(db.getHotFacts().some((fact) => fact.text.includes("internal reasoning trace"))).toBe(false);
   });
 
   it("runCompaction moves only inactive unrecalled facts to COLD", () => {
@@ -2197,6 +2289,40 @@ describe("FactsDB category drift audit/remap", () => {
     const dashboard = db.listForDashboard({ limit: 10, offset: 0, category: "fact" });
     expect(dashboard.total).toBe(1);
     expect(dashboard.facts[0]?.id).toBe(entry.id);
+  });
+
+  it("supports legacy forge/episode remap policy end-to-end", () => {
+    const legacyForge = db.store({
+      text: "Legacy forge busy fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const legacyEpisode = db.store({
+      text: "Legacy episode fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("forge_busy", legacyForge.id);
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("episode", legacyEpisode.id);
+
+    const report = db.auditCategories(["forge", "ops_summary", "other"], 2);
+    expect(report.unknown.map((row) => row.category)).toEqual(["episode", "forge_busy"]);
+
+    expect(db.remapCategory("forge_busy", "forge", true).changed).toBe(1);
+    expect(db.remapCategory("episode", "ops_summary", true).changed).toBe(1);
+
+    const after = db.auditCategories(["forge", "ops_summary", "other"], 2);
+    expect(after.unknown).toEqual([]);
+    expect(db.getById(legacyForge.id)?.category).toBe("forge");
+    expect(db.getById(legacyEpisode.id)?.category).toBe("ops_summary");
   });
 });
 

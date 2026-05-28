@@ -1,7 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const execFileMock = vi.hoisted(() => vi.fn());
+vi.mock("../utils/process-runner.js", () => ({ execFile: execFileMock }));
+
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
@@ -18,7 +22,10 @@ import {
   factStatusToDisplay,
   groupProjectFactsByEntity,
   loadTaskLedgerFromFacts,
+  loadTaskLedgerFromFactsWithMetrics,
   planActiveTaskHygiene,
+  reconcileActiveTaskLiveState,
+  renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
   taskEntityKey,
   upsertProjectTaskKey,
@@ -37,6 +44,53 @@ function fact(partial: Partial<MemoryEntry> & { id: string; entity: string; key:
     confidence: 1,
     ...partial,
   } as MemoryEntry;
+}
+
+function activeTaskStubs(): { vectorDb: VectorDB; embeddings: EmbeddingProvider } {
+  return {
+    vectorDb: {
+      hasDuplicate: async () => true,
+      store: async () => {},
+    } as unknown as VectorDB,
+    embeddings: {
+      modelName: "test-model",
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingProvider,
+  };
+}
+
+function storeActiveTaskFactRow(db: FactsDB, entity: string, title: string, status = "in_progress"): void {
+  const nowIso = new Date().toISOString();
+  db.store({
+    category: "project",
+    importance: 0.7,
+    source: "active-task",
+    decayClass: "permanent",
+    entity,
+    key: "title",
+    value: title,
+    text: `Task [${entity}] title: ${title}`,
+  });
+  db.store({
+    category: "project",
+    importance: 0.7,
+    source: "active-task",
+    decayClass: "permanent",
+    entity,
+    key: "status",
+    value: status,
+    text: `Task [${entity}] status: ${status}`,
+  });
+  db.store({
+    category: "project",
+    importance: 0.7,
+    source: "active-task",
+    decayClass: "permanent",
+    entity,
+    key: "task_updated",
+    value: nowIso,
+    text: `Task [${entity}] task_updated: ${nowIso}`,
+  });
 }
 
 describe("task-ledger-facts", () => {
@@ -62,6 +116,37 @@ describe("task-ledger-facts", () => {
     const t1 = g.get("t1");
     expect(t1?.get("status")?.value).toBe("in_progress");
     expect(t1?.get("title")?.value).toBe("Hello");
+  });
+
+  it("groupProjectFactsByEntity ignores superseded and expired rows when selecting current state", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const rows: MemoryEntry[] = [
+      fact({ id: "s-old", entity: "task-1633", key: "status", value: "in_progress", createdAt: 100 }),
+      fact({
+        id: "s-superseded",
+        entity: "task-1633",
+        key: "status",
+        value: "done",
+        createdAt: 500,
+        supersededAt: nowSec - 5,
+      }),
+      fact({
+        id: "s-expired",
+        entity: "task-1633",
+        key: "status",
+        value: "waiting",
+        createdAt: 600,
+        expiresAt: nowSec - 1,
+      }),
+      fact({ id: "s-current", entity: "task-1633", key: "status", value: "done", createdAt: 300 }),
+      fact({ id: "t1", entity: "task-1633", key: "title", value: "Close stale projection bug", createdAt: 300 }),
+    ];
+    const grouped = groupProjectFactsByEntity(rows);
+    expect(grouped.get("task-1633")?.get("status")?.id).toBe("s-current");
+    const { active, completed } = buildTaskEntriesFromGroupedFacts(grouped);
+    expect(active).toHaveLength(0);
+    expect(completed).toHaveLength(1);
+    expect(completed[0].label).toBe("task-1633");
   });
 
   it("buildTaskEntriesFromGroupedFacts splits active vs terminal", () => {
@@ -418,6 +503,213 @@ describe("task-ledger-facts", () => {
     }
   });
 
+  it("loadTaskLedgerFromFactsWithMetrics reports fetched rows and collapsed duplicates", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-metrics-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "ship-release",
+        key: "status",
+        value: "open",
+        text: "Task [ship-release] status: open",
+        sourceDate: 1,
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "ship-release",
+        key: "status",
+        value: "in_progress",
+        text: "Task [ship-release] status: in_progress",
+        sourceDate: 2,
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "ship-release",
+        key: "title",
+        value: "Ship the release",
+        text: "Task [ship-release] title: Ship the release",
+        sourceDate: 3,
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "draft-docs",
+        key: "title",
+        value: "Draft docs",
+        text: "Task [draft-docs] title: Draft docs",
+        sourceDate: 4,
+      });
+
+      const result = loadTaskLedgerFromFactsWithMetrics(db);
+      expect(result.active).toHaveLength(1);
+      expect(result.completed).toHaveLength(0);
+      expect(result.metrics).toMatchObject({
+        projectRowsFetched: 4,
+        groupedEntityCount: 2,
+        duplicateRowsCollapsed: 1,
+        activeCandidates: 1,
+        completedCandidates: 0,
+        entitiesSkippedWithoutStatus: 1,
+      });
+      expect(result.metrics.elapsedMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renderActiveTaskMarkdownFile emits projection diagnostics when a logger is provided", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-render-metrics-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const logger = { debug: vi.fn() };
+    try {
+      const staleUpdated = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+      const freshUpdated = new Date().toISOString();
+      for (const [entity, title, updated] of [
+        ["fresh-task", "Fresh task", freshUpdated],
+        ["stale-task", "Stale task", staleUpdated],
+      ] as const) {
+        db.store({
+          category: "project",
+          importance: 0.7,
+          source: "active-task",
+          decayClass: "permanent",
+          entity,
+          key: "title",
+          value: title,
+          text: `Task [${entity}] title: ${title}`,
+        });
+        db.store({
+          category: "project",
+          importance: 0.7,
+          source: "active-task",
+          decayClass: "permanent",
+          entity,
+          key: "status",
+          value: "in_progress",
+          text: `Task [${entity}] status: in_progress`,
+        });
+        db.store({
+          category: "project",
+          importance: 0.7,
+          source: "active-task",
+          decayClass: "permanent",
+          entity,
+          key: "task_updated",
+          value: updated,
+          text: `Task [${entity}] task_updated: ${updated}`,
+        });
+      }
+
+      await renderActiveTaskMarkdownFile(
+        db,
+        60,
+        join(dir, "ACTIVE-TASKS.md"),
+        {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+        logger,
+      );
+
+      expect(logger.debug).toHaveBeenCalledTimes(1);
+      expect(logger.debug).toHaveBeenCalledWith(
+        expect.stringContaining("memory-hybrid: active-task projection rowsFetched=6"),
+      );
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("groupedEntities=2"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("activeCandidates=2"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("staleBucketed=1"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("renderedActive=1"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("renderedStale=1"));
+      expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("elapsedMs="));
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renderActiveTaskMarkdownFile excludes completed rows by default", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-render-default-active-only-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      storeActiveTaskFactRow(db, "active-task-1633", "Active task", "in_progress");
+      storeActiveTaskFactRow(db, "done-task-1633", "Done task", "done");
+
+      const outPath = join(dir, "ACTIVE-TASKS.md");
+      await renderActiveTaskMarkdownFile(
+        db,
+        60,
+        outPath,
+        {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+        undefined,
+      );
+
+      const rendered = await readFile(outPath, "utf-8");
+      expect(rendered).toContain("## Active");
+      expect(rendered).toContain("[active-task-1633]");
+      expect(rendered).not.toContain("## Completed");
+      expect(rendered).not.toContain("[done-task-1633]");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renderActiveTaskMarkdownFile includes completed rows in explicit history mode", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-render-history-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      storeActiveTaskFactRow(db, "active-task-history", "Active task", "in_progress");
+      storeActiveTaskFactRow(db, "done-task-history", "Done task", "done");
+
+      const outPath = join(dir, "ACTIVE-TASKS.md");
+      await renderActiveTaskMarkdownFile(
+        db,
+        60,
+        outPath,
+        {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+        undefined,
+        { includeCompleted: true },
+      );
+
+      const rendered = await readFile(outPath, "utf-8");
+      expect(rendered).toContain("## Active");
+      expect(rendered).toContain("[active-task-history]");
+      expect(rendered).toContain("## Completed");
+      expect(rendered).toContain("[done-task-history]");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("upsertProjectTaskKey does not supersede cached memory_store rows", async () => {
     const dir = await mkdtemp(join(tmpdir(), "task-ledger-upsert-source-filter-"));
     const db = new FactsDB(join(dir, "facts.db"));
@@ -454,6 +746,46 @@ describe("task-ledger-facts", () => {
         .listFactsByCategory("project", 100)
         .filter((row) => row.entity === "proj-1273" && row.key === "status" && row.source === "active-task");
       expect(activeRows.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("upsertProjectTaskKey status writes supersede canonical-variant active-task rows even when cache misses", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-upsert-status-canonical-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const vectorDb = {
+      hasDuplicate: async () => true,
+      store: async () => {},
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "test-model",
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+    } as unknown as EmbeddingProvider;
+    try {
+      const prior = db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "proj-1633 pr queue",
+        key: "status",
+        value: "in_progress",
+        text: "Task [proj-1633 pr queue] status: in_progress",
+      });
+
+      await upsertProjectTaskKey(db, vectorDb, embeddings, "proj-1633", "status", "done", undefined, {
+        latestByEntityKey: new Map<string, MemoryEntry>(),
+      });
+
+      const priorAfter = db.getById(prior.id);
+      expect(priorAfter?.supersededBy).toBeTruthy();
+      expect(priorAfter?.supersededAt).toBeTypeOf("number");
+
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      expect(active.some((task) => canonicalLabel(task.label) === "proj-1633")).toBe(false);
+      expect(completed.some((task) => canonicalLabel(task.label) === "proj-1633")).toBe(true);
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
@@ -511,6 +843,94 @@ it("groupProjectFactsByEntity collapses case-variant labels by canonical label",
   expect(row?.get("title")?.value).toBe("New title");
 });
 
+it("groupProjectFactsByEntity uses sourceDate tie-break when createdAt is equal", () => {
+  // Issue #1624: when createdAt is equal, sourceDate is the tie-breaker.
+  // The fact with the higher sourceDate (more recent external event) wins.
+  const rows: MemoryEntry[] = [
+    // Stale in_progress fact written earlier (createdAt equal to done, but older sourceDate)
+    fact({ id: "a1", entity: "proj-1624", key: "status", value: "in_progress", createdAt: 1000, sourceDate: 900 }),
+    // Terminal done fact: same createdAt, but newer sourceDate (more recent live event)
+    fact({ id: "a2", entity: "proj-1624", key: "status", value: "done", createdAt: 1000, sourceDate: 1000 }),
+    // Also write a stale "next" field from the old checkpoint so we can verify
+    // that status comes from the newer fact (a2) and not mixed with stale fields.
+    fact({ id: "a3", entity: "proj-1624", key: "next", value: "Closed by live audit", createdAt: 950 }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  const row = g.get("proj-1624");
+  // Status must be "done" (newer sourceDate wins the tie-break at same createdAt)
+  expect(row?.get("status")?.value).toBe("done");
+  // Next should still be the latest fact for the "next" key
+  expect(row?.get("next")?.value).toBe("Closed by live audit");
+});
+
+it("groupProjectFactsByEntity prefers missing sourceDate over stale sourceDate when createdAt is equal", () => {
+  const rows: MemoryEntry[] = [
+    fact({ id: "a1", entity: "proj-source-null", key: "status", value: "done", createdAt: 1000 }),
+    fact({
+      id: "a2",
+      entity: "proj-source-null",
+      key: "status",
+      value: "in_progress",
+      createdAt: 1000,
+      sourceDate: 1001,
+    }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  const row = g.get("proj-source-null");
+  expect(row?.get("status")?.value).toBe("done");
+});
+
+it("groupProjectFactsByEntity preserves terminal status even when it has sourceDate and non-terminal lacks it", () => {
+  // Bug #1624/#1625: terminal status with sourceDate should beat non-terminal without sourceDate
+  const rows: MemoryEntry[] = [
+    fact({
+      id: "a1",
+      entity: "proj-terminal-sourcedate",
+      key: "status",
+      value: "done",
+      createdAt: 1000,
+      sourceDate: 999,
+    }),
+    fact({
+      id: "a2",
+      entity: "proj-terminal-sourcedate",
+      key: "status",
+      value: "in_progress",
+      createdAt: 1000,
+    }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  const row = g.get("proj-terminal-sourcedate");
+  expect(row?.get("status")?.value).toBe("done");
+});
+
+it("groupProjectFactsByEntity uses insertion order tie-break when createdAt and sourceDate are equal", () => {
+  // Last-write wins by insertion order when timestamps tie and rowid is unavailable.
+  const rows: MemoryEntry[] = [
+    fact({ id: "z9", entity: "proj-tie", key: "status", value: "in_progress", createdAt: 500, sourceDate: undefined }),
+    fact({ id: "a1", entity: "proj-tie", key: "status", value: "done", createdAt: 500, sourceDate: undefined }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  const row = g.get("proj-tie");
+  expect(row?.get("status")?.value).toBe("done");
+});
+
+it("groupProjectFactsByEntity keeps terminal status over non-terminal when all timestamps equal", () => {
+  // This is the exact bug from #1624: in_progress and done share createdAt.
+  // With insertion-order tie-break, the later write wins for each key.
+  const rows: MemoryEntry[] = [
+    fact({ id: "aa", entity: "proj-1624-bug", key: "status", value: "in_progress", createdAt: 2000 }),
+    fact({ id: "bb", entity: "proj-1624-bug", key: "status", value: "done", createdAt: 2000 }),
+    fact({ id: "aa", entity: "proj-1624-bug", key: "next", value: "Closed...", createdAt: 1999 }),
+    fact({ id: "bb", entity: "proj-1624-bug", key: "next", value: "Still active...", createdAt: 2000 }),
+  ];
+  const g = groupProjectFactsByEntity(rows);
+  const row = g.get("proj-1624-bug");
+  // Status: later "done" write wins.
+  expect(row?.get("status")?.value).toBe("done");
+  // Next: later write for "next" also wins.
+  expect(row?.get("next")?.value).toBe("Still active...");
+});
 it("upserting Humanizer as done suppresses humanizer case-variant rows from active projection", async () => {
   const dir = await mkdtemp(join(tmpdir(), "task-ledger-canonical-"));
   const db = new FactsDB(join(dir, "facts.db"));
@@ -597,7 +1017,7 @@ it("backfillActiveTaskCanonicalLabels collapses legacy case-variant duplicate fa
         text: `Task [${entity}] status: ${status}`,
         category: "project",
         importance: 0.7,
-        source: "test",
+        source: "active-task",
         decayClass: "permanent",
         entity,
         key: "status",
@@ -608,7 +1028,7 @@ it("backfillActiveTaskCanonicalLabels collapses legacy case-variant duplicate fa
         text: `Task [${entity}] task_updated: ${now}`,
         category: "project",
         importance: 0.7,
-        source: "test",
+        source: "active-task",
         decayClass: "permanent",
         entity,
         key: "task_updated",
@@ -747,4 +1167,116 @@ it("terminal status supersession does not supersede title fact created in same s
     db.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+describe("reconcileActiveTaskLiveState", () => {
+  it("parses PR/issue refs correctly and defaults bare owner/repo#N to issue", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-live-state-parse-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const previousToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "test-token";
+    execFileMock.mockReset();
+    execFileMock.mockImplementation(
+      (_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
+        if (args[0] === "pr") {
+          cb(null, { stdout: JSON.stringify({ state: "OPEN", mergedAt: null, closedAt: null }) });
+        } else {
+          cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
+        }
+      },
+    );
+
+    try {
+      storeActiveTaskFactRow(db, "task-pr", "Track markus-lassfolk/openclaw-hybrid-memory pull request #101");
+      storeActiveTaskFactRow(db, "task-issue-1", "Track markus-lassfolk/openclaw-hybrid-memory issue #102");
+      storeActiveTaskFactRow(db, "task-issue-2", "Track markus-lassfolk/openclaw-hybrid-memory#103");
+
+      const result = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 10 });
+      expect(result.checkedCount).toBe(3);
+      expect(result.updatedCount).toBe(0);
+
+      const calls = execFileMock.mock.calls.map((call) => call[1] as string[]);
+      expect(calls.some((args) => args[0] === "pr" && args[2] === "101")).toBe(true);
+      expect(calls.some((args) => args[0] === "issue" && args[2] === "102")).toBe(true);
+      expect(calls.some((args) => args[0] === "issue" && args[2] === "103")).toBe(true);
+    } finally {
+      process.env.GITHUB_TOKEN = previousToken;
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rotates live-state checks across runs when budget is smaller than refs", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-live-state-budget-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const previousToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "test-token";
+    execFileMock.mockReset();
+    const queriedNumbers: number[] = [];
+    execFileMock.mockImplementation(
+      (_file: string, args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
+        queriedNumbers.push(Number(args[2] ?? 0));
+        cb(null, { stdout: JSON.stringify({ state: "OPEN" }) });
+      },
+    );
+
+    try {
+      storeActiveTaskFactRow(db, "task-1", "Track markus-lassfolk/openclaw-hybrid-memory#201");
+      storeActiveTaskFactRow(db, "task-2", "Track markus-lassfolk/openclaw-hybrid-memory#202");
+      storeActiveTaskFactRow(db, "task-3", "Track markus-lassfolk/openclaw-hybrid-memory#203");
+
+      const run1 = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 1 });
+      const run2 = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 1 });
+      const run3 = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 1 });
+
+      expect(run1.checkedCount).toBe(1);
+      expect(run2.checkedCount).toBe(1);
+      expect(run3.checkedCount).toBe(1);
+      expect(queriedNumbers).toEqual([201, 202, 203]);
+    } finally {
+      process.env.GITHUB_TOKEN = previousToken;
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks all tasks done for a shared terminal PR ref", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-live-state-terminal-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const previousToken = process.env.GITHUB_TOKEN;
+    process.env.GITHUB_TOKEN = "test-token";
+    execFileMock.mockReset();
+    execFileMock.mockImplementation(
+      (_file: string, _args: string[], _opts: unknown, cb: (err: null, result: { stdout: string }) => void) => {
+        cb(null, {
+          stdout: JSON.stringify({
+            state: "CLOSED",
+            mergedAt: "2026-01-01T00:00:00Z",
+            closedAt: "2026-01-01T00:00:00Z",
+          }),
+        });
+      },
+    );
+
+    try {
+      storeActiveTaskFactRow(db, "task-a", "Follow markus-lassfolk/openclaw-hybrid-memory pull request #301");
+      storeActiveTaskFactRow(db, "task-b", "Also track markus-lassfolk/openclaw-hybrid-memory pull request #301");
+
+      const result = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 10 });
+      expect(result.checkedCount).toBe(1);
+      expect(result.updatedCount).toBe(2);
+
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      expect(active.some((t) => t.label === "task-a" || t.label === "task-b")).toBe(false);
+      expect(completed.some((t) => t.label === "task-a" && t.status === "Done")).toBe(true);
+      expect(completed.some((t) => t.label === "task-b" && t.status === "Done")).toBe(true);
+    } finally {
+      process.env.GITHUB_TOKEN = previousToken;
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

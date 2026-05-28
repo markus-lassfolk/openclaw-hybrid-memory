@@ -5,14 +5,40 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
-import { estimateTokens } from "../utils/text.js";
+import { estimateTokens, sanitizeRecallFactText } from "../utils/text.js";
 import { readActiveTaskFile } from "./active-task.js";
 import { buildActiveTaskContextBundle } from "./active-task-injection.js";
 import { capturePluginError } from "./error-reporter.js";
 import { readActiveTaskRowsFromFacts } from "./task-ledger-facts.js";
 
 type ContextAuditResult = {
-  autoRecall: { enabled: boolean; budgetTokens: number; hotTokens: number; injectionFormat: string };
+  autoRecall: {
+    enabled: boolean;
+    budgetTokens: number;
+    hotTokens: number;
+    injectionFormat: string;
+    fixedBlocks: {
+      caps: {
+        issueMaxTokens: number;
+        narrativeMaxTokens: number;
+        hotMaxTokens: number;
+        procedureMaxTokens: number;
+        activeTaskMaxTokens: number;
+        staleWarningMaxTokens: number;
+      };
+      estimatedTokens: {
+        issue: number;
+        narrative: number;
+        hot: number;
+        procedures: number;
+        activeTasks: number;
+        staleWarnings: number;
+        total: number;
+        remainingForRecall: number;
+        wouldExhaustRecall: boolean;
+      };
+    };
+  };
   procedures: { enabled: boolean; tokens: number; lines: number };
   activeTasks: {
     enabled: boolean;
@@ -63,6 +89,7 @@ export async function runContextAudit(opts: {
   const workspaceTokens = workspaceFiles.reduce((sum, f) => sum + f.tokens, 0);
 
   let activeTasksTokens = 0;
+  let staleWarningTokens = 0;
   let ledgerActiveCount = 0;
   let filteredActiveCount = 0;
   let injectedTaskCount = 0;
@@ -89,7 +116,8 @@ export async function runContextAudit(opts: {
         projection: cfg.activeTask.projection,
         injectionMaxTasks: cfg.activeTask.injectionMaxTasks,
       });
-      activeTasksTokens = bundle.injectedTokens;
+      activeTasksTokens = bundle.activeTaskTokens;
+      staleWarningTokens = bundle.staleWarningTokens;
       ledgerActiveCount = bundle.ledgerActiveCount;
       filteredActiveCount = bundle.filteredActiveCount;
       injectedTaskCount = bundle.injectedTaskCount;
@@ -167,12 +195,18 @@ export async function runContextAudit(opts: {
     try {
       const hotResults = factsDb.getHotFacts(cfg.memoryTiering.hotMaxTokens);
       if (hotResults.length > 0) {
-        const hotLines = hotResults.map(
-          (r) =>
-            `- [hot/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
-        );
-        const hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>`;
-        hotTokens = estimateTokens(hotBlock);
+        const hotLines = hotResults
+          .map((r) => {
+            const text = sanitizeRecallFactText(r.entry.summary || r.entry.text);
+            if (!text) return "";
+            const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
+            return `- [hot/${r.entry.category}] ${clipped}`;
+          })
+          .filter(Boolean);
+        if (hotLines.length > 0) {
+          const hotBlock = `<hot-memories>\n${hotLines.join("\n")}\n</hot-memories>`;
+          hotTokens = estimateTokens(hotBlock);
+        }
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -183,12 +217,52 @@ export async function runContextAudit(opts: {
   }
 
   const autoRecallBudget = cfg.autoRecall.enabled
-    ? cfg.autoRecall.injectionFormat === "progressive" || cfg.autoRecall.injectionFormat === "progressive_hybrid"
-      ? (cfg.autoRecall.progressiveIndexMaxTokens ?? cfg.autoRecall.maxTokens)
-      : cfg.autoRecall.maxTokens
+    ? Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens)
+    : 0;
+  const autoRecallHasBudget = cfg.autoRecall.enabled && autoRecallBudget > 0;
+  const issueCapTokens = autoRecallHasBudget ? Math.max(80, Math.floor(autoRecallBudget * 0.15)) : 0;
+  const narrativeMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2)))
+    : 0;
+  const hotMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.hotMaxTokens ?? (hotTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.25)) : 0))
+    : 0;
+  const defaultProcedureCap =
+    autoRecallHasBudget && proceduresTokens > 0 ? Math.max(100, Math.floor(autoRecallBudget * 0.2)) : 0;
+  const procedureMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.procedureMaxTokens ??
+      (cfg.procedures.enabled ? Math.min(cfg.procedures.maxInjectionTokens, defaultProcedureCap) : 0))
+    : 0;
+  const activeTaskMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.activeTaskMaxTokens ??
+      (cfg.activeTask.enabled
+        ? Math.min(cfg.activeTask.injectionBudget, Math.max(80, Math.floor(autoRecallBudget * 0.2)))
+        : 0))
+    : 0;
+  const staleWarningMaxTokens = autoRecallHasBudget
+    ? (cfg.autoRecall.staleWarningMaxTokens ??
+      (cfg.activeTask.enabled && cfg.activeTask.staleWarning.enabled
+        ? Math.max(40, Math.floor(autoRecallBudget * 0.08))
+        : 0))
     : 0;
 
-  const totalTokens = autoRecallBudget + hotTokens + proceduresTokens + activeTasksTokens + workspaceTokens;
+  const issueEstimateTokens = 0;
+  const narrativeEstimateTokens = 0;
+  const activeTaskEstimateTokens = cfg.activeTask.enabled ? activeTaskMaxTokens : 0;
+  const staleWarningEstimateTokens =
+    cfg.activeTask.enabled && cfg.activeTask.staleWarning.enabled ? staleWarningMaxTokens : 0;
+  const fixedBlockEstimatedTokens =
+    issueEstimateTokens +
+    narrativeEstimateTokens +
+    Math.min(hotTokens, hotMaxTokens) +
+    Math.min(proceduresTokens, procedureMaxTokens) +
+    activeTaskEstimateTokens +
+    staleWarningEstimateTokens;
+  const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
+  const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
+
+  const totalTokens =
+    autoRecallBudget + hotTokens + proceduresTokens + activeTasksTokens + staleWarningTokens + workspaceTokens;
 
   const recommendations: string[] = [];
   if (workspaceTokens > 3000) {
@@ -196,6 +270,11 @@ export async function runContextAudit(opts: {
   }
   if (cfg.autoRecall.enabled && autoRecallBudget > 1200) {
     recommendations.push("Lower autoRecall.maxTokens or switch to progressive injection to save context.");
+  }
+  if (wouldExhaustRecall) {
+    recommendations.push(
+      "Fixed block caps consume the full recall budget. Lower hot/narrative/procedure/activeTask caps or increase autoRecall.maxTokens.",
+    );
   }
   if (cfg.activeTask.enabled && activeTasksTokens > cfg.activeTask.injectionBudget) {
     recommendations.push(
@@ -219,11 +298,32 @@ export async function runContextAudit(opts: {
       budgetTokens: autoRecallBudget,
       hotTokens,
       injectionFormat: cfg.autoRecall.injectionFormat,
+      fixedBlocks: {
+        caps: {
+          issueMaxTokens: issueCapTokens,
+          narrativeMaxTokens,
+          hotMaxTokens,
+          procedureMaxTokens,
+          activeTaskMaxTokens,
+          staleWarningMaxTokens,
+        },
+        estimatedTokens: {
+          issue: issueEstimateTokens,
+          narrative: narrativeEstimateTokens,
+          hot: Math.min(hotTokens, hotMaxTokens),
+          procedures: Math.min(proceduresTokens, procedureMaxTokens),
+          activeTasks: activeTaskEstimateTokens,
+          staleWarnings: staleWarningEstimateTokens,
+          total: fixedBlockEstimatedTokens,
+          remainingForRecall,
+          wouldExhaustRecall,
+        },
+      },
     },
     procedures: { enabled: cfg.procedures.enabled, tokens: proceduresTokens, lines: proceduresLines },
     activeTasks: {
       enabled: cfg.activeTask.enabled,
-      tokens: activeTasksTokens,
+      tokens: activeTasksTokens + staleWarningTokens,
       ledgerActiveCount,
       filteredActiveCount,
       injectedTaskCount,

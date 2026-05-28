@@ -20,7 +20,7 @@ import type {
   SearchConfig,
 } from "./retrieval.js";
 
-import type { EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
+import type { DiagnosticsConfig, EventLogConfig, PathConfig, StoreConfig, WALConfig } from "./core.js";
 
 import type {
   ExtractionConfig,
@@ -356,6 +356,14 @@ export type ActiveTaskConfig = {
   taskHygiene: ActiveTaskHygieneConfig;
   /** Markdown projection when `ledger` is `facts` (render path, filters, sectioning). */
   projection: ActiveTaskProjectionConfig;
+  /**
+   * Live-state reconciliation: periodic GitHub API/CLI checks to mark tasks done when external PRs/issues close.
+   * Requires explicit opt-in (default: false) due to external network calls.
+   */
+  liveStateReconcile: {
+    /** Enable live-state reconciliation (default: false). Requires activeTask.enabled and ledger: facts. */
+    enabled: boolean;
+  };
 };
 
 /** Goal stewardship — autonomous pursuit of long-running goals (docs/GOAL-STEWARDSHIP-DESIGN.md). */
@@ -622,6 +630,8 @@ export type HybridMemoryConfig = {
   entityExtraction: EntityExtractionConfig;
   /** Write-Ahead Log for crash resilience (default: enabled) */
   wal: WALConfig;
+  /** Memory pressure diagnostic snapshots — Issue #1551 (default: disabled). */
+  diagnostics: DiagnosticsConfig;
   /** Event log archival configuration. */
   eventLog: EventLogConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */

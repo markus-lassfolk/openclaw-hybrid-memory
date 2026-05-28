@@ -2,6 +2,7 @@ import type OpenAI from "openai";
 import type { EventLog } from "../../backends/event-log.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
+
 import { chatCompleteWithRetry, is500OrWrapped, isAbortOrTransientLlmError } from "../../services/chat.js";
 import { CostFeature } from "../../services/cost-feature-labels.js";
 import { capturePluginError } from "../../services/error-reporter.js";

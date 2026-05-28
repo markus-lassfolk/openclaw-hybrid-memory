@@ -9,11 +9,17 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
+import {
+  type VectorBackendObservability,
+  collectVectorBackendObservability,
+} from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import type { MemoryEntry } from "../../../types/memory.js";
+import { isPreStoreGuardBlocked } from "../../../backends/facts-db/crud.js";
 import {
   countImplicitFeedbackTrajectorySignals,
   defaultReindexCheckpointPath,
@@ -23,6 +29,68 @@ import {
   recordStorageGrowthSample,
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
+
+type FactsDbWithBatch = {
+  getBatch: (
+    offset: number,
+    limit: number,
+    opts: { includeSuperseded: boolean },
+  ) => Array<{ id: string; text: string; category?: string; source?: string }>;
+  getAll?: (opts: { includeSuperseded: boolean }) => Array<{ id: string }>;
+};
+
+type FactsDbWithRawDb = {
+  getRawDb: () => {
+    prepare: (sql: string) => { get: (id: string) => unknown };
+  };
+};
+
+function printVectorBackendObservabilitySummary(observability: VectorBackendObservability): void {
+  console.log(`Captured: ${observability.capturedAt}`);
+  if (observability.vectorDb.path) console.log(`Vector path: ${observability.vectorDb.path}`);
+  console.log(
+    `VectorDB: initialized=${String(observability.vectorDb.initialized)} lanceAvailable=${String(observability.vectorDb.lanceAvailable)} openReaders=${observability.vectorDb.openReaders ?? "n/a"} optimizing=${String(observability.vectorDb.optimizing)}`,
+  );
+  if (observability.vectorDb.degraded?.active) {
+    console.log(
+      `Degraded mode: active reason=${observability.vectorDb.degraded.reason ?? "unknown"} since=${observability.vectorDb.degraded.sinceEpochMs ?? "n/a"}`,
+    );
+  }
+  if (observability.vectorDb.search) {
+    console.log(
+      `Search: active=${observability.vectorDb.search.active} peak=${observability.vectorDb.search.peak} total=${observability.vectorDb.search.total} lastResults=${observability.vectorDb.search.lastResultCount}`,
+    );
+  }
+  if (observability.vectorDb.cache) {
+    console.log(
+      `Cache: rows=${observability.vectorDb.cache.rows ?? "n/a"} lastFilterKey=${observability.vectorDb.cache.lastFilterKey ?? "n/a"} lastRemoved=${observability.vectorDb.cache.lastRemovedRows}`,
+    );
+  }
+  if (observability.vectorDb.lastOptimize) {
+    console.log(
+      `Last optimize: compacted=${observability.vectorDb.lastOptimize.compacted} removed=${observability.vectorDb.lastOptimize.removedFragments} freedBytes=${observability.vectorDb.lastOptimize.freedBytes}`,
+    );
+  }
+  if (observability.lancedb.basePath) {
+    console.log(
+      `LanceDB: basePath=${observability.lancedb.basePath} totalSizeBytes=${observability.lancedb.totalSizeBytes ?? "n/a"}`,
+    );
+    for (const table of observability.lancedb.tables) {
+      console.log(
+        `  table=${table.name} exists=${table.exists} rows=${table.rowCount ?? "n/a"} sizeBytes=${table.sizeBytes ?? "n/a"}`,
+      );
+    }
+  }
+}
+
+function hasGetBatch(db: object): db is object & FactsDbWithBatch {
+  return "getBatch" in db && typeof (db as { getBatch?: unknown }).getBatch === "function";
+}
+
+function hasGetRawDb(db: object): db is object & FactsDbWithRawDb {
+  return "getRawDb" in db && typeof (db as { getRawDb?: unknown }).getRawDb === "function";
+}
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
   const {
@@ -126,6 +194,35 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     );
 
   mem
+    .command("vectordb-health")
+    .description(
+      "Low-cost LanceDB/Arrow/native memory health snapshot (RSS/native estimate, FD groups, cache/search bounds, table rows/sizes)",
+    )
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        let lanceBytes: number | null = null;
+        try {
+          const sizes = await Promise.resolve(ctx.richStatsExtras?.getStorageSizes());
+          if (sizes && typeof sizes.lanceBytes === "number") lanceBytes = sizes.lanceBytes;
+        } catch {
+          // keep observability cheap/best-effort; omit lanceBytes on failure
+        }
+        const observability = await collectVectorBackendObservability({
+          vectorDb,
+          resolvedLancePath: ctx.resolvedLancePath,
+          lanceBytes,
+        });
+        if (opts?.json) {
+          console.log(JSON.stringify(observability, null, 2));
+          return;
+        }
+        console.log("=== Vector Backend Health ===");
+        printVectorBackendObservabilitySummary(observability);
+      }),
+    );
+
+  mem
     .command("record-storage-sample")
     .description(
       "Record one storage_growth_history row per UTC day (SQLite + Lance sizes). Use with daily cron so audit-health can compute 7d deltas.",
@@ -220,6 +317,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           const verifiedFacts = factsDb.countVerifiedFacts();
           const activity = factsDb.recentActivity();
           const decayBreakdown = factsDb.statsBreakdownByDecayClass();
+          const activeDecayTotal = Object.values(decayBreakdown).reduce((sum, count) => sum + count, 0);
+          const stablePermanentCount = (decayBreakdown.stable ?? 0) + (decayBreakdown.permanent ?? 0);
+          const stablePermanentRatio = activeDecayTotal > 0 ? stablePermanentCount / activeDecayTotal : 0;
           const sourceBreakdown = factsDb.statsBySource();
           const dailyWrites = factsDb.statsDailyWrites().slice(0, 10);
           const implicitFeedbackSignals = countImplicitFeedbackTrajectorySignals(factsDb);
@@ -335,10 +435,23 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           console.log(
             `Breakdown by tier: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
           );
-          const decayParts = Object.entries(decayBreakdown)
-            .map(([k, v]) => `${k}=${v}`)
-            .join(", ");
-          if (decayParts) console.log(`Breakdown by decay: ${decayParts}`);
+          const decayParts = Object.entries(decayBreakdown).sort((a, b) => b[1] - a[1]);
+          if (decayParts.length > 0) {
+            const summary = decayParts
+              .map(
+                ([k, v]) => `${k}=${v} (${activeDecayTotal > 0 ? ((v / activeDecayTotal) * 100).toFixed(1) : "0.0"}%)`,
+              )
+              .join(", ");
+            console.log(`Breakdown by decay: ${summary}`);
+            console.log(
+              `Decay stickiness: stable+permanent=${stablePermanentCount}/${activeDecayTotal} (${(stablePermanentRatio * 100).toFixed(1)}%)`,
+            );
+            if (stablePermanentRatio > 0.6) {
+              console.log(
+                "  Guidance: legacy stable/permanent ratio is high. Run `openclaw hybrid-mem decay reclassify --dry-run --stable-only` then `openclaw hybrid-mem decay reclassify --apply --stable-only`.",
+              );
+            }
+          }
           const topSources = Object.entries(sourceBreakdown)
             .sort((a, b) => b[1] - a[1])
             .slice(0, 5);
@@ -377,6 +490,13 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             console.log(`SQLite bytes per active fact: ${bytesPerFact.toFixed(0)}`);
           }
           if (sizes.sqliteBytes != null || sizes.lanceBytes != null) console.log("");
+          const vectorObservability = await collectVectorBackendObservability({
+            vectorDb,
+            resolvedLancePath: ctx.resolvedLancePath,
+            lanceBytes: sizes.lanceBytes ?? null,
+          });
+          printVectorBackendObservabilitySummary(vectorObservability);
+          console.log("");
           if (efficiency) {
             const estimatedTokens = factsDb.estimateStoredTokens();
             console.log("--- Efficiency (token estimate) ---");
@@ -434,12 +554,31 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           console.log("");
           console.log("Note: Tiering and scoping can significantly reduce token usage in LLM context.");
         } else {
+          const decayBreakdown = factsDb.statsBreakdownByDecayClass();
+          const activeDecayTotal = Object.values(decayBreakdown).reduce((sum, count) => sum + count, 0);
+          const stablePermanentCount = (decayBreakdown.stable ?? 0) + (decayBreakdown.permanent ?? 0);
+          const stablePermanentRatio = activeDecayTotal > 0 ? stablePermanentCount / activeDecayTotal : 0;
           console.log(`Total facts (SQLite): ${sqlCount}`);
           console.log(`Total vectors (LanceDB): ${lanceCount}`);
           console.log(`Expired (prunable): ${expired}`);
           console.log(
             `Breakdown: hot=${breakdown.hot}, warm=${breakdown.warm}, cold=${breakdown.cold}, structural=${breakdown.structural ?? 0}`,
           );
+          const decaySummary = Object.entries(decayBreakdown)
+            .sort((a, b) => b[1] - a[1])
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ");
+          if (decaySummary.length > 0) {
+            console.log(`Decay: ${decaySummary}`);
+            console.log(
+              `Decay stickiness (stable+permanent): ${stablePermanentCount}/${activeDecayTotal} (${(stablePermanentRatio * 100).toFixed(1)}%)`,
+            );
+            if (stablePermanentRatio > 0.6) {
+              console.log(
+                "Guidance: run `openclaw hybrid-mem decay reclassify --dry-run --stable-only` then `openclaw hybrid-mem decay reclassify --apply --stable-only`.",
+              );
+            }
+          }
         }
       }),
     );
@@ -451,12 +590,24 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--source <s>", "Only process facts from this source")
     .option("--apply", "Actually embed and write LanceDB/fact_embeddings rows; default is dry-run")
     .option("--batch-size <n>", "Embedding batch size", "40")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .option("--json", "Emit JSON")
     .action(
       withExit(
-        async (opts?: { limit?: string; source?: string; apply?: boolean; batchSize?: string; json?: boolean }) => {
+        async (
+          opts?: {
+            limit?: string;
+            source?: string;
+            apply?: boolean;
+            batchSize?: string;
+            verbose?: boolean;
+            json?: boolean;
+          },
+          cmd?: CommanderOptsParent,
+        ) => {
           const limit = Number.parseInt(opts?.limit ?? "100", 10);
           const batchSize = Number.parseInt(opts?.batchSize ?? "40", 10);
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           if (!Number.isFinite(limit) || limit < 1) {
             console.error("error: --limit must be a positive integer");
             process.exitCode = 1;
@@ -474,62 +625,80 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           let skipped = 0;
           let storeFailures = 0;
           let embedFailures = 0;
+          const totalBatches = batchSize > 0 ? Math.ceil(candidates.length / batchSize) : 0;
+          let processed = 0;
+          let batchNumber = 0;
           if (opts?.apply) {
-            await vectorDb.runWithAutoOptimizePaused(async () => {
-              for (let offset = 0; offset < candidates.length; offset += batchSize) {
-                const batch = candidates.slice(offset, offset + batchSize);
-                let vectors: (number[] | null)[];
-                try {
-                  vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
-                } catch (_err) {
-                  vectors = [];
-                  for (const fact of batch) {
+            await runMaintenanceHeartbeat(
+              "reembed-vectorless",
+              verbose,
+              async () => {
+                await vectorDb.runWithAutoOptimizePaused(async () => {
+                  for (let offset = 0; offset < candidates.length; offset += batchSize) {
+                    batchNumber = Math.floor(offset / batchSize) + 1;
+                    const batch = candidates.slice(offset, offset + batchSize);
+                    let vectors: (number[] | null)[];
                     try {
-                      vectors.push(await embeddings.embed(fact.text));
-                    } catch (singleErr) {
-                      errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
-                      embedFailures++;
-                      vectors.push(null);
+                      vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
+                    } catch (_err) {
+                      vectors = [];
+                      for (const fact of batch) {
+                        try {
+                          vectors.push(await embeddings.embed(fact.text));
+                        } catch (singleErr) {
+                          errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
+                          embedFailures++;
+                          vectors.push(null);
+                        }
+                      }
+                    }
+                    for (let i = 0; i < batch.length; i++) {
+                      const fact = batch[i];
+                      const vec = vectors[i];
+                      if (!vec || vec.length === 0) {
+                        skipped++;
+                        processed++;
+                        continue;
+                      }
+                      try {
+                        try {
+                          await vectorDb.delete(fact.id);
+                        } catch {
+                          // Missing Lance row is the normal case for vectorless repair.
+                        }
+                        await vectorDb.store({
+                          id: fact.id,
+                          text: fact.text,
+                          vector: vec,
+                          importance: 0.5,
+                          category: fact.category,
+                        });
+                        factsDb.storeEmbedding(
+                          fact.id,
+                          embeddings.modelName,
+                          "canonical",
+                          new Float32Array(vec),
+                          vec.length,
+                        );
+                        factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
+                        embedded++;
+                      } catch (err) {
+                        errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
+                        storeFailures++;
+                        skipped++;
+                      } finally {
+                        processed++;
+                      }
                     }
                   }
-                }
-                for (let i = 0; i < batch.length; i++) {
-                  const fact = batch[i];
-                  const vec = vectors[i];
-                  if (!vec || vec.length === 0) {
-                    skipped++;
-                    continue;
-                  }
-                  try {
-                    try {
-                      await vectorDb.delete(fact.id);
-                    } catch {
-                      // Missing Lance row is the normal case for vectorless repair.
-                    }
-                    await vectorDb.store({
-                      id: fact.id,
-                      text: fact.text,
-                      vector: vec,
-                      importance: 0.5,
-                      category: fact.category,
-                    });
-                    factsDb.storeEmbedding(
-                      fact.id,
-                      embeddings.modelName,
-                      "canonical",
-                      new Float32Array(vec),
-                      vec.length,
-                    );
-                    factsDb.setEmbeddingModel(fact.id, embeddings.modelName);
-                    embedded++;
-                  } catch (err) {
-                    errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
-                    storeFailures++;
-                    skipped++;
-                  }
-                }
-              }
-            });
+                });
+              },
+              {
+                progressSupplier: () =>
+                  `stage=embed-and-store; processed=${processed}/${candidates.length}; embedded=${embedded}; skipped=${skipped}; embedFailures=${embedFailures}; storeFailures=${storeFailures}; batch=${batchNumber}/${totalBatches}`,
+                jsonMode: opts?.json === true,
+              },
+            );
           }
           const after = opts?.apply ? factsDb.countVectorlessActiveFacts(opts?.source) : before;
           const report = {
@@ -796,29 +965,22 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
 
             // Update embedding metadata in SQLite (batch update for all facts)
             console.log("Re-index: updating embedding metadata in SQLite...");
-            const allFacts =
-              typeof (factsDb as { getBatch?: unknown }).getBatch === "function"
-                ? (() => {
-                    const facts: Array<{ id: string }> = [];
-                    let offset = 0;
-                    const batchSize = 500;
-                    while (true) {
-                      const batch = (
-                        factsDb as {
-                          getBatch: (
-                            offset: number,
-                            limit: number,
-                            opts: { includeSuperseded: boolean },
-                          ) => Array<{ id: string }>;
-                        }
-                      ).getBatch(offset, batchSize, { includeSuperseded: false });
-                      if (batch.length === 0) break;
-                      facts.push(...batch);
-                      offset += batch.length;
-                    }
-                    return facts;
-                  })()
-                : factsDb.getAll({ includeSuperseded: false });
+            const allFacts = hasGetBatch(factsDb)
+              ? (() => {
+                  const facts: Array<{ id: string }> = [];
+                  let offset = 0;
+                  const batchSize = 500;
+                  while (true) {
+                    const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
+                    if (batch.length === 0) break;
+                    facts.push(...batch);
+                    offset += batch.length;
+                  }
+                  return facts;
+                })()
+              : (factsDb as { getAll: (opts: { includeSuperseded: boolean }) => Array<{ id: string }> }).getAll({
+                  includeSuperseded: false,
+                });
 
             for (const fact of allFacts) {
               try {
@@ -998,6 +1160,141 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           console.log(`  errors=${report.errors.length}`);
           for (const err of report.errors.slice(0, 10)) console.log(`    - ${err}`);
           process.exitCode = 2;
+        }
+      }),
+    );
+
+  mem
+    .command("classification-artifacts")
+    .description(
+      "Supersede existing NOOP/classification-artifact facts and remove their LanceDB vectors (issue #1561). " +
+        "Dry-run by default; use --apply to mutate.",
+    )
+    .option("--apply", "Actually supersede facts and delete vectors. Omit for dry-run.")
+    .option("--json", "Emit JSON report")
+    .action(
+      withExit(async (opts?: { apply?: boolean; json?: boolean }) => {
+        const apply = opts?.apply === true;
+        const supersededIds: string[] = [];
+        const verifiedSkippedIds: string[] = [];
+        const vectorDeleteErrors: string[] = [];
+        let vectorDeleteCount = 0;
+        const verifiedLookup = (() => {
+          try {
+            return hasGetRawDb(factsDb)
+              ? factsDb.getRawDb().prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1")
+              : null;
+          } catch {
+            return null;
+          }
+        })();
+        const processFactBatch = async (
+          facts: Array<{ id: string; text: string; category?: string; source?: string }>,
+        ): Promise<number> => {
+          let supersededCount = 0;
+          for (const fact of facts) {
+            if (!isPreStoreGuardBlocked({ text: fact.text, category: fact.category, source: fact.source })) continue;
+            if (verifiedLookup?.get(fact.id)) {
+              verifiedSkippedIds.push(fact.id);
+              continue;
+            }
+            if (!apply) {
+              supersededIds.push(fact.id);
+              continue;
+            }
+            try {
+              await vectorDb.delete(fact.id);
+              vectorDeleteCount++;
+            } catch (err) {
+              vectorDeleteErrors.push(`vector delete ${fact.id}: ${String(err)}`);
+            }
+            try {
+              factsDb.supersede(fact.id, null);
+              supersededIds.push(fact.id);
+              supersededCount++;
+            } catch (err) {
+              vectorDeleteErrors.push(`supersede ${fact.id}: ${String(err)}`);
+            }
+          }
+          return supersededCount;
+        };
+        if (hasGetBatch(factsDb)) {
+          const batchSize = 500;
+          // In apply mode, keep offset at 0 because each superseded fact shrinks the result set.
+          // In dry-run mode, increment offset normally since the set is stable.
+          let offset = 0;
+          while (true) {
+            const batch = factsDb.getBatch(offset, batchSize, { includeSuperseded: false });
+            if (batch.length === 0) break;
+            const superseded = await processFactBatch(batch);
+            // If applying changes, facts are removed from the result set; stay at offset 0.
+            // If dry-run, the result set is stable; advance by batch size.
+            if (!apply) {
+              offset += batchSize;
+            } else if (superseded === 0) {
+              // No artifacts superseded in this batch; advance to avoid infinite loop.
+              offset += batchSize;
+            }
+          }
+        } else {
+          // Fallback: process all facts in batches to avoid loading entire table into memory at once.
+          const allFacts = (
+            factsDb as unknown as { getAll(opts: { includeSuperseded: boolean }): MemoryEntry[] }
+          ).getAll({
+            includeSuperseded: false,
+          });
+          const batchSize = 500;
+          for (let offset = 0; offset < allFacts.length; offset += batchSize) {
+            const batch = allFacts.slice(offset, offset + batchSize);
+            await processFactBatch(batch);
+          }
+        }
+
+        if (apply && ctx.resolvedSqlitePath) {
+          recordMaintenanceTimestamp(ctx.resolvedSqlitePath, ".classification_artifacts_last_run");
+        }
+
+        const report = {
+          apply,
+          superseded: supersededIds.length,
+          supersededIds,
+          verifiedSkipped: verifiedSkippedIds.length,
+          verifiedSkippedIds,
+          vectorDeletes: apply ? vectorDeleteCount : 0,
+          vectorDeleteErrors,
+        };
+
+        if (opts?.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+
+        if (supersededIds.length === 0) {
+          console.log("classification-artifacts: no artifact facts found");
+          return;
+        }
+
+        console.log(
+          `classification-artifacts ${apply ? "applied" : "dry-run"}: ${supersededIds.length} artifact fact(s) identified`,
+        );
+        if (verifiedSkippedIds.length > 0) {
+          console.log(`Skipped verified facts: ${verifiedSkippedIds.length}`);
+        }
+        if (!apply) {
+          console.log("Dry-run only. Re-run with --apply to supersede and delete vectors.");
+          console.log("Fact IDs:");
+          for (const id of supersededIds) console.log(`  ${id}`);
+          if (verifiedSkippedIds.length > 0) {
+            console.log("Verified fact IDs left untouched:");
+            for (const id of verifiedSkippedIds) console.log(`  ${id}`);
+          }
+        } else {
+          console.log(`Vectors deleted: ${vectorDeleteCount}`);
+          if (vectorDeleteErrors.length > 0) {
+            console.warn(`Errors: ${vectorDeleteErrors.length}`);
+            for (const e of vectorDeleteErrors.slice(0, 10)) console.warn(`  - ${e}`);
+            process.exitCode = 2;
+          }
         }
       }),
     );

@@ -10,13 +10,13 @@ The hybrid-memory plugin supports an **opt-in credential store** for structured 
 
 ## Dual-mode: Vault vs memory
 
-- **Vault disabled (default):** Credentials are stored in memory like the live version: both **distil** (session distillation, extract-daily) and **store** (memory_store tool, `openclaw hybrid-mem store`) write credential-like content into the hybrid memory (SQLite + LanceDB). This matches the existing “store everything in memory” behavior.
+- **Vault disabled/unavailable (default):** Credential-like content is **blocked** from ordinary memory storage. `memory_store`, `openclaw hybrid-mem store`, session distillation, and extract-daily will skip credential-like inputs and instruct operators to enable the credential vault.
 - **Vault enabled:** When the secure credential vault is enabled (see below), credential-like content is **not** written into memory or the database. Instead:
   - The secret is stored only in the encrypted vault.
   - A **pointer** fact is stored in memory (e.g. “Credential for home-assistant (token) — stored in secure vault. Use credential_get(service=\"home-assistant\") to retrieve.”) so the agent knows the credential exists and how to retrieve it.
   - Recall and search return the pointer, not the secret; the agent uses `credential_get` when it needs the value.
 
-So: **no vault** → credentials live in memory/facts (live behavior). **Vault on** → credentials live only in the vault; memory holds pointers only.
+So: **no vault** → credentials are not stored in ordinary memory. **Vault on** → credentials live only in the vault; memory holds pointers only.
 
 Dual-mode applies to: **memory_store** tool, **openclaw hybrid-mem store** (CLI and scripts such as session distillation), and **openclaw hybrid-mem extract-daily**.
 

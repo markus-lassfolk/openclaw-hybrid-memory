@@ -15,16 +15,18 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
-import { atomicWriteFile } from "../utils/atomic-write.js";
-import { distillMaxOutputTokens } from "../services/chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
+import { distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
+import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
@@ -33,7 +35,6 @@ import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // ---------------------------------------------------------------------------
 // Module-level constants (self-correction-specific)
@@ -53,6 +54,86 @@ const DEFAULT_SELF_CORRECTION = {
   spawnThreshold: 15,
   spawnModel: "",
 } as const;
+
+function sanitizeLlmResponseExcerpt(content: string): string {
+  return content
+    .trim()
+    .slice(0, 200)
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
+    .replace(/\b(?:sk|gh[pousr]|xox[baprs])-[A-Za-z0-9_=-]{8,}\b/g, "[redacted-token]")
+    .replace(/\b(api[_-]?key|password|secret|token)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/\s+/g, " ");
+}
+
+// ---------------------------------------------------------------------------
+// Self-correction LLM response parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the JSON array of remediation items from a self-correction LLM response.
+ *
+ * The model is instructed to return a bare JSON array, but in practice it may:
+ *   - wrap the array in a markdown code fence (```json ... ```)
+ *   - add prose before or after the array
+ *   - emit placeholder tokens instead of JSON
+ *   - return invalid/truncated JSON
+ *
+ * This function handles all of those cases robustly by scanning balanced `[...]`
+ * spans and only accepting arrays that match expected remediation object shape.
+ * Returns `null` when no valid array can be extracted (callers treat this as
+ * `failed_parse` — no remediations are applied and the error is reported).
+ *
+ * Scenarios and expected behaviour:
+ *   - **strict JSON**: `[{"remediationType":"MEMORY_STORE",...}]` → parsed directly
+ *   - **fenced JSON**: `` ```json\n[...]\n``` `` → fence stripped, array parsed
+ *   - **trailing text**: `[...]\n\nHere is my explanation` → array extracted, text ignored
+ *   - **invalid JSON**: `[not valid]` / truncated → null returned, caller handles error
+ */
+export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
+  let emptyArrayCandidate: unknown[] | null = null;
+
+  const result = tryParseFirstJsonArray(content, (parsed) => {
+    if (parsed.length === 0) {
+      emptyArrayCandidate = parsed;
+      return null;
+    }
+    return isSelfCorrectionRemediationArray(parsed) ? parsed : null;
+  });
+
+  return result ?? emptyArrayCandidate;
+}
+
+function isSelfCorrectionRemediationArray(items: unknown[]): boolean {
+  return items.every((item) => isSelfCorrectionRemediationItem(item));
+}
+
+function isSelfCorrectionRemediationItem(item: unknown): boolean {
+  if (typeof item !== "object" || item === null) return false;
+  const candidate = item as Record<string, unknown>;
+  const remediationType = candidate.remediationType;
+  if (typeof remediationType !== "string" || remediationType.trim().length === 0) return false;
+
+  const isNoAction = remediationType.trim().toUpperCase() === "NO_ACTION";
+  if ("remediationContent" in candidate) {
+    const remediationContent = candidate.remediationContent;
+    if (
+      !(
+        typeof remediationContent === "string" ||
+        (typeof remediationContent === "object" && remediationContent !== null)
+      )
+    ) {
+      return false;
+    }
+  } else if (!isNoAction) {
+    return false;
+  }
+
+  if ("category" in candidate && typeof candidate.category !== "string") return false;
+  if ("severity" in candidate && typeof candidate.severity !== "string") return false;
+  if ("repeated" in candidate && typeof candidate.repeated !== "boolean") return false;
+
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // self-correction extract
@@ -141,7 +222,16 @@ export async function runSelfCorrectionRunForCli(
     const cursor = factsDb.getScanCursor(SCAN_TYPE);
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip) {
-      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath: null, skipped: true };
+      const isConcurrency = skip.includes("already running");
+      return {
+        incidentsFound: 0,
+        analysed: 0,
+        autoFixed: 0,
+        proposals: [],
+        reportPath: null,
+        skipped: true,
+        status: isConcurrency ? "skipped_concurrency" : "skipped_cooldown",
+      };
     }
   }
 
@@ -152,7 +242,7 @@ export async function runSelfCorrectionRunForCli(
     const today = new Date().toISOString().slice(0, 10);
     const reportPath = join(reportDir, `self-correction-${today}.md`);
     let incidents: CorrectionIncident[];
-    if (opts.incidents && opts.incidents.length > 0) {
+    if (opts.incidents !== undefined) {
       incidents = opts.incidents;
     } else if (opts.extractPath) {
       try {
@@ -203,7 +293,14 @@ export async function runSelfCorrectionRunForCli(
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
       }
-      return { incidentsFound: 0, analysed: 0, autoFixed: 0, proposals: [], reportPath };
+      return {
+        incidentsFound: 0,
+        analysed: 0,
+        autoFixed: 0,
+        proposals: [],
+        reportPath,
+        status: "success_no_incidents",
+      };
     }
     if (opts.verbose) {
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} — ${incidents.length} incident(s); building LLM prompt…`);
@@ -219,13 +316,11 @@ export async function runSelfCorrectionRunForCli(
       : heavyPrefWithSources.models[0] === model
         ? (heavyPrefWithSources.sources[0] ?? "built-in")
         : "built-in";
-    const scFallbackModels = opts.model
-      ? []
-      : heavyPref.length > 1
-        ? heavyPref.slice(1)
-        : cfg.llm
-          ? []
-          : (cfg.distill?.fallbackModels ?? []);
+    const scFallbackCandidates = [
+      ...(opts.model ? heavyPref : heavyPref.slice(1)),
+      ...(cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])),
+    ];
+    const scFallbackModels = [...new Set(scFallbackCandidates.filter((m) => m !== model))];
     let analysed: Array<{
       category: string;
       severity: string;
@@ -235,6 +330,38 @@ export async function runSelfCorrectionRunForCli(
     }> = [];
     const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
     try {
+      const attemptAnalysisJsonRepair = async (rawContent: string): Promise<typeof analysed | null> => {
+        const repairPrompt = [
+          "Convert the following model output into a valid JSON array.",
+          "Return ONLY JSON (no markdown, no prose).",
+          "If no valid remediation items can be recovered, return [].",
+          "",
+          "MODEL_OUTPUT_START",
+          rawContent,
+          "MODEL_OUTPUT_END",
+        ].join("\n");
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+          model,
+          modelSource,
+          content: repairPrompt,
+          temperature: 0,
+          maxTokens: distillMaxOutputTokens(model),
+          openai,
+          fallbackModels: scFallbackModels,
+          label: "memory-hybrid: self-correction analyze-repair",
+          feature: CostFeature.selfCorrectionAnalyze,
+          logger,
+          adaptiveStatePath:
+            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+              : undefined,
+          enabled: adaptiveEnabled,
+        });
+        const repaired = parseSelfCorrectionLLMResponse(detail.content);
+        return repaired === null ? null : (repaired as typeof analysed);
+      };
+
       let content: string;
       if (useSpawn) {
         const { spawnSync } = await import("node:child_process");
@@ -292,9 +419,36 @@ export async function runSelfCorrectionRunForCli(
         }
         content = detail.content;
       }
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        analysed = JSON.parse(jsonMatch[0]) as typeof analysed;
+      const parsedRemediations = parseSelfCorrectionLLMResponse(content);
+      if (parsedRemediations !== null) {
+        analysed = parsedRemediations as typeof analysed;
+      } else if (content.trim().length > 0) {
+        // Log a sanitized excerpt (no private session data) so operators can diagnose.
+        const excerpt = sanitizeLlmResponseExcerpt(content);
+        logger.warn?.(
+          `memory-hybrid: self-correction-run — initial JSON parse failed; attempting repair pass. excerpt: "${excerpt}"`,
+        );
+        let repaired: typeof analysed | null = null;
+        try {
+          repaired = await attemptAnalysisJsonRepair(content);
+        } catch (repairErr) {
+          capturePluginError(repairErr as Error, {
+            subsystem: "cli",
+            operation: "runSelfCorrectionRunForCli:llm-analysis-repair",
+          });
+        }
+        if (repaired !== null) {
+          analysed = repaired;
+          logger.info?.(`memory-hybrid: self-correction-run — repair pass recovered ${analysed.length} item(s)`);
+        } else {
+          const parseError = new Error(
+            `Self-correction analysis: LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+          );
+          (parseError as any).isParseFailure = true;
+          throw parseError;
+        }
+      } else {
+        analysed = [];
       }
       if (opts.verbose && analysed.length > 0) {
         logger.info?.(
@@ -303,6 +457,7 @@ export async function runSelfCorrectionRunForCli(
       }
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
+      const isParseFailure = (e as any).isParseFailure === true;
       return {
         incidentsFound: incidents.length,
         analysed: 0,
@@ -310,6 +465,7 @@ export async function runSelfCorrectionRunForCli(
         proposals: [],
         reportPath: null,
         error: String(e),
+        status: isParseFailure ? "failed_parse" : undefined,
       };
     }
     const proposals: string[] = [];
@@ -353,6 +509,9 @@ export async function runSelfCorrectionRunForCli(
             source: "self-correction",
             tags: Array.isArray(obj.tags) ? obj.tags : [],
           });
+          if (storeResult.skipped) {
+            continue;
+          }
           const entry = storeResult.entry;
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
@@ -537,6 +696,7 @@ export async function runSelfCorrectionRunForCli(
       reportPath,
       toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
       toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
+      status: "success_analyzed",
     };
   } finally {
     if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);

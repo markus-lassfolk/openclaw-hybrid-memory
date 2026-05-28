@@ -21,6 +21,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
@@ -252,6 +253,38 @@ describe("resolveContradictions", () => {
     expect(result.autoResolved).toHaveLength(0);
     expect(result.ambiguous).toHaveLength(1);
     expect(result.ambiguous[0].factIdNew).toBe(newFact.id);
+  });
+
+  it("keeps preview/apply consistent when old fact is verified but already superseded", () => {
+    const old = storeFact("user", "theme", "dark", "User prefers dark mode", 0.5);
+    const newFact = storeFact("user", "theme", "light", "User switched to light mode", 1.0);
+
+    db.detectContradictions(newFact.id, "user", "theme", "light");
+
+    const liveDb = (db as unknown as { liveDb: DatabaseSync }).liveDb;
+    const nowSec = Math.floor(Date.now() / 1000);
+    liveDb
+      .prepare("UPDATE facts SET superseded_at = ?, superseded_by = ? WHERE id = ?")
+      .run(nowSec, newFact.id, old.id);
+
+    const nowIso = new Date().toISOString();
+    liveDb
+      .prepare(
+        `INSERT INTO verified_facts (
+           id, fact_id, canonical_text, checksum, verified_at, verified_by, next_verification, version, previous_version_id, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, NULL, 1, NULL, ?)`,
+      )
+      .run(`vf-${old.id}`, old.id, old.text, "test-checksum", nowIso, "agent", nowIso);
+
+    const preview = db.previewResolveContradictions();
+    expect(preview.autoResolvable).toHaveLength(1);
+    expect(preview.ambiguous).toHaveLength(0);
+
+    const apply = db.resolveContradictions();
+    expect(apply.autoResolved).toHaveLength(1);
+    expect(apply.ambiguous).toHaveLength(0);
+    expect(apply.autoResolved[0].factIdOld).toBe(old.id);
+    expect(apply.autoResolved[0].factIdNew).toBe(newFact.id);
   });
 
   it("does not re-process already-resolved contradictions", () => {

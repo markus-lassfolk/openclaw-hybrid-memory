@@ -144,6 +144,8 @@ export function registerManageCorrections(mem: Chainable, b: ManageBindings): vo
             console.log(`Credential stored: ${res.service} (${res.type}), id=${res.id}`);
           } else if (res.outcome === "credential_skipped_duplicate") {
             console.log(`Credential already in vault (skipped): ${res.service} (${res.type})`);
+          } else if (res.outcome === "credential_blocked_no_vault") {
+            console.log("Credential-like content blocked: enable credentials vault to store secrets securely.");
           } else if (res.outcome === "credential_parse_error") {
             console.log("Credential parse error (skipped).");
           } else if (res.outcome === "credential_vault_error") {

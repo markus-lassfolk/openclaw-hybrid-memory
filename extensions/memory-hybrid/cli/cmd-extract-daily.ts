@@ -4,9 +4,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { classifyMemoryOperationsBatch, type MemoryClassification } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
-import { type MemoryClassification, classifyMemoryOperationsBatch } from "../services/classification.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractStructuredFields } from "../services/fact-extraction.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-maintenance.js";
@@ -106,6 +106,9 @@ export async function runExtractDailyForCli(
               validFrom: sourceDateSec,
               supersedesId: classification.targetId,
             });
+            if (storeResult.skipped) {
+              continue;
+            }
             const newEntry = storeResult.entry;
             // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
             await cleanupEvictedVector({
@@ -145,6 +148,9 @@ export async function runExtractDailyForCli(
           }
         }
         const storeResult = factsDb.storeWithResult(storePayload);
+        if (storeResult.skipped) {
+          continue;
+        }
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({
@@ -203,7 +209,7 @@ export async function runExtractDailyForCli(
               try {
                 const stored = credentialsDb.storeIfNew({
                   service: parsed.service,
-                  type: parsed.type as any,
+                  type: parsed.type,
                   value: parsed.secretValue,
                   url: parsed.url,
                   notes: parsed.notes,
@@ -212,7 +218,7 @@ export async function runExtractDailyForCli(
                   continue;
                 }
                 storedInVault = true;
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}") to retrieve.`;
+                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
                 const pointerStoreResult = factsDb.storeWithResult({
                   text: pointerText,
@@ -225,6 +231,21 @@ export async function runExtractDailyForCli(
                   sourceDate: sourceDateSec,
                   tags: ["auth", ...extractTags(pointerText, "Credentials")],
                 });
+                if (pointerStoreResult.skipped) {
+                  // Compensating delete: vault write succeeded but pointer rejected
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (cleanupErr) {
+                    sink.warn(
+                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
+                    );
+                    capturePluginError(cleanupErr as Error, {
+                      subsystem: "cli",
+                      operation: "runExtractDailyForCli:credential-compensating-delete-skip",
+                    });
+                  }
+                  continue;
+                }
                 const pointerEntry = pointerStoreResult.entry;
                 await cleanupEvictedVector({
                   vectorDb,
@@ -255,7 +276,7 @@ export async function runExtractDailyForCli(
               } catch (err) {
                 if (storedInVault) {
                   try {
-                    credentialsDb.delete(parsed.service, parsed.type as any);
+                    credentialsDb.delete(parsed.service, parsed.type);
                   } catch (cleanupErr) {
                     sink.warn(
                       `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
@@ -278,6 +299,8 @@ export async function runExtractDailyForCli(
           // isCredentialLike but vault parse failed — skip this line entirely.
           continue;
         }
+        if (opts.verbose) sink.log("  skipped credential-like line: vault disabled or unavailable");
+        continue;
       }
       if (!extracted.entity && !extracted.key && category !== "decision") continue;
       totalExtracted++;
@@ -345,6 +368,9 @@ export async function runExtractDailyForCli(
       }
       await flushPendingExtractClassify();
       const storeResult = factsDb.storeWithResult(storePayload);
+      if (storeResult.skipped) {
+        continue;
+      }
       const entry = storeResult.entry;
       await cleanupEvictedVector({
         vectorDb,

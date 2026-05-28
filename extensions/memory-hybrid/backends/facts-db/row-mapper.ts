@@ -30,6 +30,8 @@ export function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
     lastAccessed: (row.last_accessed as number) || null,
     accessCount: (row.access_count as number) || 0,
     lastAccessedAt: (row.last_accessed_at as string) || null,
+    indexedCount: (row.indexed_count as number) || 0,
+    lastIndexed: (row.last_indexed as number) || null,
     supersededAt: (row.superseded_at as number) || null,
     supersededBy: (row.superseded_by as string) || null,
     validFrom: (row.valid_from as number) ?? undefined,

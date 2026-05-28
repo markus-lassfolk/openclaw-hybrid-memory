@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { findPluginRoot } from "../utils/plugin-root.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { clearRuntimeTimers } from "../api/plugin-runtime.js";
@@ -12,14 +11,13 @@ import type { IssueStore } from "../backends/issue-store.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { VerificationStore } from "../services/verification-store.js";
-import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { createDashboardServer } from "../routes/dashboard-server.js";
 import type { DashboardServer } from "../routes/dashboard-server.js";
+import { createDashboardServer } from "../routes/dashboard-server.js";
 import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
 import { runAutoClassify } from "../services/auto-classifier.js";
 import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
@@ -35,25 +33,31 @@ import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardshi
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runPassiveObserver } from "../services/passive-observer.js";
 import type { ProvenanceService } from "../services/provenance.js";
-import { reconcileActiveTaskInProgressSessionsFacts } from "../services/task-ledger-facts.js";
+import {
+  reconcileActiveTaskInProgressSessionsFacts,
+  reconcileActiveTaskLiveState,
+  renderActiveTaskMarkdownFile,
+} from "../services/task-ledger-facts.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 import {
   cleanupEvictedVector,
   deleteVectorsForFactIds,
   storeCanonicalVectorForFact,
 } from "../services/vector-maintenance.js";
+import type { VerificationStore } from "../services/verification-store.js";
 import { walRemove } from "../services/wal-helpers.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { findPluginRoot } from "../utils/plugin-root.js";
 import {
-  type VersionCheckCacheEntry,
   fetchLatestPublishedVersion,
   isPluginOutdated,
   isVersionCheckCacheFresh,
   maybeLogOutdatedVersionNudge,
   readVersionCheckCache,
+  type VersionCheckCacheEntry,
   writeVersionCheckCache,
 } from "../utils/plugin-update-check.js";
 import { checkOpenClawVersion } from "../utils/version-check.js";
@@ -171,6 +175,10 @@ export function createPluginService(ctx: PluginServiceContext) {
       const expired = factsDb.countExpired();
       const versionCheckCachePath =
         resolvedSqlitePath === ":memory:" ? null : join(dirname(resolvedSqlitePath), ".latest-plugin-version.json");
+      const errorReportQueuePath =
+        resolvedSqlitePath === ":memory:"
+          ? undefined
+          : join(dirname(resolvedSqlitePath), ".error_reports.pending.jsonl");
       const errorReportingActive = cfg.errorReporting.enabled && cfg.errorReporting.consent;
       let cachedVersionCheck = versionCheckCachePath ? readVersionCheckCache(versionCheckCachePath) : null;
       api.logger.info(
@@ -254,6 +262,7 @@ export function createPluginService(ctx: PluginServiceContext) {
             botId: cfg.errorReporting.botId,
             botName: cfg.errorReporting.botName,
             resolvedIssues: cfg.errorReporting.resolvedIssues,
+            pendingQueuePath: errorReportQueuePath,
           },
           versionInfo.pluginVersion,
           api.logger,
@@ -388,6 +397,9 @@ export function createPluginService(ctx: PluginServiceContext) {
                     summary,
                     tags,
                   });
+                  if (storeResult.skipped) {
+                    continue;
+                  }
                   const stored = storeResult.entry;
                   await cleanupEvictedVector({
                     vectorDb,
@@ -817,6 +829,28 @@ export function createPluginService(ctx: PluginServiceContext) {
               });
               reconciledLabels = r.reconciledLabels;
               wrote = r.wrote;
+              // Gate is intentional: live GitHub reconciliation only runs when explicitly enabled in config.
+              if (cfg.activeTask.liveStateReconcile.enabled) {
+                try {
+                  const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+                    maxRequests: 20,
+                    log: api.logger,
+                  });
+                  if (liveResult.updatedCount > 0) {
+                    api.logger.info?.(
+                      `memory-hybrid: live-state reconcile — marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+                    );
+                    await renderActiveTaskMarkdownFile(
+                      factsDb,
+                      staleMinutes,
+                      activeTaskFilePath,
+                      cfg.activeTask.projection,
+                    );
+                  }
+                } catch (liveErr) {
+                  api.logger.warn?.(`memory-hybrid: live-state reconcile failed (non-fatal): ${liveErr}`);
+                }
+              }
             } else {
               const r = await reconcileActiveTaskInProgressSessions(activeTaskFilePath, staleMinutes, {
                 flushOnComplete: cfg.activeTask.flushOnComplete !== false,
@@ -960,9 +994,12 @@ export function createPluginService(ctx: PluginServiceContext) {
     },
     stop: async () => {
       shuttingDown = true;
-      // Flush any pending error reports before shutdown (non-blocking)
+      // Flush pending error reports with timeout so persisted queue replay can reduce dropped diagnostics.
       if (isErrorReporterActive()) {
-        flushErrorReporter(2000).catch(() => {});
+        const flushed = await flushErrorReporter(2000).catch(() => false);
+        if (!flushed) {
+          api.logger.warn("memory-hybrid: error reporter flush incomplete; pending reports will retry on next startup");
+        }
       }
       clearRuntimeTimers(timers);
       if (dashboardServer) {

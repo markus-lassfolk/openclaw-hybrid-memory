@@ -13,38 +13,47 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import {
-  REFLECTION_DEDUPE_THRESHOLD,
+  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_BACKOFF_MS,
+  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_THRESHOLD,
   REFLECTION_DEDUPE_LOAD_TIMEOUT_MS,
   REFLECTION_DEDUPE_MAX_ROWS_PER_RUN,
-  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_THRESHOLD,
-  REFLECTION_DEDUPE_429_CIRCUIT_BREAKER_BACKOFF_MS,
+  REFLECTION_DEDUPE_THRESHOLD,
   REFLECTION_IMPORTANCE,
-  REFLECTION_MAX_FACTS_PER_CATEGORY,
   REFLECTION_MAX_FACT_LENGTH,
+  REFLECTION_MAX_FACTS_PER_CATEGORY,
   REFLECTION_META_MAX_CHARS,
   REFLECTION_PATTERN_MAX_CHARS,
   REFLECTION_TEMPERATURE,
 } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { withTimeout } from "../utils/timeout.js";
-import { is429OrWrapped, is403QuotaOrRateLimitLike, LLMRetryError } from "./chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
+import { is403QuotaOrRateLimitLike, is429OrWrapped, LLMRetryError } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { recordMaintenanceTimestamp } from "./maintenance-timestamp.js";
 import type { ProvenanceService } from "./provenance.js";
-import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
+import {
+  dotProductSimilarity,
+  normalizeVector,
+  parsePatternsFromReflectionResponse,
+  REFLECTION_MAX_PATTERNS_FOR_META,
+  REFLECTION_MAX_PATTERNS_FOR_RULES,
+  REFLECTION_META_MIN_CHARS,
+  REFLECTION_PATTERN_MIN_CHARS,
+  REFLECTION_RULE_MAX_CHARS,
+  REFLECTION_RULE_MIN_CHARS,
+} from "./reflection/shared.js";
+export {
+  dotProductSimilarity,
+  normalizeVector,
+  parsePatternsFromReflectionResponse,
+} from "./reflection/shared.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
-
-const REFLECTION_PATTERN_MIN_CHARS = 20;
-const REFLECTION_RULE_MIN_CHARS = 10;
-const REFLECTION_RULE_MAX_CHARS = 120;
-const REFLECTION_META_MIN_CHARS = 20;
-const REFLECTION_MAX_PATTERNS_FOR_RULES = 50;
-const REFLECTION_MAX_PATTERNS_FOR_META = 30;
 
 /** Non-superseded, non-expired pattern facts (same filter as reflection dedupe corpus). */
 export function countActivePatternFactsForMaintenance(factsDb: FactsDB): number {
@@ -82,31 +91,6 @@ interface ReflectionRulesResult {
 interface ReflectionMetaResult {
   metaExtracted: number;
   metaStored: number;
-}
-
-/**
- * Normalize vector to unit length.
- */
-export function normalizeVector(v: number[]): number[] {
-  const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
-  return v.map((x) => x / norm);
-}
-
-/**
- * Compute dot product between two PRE-NORMALIZED vectors.
- * This is an optimized version that assumes both vectors are already unit-length.
- * Returns the dot product, which equals cosine similarity for normalized vectors.
- *
- * IMPORTANT: Use this ONLY when vectors are normalized via normalizeVector() first.
- * For arbitrary (non-normalized) vectors, use cosineSimilarity from ambient-retrieval.ts instead.
- */
-export function dotProductSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
-  let dot = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-  }
-  return dot;
 }
 
 /**
@@ -402,30 +386,6 @@ export async function loadReflectionDedupeCorpusVectors(
 }
 
 /**
- * Parse PATTERN: lines from reflection LLM response. Exported for tests.
- */
-export function parsePatternsFromReflectionResponse(rawResponse: string): string[] {
-  const patterns: string[] = [];
-  for (const line of rawResponse.split(/\n/)) {
-    const m = line.match(/^\s*PATTERN:\s*(.+)/);
-    if (!m) continue;
-    const text = m[1].trim();
-    if (text.length >= REFLECTION_PATTERN_MIN_CHARS && text.length <= REFLECTION_PATTERN_MAX_CHARS) {
-      patterns.push(text);
-    }
-  }
-  const seenInBatch = new Set<string>();
-  const unique: string[] = [];
-  for (const p of patterns) {
-    const key = p.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
-    seenInBatch.add(key);
-    unique.push(p);
-  }
-  return unique;
-}
-
-/**
  * Run reflection — gather recent facts, call LLM to extract patterns, dedupe, store.
  */
 export async function runReflection(
@@ -655,6 +615,9 @@ export async function runReflection(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
@@ -932,6 +895,9 @@ export async function runReflectionRules(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
@@ -1189,6 +1155,9 @@ export async function runReflectionMeta(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      continue;
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({

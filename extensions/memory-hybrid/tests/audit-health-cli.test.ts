@@ -195,6 +195,28 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     db.close();
   });
 
+  it("adds decay reclassify remediation when stable+permanent ratio is high", () => {
+    const db = new FactsDB(":memory:");
+    for (let i = 0; i < 5; i++) {
+      db.store({
+        text: `Legacy stable ${i}`,
+        category: "fact",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+    }
+    const raw = db.getRawDb();
+    raw?.prepare("UPDATE facts SET decay_class = 'stable' WHERE superseded_at IS NULL").run();
+
+    const report = buildAuditHealthReport(db as never, () => ["fact"], [], 500);
+    expect(report.warnings.some((w) => w.includes("stable+permanent"))).toBe(true);
+    expect(report.remediation.some((r) => r.includes("decay reclassify --dry-run --stable-only"))).toBe(true);
+    db.close();
+  });
+
   it("recordStorageGrowthSample inserts once per UTC day", () => {
     const db = new FactsDB(":memory:");
     const a = recordStorageGrowthSample(db as never, 4096);

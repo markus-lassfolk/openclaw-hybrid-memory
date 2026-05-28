@@ -458,6 +458,34 @@ describe("PROPOSAL creates entry in proposals DB (#260)", () => {
 // ---------------------------------------------------------------------------
 
 describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () => {
+  it("reports an error when the LLM response is not a valid JSON array", async () => {
+    const openai = makeOpenAIMock("I could not produce valid JSON this time.");
+    const ctx = makeCtx(openai);
+
+    const result = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [
+        {
+          userMessage: "No, handle parse failures as errors.",
+          agentMessage: "I'll treat malformed output as an empty success.",
+          sessionFile: "2026-01-01-session.jsonl",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        } as any,
+      ],
+      workspace: tmpDir,
+    });
+
+    expect(result).toMatchObject({
+      incidentsFound: 1,
+      analysed: 0,
+      autoFixed: 0,
+      proposals: [],
+      reportPath: null,
+    });
+    expect(result.error).toContain(
+      "Self-correction analysis: LLM response could not be parsed as a JSON array (repair failed)",
+    );
+  });
+
   it("creates proposal when AGENTS_RULE remediation is returned", async () => {
     const llmResponse = JSON.stringify([
       {
@@ -511,6 +539,37 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
     expect(agentsRuleProp?.title).toContain("Self-correction");
     // SOUL.md is the default for behavioral content
     expect(agentsRuleProp?.targetFile).toBe("SOUL.md");
+  });
+});
+
+describe("Self-correction NO_ACTION handling", () => {
+  it("treats NO_ACTION without remediationContent as a valid no-op", async () => {
+    const llmResponse = JSON.stringify([
+      {
+        category: "NO_ISSUE",
+        severity: "LOW",
+        remediationType: "NO_ACTION",
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+    const ctx = makeCtx(openai);
+    const result = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [
+        {
+          userMessage: "Looks good now, no further changes needed.",
+          agentMessage: "I applied the requested update.",
+          sessionFile: "2026-01-01-session.jsonl",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        } as any,
+      ],
+      workspace: tmpDir,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.analysed).toBe(1);
+    expect(result.autoFixed).toBe(0);
+    expect(result.proposals).toEqual([]);
   });
 });
 

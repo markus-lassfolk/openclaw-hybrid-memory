@@ -273,6 +273,47 @@ error: unknown command 'bar'
       expect(result.missingSteps.length).toBe(0);
     });
 
+    it("reports skipped when a required step explicitly records status=skipped", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(exitPath, "2024-05-08T02:01:00Z self-correct exit=0 status=skipped reason=skipped_cooldown\n");
+
+      const result = validateMaintenanceExecution(
+        exitPath,
+        undefined,
+        ["self-correct"],
+        true, // allowSkip
+      );
+
+      expect(result.maintenanceStatus).toBe("skipped");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.error).toContain("skipped_cooldown");
+    });
+
+    it("reports success and updates guard when only some steps are skipped in multi-step job", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(
+        exitPath,
+        `2024-05-08T02:00:00Z prune exit=0 status=ok
+2024-05-08T02:01:00Z distill exit=0 status=ok
+2024-05-08T02:02:00Z self-correct exit=0 status=skipped reason=skipped_cooldown
+`,
+      );
+
+      const result = validateMaintenanceExecution(
+        exitPath,
+        undefined,
+        ["prune", "distill", "self-correct"],
+        true, // allowSkip
+      );
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.guardUpdated).toBe(true);
+      expect(result.missingSteps.length).toBe(0);
+      expect(result.failedSteps.length).toBe(0);
+    });
+
     it("should fail when unknown command detected in log", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
@@ -326,6 +367,27 @@ error: unknown command 'bar'
       const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
 
       expect(result.maintenanceStatus).toBe("failed");
+    });
+
+    it("should deterministically fail stale empty ledgers with heartbeat-only logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "");
+      writeFileSync(
+        logPath,
+        [
+          "[dream-cycle] extract implicit feedback — still running after 2210s — stage=scan-sessions; sessions=106/177",
+          "memory-hybrid: dream-cycle — stage 3 still running after 2210s",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.missingSteps).toEqual(["dream-cycle"]);
+      expect(result.error).toContain("Missing steps");
     });
   });
 });

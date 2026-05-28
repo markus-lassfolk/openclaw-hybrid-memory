@@ -5,6 +5,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { Mock } from "vitest";
 import { vi } from "vitest";
 import memoryHybridPlugin from "../../index.js";
 
@@ -46,9 +47,52 @@ export function getFullStackConfig(tmpDir: string, overrides: Record<string, unk
   };
 }
 
-export type FullStackApi = ReturnType<typeof makeFullStackApi>;
+export interface FullStackApi {
+  on: ReturnType<typeof vi.fn>;
+  registerTool: (opts: Record<string, unknown>, options?: unknown) => void;
+  getTool: (name: string) => { execute: (...args: unknown[]) => unknown } | undefined;
+  registerService: (svc: { start?: () => Promise<void>; stop?: () => Promise<void> } | null) => void;
+  registerCli: ReturnType<typeof vi.fn>;
+  registerLifecycleHook: ReturnType<typeof vi.fn>;
+  registerHttpRoute: ReturnType<typeof vi.fn>;
+  logger: {
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    debug: ReturnType<typeof vi.fn>;
+    error: ReturnType<typeof vi.fn>;
+  };
+  context: { sessionId: string; sessionKey: string; agentId: string };
+  config: Record<string, unknown>;
+  resolvePath: (p: string) => string;
+  pluginConfig: Record<string, unknown> | undefined;
+  registrationMode: "full";
+  version: string;
+  startService: () => Promise<void>;
+  stopService: () => Promise<void>;
+  registeredEvents: () => string[];
+  hookHandlers: (eventName: string) => Array<(event: unknown, hookCtx: unknown) => Promise<unknown>>;
+}
 
-export function makeFullStackApi(tmpDir: string) {
+export function makeFullStackApi(tmpDir: string): {
+  on: Mock;
+  registerTool: (opts: Record<string, unknown>, options?: unknown) => void;
+  getTool: (name: string) => { execute: (...args: unknown[]) => unknown } | undefined;
+  registerService: Mock;
+  registerCli: Mock;
+  registerLifecycleHook: Mock;
+  registerHttpRoute: Mock;
+  logger: { info: Mock; warn: Mock; debug: Mock; error: Mock };
+  context: { sessionId: string; sessionKey: string; agentId: string };
+  config: Record<string, unknown>;
+  resolvePath: (p: string) => string;
+  pluginConfig: Record<string, unknown> | undefined;
+  registrationMode: "full";
+  version: string;
+  startService: () => Promise<void>;
+  stopService: () => Promise<void>;
+  registeredEvents: () => string[];
+  hookHandlers: (eventName: string) => Array<(event: unknown, hookCtx: unknown) => Promise<unknown>>;
+} {
   let registeredService: {
     start?: () => Promise<void>;
     stop?: () => Promise<void>;

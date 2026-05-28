@@ -11,6 +11,7 @@ import { FactsDB } from "../backends/facts-db.js";
 import { runRecallStage } from "../lifecycle/stage-recall.js";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import * as recallPipeline from "../services/recall-pipeline.js";
+import { estimateTokens } from "../utils/text.js";
 import {
   buildRecallLifecycleContext,
   makeMockStageApi,
@@ -163,5 +164,142 @@ describe("runRecallStage", () => {
       expect(result.result.candidates.some((c) => c.entry.id === "pipe-1")).toBe(true);
     }
     expect(ctx.recallInFlightRef.value).toBe(0);
+  });
+
+  it("caps hot fixed block tokens and keeps recall budget available", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      memoryTiering: { enabled: true, hotMaxTokens: 2000 },
+      autoRecall: {
+        hotMaxTokens: 40,
+        narrativeMaxTokens: 200,
+        procedureMaxTokens: 200,
+        activeTaskMaxTokens: 0,
+        staleWarningMaxTokens: 0,
+      },
+    });
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockResolvedValue([
+      {
+        entry: {
+          id: "pipe-hot-cap",
+          text: "pipeline hit",
+          category: "fact",
+          importance: 0.8,
+          entity: null,
+          key: null,
+          value: null,
+          source: "conversation",
+          createdAt: 1,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          scope: "global",
+        },
+        score: 0.95,
+        backend: "sqlite",
+      },
+    ]);
+    vi.spyOn(factsDb, "getHotFacts").mockReturnValue([
+      {
+        entry: {
+          id: "hot-1",
+          text: "<think>internal chain</think> deployment api key rotates weekly with strict rollback checks ".repeat(
+            8,
+          ),
+          category: "project",
+          importance: 0.9,
+          entity: null,
+          key: null,
+          value: null,
+          source: "conversation",
+          createdAt: 1,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          scope: "global",
+        },
+        score: 1,
+        backend: "sqlite",
+      },
+    ]);
+
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+    const result = await runRecallStage({ prompt: "deployment plan context" }, api as never, ctx, sessionState);
+
+    expect(result?.kind).toBe("full");
+    if (result?.kind === "full") {
+      expect(result.result.maxTokens).toBeGreaterThan(0);
+      expect(estimateTokens(result.result.hotBlock)).toBeLessThanOrEqual(40);
+      expect(result.result.hotBlock).not.toContain("<think>");
+    }
+  });
+
+  it("logs fixed-block consumers when recall budget is exhausted", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      memoryTiering: { enabled: true, hotMaxTokens: 2000 },
+      activeTask: { enabled: true, ledger: "facts", injectionBudget: 500, staleWarning: { enabled: true } },
+      autoRecall: {
+        maxTokens: 120,
+        hotMaxTokens: 80,
+        narrativeMaxTokens: 80,
+        procedureMaxTokens: 80,
+        activeTaskMaxTokens: 80,
+        staleWarningMaxTokens: 40,
+      },
+    });
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockResolvedValue([
+      {
+        entry: {
+          id: "pipe-exhausted",
+          text: "pipeline hit",
+          category: "fact",
+          importance: 0.8,
+          entity: null,
+          key: null,
+          value: null,
+          source: "conversation",
+          createdAt: 1,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          scope: "global",
+        },
+        score: 0.95,
+        backend: "sqlite",
+      },
+    ]);
+    vi.spyOn(factsDb, "getHotFacts").mockReturnValue([
+      {
+        entry: {
+          id: "hot-2",
+          text: "critical deploy context ".repeat(80),
+          category: "project",
+          importance: 0.9,
+          entity: null,
+          key: null,
+          value: null,
+          source: "conversation",
+          createdAt: 1,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          scope: "global",
+        },
+        score: 1,
+        backend: "sqlite",
+      },
+    ]);
+
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+    const result = await runRecallStage({ prompt: "deploy now with context" }, api as never, ctx, sessionState);
+
+    expect(result?.kind).toBe("full");
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("consumers:"));
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("active-task"));
   });
 });

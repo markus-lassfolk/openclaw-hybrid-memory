@@ -3,7 +3,7 @@
  * No OpenClaw core required — exercises registerGoalStewardshipInjection + registerGoalSubagentHandlers.
  */
 
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
@@ -336,6 +336,36 @@ describe("goal stewardship integration (mock plugin API)", () => {
     const after2 = await readGoal(goalsDir, g2.id);
     expect(after1?.linkedTasks.find((t) => t.label === "shared-task")?.status).toBe("in_progress");
     expect(after2?.linkedTasks.find((t) => t.label === "shared-task")?.status).toBe("in_progress");
+  });
+
+  it("subagent_ended ignores goals with missing linkedTasks arrays", async () => {
+    const cfg = parseCfg();
+    const ctx = minimalLifecycleContext(cfg);
+    const api = createMockPluginApi();
+    registerGoalSubagentHandlers(api as unknown as ClawdbotPluginApi, ctx, goalsDir);
+
+    const g = await createGoal(
+      goalsDir,
+      { label: "missing-linked-tasks", description: "legacy goal shape", acceptanceCriteria: ["ok"] },
+      defaults,
+    );
+    const goalPath = join(goalsDir, `${g.id}.json`);
+    const rawGoal = JSON.parse(await readFile(goalPath, "utf-8")) as Record<string, unknown>;
+    delete rawGoal.linkedTasks;
+    await writeFile(goalPath, JSON.stringify(rawGoal, null, 2), "utf-8");
+
+    await expect(
+      api.emitAll("subagent_ended", {
+        label: "legacy-task",
+        targetSessionKey: "legacy-session",
+        success: true,
+        outcome: "success",
+      }),
+    ).resolves.toBeUndefined();
+
+    const afterEnd = await readGoal(goalsDir, g.id);
+    expect(afterEnd?.status).toBe("active");
+    expect(afterEnd?.linkedTasks).toEqual([]);
   });
 
   it("before_agent_start returns undefined when no active goals exist", async () => {

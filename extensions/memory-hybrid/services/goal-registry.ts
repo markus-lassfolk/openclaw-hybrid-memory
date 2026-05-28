@@ -160,6 +160,7 @@ export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
 function normalizeGoalJson(g: Goal): Goal {
   return {
     ...g,
+    linkedTasks: Array.isArray(g.linkedTasks) ? g.linkedTasks : [],
     lastBlockerFingerprint: g.lastBlockerFingerprint ?? null,
     sameBlockerStreak: g.sameBlockerStreak ?? 0,
     circuitBreakerLastProgressAssessmentCount: g.circuitBreakerLastProgressAssessmentCount ?? 0,

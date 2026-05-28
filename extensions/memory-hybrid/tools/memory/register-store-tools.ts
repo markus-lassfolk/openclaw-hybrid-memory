@@ -177,8 +177,43 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             decayFreezeUntil?: number;
           };
 
+          // --- Early input validation (must run before any side effects) ---
+          if (text.trim().length === 0) {
+            return {
+              content: [{ type: "text", text: "memory_store: text must not be empty or whitespace." }],
+              details: { error: "invalid_text" },
+            };
+          }
+
           let textToStore = text;
           textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+
+          const importanceValue = importance as number;
+          if (!Number.isFinite(importanceValue) || importanceValue < 0 || importanceValue > 1) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `memory_store: importance must be a finite number in [0, 1]; got ${importanceValue}.`,
+                },
+              ],
+              details: { error: "invalid_importance" },
+            };
+          }
+
+          if (paramDecayFreezeUntil != null && (!Number.isFinite(paramDecayFreezeUntil) || paramDecayFreezeUntil < 0)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `memory_store: decayFreezeUntil must be a non-negative finite epoch seconds value; got ${paramDecayFreezeUntil}.`,
+                },
+              ],
+              details: { error: "invalid_decay_freeze_until" },
+            };
+          }
+          // --- End early validation ---
+
           const provenanceSessionId = api.context?.sessionId ?? null;
           const recordActiveStoreProvenance = (factId: string, sourceText?: string) => {
             if (!provenanceService || !cfg.provenance.enabled) return;
@@ -257,112 +292,133 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
           };
 
-          // Dual-mode credentials: vault enabled → store in vault + pointer in memory; vault disabled → store in memory (live behavior).
-          // When vault is enabled, credential-like content that fails to parse must not be written to memory (see docs/CREDENTIALS.md).
-          if (cfg.credentials.enabled && credentialsDb && isCredentialLike(textToStore, entity, key, value)) {
-            const parsed = tryParseCredentialForVault(textToStore, entity, key, value, {
-              requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-            });
-            if (parsed) {
-              const stored = credentialsDb.storeIfNew({
-                service: parsed.service,
-                type: parsed.type,
-                value: parsed.secretValue,
-                url: parsed.url,
-                notes: parsed.notes,
+          if (isCredentialLike(textToStore, entity, key, value)) {
+            if (cfg.credentials.enabled && credentialsDb) {
+              const parsed = tryParseCredentialForVault(textToStore, entity, key, value, {
+                requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
               });
-              if (!stored) {
-                return {
-                  content: [
-                    { type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` },
-                  ],
-                  details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
-                };
-              }
-              const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
-              const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-              const pointerStoreResult = factsDb.storeWithResult({
-                text: pointerText,
-                why,
-                category: "technical" as MemoryCategory,
-                importance,
-                entity: "Credentials",
-                key: parsed.service,
-                value: pointerValue,
-                source: "conversation",
-                decayClass: paramDecayClass ?? "permanent",
-                tags: ["auth", ...extractTags(pointerText, "Credentials")],
-                provenanceSession: provenanceSessionId,
-                extractionMethod: "active",
-                extractionConfidence: importance,
-              });
-              const pointerEntry = pointerStoreResult.entry;
-              await cleanupEvictedVector({
-                vectorDb,
-                evictedFactId: pointerStoreResult.evictedFactId,
-                logger: api.logger,
-                context: "memory-store-credential-pointer",
-              });
-              recordActiveStoreProvenance(pointerEntry.id, pointerText);
-              try {
-                addOperationBreadcrumb("vector", "store-credential-pointer");
-                const vector = await embedCallWithTimeoutAndRetry(
-                  () => embeddings.embed(pointerText),
-                  "memory-tools:store-credential-pointer",
-                );
-                await storeActiveCanonicalVector({
-                  factId: pointerEntry.id,
+              if (parsed) {
+                const stored = credentialsDb.storeIfNew({
+                  service: parsed.service,
+                  type: parsed.type,
+                  value: parsed.secretValue,
+                  url: parsed.url,
+                  notes: parsed.notes,
+                });
+                if (!stored) {
+                  return {
+                    content: [
+                      { type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` },
+                    ],
+                    details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
+                  };
+                }
+                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
+                const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
+                const pointerStoreResult = factsDb.storeWithResult({
                   text: pointerText,
                   why,
-                  vector,
+                  category: "technical" as MemoryCategory,
                   importance,
-                  category: "technical",
+                  entity: "Credentials",
+                  key: parsed.service,
+                  value: pointerValue,
+                  source: "conversation",
+                  decayClass: paramDecayClass ?? "permanent",
+                  tags: ["auth", ...extractTags(pointerText, "Credentials")],
+                  provenanceSession: provenanceSessionId,
+                  extractionMethod: "active",
+                  extractionConfidence: importance,
                 });
-                await storeRegistryEmbeddings({
-                  factsDb,
-                  embeddingRegistry,
-                  embeddings,
-                  factId: pointerEntry.id,
-                  text: pointerText,
-                  vector,
-                  logger: api.logger,
-                  operation: "store-credential-pointer",
-                });
-              } catch (err) {
-                // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
-                if (!(err instanceof AllEmbeddingProvidersFailed)) {
-                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    subsystem: "vector",
-                    operation: "store-credential-pointer",
-                    phase: "runtime",
-                    backend: "lancedb",
-                  });
+                const pointerEntry = pointerStoreResult.entry;
+                // Guard: if the pointer was rejected by the pre-store guard, undo the vault store and return rejected artifact
+                if (pointerStoreResult.rejected) {
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (_cleanupErr) {
+                    // best-effort cleanup
+                  }
+                  return {
+                    content: [{ type: "text", text: "Credential-like content rejected by pre-store guard." }],
+                    details: { action: "credential_rejected_artifact" },
+                  };
                 }
-                api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                await cleanupEvictedVector({
+                  vectorDb,
+                  evictedFactId: pointerStoreResult.evictedFactId,
+                  logger: api.logger,
+                  context: "memory-store-credential-pointer",
+                });
+                recordActiveStoreProvenance(pointerEntry.id, pointerText);
+                try {
+                  addOperationBreadcrumb("vector", "store-credential-pointer");
+                  const vector = await embedCallWithTimeoutAndRetry(
+                    () => embeddings.embed(pointerText),
+                    "memory-tools:store-credential-pointer",
+                  );
+                  await storeActiveCanonicalVector({
+                    factId: pointerEntry.id,
+                    text: pointerText,
+                    why,
+                    vector,
+                    importance,
+                    category: "technical",
+                  });
+                  await storeRegistryEmbeddings({
+                    factsDb,
+                    embeddingRegistry,
+                    embeddings,
+                    factId: pointerEntry.id,
+                    text: pointerText,
+                    vector,
+                    logger: api.logger,
+                    operation: "store-credential-pointer",
+                  });
+                } catch (err) {
+                  // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
+                  if (!(err instanceof AllEmbeddingProvidersFailed)) {
+                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                      subsystem: "vector",
+                      operation: "store-credential-pointer",
+                      phase: "runtime",
+                      backend: "lancedb",
+                    });
+                  }
+                  api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+                }
+                return {
+                  content: [
+                    {
+                      type: "text",
+                      text: `Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer saved in memory.`,
+                    },
+                  ],
+                  details: {
+                    action: "credential_vault",
+                    id: pointerEntry.id,
+                    service: parsed.service,
+                    type: parsed.type,
+                  },
+                };
               }
               return {
                 content: [
                   {
                     type: "text",
-                    text: `Credential stored in vault for ${parsed.service} (${parsed.type}). Pointer saved in memory.`,
+                    text: "Credential-like content detected but could not be parsed as a structured credential; not stored (vault is enabled).",
                   },
                 ],
-                details: {
-                  action: "credential_vault",
-                  id: pointerEntry.id,
-                  service: parsed.service,
-                  type: parsed.type,
-                },
+                details: { action: "credential_skipped" },
               };
             }
             return {
               content: [
                 {
                   type: "text",
-                  text: "Credential-like content detected but could not be parsed as a structured credential; not stored (vault is enabled).",
+                  text: "Credential-like content detected. Ordinary memory storage is blocked while the credential vault is disabled or unavailable. Enable credentials vault and retry.",
                 },
               ],
-              details: { action: "credential_skipped" },
+              details: { action: "credential_blocked_no_vault" },
             };
           }
 
@@ -526,89 +582,103 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     extractionConfidence: Math.max(importance, oldFact.importance),
                   });
                   const newEntry = updateStoreResult.entry;
-                  await cleanupEvictedVector({
-                    vectorDb,
-                    evictedFactId: updateStoreResult.evictedFactId,
-                    logger: api.logger,
-                    context: "memory-store-update",
-                  });
-                  recordActiveStoreProvenance(newEntry.id, textToStore);
-                  factsDb.supersede(classification.targetId, newEntry.id);
-                  aliasDb?.deleteByFactId(classification.targetId);
-                  await deleteVectorForFactId({
-                    vectorDb,
-                    factId: classification.targetId,
-                    logger: api.logger,
-                    context: "store-update-delete-superseded",
-                  });
-                  maybeAutoVerify(
-                    newEntry.id,
-                    textToStore,
-                    newEntry.tags ?? tags,
-                    newEntry.entity,
-                    newEntry.key,
-                    newEntry.value,
-                  );
+                  // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
+                  if (!updateStoreResult.skipped) {
+                    await cleanupEvictedVector({
+                      vectorDb,
+                      evictedFactId: updateStoreResult.evictedFactId,
+                      logger: api.logger,
+                      context: "memory-store-update",
+                    });
+                    recordActiveStoreProvenance(newEntry.id, textToStore);
+                    factsDb.supersede(classification.targetId, newEntry.id);
+                    aliasDb?.deleteByFactId(classification.targetId);
+                    await deleteVectorForFactId({
+                      vectorDb,
+                      factId: classification.targetId,
+                      logger: api.logger,
+                      context: "store-update-delete-superseded",
+                    });
+                    maybeAutoVerify(
+                      newEntry.id,
+                      textToStore,
+                      newEntry.tags ?? tags,
+                      newEntry.entity,
+                      newEntry.key,
+                      newEntry.value,
+                    );
 
-                  const finalImportance = Math.max(importance, oldFact.importance);
-                  try {
-                    if (vector) {
-                      await storeActiveCanonicalVector({
+                    const finalImportance = Math.max(importance, oldFact.importance);
+                    try {
+                      if (vector) {
+                        await storeActiveCanonicalVector({
+                          factId: newEntry.id,
+                          text: textToStore,
+                          why,
+                          vector,
+                          importance: finalImportance,
+                          category,
+                        });
+                      }
+                      await storeRegistryEmbeddings({
+                        factsDb,
+                        embeddingRegistry,
+                        embeddings,
                         factId: newEntry.id,
                         text: textToStore,
-                        why,
                         vector,
-                        importance: finalImportance,
-                        category,
+                        logger: api.logger,
+                        operation: "store-update-supersede",
                       });
+                    } catch (err) {
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "vector",
+                        operation: "store-update-supersede",
+                        phase: "runtime",
+                        backend: "lancedb",
+                      });
+                      api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                     }
-                    await storeRegistryEmbeddings({
-                      factsDb,
-                      embeddingRegistry,
-                      embeddings,
-                      factId: newEntry.id,
-                      text: textToStore,
-                      vector,
-                      logger: api.logger,
-                      operation: "store-update-supersede",
-                    });
-                  } catch (err) {
-                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                      subsystem: "vector",
-                      operation: "store-update-supersede",
-                      phase: "runtime",
-                      backend: "lancedb",
-                    });
-                    api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
-                  }
 
+                    await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
+
+                    // Issue #159: enqueue contextual variant generation (non-blocking)
+                    if (variantQueue) {
+                      variantQueue.enqueue({ factId: newEntry.id, text: textToStore, category: category as string });
+                    }
+
+                    api.logger.info?.(
+                      `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
+                    );
+                    await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [
+                        {
+                          type: "text",
+                          text: `Updated: superseded old fact with "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${newEntry.decayClass}] (reason: ${classification.reason})`,
+                        },
+                      ],
+                      details: {
+                        action: "updated",
+                        id: newEntry.id,
+                        why: why ?? undefined,
+                        superseded: classification.targetId,
+                        reason: classification.reason,
+                        backend: "both",
+                        decayClass: newEntry.decayClass,
+                      },
+                    };
+                  }
+                  // WAL cleanup for skipped update path
                   await walRemove(walEntryId, api.logger);
-                  await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
-
-                  // Issue #159: enqueue contextual variant generation (non-blocking)
-                  if (variantQueue) {
-                    variantQueue.enqueue({ factId: newEntry.id, text: textToStore, category: category as string });
-                  }
-
-                  api.logger.info?.(
-                    `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
-                  );
                   return {
                     content: [
                       {
                         type: "text",
-                        text: `Updated: superseded old fact with "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${newEntry.decayClass}] (reason: ${classification.reason})`,
+                        text: `Store blocked by pre-store guard (category: ${category}).`,
                       },
                     ],
-                    details: {
-                      action: "updated",
-                      id: newEntry.id,
-                      why: why ?? undefined,
-                      superseded: classification.targetId,
-                      reason: classification.reason,
-                      backend: "both",
-                      decayClass: newEntry.decayClass,
-                    },
+                    details: { action: "skipped", reason: "blocked-by-guard", category },
                   };
                 }
                 return {
@@ -740,253 +810,267 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
           const entry = storeResult.entry;
-          await cleanupEvictedVector({
-            vectorDb,
-            evictedFactId: storeResult.evictedFactId,
-            logger: api.logger,
-            context: "memory-store",
-          });
-          recordActiveStoreProvenance(entry.id, textToStore);
-          if (supersedes?.trim()) {
-            const supersededId = supersedes.trim();
-            factsDb.supersede(supersededId, entry.id);
-            aliasDb?.deleteByFactId(supersededId);
-            await deleteVectorForFactId({
+          // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
+          if (!storeResult.skipped) {
+            await cleanupEvictedVector({
               vectorDb,
-              factId: supersededId,
+              evictedFactId: storeResult.evictedFactId,
               logger: api.logger,
-              context: "store-manual-supersede",
+              context: "memory-store",
             });
-          }
+            recordActiveStoreProvenance(entry.id, textToStore);
+            if (supersedes?.trim()) {
+              const supersededId = supersedes.trim();
+              factsDb.supersede(supersededId, entry.id);
+              aliasDb?.deleteByFactId(supersededId);
+              await deleteVectorForFactId({
+                vectorDb,
+                factId: supersededId,
+                logger: api.logger,
+                context: "store-manual-supersede",
+              });
+            }
 
-          try {
-            addOperationBreadcrumb("vector", "store-fact");
-            if (vector) {
-              await storeActiveCanonicalVector({
+            try {
+              addOperationBreadcrumb("vector", "store-fact");
+              if (vector) {
+                await storeActiveCanonicalVector({
+                  factId: entry.id,
+                  text: textToStore,
+                  why,
+                  vector,
+                  importance,
+                  category,
+                });
+              }
+              await storeRegistryEmbeddings({
+                factsDb,
+                embeddingRegistry,
+                embeddings,
                 factId: entry.id,
                 text: textToStore,
-                why,
                 vector,
-                importance,
-                category,
+                logger: api.logger,
+                operation: "store-fact",
               });
-            }
-            await storeRegistryEmbeddings({
-              factsDb,
-              embeddingRegistry,
-              embeddings,
-              factId: entry.id,
-              text: textToStore,
-              vector,
-              logger: api.logger,
-              operation: "store-fact",
-            });
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "vector",
-              operation: "store-fact",
-              phase: "runtime",
-              backend: "lancedb",
-            });
-            api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
-          }
-
-          await walRemove(walEntryId, api.logger);
-          await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
-
-          // Issue #150: write event to episodic event log
-          if (eventLog) {
-            try {
-              const eventType = categoryToEventType(category);
-              eventLog.append({
-                sessionId: api.context?.sessionId ?? "unknown",
-                timestamp: new Date().toISOString(),
-                eventType,
-                content: {
-                  text: textToStore.slice(0, 500),
-                  factId: entry.id,
-                  category,
-                  importance,
-                  source: "memory_store",
-                },
-                entities: entity ? [entity] : undefined,
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "vector",
+                operation: "store-fact",
+                phase: "runtime",
+                backend: "lancedb",
               });
-            } catch {
-              // Non-fatal
+              api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
             }
-          }
 
-          // Issue #159: enqueue contextual variant generation (non-blocking)
-          if (variantQueue) {
-            variantQueue.enqueue({ factId: entry.id, text: textToStore, category: category as string });
-          }
+            await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
-          // Issue #149: generate and store retrieval aliases (non-blocking)
-          if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
-            const aliasModel = cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-            void storeAliases(entry.id, textToStore, cfg.aliases, aliasModel, openai, embeddings, aliasDb, (msg) =>
-              api.logger.warn(msg),
-            ).catch((err) => {
-              api.logger.warn(`memory-hybrid: alias generation failed: ${err}`);
-            });
-          }
-
-          // Contradiction detection (Issue #157): check for same entity+key, different value
-          // Pass the stored fact's scope so detection stays within the same scope boundary.
-          const contradictions = factsDb.detectContradictions(
-            entry.id,
-            entity ?? null,
-            key ?? null,
-            value ?? null,
-            entry.scope ?? null,
-            entry.scopeTarget ?? null,
-          );
-          for (const { contradictionId, oldFactId } of contradictions) {
+            // Issue #150: write event to episodic event log
             if (eventLog) {
-              eventLog.append({
-                sessionId: api.context?.sessionId ?? "unknown",
-                timestamp: new Date().toISOString(),
-                eventType: "correction",
-                content: {
-                  type: "contradiction_detected",
-                  contradictionId,
-                  newFactId: entry.id,
-                  oldFactId,
-                  entity: entity ?? null,
-                  key: key ?? null,
-                  newValue: value ?? null,
-                },
-                entities: entity ? [entity] : undefined,
+              try {
+                const eventType = categoryToEventType(category);
+                eventLog.append({
+                  sessionId: api.context?.sessionId ?? "unknown",
+                  timestamp: new Date().toISOString(),
+                  eventType,
+                  content: {
+                    text: textToStore.slice(0, 500),
+                    factId: entry.id,
+                    category,
+                    importance,
+                    source: "memory_store",
+                  },
+                  entities: entity ? [entity] : undefined,
+                });
+              } catch {
+                // Non-fatal
+              }
+            }
+
+            // Issue #159: enqueue contextual variant generation (non-blocking)
+            if (variantQueue) {
+              variantQueue.enqueue({ factId: entry.id, text: textToStore, category: category as string });
+            }
+
+            // Issue #149: generate and store retrieval aliases (non-blocking)
+            if (cfg.aliases?.enabled && aliasDb && importance >= 0.5) {
+              const aliasModel = cfg.aliases.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+              void storeAliases(entry.id, textToStore, cfg.aliases, aliasModel, openai, embeddings, aliasDb, (msg) =>
+                api.logger.warn(msg),
+              ).catch((err) => {
+                api.logger.warn(`memory-hybrid: alias generation failed: ${err}`);
               });
             }
-          }
 
-          // Auto-link to similar facts when enabled
-          let autoLinked = 0;
-          if (cfg.graph.enabled && cfg.graph.autoLink) {
-            const entryScope = entry.scope ?? "global";
-            const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
-            const similar = factsDb.findSimilarForClassification(
-              textToStore,
-              entity ?? null,
-              key ?? null,
-              cfg.graph.autoLinkLimit,
-              entryScope,
-              entryScopeTarget,
-            );
-            for (const s of similar) {
-              if (s.id === entry.id) continue;
-              factsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
-              autoLinked++;
-            }
-          }
-
-          // Entity-based auto-linking (Issue #154): known-entity matching, IP NER,
-          // temporal co-occurrence, and supersession detection.
-          let entityAutoLinked = 0;
-          let autoSupersededIds: string[] = [];
-          if (cfg.graph.enabled && cfg.graph.autoLink) {
-            const sessionId = api.context?.sessionId ?? null;
-            const result = factsDb.autoLinkEntities(
+            // Contradiction detection (Issue #157): check for same entity+key, different value
+            // Pass the stored fact's scope so detection stays within the same scope boundary.
+            const contradictions = factsDb.detectContradictions(
               entry.id,
-              textToStore,
               entity ?? null,
               key ?? null,
-              sessionId,
-              {
-                coOccurrenceWeight: cfg.graph.coOccurrenceWeight,
-                autoSupersede: cfg.graph.autoSupersede,
-              },
+              value ?? null,
               entry.scope ?? null,
               entry.scopeTarget ?? null,
             );
-            entityAutoLinked = result.linkedCount;
-            autoSupersededIds = result.supersededIds;
-            if (autoSupersededIds.length > 0) {
-              api.logger.info?.(
-                `memory-hybrid: autoSupersede — superseded [${autoSupersededIds.join(", ")}] with ${entry.id}`,
+            for (const { contradictionId, oldFactId } of contradictions) {
+              if (eventLog) {
+                eventLog.append({
+                  sessionId: api.context?.sessionId ?? "unknown",
+                  timestamp: new Date().toISOString(),
+                  eventType: "correction",
+                  content: {
+                    type: "contradiction_detected",
+                    contradictionId,
+                    newFactId: entry.id,
+                    oldFactId,
+                    entity: entity ?? null,
+                    key: key ?? null,
+                    newValue: value ?? null,
+                  },
+                  entities: entity ? [entity] : undefined,
+                });
+              }
+            }
+
+            // Auto-link to similar facts when enabled
+            let autoLinked = 0;
+            if (cfg.graph.enabled && cfg.graph.autoLink) {
+              const entryScope = entry.scope ?? "global";
+              const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
+              const similar = factsDb.findSimilarForClassification(
+                textToStore,
+                entity ?? null,
+                key ?? null,
+                cfg.graph.autoLinkLimit,
+                entryScope,
+                entryScopeTarget,
               );
+              for (const s of similar) {
+                if (s.id === entry.id) continue;
+                factsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
+                autoLinked++;
+              }
             }
-          }
 
-          // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
-          if (cfg.graph.enabled) {
-            const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
-            void extractEntityMentionsWithLlm(textToStore, openai, enrichModel, {
-              stopWords: cfg.entityExtraction.stopWords,
-            })
-              .then(({ mentions, detectedLang }) => {
-                factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+            // Entity-based auto-linking (Issue #154): known-entity matching, IP NER,
+            // temporal co-occurrence, and supersession detection.
+            let entityAutoLinked = 0;
+            let autoSupersededIds: string[] = [];
+            if (cfg.graph.enabled && cfg.graph.autoLink) {
+              const sessionId = api.context?.sessionId ?? null;
+              const result = factsDb.autoLinkEntities(
+                entry.id,
+                textToStore,
+                entity ?? null,
+                key ?? null,
+                sessionId,
+                {
+                  coOccurrenceWeight: cfg.graph.coOccurrenceWeight,
+                  autoSupersede: cfg.graph.autoSupersede,
+                },
+                entry.scope ?? null,
+                entry.scopeTarget ?? null,
+              );
+              entityAutoLinked = result.linkedCount;
+              autoSupersededIds = result.supersededIds;
+              if (autoSupersededIds.length > 0) {
+                api.logger.info?.(
+                  `memory-hybrid: autoSupersede — superseded [${autoSupersededIds.join(", ")}] with ${entry.id}`,
+                );
+              }
+            }
+
+            // NER + contact/org layer (#985–#987): async enrichment after graph auto-link; uses franc + LLM.
+            if (cfg.graph.enabled) {
+              const enrichModel = getDefaultCronModel(getCronModelConfig(cfg), "nano");
+              void extractEntityMentionsWithLlm(textToStore, openai, enrichModel, {
+                stopWords: cfg.entityExtraction.stopWords,
               })
-              .catch((err) => {
-                const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
-                api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${msg}`);
-              });
-          }
-
-          const totalLinked = autoLinked + entityAutoLinked;
-          const verbosity = cfg.verbosity ?? "normal";
-          let storedMsg: string;
-          if (isCompactVerbosity(verbosity)) {
-            // Quiet: only report the ID and any warnings (contradictions are important)
-            storedMsg = `Stored: ${entry.id}${
-              contradictions.length > 0
-                ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
-                : ""
-            }`;
-          } else {
-            // normal / verbose: full details (verbose adds scope/category info)
-            storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersedes?.trim() ? " (supersedes previous fact)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
-              autoSupersededIds.length > 0
-                ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})`
-                : ""
-            }${
-              contradictions.length > 0
-                ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
-                : ""
-            }`;
-            if (verbosity === "verbose") {
-              storedMsg += ` [id: ${entry.id}]`;
-              if (entry.scope)
-                storedMsg += ` [scope: ${entry.scope}${entry.scopeTarget ? `/${entry.scopeTarget}` : ""}]`;
+                .then(({ mentions, detectedLang }) => {
+                  factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+                })
+                .catch((err) => {
+                  const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+                  api.logger.warn?.(`memory-hybrid: entity enrichment failed: ${msg}`);
+                });
             }
+
+            const totalLinked = autoLinked + entityAutoLinked;
+            const verbosity = cfg.verbosity ?? "normal";
+            let storedMsg: string;
+            if (isCompactVerbosity(verbosity)) {
+              // Quiet: only report the ID and any warnings (contradictions are important)
+              storedMsg = `Stored: ${entry.id}${
+                contradictions.length > 0
+                  ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
+                  : ""
+              }`;
+            } else {
+              // normal / verbose: full details (verbose adds scope/category info)
+              storedMsg = `Stored: "${textToStore.slice(0, 100)}${textToStore.length > 100 ? "..." : ""}"${entity ? ` [entity: ${entity}]` : ""} [decay: ${entry.decayClass}]${supersedes?.trim() ? " (supersedes previous fact)" : ""}${totalLinked > 0 ? ` (linked to ${totalLinked} related fact${totalLinked === 1 ? "" : "s"})` : ""}${
+                autoSupersededIds.length > 0
+                  ? ` (auto-superseded ${autoSupersededIds.length} fact${autoSupersededIds.length === 1 ? "" : "s"})`
+                  : ""
+              }${
+                contradictions.length > 0
+                  ? ` (⚠️ contradicts ${contradictions.length} existing fact${contradictions.length === 1 ? "" : "s"})`
+                  : ""
+              }`;
+              if (verbosity === "verbose") {
+                storedMsg += ` [id: ${entry.id}]`;
+                if (entry.scope)
+                  storedMsg += ` [scope: ${entry.scope}${entry.scopeTarget ? `/${entry.scopeTarget}` : ""}]`;
+              }
+            }
+
+            auditAppend({
+              agentId: agentIdForAudit(),
+              action: "memory_store",
+              target: `memory #${entry.id}`,
+              outcome: "success",
+              sessionId: api.context?.sessionId ?? undefined,
+              context: { category },
+            });
+
+            await walRemove(walEntryId, api.logger);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: storedMsg,
+                },
+              ],
+              details: {
+                action: supersedes?.trim() ? "updated" : "created",
+                id: entry.id,
+                why: why ?? undefined,
+                backend: "both",
+                decayClass: entry.decayClass,
+                ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
+                ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
+                ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
+                ...(contradictions.length > 0
+                  ? {
+                      contradictions: contradictions.map((c) => ({
+                        contradictionId: c.contradictionId,
+                        oldFactId: c.oldFactId,
+                      })),
+                    }
+                  : {}),
+                ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
+              },
+            };
           }
-
-          auditAppend({
-            agentId: agentIdForAudit(),
-            action: "memory_store",
-            target: `memory #${entry.id}`,
-            outcome: "success",
-            sessionId: api.context?.sessionId ?? undefined,
-            context: { category },
-          });
-
+          // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
+          await walRemove(walEntryId, api.logger);
           return {
             content: [
               {
                 type: "text",
-                text: storedMsg,
+                text: `Store blocked by pre-store guard (category: ${category}).`,
               },
             ],
-            details: {
-              action: supersedes?.trim() ? "updated" : "created",
-              id: entry.id,
-              why: why ?? undefined,
-              backend: "both",
-              decayClass: entry.decayClass,
-              ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
-              ...(totalLinked > 0 ? { autoLinked: totalLinked } : {}),
-              ...(autoSupersededIds.length > 0 ? { autoSuperseded: autoSupersededIds } : {}),
-              ...(contradictions.length > 0
-                ? {
-                    contradictions: contradictions.map((c) => ({
-                      contradictionId: c.contradictionId,
-                      oldFactId: c.oldFactId,
-                    })),
-                  }
-                : {}),
-              ...(decayFreezeUntil != null ? { decayFreezeUntil } : {}),
-            },
+            details: { action: "skipped", reason: "blocked-by-guard", category },
           };
         } catch (err) {
           auditAppend({

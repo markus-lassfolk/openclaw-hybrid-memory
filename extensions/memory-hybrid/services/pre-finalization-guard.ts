@@ -333,6 +333,10 @@ export function sessionRefMatches(relatedSession: string, currentSession: string
   ) {
     return true;
   }
+  // #1591: canonical agent:main:main also matches canonical agent:main:main (same session).
+  if (isMainAgentCanonicalSessionRef(related) && isMainAgentCanonicalSessionRef(current)) {
+    return true;
+  }
   return false;
 }
 
@@ -363,9 +367,9 @@ function evaluateProjectCheckpoint(
     // checkpoint obligation for this session — return satisfied to avoid false positives (#1479).
     // Only apply this when projectFacts were explicitly provided (not just defaulted to empty).
     if (currentSessionKey && projectFactsProvided) {
-      return { satisfied: true, missingFields: [] };
+      return { satisfied: true, missingFields: [], candidateEntity: undefined };
     }
-    return { satisfied: false, missingFields: ["status"] };
+    return { satisfied: false, missingFields: ["status"], candidateEntity: undefined };
   }
 
   const grouped = groupProjectFactsByEntity(projectFacts);
