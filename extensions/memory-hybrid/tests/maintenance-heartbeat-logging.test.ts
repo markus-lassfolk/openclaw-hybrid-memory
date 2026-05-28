@@ -89,6 +89,8 @@ describe("maintenance heartbeat logging", () => {
       },
     );
 
-    expect(logs.filter((line) => line.includes("backfill-decay — still running after")).length).toBeGreaterThanOrEqual(3);
+    expect(logs.filter((line) => line.includes("backfill-decay — still running after")).length).toBeGreaterThanOrEqual(
+      3,
+    );
   });
 });
