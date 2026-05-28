@@ -584,6 +584,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                     }
 
+                    await walRemove(walEntryId, api.logger);
+
                     await maybeRefreshProjectActiveTaskProjection(newEntry.category, newEntry.id, newEntry.scope);
 
                     // Issue #159: enqueue contextual variant generation (non-blocking)
@@ -594,7 +596,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
-                    await walRemove(walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -807,6 +808,8 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
             }
 
+            await walRemove(walEntryId, api.logger);
+
             await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
             // Issue #150: write event to episodic event log
@@ -976,7 +979,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
-            await walRemove(walEntryId, api.logger);
             return {
               content: [
                 {
