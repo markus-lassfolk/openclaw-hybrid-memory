@@ -542,6 +542,37 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
   });
 });
 
+describe("Self-correction NO_ACTION handling", () => {
+  it("treats NO_ACTION without remediationContent as a valid no-op", async () => {
+    const llmResponse = JSON.stringify([
+      {
+        category: "NO_ISSUE",
+        severity: "LOW",
+        remediationType: "NO_ACTION",
+      },
+    ]);
+
+    const openai = makeOpenAIMock(llmResponse);
+    const ctx = makeCtx(openai);
+    const result = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [
+        {
+          userMessage: "Looks good now, no further changes needed.",
+          agentMessage: "I applied the requested update.",
+          sessionFile: "2026-01-01-session.jsonl",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        } as any,
+      ],
+      workspace: tmpDir,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.analysed).toBe(1);
+    expect(result.autoFixed).toBe(0);
+    expect(result.proposals).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Semantic dedup: skip duplicate PATTERN_FACT
 // ---------------------------------------------------------------------------

@@ -26,13 +26,8 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
-import {
-  extractBalancedArraySlice,
-  stripBracketContextPreamble,
-  stripMarkdownCodeFence,
-} from "../utils/llm-json-array.js";
-import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
+import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
@@ -95,34 +90,17 @@ function sanitizeLlmResponseExcerpt(content: string): string {
  *   - **invalid JSON**: `[not valid]` / truncated → null returned, caller handles error
  */
 export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
-  const normalized = stripBracketContextPreamble(stripMarkdownCodeFence(content));
-  let searchFrom = 0;
   let emptyArrayCandidate: unknown[] | null = null;
 
-  while (searchFrom < normalized.length) {
-    const start = normalized.indexOf("[", searchFrom);
-    if (start === -1) break;
-    const slice = extractBalancedArraySlice(normalized, start);
-    if (!slice) {
-      searchFrom = start + 1;
-      continue;
+  const result = tryParseFirstJsonArray(content, (parsed) => {
+    if (parsed.length === 0) {
+      emptyArrayCandidate = parsed;
+      return null;
     }
-    try {
-      const parsed: unknown = JSON.parse(slice);
-      if (Array.isArray(parsed)) {
-        if (parsed.length === 0) {
-          emptyArrayCandidate = parsed;
-        } else if (isSelfCorrectionRemediationArray(parsed)) {
-          return parsed;
-        }
-      }
-    } catch {
-      /* try next balanced span */
-    }
-    searchFrom = start + slice.length;
-  }
+    return isSelfCorrectionRemediationArray(parsed) ? parsed : null;
+  });
 
-  return emptyArrayCandidate;
+  return result ?? emptyArrayCandidate;
 }
 
 function isSelfCorrectionRemediationArray(items: unknown[]): boolean {
@@ -135,10 +113,18 @@ function isSelfCorrectionRemediationItem(item: unknown): boolean {
   const remediationType = candidate.remediationType;
   if (typeof remediationType !== "string" || remediationType.trim().length === 0) return false;
 
-  const remediationContent = candidate.remediationContent;
-  if (
-    !(typeof remediationContent === "string" || (typeof remediationContent === "object" && remediationContent !== null))
-  ) {
+  const isNoAction = remediationType.trim().toUpperCase() === "NO_ACTION";
+  if ("remediationContent" in candidate) {
+    const remediationContent = candidate.remediationContent;
+    if (
+      !(
+        typeof remediationContent === "string" ||
+        (typeof remediationContent === "object" && remediationContent !== null)
+      )
+    ) {
+      return false;
+    }
+  } else if (!isNoAction) {
     return false;
   }
 
@@ -372,7 +358,7 @@ export async function runSelfCorrectionRunForCli(
               : undefined,
           enabled: adaptiveEnabled,
         });
-        const repaired = tryParseFirstJsonArray(detail.content);
+        const repaired = parseSelfCorrectionLLMResponse(detail.content);
         return repaired === null ? null : (repaired as typeof analysed);
       };
 
@@ -461,6 +447,8 @@ export async function runSelfCorrectionRunForCli(
           (parseError as any).isParseFailure = true;
           throw parseError;
         }
+      } else {
+        analysed = [];
       }
       if (opts.verbose && analysed.length > 0) {
         logger.info?.(

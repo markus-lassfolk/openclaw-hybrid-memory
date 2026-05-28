@@ -147,6 +147,32 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).toHaveLength(2);
   });
 
+  it("accepts NO_ACTION items without remediationContent", () => {
+    const input = JSON.stringify([
+      {
+        category: "NO_ISSUE",
+        severity: "LOW",
+        remediationType: "NO_ACTION",
+      },
+    ]);
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+    expect((result as Array<{ remediationType: string }>)[0].remediationType).toBe("NO_ACTION");
+  });
+
+  it("returns null when only actionable items are missing remediationContent", () => {
+    const input = JSON.stringify([
+      {
+        category: "WRONG_APPROACH",
+        severity: "MEDIUM",
+        remediationType: "MEMORY_STORE",
+      },
+    ]);
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).toBeNull();
+  });
+
   it("skips remediationType-only object arrays and parses a later valid remediation array", () => {
     const malformed = [{ remediationType: "MEMORY_STORE" }];
     const input = `${JSON.stringify(malformed)}\n${JSON.stringify([sampleItem])}`;
@@ -154,6 +180,20 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).not.toBeNull();
     expect(result).toHaveLength(1);
     expect((result as (typeof sampleItem)[])[0].remediationType).toBe("MEMORY_STORE");
+  });
+
+  it("accepts NO_ACTION items when remediationContent is omitted", () => {
+    const items = [{ remediationType: "NO_ACTION", category: "INFO", severity: "LOW" }];
+    const result = parseSelfCorrectionLLMResponse(JSON.stringify(items));
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+    expect((result as { remediationType: string }[])[0].remediationType).toBe("NO_ACTION");
+  });
+
+  it("rejects actionable remediation items when remediationContent is omitted", () => {
+    const items = [{ remediationType: "TOOLS_RULE", category: "WRONG_APPROACH", severity: "MEDIUM" }];
+    const result = parseSelfCorrectionLLMResponse(JSON.stringify(items));
+    expect(result).toBeNull();
   });
 
   it("handles a fenced block with trailing text (combined)", () => {
