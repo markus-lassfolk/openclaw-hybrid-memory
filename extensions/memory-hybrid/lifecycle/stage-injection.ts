@@ -301,8 +301,8 @@ async function runInjection(
     if (indexIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexIds);
     const allIds = [...injectedPinnedIds, ...indexIds];
     if (ambientSeenFacts && allIds.length > 0) ambientSeenFacts.markSeen(allIds);
-    if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
-      strengthenHebbianLinks(allIds, ctx.factsDb, api.logger);
+    if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedPinnedIds.length >= 2) {
+      strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger);
     }
     const indexContent = indexLines.join("\n");
     const fullContent =
@@ -347,9 +347,8 @@ async function runInjection(
     // Index-only exposures must NOT inflate recall_count (#1559)
     ctx.factsDb.refreshIndexedFacts(indexIds);
     if (ambientSeenFacts && indexIds.length > 0) ambientSeenFacts.markSeen(indexIds);
-    if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && indexIds.length >= 2) {
-      strengthenHebbianLinks(indexIds, ctx.factsDb, api.logger);
-    }
+    // Index-only exposures must NOT strengthen Hebbian links (#1559)
+
     const indexContent = indexLines.join("\n");
     api.logger.info?.(
       `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
