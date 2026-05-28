@@ -47,3 +47,17 @@ export const ISSUE_TRANSITIONS: Record<IssueStatus, IssueStatus[]> = {
   verified: [],
   "wont-fix": ["open"],
 };
+
+export type DuplicateClosureDecision = "safe" | "needs-reconciliation";
+
+export interface DuplicateClosureAssessment {
+  candidateRef: string;
+  replacementRef?: string | null;
+  decision: DuplicateClosureDecision;
+  reasons: string[];
+}
+
+export interface DuplicateClosureGuardProof {
+  decision: DuplicateClosureDecision;
+  assessments: DuplicateClosureAssessment[];
+}
