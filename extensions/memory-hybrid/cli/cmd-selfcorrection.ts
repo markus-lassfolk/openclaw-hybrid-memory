@@ -134,13 +134,18 @@ function isSelfCorrectionRemediationItem(item: unknown): boolean {
   const remediationType = candidate.remediationType;
   if (typeof remediationType !== "string" || remediationType.trim().length === 0) return false;
 
-  const remediationContent = candidate.remediationContent;
-  if (
-    !(
-      typeof remediationContent === "string" ||
-      (typeof remediationContent === "object" && remediationContent !== null)
-    )
-  ) {
+  const isNoAction = remediationType.trim().toUpperCase() === "NO_ACTION";
+  if ("remediationContent" in candidate) {
+    const remediationContent = candidate.remediationContent;
+    if (
+      !(
+        typeof remediationContent === "string" ||
+        (typeof remediationContent === "object" && remediationContent !== null)
+      )
+    ) {
+      return false;
+    }
+  } else if (!isNoAction) {
     return false;
   }
 

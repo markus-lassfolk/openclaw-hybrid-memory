@@ -156,6 +156,20 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect((result as (typeof sampleItem)[])[0].remediationType).toBe("MEMORY_STORE");
   });
 
+  it("accepts NO_ACTION items when remediationContent is omitted", () => {
+    const items = [{ remediationType: "NO_ACTION", category: "INFO", severity: "LOW" }];
+    const result = parseSelfCorrectionLLMResponse(JSON.stringify(items));
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+    expect((result as { remediationType: string }[])[0].remediationType).toBe("NO_ACTION");
+  });
+
+  it("rejects actionable remediation items when remediationContent is omitted", () => {
+    const items = [{ remediationType: "TOOLS_RULE", category: "WRONG_APPROACH", severity: "MEDIUM" }];
+    const result = parseSelfCorrectionLLMResponse(JSON.stringify(items));
+    expect(result).toBeNull();
+  });
+
   it("handles a fenced block with trailing text (combined)", () => {
     const array = JSON.stringify([sampleItem]);
     const input = `\`\`\`json\n${array}\n\`\`\`\n\nI have summarized 1 correction item above.`;
