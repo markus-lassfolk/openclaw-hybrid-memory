@@ -92,6 +92,7 @@ function sanitizeLlmResponseExcerpt(content: string): string {
 export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
   const normalized = stripBracketContextPreamble(stripMarkdownCodeFence(content));
   let searchFrom = 0;
+  let emptyArrayCandidate: unknown[] | null = null;
 
   while (searchFrom < normalized.length) {
     const start = normalized.indexOf("[", searchFrom);
@@ -103,8 +104,12 @@ export function parseSelfCorrectionLLMResponse(content: string): unknown[] | nul
     }
     try {
       const parsed: unknown = JSON.parse(slice);
-      if (Array.isArray(parsed) && isSelfCorrectionRemediationArray(parsed)) {
-        return parsed;
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0) {
+          emptyArrayCandidate = parsed;
+        } else if (isSelfCorrectionRemediationArray(parsed)) {
+          return parsed;
+        }
       }
     } catch {
       /* try next balanced span */
@@ -112,11 +117,10 @@ export function parseSelfCorrectionLLMResponse(content: string): unknown[] | nul
     searchFrom = start + slice.length;
   }
 
-  return null;
+  return emptyArrayCandidate;
 }
 
 function isSelfCorrectionRemediationArray(items: unknown[]): boolean {
-  if (items.length === 0) return true;
   return items.every(
     (item) => typeof item === "object" && item !== null && typeof (item as Record<string, unknown>).remediationType === "string",
   );

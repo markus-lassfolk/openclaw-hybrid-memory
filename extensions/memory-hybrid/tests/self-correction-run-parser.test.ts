@@ -91,6 +91,20 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).toBeNull();
   });
 
+  it("skips non-remediation object arrays and parses the remediation array", () => {
+    const input = `Metadata: [{"id":1}]\n${JSON.stringify([sampleItem])}`;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+  });
+
+  it("prefers a later remediation array over an earlier empty array", () => {
+    const input = `[]\n${JSON.stringify([sampleItem])}`;
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+  });
+
   it("returns null for empty string input", () => {
     const result = parseSelfCorrectionLLMResponse("");
     expect(result).toBeNull();
