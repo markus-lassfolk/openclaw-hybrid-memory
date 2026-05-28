@@ -105,8 +105,11 @@ export class FactsDB extends FactsDBLayer2 {
   }
 
   /** Alias for backfillDecayClasses() for backward compatibility */
-  backfillDecay(): Record<string, number> {
-    return this.backfillDecayClasses();
+  backfillDecay(options?: {
+    onProgress?: (progress: import("./maintenance.js").BackfillDecayProgress) => void;
+    reportEvery?: number;
+  }): Record<string, number> {
+    return this.backfillDecayClasses(options);
   }
 
   pruneLogTables(retentionDays: number): number {
