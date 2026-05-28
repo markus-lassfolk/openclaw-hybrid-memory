@@ -432,6 +432,8 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
                   process.exitCode = 1;
                 }
               }
+            } else if (factsReinforced > 0 && result.annotationReasons?.errors && result.annotationReasons.errors > 0) {
+              process.exitCode = 2;
             }
           }
         },
