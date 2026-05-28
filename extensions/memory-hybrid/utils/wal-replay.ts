@@ -94,11 +94,12 @@ async function ensureVectorAndEmbeddingMeta(opts: {
   category: string;
   importance: number;
   vector: number[] | null;
+  embeddingModelName?: string | null;
   vectorDb?: VectorDB;
   embeddings?: EmbeddingProvider | null;
   factsDb: FactsDB;
 }): Promise<void> {
-  const { factId, text, category, importance, vector, vectorDb, embeddings, factsDb } = opts;
+  const { factId, text, category, importance, vector, embeddingModelName, vectorDb, embeddings, factsDb } = opts;
   if (!vectorDb) return;
 
   const embedAndStore = async (): Promise<number[] | null> => {
@@ -131,6 +132,19 @@ async function ensureVectorAndEmbeddingMeta(opts: {
         importance,
         category,
       });
+      const effectiveModel = embeddingModelName ?? embeddings?.modelName;
+      if (effectiveModel) {
+        try {
+          factsDb.setEmbeddingModel(factId, effectiveModel);
+          factsDb.storeEmbedding(factId, effectiveModel, "canonical", new Float32Array(vector), vector.length);
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "wal-replay",
+            operation: "store-embedding-metadata",
+            factId,
+          });
+        }
+      }
       return;
     }
   } catch {
@@ -167,6 +181,12 @@ export async function replayWalEntries(
 
   for (const entry of walEntries) {
     try {
+      // Skip diagnostic probe entries (e.g., doctor command durability tests).
+      if (entry.data?.probe) {
+        skipped++;
+        await wal.remove(entry.id);
+        continue;
+      }
       if (entry.operation === "store" && isSafeWalText(entry.data?.text)) {
         const text = safeString(entry.data.text);
         if (!text) continue;
@@ -191,6 +211,7 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+        const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: a non-global scope without a scopeTarget cannot be safely replayed — storing it
         // would silently change the intended scope to global (issue #1574). Skip with a diagnostic
@@ -219,6 +240,7 @@ export async function replayWalEntries(
             category,
             importance,
             vector: precomputedVector,
+            embeddingModelName,
             vectorDb,
             embeddings,
             factsDb,
@@ -263,18 +285,23 @@ export async function replayWalEntries(
           provenanceJson: provenanceJson ?? undefined,
         });
 
-        await ensureVectorAndEmbeddingMeta({
-          factId: stored.id,
-          text: stored.text,
-          category: stored.category,
-          importance: stored.importance,
-          vector: precomputedVector,
-          vectorDb,
-          embeddings,
-          factsDb,
-        });
-
-        committed++;
+        // Skip vector operations if the store was rejected (artifact text)
+        if (stored.id !== "") {
+          await ensureVectorAndEmbeddingMeta({
+            factId: stored.id,
+            text: stored.text,
+            category: stored.category,
+            importance: stored.importance,
+            vector: precomputedVector,
+            embeddingModelName,
+            vectorDb,
+            embeddings,
+            factsDb,
+          });
+          committed++;
+        } else {
+          skipped++;
+        }
         await wal.remove(entry.id);
       } else if (entry.operation === "update" && entry.targetId && isSafeWalText(entry.data?.text)) {
         const targetId = entry.targetId;
@@ -301,6 +328,7 @@ export async function replayWalEntries(
         const precomputedVector = Array.isArray(entry.data.vector)
           ? (entry.data.vector as number[]).filter((n) => typeof n === "number" && Number.isFinite(n))
           : null;
+        const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: same as "store" path — do not replay a non-global scoped update without a scopeTarget.
         const updateInvalidMsg = invalidScopeMessage(entry.id, "update", scope, scopeTarget);
@@ -338,6 +366,7 @@ export async function replayWalEntries(
               category,
               importance,
               vector: precomputedVector,
+              embeddingModelName,
               vectorDb,
               embeddings,
               factsDb,
@@ -380,20 +409,27 @@ export async function replayWalEntries(
           preserveTags: preserveTags ?? undefined,
           provenanceJson: provenanceJson ?? undefined,
         });
-        factsDb.supersede(targetId, stored.id);
 
-        await ensureVectorAndEmbeddingMeta({
-          factId: stored.id,
-          text: stored.text,
-          category: stored.category,
-          importance: stored.importance,
-          vector: precomputedVector,
-          vectorDb,
-          embeddings,
-          factsDb,
-        });
+        // Skip supersede and vector operations if store was rejected (artifact text)
+        if (stored.id !== "") {
+          factsDb.supersede(targetId, stored.id);
 
-        committed++;
+          await ensureVectorAndEmbeddingMeta({
+            factId: stored.id,
+            text: stored.text,
+            category: stored.category,
+            importance: stored.importance,
+            vector: precomputedVector,
+            embeddingModelName,
+            vectorDb,
+            embeddings,
+            factsDb,
+          });
+
+          committed++;
+        } else {
+          skipped++;
+        }
         await wal.remove(entry.id);
       } else if ((entry.operation === "store" || entry.operation === "update") && !isSafeWalText(entry.data?.text)) {
         // Empty or whitespace-only text cannot ever be replayed into FactsDB.

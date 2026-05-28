@@ -88,6 +88,75 @@ describe("PR #1332 unresolved feedback remediation", () => {
     ).toBe(false);
   });
 
+  it("allows GraphQL updateFact to edit already-persisted guarded facts", async () => {
+    const existing = {
+      id: "legacy-compact",
+      text: "old compact text",
+      category: "fact",
+      importance: 0.5,
+      confidence: 0.9,
+      decayClass: "normal",
+      source: "compact",
+      tags: [],
+      entity: null,
+      key: null,
+      value: null,
+      scope: "global",
+      scopeTarget: null,
+      expiresAt: null,
+    };
+    const replacement = { ...existing, id: "updated", text: "edited text" };
+    const storeWithResult = vi.fn(() => ({ entry: replacement, skipped: false }));
+    const context = {
+      factsDb: {
+        getById: vi.fn((id: string) => (id === existing.id ? existing : null)),
+        storeWithResult,
+        supersede: vi.fn(() => true),
+      },
+    } as unknown as ResolverContext;
+
+    const updated = await resolvers.Mutation.updateFact(
+      null,
+      { input: { id: existing.id, text: "edited text" } } as ResolverArgs,
+      context,
+    );
+
+    expect(updated).toBe(replacement);
+    expect(storeWithResult).toHaveBeenCalledWith(expect.objectContaining({ source: "compact", text: "edited text" }), {
+      allowPreStoreGuardBypass: true,
+    });
+    expect(context.factsDb.supersede).toHaveBeenCalledWith(existing.id, replacement.id);
+  });
+
+  it("prevalidates GraphQL importFacts before storing guarded facts", async () => {
+    const storeWithResult = vi.fn((input: { text: string }) => ({
+      entry: { id: input.text, text: input.text },
+      skipped: false,
+    }));
+    const context = { factsDb: { storeWithResult } } as unknown as ResolverContext;
+
+    await expect(
+      resolvers.Mutation.importFacts(
+        null,
+        { facts: [{ text: "safe" }, { text: "blocked", source: "compact" }] } as ResolverArgs,
+        context,
+      ),
+    ).rejects.toThrow(/blocked by pre-store guard/);
+    expect(storeWithResult).not.toHaveBeenCalled();
+  });
+
+  it("cleans up evicted vectors from GraphQL createFact", async () => {
+    const entry = { id: "created", text: "created" };
+    const storeWithResult = vi.fn(() => ({ entry, skipped: false, evictedFactId: "evicted" }));
+    const vectorDb = { delete: vi.fn().mockResolvedValue(true) };
+    const context = { factsDb: { storeWithResult }, vectorDb } as unknown as ResolverContext;
+
+    await expect(
+      resolvers.Mutation.createFact(null, { input: { text: "created" } } as ResolverArgs, context),
+    ).resolves.toBe(entry);
+    expect(vectorDb.delete).toHaveBeenCalledWith("evicted");
+  });
+
   it("fails GraphQL supersede mutation when the old fact is missing or already superseded", () => {
     const facts = new Map([
       ["new", { id: "new", text: "new" }],
@@ -135,6 +204,82 @@ describe("PR #1332 unresolved feedback remediation", () => {
     const output = log.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain(join(root, "custom"));
     expect(output).not.toContain(".openclaw/plugins/memory-hybrid");
+  });
+
+  it("doctor includes WAL circuit/journal/durability checks when WAL is enabled", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hm-doctor-wal-"));
+    tmpRoots.push(root);
+    const walPath = join(root, "memory.wal");
+    const command = new FakeCommand();
+    const wal = {
+      getPath: () => walPath,
+      readAll: vi.fn().mockResolvedValue([]),
+      getValidEntries: vi.fn().mockResolvedValue([]),
+      write: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+    registerDoctorCommand(
+      command as never,
+      {
+        sqlitePath: join(root, "facts.db"),
+        embedding: { provider: "openai", apiKey: "sk-test" },
+        wal: { enabled: true, walPath },
+      } as never,
+      { getCount: () => 1 } as never,
+      { getAllIds: async () => ["v1"] } as never,
+      wal as never,
+    );
+    const doctor = command.children.find((child) => child.name === "doctor");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await doctor?.handler?.();
+    const output = log.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("WAL Circuit Breaker");
+    expect(output).toContain("WAL Journal");
+    const probe = wal.write.mock.calls[0]?.[0] as { operation?: string; targetId?: string; data?: unknown } | undefined;
+    expect(probe?.operation).toBe("update");
+    expect(probe).not.toHaveProperty("targetId");
+    expect(probe?.data).toEqual(expect.objectContaining({ probe: "doctor-wal-durability" }));
+  });
+
+  it("doctor WAL durability probe is ignored by replay if cleanup fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "hm-doctor-probe-"));
+    tmpRoots.push(root);
+    const walPath = join(root, "memory.wal");
+    const command = new FakeCommand();
+    const written: unknown[] = [];
+    const wal = {
+      getPath: () => walPath,
+      readAll: vi.fn().mockResolvedValue([]),
+      getValidEntries: vi.fn().mockImplementation(async () => written),
+      write: vi.fn().mockImplementation(async (entry: unknown) => written.push(entry)),
+      remove: vi.fn().mockRejectedValue(new Error("cleanup failed")),
+    };
+    registerDoctorCommand(
+      command as never,
+      {
+        sqlitePath: join(root, "facts.db"),
+        embedding: { provider: "openai", apiKey: "sk-test" },
+        wal: { enabled: true, walPath },
+      } as never,
+      { getCount: () => 1 } as never,
+      { getAllIds: async () => ["v1"] } as never,
+      wal as never,
+    );
+    const doctor = command.children.find((child) => child.name === "doctor");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await expect(doctor?.handler?.()).rejects.toThrow(/process\.exit/);
+
+    const { replayWalEntries } = await import("../utils/wal-replay.js");
+    const factsDb = {
+      store: vi.fn(),
+      hasDuplicate: vi.fn(),
+      getRawDb: vi.fn(),
+      getById: vi.fn(),
+    };
+    const result = await replayWalEntries(wal as never, factsDb as never);
+
+    expect(result).toEqual({ committed: 0, skipped: 1 });
+    expect(factsDb.store).not.toHaveBeenCalled();
   });
 
   it("progress helpers emit completion/status output in non-TTY mode", () => {

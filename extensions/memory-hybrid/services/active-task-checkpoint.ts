@@ -294,10 +294,11 @@ function primeLatestProjectFactCacheForEntityKeys(
   entity: string,
   keys: readonly string[],
 ): void {
+  const normalizedEntity = entity.trim().toLowerCase();
   for (const key of keys) {
     const normalizedKey = key.trim();
     if (!normalizedKey) continue;
-    const cacheKey = taskEntityKey(entity, normalizedKey);
+    const cacheKey = taskEntityKey(normalizedEntity, normalizedKey);
     if (cache.has(cacheKey)) continue;
     const hit = factsDb.lookup(entity, normalizedKey, undefined, { includeSuperseded: false, limit: 1 })[0]?.entry;
     if (!hit) continue;
@@ -307,7 +308,8 @@ function primeLatestProjectFactCacheForEntityKeys(
 }
 
 function getLatestProjectValue(cache: Map<string, MemoryEntry>, entity: string, key: string): string | undefined {
-  const row = cache.get(taskEntityKey(entity, key));
+  const normalizedEntity = entity.trim().toLowerCase();
+  const row = cache.get(taskEntityKey(normalizedEntity, key));
   if (!row) return undefined;
   if (typeof row.value === "string") return row.value.trim();
   if (typeof row.text === "string") {

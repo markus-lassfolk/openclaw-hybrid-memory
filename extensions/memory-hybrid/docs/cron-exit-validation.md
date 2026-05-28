@@ -23,8 +23,9 @@ New module that validates maintenance execution by:
 - Parsing HM_EXIT file for all step results
 - Checking for `unknown command` errors in HM_LOG
 - Validating all required steps are present with `exit=0`
+- Preserving explicit skipped outcomes (for example `status=skipped reason=skipped_cooldown`)
 - Supporting skip variants (e.g., `distill-skipped` when config disabled)
-- Returning structured status: `success`, `partial`, or `failed`
+- Returning structured status: `success`, `skipped`, `partial`, or `failed`
 
 ### 2. Updated Cron Message Templates (`services/cron-job-bash-harness.ts`)
 

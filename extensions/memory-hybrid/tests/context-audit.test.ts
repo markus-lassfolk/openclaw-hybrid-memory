@@ -31,6 +31,8 @@ describe("runContextAudit", () => {
     expect(audit.workspaceFiles.totalTokens).toBeGreaterThan(0);
     expect(audit.workspaceFiles.files.some((f) => f.file === "AGENTS.md")).toBe(true);
     expect(audit.autoRecall.budgetTokens).toBe(cfg.autoRecall.maxTokens);
+    expect(audit.autoRecall.fixedBlocks.caps.hotMaxTokens).toBeGreaterThanOrEqual(0);
+    expect(audit.autoRecall.fixedBlocks.estimatedTokens.remainingForRecall).toBeGreaterThanOrEqual(0);
   });
 
   it("keeps activeTasks.count as a backwards-compatible injected-task alias", async () => {
@@ -45,7 +47,8 @@ describe("runContextAudit", () => {
         key: "status",
         value: "in_progress",
         text: "context audit alias status in progress",
-        source: "test",
+        // Must use source:"active-task" so loadTaskLedgerFromFacts picks it up (fix #1556).
+        source: "active-task",
         importance: 0.5,
         decayClass: "permanent",
       },
@@ -57,5 +60,69 @@ describe("runContextAudit", () => {
     expect(audit.activeTasks.injectedTaskCount).toBeGreaterThan(0);
     expect(audit.activeTasks.count).toBe(audit.activeTasks.ledgerActiveCount);
     expect(audit.activeTasks.injectedCount).toBe(audit.activeTasks.injectedTaskCount);
+  });
+
+  it("reports zero fixed-block caps when autoRecall is disabled", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+      autoRecall: { enabled: false },
+      activeTask: { enabled: true, injectionBudget: 1000, staleWarning: { enabled: true } },
+    });
+
+    const audit = await runContextAudit({ cfg, factsDb, workspaceRoot: tmpDir });
+
+    expect(audit.autoRecall.budgetTokens).toBe(0);
+    expect(audit.autoRecall.fixedBlocks.caps).toEqual({
+      issueMaxTokens: 0,
+      narrativeMaxTokens: 0,
+      hotMaxTokens: 0,
+      procedureMaxTokens: 0,
+      activeTaskMaxTokens: 0,
+      staleWarningMaxTokens: 0,
+    });
+    expect(audit.autoRecall.fixedBlocks.estimatedTokens.total).toBe(0);
+    expect(audit.autoRecall.fixedBlocks.estimatedTokens.remainingForRecall).toBe(0);
+  });
+
+  it("sanitizes HOT reasoning traces before estimating fixed-block tokens", async () => {
+    const cfg = hybridConfigSchema.parse({
+      embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough-to-pass" },
+      memoryTiering: { enabled: true, hotMaxTokens: 2000 },
+      autoRecall: { enabled: true, maxTokens: 400, hotMaxTokens: 200, narrativeMaxTokens: 0 },
+    });
+    factsDb.getHotFacts = (() => [
+      {
+        entry: {
+          id: "context-audit-hot-sanitize",
+          category: "fact",
+          entity: "context-audit-hot-sanitize",
+          key: "note",
+          value: "visible",
+          text: `<think>${"x".repeat(1600)}</think> visible memory`,
+          summary: null,
+          source: "test",
+          tags: [],
+          importance: 0.95,
+          decayClass: "normal",
+          recallCount: 0,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          createdAt: 1,
+          expiresAt: null,
+          validFrom: 0,
+          validUntil: null,
+          supersededBy: null,
+          scope: "global",
+        },
+        score: 1,
+        backend: "sqlite",
+      },
+    ]) as typeof factsDb.getHotFacts;
+
+    const audit = await runContextAudit({ cfg, factsDb, workspaceRoot: tmpDir });
+
+    expect(audit.autoRecall.hotTokens).toBeGreaterThan(0);
+    expect(audit.autoRecall.hotTokens).toBeLessThan(80);
+    expect(audit.autoRecall.fixedBlocks.estimatedTokens.hot).toBe(audit.autoRecall.hotTokens);
   });
 });

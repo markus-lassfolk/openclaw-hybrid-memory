@@ -35,6 +35,10 @@ export type MemoryEntry = {
   accessCount?: number;
   /** ISO 8601 timestamp of last recall hit (#237). */
   lastAccessedAt?: string | null;
+  /** Number of index-only exposures (does not inflate recall_count). */
+  indexedCount?: number;
+  /** Epoch seconds of last index-only exposure. Separate signal from last_accessed. */
+  lastIndexed?: number | null;
   supersededAt?: number | null;
   supersededBy?: string | null;
   /** When the fact became true in the real world (epoch seconds). */

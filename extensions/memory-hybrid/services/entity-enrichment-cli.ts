@@ -22,11 +22,23 @@ export type EntityEnrichmentVerboseFact = {
   mentions: EntityEnrichmentMentionSummary[];
 };
 
+export type EntityEnrichmentProgress = {
+  processed: number;
+  total: number;
+  factsEnriched: number;
+};
+
 export async function runEntityEnrichmentForCli(
   factsDb: FactsDB,
   openai: OpenAI,
   cfg: HybridMemoryConfig,
-  opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean },
+  opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+    onProgress?: (progress: EntityEnrichmentProgress) => void;
+  },
 ): Promise<{
   pending: number;
   processed: number;
@@ -57,20 +69,22 @@ export async function runEntityEnrichmentForCli(
   for (const id of ids) {
     processed++;
     const f = factsDb.getById(id);
-    if (!f?.text) continue;
-    const { mentions, detectedLang } = await extractEntityMentionsWithLlm(f.text, openai, model, {
-      stopWords: cfg.entityExtraction.stopWords,
-    });
-    factsDb.applyEntityEnrichment(id, mentions, detectedLang);
-    if (mentions.length > 0) {
-      factsEnriched++;
-      if (verbose) {
-        enrichedFacts.push({
-          factId: id,
-          mentions: mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
-        });
+    if (f?.text) {
+      const { mentions, detectedLang } = await extractEntityMentionsWithLlm(f.text, openai, model, {
+        stopWords: cfg.entityExtraction.stopWords,
+      });
+      factsDb.applyEntityEnrichment(id, mentions, detectedLang);
+      if (mentions.length > 0) {
+        factsEnriched++;
+        if (verbose) {
+          enrichedFacts.push({
+            factId: id,
+            mentions: mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
+          });
+        }
       }
     }
+    opts.onProgress?.({ processed, total: ids.length, factsEnriched });
   }
   return {
     pending: ids.length,

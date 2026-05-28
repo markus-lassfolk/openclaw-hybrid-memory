@@ -87,3 +87,22 @@ export type PathConfig = {
   /** Hard cap on maxDepth accepted by memory_path (default: 10). */
   maxPathDepth: number;
 };
+
+/**
+ * Memory pressure diagnostic snapshot configuration (Issue #1551).
+ * When memory pressure crosses a critical threshold, optionally emit a compact diagnostic bundle
+ * to distinguish JS heap, native addon memory, SQLite handles, LanceDB/Arrow buffers,
+ * and stale plugin generations.
+ */
+export type DiagnosticsConfig = {
+  /** Enable memory pressure snapshots on critical threshold (default: false). */
+  enabled: boolean;
+  /** Write JSON artifact to ~/.openclaw/diagnostics/memory-pressure/ (default: false). */
+  writeArtifact: boolean;
+  /** Minimum seconds between snapshots (rate-limit cooldown, default: 300). */
+  cooldownSec: number;
+  /** Include /proc/self/status memory fields on Linux (default: true on Linux). */
+  includeLinuxProcMem: boolean;
+  /** Max sample paths per FD group in snapshot (default: 5). */
+  fdGroupSampleLimit: number;
+};

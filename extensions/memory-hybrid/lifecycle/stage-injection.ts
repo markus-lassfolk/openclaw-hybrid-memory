@@ -209,11 +209,31 @@ async function runInjection(
     const rest: typeof candidates = [];
     for (const x of candidates) {
       const recallCount = x.entry.recallCount ?? 0;
-      if (x.entry.decayClass === "permanent" || recallCount >= pinnedRecallThreshold) pinned.push(x);
-      else rest.push(x);
+      const indexedCount = x.entry.indexedCount ?? 0;
+      // Pin by recall_count ONLY when last_accessed is recent (within 14 days) to prevent
+      // garbage artifacts (high recall_count from repeated index exposure) from being pinned (#1559).
+      const lastAccessed = x.entry.lastAccessed ?? 0;
+      const lastAccessedDaysAgo = lastAccessed > 0 ? (Date.now() / 1000 - lastAccessed) / 86400 : Infinity;
+      const isRecentlyAccessed = lastAccessedDaysAgo < 14;
+
+      // Exclude facts with disproportionate index exposure (indexed_count >> recall_count)
+      // which indicates garbage that was repeatedly shown in progressive index but never
+      // actually recalled (#1559).
+      const indexInflationRatio = recallCount > 0 ? indexedCount / recallCount : indexedCount;
+      const likelyIndexGarbage = indexInflationRatio > 10 && indexedCount > 50;
+
+      if (
+        x.entry.decayClass === "permanent" ||
+        (recallCount >= pinnedRecallThreshold && isRecentlyAccessed && !likelyIndexGarbage)
+      ) {
+        pinned.push(x);
+      } else {
+        rest.push(x);
+      }
     }
     const pinnedHeader = '<relevant-memories format="progressive_hybrid">\n';
     const pinnedPart: string[] = [];
+    const injectedPinnedIds: string[] = [];
     let pinnedTokens = estimateTokens(pinnedHeader);
     const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
     for (const x of pinned) {
@@ -224,6 +244,7 @@ async function runInjection(
       const lineTokens = estimateTokens(`${line}\n`);
       if (pinnedTokens + lineTokens > pinnedBudget) break;
       pinnedPart.push(line);
+      injectedPinnedIds.push(x.entry.id);
       pinnedTokens += lineTokens;
     }
     const indexIntro =
@@ -238,11 +259,10 @@ async function runInjection(
         `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`,
       );
       if (pinnedPart.length > 0) {
-        const pinnedIds = pinned.map((x) => x.entry.id);
-        ctx.factsDb.refreshAccessedFacts(pinnedIds);
-        if (ambientSeenFacts) ambientSeenFacts.markSeen(pinnedIds);
-        if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && pinnedIds.length >= 2) {
-          strengthenHebbianLinks(pinnedIds, ctx.factsDb, api.logger);
+        ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
+        if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedPinnedIds);
+        if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedPinnedIds.length >= 2) {
+          strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger);
         }
         const fullContent = `${pinnedHeader}${pinnedPart.join("\n")}\n</relevant-memories>`;
         api.logger.info?.(
@@ -272,9 +292,10 @@ async function runInjection(
     const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, indexBudget, 1);
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
-    if (pinnedPart.length > 0) ctx.factsDb.refreshAccessedFacts(pinned.map((x) => x.entry.id));
-    if (indexIds.length > 0) ctx.factsDb.refreshAccessedFacts(indexIds);
-    const allIds = [...pinned.map((x) => x.entry.id), ...indexIds];
+    if (injectedPinnedIds.length > 0) ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
+    // Index-only exposures must NOT inflate recall_count (#1559)
+    if (indexIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexIds);
+    const allIds = [...injectedPinnedIds, ...indexIds];
     if (ambientSeenFacts && allIds.length > 0) ambientSeenFacts.markSeen(allIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
       strengthenHebbianLinks(allIds, ctx.factsDb, api.logger);
@@ -319,7 +340,8 @@ async function runInjection(
     }
     lastProgressiveIndexIdsRef.length = 0;
     lastProgressiveIndexIdsRef.push(...indexIds);
-    ctx.factsDb.refreshAccessedFacts(indexIds);
+    // Index-only exposures must NOT inflate recall_count (#1559)
+    ctx.factsDb.refreshIndexedFacts(indexIds);
     if (ambientSeenFacts && indexIds.length > 0) ambientSeenFacts.markSeen(indexIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && indexIds.length >= 2) {
       strengthenHebbianLinks(indexIds, ctx.factsDb, api.logger);

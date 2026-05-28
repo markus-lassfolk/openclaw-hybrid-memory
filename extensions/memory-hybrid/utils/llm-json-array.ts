@@ -81,8 +81,16 @@ export function extractFirstJsonArraySubstring(text: string): string | null {
 /**
  * Find the first balanced `[...]` in the response that parses as a JSON array.
  * Skips prose like `[see below]` or `[batch]` that are not valid JSON arrays.
+ *
+ * @param raw - The raw string to parse
+ * @param filter - Optional filter callback to validate parsed arrays; receives the parsed array
+ *                 and should return the array to accept or null/undefined to continue searching.
+ *                 When provided, the function returns the first array accepted by the filter.
  */
-export function tryParseFirstJsonArray(raw: string): unknown[] | null {
+export function tryParseFirstJsonArray(
+  raw: string,
+  filter?: (parsed: unknown[]) => unknown[] | null | undefined,
+): unknown[] | null {
   const s = stripBracketContextPreamble(stripMarkdownCodeFence(raw));
   let searchFrom = 0;
   while (searchFrom < s.length) {
@@ -95,7 +103,14 @@ export function tryParseFirstJsonArray(raw: string): unknown[] | null {
     }
     try {
       const parsed: unknown = JSON.parse(slice);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        if (filter) {
+          const result = filter(parsed);
+          if (result !== null && result !== undefined) return result;
+        } else {
+          return parsed;
+        }
+      }
     } catch {
       /* try next [ — skip this whole balanced span (avoids O(n) single-char steps on long junk) */
     }

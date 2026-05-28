@@ -57,6 +57,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _testing } from "../index.js";
+import { pluginLogger } from "../utils/logger.js";
 
 const { WriteAheadLog } = _testing;
 
@@ -93,6 +94,18 @@ describe("WriteAheadLog", () => {
       await nestedWal.init();
       expect(existsSync(join(testDir, "nested", "dir"))).toBe(true);
       await nestedWal.clear(); // cleanup
+    });
+
+    it("logs init load failures instead of silently swallowing them", async () => {
+      const localWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
+      const readAllSpy = vi.spyOn(localWal, "readAll").mockRejectedValue(new Error("simulated init read failure"));
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+
+      await localWal.init();
+
+      expect(readAllSpy).toHaveBeenCalledOnce();
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL init: failed to load active IDs"));
+      warnSpy.mockRestore();
     });
   });
 

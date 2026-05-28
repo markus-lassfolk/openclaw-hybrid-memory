@@ -301,6 +301,9 @@ export async function runBackfillForCli(
         source: `backfill:${fact.source}`,
         sourceDate: sourceDateSec(fact.source_date),
       });
+      if (storeResult.skipped) {
+        continue;
+      }
       const entry = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       await cleanupEvictedVector({
@@ -730,6 +733,9 @@ export async function runIngestFilesForCli(
         decayClass: "stable",
         tags: fact.tags,
       });
+      if (storeResult.skipped) {
+        continue;
+      }
       const entry = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       await cleanupEvictedVector({

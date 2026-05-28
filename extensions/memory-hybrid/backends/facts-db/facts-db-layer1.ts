@@ -13,12 +13,13 @@ import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
 import {
-  type StoreFactInput,
-  type StoreFactResult,
   deleteFact,
   getDuplicateIdByNormalizedHash,
   hasDuplicateText,
   refreshAccessedFacts as refreshAccessedFactsImpl,
+  refreshIndexedFacts as refreshIndexedFactsImpl,
+  type StoreFactInput,
+  type StoreFactResult,
   statsDailyWrites as statsDailyWritesImpl,
   storeFact,
 } from "./crud.js";
@@ -44,14 +45,14 @@ import {
 import {
   logRecall as logRecallImpl,
   pruneRecallLog as pruneRecallLogImpl,
+  type RetierReport,
   retierFacts as retierFactsImpl,
   runCompaction as runCompactionImpl,
   setFactTier,
   setPreserveTags as setPreserveTagsImpl,
   setPreserveUntil as setPreserveUntilImpl,
-  trimToBudget as trimToBudgetImpl,
-  type RetierReport,
   type TieringOptions,
+  trimToBudget as trimToBudgetImpl,
 } from "./maintenance.js";
 import { getScanCursor as getScanCursorHelper, updateScanCursor as updateScanCursorHelper } from "./scan-cursors.js";
 import { bootstrapFactsCoreSchema } from "./schema-bootstrap.js";
@@ -233,9 +234,15 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       warnContext?: string;
       /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
       suppressVectorFallbackWarning?: boolean;
+      /** Trusted edit path for re-storing already persisted legacy guarded facts. */
+      allowPreStoreGuardBypass?: boolean;
     },
   ): MemoryEntry {
-    return this.storeWithResult(entry, options).entry;
+    const result = this.storeWithResult(entry, options);
+    // Skipped results carry a non-addressable placeholder entry (id === "") for
+    // legacy store() callers. storeWithResult() callers must check result.skipped
+    // before vector, supersession, provenance, or event side effects.
+    return result.entry;
   }
 
   storeWithResult(
@@ -249,6 +256,8 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       warnContext?: string;
       /** Suppress the vector-candidates-missing warning entirely (caller will summarise). */
       suppressVectorFallbackWarning?: boolean;
+      /** Trusted edit path for re-storing already persisted legacy guarded facts. */
+      allowPreStoreGuardBypass?: boolean;
     },
   ): StoreFactResult {
     const warnOnce = (key: string, message: string): void => {
@@ -270,6 +279,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
         warnOnce,
         warnOnceKey: options?.warnContext,
         suppressVectorFallbackWarning: options?.suppressVectorFallbackWarning,
+        allowPreStoreGuardBypass: options?.allowPreStoreGuardBypass,
       },
       entry,
     );
@@ -282,6 +292,11 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   /** Update recall_count and last_accessed for facts (public for progressive disclosure). Bulk UPDATE to avoid N+1. */
   refreshAccessedFacts(ids: string[]): void {
     refreshAccessedFactsImpl(this.liveDb, ids);
+  }
+
+  /** Update indexed_count and last_indexed for index-only exposures (#1559). Does NOT inflate recall_count. */
+  refreshIndexedFacts(ids: string[]): void {
+    refreshIndexedFactsImpl(this.liveDb, ids);
   }
 
   /** Record a memory_recall invocation outcome for hit-rate tracking (Issue #148). */

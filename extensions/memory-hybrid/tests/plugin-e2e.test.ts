@@ -13,10 +13,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IssueStore } from "../backends/issue-store.js";
-import { type ActiveTaskProjectionConfig, hybridConfigSchema } from "../config.js";
+import { hybridConfigSchema } from "../config.js";
 import memoryHybridPlugin from "../index.js";
 import { _testing } from "../index.js";
-import { applyActiveTaskProjectionFilters, loadTaskLedgerFromFacts } from "../services/task-ledger-facts.js";
+import { groupProjectFactsByEntity } from "../services/task-ledger-facts.js";
 import { closeOldDatabases, initializeDatabases } from "../setup/init-databases.js";
 import { registerTools } from "../setup/register-tools.js";
 
@@ -328,6 +328,28 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     expect(texts.some((t) => t.includes("banana server port 9999"))).toBe(true);
   });
 
+  it("memory_store blocks credential-like content when vault is disabled", async () => {
+    registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
+
+    const storeTool = api.getTool("memory_store");
+    const recallTool = api.getTool("memory_recall");
+
+    const result = (await storeTool?.execute("call-cred-block", {
+      text: "OpenAI API Key: sk-testAbCdEfGh1234IjKlMnOpQrSt",
+      category: "technical",
+      importance: 0.9,
+    })) as { content?: { type: string; text: string }[]; details?: { action?: string } };
+
+    expect(result.details?.action).toBe("credential_blocked_no_vault");
+    expect(result.content?.[0]?.text).toContain("blocked");
+
+    const recallResult = (await recallTool?.execute("call-cred-block-recall", {
+      query: "OpenAI API Key",
+      limit: 5,
+    })) as { details?: { count?: number } };
+    expect(recallResult.details?.count ?? 0).toBe(0);
+  });
+
   it("memory_recall exposes constrained-recall mode with filter and rank explanation", async () => {
     registerTools(buildE2EContext({ tmpDir, factsDb, vectorDb, cfg, api }) as never, api as never);
 
@@ -609,13 +631,6 @@ describe("Core and common flows e2e", () => {
     const storeTool = api.getTool("memory_store");
     const entity = "stewardship-reliability-reset";
     const title = "Stewardship reliability reset and hardening";
-    const projection: ActiveTaskProjectionConfig = {
-      mode: "readable",
-      excludeGenericTitle: true,
-      titleMinChars: 0,
-      dedupeBy: "none",
-      sectioned: true,
-    };
 
     await storeTool?.execute("call-1", {
       text: "Task status in progress",
@@ -650,9 +665,6 @@ describe("Core and common flows e2e", () => {
       importance: 0.8,
     });
 
-    const beforeTitle = applyActiveTaskProjectionFilters(loadTaskLedgerFromFacts(factsDb).active, projection);
-    expect(beforeTitle).toHaveLength(0);
-
     const titleResult = (await storeTool?.execute("call-5", {
       text: title,
       category: "project",
@@ -664,13 +676,17 @@ describe("Core and common flows e2e", () => {
       details?: { action?: string; id?: string };
     };
 
+    // Key-awareness: the title key write must not be mistaken for a duplicate.
     expect(titleResult.details?.action).not.toBe("duplicate");
     expect(titleResult.details?.id).toBeDefined();
 
-    const afterTitle = applyActiveTaskProjectionFilters(loadTaskLedgerFromFacts(factsDb).active, projection);
-    expect(afterTitle).toHaveLength(1);
-    expect(afterTitle[0].label).toBe(entity);
-    expect(afterTitle[0].description).toBe(title);
+    // memory_store writes use source:"memory_store", not source:"active-task",
+    // so they must NOT appear in the active-task projection (fix #1556).
+    // Verify the raw key-aware DB state instead.
+    const projectRows = groupProjectFactsByEntity(factsDb.listFactsByCategory("project", 100));
+    const row = projectRows.get(entity);
+    expect(row?.get("title")?.value).toBe(title);
+    expect(row?.get("status")?.value).toBe("in_progress");
   });
 });
 

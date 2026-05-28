@@ -226,12 +226,12 @@ describe("replayWalEntries", () => {
     expect(await wal.readAll()).toHaveLength(0);
   });
 
-  it("does not label a precomputed WAL vector with the current embedding model", async () => {
+  it("uses WAL embedding model metadata for precomputed vectors", async () => {
     const vectorDb = {
       store: vi.fn().mockResolvedValue(undefined),
     } as unknown as VectorDB;
     const embeddings = {
-      modelName: "current-model",
+      modelName: "text-embedding-3-large",
       embed: vi.fn().mockResolvedValue([0.9, 0.1]),
     };
     await wal.write(
@@ -241,6 +241,7 @@ describe("replayWalEntries", () => {
           category: "fact",
           source: "test",
           vector: [0.1, 0.2, 0.3],
+          embeddingModelName: "text-embedding-3-small",
         },
       }),
     );
@@ -252,8 +253,52 @@ describe("replayWalEntries", () => {
     };
     expect(vectorDb.store).toHaveBeenCalledWith(expect.objectContaining({ id: stored.id, vector: [0.1, 0.2, 0.3] }));
     expect(embeddings.embed).not.toHaveBeenCalled();
-    expect(factsDb.getById(stored.id)?.embeddingModel).toBeNull();
-    expect(factsDb.getEmbeddings(stored.id)).toHaveLength(0);
+    expect(factsDb.getById(stored.id)?.embeddingModel).toBe("text-embedding-3-small");
+    expect(factsDb.getEmbeddings(stored.id)).toEqual([
+      {
+        model: "text-embedding-3-small",
+        variant: "canonical",
+        embedding: new Float32Array([0.1, 0.2, 0.3]),
+      },
+    ]);
+  });
+
+  it("falls back to runtime embedding model for legacy WAL vectors without model metadata", async () => {
+    const vectorDb = {
+      store: vi.fn().mockResolvedValue(undefined),
+    } as unknown as VectorDB;
+    const embeddings = {
+      modelName: "legacy-runtime-model",
+      embed: vi.fn().mockResolvedValue([0.9, 0.1]),
+    };
+    await wal.write(
+      walEntry({
+        data: {
+          text: "Legacy precomputed vector fact",
+          category: "fact",
+          source: "test",
+          vector: [0.4, 0.5, 0.6],
+        },
+      }),
+    );
+
+    await replayWalEntries(wal, factsDb, vectorDb, embeddings as never);
+
+    const stored = factsDb
+      .getRawDb()
+      .prepare("SELECT id FROM facts WHERE text = ?")
+      .get("Legacy precomputed vector fact") as {
+      id: string;
+    };
+    expect(embeddings.embed).not.toHaveBeenCalled();
+    expect(factsDb.getById(stored.id)?.embeddingModel).toBe("legacy-runtime-model");
+    expect(factsDb.getEmbeddings(stored.id)).toEqual([
+      {
+        model: "legacy-runtime-model",
+        variant: "canonical",
+        embedding: new Float32Array([0.4, 0.5, 0.6]),
+      },
+    ]);
   });
 
   it("removes store entries when store-side dedupe already handled the write", async () => {

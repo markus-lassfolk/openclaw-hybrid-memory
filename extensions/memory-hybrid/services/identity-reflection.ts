@@ -188,7 +188,7 @@ export async function runIdentityReflection(
   let stored = 0;
   const runId = randomUUID();
   for (const item of parsed) {
-    const latest = store.getLatestByQuestion(item.questionKey);
+    const latest = store.getLatestByQuestion(item.questionKey, { scopeFilter });
     if (latest && normalizeForDedupe(latest.insight) === normalizeForDedupe(item.insight)) {
       continue;
     }
@@ -208,6 +208,7 @@ export async function runIdentityReflection(
       sourcePatternCount: patterns.length,
       sourceRuleCount: rules.length,
       sourceMetaCount: metas.length,
+      scopeFilter,
     });
     stored++;
     if (opts.verbose) {

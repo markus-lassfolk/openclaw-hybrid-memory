@@ -13,6 +13,7 @@ import {
   getByCategory as getByCategoryImpl,
   getCount as getCountImpl,
   getMaxCreatedAtByCategory as getMaxCreatedAtByCategoryImpl,
+  getProjectFacts as getProjectFactsImpl,
   getRecentFacts as getRecentFactsImpl,
   getUnattemptedOtherFacts as getUnattemptedOtherFactsImpl,
   listDirectives as listDirectivesImpl,
@@ -465,8 +466,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return countExpiredFactsImpl(this.liveDb);
   }
 
-  backfillDecayClasses(): Record<string, number> {
-    return backfillDecayClassesImpl(this.liveDb);
+  backfillDecayClasses(options?: Parameters<typeof backfillDecayClassesImpl>[1]): Record<string, number> {
+    return backfillDecayClassesImpl(this.liveDb, options);
   }
 
   reclassifyDecayClasses(
@@ -492,6 +493,14 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
   /** List non-superseded facts by category (for CLI list command). */
   listFactsByCategory(category: string, limit = 100): MemoryEntry[] {
     return listFactsByCategoryImpl(this.liveDb, category, limit);
+  }
+
+  /**
+   * Targeted project-fact query for active-task projection (#1553).
+   * Uses a category='project' filter instead of loading all facts, then filtering by category.
+   */
+  getProjectFacts(limit = 8000, scopeFilter?: ScopeFilter | null): MemoryEntry[] {
+    return getProjectFactsImpl(this.liveDb, limit, scopeFilter);
   }
 
   /** List directive facts (source LIKE 'directive:%'), non-superseded, by created_at DESC. */

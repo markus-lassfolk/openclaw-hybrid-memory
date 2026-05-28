@@ -7,6 +7,7 @@
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -86,6 +87,7 @@ export type { ActiveTaskContext };
 export type HybridMemCliContext = {
   factsDb: FactsDB;
   vectorDb: VectorDB;
+  wal?: WriteAheadLog | null;
   aliasDb?: AliasDB | null;
   crystallizationStore?: CrystallizationStore | null;
   versionInfo: {
@@ -229,6 +231,21 @@ export type HybridMemCliContext = {
       factIdOld: string;
     }>;
   }>;
+  runResolveContradictionsDryRun: () => Promise<{
+    autoResolvable: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
+    ambiguous: Array<{
+      contradictionId: string;
+      factIdNew: string;
+      factIdOld: string;
+    }>;
+  }>;
+  runResolveContradictionsProjectStateLww: (opts: {
+    dryRun?: boolean;
+  }) => Promise<import("../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -254,7 +271,13 @@ export type HybridMemCliContext = {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean }) => Promise<{
+  runEntityEnrichment: (opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+    onProgress?: (progress: import("../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
+  }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;
@@ -576,6 +599,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       cfg: ctx.cfg,
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
+      wal: ctx.wal,
       embeddings: ctx.embeddings,
       runConfigSet: ctx.runConfigSet,
     };

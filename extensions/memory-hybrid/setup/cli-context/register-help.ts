@@ -494,6 +494,7 @@ export function createHybridMemCliContext(
   return {
     factsDb: handlerCtx.factsDb,
     vectorDb: handlerCtx.vectorDb,
+    wal: handlerCtx.wal,
     aliasDb: handlerCtx.aliasDb,
     crystallizationStore: handlerCtx.crystallizationStore ?? null,
     versionInfo: services.versionInfo,
@@ -534,6 +535,8 @@ export function createHybridMemCliContext(
     runDreamCycle: services.runDreamCycle,
     runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,
+    runResolveContradictionsDryRun: services.runResolveContradictionsDryRun,
+    runResolveContradictionsProjectStateLww: services.runResolveContradictionsProjectStateLww,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
       model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "maintenance"),

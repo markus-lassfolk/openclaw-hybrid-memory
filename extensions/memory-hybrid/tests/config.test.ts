@@ -543,6 +543,11 @@ describe("hybridConfigSchema.parse", () => {
         enabled: true,
         interactiveEnrichment: "balanced",
         maxTokens: 500,
+        hotMaxTokens: 120,
+        narrativeMaxTokens: 140,
+        procedureMaxTokens: 90,
+        activeTaskMaxTokens: 200,
+        staleWarningMaxTokens: 80,
         injectionFormat: "short",
         limit: 10,
         minScore: 0.5,
@@ -553,6 +558,11 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.autoRecall.limit).toBe(10);
     expect(result.autoRecall.minScore).toBe(0.5);
     expect(result.autoRecall.interactiveEnrichment).toBe("balanced");
+    expect(result.autoRecall.hotMaxTokens).toBe(120);
+    expect(result.autoRecall.narrativeMaxTokens).toBe(140);
+    expect(result.autoRecall.procedureMaxTokens).toBe(90);
+    expect(result.autoRecall.activeTaskMaxTokens).toBe(200);
+    expect(result.autoRecall.staleWarningMaxTokens).toBe(80);
   });
 
   it("parses autoRecall.interactiveEnrichment", () => {
@@ -564,6 +574,36 @@ describe("hybridConfigSchema.parse", () => {
       },
     });
     expect(result.autoRecall.interactiveEnrichment).toBe("fast");
+  });
+
+  it("defaults autoRecall.capabilityHints to off", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+      },
+    });
+    expect(result.autoRecall.capabilityHints).toBe("off");
+  });
+
+  it("parses autoRecall.capabilityHints override", () => {
+    const always = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+        capabilityHints: "always",
+      },
+    });
+    expect(always.autoRecall.capabilityHints).toBe("always");
+
+    const off = hybridConfigSchema.parse({
+      ...validBase,
+      autoRecall: {
+        enabled: true,
+        capabilityHints: "off",
+      },
+    });
+    expect(off.autoRecall.capabilityHints).toBe("off");
   });
 
   it("parses autoRecall.recallTiming", () => {

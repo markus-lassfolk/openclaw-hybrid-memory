@@ -70,7 +70,13 @@ interface CliContextServices {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean }) => Promise<{
+  runEntityEnrichment: (opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+    onProgress?: (progress: import("../../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
+  }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;
@@ -91,6 +97,13 @@ interface CliContextServices {
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
   }>;
+  runResolveContradictionsDryRun: () => Promise<{
+    autoResolvable: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+    ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
+  }>;
+  runResolveContradictionsProjectStateLww: (opts: {
+    dryRun?: boolean;
+  }) => Promise<import("../../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
   getMemoryCategories: () => string[];
   mergeResults: HybridMemCliContext["mergeResults"];
   parseSourceDate: (v: string | number | null | undefined) => number | null;
@@ -389,6 +402,9 @@ export function buildCliContextServices(
       });
     },
     runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
+    runResolveContradictionsDryRun: () => Promise.resolve(factsDb.previewResolveContradictions()),
+    runResolveContradictionsProjectStateLww: (opts: { dryRun?: boolean }) =>
+      Promise.resolve(factsDb.resolveContradictionsProjectStateLww(opts)),
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,
     parseSourceDate,

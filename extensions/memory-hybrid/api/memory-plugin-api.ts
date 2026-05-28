@@ -111,6 +111,10 @@ export interface MemoryPluginAPI {
   recallInFlightRef: { value: number };
   /** Last prompt used for before_agent_start recall; used to re-match memories after compaction (#957). */
   lastAutoRecallPromptRef: { value: string | null };
+  /** Monotonic lifecycle registration generation for stale-hook guards. */
+  registrationGeneration?: number;
+  /** Global generation ref updated on each plugin re-registration. */
+  currentRegistrationGenerationRef?: { value: number };
 
   // --- WAL & search (raw; caller binds wal where needed) ---
   walWrite: WalWriteFn;

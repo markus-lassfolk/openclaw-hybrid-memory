@@ -2,11 +2,15 @@
  * CLI command for quick health status with traffic-light indicators
  */
 
+import { existsSync, statSync } from "node:fs";
 import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
+import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
 
 interface HealthIndicator {
   name: string;
@@ -19,6 +23,7 @@ export function registerHealthCommand(
   cfg: HybridMemoryConfig,
   factsDb: FactsDB,
   vectorDb: VectorDB,
+  wal: WriteAheadLog | null = null,
 ): void {
   program
     .command("health")
@@ -138,6 +143,134 @@ export function registerHealthCommand(
           name: "Database Sync",
           status: "warn",
           detail: "Could not verify",
+        });
+      }
+
+      // Check WAL health
+      if (!cfg.wal?.enabled) {
+        indicators.push({
+          name: "WAL",
+          status: "warn",
+          detail: "Disabled in config (crash replay unavailable)",
+        });
+      } else if (!wal) {
+        indicators.push({
+          name: "WAL",
+          status: "error",
+          detail: "Enabled in config but WAL runtime is unavailable",
+        });
+      } else {
+        try {
+          const breaker = getWalCircuitBreakerState(wal);
+          const walPath = breaker.walPath ?? cfg.wal.walPath ?? "unknown";
+          const walSizeBytes =
+            breaker.walPath && existsSync(breaker.walPath) ? Math.max(0, statSync(breaker.walPath).size) : 0;
+          const allEntries = await wal.readAll();
+          const validEntries = await wal.getValidEntries();
+          const staleEntries = Math.max(0, allEntries.length - validEntries.length);
+
+          if (breaker.persistentDisabled) {
+            indicators.push({
+              name: "WAL",
+              status: "error",
+              detail: `Persistently disabled via circuit breaker (${breaker.sentinelPath ?? walPath})`,
+            });
+          } else if (breaker.inMemoryDisabled) {
+            indicators.push({
+              name: "WAL",
+              status: "warn",
+              detail: "Circuit breaker open in current process",
+            });
+          } else if (walSizeBytes > WAL_SIZE_WARN_BYTES || staleEntries > 0) {
+            indicators.push({
+              name: "WAL",
+              status: "warn",
+              detail: `${validEntries.length} pending, ${staleEntries} stale, ${formatBytes(walSizeBytes)} at ${walPath}`,
+            });
+          } else {
+            indicators.push({
+              name: "WAL",
+              status: "good",
+              detail: `${validEntries.length} pending, ${formatBytes(walSizeBytes)} at ${walPath}`,
+            });
+          }
+        } catch (error) {
+          indicators.push({
+            name: "WAL",
+            status: "error",
+            detail: `Health check failed: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      }
+
+      // Decay profile guidance (Issue #1582).
+      try {
+        const decayBreakdown =
+          typeof (factsDb as { statsBreakdownByDecayClass?: unknown }).statsBreakdownByDecayClass === "function"
+            ? (
+                factsDb as {
+                  statsBreakdownByDecayClass: () => Record<string, number>;
+                }
+              ).statsBreakdownByDecayClass()
+            : null;
+        if (decayBreakdown) {
+          const total = Object.values(decayBreakdown).reduce((sum, count) => sum + count, 0);
+          const stablePermanent = (decayBreakdown.stable ?? 0) + (decayBreakdown.permanent ?? 0);
+          const ratio = total > 0 ? stablePermanent / total : 0;
+          if (ratio > 0.6) {
+            indicators.push({
+              name: "Decay Profile",
+              status: "warn",
+              detail: `stable+permanent ${(ratio * 100).toFixed(1)}% — run: openclaw hybrid-mem decay reclassify --dry-run --stable-only`,
+            });
+          } else {
+            indicators.push({
+              name: "Decay Profile",
+              status: "good",
+              detail: `stable+permanent ${(ratio * 100).toFixed(1)}%`,
+            });
+          }
+        }
+      } catch (_error) {
+        indicators.push({
+          name: "Decay Profile",
+          status: "warn",
+          detail: "Could not inspect decay distribution",
+        });
+      }
+
+      // Vector bounds visibility (Issue #1554).
+      try {
+        const bounds =
+          typeof (vectorDb as { getRuntimeBounds?: unknown }).getRuntimeBounds === "function"
+            ? (
+                vectorDb as {
+                  getRuntimeBounds: () => {
+                    vectorSearchMaxResults: number;
+                    semanticCacheMaxRowsPerFilterKey: number;
+                    semanticCacheCandidateLimitMax: number;
+                  };
+                }
+              ).getRuntimeBounds()
+            : null;
+        if (bounds) {
+          indicators.push({
+            name: "Vector Bounds",
+            status: "good",
+            detail: `search<=${bounds.vectorSearchMaxResults}, cacheRows<=${bounds.semanticCacheMaxRowsPerFilterKey}, cacheCandidates<=${bounds.semanticCacheCandidateLimitMax}`,
+          });
+        } else {
+          indicators.push({
+            name: "Vector Bounds",
+            status: "warn",
+            detail: "Runtime bounds unavailable",
+          });
+        }
+      } catch (_error) {
+        indicators.push({
+          name: "Vector Bounds",
+          status: "warn",
+          detail: "Could not inspect vector bounds",
         });
       }
 

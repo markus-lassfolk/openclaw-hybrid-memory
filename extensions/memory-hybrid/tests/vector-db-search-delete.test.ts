@@ -437,3 +437,80 @@ describe("VectorDB.deleteMany", () => {
     expect(fallbackDeleteSpy).toHaveBeenNthCalledWith(2, id2.toLowerCase());
   });
 });
+
+describe("VectorDB runtime bounds/telemetry observability", () => {
+  const DIM = 3;
+
+  it("caps vector search result materialization by runtime bound and records telemetry", async () => {
+    const db = new VectorDB("/tmp/test-lance-search-bound", DIM);
+    const ensureInitializedSpy = vi.spyOn(
+      db as unknown as { ensureInitialized: () => Promise<void> },
+      "ensureInitialized",
+    );
+    const getTableSpy = vi.spyOn(
+      db as unknown as {
+        getTable: () => {
+          vectorSearch: (vector: number[]) => { limit: (n: number) => { toArray: () => Promise<unknown[]> } };
+        };
+      },
+      "getTable",
+    );
+    let capturedLimit = 0;
+    ensureInitializedSpy.mockResolvedValue(undefined);
+    getTableSpy.mockReturnValue({
+      vectorSearch: () => ({
+        limit: (n: number) => {
+          capturedLimit = n;
+          return { toArray: async () => [] };
+        },
+      }),
+    });
+    const internals = db as unknown as { lanceDbAvailable: boolean; lanceInitFailed: boolean; table: object | null };
+    internals.lanceDbAvailable = true;
+    internals.lanceInitFailed = false;
+    internals.table = {};
+
+    await db.search([0.1, 0.2, 0.3], 10_000, 0);
+
+    const bounds = db.getRuntimeBounds();
+    const telemetry = db.getSearchTelemetry();
+    expect(capturedLimit).toBeLessThanOrEqual(bounds.vectorSearchMaxResults);
+    expect(telemetry.lastEffectiveLimit).toBe(capturedLimit);
+    expect(telemetry.lastRequestedLimit).toBe(10_000);
+    expect(telemetry.total).toBe(1);
+    expect(telemetry.active).toBe(0);
+  });
+
+  it("caps semantic-cache candidate lookup size by runtime bound", async () => {
+    const db = new VectorDB("/tmp/test-lance-cache-bound", DIM);
+    const ensureInitializedSpy = vi.spyOn(
+      db as unknown as { ensureInitialized: () => Promise<void> },
+      "ensureInitialized",
+    );
+    ensureInitializedSpy.mockResolvedValue(undefined);
+    let capturedLimit = 0;
+    const cacheTable = {
+      vectorSearch: () => ({
+        limit: (n: number) => {
+          capturedLimit = n;
+          return { toArray: async () => [] };
+        },
+      }),
+    };
+    const internals = db as unknown as {
+      lanceDbAvailable: boolean;
+      lanceInitFailed: boolean;
+      semanticQueryCacheTable: object | null;
+      semanticQueryCacheSchemaValid: boolean;
+    };
+    internals.lanceDbAvailable = true;
+    internals.lanceInitFailed = false;
+    internals.semanticQueryCacheTable = cacheTable as unknown as object;
+    internals.semanticQueryCacheSchemaValid = true;
+
+    await db.getSemanticQueryCacheMatch([0.1, 0.2, 0.3], { candidateLimit: 10_000 });
+
+    const bounds = db.getRuntimeBounds();
+    expect(capturedLimit).toBeLessThanOrEqual(bounds.semanticCacheCandidateLimitMax);
+  });
+});

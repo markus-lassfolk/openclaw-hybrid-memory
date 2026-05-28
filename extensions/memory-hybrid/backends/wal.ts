@@ -3,8 +3,7 @@
  * Append-only NDJSON format; fsync after each write for durability.
  */
 
-import { mkdirSync } from "node:fs";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
@@ -32,6 +31,7 @@ export type WALEntry = {
     summary?: string | null;
     tags?: string[];
     vector?: number[];
+    embeddingModelName?: string | null;
     // Optional metadata fields (best-effort) so replay can preserve semantics.
     scope?: "global" | "user" | "agent" | "session";
     scopeTarget?: string | null;
@@ -44,6 +44,8 @@ export type WALEntry = {
     preserveUntil?: number | null;
     preserveTags?: string[] | null;
     provenanceJson?: string | null;
+    // Non-replayable diagnostic marker entries (for example doctor WAL durability probes).
+    probe?: string;
   };
 };
 
@@ -81,6 +83,10 @@ export class WriteAheadLog {
     mkdirSync(dirname(walPath), { recursive: true });
   }
 
+  getPath(): string {
+    return this.walPath;
+  }
+
   async init(): Promise<void> {
     if (this.initPromise) {
       return this.initPromise;
@@ -96,7 +102,14 @@ export class WriteAheadLog {
         await prevLock;
         const entries = await this.readAll();
         this.activeIds = new Set(entries.map((e) => e.id));
-      } catch {
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "wal-init",
+          subsystem: "wal",
+        });
+        pluginLogger.warn(
+          `WAL init: failed to load active IDs, continuing with empty in-memory set: ${err instanceof Error ? err.message : String(err)}`,
+        );
         this.activeIds = new Set();
       } finally {
         // biome-ignore lint/style/noNonNullAssertion: Synchronous

@@ -252,3 +252,19 @@ describe("runStoreForCli credential parse failure", () => {
     expect(vaultList.length).toBe(0);
   });
 });
+
+describe("runStoreForCli credential blocked when vault unavailable", () => {
+  it("returns credential_blocked_no_vault when vault is disabled", async () => {
+    mockCtx.cfg.credentials.enabled = false;
+    const opts: StoreCliOpts = {
+      text: "OpenAI API Key: sk-testAbCdEfGh1234IjKlMnOpQrSt",
+      category: "technical",
+    };
+
+    const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(result.outcome).toBe("credential_blocked_no_vault");
+
+    expect(credentialsDb.list()).toHaveLength(0);
+    expect(factsDb.getAll()).toHaveLength(0);
+  });
+});
