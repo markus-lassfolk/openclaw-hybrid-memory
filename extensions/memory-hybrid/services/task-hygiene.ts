@@ -83,22 +83,23 @@ export async function fetchLivePrBlockerStatus(
     return "no_live_blocker";
   }
 
-  const ghArgs = [
-    "pr",
-    "view",
-    String(prNumber),
-    "--repo",
-    `${owner}/${repo}`,
-    "--json",
-    "mergeStateStatus,reviewDecision,reviewThreads,mergeable,statusCheckRollup,commits",
-    "--jq=.",
-  ];
-
   const ac = new AbortController();
   const timeout = setTimeout(() => ac.abort(), 20_000);
   const outerSignal = opts.signal ?? ac.signal;
 
   try {
+    // Fetch basic PR fields via `gh pr view --json`
+    const ghArgs = [
+      "pr",
+      "view",
+      String(prNumber),
+      "--repo",
+      `${owner}/${repo}`,
+      "--json",
+      "mergeStateStatus,reviewDecision,mergeable,statusCheckRollup,commits",
+      "--jq=.",
+    ];
+
     const { stdout } = await execFileAsync("gh", ghArgs, {
       encoding: "utf-8",
       signal: outerSignal,
@@ -106,9 +107,46 @@ export async function fetchLivePrBlockerStatus(
     });
     const pr: GhPrViewJson = JSON.parse(stdout);
 
+    // Fetch reviewThreads via GraphQL (not supported by `gh pr view --json`)
+    const graphqlQuery = `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100) {
+            nodes {
+              id
+              isResolved
+              isOutdated
+            }
+          }
+        }
+      }
+    }`;
+
+    const graphqlArgs = [
+      "api",
+      "graphql",
+      "-f",
+      `query=${graphqlQuery}`,
+      "-F",
+      `owner=${owner}`,
+      "-F",
+      `repo=${repo}`,
+      "-F",
+      `number=${prNumber}`,
+    ];
+
+    const { stdout: graphqlStdout } = await execFileAsync("gh", graphqlArgs, {
+      encoding: "utf-8",
+      signal: outerSignal,
+      timeout: 25_000,
+    });
+    const graphqlResult = JSON.parse(graphqlStdout);
+
     // 1. Check for unresolved review threads (most important — actionable human feedback)
-    const threads = pr.reviewThreads?.nodes ?? [];
-    const unresolvedThreads = threads.filter((t) => !t.isResolved && !t.isOutdated);
+    const threads = graphqlResult?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
+    const unresolvedThreads = threads.filter(
+      (t: { isResolved: boolean; isOutdated: boolean }) => !t.isResolved && !t.isOutdated,
+    );
     if (unresolvedThreads.length > 0) {
       return "unresolved_review_threads";
     }

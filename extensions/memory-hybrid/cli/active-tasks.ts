@@ -427,6 +427,17 @@ export async function runActiveTaskHygiene(
       newActive.push(task);
       continue;
     }
+    if (action.kind === "pr-live-blocker") {
+      const waitingEntry: ActiveTaskEntry = {
+        ...task,
+        status: "Waiting",
+        updated: now,
+        next: action.reason,
+        subagent: task.subagent,
+      };
+      newActive.push(waitingEntry);
+      continue;
+    }
     const completedEntry: ActiveTaskEntry = {
       ...task,
       status: "Done",
