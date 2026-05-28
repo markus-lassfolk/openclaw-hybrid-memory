@@ -204,6 +204,23 @@ function isFactVerified(db: DatabaseSync, factId: string): boolean {
   return row != null;
 }
 
+function isAutoResolvableContradiction(
+  db: DatabaseSync,
+  contradiction: ContradictionRecord,
+  newFact: MemoryEntry,
+  oldFact: MemoryEntry,
+): boolean {
+  const newConf = newFact.confidence ?? 1.0;
+  const oldConf = contradiction.oldFactOriginalConfidence ?? oldFact.confidence ?? 1.0;
+  const newIsNewer = newFact.createdAt >= oldFact.createdAt;
+  const newIsHigherConf = newConf > oldConf;
+  const newIsFromUser = newFact.source === "conversation" || newFact.source === "cli";
+
+  if (!(newIsNewer && newIsHigherConf && newIsFromUser)) return false;
+  if (oldFact.supersededAt != null) return true;
+  return !isFactVerified(db, contradiction.factIdOld);
+}
+
 export function previewResolveContradictionsAuto(
   db: DatabaseSync,
   getById: (id: string) => MemoryEntry | null,
@@ -244,13 +261,7 @@ export function previewResolveContradictionsAuto(
       continue;
     }
 
-    const newConf = newFact.confidence ?? 1.0;
-    const oldConf = c.oldFactOriginalConfidence ?? oldFact.confidence ?? 1.0;
-    const newIsNewer = newFact.createdAt >= oldFact.createdAt;
-    const newIsHigherConf = newConf > oldConf;
-    const newIsFromUser = newFact.source === "conversation" || newFact.source === "cli";
-
-    if (newIsNewer && newIsHigherConf && newIsFromUser && !isFactVerified(db, c.factIdOld)) {
+    if (isAutoResolvableContradiction(db, c, newFact, oldFact)) {
       autoResolvable.push({
         contradictionId: c.id,
         factIdNew: c.factIdNew,
@@ -337,13 +348,7 @@ export function resolveContradictionsAuto(
     if (!newFact || !oldFact) continue;
     const resolvedNew = newFact;
     const resolvedOld = oldFact;
-    const newConf = resolvedNew.confidence ?? 1.0;
-    const oldConf = c.oldFactOriginalConfidence ?? resolvedOld.confidence ?? 1.0;
-    const newIsNewer = resolvedNew.createdAt >= resolvedOld.createdAt;
-    const newIsHigherConf = newConf > oldConf;
-    const newIsFromUser = resolvedNew.source === "conversation" || resolvedNew.source === "cli";
-
-    if (newIsNewer && newIsHigherConf && newIsFromUser) {
+    if (isAutoResolvableContradiction(db, c, resolvedNew, resolvedOld)) {
       if (resolvedOld.supersededAt != null) {
         resolveContradiction(db, c.id, "superseded");
         autoResolved.push({
