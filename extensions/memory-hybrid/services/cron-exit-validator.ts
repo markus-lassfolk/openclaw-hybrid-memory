@@ -11,6 +11,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 
+const SKIP_REASON_COOLDOWN = "skipped_cooldown";
+const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
+
 export interface ExitStep {
   timestamp: string;
   step: string;
@@ -207,6 +210,7 @@ export function validateMaintenanceExecution(
   // Check for missing required steps
   const missingSteps: string[] = [];
   const failedSteps: ExitStep[] = [];
+  const skippedSteps: ExitStep[] = [];
 
   for (const required of requiredSteps) {
     const step = stepMap.get(required);
@@ -220,6 +224,8 @@ export function validateMaintenanceExecution(
       missingSteps.push(required);
     } else if (step.exitCode !== 0) {
       failedSteps.push(step);
+    } else if (allowSkip && (step.reason === SKIP_REASON_COOLDOWN || step.reason === SKIP_REASON_CONCURRENCY)) {
+      skippedSteps.push(step);
     }
   }
 
@@ -237,8 +243,10 @@ export function validateMaintenanceExecution(
   let maintenanceStatus: "success" | "skipped" | "partial" | "failed";
 
   if (missingSteps.length === 0 && failedSteps.length === 0) {
-    // All required steps present and succeeded
-    maintenanceStatus = "success";
+    // All required steps present and succeeded (exit=0).
+    // Only mark as "skipped" if ALL required steps were skipped; otherwise treat as "success".
+    // This prevents wasteful re-runs when only a subset of steps are skipped (e.g., cooldown).
+    maintenanceStatus = skippedSteps.length > 0 && skippedSteps.length === requiredSteps.length ? "skipped" : "success";
   } else if (missingSteps.length === requiredSteps.length) {
     // Every required step absent — usually a hard failure (shell died before hm_step).
     // Exception: cron preambles that tell the agent to skip the whole script when a feature
@@ -274,7 +282,10 @@ export function validateMaintenanceExecution(
     }
     error = parts.join("; ");
   } else if (maintenanceStatus === "skipped") {
-    error = "Feature-gated skip: no hm_step lines in HM_EXIT; log indicates disabled feature (guard not updated).";
+    error =
+      skippedSteps.length > 0
+        ? `Skipped steps: ${skippedSteps.map((s) => `${s.step}${s.reason ? ` (${s.reason})` : ""}`).join(", ")}`
+        : "Feature-gated skip: no hm_step lines in HM_EXIT; log indicates disabled feature (guard not updated).";
   }
 
   return {
