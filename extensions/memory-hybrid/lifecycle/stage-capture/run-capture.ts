@@ -924,7 +924,6 @@ export async function runCapture(
             if (stored && logCaptures) {
               api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
             }
->>>>>>> 6598532b (fix: block credential capture without vault)
             }
           }
         }
