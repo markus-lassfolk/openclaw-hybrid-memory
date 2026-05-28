@@ -1,6 +1,6 @@
 import type {
-  DuplicateClosureDecision,
   DuplicateClosureAssessment,
+  DuplicateClosureDecision,
   DuplicateClosureGuardProof,
 } from "../types/issue-types.js";
 
