@@ -404,7 +404,9 @@ describe("project-state-lww: missing original confidence requires manual-review"
     // Simulate legacy/backfilled contradiction rows where original confidence is absent.
     // @ts-expect-error accessing internal liveDb for deterministic legacy-row setup
     db.liveDb
-      .prepare("UPDATE contradictions SET old_fact_original_confidence = NULL WHERE fact_id_new = ? AND fact_id_old = ?")
+      .prepare(
+        "UPDATE contradictions SET old_fact_original_confidence = NULL WHERE fact_id_new = ? AND fact_id_old = ?",
+      )
       .run(newer.id, older.id);
 
     const dryRun = db.resolveContradictionsProjectStateLww({ dryRun: true });
