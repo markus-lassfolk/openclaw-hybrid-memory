@@ -1,6 +1,12 @@
-export type ClosureDecision = "safe" | "needs-reconciliation";
+import type {
+  DuplicateClosureDecision,
+  DuplicateClosureAssessment,
+  DuplicateClosureGuardProof,
+} from "../types/issue-types.js";
 
-export type ImplementationClass = "implementation" | "docs" | "workflow" | "mixed" | "unknown";
+export type ClosureDecision = DuplicateClosureDecision;
+export type ClosureAssessment = DuplicateClosureAssessment;
+export type ClosureGuardResult = DuplicateClosureGuardProof;
 
 export interface ClosureCandidate {
   candidateRef: string;
@@ -13,18 +19,6 @@ export interface ClosureCandidate {
   hasFileOverlap: boolean;
   hasSemanticCoverageNote: boolean;
   hasEvidenceCommentText: boolean;
-}
-
-export interface ClosureAssessment {
-  candidateRef: string;
-  replacementRef?: string | null;
-  decision: ClosureDecision;
-  reasons: string[];
-}
-
-export interface ClosureGuardResult {
-  decision: ClosureDecision;
-  assessments: ClosureAssessment[];
 }
 
 export function evaluateStrictDuplicateClosureGuard(candidates: ClosureCandidate[]): ClosureGuardResult {
@@ -64,9 +58,8 @@ export function evaluateStrictDuplicateClosureGuard(candidates: ClosureCandidate
     } satisfies ClosureAssessment;
   });
 
-  const decision: ClosureDecision = assessments.length > 0 && assessments.every((item) => item.decision === "safe")
-    ? "safe"
-    : "needs-reconciliation";
+  const decision: ClosureDecision =
+    assessments.length > 0 && assessments.every((item) => item.decision === "safe") ? "safe" : "needs-reconciliation";
 
   return {
     decision,

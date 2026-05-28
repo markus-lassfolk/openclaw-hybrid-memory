@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  type ClosureCandidate,
-  evaluateStrictDuplicateClosureGuard,
-} from "../services/duplicate-closure-guard.js";
+import { type ClosureCandidate, evaluateStrictDuplicateClosureGuard } from "../services/duplicate-closure-guard.js";
 
 function baseCandidate(overrides: Partial<ClosureCandidate> = {}): ClosureCandidate {
   return {
