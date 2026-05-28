@@ -447,6 +447,8 @@ export async function runSelfCorrectionRunForCli(
           (parseError as any).isParseFailure = true;
           throw parseError;
         }
+      } else {
+        analysed = [];
       }
       if (opts.verbose && analysed.length > 0) {
         logger.info?.(
