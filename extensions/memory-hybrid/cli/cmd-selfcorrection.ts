@@ -61,7 +61,7 @@ function sanitizeLlmResponseExcerpt(content: string): string {
     .slice(0, 200)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
     .replace(/\b(?:sk|gh[pousr]|xox[baprs])-[A-Za-z0-9_=-]{8,}\b/g, "[redacted-token]")
-    .replace(/\b(?:api[_-]?key|password|secret|token)\s*[:=]\s*\S+/gi, "$1=[redacted]")
+    .replace(/\b(api[_-]?key|password|secret|token)\s*[:=]\s*\S+/gi, "$1=[redacted]")
     .replace(/\s+/g, " ");
 }
 
