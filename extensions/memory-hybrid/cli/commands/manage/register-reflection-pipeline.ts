@@ -705,23 +705,35 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "--project-state-lww",
       "Apply project-state latest-wins (LWW) policy: safely resolve stale project/task contradictions for known mutable keys",
     )
-    .option("--dry-run", "Report contradiction-resolution candidates without mutating any facts")
+    .option("--dry-run", "Project-state LWW contract mode: preview contradiction-resolution candidates")
+    .option("--apply", "Project-state LWW contract mode: apply contradiction-resolution candidates")
     .action(
       withExit(
         async (
-          opts?: { verbose?: boolean; details?: boolean; projectStateLww?: boolean; dryRun?: boolean },
+          opts?: { verbose?: boolean; details?: boolean; projectStateLww?: boolean; dryRun?: boolean; apply?: boolean },
           cmd?: CommanderOptsParent,
         ) => {
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           const details = !!opts?.details;
           const projectStateLww = !!opts?.projectStateLww;
           const dryRun = !!opts?.dryRun;
+          const apply = !!opts?.apply;
 
-          if (projectStateLww) {
+          if (dryRun && apply) {
+            throw new Error("--dry-run and --apply are mutually exclusive");
+          }
+
+          // Operator contract mode for Issue #1636:
+          //   resolve-contradictions --dry-run
+          //   resolve-contradictions --apply
+          // Legacy compatibility: --project-state-lww keeps working as explicit LWW mode.
+          const projectStateLwwContractMode = projectStateLww || dryRun || apply;
+          if (projectStateLwwContractMode) {
+            const lwwDryRun = dryRun;
             // Project-state LWW mode: grouped, human-readable output.
             let lwwRes;
             try {
-              lwwRes = await ctx.runResolveContradictionsProjectStateLww({ dryRun });
+              lwwRes = await ctx.runResolveContradictionsProjectStateLww({ dryRun: lwwDryRun });
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -730,8 +742,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               throw err;
             }
 
-            const modeLabel = dryRun ? "(dry-run)" : "(applied)";
-            if (dryRun) {
+            const modeLabel = lwwDryRun ? "(dry-run)" : "(applied)";
+            if (lwwDryRun) {
               console.log(
                 `project-state-lww candidates ${modeLabel}: ${lwwRes.totalCandidates} total — would supersede: ${lwwRes.wouldSupersede}, manual review: ${lwwRes.wouldManualReview}`,
               );
@@ -740,6 +752,10 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 `project-state-lww ${modeLabel}: ${lwwRes.applied} superseded, ${lwwRes.wouldManualReview} manual-review remaining.`,
               );
             }
+            const autoResolved = lwwDryRun ? lwwRes.wouldSupersede : lwwRes.applied;
+            console.log(
+              `project-state-lww summary auto-resolved=${autoResolved} dry-run=${lwwDryRun ? 1 : 0} remaining=${lwwRes.wouldManualReview} total-candidates=${lwwRes.totalCandidates}`,
+            );
 
             if (lwwRes.groups.length > 0) {
               const formatEpochTimestamp = (t: number) =>
@@ -769,8 +785,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               console.log("");
             }
 
-            if (dryRun && lwwRes.wouldSupersede > 0) {
-              console.log(`Run without --dry-run to apply ${lwwRes.wouldSupersede} project-state-lww resolutions.`);
+            if (lwwDryRun && lwwRes.wouldSupersede > 0) {
+              console.log(`Run with --apply to resolve ${lwwRes.wouldSupersede} project-state-lww contradiction(s).`);
             }
             if (lwwRes.wouldManualReview > 0) {
               console.log(

@@ -1,0 +1,222 @@
+import { Command } from "commander";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ManageBindings } from "../cli/commands/manage/bindings.js";
+import { registerManageReflectionPipeline } from "../cli/commands/manage/register-reflection-pipeline.js";
+
+type LwwResult = Awaited<ReturnType<ManageBindings["runResolveContradictionsProjectStateLww"]>>;
+
+function makeBindings(overrides: Partial<ManageBindings> = {}): ManageBindings {
+  const base = {
+    factsDb: {
+      getById: vi.fn().mockReturnValue(null),
+    },
+    cfg: {},
+    runFindDuplicates: vi.fn().mockResolvedValue({ pairs: [], candidatesCount: 0, skippedStructured: 0 }),
+    runConsolidate: vi.fn().mockResolvedValue({ clustersFound: 0, merged: 0, deleted: 0 }),
+    runReflection: vi.fn().mockResolvedValue({ factsAnalyzed: 0, patternsExtracted: 0, patternsStored: 0, window: 7 }),
+    reflectionConfig: { enabled: true, defaultWindow: 7, minObservations: 1, model: "test-model" },
+    runReflectionRules: vi.fn().mockResolvedValue({ rulesExtracted: 0, rulesStored: 0 }),
+    runReflectionMeta: vi.fn().mockResolvedValue({ metaExtracted: 0, metaStored: 0 }),
+    runReflectIdentity: vi.fn().mockResolvedValue({ insightsExtracted: 0, insightsStored: 0, questionsAsked: 0 }),
+    runClassify: vi.fn().mockResolvedValue({ reclassified: 0, total: 0, breakdown: {} }),
+    runEntityEnrichment: vi.fn().mockResolvedValue({ pending: 0, processed: 0, factsEnriched: 0 }),
+    runDreamCycle: vi.fn().mockResolvedValue({ skipped: true }),
+    runContinuousVerification: vi.fn().mockResolvedValue({ skipped: true }),
+    runExtractImplicitFeedback: vi
+      .fn()
+      .mockResolvedValue({
+        signalsExtracted: 0,
+        positiveCount: 0,
+        negativeCount: 0,
+        trajectoriesBuilt: 0,
+        sessionsScanned: 0,
+      }),
+    runCrossAgentLearning: vi.fn().mockResolvedValue({ stored: 0 }),
+    runToolEffectiveness: vi.fn().mockResolvedValue("ok"),
+    pruneCostLog: vi.fn().mockReturnValue(0),
+    runBackfill: vi.fn().mockResolvedValue({ stored: 0, skipped: 0, candidates: 0, files: 0 }),
+    runIngestFiles: vi.fn().mockResolvedValue({ stored: 0, skipped: 0, extracted: 0, files: 0 }),
+    runExport: vi
+      .fn()
+      .mockResolvedValue({ factsExported: 0, proceduresExported: 0, filesWritten: 0, outputPath: "/tmp" }),
+    runBuildLanguageKeywords: vi
+      .fn()
+      .mockResolvedValue({ ok: true, path: "/tmp/languages.json", topLanguages: [], languagesAdded: 0 }),
+    runResolveContradictions: vi.fn().mockResolvedValue({ autoResolved: [], ambiguous: [] }),
+    runResolveContradictionsDryRun: vi.fn().mockResolvedValue({ autoResolvable: [], ambiguous: [] }),
+    runResolveContradictionsProjectStateLww: vi.fn().mockResolvedValue({
+      groups: [],
+      totalCandidates: 0,
+      wouldSupersede: 0,
+      wouldManualReview: 0,
+      applied: 0,
+    }),
+    vectorDb: {},
+    versionInfo: { pluginVersion: "test", memoryManagerVersion: "test", schemaVersion: 1 },
+    embeddings: {},
+    mergeResults: vi.fn(),
+    parseSourceDate: vi.fn().mockReturnValue(null),
+    getMemoryCategories: vi.fn().mockReturnValue(["fact", "project"]),
+    runStore: vi.fn(),
+    runMigrateToVault: vi.fn().mockResolvedValue(null),
+    runEncryptVault: vi.fn(),
+    runCredentialsList: vi.fn().mockReturnValue([]),
+    runCredentialsGet: vi.fn().mockReturnValue(null),
+    runCredentialsAudit: vi.fn(),
+    runCredentialsPrune: vi.fn(),
+    runUninstall: vi.fn(),
+    runUpgrade: vi.fn(),
+    runConfigView: vi.fn(),
+    runConfigMode: vi.fn(),
+    runConfigSet: vi.fn(),
+    runConfigSetHelp: vi.fn(),
+    autoClassifyConfig: { model: "test-model", batchSize: 8 },
+    runCompaction: vi.fn().mockResolvedValue({ hot: 0, warm: 0, cold: 0, structural: 0 }),
+    runSelfCorrectionExtract: vi.fn(),
+    runSelfCorrectionRun: vi.fn(),
+    tieringEnabled: false,
+    resolvedSqlitePath: null,
+    resolvedLancePath: null,
+    aliasDb: null,
+    auditStore: null,
+    agentHealthStore: null,
+    listCommands: () => [],
+    merge: vi.fn(),
+    BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    ctx: { cfg: {} },
+  };
+  const merged = { ...base, ...overrides } as Record<string, unknown>;
+  if (!("ctx" in overrides)) {
+    merged.ctx = {
+      cfg: merged.cfg,
+      runResolveContradictions: merged.runResolveContradictions,
+      runResolveContradictionsDryRun: merged.runResolveContradictionsDryRun,
+      runResolveContradictionsProjectStateLww: merged.runResolveContradictionsProjectStateLww,
+    };
+  }
+  return merged as ManageBindings;
+}
+
+function makeProgram(bindings: ManageBindings): Command {
+  const mem = new Command("hybrid-mem");
+  mem.exitOverride();
+  registerManageReflectionPipeline(mem, bindings);
+  return mem;
+}
+
+function sampleLwwResult(overrides: Partial<LwwResult> = {}): LwwResult {
+  return {
+    groups: [
+      {
+        entity: "hybrid-memory-issue-1636-pr",
+        key: "status",
+        scope: null,
+        scopeTarget: null,
+        candidates: [
+          {
+            contradictionId: "c-1",
+            factIdNew: "new-1",
+            factIdOld: "old-1",
+            entity: "hybrid-memory-issue-1636-pr",
+            key: "status",
+            scope: null,
+            scopeTarget: null,
+            newFactDate: 1_700_000_060,
+            oldFactDate: 1_700_000_000,
+            newSource: "conversation",
+            oldSource: "active-task",
+            newConf: 1,
+            oldConf: 1,
+            newValueExcerpt: "done",
+            oldValueExcerpt: "in_progress",
+            action: "supersede",
+            possibleOverloadedEntity: false,
+          },
+        ],
+      },
+    ],
+    totalCandidates: 1,
+    wouldSupersede: 1,
+    wouldManualReview: 0,
+    applied: 1,
+    ...overrides,
+  };
+}
+
+describe("resolve-contradictions CLI contract mode", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("supports --dry-run contract mode with grouped details and structured summary", async () => {
+    const runResolveContradictionsProjectStateLww = vi.fn().mockResolvedValue(sampleLwwResult({ applied: 0 }));
+    const runResolveContradictions = vi.fn().mockResolvedValue({ autoResolved: [], ambiguous: [] });
+    const mem = makeProgram(
+      makeBindings({
+        runResolveContradictionsProjectStateLww,
+        runResolveContradictions,
+      }),
+    );
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--dry-run"], { from: "user" });
+
+    expect(runResolveContradictionsProjectStateLww).toHaveBeenCalledWith({ dryRun: true });
+    expect(runResolveContradictions).not.toHaveBeenCalled();
+    expect(lines.some((l) => l.includes("hybrid-memory-issue-1636-pr / status"))).toBe(true);
+    expect(lines.some((l) => l.includes("project-state-lww summary auto-resolved=1 dry-run=1 remaining=0"))).toBe(true);
+  });
+
+  it("supports --apply contract mode with grouped details and structured summary", async () => {
+    const runResolveContradictionsProjectStateLww = vi.fn().mockResolvedValue(sampleLwwResult({ applied: 1 }));
+    const mem = makeProgram(
+      makeBindings({
+        runResolveContradictionsProjectStateLww,
+      }),
+    );
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--apply"], { from: "user" });
+
+    expect(runResolveContradictionsProjectStateLww).toHaveBeenCalledWith({ dryRun: false });
+    expect(lines.some((l) => l.includes("hybrid-memory-issue-1636-pr / status"))).toBe(true);
+    expect(lines.some((l) => l.includes("project-state-lww summary auto-resolved=1 dry-run=0 remaining=0"))).toBe(true);
+  });
+
+  it("prints structured summary in empty dry-run output", async () => {
+    const runResolveContradictionsProjectStateLww = vi
+      .fn()
+      .mockResolvedValue(
+        sampleLwwResult({ groups: [], totalCandidates: 0, wouldSupersede: 0, wouldManualReview: 0, applied: 0 }),
+      );
+    const mem = makeProgram(
+      makeBindings({
+        runResolveContradictionsProjectStateLww,
+      }),
+    );
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--dry-run"], { from: "user" });
+
+    expect(lines.some((l) => l.includes("project-state-lww summary auto-resolved=0 dry-run=1 remaining=0"))).toBe(true);
+  });
+
+  it("rejects ambiguous flag combinations", async () => {
+    const mem = makeProgram(makeBindings());
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(mem.parseAsync(["resolve-contradictions", "--dry-run", "--apply"], { from: "user" })).rejects.toThrow(
+      "--dry-run and --apply are mutually exclusive",
+    );
+  });
+});
