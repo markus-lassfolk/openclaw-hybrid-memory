@@ -11,6 +11,7 @@
  *   - Write-time auto-supersede: project-state store avoids leaving unresolved contradictions
  *   - Trusted-source guard: distillation source does not qualify for LWW
  *   - Older-wins case: newer fact older than old → manual-review
+ *   - Missing old_fact_original_confidence stays manual-review (no penalized fallback)
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -378,7 +379,50 @@ describe("project-state-lww: older-wins prevents auto-supersede", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. Write-time auto-supersede: storing a newer project-state fact avoids
+// 8. Missing original confidence should not auto-supersede
+// ---------------------------------------------------------------------------
+describe("project-state-lww: missing original confidence requires manual-review", () => {
+  it("does not supersede when old_fact_original_confidence is missing", () => {
+    const older = storeProjectFact({
+      entity: "proj-missing-original-confidence",
+      key: "status",
+      value: "in_progress",
+      text: "Project in progress",
+      confidence: 1.0,
+    });
+    const newer = storeProjectFact({
+      entity: "proj-missing-original-confidence",
+      key: "status",
+      value: "done",
+      text: "Project done with lower confidence than original",
+      confidence: 0.9,
+      createdAtOffset: 60,
+    });
+
+    // recordContradiction stores the pre-penalty confidence then penalizes old fact by -0.2.
+    db.recordContradiction(newer.id, older.id);
+    // Simulate legacy/backfilled contradiction rows where original confidence is absent.
+    // @ts-expect-error accessing internal liveDb for deterministic legacy-row setup
+    db.liveDb
+      .prepare("UPDATE contradictions SET old_fact_original_confidence = NULL WHERE fact_id_new = ? AND fact_id_old = ?")
+      .run(newer.id, older.id);
+
+    const dryRun = db.resolveContradictionsProjectStateLww({ dryRun: true });
+    const candidate = dryRun.groups
+      .flatMap((g) => g.candidates)
+      .find((c) => c.factIdNew === newer.id && c.factIdOld === older.id);
+    expect(candidate).toBeDefined();
+    expect(candidate?.action).toBe("manual-review");
+
+    const apply = db.resolveContradictionsProjectStateLww({ dryRun: false });
+    expect(apply.applied).toBe(0);
+    const oldAfter = db.getById(older.id);
+    expect(oldAfter?.supersededAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 9. Write-time auto-supersede: storing a newer project-state fact avoids
 //    leaving an unresolved contradiction
 // ---------------------------------------------------------------------------
 describe("project-state-lww: write-time auto-supersede", () => {

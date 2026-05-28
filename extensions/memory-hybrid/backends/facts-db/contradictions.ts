@@ -152,7 +152,8 @@ export function getContradictions(db: DatabaseSync, factId?: string): Contradict
     detectedAt: r.detected_at as string,
     resolved: (r.resolved as number) === 1,
     resolution: (r.resolution as "superseded" | "kept" | "merged" | null) ?? null,
-    oldFactOriginalConfidence: r.old_fact_original_confidence as number | undefined,
+    oldFactOriginalConfidence:
+      r.old_fact_original_confidence == null ? undefined : (r.old_fact_original_confidence as number),
   }));
 }
 
@@ -413,7 +414,8 @@ export type LwwEligibilityResult =
  * batch `resolveProjectStateLww` pass to keep eligibility logic in one place.
  *
  * @param oldFactOriginalConfidence The confidence captured at contradiction-detection
- *   time (before the -0.2 penalty). Pass `undefined` to fall back to `oldFact.confidence`.
+ *   time (before the -0.2 penalty). Missing values are treated as non-qualifying:
+ *   LWW will require manual review instead of guessing from a possibly penalized score.
  */
 export function evaluateLwwEligibility(
   newFact: MemoryEntry,
@@ -426,6 +428,9 @@ export function evaluateLwwEligibility(
   if (!PROJECT_STATE_LWW_TRUSTED_SOURCES.has(newFact.source ?? "")) return { eligible: false };
   const newConf = newFact.confidence ?? 1.0;
   const oldConf = oldFactOriginalConfidence ?? oldFact.confidence ?? 1.0;
+  if (oldFactOriginalConfidence == null) {
+    return { eligible: true, qualifies: false, newConf, oldConf };
+  }
   const qualifies = newFact.createdAt > oldFact.createdAt && newConf >= oldConf;
   return { eligible: true, qualifies, newConf, oldConf };
 }
