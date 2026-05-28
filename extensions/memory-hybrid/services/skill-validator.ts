@@ -270,7 +270,7 @@ export class SkillValidator {
     const violations: string[] = [];
     const normalizedSkillContent = stripLeadingHtmlComments(skillContent);
     const lines = normalizedSkillContent.split("\n");
-    const skillBytes = utf8ByteLength(normalizedSkillContent);
+    const skillBytes = utf8ByteLength(skillContent);
 
     if (skillBytes > MAX_SKILL_FILE_BYTES) {
       violations.push(

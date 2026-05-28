@@ -974,6 +974,15 @@ ${extra.extraBody ?? ""}`;
     expect(result.violations.some((v: string) => v.includes("loader byte limit"))).toBe(true);
   });
 
+  it("includes leading HTML comments in byte limit check (guards against loader rejection after injectInstallMetadata)", () => {
+    const htmlComment = "<!-- openclaw:skill-proposal id=test-123 pattern_id=pat-456 evidence_hash=ev-789 output_path=/tmp/test -->\n";
+    const baseContent = compactValidSkill({ extraBody: "\n" + "a".repeat(MAX_SKILL_FILE_BYTES - 500) });
+    const contentWithHtml = htmlComment + baseContent;
+    const result = validator.validate(contentWithHtml);
+    expect(result.valid).toBe(false);
+    expect(result.violations.some((v: string) => v.includes("loader byte limit"))).toBe(true);
+  });
+
   it("denies eval() in code block", () => {
     const content = compactValidSkill({
       workflow: [
