@@ -389,6 +389,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                     tags,
                   });
                   if (storeResult.skipped) {
+                    await walRemove(wal, entry.id, api.logger);
                     continue;
                   }
                   const stored = storeResult.entry;
