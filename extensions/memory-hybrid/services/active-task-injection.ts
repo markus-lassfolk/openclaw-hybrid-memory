@@ -74,19 +74,19 @@ export function prepareActiveTasksForInjection(
     userText?: string;
     sessionKey?: string;
   },
-): { prepared: ActiveTaskEntry[]; preCap: ActiveTaskEntry[]; ledgerActiveCount: number; filteredActiveCount: number } {
+): { prepared: ActiveTaskEntry[]; ledgerActiveCount: number; filteredActiveCount: number } {
   const ledgerActiveCount = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status)).length;
   let prepared = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status) && !t.stale);
   prepared = applyActiveTaskProjectionFilters(prepared, opts.projection);
   prepared.sort((a, b) => compareTasksForInjection(a, b, opts.userText, opts.sessionKey));
 
-  const preCap = [...prepared];
+  const filteredActiveCount = prepared.length;
   const rowCap = opts.injectionMaxTasks ?? opts.projection.maxRowsPerSection;
   if (typeof rowCap === "number" && rowCap > 0 && prepared.length > rowCap) {
     prepared = prepared.slice(0, rowCap);
   }
 
-  return { prepared, preCap, ledgerActiveCount, filteredActiveCount: preCap.length };
+  return { prepared, ledgerActiveCount, filteredActiveCount };
 }
 
 export type ActiveTaskContextBundleResult = {
