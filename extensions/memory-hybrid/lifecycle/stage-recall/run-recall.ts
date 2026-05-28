@@ -105,6 +105,63 @@ type FixedBlockAudit = {
   reason?: "empty" | "cap" | "budget_exhausted";
 };
 
+function createBudgetTracker(totalBudget: number) {
+  let remainingBudget = totalBudget;
+  const fixedBlockAudit: FixedBlockAudit[] = [];
+
+  const capAndTrackBlock = (name: string, block: string, capTokens: number): string => {
+    const cap = Math.max(0, Math.floor(capTokens));
+    const allowed = Math.min(cap, remainingBudget);
+    const { text, sourceTokens, usedTokens } = trimBlockToBudget(block, allowed);
+    const suppressed = sourceTokens > 0 && usedTokens === 0;
+    fixedBlockAudit.push({
+      block: name,
+      sourceTokens,
+      capTokens: cap,
+      injectedTokens: usedTokens,
+      reserved: false,
+      truncated: sourceTokens > usedTokens,
+      suppressed,
+      reason:
+        sourceTokens === 0
+          ? "empty"
+          : usedTokens === 0
+            ? "budget_exhausted"
+            : sourceTokens > usedTokens
+              ? allowed < cap
+                ? "budget_exhausted"
+                : "cap"
+              : undefined,
+    });
+    remainingBudget = Math.max(0, remainingBudget - usedTokens);
+    return text;
+  };
+
+  const reserveAndTrackBlock = (name: string, reserveTokens: number, enabled: boolean): void => {
+    const cap = enabled ? Math.max(0, Math.floor(reserveTokens)) : 0;
+    const reserved = Math.min(cap, remainingBudget);
+    fixedBlockAudit.push({
+      block: name,
+      sourceTokens: cap,
+      capTokens: cap,
+      injectedTokens: reserved,
+      reserved: true,
+      truncated: cap > reserved,
+      suppressed: cap > 0 && reserved === 0,
+      reason:
+        cap === 0 ? "empty" : reserved === 0 ? "budget_exhausted" : cap > reserved ? "budget_exhausted" : undefined,
+    });
+    remainingBudget = Math.max(0, remainingBudget - reserved);
+  };
+
+  return {
+    capAndTrackBlock,
+    reserveAndTrackBlock,
+    getRemainingBudget: () => remainingBudget,
+    getAudit: () => fixedBlockAudit,
+  };
+}
+
 export async function runRecall(
   event: unknown,
   api: ClawdbotPluginApi,
@@ -255,51 +312,8 @@ export async function runRecall(
         (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled
           ? Math.max(40, Math.floor(totalBudget * 0.08))
           : 0);
-      let remainingBudget = totalBudget;
-      const fixedBlockAudit: FixedBlockAudit[] = [];
-      const capAndTrackBlock = (name: string, block: string, capTokens: number): string => {
-        const cap = Math.max(0, Math.floor(capTokens));
-        const allowed = Math.min(cap, remainingBudget);
-        const { text, sourceTokens, usedTokens } = trimBlockToBudget(block, allowed);
-        const suppressed = sourceTokens > 0 && usedTokens === 0;
-        fixedBlockAudit.push({
-          block: name,
-          sourceTokens,
-          capTokens: cap,
-          injectedTokens: usedTokens,
-          reserved: false,
-          truncated: sourceTokens > usedTokens,
-          suppressed,
-          reason:
-            sourceTokens === 0
-              ? "empty"
-              : usedTokens === 0
-                ? "budget_exhausted"
-                : sourceTokens > usedTokens
-                  ? allowed < cap
-                    ? "budget_exhausted"
-                    : "cap"
-                  : undefined,
-        });
-        remainingBudget = Math.max(0, remainingBudget - usedTokens);
-        return text;
-      };
-      const reserveAndTrackBlock = (name: string, reserveTokens: number, enabled: boolean): void => {
-        const cap = enabled ? Math.max(0, Math.floor(reserveTokens)) : 0;
-        const reserved = Math.min(cap, remainingBudget);
-        fixedBlockAudit.push({
-          block: name,
-          sourceTokens: cap,
-          capTokens: cap,
-          injectedTokens: reserved,
-          reserved: true,
-          truncated: cap > reserved,
-          suppressed: cap > 0 && reserved === 0,
-          reason:
-            cap === 0 ? "empty" : reserved === 0 ? "budget_exhausted" : cap > reserved ? "budget_exhausted" : undefined,
-        });
-        remainingBudget = Math.max(0, remainingBudget - reserved);
-      };
+      const budgetTracker = createBudgetTracker(totalBudget);
+      const { capAndTrackBlock, reserveAndTrackBlock } = budgetTracker;
       let narrativePart = "";
       if (ctx.narrativesDb || ctx.eventLog) {
         try {
@@ -349,11 +363,13 @@ export async function runRecall(
             `- [${r.backend}/${r.entry.category}] ${(r.entry.summary || r.entry.text).slice(0, 200)}${(r.entry.summary || r.entry.text).length > 200 ? "…" : ""}`,
         );
       const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
-      const { text: recallPart } = trimBlockToBudget(recallBlock, remainingBudget);
+      const { text: recallPart } = trimBlockToBudget(recallBlock, budgetTracker.getRemainingBudget());
       const inner = narrativePart + hotPart + recallPart;
       const block = inner ? `<recalled-context>\n${inner}\n</recalled-context>` : "";
       const degradedMarker = "<!-- recall degraded: queue -->\n";
       const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
+      const remainingBudget = budgetTracker.getRemainingBudget();
+      const fixedBlockAudit = budgetTracker.getAudit();
       const fixedBlocksTokens = totalBudget - remainingBudget;
       const blockSummary = fixedBlockAudit
         .map((b) => `${b.block}:${b.injectedTokens}/${b.capTokens}${b.reserved ? "r" : ""}${b.truncated ? "!" : ""}`)
@@ -934,53 +950,8 @@ export async function runRecall(
         : 0;
     const staleWarningReserveTokens = staleWarningReserveCapCfg ?? defaultStaleReserve;
 
-    let remainingBudget = totalBudget;
-    const fixedBlockAudit: FixedBlockAudit[] = [];
-
-    const capAndTrackBlock = (name: string, block: string, capTokens: number): string => {
-      const cap = Math.max(0, Math.floor(capTokens));
-      const allowed = Math.min(cap, remainingBudget);
-      const { text, sourceTokens, usedTokens } = trimBlockToBudget(block, allowed);
-      const suppressed = sourceTokens > 0 && usedTokens === 0;
-      fixedBlockAudit.push({
-        block: name,
-        sourceTokens,
-        capTokens: cap,
-        injectedTokens: usedTokens,
-        reserved: false,
-        truncated: sourceTokens > usedTokens,
-        suppressed,
-        reason:
-          sourceTokens === 0
-            ? "empty"
-            : usedTokens === 0
-              ? "budget_exhausted"
-              : sourceTokens > usedTokens
-                ? allowed < cap
-                  ? "budget_exhausted"
-                  : "cap"
-                : undefined,
-      });
-      remainingBudget = Math.max(0, remainingBudget - usedTokens);
-      return text;
-    };
-
-    const reserveAndTrackBlock = (name: string, reserveTokens: number, enabled: boolean): void => {
-      const cap = enabled ? Math.max(0, Math.floor(reserveTokens)) : 0;
-      const reserved = Math.min(cap, remainingBudget);
-      fixedBlockAudit.push({
-        block: name,
-        sourceTokens: cap,
-        capTokens: cap,
-        injectedTokens: reserved,
-        reserved: true,
-        truncated: cap > reserved,
-        suppressed: cap > 0 && reserved === 0,
-        reason:
-          cap === 0 ? "empty" : reserved === 0 ? "budget_exhausted" : cap > reserved ? "budget_exhausted" : undefined,
-      });
-      remainingBudget = Math.max(0, remainingBudget - reserved);
-    };
+    const budgetTracker = createBudgetTracker(totalBudget);
+    const { capAndTrackBlock, reserveAndTrackBlock } = budgetTracker;
 
     issueBlock = capAndTrackBlock("issue", issueBlock, issueCapTokens);
     narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens);
@@ -993,6 +964,8 @@ export async function runRecall(
       ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled,
     );
 
+    const remainingBudget = budgetTracker.getRemainingBudget();
+    const fixedBlockAudit = budgetTracker.getAudit();
     const fixedBlocksTokens = totalBudget - remainingBudget;
     const maxTokens = Math.max(0, remainingBudget);
     const blockSummary = fixedBlockAudit
