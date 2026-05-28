@@ -273,6 +273,47 @@ error: unknown command 'bar'
       expect(result.missingSteps.length).toBe(0);
     });
 
+    it("reports skipped when a required step explicitly records status=skipped", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(exitPath, "2024-05-08T02:01:00Z self-correct exit=0 status=skipped reason=skipped_cooldown\n");
+
+      const result = validateMaintenanceExecution(
+        exitPath,
+        undefined,
+        ["self-correct"],
+        true, // allowSkip
+      );
+
+      expect(result.maintenanceStatus).toBe("skipped");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.error).toContain("skipped_cooldown");
+    });
+
+    it("reports success and updates guard when only some steps are skipped in multi-step job", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(
+        exitPath,
+        `2024-05-08T02:00:00Z prune exit=0 status=ok
+2024-05-08T02:01:00Z distill exit=0 status=ok
+2024-05-08T02:02:00Z self-correct exit=0 status=skipped reason=skipped_cooldown
+`,
+      );
+
+      const result = validateMaintenanceExecution(
+        exitPath,
+        undefined,
+        ["prune", "distill", "self-correct"],
+        true, // allowSkip
+      );
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.guardUpdated).toBe(true);
+      expect(result.missingSteps.length).toBe(0);
+      expect(result.failedSteps.length).toBe(0);
+    });
+
     it("should fail when unknown command detected in log", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");

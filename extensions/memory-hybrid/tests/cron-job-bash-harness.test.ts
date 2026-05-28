@@ -144,4 +144,51 @@ exit 2
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).toContain('{"maintenanceStatus":"success"}');
   });
+
+  it("records self-correction cooldown skips as status=skipped in HM_EXIT", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const marker = join(tmp, "exit-captured.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
+  echo "Skipping self-correction-run: cooldown active. status=skipped_cooldown"
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  exit_path=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --exit-path) exit_path="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  cp "$exit_path" ${JSON.stringify(marker)}
+  echo '{"maintenanceStatus":"skipped"}'
+  exit 0
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-self-correction", [
+      { name: "self-correct", cmd: "openclaw hybrid-mem self-correction-run" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.status).toBe(0);
+    const exitContents = readFileSync(marker, "utf-8");
+    expect(exitContents).toContain("self-correct exit=0 status=skipped reason=skipped_cooldown");
+  });
 });
