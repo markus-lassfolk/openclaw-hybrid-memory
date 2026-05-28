@@ -975,8 +975,9 @@ ${extra.extraBody ?? ""}`;
   });
 
   it("includes leading HTML comments in byte limit check (guards against loader rejection after injectInstallMetadata)", () => {
-    const htmlComment = "<!-- openclaw:skill-proposal id=test-123 pattern_id=pat-456 evidence_hash=ev-789 output_path=/tmp/test -->\n";
-    const baseContent = compactValidSkill({ extraBody: "\n" + "a".repeat(MAX_SKILL_FILE_BYTES - 500) });
+    const htmlComment =
+      "<!-- openclaw:skill-proposal id=test-123 pattern_id=pat-456 evidence_hash=ev-789 output_path=/tmp/test -->\n";
+    const baseContent = compactValidSkill({ extraBody: "\n" + "a".repeat(MAX_SKILL_FILE_BYTES - 900) });
     const contentWithHtml = htmlComment + baseContent;
     const result = validator.validate(contentWithHtml);
     expect(result.valid).toBe(false);
