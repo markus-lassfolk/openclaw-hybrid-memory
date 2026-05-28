@@ -368,5 +368,26 @@ error: unknown command 'bar'
 
       expect(result.maintenanceStatus).toBe("failed");
     });
+
+    it("should deterministically fail stale empty ledgers with heartbeat-only logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "");
+      writeFileSync(
+        logPath,
+        [
+          "[dream-cycle] extract implicit feedback — still running after 2210s — stage=scan-sessions; sessions=106/177",
+          "memory-hybrid: dream-cycle — stage 3 still running after 2210s",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.missingSteps).toEqual(["dream-cycle"]);
+      expect(result.error).toContain("Missing steps");
+    });
   });
 });

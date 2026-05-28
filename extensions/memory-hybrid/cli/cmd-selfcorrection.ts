@@ -26,6 +26,11 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
+import {
+  extractBalancedArraySlice,
+  stripBracketContextPreamble,
+  stripMarkdownCodeFence,
+} from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
@@ -63,6 +68,85 @@ function sanitizeLlmResponseExcerpt(content: string): string {
     .replace(/\b(?:sk|gh[pousr]|xox[baprs])-[A-Za-z0-9_=-]{8,}\b/g, "[redacted-token]")
     .replace(/\b(api[_-]?key|password|secret|token)\s*[:=]\s*\S+/gi, "$1=[redacted]")
     .replace(/\s+/g, " ");
+}
+
+// ---------------------------------------------------------------------------
+// Self-correction LLM response parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the JSON array of remediation items from a self-correction LLM response.
+ *
+ * The model is instructed to return a bare JSON array, but in practice it may:
+ *   - wrap the array in a markdown code fence (```json ... ```)
+ *   - add prose before or after the array
+ *   - emit placeholder tokens instead of JSON
+ *   - return invalid/truncated JSON
+ *
+ * This function handles all of those cases robustly by scanning balanced `[...]`
+ * spans and only accepting arrays that match expected remediation object shape.
+ * Returns `null` when no valid array can be extracted (callers treat this as
+ * `failed_parse` — no remediations are applied and the error is reported).
+ *
+ * Scenarios and expected behaviour:
+ *   - **strict JSON**: `[{"remediationType":"MEMORY_STORE",...}]` → parsed directly
+ *   - **fenced JSON**: `` ```json\n[...]\n``` `` → fence stripped, array parsed
+ *   - **trailing text**: `[...]\n\nHere is my explanation` → array extracted, text ignored
+ *   - **invalid JSON**: `[not valid]` / truncated → null returned, caller handles error
+ */
+export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
+  const normalized = stripBracketContextPreamble(stripMarkdownCodeFence(content));
+  let searchFrom = 0;
+  let emptyArrayCandidate: unknown[] | null = null;
+
+  while (searchFrom < normalized.length) {
+    const start = normalized.indexOf("[", searchFrom);
+    if (start === -1) break;
+    const slice = extractBalancedArraySlice(normalized, start);
+    if (!slice) {
+      searchFrom = start + 1;
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(slice);
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0) {
+          emptyArrayCandidate = parsed;
+        } else if (isSelfCorrectionRemediationArray(parsed)) {
+          return parsed;
+        }
+      }
+    } catch {
+      /* try next balanced span */
+    }
+    searchFrom = start + slice.length;
+  }
+
+  return emptyArrayCandidate;
+}
+
+function isSelfCorrectionRemediationArray(items: unknown[]): boolean {
+  return items.every((item) => isSelfCorrectionRemediationItem(item));
+}
+
+function isSelfCorrectionRemediationItem(item: unknown): boolean {
+  if (typeof item !== "object" || item === null) return false;
+  const candidate = item as Record<string, unknown>;
+  const remediationType = candidate.remediationType;
+  if (typeof remediationType !== "string" || remediationType.trim().length === 0) return false;
+
+  const remediationContent = candidate.remediationContent;
+  if (
+    !(typeof remediationContent === "string" || (typeof remediationContent === "object" && remediationContent !== null))
+  ) {
+    return false;
+  }
+
+  if ("category" in candidate && typeof candidate.category !== "string") return false;
+  if ("severity" in candidate && typeof candidate.severity !== "string") return false;
+  if ("repeated" in candidate && typeof candidate.repeated !== "boolean") return false;
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,9 +433,9 @@ export async function runSelfCorrectionRunForCli(
         }
         content = detail.content;
       }
-      const parsedArray = tryParseFirstJsonArray(content);
-      if (parsedArray !== null) {
-        analysed = parsedArray as typeof analysed;
+      const parsedRemediations = parseSelfCorrectionLLMResponse(content);
+      if (parsedRemediations !== null) {
+        analysed = parsedRemediations as typeof analysed;
       } else if (content.trim().length > 0) {
         // Log a sanitized excerpt (no private session data) so operators can diagnose.
         const excerpt = sanitizeLlmResponseExcerpt(content);

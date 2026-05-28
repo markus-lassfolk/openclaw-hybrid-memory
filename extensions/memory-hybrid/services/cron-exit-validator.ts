@@ -6,6 +6,34 @@
  * or only partially complete.
  *
  * Issue: hybrid-memory cron jobs report OK despite failed or partial maintenance
+ *
+ * ## Maintenance result vocabulary
+ *
+ * `maintenanceStatus` in {@link ExitValidationResult} uses the following values:
+ *
+ * - `"success"` — All required steps are present in the HM_EXIT ledger and every
+ *   step exited 0 (or a permitted skip variant matched). The guard file MAY be
+ *   updated after a `"success"` result.
+ *
+ * - `"skipped"` — The exit ledger is empty AND the HM_LOG contains a recognised
+ *   feature-gate phrase (e.g. "reflection.enabled is false"). No hm_step lines ran.
+ *   The guard file MUST NOT be updated; the skip is recorded for audit but is not
+ *   treated as a failure.
+ *
+ * - `"partial"` — Some but not all required steps are present in the ledger and the
+ *   present steps all exited 0. The guard file MUST NOT be updated; the job should
+ *   be requeued or investigated.
+ *
+ * - `"failed"` — At least one step exited non-zero, or all required steps are absent
+ *   and the log does not indicate an intentional feature skip, or an unknown command
+ *   was detected in the log. The guard file MUST NOT be updated.
+ *
+ * ## Guard update rule
+ *
+ * `guardUpdated` is `true` only when `maintenanceStatus === "success"`.  Callers
+ * MUST NOT write a success guard for `"skipped"`, `"partial"`, or `"failed"` runs.
+ * This ensures that a shell-exited-0 cron wrapper cannot silently masquerade as a
+ * healthy run when the semantic work did not complete.
  */
 
 import { existsSync, readFileSync } from "node:fs";
