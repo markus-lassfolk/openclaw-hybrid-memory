@@ -19,6 +19,13 @@ function baseCandidate(overrides: Partial<ClosureCandidate> = {}): ClosureCandid
 }
 
 describe("evaluateStrictDuplicateClosureGuard", () => {
+  it("marks empty candidates as needs reconciliation", () => {
+    const result = evaluateStrictDuplicateClosureGuard([]);
+
+    expect(result.decision).toBe("needs-reconciliation");
+    expect(result.assessments).toHaveLength(0);
+  });
+
   it("marks same-title different issue scope unsafe (#1560 vs #1561 style)", () => {
     const result = evaluateStrictDuplicateClosureGuard([
       baseCandidate({
