@@ -168,6 +168,37 @@ function writeSessionWithoutMemoryRecall(path: string): void {
 }
 
 /**
+ * Write a session JSONL with no memory recall IDs, but with a tool call sequence
+ * so procedure reinforcement runs.
+ */
+function writeSessionWithoutMemoryRecallWithTools(path: string): void {
+  writeFileSync(
+    path,
+    [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "tool_use", name: "read_file", id: "tool1" },
+            { type: "tool_use", name: "edit_file", id: "tool2" },
+            { type: "text", text: "Applied the requested update and verified the behavior." },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "Perfect! Exactly what I needed." }],
+        },
+      }),
+    ].join("\n"),
+    "utf-8",
+  );
+}
+
+/**
  * Store a fact in factsDb and return the generated ID.
  * FactsDB.store() omits `id` from StoreFactInput; IDs are always generated internally.
  */
@@ -279,6 +310,40 @@ describe("LLM failure → degraded_model_or_parser (#1639)", () => {
     expect(result.annotated).toBe(0);
     // LLM failure + no recalled IDs = degraded_model_or_parser
     expect(result.annotationStatus).toBe("degraded_model_or_parser");
+  });
+
+  it("annotationStatus is degraded_model_or_parser when LLM returns unparseable output", async () => {
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeSessionWithoutMemoryRecall(sessionFile);
+
+    const openai = makeOpenAIMock("No JSON available.");
+    const ctx = makeCtx(openai);
+    const result = await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    expect(result.incidents.length).toBeGreaterThan(0);
+    expect(result.annotated).toBe(0);
+    expect(result.annotationStatus).toBe("degraded_model_or_parser");
+    expect(result.annotationReasons?.noRecalledIds).toBe(result.incidents.length);
+  });
+});
+
+describe("procedure boost errors are surfaced (#1639)", () => {
+  it("counts no-recall procedure boost failures as annotation errors", async () => {
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeSessionWithoutMemoryRecallWithTools(sessionFile);
+    vi.spyOn(factsDb, "searchProcedures").mockImplementation(() => {
+      throw new Error("procedure lookup failed");
+    });
+
+    const openai = makeOpenAIMock("[]");
+    const ctx = makeCtx(openai);
+    const result = await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    expect(result.incidents.length).toBeGreaterThan(0);
+    expect(result.annotated).toBe(0);
+    expect(result.annotationStatus).toBe("failed_annotation");
+    expect(result.annotationReasons?.noRecalledIds).toBe(result.incidents.length);
+    expect(result.annotationReasons?.errors).toBe(result.incidents.length);
   });
 });
 

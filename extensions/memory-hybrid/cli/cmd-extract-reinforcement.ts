@@ -177,8 +177,17 @@ export async function runExtractReinforcementForCli(
         }
         const jsonMatch = detail.content.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-          analysed = JSON.parse(jsonMatch[0]) as ReinforcementRemediation[];
-          analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(parsed)) {
+            analysed = parsed as ReinforcementRemediation[];
+            analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
+          } else {
+            llmAnalysisFailed = true;
+            logger.warn?.("memory-hybrid: extract-reinforcement analysis produced non-array JSON");
+          }
+        } else {
+          llmAnalysisFailed = true;
+          logger.warn?.("memory-hybrid: extract-reinforcement analysis produced no parseable JSON array");
         }
       } catch (e) {
         llmAnalysisFailed = true;
@@ -376,6 +385,7 @@ export async function runExtractReinforcementForCli(
               }
             }
           } catch (err) {
+            annotationReasons.errors++;
             capturePluginError(err as Error, {
               subsystem: "cli",
               operation: "runExtractReinforcementForCli:procedure-boost",
