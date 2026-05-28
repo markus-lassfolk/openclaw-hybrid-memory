@@ -62,8 +62,8 @@ function factTieBreak(a: MemoryEntry, b: MemoryEntry, key: string): number {
   if (a.createdAt === b.createdAt) {
     // Rule 1: status terminal-vs-nonterminal tie-break
     if (key === "status") {
-      const aTerminal = isTerminalFactStatus(a.value ?? "") ? 1 : 0;
-      const bTerminal = isTerminalFactStatus(b.value ?? "") ? 1 : 0;
+      const aTerminal = isTerminalFactStatus(a.value ?? a.text ?? "") ? 1 : 0;
+      const bTerminal = isTerminalFactStatus(b.value ?? b.text ?? "") ? 1 : 0;
       if (aTerminal !== bTerminal) return bTerminal - aTerminal; // terminal (1) wins
     }
     // Rule 2: lexicographic id tie-break (stable, later id = newer fact)
