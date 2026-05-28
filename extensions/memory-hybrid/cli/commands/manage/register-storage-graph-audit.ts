@@ -23,6 +23,13 @@ import {
   validateSyncEnvelope,
 } from "./storage-stats-helpers.js";
 
+const LEGACY_CATEGORY_REMAP_POLICY: Readonly<Record<string, string>> = {
+  forge_busy: "forge",
+  forge_dispatch: "forge",
+  forge_ops: "forge",
+  episode: "ops_summary",
+};
+
 export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBindings): void {
   const {
     factsDb,
@@ -703,6 +710,16 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           console.log(
             `Labels in DB but not in your config (${report.unknown.length}): ${report.unknown.map((u) => u.category).join(", ")}`,
           );
+          const unknownCategories = new Set(report.unknown.map((u) => u.category));
+          const legacyRemapCommands = Object.entries(LEGACY_CATEGORY_REMAP_POLICY)
+            .filter(([from]) => unknownCategories.has(from))
+            .map(([from, to]) => `openclaw hybrid-mem categories remap --from ${from} --to ${to} --apply`);
+          if (legacyRemapCommands.length > 0) {
+            console.log("Legacy category remap policy:");
+            for (const command of legacyRemapCommands) {
+              console.log(`  ${command}`);
+            }
+          }
           console.log(
             "Remap into a configured category (dry-run by default), e.g.: openclaw hybrid-mem categories remap --from monitoring --to fact",
           );
