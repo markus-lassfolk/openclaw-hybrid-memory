@@ -261,9 +261,9 @@ export class FactsDB extends FactsDBLayer2 {
             if (!rec) continue;
             const lww = evaluateLwwEligibility(newFact, oldFact, rec.oldFactOriginalConfidence);
             if (lww.eligible && lww.qualifies) {
-              const resolved = this.resolveContradiction(contradictionId, "superseded");
-              if (resolved) {
-                this.supersede(oldFactId, newFactId);
+              const superseded = this.supersede(oldFactId, newFactId);
+              if (superseded) {
+                this.resolveContradiction(contradictionId, "superseded");
               }
             }
           }

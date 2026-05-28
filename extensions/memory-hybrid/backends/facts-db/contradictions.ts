@@ -270,13 +270,15 @@ export function resolveContradictionsAuto(
     const newIsFromUser = resolvedNew.source === "conversation" || resolvedNew.source === "cli";
 
     if (newIsNewer && newIsHigherConf && newIsFromUser) {
-      resolveContradiction(db, c.id, "superseded");
-      supersede(c.factIdOld, c.factIdNew);
-      autoResolved.push({
-        contradictionId: c.id,
-        factIdNew: c.factIdNew,
-        factIdOld: c.factIdOld,
-      });
+      const superseded = supersede(c.factIdOld, c.factIdNew);
+      if (superseded) {
+        resolveContradiction(db, c.id, "superseded");
+        autoResolved.push({
+          contradictionId: c.id,
+          factIdNew: c.factIdNew,
+          factIdOld: c.factIdOld,
+        });
+      }
     } else {
       ambiguous.push({
         contradictionId: c.id,
@@ -500,12 +502,10 @@ export function resolveProjectStateLww(
     });
 
     if (!dryRun && action === "supersede") {
-      const resolved = resolveContradiction(db, c.id, "superseded");
-      if (resolved) {
-        const superseded = supersede(c.factIdOld, c.factIdNew);
-        if (superseded) {
-          applied++;
-        }
+      const superseded = supersede(c.factIdOld, c.factIdNew);
+      if (superseded) {
+        resolveContradiction(db, c.id, "superseded");
+        applied++;
       }
     }
   }
