@@ -303,7 +303,7 @@ function writeJsonArtifact(snapshot: MemoryPressureSnapshot): void {
 // Main snapshot function
 // ---------------------------------------------------------------------------
 
-export async function captureMemoryPressureSnapshot(
+async function captureMemoryPressureSnapshot(
   ctx: Pick<LifecycleContext, "factsDb" | "vectorDb" | "recallInFlightRef" | "resolvedSqlitePath" | "cfg"> & {
     activeTaskPath?: string;
   },
@@ -394,7 +394,7 @@ export async function captureMemoryPressureSnapshot(
         lancedbOptimizing,
       },
       hybridMemory,
-      cooldownRemainingSec: 0,
+      cooldownRemainingSec: config.cooldownSec,
     };
 
     if (config.writeArtifact) {
@@ -412,7 +412,7 @@ export async function captureMemoryPressureSnapshot(
 /**
  * Format snapshot as a compact single-line string for log output.
  */
-export function formatMemoryPressureLogLine(snapshot: MemoryPressureSnapshot): string {
+function formatMemoryPressureLogLine(snapshot: MemoryPressureSnapshot): string {
   const { memory, hybridMemory, fdGroups } = snapshot;
   const heapPct = memory.heapTotal > 0 ? ((memory.heapUsed / memory.heapTotal) * 100).toFixed(1) : "0.0";
   const rssMb = (memory.rss / 1024 / 1024).toFixed(0);
