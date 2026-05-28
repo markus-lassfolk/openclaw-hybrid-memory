@@ -238,12 +238,13 @@ export async function runContextAudit(opts: {
   const issueEstimateTokens = cfg.ambient.enabled ? issueCapTokens : 0;
   const narrativeEstimateTokens = narrativeMaxTokens;
   const staleWarningEstimateTokens = staleWarningMaxTokens;
+  const activeTasksTokensWithoutStaleWarning = Math.max(0, activeTasksTokens - _staleWarningTokens);
   const fixedBlockEstimatedTokens =
     issueEstimateTokens +
     narrativeEstimateTokens +
     Math.min(hotTokens, hotMaxTokens) +
     Math.min(proceduresTokens, procedureMaxTokens) +
-    Math.min(activeTasksTokens, activeTaskMaxTokens) +
+    Math.min(activeTasksTokensWithoutStaleWarning, activeTaskMaxTokens) +
     staleWarningEstimateTokens;
   const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
   const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
