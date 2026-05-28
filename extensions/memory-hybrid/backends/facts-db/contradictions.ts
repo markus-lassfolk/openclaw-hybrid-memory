@@ -199,7 +199,7 @@ export function getContradictedIds(db: DatabaseSync, factIds: string[]): Set<str
   return result;
 }
 
-function isFactVerified(db: DatabaseSync, factId: string): boolean {
+export function isFactVerified(db: DatabaseSync, factId: string): boolean {
   const row = db.prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1").get(factId);
   return row != null;
 }

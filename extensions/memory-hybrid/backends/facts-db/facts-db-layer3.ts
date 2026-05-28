@@ -22,6 +22,7 @@ import {
   getContradictedIds as getContradictedIdsImpl,
   getContradictions as getContradictionsImpl,
   isContradicted as isContradictedImpl,
+  isFactVerified,
   PROJECT_STATE_LWW_KEYS,
   recordContradiction as recordContradictionImpl,
   resolveContradiction as resolveContradictionImpl,
@@ -259,7 +260,7 @@ export class FactsDB extends FactsDBLayer2 {
             const oldFact = this.getById(oldFactId);
             if (!oldFact) continue;
             const lww = evaluateLwwEligibility(newFact, oldFact, oldFactOriginalConfidence);
-            if (lww.eligible && lww.qualifies) {
+            if (lww.eligible && lww.qualifies && !isFactVerified(this.liveDb, oldFactId)) {
               const superseded = this.supersede(oldFactId, newFactId);
               if (superseded) {
                 this.resolveContradiction(contradictionId, "superseded");
