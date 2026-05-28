@@ -132,17 +132,14 @@ export async function runExtractReinforcementForCli(
           incidents_json: JSON.stringify(result.incidents),
         });
         const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
-        const tierPrefWithSources = resolveTierPreferenceWithSources(
-          cfg,
-          extractionTier as "nano" | "default" | "heavy",
-        );
+        const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, extractionTier);
         const cronCfg = getCronModelConfig(cfg);
         const tierPref = getLLMModelPreference(cronCfg, extractionTier);
         const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
         // Derive fallback chain from the full tier preference list; when only one model is
         // configured, fall through to resolveReflectionModelAndFallbacks which picks up
         // llm.fallbackModel and distill.fallbackModels (mirrors the distill/self-correction fix).
-        const tierResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier as "nano" | "default" | "heavy");
+        const tierResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
         const fallbackModels = tierResolved.fallbackModels ?? [];
         const modelSource =
           tierPrefWithSources.models[0] === model ? (tierPrefWithSources.sources[0] ?? "built-in") : "built-in";
@@ -353,7 +350,7 @@ export async function runExtractReinforcementForCli(
 
     // Annotate facts/procedures with reinforcement if not dry-run
     let annotated = 0;
-    const annotationReasons: AnnotationReasons = { noRecalledIds: 0, reinforced: 0, errors: 0 };
+    const annotationReasons: AnnotationReasons = { noRecalledIds: 0, reinforced: 0, recalledIdsNoMatch: 0, errors: 0 };
 
     if (!opts.dryRun) {
       const trackContext = cfg.reinforcement?.trackContext !== false;
@@ -410,6 +407,7 @@ export async function runExtractReinforcementForCli(
           }
           annotated += incidentAnnotated;
           if (incidentAnnotated > 0) annotationReasons.reinforced++;
+          else annotationReasons.recalledIdsNoMatch++;
 
           // Reinforce procedures based on tool call sequence
           if (incident.toolCallSequence.length >= 2) {

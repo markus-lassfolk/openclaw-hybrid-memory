@@ -32,6 +32,8 @@ export type AnnotationReasons = {
   noRecalledIds: number;
   /** Incidents where at least one fact was successfully reinforced */
   reinforced: number;
+  /** Incidents had recalled IDs but none could be reinforced (e.g., stale/non-existent IDs) */
+  recalledIdsNoMatch: number;
   /** Incidents where annotation threw an error */
   errors: number;
 };

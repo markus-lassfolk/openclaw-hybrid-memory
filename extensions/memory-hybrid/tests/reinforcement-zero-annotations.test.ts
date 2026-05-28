@@ -218,6 +218,7 @@ describe("successful annotation (#1639)", () => {
     expect(result.annotationStatus).toBeUndefined();
     expect(result.annotationReasons?.reinforced).toBeGreaterThan(0);
     expect(result.annotationReasons?.noRecalledIds).toBe(0);
+    expect(result.annotationReasons?.recalledIdsNoMatch).toBe(0);
     expect(result.annotationReasons?.errors).toBe(0);
   });
 });
@@ -240,6 +241,7 @@ describe("no-match benign (partial_no_matches) (#1639)", () => {
     expect(result.annotationStatus).toBe("partial_no_matches");
     expect(result.annotationReasons?.noRecalledIds).toBe(result.incidents.length);
     expect(result.annotationReasons?.reinforced).toBe(0);
+    expect(result.annotationReasons?.recalledIdsNoMatch).toBe(0);
     expect(result.annotationReasons?.errors).toBe(0);
   });
 
@@ -398,9 +400,27 @@ describe("maintenance validation semantics (#1639)", () => {
     expect(result.annotated).toBeGreaterThan(0);
     expect(result.annotationReasons).toBeDefined();
     expect(result.annotationReasons?.reinforced).toBeGreaterThan(0);
+    expect(result.annotationReasons?.recalledIdsNoMatch).toBe(0);
   });
 
-  it("dry-run does not set annotated or annotationStatus", async () => {
+  it("sets failed_annotation and recalledIdsNoMatch when recalled IDs do not map to reinforceable facts", async () => {
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeSessionWithMemoryRecall(sessionFile, "bbbbbbbb-0000-0000-0000-000000000002");
+
+    const openai = makeOpenAIMock("[]");
+    const ctx = makeCtx(openai);
+    const result = await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    expect(result.incidents.length).toBeGreaterThan(0);
+    expect(result.annotated).toBe(0);
+    expect(result.annotationStatus).toBe("failed_annotation");
+    expect(result.annotationReasons?.noRecalledIds).toBe(0);
+    expect(result.annotationReasons?.reinforced).toBe(0);
+    expect(result.annotationReasons?.recalledIdsNoMatch).toBe(result.incidents.length);
+    expect(result.annotationReasons?.errors).toBe(0);
+  });
+
+  it("dry-run leaves annotated at 0 and annotationStatus unset", async () => {
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     // Write a session with some non-existent ID (dry-run won't annotate regardless)
     writeSessionWithMemoryRecall(sessionFile, "bbbbbbbb-0000-0000-0000-000000000002");
@@ -415,6 +435,7 @@ describe("maintenance validation semantics (#1639)", () => {
     // annotationReasons should reflect the un-run annotation pass (all zeros)
     expect(result.annotationReasons?.noRecalledIds).toBe(0);
     expect(result.annotationReasons?.reinforced).toBe(0);
+    expect(result.annotationReasons?.recalledIdsNoMatch).toBe(0);
     expect(result.annotationReasons?.errors).toBe(0);
   });
 

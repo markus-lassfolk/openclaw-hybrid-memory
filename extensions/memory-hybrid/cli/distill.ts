@@ -422,7 +422,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
               const reasons = result.annotationReasons;
               if (reasons) {
                 console.log(
-                  `Annotation reason breakdown: noRecalledIds=${reasons.noRecalledIds} reinforced=${reasons.reinforced} errors=${reasons.errors}`,
+                  `Annotation reason breakdown: noRecalledIds=${reasons.noRecalledIds} reinforced=${reasons.reinforced} recalledIdsNoMatch=${reasons.recalledIdsNoMatch} errors=${reasons.errors}`,
                 );
               }
               const status = result.annotationStatus;
