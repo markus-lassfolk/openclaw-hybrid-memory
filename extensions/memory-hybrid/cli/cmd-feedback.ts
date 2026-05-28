@@ -195,6 +195,10 @@ export function cleanupImplicitFeedbackDuplicates(
     seedCanonical?: ReadonlyArray<{ id: string; text: string }>;
     /** When true, also collapse legacy `category=pattern` implicit-feedback rows into canonical signals. */
     includeLegacy?: boolean;
+    /** Optional progress callback for long-running synchronous scans. */
+    onProgress?: (progress: { scanned: number; total: number; collapsed: number }) => void;
+    /** Callback cadence in scanned rows. */
+    reportEvery?: number;
   } = {},
 ): {
   scanned: number;
@@ -232,6 +236,8 @@ export function cleanupImplicitFeedbackDuplicates(
     createdAt: number;
   }>;
   let collapsed = 0;
+  let scanned = 0;
+  const reportEvery = Math.max(1, opts.reportEvery ?? 250);
   const CANONICAL_WINDOW_SIZE = Math.min(20_000, Math.max(2000, limit * 8));
   const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])]
     .slice(-CANONICAL_WINDOW_SIZE)
@@ -246,22 +252,33 @@ export function cleanupImplicitFeedbackDuplicates(
   let supersededAny = false;
   const scanRows = () => {
     for (const row of rows) {
+      scanned++;
       const match = canonical.find(
         (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
       );
       if (!match) {
         canonical.push({ id: row.id, text: row.text });
+        if (scanned % reportEvery === 0 || scanned === rows.length) {
+          opts.onProgress?.({ scanned, total: rows.length, collapsed });
+        }
         continue;
       }
       if (dryRun) {
         collapsed++;
+        if (scanned % reportEvery === 0 || scanned === rows.length) {
+          opts.onProgress?.({ scanned, total: rows.length, collapsed });
+        }
         continue;
       }
       const sup = supersedeStmt.run(nowSec, match.id, nowSec, row.id);
-      if ((sup.changes ?? 0) <= 0) continue;
-      supersededAny = true;
-      reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
-      collapsed++;
+      if ((sup.changes ?? 0) > 0) {
+        supersededAny = true;
+        reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
+        collapsed++;
+      }
+      if (scanned % reportEvery === 0 || scanned === rows.length) {
+        opts.onProgress?.({ scanned, total: rows.length, collapsed });
+      }
     }
   };
   if (dryRun) {

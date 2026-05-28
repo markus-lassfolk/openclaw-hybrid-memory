@@ -70,7 +70,13 @@ interface CliContextServices {
   }) => Promise<
     { ok: true; path: string; topLanguages: string[]; languagesAdded: number } | { ok: false; error: string }
   >;
-  runEntityEnrichment: (opts: { limit: number; dryRun: boolean; model?: string; verbose?: boolean }) => Promise<{
+  runEntityEnrichment: (opts: {
+    limit: number;
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+    onProgress?: (progress: import("../../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
+  }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;

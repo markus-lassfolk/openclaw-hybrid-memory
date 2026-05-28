@@ -466,8 +466,8 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     return countExpiredFactsImpl(this.liveDb);
   }
 
-  backfillDecayClasses(): Record<string, number> {
-    return backfillDecayClassesImpl(this.liveDb);
+  backfillDecayClasses(options?: Parameters<typeof backfillDecayClassesImpl>[1]): Record<string, number> {
+    return backfillDecayClassesImpl(this.liveDb, options);
   }
 
   reclassifyDecayClasses(
