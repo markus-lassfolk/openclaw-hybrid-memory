@@ -708,6 +708,11 @@ export function buildAuditHealthReport(
     );
   if (unknown.length > 0)
     remediation.push("Run `openclaw hybrid-mem categories audit`, then `categories remap --apply` where appropriate.");
+  if (activeFacts > 0 && stableStickinessRatio > 0.6) {
+    remediation.push(
+      "Run `openclaw hybrid-mem decay reclassify --dry-run --stable-only`, then `openclaw hybrid-mem decay reclassify --apply --stable-only` if the report looks correct.",
+    );
+  }
   if (vectorless > 0) remediation.push("Run `openclaw hybrid-mem reembed-vectorless --apply`.");
   if (degraded) remediation.push("Run `openclaw hybrid-mem repair-vectors` and validate LanceDB connectivity.");
   if (procedureTriage.summary.total > 0)

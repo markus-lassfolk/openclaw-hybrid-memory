@@ -17,17 +17,22 @@ import {
   addTag as addTagImpl,
   contradictionsCount as contradictionsCountImpl,
   detectContradictions as detectContradictionsImpl,
+  evaluateLwwEligibility,
   findConflictingFacts as findConflictingFactsImpl,
   getContradictedIds as getContradictedIdsImpl,
   getContradictions as getContradictionsImpl,
   isContradicted as isContradictedImpl,
+  isFactVerified,
+  PROJECT_STATE_LWW_KEYS,
   recordContradiction as recordContradictionImpl,
   resolveContradiction as resolveContradictionImpl,
+  previewResolveContradictionsAuto as previewResolveContradictionsAutoImpl,
   resolveContradictionsAuto as resolveContradictionsAutoImpl,
+  resolveProjectStateLww as resolveProjectStateLwwImpl,
   setConfidenceTo as setConfidenceToImpl,
   updateConfidence as updateConfidenceImpl,
 } from "./contradictions.js";
-import type { ContradictionRecord } from "./contradictions.js";
+import type { ContradictionRecord, ProjectStateLwwResult } from "./contradictions.js";
 import {
   autoDetectInstanceOf as autoDetectInstanceOfImpl,
   autoLinkEntities as autoLinkEntitiesImpl,
@@ -105,8 +110,11 @@ export class FactsDB extends FactsDBLayer2 {
   }
 
   /** Alias for backfillDecayClasses() for backward compatibility */
-  backfillDecay(): Record<string, number> {
-    return this.backfillDecayClasses();
+  backfillDecay(options?: {
+    onProgress?: (progress: import("./maintenance.js").BackfillDecayProgress) => void;
+    reportEvery?: number;
+  }): Record<string, number> {
+    return this.backfillDecayClasses(options);
   }
 
   pruneLogTables(retentionDays: number): number {
@@ -219,7 +227,7 @@ export class FactsDB extends FactsDBLayer2 {
   recordContradiction(factIdNew: string, factIdOld: string): string {
     return recordContradictionImpl(this.liveDb, factIdNew, factIdOld, (a, b, t, s) =>
       this.createLink(a, b, t, s ?? 1.0),
-    );
+    ).id;
   }
 
   detectContradictions(
@@ -229,10 +237,41 @@ export class FactsDB extends FactsDBLayer2 {
     value: string | null | undefined,
     scope?: string | null,
     scopeTarget?: string | null,
-  ): Array<{ contradictionId: string; oldFactId: string }> {
-    return detectContradictionsImpl(this.liveDb, newFactId, entity, key, value, scope, scopeTarget, (a, b, t, s) =>
-      this.createLink(a, b, t, s ?? 1.0),
+  ): Array<{ contradictionId: string; oldFactId: string; oldFactOriginalConfidence: number }> {
+    const results = detectContradictionsImpl(
+      this.liveDb,
+      newFactId,
+      entity,
+      key,
+      value,
+      scope,
+      scopeTarget,
+      (a, b, t, s) => this.createLink(a, b, t, s ?? 1.0),
     );
+
+    // Project-state LWW: immediately resolve contradictions for known mutable keys so
+    // active-task/project writes do not leave avoidable unresolved contradictions (#1636).
+    if (results.length > 0 && key != null) {
+      const keyLower = key.trim().toLowerCase();
+      if (PROJECT_STATE_LWW_KEYS.has(keyLower)) {
+        const newFact = this.getById(newFactId);
+        if (newFact) {
+          for (const { contradictionId, oldFactId, oldFactOriginalConfidence } of results) {
+            const oldFact = this.getById(oldFactId);
+            if (!oldFact) continue;
+            const lww = evaluateLwwEligibility(newFact, oldFact, oldFactOriginalConfidence);
+            if (lww.eligible && lww.qualifies && !isFactVerified(this.liveDb, oldFactId)) {
+              const superseded = this.supersede(oldFactId, newFactId);
+              if (superseded) {
+                this.resolveContradiction(contradictionId, "superseded");
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return results;
   }
 
   getContradictions(factId?: string): ContradictionRecord[] {
@@ -256,6 +295,26 @@ export class FactsDB extends FactsDBLayer2 {
       this.liveDb,
       (id) => this.getById(id),
       (o, n) => this.supersede(o, n),
+    );
+  }
+
+  previewResolveContradictions(): ReturnType<typeof previewResolveContradictionsAutoImpl> {
+    return previewResolveContradictionsAutoImpl(this.liveDb, (id) => this.getById(id));
+  }
+
+  /**
+   * Project-state latest-wins resolution pass (Issue #1636).
+   * Safely resolves stale `project` contradictions for known mutable keys when the newer
+   * trusted fact is strictly newer and has equal or higher confidence.
+   *
+   * Pass `{ dryRun: true }` to inspect candidates without mutating any data.
+   */
+  resolveContradictionsProjectStateLww(opts: { dryRun?: boolean } = {}): ProjectStateLwwResult {
+    return resolveProjectStateLwwImpl(
+      this.liveDb,
+      (id) => this.getById(id),
+      (o, n) => this.supersede(o, n),
+      opts,
     );
   }
 

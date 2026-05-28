@@ -8,12 +8,14 @@ import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
+import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 
 import {
   formatExtractImplicitFeedbackProgress,
   runVerboseFollowUp,
   type RunVerboseFollowUpOptions,
 } from "./dream-cycle-followup.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindings): void {
   const {
@@ -341,21 +343,38 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             let scanned = 0;
             let collapsed = 0;
             let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
-            for (;;) {
-              const res = cleanupImplicitFeedbackDuplicates(factsDb, {
-                threshold,
-                limit,
-                afterRowid,
-                dryRun,
-                seedCanonical: carryCanonical,
-                includeLegacy: opts?.includeLegacy === true,
-              });
-              scanned += res.scanned;
-              collapsed += res.collapsed;
-              carryCanonical = res.carryCanonical;
-              if (res.scanned < limit || res.resumeAfterRowid == null) break;
-              afterRowid = res.resumeAfterRowid;
-            }
+            let batches = 0;
+            await runMaintenanceHeartbeat(
+              "reflect-meta-collapse",
+              verbose,
+              async (heartbeat) => {
+                for (;;) {
+                  batches++;
+                  const res = cleanupImplicitFeedbackDuplicates(factsDb, {
+                    threshold,
+                    limit,
+                    afterRowid,
+                    dryRun,
+                    seedCanonical: carryCanonical,
+                    includeLegacy: opts?.includeLegacy === true,
+                    reportEvery: 250,
+                    onProgress: () => heartbeat.heartbeat(),
+                  });
+                  scanned += res.scanned;
+                  collapsed += res.collapsed;
+                  carryCanonical = res.carryCanonical;
+                  heartbeat.heartbeat();
+                  if (res.scanned < limit || res.resumeAfterRowid == null) break;
+                  afterRowid = res.resumeAfterRowid;
+                  await new Promise((resolve) => setImmediate(resolve));
+                }
+              },
+              {
+                forceHeartbeat: true,
+                progressSupplier: () =>
+                  `stage=scan; batches=${batches}; scanned=${scanned}; collapsed=${collapsed}; includeLegacy=${opts?.includeLegacy === true ? "yes" : "no"}`,
+              },
+            );
             console.log(
               `Implicit-feedback collapse complete: scanned ${scanned}, collapsed ${collapsed} ${dryRun ? "(dry-run)" : ""}`,
             );
@@ -363,7 +382,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           }
           let res;
           try {
-            res = await runReflectionMeta({ dryRun, model, verbose });
+            res = await runMaintenanceHeartbeat(
+              "reflect-meta",
+              verbose,
+              () => runReflectionMeta({ dryRun, model, verbose }),
+              {
+                progressSupplier: () => `stage=extract-meta-patterns; dryRun=${dryRun ? "yes" : "no"}`,
+              },
+            );
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
@@ -675,81 +701,217 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "--details",
       "For ambiguous pairs, print entity/key/value summaries (not only UUIDs); implies listing all ambiguous rows",
     )
+    .option(
+      "--project-state-lww",
+      "Apply project-state latest-wins (LWW) policy: safely resolve stale project/task contradictions for known mutable keys",
+    )
+    .option("--dry-run", "Project-state LWW contract mode: preview contradiction-resolution candidates")
+    .option("--apply", "Project-state LWW contract mode: apply contradiction-resolution candidates")
     .action(
-      withExit(async (opts?: { verbose?: boolean; details?: boolean }, cmd?: CommanderOptsParent) => {
-        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-        const details = !!opts?.details;
-        let res;
-        try {
-          res = await ctx.runResolveContradictions();
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "resolve-contradictions",
-          });
-          throw err;
-        }
-        console.log(
-          `Contradictions resolved: ${res.autoResolved.length} auto-resolved, ${res.ambiguous.length} ambiguous.`,
-        );
-        if (verbose && res.autoResolved.length > 0) {
-          console.log("Auto-resolved (--verbose):");
-          for (const a of res.autoResolved) {
-            console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+      withExit(
+        async (
+          opts?: { verbose?: boolean; details?: boolean; projectStateLww?: boolean; dryRun?: boolean; apply?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          const details = !!opts?.details;
+          const projectStateLww = !!opts?.projectStateLww;
+          const dryRun = !!opts?.dryRun;
+          const apply = !!opts?.apply;
+
+          if (dryRun && apply) {
+            throw new Error("--dry-run and --apply are mutually exclusive");
           }
-        }
-        if (res.ambiguous.length > 0) {
-          const trunc = (s: string | null | undefined, n: number): string => {
-            if (s == null || s === "") return "(empty)";
-            const t = s.replace(/\s+/g, " ").trim();
-            return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
-          };
-          const ambiguousList = verbose || details ? res.ambiguous : res.ambiguous.slice(0, 10);
-          if (details) {
-            console.log("Ambiguous pairs (same entity + key, different value — pick which fact stays current):");
-            for (const a of ambiguousList) {
-              const newF = factsDb.getById(a.factIdNew);
-              const oldF = factsDb.getById(a.factIdOld);
-              const entity = newF?.entity ?? oldF?.entity ?? "?";
-              const key = newF?.key ?? oldF?.key ?? "?";
-              const newBits = newF
-                ? `value=${trunc(newF.value, 48)} | text=${trunc(newF.text, 72)} | conf=${(newF.confidence ?? 0).toFixed(2)} | src=${newF.source}`
-                : "(newer fact row missing)";
-              const oldBits = oldF
-                ? `value=${trunc(oldF.value, 48)} | text=${trunc(oldF.text, 72)} | conf=${(oldF.confidence ?? 0).toFixed(2)} | src=${oldF.source}`
-                : "(older fact row missing)";
-              console.log(`  · [${entity}] ${key}`);
-              console.log(`      newer fact ${a.factIdNew}: ${newBits}`);
-              console.log(`      older fact ${a.factIdOld}: ${oldBits}`);
-              console.log(`      contradiction row ${a.contradictionId}`);
+
+          // Operator contract mode for Issue #1636:
+          //   resolve-contradictions --dry-run
+          //   resolve-contradictions --apply
+          // Legacy compatibility: --project-state-lww keeps working as explicit LWW mode.
+          const projectStateLwwContractMode = projectStateLww || apply || dryRun;
+          if (projectStateLwwContractMode) {
+            const lwwDryRun = dryRun;
+            // Project-state LWW mode: grouped, human-readable output.
+            let lwwRes;
+            try {
+              lwwRes = await ctx.runResolveContradictionsProjectStateLww({ dryRun: lwwDryRun });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "resolve-contradictions-project-state-lww",
+              });
+              throw err;
             }
-          } else {
-            console.log("Ambiguous pairs (manual review recommended):");
-            for (const a of ambiguousList) {
+
+            const modeLabel = lwwDryRun ? "(dry-run)" : "(applied)";
+            if (lwwDryRun) {
+              console.log(
+                `project-state-lww candidates ${modeLabel}: ${lwwRes.totalCandidates} total — would supersede: ${lwwRes.wouldSupersede}, manual review: ${lwwRes.wouldManualReview}`,
+              );
+            } else {
+              console.log(
+                `project-state-lww ${modeLabel}: ${lwwRes.applied} superseded, ${lwwRes.wouldManualReview} manual-review remaining.`,
+              );
+            }
+            const autoResolved = lwwDryRun ? lwwRes.wouldSupersede : lwwRes.applied;
+            console.log(
+              `project-state-lww summary auto-resolved=${autoResolved} dry-run=${lwwDryRun ? 1 : 0} remaining=${lwwRes.wouldManualReview} total-candidates=${lwwRes.totalCandidates}`,
+            );
+
+            if (lwwRes.groups.length > 0) {
+              const formatEpochTimestamp = (t: number) =>
+                new Date(t * 1000).toISOString().replace("T", " ").slice(0, 19);
+              for (const group of lwwRes.groups) {
+                const scopeLabel =
+                  group.scope && group.scope !== "global"
+                    ? ` [scope=${group.scope}${group.scopeTarget ? `/${group.scopeTarget}` : ""}]`
+                    : "";
+                console.log(`\n  ${group.entity} / ${group.key}${scopeLabel}`);
+                for (const cand of group.candidates) {
+                  const overloadNote = cand.possibleOverloadedEntity ? " [!] possible-entity-reuse" : "";
+                  const actionLabel =
+                    cand.action === "supersede" ? "auto-safe: project-state-lww" : "manual: non-qualifying";
+                  const keepLabel = cand.action === "supersede" ? "keep" : "newer";
+                  const supersedeLabel = cand.action === "supersede" ? "supersede" : "older";
+                  console.log(`    [${actionLabel}]${overloadNote}`);
+                  console.log(
+                    `      ${keepLabel.padEnd(10)}: ${formatEpochTimestamp(cand.newFactDate)} src=${cand.newSource} conf=${cand.newConf.toFixed(2)} "${cand.newValueExcerpt}"`,
+                  );
+                  console.log(
+                    `      ${supersedeLabel.padEnd(10)}: ${formatEpochTimestamp(cand.oldFactDate)} src=${cand.oldSource} conf=${cand.oldConf.toFixed(2)} "${cand.oldValueExcerpt}"`,
+                  );
+                  console.log(`      contradiction: ${cand.contradictionId}`);
+                }
+              }
+              console.log("");
+            }
+
+            if (lwwDryRun && lwwRes.wouldSupersede > 0) {
+              console.log(`Run with --apply to resolve ${lwwRes.wouldSupersede} project-state-lww contradiction(s).`);
+            }
+            if (lwwRes.wouldManualReview > 0) {
+              console.log(
+                `${lwwRes.wouldManualReview} project-state pair(s) require manual review (non-qualifying for LWW).`,
+              );
+              console.log("  Inspect with: openclaw hybrid-mem resolve-contradictions --details");
+            }
+            return;
+          }
+
+          if (dryRun) {
+            let res;
+            try {
+              res = await ctx.runResolveContradictionsDryRun();
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "resolve-contradictions-dry-run",
+              });
+              throw err;
+            }
+            console.log(
+              `Contradictions dry-run: would auto-resolve ${res.autoResolvable.length}, ${res.ambiguous.length} ambiguous.`,
+            );
+            if (res.autoResolvable.length > 0) {
+              console.log("Would auto-resolve:");
+              for (const a of res.autoResolvable) {
+                console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+              }
+              console.log("Run without --dry-run to apply these conservative auto-resolutions.");
+            }
+            if (res.ambiguous.length > 0) {
+              console.log(
+                "Ambiguous pairs require manual review. Re-run with --details for entity/key/value summaries, or use --project-state-lww --dry-run for project-state candidates.",
+              );
+            }
+            return;
+          }
+
+          // Default (conservative) mode: unchanged behavior.
+          let res;
+          try {
+            res = await ctx.runResolveContradictions();
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "resolve-contradictions",
+            });
+            throw err;
+          }
+          console.log(
+            `Contradictions resolved: ${res.autoResolved.length} auto-resolved, ${res.ambiguous.length} ambiguous.`,
+          );
+          if (verbose && res.autoResolved.length > 0) {
+            console.log("Auto-resolved (--verbose):");
+            for (const a of res.autoResolved) {
               console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
             }
           }
-          if (!verbose && !details && res.ambiguous.length > 10) {
-            console.log(`  ...and ${res.ambiguous.length - 10} more`);
+          if (res.ambiguous.length > 0) {
+            const trunc = (s: string | null | undefined, n: number): string => {
+              if (s == null || s === "") return "(empty)";
+              const t = s.replace(/\s+/g, " ").trim();
+              return t.length <= n ? t : `${t.slice(0, n - 1)}…`;
+            };
+            const ambiguousList = verbose || details ? res.ambiguous : res.ambiguous.slice(0, 10);
+            if (details) {
+              console.log("Ambiguous pairs (same entity + key, different value — pick which fact stays current):");
+              for (const a of ambiguousList) {
+                const newF = factsDb.getById(a.factIdNew);
+                const oldF = factsDb.getById(a.factIdOld);
+                const entity = newF?.entity ?? oldF?.entity ?? "?";
+                const key = newF?.key ?? oldF?.key ?? "?";
+                const newBits = newF
+                  ? `value=${trunc(newF.value, 48)} | text=${trunc(newF.text, 72)} | conf=${(newF.confidence ?? 0).toFixed(2)} | src=${newF.source}`
+                  : "(newer fact row missing)";
+                const oldBits = oldF
+                  ? `value=${trunc(oldF.value, 48)} | text=${trunc(oldF.text, 72)} | conf=${(oldF.confidence ?? 0).toFixed(2)} | src=${oldF.source}`
+                  : "(older fact row missing)";
+                console.log(`  · [${entity}] ${key}`);
+                console.log(`      newer fact ${a.factIdNew}: ${newBits}`);
+                console.log(`      older fact ${a.factIdOld}: ${oldBits}`);
+                console.log(`      contradiction row ${a.contradictionId}`);
+              }
+            } else {
+              console.log("Ambiguous pairs (manual review recommended):");
+              for (const a of ambiguousList) {
+                console.log(`  - ${a.factIdNew} ↔ ${a.factIdOld} (${a.contradictionId})`);
+              }
+            }
+            if (!verbose && !details && res.ambiguous.length > 10) {
+              console.log(`  ...and ${res.ambiguous.length - 10} more`);
+            }
+            console.log("");
+            console.log(
+              "What this means: each line is two stored facts with the same entity and key but different values. " +
+                "Auto-resolution only runs when the newer fact is clearly stronger (newer, higher confidence, and from conversation or CLI).",
+            );
+            console.log("What to do:");
+            console.log(
+              "  1. Inspect: openclaw hybrid-mem show <fact-id>   (left/newer id first, then older id in each pair)",
+            );
+            console.log(
+              "  2. Fix memory: if the newer statement is right, add or correct with store --supersedes <older-fact-id>; " +
+                "if the older one is right, supersede or remove the newer fact (e.g. prune), then re-run this command.",
+            );
+            if (!details) {
+              console.log("  3. Easier scan: openclaw hybrid-mem resolve-contradictions --details");
+            }
+            const hasProjectStatePairs = res.ambiguous.some((a) => {
+              const newF = factsDb.getById(a.factIdNew);
+              const oldF = factsDb.getById(a.factIdOld);
+              if (!newF || !oldF) return false;
+              if (newF.category !== "project" || oldF.category !== "project") return false;
+              const keyLower = (newF.key ?? oldF.key ?? "").toLowerCase();
+              return PROJECT_STATE_LWW_KEYS.has(keyLower);
+            });
+            if (hasProjectStatePairs) {
+              console.log(
+                "  4. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
+              );
+            }
           }
-          console.log("");
-          console.log(
-            "What this means: each line is two stored facts with the same entity and key but different values. " +
-              "Auto-resolution only runs when the newer fact is clearly stronger (newer, higher confidence, and from conversation or CLI).",
-          );
-          console.log("What to do:");
-          console.log(
-            "  1. Inspect: openclaw hybrid-mem show <fact-id>   (left/newer id first, then older id in each pair)",
-          );
-          console.log(
-            "  2. Fix memory: if the newer statement is right, add or correct with store --supersedes <older-fact-id>; " +
-              "if the older one is right, supersede or remove the newer fact (e.g. prune), then re-run this command.",
-          );
-          if (!details) {
-            console.log("  3. Easier scan: openclaw hybrid-mem resolve-contradictions --details");
-          }
-        }
-      }),
+        },
+      ),
     );
 
   mem
@@ -792,13 +954,22 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     )
     .option("--model <m>", "LLM model (default from autoClassify config)")
     .option("--dry-run", "Show what would be generated without writing")
+    .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .action(
-      withExit(async (opts?: { model?: string; dryRun?: boolean }) => {
+      withExit(async (opts?: { model?: string; dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const model = opts?.model ?? ctx.autoClassifyConfig.model;
         const dryRun = !!opts?.dryRun;
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         let res;
         try {
-          res = await runBuildLanguageKeywords({ model, dryRun });
+          res = await runMaintenanceHeartbeat(
+            "build-languages",
+            verbose,
+            () => runBuildLanguageKeywords({ model, dryRun }),
+            {
+              progressSupplier: () => `stage=detect+generate; dryRun=${dryRun ? "yes" : "no"}`,
+            },
+          );
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "cli",
@@ -840,9 +1011,28 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const dryRun = !!opts?.dryRun;
           const model = opts?.model;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          let enrichProgress = { processed: 0, total: 0, factsEnriched: 0 };
           let res;
           try {
-            res = await runEntityEnrichment({ limit, dryRun, model, verbose });
+            res = await runMaintenanceHeartbeat(
+              "enrich-entities",
+              verbose,
+              (heartbeat) =>
+                runEntityEnrichment({
+                  limit,
+                  dryRun,
+                  model,
+                  verbose,
+                  onProgress: (next) => {
+                    enrichProgress = next;
+                    heartbeat.heartbeat();
+                  },
+                }),
+              {
+                progressSupplier: () =>
+                  `stage=entity-enrichment; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; dryRun=${dryRun ? "yes" : "no"}`,
+              },
+            );
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",

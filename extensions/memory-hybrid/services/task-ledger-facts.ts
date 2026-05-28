@@ -5,11 +5,15 @@
 
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+import { execFile } from "../utils/process-runner.js";
+import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { getEnv } from "../utils/env-manager.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
@@ -27,10 +31,28 @@ import {
 } from "./active-task.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
+import { fetchLivePrBlockerStatus, type PrBlockerStatus } from "./task-hygiene.js";
+import {
+  activeTaskProvenance,
+  canonicalLabel,
+  displayStatusToFact,
+  factCanonicalLabel,
+  factStatusToDisplay,
+  groupProjectFactsByEntity,
+  isTerminalFactStatus,
+  readCanonicalLabelFromFact,
+} from "./task-ledger/canonical.js";
 
+const execFileAsync = promisify(execFile);
+
+export {
+  canonicalLabel,
+  displayStatusToFact,
+  factStatusToDisplay,
+  groupProjectFactsByEntity,
+} from "./task-ledger/canonical.js";
 export const TASK_LEDGER_CATEGORY = "project" as MemoryCategory;
 
-const TERMINAL = new Set(["done", "completed", "cancelled", "closed", "abandoned", "superseded"]);
 const GENERIC_TASK_TITLE_NORMALIZED = new Set(["project task", "task", "active task"]);
 const PROJECTION_STALE_MARKER_SUFFIX = ".stale.json";
 const ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER: ScopeFilter = { agentId: "__active_task_projection_global__" };
@@ -53,27 +75,21 @@ export type ActiveTaskProjectionStatus = {
   marker: ActiveTaskProjectionStaleMarker | null;
 };
 
-/** Latest value per entity+key from non-superseded project facts.
- *  Entity labels are normalised to lowercase (trim + toLowerCase) so that
- *  case-variant entries (e.g. "Humanizer" / "humanizer") are merged into one group. */
-export function groupProjectFactsByEntity(facts: MemoryEntry[]): Map<string, Map<string, MemoryEntry>> {
-  const byEntity = new Map<string, Map<string, MemoryEntry>>();
-  for (const f of facts) {
-    if (!f.entity?.trim()) continue;
-    const ent = f.entity.trim().toLowerCase();
-    const k = (f.key ?? "").trim() || "_body";
-    let km = byEntity.get(ent);
-    if (!km) {
-      km = new Map();
-      byEntity.set(ent, km);
-    }
-    const prev = km.get(k);
-    if (!prev || f.createdAt > prev.createdAt) {
-      km.set(k, f);
-    }
-  }
-  return byEntity;
-}
+export type ActiveTaskLedgerSelectionMetrics = {
+  projectRowsFetched: number;
+  rowsDroppedMissingEntityOrCanonical: number;
+  groupedEntityCount: number;
+  duplicateRowsCollapsed: number;
+  activeCandidates: number;
+  completedCandidates: number;
+  entitiesSkippedWithoutStatus: number;
+  elapsedMs: number;
+};
+
+export type ActiveTaskCanonicalBackfillOptions = {
+  dryRun?: boolean;
+  limit?: number;
+};
 
 function rowToRecord(row: Map<string, MemoryEntry>): Record<string, string> {
   const o: Record<string, string> = {};
@@ -123,39 +139,6 @@ function resolveTaskUpdated(f: Record<string, string>, bounds: ReturnType<typeof
     (bounds ? new Date(bounds.maxSec * 1000).toISOString() : undefined) ??
     UNKNOWN_ACTIVE_TASK_TIME
   );
-}
-
-export function factStatusToDisplay(raw: string): ActiveTaskStatus {
-  const s = raw.trim().toLowerCase();
-  if (s === "open") return "In progress";
-  if (s === "in_progress" || s === "in progress") return "In progress";
-  if (s === "blocked" || s.startsWith("blocked")) return "Stalled";
-  if (s === "waiting") return "Waiting";
-  if (s === "failed" || s === "error") return "Failed";
-  if (s === "stalled") return "Stalled";
-  if (TERMINAL.has(s)) return "Done";
-  return "In progress";
-}
-
-export function displayStatusToFact(status: ActiveTaskStatus): string {
-  switch (status) {
-    case "In progress":
-      return "in_progress";
-    case "Done":
-      return "done";
-    case "Failed":
-      return "failed";
-    case "Waiting":
-      return "waiting";
-    case "Stalled":
-      return "blocked";
-    default:
-      return "in_progress";
-  }
-}
-
-function isTerminalFactStatus(raw: string): boolean {
-  return TERMINAL.has(raw.trim().toLowerCase());
 }
 
 function titleFromFacts(f: Record<string, string>): string {
@@ -221,12 +204,47 @@ export function loadTaskLedgerFromFacts(
   active: ActiveTaskEntry[];
   completed: ActiveTaskEntry[];
 } {
-  const facts = factsDb
-    .getAll({ scopeFilter })
-    .filter((fact) => fact.category === TASK_LEDGER_CATEGORY && fact.source === "active-task")
-    .slice(0, factLimit);
+  const { active, completed } = loadTaskLedgerFromFactsWithMetrics(factsDb, factLimit, scopeFilter);
+  return { active, completed };
+}
+
+export function loadTaskLedgerFromFactsWithMetrics(
+  factsDb: FactsDB,
+  factLimit = 8000,
+  scopeFilter?: ScopeFilter | null,
+): {
+  active: ActiveTaskEntry[];
+  completed: ActiveTaskEntry[];
+  metrics: ActiveTaskLedgerSelectionMetrics;
+} {
+  const startedAtMs = Date.now();
+  // Use targeted query instead of loading all facts then filtering by category (#1553)
+  const facts = factsDb.getProjectFacts(factLimit, scopeFilter);
+  // groupProjectFactsByEntity silently drops rows with no entity or no canonical label;
+  // count those separately so duplicateRowsCollapsed only reflects true duplicates.
   const grouped = groupProjectFactsByEntity(facts);
-  return buildTaskEntriesFromGroupedFacts(grouped);
+  const { active, completed } = buildTaskEntriesFromGroupedFacts(grouped);
+  let groupedFactRows = 0;
+  for (const keyMap of grouped.values()) {
+    groupedFactRows += keyMap.size;
+  }
+  // The rows fed to groupProjectFactsByEntity = facts that passed entity/canonical guard.
+  // We infer dropped rows = facts.length - sum of sizes of all keyMaps.
+  // But keyMaps only count unique (entity,key) pairs — so true duplicates are also in groupedFactRows.
+  // Instead: track rows fed to grouping = only rows with entity AND canonicalLabel.
+  // Use canonicalLabel directly to determine eligibility.
+  const eligibleRows = facts.filter((f) => f.entity?.trim() && canonicalLabel(f.entity.trim())).length;
+  const metrics: ActiveTaskLedgerSelectionMetrics = {
+    projectRowsFetched: facts.length,
+    rowsDroppedMissingEntityOrCanonical: facts.length - eligibleRows,
+    groupedEntityCount: grouped.size,
+    duplicateRowsCollapsed: Math.max(0, eligibleRows - groupedFactRows),
+    activeCandidates: active.length,
+    completedCandidates: completed.length,
+    entitiesSkippedWithoutStatus: Math.max(0, grouped.size - active.length - completed.length),
+    elapsedMs: Date.now() - startedAtMs,
+  };
+  return { active, completed, metrics };
 }
 
 export function readActiveTaskRowsFromFacts(
@@ -303,6 +321,9 @@ export async function clearActiveTaskProjectionStale(filePath: string): Promise<
 }
 
 export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, scopeFilter?: ScopeFilter | null): number | null {
+  // Query all project facts (any source) to detect staleness from any project fact updates.
+  // Note: getProjectFacts filters by source='active-task', but we need to detect updates
+  // from all sources (e.g., memory_store) to properly mark projections as stale.
   const projectFacts = factsDb
     .getAll({ scopeFilter })
     .filter((fact) => fact.category === TASK_LEDGER_CATEGORY)
@@ -445,14 +466,16 @@ export interface ActiveTaskHygieneStaleCandidate {
   reason: string;
 }
 
-export type ActiveTaskHygieneActionKind = "dead-session" | "stale-failed" | "superseded-duplicate";
+export type ActiveTaskHygieneActionKind = "dead-session" | "stale-failed" | "superseded-duplicate" | "pr-live-blocker";
 
 export interface ActiveTaskHygieneAction {
   label: string;
   kind: ActiveTaskHygieneActionKind;
-  toStatus: "abandoned" | "superseded";
+  toStatus: "abandoned" | "superseded" | "stage-4-feedback";
   reason: string;
   canonicalLabel?: string;
+  /** Set when kind is "pr-live-blocker" — the actual GitHub-classified blocker */
+  prBlockerStatus?: string;
 }
 
 export interface ActiveTaskHygienePlan {
@@ -575,6 +598,8 @@ export async function planActiveTaskHygiene(
     nowMs?: number;
     openclawHome?: string;
     checkSessionPresent?: (sessionRef: string) => Promise<boolean>;
+    /** When true, fetch live PR state for tasks whose labels contain an "owner/repo#N" PR reference. */
+    checkPrLiveBlocker?: boolean;
   },
 ): Promise<ActiveTaskHygienePlan> {
   const nowMs = opts.nowMs ?? Date.now();
@@ -656,6 +681,80 @@ export async function planActiveTaskHygiene(
       toStatus: "abandoned",
       reason,
     });
+  }
+
+  // -----------------------------------------------------------------------------------------
+  // PR live blocker check: verify tasks with "In progress" / "Waiting" / "Stalled" status
+  // actually have a live GitHub blocker before classifying them as blocked/waiting.
+  // This prevents hygiene from incorrectly marking PR-backed tasks as stalled when
+  // mergeStateStatus says BLOCKED but unresolved review threads exist.
+  // -----------------------------------------------------------------------------------------
+  if (opts.checkPrLiveBlocker === true) {
+    // Collect tasks that reference a PR (owner/repo#N pattern in label or description)
+    const PR_REF_RE = /(?:^|[\s/])([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#(\d+)/;
+    const prCandidateTasks = tasks.filter((t) => {
+      if (t.status !== "In progress" && t.status !== "Waiting" && t.status !== "Stalled") return false;
+      const text = `${t.label} ${t.description}`;
+      return PR_REF_RE.test(text);
+    });
+
+    if (prCandidateTasks.length > 0) {
+      // Group by owner/repo to avoid duplicate API calls for the same repo
+      const prKeys = new Map<string, { tasks: ActiveTaskEntry[]; owner: string; repo: string; number: number }>();
+      for (const task of prCandidateTasks) {
+        const m = PR_REF_RE.exec(`${task.label} ${task.description}`);
+        if (!m) continue;
+        const key = `${m[1]}#${m[2]}`;
+        const existing = prKeys.get(key);
+        if (existing) {
+          existing.tasks.push(task);
+        } else {
+          const [owner, repo] = m[1].split("/");
+          prKeys.set(key, { tasks: [task], owner, repo, number: Number(m[2]) });
+        }
+      }
+
+      // Fetch live blocker status for each unique PR (parallel, deduped)
+      const prStatuses = await Promise.all(
+        [...prKeys.values()].map(async ({ owner, repo, number }) => {
+          const status = await fetchLivePrBlockerStatus(owner, repo, number);
+          return { owner, repo, number, status };
+        }),
+      );
+      const statusByKey = new Map(prStatuses.map((p) => [`${p.owner}/${p.repo}#${p.number}`, p]));
+
+      for (const { tasks, owner, repo, number } of prKeys.values()) {
+        const blockerStatus = statusByKey.get(`${owner}/${repo}#${number}`);
+        if (!blockerStatus) continue;
+
+        if (blockerStatus.status !== "no_live_blocker") {
+          const key = `${owner}/${repo}`;
+          const reason = `[PR hygiene #${number}] Live GitHub state: ${blockerStatus.status} — task updated to reflect actual PR state.`;
+
+          // Apply action to ALL tasks referencing this PR
+          for (const task of tasks) {
+            // Skip if already handled by a dead-session or stale-failed action
+            if (actionsByLabel.has(task.label)) continue;
+
+            stale.push({
+              label: task.label,
+              status: task.status,
+              updated: task.updated,
+              hoursStale: staleHoursFromUpdated(task.updated, nowMs),
+              reason,
+            });
+            actionsByLabel.set(task.label, {
+              label: task.label,
+              kind: "pr-live-blocker",
+              toStatus: "stage-4-feedback",
+              reason,
+              // Store actual blocker classification, plus PR coordinates for parsing
+              prBlockerStatus: `${blockerStatus.status}|${owner}:${repo}:${number}`,
+            });
+          }
+        }
+      }
+    }
   }
 
   const duplicates: ActiveTaskHygieneDuplicateGroup[] = [];
@@ -779,7 +878,7 @@ export function buildFactsSectionedMarkdownBody(
 }
 
 export function taskEntityKey(entity: string, key: string): string {
-  return `${entity}\u0000${key}`;
+  return `${canonicalLabel(entity)}\u0000${key.trim()}`;
 }
 
 export async function upsertProjectTaskKey(
@@ -795,6 +894,7 @@ export async function upsertProjectTaskKey(
   // Normalise entity labels on write (trim + lowercase) to prevent case-variant
   // collisions (e.g. "Humanizer" and "humanizer" stored as separate entities).
   const normalizedEntity = entity.trim().toLowerCase();
+  const canonical = canonicalLabel(normalizedEntity);
   const cacheKey = taskEntityKey(normalizedEntity, key);
   let previous: MemoryEntry | undefined;
   const cached = opts?.latestByEntityKey?.get(cacheKey);
@@ -802,14 +902,21 @@ export async function upsertProjectTaskKey(
   // memory_store rows must never be retired by active-task checkpoints.
   if (cached?.source === "active-task") {
     previous = cached;
-  } else if (!opts?.latestByEntityKey || cached) {
+  } else if (!opts?.latestByEntityKey || cached || key === "status") {
     // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
-    // entry (which we must not supersede, but an active-task row may still exist).
+    // entry (which we must not supersede, but an active-task row may still exist), or
+    // (c) this is a status write and cache missed (status must not become append-only).
     const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-    // Case-insensitive lookup so mixed-case legacy facts are also superseded.
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Supersede by canonical label to match grouping logic (strips suffixes, normalizes separators).
     // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
+    // Exclude expired facts to match projection logic (groupProjectFactsByEntity).
     const same = facts.filter(
-      (f) => f.source === "active-task" && f.entity?.toLowerCase() === normalizedEntity && (f.key ?? "") === key,
+      (f) =>
+        f.source === "active-task" &&
+        canonicalLabel(f.entity ?? "") === canonical &&
+        (f.key ?? "") === key &&
+        !(typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec),
     );
     same.sort((a, b) => b.createdAt - a.createdAt);
     previous = same[0];
@@ -824,6 +931,7 @@ export async function upsertProjectTaskKey(
     value,
     source: "active-task",
     decayClass: "permanent",
+    provenanceJson: activeTaskProvenance(canonical),
   });
   if (previous) {
     factsDb.supersede(previous.id, entry.id);
@@ -911,6 +1019,133 @@ export async function syncActiveTaskEntryToFacts(
 export interface ActiveTaskHygieneApplyResult {
   appliedCount: number;
   auditFactId?: string;
+  /** Tasks whose live PR state has an actionable blocker (unresolved threads, red CI, etc.) */
+  prBlockerTasks?: Array<{
+    label: string;
+    owner: string;
+    repo: string;
+    number: number;
+    blockerStatus: string;
+    reason: string;
+  }>;
+}
+
+export interface ActiveTaskCanonicalBackfillResult {
+  scannedFacts: number;
+  canonicalLabelsUpdated: number;
+  supersededFacts: number;
+  duplicateGroups: Array<{ canonicalLabel: string; facts: number; activeBefore: number; superseded: number }>;
+}
+
+export function backfillActiveTaskCanonicalLabels(
+  factsDb: FactsDB,
+  opts: ActiveTaskCanonicalBackfillOptions = {},
+): ActiveTaskCanonicalBackfillResult {
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, opts.limit ?? 50_000);
+  const groups = new Map<string, MemoryEntry[]>();
+  let canonicalLabelsUpdated = 0;
+
+  const verifiedLookup = (() => {
+    try {
+      return factsDb.getRawDb().prepare("SELECT 1 FROM verified_facts WHERE fact_id = ? LIMIT 1");
+    } catch {
+      return null;
+    }
+  })();
+
+  for (const fact of facts) {
+    if (!fact.entity?.trim()) continue;
+    const canonical = factCanonicalLabel(fact);
+    const existing = readCanonicalLabelFromFact(fact);
+    if (existing !== canonical) {
+      canonicalLabelsUpdated++;
+      if (!opts.dryRun) {
+        const rawDb = (
+          factsDb as unknown as {
+            getRawDb?: () => { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } };
+          }
+        ).getRawDb?.();
+        rawDb
+          ?.prepare("UPDATE facts SET provenance_json = ? WHERE id = ?")
+          .run(activeTaskProvenance(canonical, fact.provenanceJson), fact.id);
+      }
+    }
+    const arr = groups.get(canonical) ?? [];
+    arr.push(fact);
+    groups.set(canonical, arr);
+  }
+
+  const duplicateGroups: ActiveTaskCanonicalBackfillResult["duplicateGroups"] = [];
+  let supersededFacts = 0;
+  const nowSec = Math.floor(Date.now() / 1000);
+  for (const [canonical, rows] of groups) {
+    const activeBefore = rows.filter((f) => !f.supersededAt).length;
+    let groupSuperseded = 0;
+    const byKey = new Map<string, MemoryEntry[]>();
+    for (const row of rows) {
+      const key = (row.key ?? "").trim() || "_body";
+      const arr = byKey.get(key) ?? [];
+      arr.push(row);
+      byKey.set(key, arr);
+    }
+    let terminalStatus: MemoryEntry | undefined;
+    const statusRows = byKey.get("status") ?? [];
+    for (const row of statusRows) {
+      const isExpired = row.expiresAt !== null && row.expiresAt <= nowSec;
+      if (
+        !isExpired &&
+        !row.supersededAt &&
+        isTerminalFactStatus(row.value ?? row.text ?? "") &&
+        (!terminalStatus || row.createdAt > terminalStatus.createdAt)
+      ) {
+        terminalStatus = row;
+      }
+    }
+    const supersede = (oldId: string, newId: string | null): void => {
+      if (verifiedLookup?.get(oldId)) {
+        return;
+      }
+      supersededFacts++;
+      groupSuperseded++;
+      if (!opts.dryRun) factsDb.supersede(oldId, newId);
+    };
+    if (terminalStatus) {
+      for (const [key, sameKey] of byKey) {
+        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
+        const keeper = key === "status" ? terminalStatus : ranked[0];
+        for (const row of ranked) {
+          if (row.id !== keeper.id && !row.supersededAt) supersede(row.id, keeper.id);
+        }
+      }
+    } else {
+      for (const sameKey of byKey.values()) {
+        const ranked = [...sameKey].sort((a, b) => b.createdAt - a.createdAt);
+        const keeper = ranked[0];
+        for (const row of ranked.slice(1)) {
+          if (!row.supersededAt) supersede(row.id, keeper.id);
+        }
+      }
+    }
+    if (activeBefore > 1 || groupSuperseded > 0) {
+      duplicateGroups.push({
+        canonicalLabel: canonical,
+        facts: rows.length,
+        activeBefore,
+        superseded: groupSuperseded,
+      });
+    }
+  }
+
+  if (!opts.dryRun) {
+    (factsDb as unknown as { invalidateSupersededTextsCache?: () => void }).invalidateSupersededTextsCache?.();
+  }
+
+  return {
+    scannedFacts: facts.length,
+    canonicalLabelsUpdated,
+    supersededFacts,
+    duplicateGroups: duplicateGroups.sort((a, b) => a.canonicalLabel.localeCompare(b.canonicalLabel)),
+  };
 }
 
 export async function applyActiveTaskHygieneFacts(
@@ -932,9 +1167,12 @@ export async function applyActiveTaskHygieneFacts(
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
   const latestByEntityKey = new Map<string, MemoryEntry>();
+  const nowSec = Math.floor(Date.now() / 1000);
   // Only index active-task ledger facts, not memory_store project facts.
+  // Exclude expired facts to match projection logic (groupProjectFactsByEntity).
   for (const fact of factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000)) {
     if (fact.source !== "active-task") continue;
+    if (typeof fact.expiresAt === "number" && Number.isFinite(fact.expiresAt) && fact.expiresAt <= nowSec) continue;
     const entity = fact.entity?.trim().toLowerCase();
     if (!entity) continue;
     const key = (fact.key ?? "").trim();
@@ -945,9 +1183,43 @@ export async function applyActiveTaskHygieneFacts(
     }
   }
   let appliedCount = 0;
+  const prBlockerTasks: ActiveTaskHygieneApplyResult["prBlockerTasks"] = [];
+
   for (const action of plan.actions) {
     const task = byLabel.get(action.label);
     if (!task) continue;
+
+    if (action.kind === "pr-live-blocker") {
+      // Update task in-place: set status to "Waiting" and record the live blocker reason.
+      // Do NOT complete the task — it is actively blocked and needs Forge attention.
+      const updatedEntry: ActiveTaskEntry = {
+        ...task,
+        status: "Waiting",
+        updated: runAt,
+        next: action.reason,
+        // Keep subagent so we know who is working on it
+        subagent: task.subagent,
+      };
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, updatedEntry, opts.log, {
+        statusOverride: displayStatusToFact("Waiting"),
+        latestByEntityKey,
+      });
+      // Record so caller can dispatch Forge for these tasks
+      const parsed = action.prBlockerStatus ?? "";
+      const [actualStatus, prRef] = parsed.includes("|") ? parsed.split("|", 2) : ["", parsed];
+      const prParts = prRef.split(":");
+      prBlockerTasks.push({
+        label: task.label,
+        owner: prParts[0] ?? "",
+        repo: prParts[1] ?? "",
+        number: Number(prParts[2] ?? 0) || 0,
+        blockerStatus: actualStatus,
+        reason: action.reason,
+      });
+      appliedCount++;
+      continue;
+    }
+
     const doneEntry: ActiveTaskEntry = {
       ...task,
       status: "Done",
@@ -996,7 +1268,7 @@ export async function applyActiveTaskHygieneFacts(
     value: JSON.stringify(audit),
   });
 
-  return { appliedCount, auditFactId: auditFact.id };
+  return { appliedCount, auditFactId: auditFact.id, prBlockerTasks };
 }
 
 export async function renderActiveTaskMarkdownFile(
@@ -1004,10 +1276,18 @@ export async function renderActiveTaskMarkdownFile(
   staleMinutes: number,
   filePath: string,
   projection: ActiveTaskProjectionConfig,
+  logger?: { debug?: (message: string) => void },
+  opts: { includeCompleted?: boolean } = {},
 ): Promise<void> {
-  let { active, completed } = loadTaskLedgerFromFacts(factsDb, 8000, ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER);
+  const renderStartMs = Date.now();
+  const includeCompleted = opts.includeCompleted === true;
+  let { active, completed, metrics } = loadTaskLedgerFromFactsWithMetrics(
+    factsDb,
+    8000,
+    ACTIVE_TASK_PROJECTION_GLOBAL_SCOPE_FILTER,
+  );
   active = applyActiveTaskProjectionFilters(active, projection);
-  completed = applyActiveTaskProjectionFilters(completed, projection);
+  completed = includeCompleted ? applyActiveTaskProjectionFilters(completed, projection) : [];
   active = detectStaleTasks(active, staleMinutes);
 
   const hotRaw = active.filter((t) => !t.stale);
@@ -1048,6 +1328,9 @@ export async function renderActiveTaskMarkdownFile(
     0,
     "",
     "> **Projection** of hybrid-memory `category:project` facts (`activeTask.ledger: facts`). Regenerate via `hybrid-mem active-tasks render`.",
+    includeCompleted
+      ? "> **History mode:** includes terminal rows (`--include-completed`) for audit context."
+      : "> **Default mode:** hides terminal rows; `ACTIVE-TASKS.md` is for active/stale work only. Use `active-tasks render --include-completed` for audit/history.",
     "> **Timestamps:** **Started** / **Updated** use stored fact fields (`started`, `task_started`, `task_updated`, …) or SQLite row times (min / max `createdAt` per task). The render clock is not used. Missing values show as **Unknown** and count as stale under `staleThreshold`.",
     "> **Operators:** Update or close tasks via `memory_store` / project facts; run `hybrid-mem active-tasks reconcile` when session rows are obsolete; then `active-tasks render`. See `docs/ACTIVE-TASKS-PROJECTION.md`.",
     "",
@@ -1059,6 +1342,9 @@ export async function renderActiveTaskMarkdownFile(
   } catch {
     // Keep render success best-effort even when marker cleanup fails.
   }
+  logger?.debug?.(
+    `memory-hybrid: active-task projection rowsFetched=${metrics.projectRowsFetched} groupedEntities=${metrics.groupedEntityCount} duplicatesCollapsed=${metrics.duplicateRowsCollapsed} activeCandidates=${metrics.activeCandidates} staleBucketed=${staleRaw.length} renderedActive=${capAct.rows.length} renderedStale=${capStale.rows.length} renderedCompleted=${capDone.rows.length} elapsedMs=${Date.now() - renderStartMs}`,
+  );
 }
 
 /**
@@ -1286,4 +1572,261 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   }
 
   return { reconciledLabels, wrote: true };
+}
+
+// -----------------------------------------------------------------------------------------
+// Issue #1625: live-state reconciliation
+// Fetches live GitHub issue/PR state for active tasks that reference external resources
+// and checkpoints terminal live state into the task ledger so agents don't repeat audits.
+// -----------------------------------------------------------------------------------------
+
+export interface ReconcileLiveStateOptions {
+  /** Maximum GitHub API calls per invocation (budget guard). */
+  maxRequests?: number;
+  /** AbortSignal for cancellation. */
+  signal?: AbortSignal;
+  log?: {
+    debug?: (m: string) => void;
+    warn?: (m: string) => void;
+    info?: (m: string) => void;
+  };
+}
+
+interface LiveStateRef {
+  owner: string;
+  repo: string;
+  number: number;
+  /** "pr" or "issue" */
+  kind: "pr" | "issue";
+}
+
+type LiveStateFetchStatus = "merged" | "closed" | "open" | "unknown" | "unavailable";
+
+const LIVE_STATE_GH_TIMEOUT_MS = 20_000;
+let liveStateBudgetCursor = 0;
+
+function hasGitHubToken(): boolean {
+  return (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim().length > 0;
+}
+
+async function runGhJsonCommand(args: string[], signal?: AbortSignal): Promise<unknown> {
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), LIVE_STATE_GH_TIMEOUT_MS);
+  const onAbort = (): void => ac.abort();
+  if (signal) {
+    if (signal.aborted) ac.abort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      encoding: "utf-8",
+      signal: ac.signal,
+      timeout: LIVE_STATE_GH_TIMEOUT_MS,
+    });
+    const raw = typeof stdout === "string" ? stdout.trim() : "";
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } finally {
+    clearTimeout(timeout);
+    if (signal) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+function selectRoundRobinEntries<T>(entries: T[], maxRequests: number): T[] {
+  if (entries.length === 0 || maxRequests <= 0) return [];
+  if (entries.length <= maxRequests) {
+    liveStateBudgetCursor = 0;
+    return entries;
+  }
+  const start = ((liveStateBudgetCursor % entries.length) + entries.length) % entries.length;
+  const selected: T[] = [];
+  for (let i = 0; i < maxRequests; i++) {
+    selected.push(entries[(start + i) % entries.length]);
+  }
+  liveStateBudgetCursor = (start + maxRequests) % entries.length;
+  return selected;
+}
+
+/** Extract "owner/repo#N" references from a task label or description.
+ *  Handles: "owner/repo#123", "owner/repo pull request #123" (case-insensitive).
+ *  Returns one ref per task (first match wins). */
+function extractLiveStateRef(task: ActiveTaskEntry): LiveStateRef | null {
+  const text = `${task.label} ${task.description}`;
+  // Pattern: "owner/repo issue #123" or "owner/repo pull request #123" (GitHub's own URL form)
+  // Check this first to avoid ambiguity with the bare owner/repo#N pattern
+  const issueMatch = text.match(/\b([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\s+(issue|pull\s+request|pr)\s*#(\d+)\b/i);
+  if (issueMatch) {
+    const number = Number(issueMatch[4]);
+    if (!Number.isFinite(number) || number < 1) return null;
+    const kindString = issueMatch[3];
+    const kind: "pr" | "issue" = /pull\s*request|pr/i.test(kindString) ? "pr" : "issue";
+    return { owner: issueMatch[1], repo: issueMatch[2], number, kind };
+  }
+  // Pattern: owner/repo#number (most common - defaults to issue as per GitHub convention)
+  const refMatch = text.match(/\b([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\s*#(\d+)\b/i);
+  if (refMatch) {
+    const number = Number(refMatch[3]);
+    if (!Number.isFinite(number) || number < 1) return null;
+    return { owner: refMatch[1], repo: refMatch[2], number, kind: "issue" };
+  }
+  return null;
+}
+
+/** Fetch live state for a GitHub PR via `gh pr view`.
+ *  Returns "merged", "closed", "open", "unknown", or "unavailable". */
+async function fetchLivePrState(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  signal?: AbortSignal,
+): Promise<LiveStateFetchStatus> {
+  if (!hasGitHubToken()) return "unavailable";
+  try {
+    const payload = await runGhJsonCommand(
+      ["pr", "view", String(prNumber), "--repo", `${owner}/${repo}`, "--json", "state,mergedAt,closedAt"],
+      signal,
+    );
+    const data = payload as { state?: unknown; mergedAt?: unknown; closedAt?: unknown } | null;
+    const state = typeof data?.state === "string" ? data.state.trim().toUpperCase() : "";
+    const mergedAt = typeof data?.mergedAt === "string" && data.mergedAt.trim().length > 0;
+    const closedAt = typeof data?.closedAt === "string" && data.closedAt.trim().length > 0;
+    if (state === "MERGED" || mergedAt) return "merged";
+    if (state === "CLOSED" || (closedAt && !mergedAt)) return "closed";
+    if (state === "OPEN") return "open";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** Fetch live state for a GitHub issue.
+ *  Returns "closed" when the issue is closed, "open" when still open, "unknown" when
+ *  state cannot be determined, or "unavailable" when the token/network is missing. */
+async function fetchLiveIssueState(
+  owner: string,
+  repo: string,
+  issueNumber: number,
+  signal?: AbortSignal,
+): Promise<LiveStateFetchStatus> {
+  if (!hasGitHubToken()) return "unavailable";
+  try {
+    const payload = await runGhJsonCommand(
+      ["issue", "view", String(issueNumber), "--repo", `${owner}/${repo}`, "--json", "state"],
+      signal,
+    );
+    const data = payload as { state?: unknown } | null;
+    const state = typeof data?.state === "string" ? data.state.trim().toUpperCase() : "";
+    if (state === "CLOSED") return "closed";
+    if (state === "OPEN") return "open";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+/** Reconcile active tasks with live GitHub state.
+ *
+ *  For each active task that references an external GitHub issue or PR:
+ *  - Fetch the current live state from GitHub.
+ *  - If the live state is terminal (issue closed, PR merged/closed), checkpoint the
+ *    task as "Done" in the facts ledger with evidence in `next` and `task_updated`.
+ *  - If live state is non-terminal/unknown, leave the task unchanged.
+ *
+ *  This is intended to run during normal reconcile/hygiene/render cycles when enabled.
+ *  The function is safe to call repeatedly: it only checkpoints terminal
+ *  live-state transitions (merged/closed) and degrades gracefully when GitHub is unavailable.
+ *
+ *  Returns the number of tasks that were updated (for telemetry).
+ */
+export async function reconcileActiveTaskLiveState(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: EmbeddingProvider,
+  opts: ReconcileLiveStateOptions = {},
+): Promise<{ updatedCount: number; checkedCount: number; skippedCount: number }> {
+  const maxRequests = Math.max(1, Math.min(opts.maxRequests ?? 20, 50));
+  const signal = opts.signal;
+
+  const { active } = loadTaskLedgerFromFacts(factsDb);
+  let updatedCount = 0;
+  let skippedCount = 0;
+
+  // Collect all tasks with refs (allow multiple tasks per ref)
+  const refMap = new Map<string, { tasks: ActiveTaskEntry[]; ref: LiveStateRef }>();
+  for (const task of active) {
+    if (task.status === "Done" || task.status === "Failed") continue;
+    const ref = extractLiveStateRef(task);
+    if (!ref) {
+      skippedCount++;
+      continue;
+    }
+    const key = `${ref.kind}:${ref.owner}/${ref.repo}#${ref.number}`;
+    const existing = refMap.get(key);
+    if (existing) {
+      existing.tasks.push(task);
+    } else {
+      refMap.set(key, { tasks: [task], ref });
+    }
+  }
+
+  const entries = [...refMap.entries()];
+  const toFetch = selectRoundRobinEntries(entries, maxRequests);
+  skippedCount += Math.max(0, entries.length - toFetch.length);
+
+  // Fetch live state in parallel, up to budget
+  let fetchedResults: Array<{ key: string; ref: LiveStateRef; state: LiveStateFetchStatus }> = [];
+  try {
+    const settled = await Promise.allSettled(
+      toFetch.map(async ([key, { ref }]) => {
+        const state: LiveStateFetchStatus =
+          ref.kind === "pr"
+            ? await fetchLivePrState(ref.owner, ref.repo, ref.number, signal)
+            : await fetchLiveIssueState(ref.owner, ref.repo, ref.number, signal);
+        return { key, ref, state };
+      }),
+    );
+    fetchedResults = settled
+      .filter(
+        (result): result is PromiseFulfilledResult<{ key: string; ref: LiveStateRef; state: LiveStateFetchStatus }> =>
+          result.status === "fulfilled",
+      )
+      .map((result) => result.value);
+  } catch {
+    opts.log?.debug?.("memory-hybrid: live-state reconcile fetch failed, skipping update");
+    return { updatedCount, checkedCount: fetchedResults.length, skippedCount };
+  }
+  const checkedCount = fetchedResults.length;
+
+  const terminalRefKeys = new Set<string>();
+  for (const { key, state } of fetchedResults) {
+    const isTerminal = state === "merged" || state === "closed";
+    if (isTerminal) terminalRefKeys.add(key);
+  }
+
+  // Apply updates: for each terminal ref, update ALL tasks that point to it
+  for (const [key, { tasks }] of entries) {
+    if (!terminalRefKeys.has(key)) continue;
+    const { ref } = refMap.get(key)!;
+    const state = fetchedResults.find((r) => r.key === key)?.state ?? "unknown";
+    const isTerminal = state === "merged" || state === "closed";
+    if (!isTerminal) continue;
+
+    const now = new Date().toISOString();
+    const terminalState = state === "merged" ? "merged" : "closed";
+    const next = `Auto-reconciled from live GitHub (${ref.owner}/${ref.repo} ${ref.kind} #${ref.number}): ${terminalState}.`;
+
+    for (const task of tasks) {
+      const doneEntry: ActiveTaskEntry = {
+        ...task,
+        status: "Done",
+        updated: now,
+        next,
+      };
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log);
+      updatedCount++;
+      opts.log?.info?.(`memory-hybrid: live-state reconcile marked "${task.label}" done (${terminalState})`);
+    }
+  }
+
+  return { updatedCount, checkedCount, skippedCount };
 }

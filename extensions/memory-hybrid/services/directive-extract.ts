@@ -45,7 +45,10 @@ export type DirectiveIncident = {
 export type DirectiveExtractResult = {
   incidents: DirectiveIncident[];
   sessionsScanned: number;
+  rejected?: number;
 };
+
+export const DIRECTIVE_EXTRACTION_METHOD = "directive-extract:regex-heuristic-v2";
 
 const MAX_USER_MSG = 800;
 const MAX_ASSISTANT_MSG = 500;
@@ -81,6 +84,95 @@ function shouldSkipUserMessage(text: string): boolean {
     if (re.test(t)) return true;
   }
   return false;
+}
+
+type DirectiveRejectionReason =
+  | "untrusted_metadata"
+  | "json_envelope"
+  | "chat_fragment"
+  | "one_off_command"
+  | "missing_durable_signal";
+
+const UNTRUSTED_METADATA_MARKERS = [/conversation info\s*\(untrusted metadata\)/i, /sender\s*\(untrusted metadata\)/i];
+const UNTRUSTED_METADATA_KEYS_RE = /\b(chat_id|message_id|sender_id|inbound_event_kind|conversation_id)\b/i;
+const UNTRUSTED_METADATA_ENVELOPE_BLOCK_RE =
+  /(?:Conversation info|Sender)\s*\(untrusted metadata\)\s*:\s*```(?:json)?[\s\S]*?```/gi;
+const CODE_FENCE_RE = /```[\s\S]*?```/g;
+const GITHUB_LINK_RE = /https?:\/\/github\.com\/[^\s)]+/gi;
+const GITHUB_ISSUE_PR_RE = /(?:^|\s)#\d+(?:\s|$)|\b(?:issue|issues|pr|pull request)\b/i;
+const SELECTED_CONTEXT_RE = /(?:^|\s)#\d+\s+(?:mon|tue|wed|thu|fri|sat|sun)\b/i;
+const QUESTION_MARK_RE = /^\s*\?|[?]{2,}/;
+const ONE_OFF_COMMAND_RE = /\b(file|open|create|submit)\s+(?:a\s+)?(?:detailed\s+)?(?:issue|pr|pull request)\b/i;
+const RULE_LIKE_CATEGORIES = new Set<DirectiveCategory>([
+  "explicit_memory",
+  "future_behavior",
+  "absolute_rule",
+  "correction",
+  "preference",
+  "warning",
+  "procedural",
+  "implicit_correction",
+  "conditional_rule",
+]);
+
+function hasRuleLikeCategory(categories: readonly DirectiveCategory[]): boolean {
+  return categories.some((category) => RULE_LIKE_CATEGORIES.has(category));
+}
+
+function hasLocalizedDurableSignal(categories: readonly DirectiveCategory[], text: string): boolean {
+  if (hasRuleLikeCategory(categories)) return true;
+  const detected = detectDirectiveCategories(text);
+  return hasRuleLikeCategory(detected.categories);
+}
+
+function sanitizeDirectiveCandidate(rawRule: string): string {
+  return rawRule
+    .replace(UNTRUSTED_METADATA_ENVELOPE_BLOCK_RE, " ")
+    .replace(CODE_FENCE_RE, " ")
+    .replace(/(?:Conversation info|Sender)\s*\(untrusted metadata\)\s*:/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function classifyDirectiveCandidate(
+  rawRule: string,
+  userText: string,
+  categories: readonly DirectiveCategory[],
+): { accepted: true; sanitizedRule: string } | { accepted: false; reason: DirectiveRejectionReason } {
+  if (!rawRule.trim()) return { accepted: false, reason: "missing_durable_signal" };
+  if (
+    UNTRUSTED_METADATA_MARKERS.some((re) => re.test(rawRule) || re.test(userText)) ||
+    UNTRUSTED_METADATA_KEYS_RE.test(rawRule) ||
+    UNTRUSTED_METADATA_KEYS_RE.test(userText)
+  ) {
+    return { accepted: false, reason: "untrusted_metadata" };
+  }
+
+  const sanitizedRule = sanitizeDirectiveCandidate(rawRule);
+  if (!sanitizedRule) return { accepted: false, reason: "missing_durable_signal" };
+  if (UNTRUSTED_METADATA_KEYS_RE.test(sanitizedRule)) return { accepted: false, reason: "untrusted_metadata" };
+  const looksLikeRawJsonEnvelope = /^\s*```(?:json)?/i.test(rawRule);
+  const looksLikeJsonDocument = /^\s*[{[][\s\S]*[}\]]\s*$/m.test(sanitizedRule);
+  if (looksLikeRawJsonEnvelope || looksLikeJsonDocument) {
+    return { accepted: false, reason: "json_envelope" };
+  }
+
+  const githubLinks = sanitizedRule.match(GITHUB_LINK_RE) ?? [];
+  const looksLikeUrlList = githubLinks.length >= 2;
+  if (looksLikeUrlList || SELECTED_CONTEXT_RE.test(sanitizedRule) || QUESTION_MARK_RE.test(sanitizedRule)) {
+    return { accepted: false, reason: "chat_fragment" };
+  }
+  const hasDurableSignal =
+    hasLocalizedDurableSignal(categories, sanitizedRule) ||
+    hasRuleLikeCategory(detectDirectiveCategories(userText).categories);
+  if (ONE_OFF_COMMAND_RE.test(sanitizedRule) && GITHUB_ISSUE_PR_RE.test(sanitizedRule) && !hasDurableSignal) {
+    return { accepted: false, reason: "one_off_command" };
+  }
+  if (!hasDurableSignal) {
+    return { accepted: false, reason: "missing_durable_signal" };
+  }
+
+  return { accepted: true, sanitizedRule };
 }
 
 let categoryRegexCache: Map<DirectiveCategory, RegExp> | null = null;
@@ -240,6 +332,7 @@ type RunDirectiveExtractOpts = {
 export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExtractResult {
   const { filePaths, directiveRegex } = opts;
   const incidents: DirectiveIncident[] = [];
+  let rejected = 0;
 
   for (const filePath of filePaths) {
     let lines: string[];
@@ -292,11 +385,16 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
 
       const precedingAssistant = i > 0 && messages[i - 1].role === "assistant" ? messages[i - 1].text : "";
       const extractedRule = extractRule(userText);
+      const candidate = classifyDirectiveCandidate(extractedRule, userText, categories);
+      if (!candidate.accepted) {
+        rejected++;
+        continue;
+      }
 
       incidents.push({
         userMessage: truncate(userText, MAX_USER_MSG),
         categories,
-        extractedRule,
+        extractedRule: candidate.sanitizedRule,
         precedingAssistant: truncate(precedingAssistant, MAX_ASSISTANT_MSG),
         confidence,
         timestamp: ts,
@@ -305,5 +403,5 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
     }
   }
 
-  return { incidents, sessionsScanned: filePaths.length };
+  return { incidents, sessionsScanned: filePaths.length, rejected };
 }

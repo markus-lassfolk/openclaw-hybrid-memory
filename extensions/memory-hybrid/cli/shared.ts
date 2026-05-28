@@ -69,7 +69,7 @@ export const withExit =
 const SCAN_IN_PROGRESS = new Map<string, boolean>();
 
 /** 23-hour threshold for startup guard (milliseconds). */
-const SCAN_MIN_INTERVAL_MS = 23 * 60 * 60 * 1000;
+export const SCAN_MIN_INTERVAL_MS = 23 * 60 * 60 * 1000;
 
 /**
  * Apply the 23h startup guard and concurrency lock for a scan type.

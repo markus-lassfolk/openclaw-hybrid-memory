@@ -87,6 +87,7 @@ export interface SessionState {
   frustrationStateMap: Map<string, { level: number; turns: FrustrationConversationTurn[] }>;
   authFailureRecallsThisSession: Map<string, number>;
   sessionLastActivity: Map<string, number>;
+  capabilityHintsSessionsSeen: Set<string>;
   touchSession: (sessionKey: string) => void;
   clearSessionState: (sessionKey: string) => void;
   pruneSessionMaps: () => void;

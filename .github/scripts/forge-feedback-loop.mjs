@@ -120,7 +120,13 @@ function summarizeUnresolvedThreads(reviewThreads) {
     return firstComment?.updatedAt ?? firstComment?.createdAt ?? thread.updatedAt ?? thread.createdAt ?? null;
   };
   return sortNewestFirst(reviewThreads ?? [], getThreadDate)
-    .filter((thread) => thread && typeof thread === 'object' && thread.isResolved === false)
+    .filter(
+      (thread) =>
+        thread &&
+        typeof thread === 'object' &&
+        thread.isResolved === false &&
+        thread.isOutdated !== true,
+    )
     .slice(0, DEFAULT_MAX_ITEMS_PER_SECTION)
     .map((thread) => {
       const comments = sortNewestFirst(thread.comments?.nodes ?? [], (comment) => comment.updatedAt ?? comment.createdAt)

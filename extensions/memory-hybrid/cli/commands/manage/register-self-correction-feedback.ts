@@ -1,6 +1,6 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, withExit } from "../../shared.js";
+import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBindings): void {
@@ -60,7 +60,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
     .option("--extract-path <path>", "Path to incidents JSON (default: memory/.self-correction-incidents.json)")
     .option("--workspace <w>", "Workspace path (for TOOLS.md)")
     .option("--dry-run", "Show what would be applied without applying")
-    .option("--model <m>", "LLM model (default from autoClassify config)")
+    .option("--model <m>", "LLM model override (default from self-correction heavy tier)")
     .option("--approve", "Auto-approve all corrections (skip review)")
     .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
     .option("--full", "Force full re-scan (bypass 23-hour startup guard)")
@@ -83,7 +83,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           const extractPath = opts?.extractPath;
           const workspace = opts?.workspace;
           const dryRun = !!opts?.dryRun;
-          const model = opts?.model ?? ctx.autoClassifyConfig.model;
+          const model = opts?.model?.trim() || undefined;
           const approve = !!opts?.approve;
           const full = !!opts?.full;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
@@ -107,12 +107,23 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             throw err;
           }
           if (res.error) {
-            console.error(`Error: ${res.error}`);
+            console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
             process.exitCode = 1;
             return;
           }
+          if (res.skipped) {
+            const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);
+            if (res.status === "skipped_concurrency") {
+              console.log(`Skipping self-correction-run: scan already in progress. status=skipped_concurrency`);
+            } else {
+              console.log(
+                `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --full to override. status=skipped_cooldown`,
+              );
+            }
+            return;
+          }
           console.log(
-            `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}`,
+            `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}${res.status ? ` status=${res.status}` : ""}`,
           );
           if (res.proposals.length > 0) {
             console.log(`Proposals (${res.proposals.length}):`);

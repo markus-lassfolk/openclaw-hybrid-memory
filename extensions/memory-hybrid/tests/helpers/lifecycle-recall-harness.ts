@@ -4,9 +4,10 @@
  */
 
 import { join } from "node:path";
+import type { Mock } from "vitest";
 import { vi } from "vitest";
 import type { FactsDB } from "../../backends/facts-db.js";
-import { hybridConfigSchema, type HybridMemoryConfig } from "../../config.js";
+import { type HybridMemoryConfig, hybridConfigSchema } from "../../config.js";
 import { createSessionState } from "../../lifecycle/session-state.js";
 import type { LifecycleContext, RecallResult, SessionState } from "../../lifecycle/types.js";
 import type { SearchResult } from "../../types/memory.js";
@@ -91,7 +92,11 @@ export function makeRecallSessionState(): SessionState {
   return createSessionState();
 }
 
-export function makeMockStageApi(sessionKey = "agent:main:telegram:test") {
+export function makeMockStageApi(sessionKey = "agent:main:telegram:test"): {
+  on: Mock;
+  logger: { info: Mock; warn: Mock; debug: Mock; error: Mock };
+  context: { sessionId: string; sessionKey: string; agentId: string };
+} {
   return {
     on: vi.fn(),
     logger: {

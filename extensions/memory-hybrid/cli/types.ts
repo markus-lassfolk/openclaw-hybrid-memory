@@ -34,6 +34,7 @@ export type StoreCliResult =
   | { outcome: "duplicate" }
   | { outcome: "credential"; id: string; service: string; type: string }
   | { outcome: "credential_skipped_duplicate"; service: string; type: string }
+  | { outcome: "credential_blocked_no_vault" }
   | { outcome: "credential_parse_error" }
   | { outcome: "credential_vault_error" }
   | { outcome: "credential_db_error" }
@@ -217,6 +218,15 @@ export type SelfCorrectionRunResult = {
   toolsApplied?: number;
   error?: string;
   skipped?: boolean;
+  /**
+   * Fine-grained outcome for cron/wrapper ledger reporting.
+   * - `success_analyzed`    — incidents found and LLM analysis completed
+   * - `success_no_incidents`— scan ran to completion, no incidents found
+   * - `skipped_cooldown`    — 23 h cooldown guard fired; no analysis performed
+   * - `skipped_concurrency` — scan already in progress; no analysis performed
+   * - `failed_parse`        — LLM responded but response could not be parsed as JSON
+   */
+  status?: "success_analyzed" | "success_no_incidents" | "skipped_cooldown" | "skipped_concurrency" | "failed_parse";
 };
 
 export type AnalyzeFeedbackPhrasesResult = {
@@ -333,11 +343,21 @@ export type ActiveTaskHygieneResult = {
   }>;
   actions: Array<{
     label: string;
-    kind: "dead-session" | "stale-failed" | "superseded-duplicate";
-    toStatus: "abandoned" | "superseded";
+    kind: "dead-session" | "stale-failed" | "superseded-duplicate" | "pr-live-blocker";
+    toStatus: "abandoned" | "superseded" | "stage-4-feedback";
     reason: string;
     canonicalLabel?: string;
+    prBlockerStatus?: string;
   }>;
   appliedCount: number;
   auditFactId?: string;
+  /** Tasks with live PR blockers detected during hygiene (only populated when checkPrLiveBlocker is true and plan is applied) */
+  prBlockerTasks?: Array<{
+    label: string;
+    owner: string;
+    repo: string;
+    number: number;
+    blockerStatus: string;
+    reason: string;
+  }>;
 };

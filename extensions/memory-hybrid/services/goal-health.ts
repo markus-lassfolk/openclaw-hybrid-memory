@@ -4,6 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { isAbsolute, join } from "node:path";
@@ -95,6 +96,19 @@ function extractActionableNext(goal: Goal): string | null {
   if (!next) return null;
   if (/^(none|n\/a|n-a|unknown|tbd)$/i.test(next)) return null;
   return next;
+}
+
+async function findInvalidLinkedTasksReason(goalsDir: string, goalId: string): Promise<string | null> {
+  const path = join(goalsDir, `${goalId}.json`);
+  try {
+    const raw = await readFile(path, "utf-8");
+    const parsed = JSON.parse(raw) as { linkedTasks?: unknown };
+    if (!Object.hasOwn(parsed, "linkedTasks")) return null;
+    if (parsed.linkedTasks === undefined || Array.isArray(parsed.linkedTasks)) return null;
+    return 'Goal file has invalid "linkedTasks" field (expected array).';
+  } catch {
+    return null;
+  }
 }
 
 const SHELL_DENY_RE = /[;&|`$(){}!\n\\<>~#]/;
@@ -372,6 +386,38 @@ export async function runGoalHealthCheck(opts: GoalHealthCheckOptions): Promise<
       let g = await readGoal(goalsDir, goal.id);
       if (!g) {
         recordOutcome("blocked", "Goal state could not be loaded for stewardship processing.");
+        continue;
+      }
+
+      const invalidLinkedTasksReason = await findInvalidLinkedTasksReason(goalsDir, goal.id);
+      if (invalidLinkedTasksReason) {
+        const blockers = g.currentBlockers.includes(invalidLinkedTasksReason)
+          ? g.currentBlockers
+          : [...g.currentBlockers, invalidLinkedTasksReason];
+        await updateGoal(
+          goalsDir,
+          g.id,
+          {
+            status: "blocked",
+            currentBlockers: blockers,
+            lastOutcome: invalidLinkedTasksReason,
+            consecutiveFailures: g.consecutiveFailures + 1,
+          },
+          {
+            timestamp: nowIso(),
+            action: "goal-schema-invalid",
+            detail: invalidLinkedTasksReason,
+            actor: "watchdog",
+          },
+        );
+        result.goalsUpdated++;
+        result.actions.push({
+          goalId: g.id,
+          label: g.label,
+          action: "goal-schema-invalid",
+          reason: invalidLinkedTasksReason,
+        });
+        recordOutcome("blocked", invalidLinkedTasksReason);
         continue;
       }
 

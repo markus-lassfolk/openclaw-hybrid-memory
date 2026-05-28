@@ -2,13 +2,19 @@
  * Minimal MemoryPluginAPI + mock Clawdbot API for registerLifecycleHooks tests.
  */
 
+import type { Mock } from "vitest";
 import { vi } from "vitest";
 import type { FactsDB } from "../../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../../config.js";
 import type { LifecycleContext } from "../../lifecycle/types.js";
 import { buildGuardTestConfig, buildGuardTestLifecycleContext } from "./lifecycle-hook-harness.js";
 
-export function makeHooksApi() {
+export function makeHooksApi(): {
+  on: Mock;
+  logger: { info: Mock; warn: Mock; debug: Mock; error: Mock };
+  context: { sessionId: string; sessionKey: string; agentId: string };
+  resolvePath: Mock;
+} {
   return {
     on: vi.fn(),
     logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
@@ -21,7 +27,7 @@ export function buildPluginApiForRegisterHooks(
   tmpDir: string,
   factsDb: FactsDB,
   cfgOverrides: Record<string, unknown> = {},
-) {
+): LifecycleContext & Record<string, unknown> {
   const lifecycleCtx = buildGuardTestLifecycleContext(tmpDir, factsDb);
   const cfg = buildGuardTestConfig(tmpDir);
   if (cfgOverrides.autoRecall && typeof cfgOverrides.autoRecall === "object") {

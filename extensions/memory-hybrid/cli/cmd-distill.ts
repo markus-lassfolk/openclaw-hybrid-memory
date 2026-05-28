@@ -5,18 +5,17 @@
  * Extracted from handlers.ts.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-
+import type { MemoryCategory } from "../config.js";
 import {
+  describeMaintenanceFallbackPolicy,
   getCronModelConfig,
   getDefaultCronModel,
-  describeMaintenanceFallbackPolicy,
+  isValidCategory,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
-import { isValidCategory } from "../config.js";
-import type { MemoryCategory } from "../config.js";
 import {
   ADAPTIVE_MODEL_LIMITS_VERSION,
   adaptiveFailureShrinkRatios,
@@ -26,7 +25,7 @@ import {
   recordAdaptiveSuccess,
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import {
   chatCompleteWithRetryDetailed,
   distillBatchTokenLimit,
@@ -40,6 +39,7 @@ import {
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
@@ -47,12 +47,11 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
 import { chunkSessionText, estimateTokens } from "../utils/text.js";
 import { getMaxMtime } from "./cmd-extract.js";
-import { extractTextFromSessionJsonl } from "./distill-session-jsonl.js";
 import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
+import { extractTextFromSessionJsonl } from "./distill-session-jsonl.js";
 import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 // Constants used only by distill functions
 const FULL_DISTILL_MAX_DAYS = 90;
@@ -625,82 +624,86 @@ export async function runDistillForCli(
     let skipped = 0;
     for (const fact of allFacts) {
       const isCred = isCredentialLike(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
-      if (isCred && cfg.credentials.enabled && credentialsDb) {
-        const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
-          requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-        });
-        if (parsed) {
-          if (!opts.dryRun) {
-            let storedInVault = false;
-            try {
-              const credStoreResult = credentialsDb.storeIfNew({
-                service: parsed.service,
-                type: parsed.type as any,
-                value: parsed.secretValue,
-                url: parsed.url,
-                notes: parsed.notes,
-              });
-              if (!credStoreResult) {
-                continue;
-              }
-              storedInVault = true;
-              const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
-              const storeResult = factsDb.storeWithResult({
-                text: pointerText,
-                category: "technical",
-                importance: BATCH_STORE_IMPORTANCE,
-                entity: "Credentials",
-                key: parsed.service,
-                value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
-                source: "distillation",
-                sourceDate: sourceDateSec(fact.source_date),
-              });
-              const entry = storeResult.entry;
-              // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-              await cleanupEvictedVector({
-                vectorDb: vectorDb,
-                evictedFactId: storeResult.evictedFactId,
-                logger: sink,
-                context: "distill",
-              });
+      if (isCred) {
+        if (cfg.credentials.enabled && credentialsDb) {
+          const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
+            requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+          });
+          if (parsed) {
+            if (!opts.dryRun) {
+              let storedInVault = false;
               try {
-                const vector = await embeddings.embed(pointerText);
-                factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-                if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
-                  await vectorDb.store({
-                    text: pointerText,
-                    vector,
-                    importance: BATCH_STORE_IMPORTANCE,
-                    category: "technical",
-                    id: entry.id,
-                  });
-                }
-              } catch (err) {
-                capturePluginError(err as Error, {
-                  subsystem: "cli",
-                  operation: "runDistillForCli:credential-vector-store",
+                const credStoreResult = credentialsDb.storeIfNew({
+                  service: parsed.service,
+                  type: parsed.type,
+                  value: parsed.secretValue,
+                  url: parsed.url,
+                  notes: parsed.notes,
                 });
-              }
-              stored++;
-              if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
-            } catch (err) {
-              if (storedInVault) {
+                if (!credStoreResult) {
+                  continue;
+                }
+                storedInVault = true;
+                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
+                const storeResult = factsDb.storeWithResult({
+                  text: pointerText,
+                  category: "technical",
+                  importance: BATCH_STORE_IMPORTANCE,
+                  entity: "Credentials",
+                  key: parsed.service,
+                  value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
+                  source: "distillation",
+                  sourceDate: sourceDateSec(fact.source_date),
+                });
+                const entry = storeResult.entry;
+                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                await cleanupEvictedVector({
+                  vectorDb: vectorDb,
+                  evictedFactId: storeResult.evictedFactId,
+                  logger: sink,
+                  context: "distill",
+                });
                 try {
-                  credentialsDb.delete(parsed.service, parsed.type as any);
-                } catch (cleanupErr) {
-                  if (opts.verbose)
-                    sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
-                  capturePluginError(cleanupErr as Error, {
+                  const vector = await embeddings.embed(pointerText);
+                  factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+                  if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+                    await vectorDb.store({
+                      text: pointerText,
+                      vector,
+                      importance: BATCH_STORE_IMPORTANCE,
+                      category: "technical",
+                      id: entry.id,
+                    });
+                  }
+                } catch (err) {
+                  capturePluginError(err as Error, {
                     subsystem: "cli",
-                    operation: "runDistillForCli:credential-compensating-delete",
+                    operation: "runDistillForCli:credential-vector-store",
                   });
                 }
+                stored++;
+                if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
+              } catch (err) {
+                if (storedInVault) {
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type);
+                  } catch (cleanupErr) {
+                    if (opts.verbose)
+                      sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+                    capturePluginError(cleanupErr as Error, {
+                      subsystem: "cli",
+                      operation: "runDistillForCli:credential-compensating-delete",
+                    });
+                  }
+                }
+                capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
               }
-              capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
             }
+            continue;
           }
           continue;
         }
+        if (opts.verbose) sink.log("  skipped credential-like fact: vault disabled or unavailable");
         continue;
       }
       if (factsDb.hasDuplicate(fact.text, "distillation")) {
@@ -724,6 +727,9 @@ export async function runDistillForCli(
           sourceDate: sourceDateSec(fact.source_date),
           tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
         });
+        if (storeResult.skipped) {
+          continue;
+        }
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({

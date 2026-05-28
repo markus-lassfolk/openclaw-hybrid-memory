@@ -27,9 +27,39 @@ export type ReinforcementIncident = {
   sessionFile: string;
 };
 
+export type AnnotationReasons = {
+  /** Incidents where the agent made no memory_recall calls (no IDs to reinforce) */
+  noRecalledIds: number;
+  /** Incidents where at least one fact was successfully reinforced */
+  reinforced: number;
+  /** Incidents had recalled IDs but none could be reinforced (e.g., stale/non-existent IDs) */
+  recalledIdsNoMatch: number;
+  /** Incidents where annotation threw an error */
+  errors: number;
+};
+
+/**
+ * Semantic status for the case where incidentsFound > 0 && annotated == 0.
+ * - `partial_no_matches`: all incidents had no recalled memory IDs — agent did not use
+ *   memory_recall in the praised sessions, so no facts could be linked. Benign.
+ * - `failed_annotation`: some incidents had recalled IDs but reinforceFact() calls all failed.
+ * - `degraded_model_or_parser`: LLM analysis failed or produced unparseable output and
+ *   no facts were reinforced.
+ */
+export type ReinforcementAnnotationStatus = "partial_no_matches" | "failed_annotation" | "degraded_model_or_parser";
+
 export type ReinforcementExtractResult = {
   incidents: ReinforcementIncident[];
   sessionsScanned: number;
+  /** Total number of facts annotated with reinforcement data (set after annotation pass) */
+  annotated?: number;
+  /** Reason breakdown per incident (set after annotation pass) */
+  annotationReasons?: AnnotationReasons;
+  /**
+   * Semantic status when incidentsFound > 0 && annotated == 0.
+   * Undefined when annotated > 0 or incidentsFound == 0.
+   */
+  annotationStatus?: ReinforcementAnnotationStatus;
 };
 
 /** Hard cap on bytes read per file per run to avoid unbounded JSONL reads (matches passive observer). */

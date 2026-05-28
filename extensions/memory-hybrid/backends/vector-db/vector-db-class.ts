@@ -32,13 +32,28 @@ import {
   LANCE_TABLE,
   optimizeFailuresByPath,
   optimizingByPath,
+  SEMANTIC_QUERY_CACHE_CANDIDATE_LIMIT_MAX,
   SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY,
   SEMANTIC_QUERY_CACHE_TABLE,
   type SemanticQueryCacheEntry,
+  VECTOR_QUERY_MAX_RESULTS,
   VECTOR_BULK_DELETE_IN_CHUNK,
   type VectorDBLogger,
 } from "./constants.js";
 import { isPathInsideDir, resolvedPathOrFallback } from "./path-utils.js";
+import {
+  activeReadersByPath,
+  decrementActiveReaderCount,
+  decrementReindexLockCount,
+  getActiveReaderCount,
+  getReindexLockCount,
+  incrementActiveReaderCount,
+  incrementReindexLockCount,
+  isOptimizeLocked,
+  optimizeExclusiveLockByPath,
+  reindexExclusiveLockByPath,
+  setOptimizeLock,
+} from "./runtime-locks.js";
 
 export class VectorDB {
   private db: lancedb.Connection | null = null;
@@ -109,6 +124,46 @@ export class VectorDB {
     reason: null,
     sinceEpochMs: null,
   };
+  /** Lightweight vector-search concurrency/limit observability for operator diagnostics. */
+  private searchTelemetry: {
+    active: number;
+    peak: number;
+    total: number;
+    lastRequestedLimit: number;
+    lastEffectiveLimit: number;
+    lastResultCount: number;
+    lastCompletedAtEpochMs: number | null;
+  } = {
+    active: 0,
+    peak: 0,
+    total: 0,
+    lastRequestedLimit: 0,
+    lastEffectiveLimit: 0,
+    lastResultCount: 0,
+    lastCompletedAtEpochMs: null,
+  };
+  /** Last semantic-query-cache prune summary, so operators can see cache churn behavior. */
+  private semanticQueryCachePruneTelemetry: {
+    lastFilterKey: string | null;
+    lastRemovedRows: number;
+    lastPrunedAtEpochMs: number | null;
+  } = {
+    lastFilterKey: null,
+    lastRemovedRows: 0,
+    lastPrunedAtEpochMs: null,
+  };
+  /** Last successful optimize() run result for observability surfaces. */
+  private lastOptimizeTelemetry: {
+    ranAtEpochMs: number | null;
+    compacted: number;
+    removedFragments: number;
+    freedBytes: number;
+  } = {
+    ranAtEpochMs: null,
+    compacted: 0,
+    removedFragments: 0,
+    freedBytes: 0,
+  };
   /**
    * When true, this VectorDB is a long-lived singleton connection (set via setPersistent()).
    * removeSession() becomes a safe no-op when persistent — the connection is only closed
@@ -130,9 +185,10 @@ export class VectorDB {
    *
    * Module-level by dbPath so multiple VectorDB instances on the same path cooperate.
    */
-  private static _activeReadersByPath = new Map<string, number>();
-  private static _optimizeExclusiveLockByPath = new Map<string, boolean>();
-  private static _reindexExclusiveLockByPath = new Map<string, number>();
+  // Back-compat for tests/diagnostics that inspect lock maps directly.
+  private static _activeReadersByPath = activeReadersByPath;
+  private static _optimizeExclusiveLockByPath = optimizeExclusiveLockByPath;
+  private static _reindexExclusiveLockByPath = reindexExclusiveLockByPath;
 
   constructor(
     private readonly dbPath: string,
@@ -171,7 +227,7 @@ export class VectorDB {
 
   private async waitForReindexLockRelease(maxWaitMs = 30_000): Promise<void> {
     const started = Date.now();
-    while ((VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 0) > 0) {
+    while (getReindexLockCount(this.dbPath) > 0) {
       if (Date.now() - started > maxWaitMs) {
         throw new Error(
           `VectorDB operation blocked by active re-index lock for >${maxWaitMs}ms. Retry after re-index completes.`,
@@ -182,14 +238,11 @@ export class VectorDB {
   }
 
   async runWithReindexLock<T>(fn: () => Promise<T>): Promise<T> {
-    const current = VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 0;
-    VectorDB._reindexExclusiveLockByPath.set(this.dbPath, current + 1);
+    incrementReindexLockCount(this.dbPath);
     try {
       return await fn();
     } finally {
-      const next = (VectorDB._reindexExclusiveLockByPath.get(this.dbPath) ?? 1) - 1;
-      if (next <= 0) VectorDB._reindexExclusiveLockByPath.delete(this.dbPath);
-      else VectorDB._reindexExclusiveLockByPath.set(this.dbPath, next);
+      decrementReindexLockCount(this.dbPath);
     }
   }
 
@@ -217,9 +270,8 @@ export class VectorDB {
   private acquireReader(): boolean {
     // Skip reader count if an exclusive optimize is in progress — those readers
     // will see whatever version was current when they started, which is fine.
-    if (VectorDB._optimizeExclusiveLockByPath.get(this.dbPath) === true) return false;
-    const current = (VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) + 1;
-    VectorDB._activeReadersByPath.set(this.dbPath, current);
+    if (isOptimizeLocked(this.dbPath)) return false;
+    incrementActiveReaderCount(this.dbPath);
     return true;
   }
 
@@ -231,8 +283,23 @@ export class VectorDB {
    */
   private releaseReader(acquired: boolean): void {
     if (!acquired) return;
-    const current = VectorDB._activeReadersByPath.get(this.dbPath) ?? 1;
-    VectorDB._activeReadersByPath.set(this.dbPath, Math.max(0, current - 1));
+    decrementActiveReaderCount(this.dbPath);
+  }
+
+  private beginSearch(requestedLimit: number, effectiveLimit: number): void {
+    this.searchTelemetry.active += 1;
+    this.searchTelemetry.total += 1;
+    this.searchTelemetry.lastRequestedLimit = requestedLimit;
+    this.searchTelemetry.lastEffectiveLimit = effectiveLimit;
+    if (this.searchTelemetry.active > this.searchTelemetry.peak) {
+      this.searchTelemetry.peak = this.searchTelemetry.active;
+    }
+  }
+
+  private endSearch(resultCount: number): void {
+    this.searchTelemetry.active = Math.max(0, this.searchTelemetry.active - 1);
+    this.searchTelemetry.lastResultCount = Math.max(0, resultCount);
+    this.searchTelemetry.lastCompletedAtEpochMs = Date.now();
   }
 
   /**
@@ -246,7 +313,7 @@ export class VectorDB {
    */
   private async waitForReadersToDrain(): Promise<void> {
     const start = Date.now();
-    while ((VectorDB._activeReadersByPath.get(this.dbPath) ?? 0) > 0) {
+    while (getActiveReaderCount(this.dbPath) > 0) {
       if (Date.now() - start > VECTORDB_READER_DRAIN_TIMEOUT_MS) {
         this.logWarn(
           `memory-hybrid: waitForReadersToDrain timed out after ${VECTORDB_READER_DRAIN_TIMEOUT_MS}ms — proceeding with optimize() to avoid indefinite starvation under sustained read load.`,
@@ -1115,6 +1182,11 @@ export class VectorDB {
       const idList = chunk.map((row) => `'${this.escapeSqlString(row.id)}'`).join(", ");
       await table.delete(`id IN (${idList})`);
     }
+    this.semanticQueryCachePruneTelemetry = {
+      lastFilterKey: filterKey,
+      lastRemovedRows: staleRows.length,
+      lastPrunedAtEpochMs: Date.now(),
+    };
   }
 
   async getSemanticQueryCacheMatch(
@@ -1131,7 +1203,7 @@ export class VectorDB {
       const ttlSec = Math.max(1, Math.floor((options.ttlMs ?? 5 * 60 * 1000) / 1000));
       const filterKey = options.filterKey ?? "default";
       const rawCandidate = options.candidateLimit ?? 25;
-      const candidateLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, Math.floor(rawCandidate)));
+      const candidateLimit = Math.max(1, Math.min(SEMANTIC_QUERY_CACHE_CANDIDATE_LIMIT_MAX, Math.floor(rawCandidate)));
 
       // Dimension pre-check: prevent LanceDB "No vector column found" errors on fallback query mismatch
       if (vector.length !== this.vectorDim) return null;
@@ -1437,7 +1509,7 @@ export class VectorDB {
     // cleanupOlderThan removes data versions that a concurrent search/hasDuplicate is
     // still reading. The exclusive lock also prevents new readers from incrementing
     // the count while we are waiting for drain.
-    VectorDB._optimizeExclusiveLockByPath.set(this.dbPath, true);
+    setOptimizeLock(this.dbPath, true);
 
     let promiseRef: Promise<{ compacted: number; removedFragments: number; freedBytes: number }> | null = null;
     const optimizePromise = (async () => {
@@ -1450,13 +1522,20 @@ export class VectorDB {
         const table = this.getTable();
         const cleanupOlderThan = new Date(Date.now() - olderThanMs);
         const stats = await table.optimize({ cleanupOlderThan });
-        return {
+        const out = {
           compacted: stats.compaction?.fragmentsRemoved ?? 0,
           removedFragments: stats.prune?.oldVersionsRemoved ?? 0,
           freedBytes: stats.prune?.bytesRemoved ?? 0,
         };
+        this.lastOptimizeTelemetry = {
+          ranAtEpochMs: Date.now(),
+          compacted: out.compacted,
+          removedFragments: out.removedFragments,
+          freedBytes: out.freedBytes,
+        };
+        return out;
       } finally {
-        VectorDB._optimizeExclusiveLockByPath.set(this.dbPath, false);
+        setOptimizeLock(this.dbPath, false);
         optimizingByPath.set(this.dbPath, false);
         if (this.optimizePromise === promiseRef) {
           this.optimizePromise = null;
@@ -1496,11 +1575,13 @@ export class VectorDB {
       }
       this.lastSearchFailReason = null;
       const rawLimit = Number.isFinite(limit) ? Math.floor(limit) : 5;
-      const safeLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, rawLimit));
+      const safeLimit = Math.max(1, Math.min(LANCE_VECTOR_SEARCH_MAX_LIMIT, VECTOR_QUERY_MAX_RESULTS, rawLimit));
+      this.beginSearch(rawLimit, safeLimit);
       const acquired = this.acquireReader();
+      let filteredCount = 0;
       try {
         const results = await this.getTable().vectorSearch(vector).limit(safeLimit).toArray();
-        return results
+        const filtered = results
           .map((row) => {
             const distance = row._distance ?? 0;
             const score = 1 / (1 + distance);
@@ -1533,7 +1614,10 @@ export class VectorDB {
             };
           })
           .filter((r) => r.score >= minScore);
+        filteredCount = filtered.length;
+        return filtered;
       } finally {
+        this.endSearch(filteredCount);
         this.releaseReader(acquired);
       }
     } catch (err) {
@@ -1749,6 +1833,42 @@ export class VectorDB {
         subsystem: "vector",
       });
       this.logWarn(`memory-hybrid: LanceDB count failed: ${err}`);
+      return 0;
+    }
+  }
+
+  async countSemanticQueryCacheRows(): Promise<number> {
+    try {
+      if (!this.lanceDbAvailable && this.lanceInitFailed) return 0;
+      await this.ensureInitialized();
+      if (!this.lanceDbAvailable || this.lanceInitFailed) return 0;
+      const cacheTable = this.getSemanticQueryCacheTable();
+      if (!cacheTable) return 0;
+      const acquired = this.acquireReader();
+      try {
+        const countPromise = cacheTable.countRows();
+        const count = await withTimeout(VECTORDB_COUNT_TIMEOUT_MS, () => countPromise);
+        if (count === null) {
+          this.logWarn(`memory-hybrid: semantic query cache count timed out after ${VECTORDB_COUNT_TIMEOUT_MS}ms`);
+          void countPromise.then(
+            () => {},
+            (countErr) => {
+              this.logWarn(`memory-hybrid: semantic query cache count failed after timing out: ${countErr}`);
+            },
+          );
+          return 0;
+        }
+        return count;
+      } finally {
+        this.releaseReader(acquired);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "vector-semantic-query-cache-count",
+        severity: "info",
+        subsystem: "vector",
+      });
+      this.logWarn(`memory-hybrid: semantic query cache count failed: ${err}`);
       return 0;
     }
   }
@@ -1979,6 +2099,7 @@ export class VectorDB {
     this.lanceInitFailed = false;
     this.lanceDbAvailable = true;
     this.clearDegradedState("closed");
+    this.searchTelemetry.active = 0;
     this.table = null;
     this.semanticQueryCacheTable = null;
     this.shadowTableCache.clear();
@@ -2018,6 +2139,59 @@ export class VectorDB {
     return this.closeGeneration;
   }
 
+  /** Lightweight search telemetry for diagnostics/health surfaces. */
+  getSearchTelemetry(): {
+    active: number;
+    peak: number;
+    total: number;
+    lastRequestedLimit: number;
+    lastEffectiveLimit: number;
+    lastResultCount: number;
+    lastCompletedAtEpochMs: number | null;
+  } {
+    return { ...this.searchTelemetry };
+  }
+
+  /** Runtime cache bounds + latest prune event. */
+  getSemanticQueryCacheTelemetry(): {
+    maxRowsPerFilterKey: number;
+    candidateLimitMax: number;
+    lastFilterKey: string | null;
+    lastRemovedRows: number;
+    lastPrunedAtEpochMs: number | null;
+  } {
+    return {
+      maxRowsPerFilterKey: SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY,
+      candidateLimitMax: SEMANTIC_QUERY_CACHE_CANDIDATE_LIMIT_MAX,
+      lastFilterKey: this.semanticQueryCachePruneTelemetry.lastFilterKey,
+      lastRemovedRows: this.semanticQueryCachePruneTelemetry.lastRemovedRows,
+      lastPrunedAtEpochMs: this.semanticQueryCachePruneTelemetry.lastPrunedAtEpochMs,
+    };
+  }
+
+  /** Last successful optimize() result snapshot. */
+  getLastOptimizeTelemetry(): {
+    ranAtEpochMs: number | null;
+    compacted: number;
+    removedFragments: number;
+    freedBytes: number;
+  } {
+    return { ...this.lastOptimizeTelemetry };
+  }
+
+  /** Effective process-level safety bounds for Lance/Arrow result materialization. */
+  getRuntimeBounds(): {
+    vectorSearchMaxResults: number;
+    semanticCacheMaxRowsPerFilterKey: number;
+    semanticCacheCandidateLimitMax: number;
+  } {
+    return {
+      vectorSearchMaxResults: VECTOR_QUERY_MAX_RESULTS,
+      semanticCacheMaxRowsPerFilterKey: SEMANTIC_QUERY_CACHE_MAX_ROWS_PER_FILTER_KEY,
+      semanticCacheCandidateLimitMax: SEMANTIC_QUERY_CACHE_CANDIDATE_LIMIT_MAX,
+    };
+  }
+
   /** Returns the reason code from the last search() that returned early, or null if search completed normally. */
   getLastSearchFailReason(): string | null {
     return this.lastSearchFailReason;
@@ -2048,5 +2222,41 @@ export class VectorDB {
 
   getDegradedState(): { active: boolean; reason: string | null; sinceEpochMs: number | null } {
     return { ...this.degradedState };
+  }
+
+  /** Init generation counter — increments each time the LanceDB connection is established or repaired. */
+  getInitGeneration(): number {
+    return this.initGeneration;
+  }
+
+  /** Number of store() calls since the last auto-optimize reset (rough proxy for write pressure). */
+  getStoreCount(): number {
+    return this.storeCount;
+  }
+
+  /** LanceDB root path for this backend instance. */
+  getPath(): string {
+    return this.dbPath;
+  }
+
+  /** Returns true if the VectorDB table and semantic query cache table are initialized and ready. */
+  isInitialized(): boolean {
+    return (
+      !this.closed &&
+      this.db !== null &&
+      this.table !== null &&
+      this.semanticQueryCacheTable !== null &&
+      !this.lanceInitFailed
+    );
+  }
+
+  /** Returns true if an optimize operation is currently in progress. */
+  isOptimizing(): boolean {
+    return this.optimizePromise !== null;
+  }
+
+  /** Returns the current number of active readers (for exclusive lock coordination with optimize). */
+  getOpenReaderCount(): number {
+    return getActiveReaderCount(this.dbPath);
   }
 }

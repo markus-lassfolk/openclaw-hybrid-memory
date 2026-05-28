@@ -86,5 +86,13 @@
     "defaultAction": "retry-once",
     "severity": "medium",
     "suggestedAction": "Another run may be holding a scan lock; if the PID is stale, clear the lock file after confirming no live process."
+  },
+  {
+    "id": "cron-path-missing",
+    "pattern": "failed to run command ['\"]openclaw['\"]|command not found[^\\n]*openclaw|openclaw[^\\n]*(command )?not found|openclaw[^\\n]*no such file or directory|no such file or directory[^\\n]*openclaw",
+    "classification": "env-misconfig",
+    "defaultAction": "escalate-user",
+    "severity": "high",
+    "suggestedAction": "The 'openclaw' binary is not in PATH for the cron context. Run 'which openclaw' in a login shell, then update the cron preamble to source the correct PATH or use the full absolute binary path (e.g. /home/user/.local/bin/openclaw)."
   }
 ]

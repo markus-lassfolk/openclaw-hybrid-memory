@@ -94,6 +94,10 @@ export type ActiveTaskContextBundleResult = {
   filteredActiveCount: number;
   injectedTaskCount: number;
   injectedTokens: number;
+  activeTaskTokens: number;
+  staleWarningTokens: number;
+  heartbeatHygieneTokens: number;
+  goalEscalationTokens: number;
 };
 
 export type ActiveTaskContextBundleInput = {
@@ -122,6 +126,10 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
 
   const parts: string[] = [];
   let injectedTaskCount = 0;
+  let activeTaskTokens = 0;
+  let staleWarningTokens = 0;
+  let heartbeatHygieneTokens = 0;
+  let goalEscalationTokens = 0;
   const totalChars = Math.max(0, input.injectionBudgetTokens * 4);
   const hygieneReserve =
     input.heartbeatHygiene != null
@@ -136,6 +144,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     if (main.text) {
       parts.push(main.text);
       injectedTaskCount = main.injectedCount;
+      activeTaskTokens = estimateTokens(main.text);
       remainingChars = Math.max(0, remainingChars - main.text.length - 2);
     }
   }
@@ -144,6 +153,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     const staleResult = buildStaleWarningInjection(input.ledgerTasks, input.staleMinutes, remainingChars);
     if (staleResult.text) {
       parts.push(staleResult.text);
+      staleWarningTokens = estimateTokens(staleResult.text);
       remainingChars = Math.max(0, remainingChars - staleResult.text.length - 2);
     }
   }
@@ -158,6 +168,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
       });
       if (hygiene) {
         parts.push(hygiene);
+        heartbeatHygieneTokens = estimateTokens(hygiene);
       }
     }
   }
@@ -171,6 +182,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
         : `${input.goalEscalationBlock.slice(0, Math.max(0, leftAfterBlocks - 24))}\n…(truncated)\n`;
     if (block.trim()) {
       parts.push(block);
+      goalEscalationTokens = estimateTokens(block);
     }
   }
 
@@ -181,5 +193,9 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     filteredActiveCount,
     injectedTaskCount,
     injectedTokens: combined ? estimateTokens(combined) : 0,
+    activeTaskTokens,
+    staleWarningTokens,
+    heartbeatHygieneTokens,
+    goalEscalationTokens,
   };
 }

@@ -292,6 +292,7 @@ function sweepStaleSessions(sessionState: SessionState): number {
   for (const [sessionKey, lastActive] of sessionState.sessionLastActivity) {
     if (lastActive < cutoff) {
       sessionState.clearSessionState(sessionKey);
+      sessionState.capabilityHintsSessionsSeen.delete(sessionKey);
       swept++;
     }
   }

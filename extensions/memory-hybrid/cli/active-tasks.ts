@@ -23,10 +23,12 @@ import {
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import {
   applyActiveTaskHygieneFacts,
+  backfillActiveTaskCanonicalLabels,
   loadTaskLedgerFromFacts,
   planActiveTaskHygiene,
   readActiveTaskRowsFromFacts,
   reconcileActiveTaskInProgressSessionsFacts,
+  reconcileActiveTaskLiveState,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
@@ -340,16 +342,20 @@ export async function runActiveTaskHygiene(
     apply?: boolean;
     olderThanMinutes?: number;
     openclawHome?: string;
+    /** When true, fetch live PR state for tasks with PR references (default: false). */
+    checkPrLiveBlocker?: boolean;
   } = {},
 ): Promise<ActiveTaskHygieneResult> {
   const olderThanMinutes = Math.max(1, Math.floor(opts.olderThanMinutes ?? ctx.staleMinutes));
   const apply = opts.apply === true;
+  const checkPrLiveBlocker = opts.checkPrLiveBlocker === true;
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
     const { active } = loadTaskLedgerFromFacts(factsDb);
     const plan = await planActiveTaskHygiene(active, {
       olderThanMinutes,
       openclawHome: opts.openclawHome,
+      checkPrLiveBlocker,
     });
     if (!apply || plan.actions.length === 0) {
       return {
@@ -376,6 +382,7 @@ export async function runActiveTaskHygiene(
       actions: plan.actions,
       appliedCount: applied.appliedCount,
       auditFactId: applied.auditFactId,
+      prBlockerTasks: applied.prBlockerTasks,
     };
   }
 
@@ -385,6 +392,7 @@ export async function runActiveTaskHygiene(
   const plan = await planActiveTaskHygiene(active, {
     olderThanMinutes,
     openclawHome: opts.openclawHome,
+    checkPrLiveBlocker,
   });
   if (apply && !taskFile) {
     return {
@@ -625,15 +633,35 @@ export function registerActiveTaskCommands(
         );
         if (result.reconciledLabels.length === 0) {
           console.log("✅ No orphan in-progress subagent tasks to reconcile.");
-          return;
+        } else {
+          if (opts.dryRun) {
+            console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
+            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+          } else {
+            console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
+            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+          }
         }
-        if (opts.dryRun) {
-          console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
-          for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
-          return;
+        if (!opts.dryRun && cfg.activeTask.liveStateReconcile.enabled) {
+          try {
+            const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+              maxRequests: 20,
+              log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+            });
+            if (liveResult.updatedCount > 0) {
+              await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+              console.log(
+                `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+              );
+            } else {
+              console.log(
+                `✅ Live-state reconcile: no terminal states found (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+              );
+            }
+          } catch (liveErr) {
+            console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+          }
         }
-        console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
-        for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
         return;
       }
 
@@ -694,11 +722,80 @@ export function registerActiveTaskCommands(
         console.log("\nDry run only. Re-run with --apply to persist hygiene actions.");
         return;
       }
+      let liveUpdatedCount = 0;
+      let liveCheckedCount = 0;
+      let liveSkippedCount = 0;
+      if (ctx.ledger === "facts" && cfg.activeTask.liveStateReconcile.enabled) {
+        const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+        try {
+          const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+            maxRequests: 20,
+            log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+          });
+          liveUpdatedCount = liveResult.updatedCount;
+          liveCheckedCount = liveResult.checkedCount;
+          liveSkippedCount = liveResult.skippedCount;
+          if (liveResult.updatedCount > 0) {
+            await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+          }
+        } catch (liveErr) {
+          console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+        }
+      }
       console.log(`\nApplied ${result.appliedCount} action(s).`);
       if (result.auditFactId) {
         console.log(`Audit fact: ${result.auditFactId}`);
       }
       if (result.ledger === "facts") {
+        console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
+        if (cfg.activeTask.liveStateReconcile.enabled) {
+          if (liveUpdatedCount > 0) {
+            console.log(
+              `Live-state reconcile: marked ${liveUpdatedCount} task(s) done (checked ${liveCheckedCount}, skipped ${liveSkippedCount}).`,
+            );
+          } else {
+            console.log(
+              `Live-state reconcile: no terminal states found (checked ${liveCheckedCount}, skipped ${liveSkippedCount}).`,
+            );
+          }
+        }
+      }
+    });
+
+  activeTasks
+    .command("backfill-canonical-labels")
+    .description("Backfill active-task canonical labels and collapse case-variant duplicate facts (facts ledger only)")
+    .option("--dry-run", "Report planned changes without updating facts")
+    .option("--limit <n>", "Maximum project facts to scan (default: 50000)")
+    .action(async (opts: { dryRun?: boolean; limit?: string }) => {
+      if (ctx.ledger !== "facts") {
+        console.log("ℹ️  backfill-canonical-labels applies only when activeTask.ledger is 'facts'.");
+        return;
+      }
+      const { factsDb } = requireFacts(ctx);
+      const parsedLimit = opts.limit == null ? undefined : Number.parseInt(String(opts.limit), 10);
+      if (parsedLimit !== undefined && (!Number.isFinite(parsedLimit) || parsedLimit <= 0)) {
+        console.error(`Error: invalid --limit value "${opts.limit}"`);
+        process.exitCode = 1;
+        return;
+      }
+      const result = backfillActiveTaskCanonicalLabels(factsDb, {
+        dryRun: opts.dryRun === true,
+        limit: parsedLimit,
+      });
+      console.log(`${opts.dryRun ? "Dry run — " : ""}Scanned ${result.scannedFacts} project fact(s).`);
+      console.log(`Canonical label updates: ${result.canonicalLabelsUpdated}`);
+      console.log(`Superseded duplicate facts: ${result.supersededFacts}`);
+      if (result.duplicateGroups.length > 0) {
+        console.log("Duplicate canonical groups:");
+        for (const group of result.duplicateGroups) {
+          console.log(
+            `  - ${group.canonicalLabel}: facts=${group.facts}, activeBefore=${group.activeBefore}, superseded=${group.superseded}`,
+          );
+        }
+      }
+      if (!opts.dryRun) {
+        await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
         console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
       }
     });
@@ -741,15 +838,37 @@ export function registerActiveTaskCommands(
     .description(
       "Write ACTIVE-TASKS.md projection from facts ledger (no-op when ledger is markdown; use with activeTask.ledger: facts)",
     )
-    .action(async () => {
+    .option("--include-completed", "Include terminal/completed rows for history/audit output")
+    .action(async (opts: { includeCompleted?: boolean }) => {
       if (ctx.ledger !== "facts") {
         console.log(
           "ℹ️  render applies when activeTask.ledger is 'facts'. With markdown ledger, ACTIVE-TASKS.md is already the source.",
         );
         return;
       }
-      const { factsDb } = requireFacts(ctx);
-      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+      const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+      if (cfg.activeTask.liveStateReconcile.enabled) {
+        try {
+          const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+            maxRequests: 20,
+            log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+          });
+          if (liveResult.updatedCount > 0) {
+            console.log(
+              `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+            );
+          } else {
+            console.log(
+              `✅ Live-state reconcile: no terminal states found (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+            );
+          }
+        } catch (liveErr) {
+          console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+        }
+      }
+      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection, undefined, {
+        includeCompleted: opts.includeCompleted === true,
+      });
       console.log(`✅ Wrote ${ctx.activeTaskFilePath}`);
     });
 }

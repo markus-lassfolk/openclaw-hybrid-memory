@@ -189,6 +189,36 @@ describe("FactsDB.store", () => {
       sqlite.prepare = originalPrepare;
     }
   });
+
+  it("does not persist entries blocked by pre-store guard", () => {
+    const before = db.count();
+    const blockedBySource = db.storeWithResult({
+      text: "NOOP classification output",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "remember",
+    });
+    const blockedByCategory = db.storeWithResult({
+      text: "artifact-like internal payload",
+      category: "artifact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+
+    expect(blockedBySource.skipped).toBe(true);
+    expect(blockedBySource.entry.id).toBe("");
+    expect(blockedBySource.entry.source).toBe("remember");
+    expect(blockedByCategory.skipped).toBe(true);
+    expect(blockedByCategory.entry.id).toBe("");
+    expect(blockedByCategory.entry.category).toBe("artifact");
+    expect(db.count()).toBe(before);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -909,7 +939,7 @@ describe("FactsDB tiering", () => {
   });
 
   it("runCompaction keeps garbage artifacts out of HOT after retiering", () => {
-    const garbage = db.store({
+    const garbage = db.storeWithResult({
       text: "<thinking>internal reasoning trace</thinking>",
       category: "fact",
       importance: 0.8,
@@ -918,11 +948,11 @@ describe("FactsDB tiering", () => {
       value: null,
       source: "test",
     });
-    for (let i = 0; i < 3; i++) db.refreshAccessedFacts([garbage.id]);
+    expect(garbage.skipped).toBe(true);
 
     db.runCompaction({ inactivePreferenceDays: 7, hotMaxTokens: 2000, hotMaxFacts: 50 });
 
-    expect(db.getById(garbage.id)?.tier).toBe("warm");
+    expect(db.getHotFacts().some((fact) => fact.text.includes("internal reasoning trace"))).toBe(false);
   });
 
   it("runCompaction moves only inactive unrecalled facts to COLD", () => {
@@ -2259,6 +2289,40 @@ describe("FactsDB category drift audit/remap", () => {
     const dashboard = db.listForDashboard({ limit: 10, offset: 0, category: "fact" });
     expect(dashboard.total).toBe(1);
     expect(dashboard.facts[0]?.id).toBe(entry.id);
+  });
+
+  it("supports legacy forge/episode remap policy end-to-end", () => {
+    const legacyForge = db.store({
+      text: "Legacy forge busy fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const legacyEpisode = db.store({
+      text: "Legacy episode fact",
+      category: "other",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("forge_busy", legacyForge.id);
+    db.getRawDb().prepare("UPDATE facts SET category = ? WHERE id = ?").run("episode", legacyEpisode.id);
+
+    const report = db.auditCategories(["forge", "ops_summary", "other"], 2);
+    expect(report.unknown.map((row) => row.category)).toEqual(["episode", "forge_busy"]);
+
+    expect(db.remapCategory("forge_busy", "forge", true).changed).toBe(1);
+    expect(db.remapCategory("episode", "ops_summary", true).changed).toBe(1);
+
+    const after = db.auditCategories(["forge", "ops_summary", "other"], 2);
+    expect(after.unknown).toEqual([]);
+    expect(db.getById(legacyForge.id)?.category).toBe("forge");
+    expect(db.getById(legacyEpisode.id)?.category).toBe("ops_summary");
   });
 });
 

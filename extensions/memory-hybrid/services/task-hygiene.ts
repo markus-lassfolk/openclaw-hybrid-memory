@@ -4,9 +4,12 @@
  */
 
 import { basename } from "node:path";
+import { promisify } from "node:util";
 import type { ActiveTaskEntry } from "./active-task.js";
 import { isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
+import { getEnv } from "../utils/env-manager.js";
+import { execFile } from "../utils/process-runner.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
 export type LongRunningRegistrationMode = ActiveTaskLongRunningRegistrationMode;
@@ -18,6 +21,136 @@ export type LongRunningWorkflowProposal = {
   next: string;
   repoContext?: string;
 };
+
+/**
+ * Classification outcomes for a PR-backed task's live blocker state.
+ * These are returned by `fetchLivePrBlockerStatus` and consumed by hygiene logic.
+ */
+export type PrBlockerStatus =
+  | "unresolved_review_threads"
+  | "red_ci"
+  | "pending_ci"
+  | "merge_conflict"
+  | "human_approval"
+  | "no_live_blocker";
+
+const execFileAsync = promisify(execFile);
+
+interface GhPrViewJson {
+  number: number;
+  mergeStateStatus?: string;
+  reviewDecision?: string;
+  reviewThreads?: {
+    nodes: Array<{
+      id: string;
+      isResolved: boolean;
+      isOutdated: boolean;
+    }>;
+  };
+  mergeable?: string;
+  statusCheckRollup?: Array<{
+    state?: string;
+    conclusion?: string;
+    status?: string;
+  }>;
+  commits?: {
+    nodes: Array<{ commit: { checkSuites?: { nodes: Array<{ conclusion?: string; status?: string }> } } }>;
+  };
+}
+
+const BLOCKING_CONCLUSIONS = new Set(["FAILURE", "TIMED_OUT", "STARTUP_FAILURE"]);
+const PENDING_CHECK_STATES = new Set(["IN_PROGRESS", "QUEUED", "PENDING", "WAITING", "REQUESTED"]);
+
+/**
+ * Fetch live PR state from GitHub (via `gh`) and classify the blocking status.
+ *
+ * This function exists to ensure hygiene does not mis-classify a PR as "waiting/blocked"
+ * based on shallow signals (mergeStateStatus, reviewDecision) alone — it always checks
+ * for actionable unresolved review threads before concluding there is no live blocker.
+ *
+ * Returns "no_live_blocker" only when CI is green/success, there are no unresolved threads,
+ * no merge conflict, and no pending human approval.
+ */
+export async function fetchLivePrBlockerStatus(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  opts: { signal?: AbortSignal } = {},
+): Promise<PrBlockerStatus> {
+  const token = (getEnv("GITHUB_TOKEN") ?? getEnv("GH_TOKEN") ?? "").trim();
+  if (!token) {
+    // No token — skip live check, be conservative
+    return "no_live_blocker";
+  }
+
+  const ghArgs = [
+    "pr",
+    "view",
+    String(prNumber),
+    "--repo",
+    `${owner}/${repo}`,
+    "--json",
+    "mergeStateStatus,reviewDecision,reviewThreads,mergeable,statusCheckRollup,commits",
+    "--jq=.",
+  ];
+
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 20_000);
+  const outerSignal = opts.signal ?? ac.signal;
+
+  try {
+    const { stdout } = await execFileAsync("gh", ghArgs, {
+      encoding: "utf-8",
+      signal: outerSignal,
+      timeout: 25_000,
+    });
+    const pr: GhPrViewJson = JSON.parse(stdout);
+
+    // 1. Check for unresolved review threads (most important — actionable human feedback)
+    const threads = pr.reviewThreads?.nodes ?? [];
+    const unresolvedThreads = threads.filter((t) => !t.isResolved && !t.isOutdated);
+    if (unresolvedThreads.length > 0) {
+      return "unresolved_review_threads";
+    }
+
+    // 2. Check CI (from statusCheckRollup + checkSuites on latest commit)
+    const statusCheckRollup = pr.statusCheckRollup ?? [];
+    const commitNodes = pr.commits?.nodes ?? [];
+    const latestCommit = commitNodes[commitNodes.length - 1]?.commit;
+    const checkSuites = latestCommit?.checkSuites?.nodes ?? [];
+
+    const hasFailure =
+      statusCheckRollup.some(
+        (c) =>
+          c.state === "FAILURE" || c.state === "TIMED_OUT" || (c.conclusion && BLOCKING_CONCLUSIONS.has(c.conclusion)),
+      ) || checkSuites.some((cs) => cs.conclusion && BLOCKING_CONCLUSIONS.has(cs.conclusion));
+    const hasPending =
+      statusCheckRollup.some(
+        (c) => c.state === "PENDING" || c.state === "IN_PROGRESS" || (c.status && PENDING_CHECK_STATES.has(c.status)),
+      ) || checkSuites.some((cs) => cs.status && PENDING_CHECK_STATES.has(cs.status));
+
+    if (hasFailure) return "red_ci";
+    if (hasPending) return "pending_ci";
+
+    // 3. Check merge conflict
+    if (pr.mergeStateStatus === "BLOCKED" || pr.mergeStateStatus === "UNSTABLE") {
+      // Double-check via mergeable field if available
+      if (pr.mergeable === "CONFLICTING") return "merge_conflict";
+    }
+    if (pr.mergeable === "CONFLICTING") return "merge_conflict";
+
+    // 4. Human approval pending
+    if (pr.reviewDecision === "CHANGES_REQUESTED") return "human_approval";
+    if (pr.reviewDecision === "REVIEW_REQUIRED") return "human_approval";
+
+    return "no_live_blocker";
+  } catch {
+    // Network or parse error — be conservative, don't modify task state
+    return "no_live_blocker";
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 const REPO_REF_RE = /\b([a-z0-9][a-z0-9_.-]{1,98})\/([a-z0-9][a-z0-9_.-]{1,98})\b/gi;
 const GITHUB_URL_RE =
