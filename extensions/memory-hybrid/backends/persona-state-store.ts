@@ -145,11 +145,9 @@ export class PersonaStateStore extends BaseSqliteStore {
 
   count(opts?: { scopeFilter?: ScopeFilter }): number {
     const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
-    const row = this.liveDb.prepare(`SELECT COUNT(*) AS count FROM persona_state${scopeWhere.whereClause}`).get(
-      ...scopeWhere.params,
-    ) as
-      | { count?: number }
-      | undefined;
+    const row = this.liveDb
+      .prepare(`SELECT COUNT(*) AS count FROM persona_state${scopeWhere.whereClause}`)
+      .get(...scopeWhere.params) as { count?: number } | undefined;
     return row?.count ?? 0;
   }
 

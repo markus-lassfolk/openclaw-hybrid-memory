@@ -51,9 +51,7 @@ export async function runGenerateProposalsForCli(
   let personaStateBlock = "";
   if (ctx.personaStateStore) {
     const personaStateEntries = new Map(
-      ctx.personaStateStore
-        .listRecent(12, { scopeFilter })
-        .map((entry) => [entry.stateKey, entry] as const),
+      ctx.personaStateStore.listRecent(12, { scopeFilter }).map((entry) => [entry.stateKey, entry] as const),
     );
 
     if (ctx.identityReflectionStore) {

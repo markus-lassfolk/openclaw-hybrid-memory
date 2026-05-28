@@ -163,9 +163,7 @@ export class IdentityReflectionStore extends BaseSqliteStore {
   listRecent(limit = 50, opts?: { scopeFilter?: ScopeFilter }): IdentityReflectionEntry[] {
     const scopeWhere = buildExactScopeWhereClause(opts?.scopeFilter);
     const rows = this.liveDb
-      .prepare(
-        `SELECT * FROM identity_reflections${scopeWhere.whereClause} ORDER BY created_at DESC LIMIT ?`,
-      )
+      .prepare(`SELECT * FROM identity_reflections${scopeWhere.whereClause} ORDER BY created_at DESC LIMIT ?`)
       .all(...scopeWhere.params, limit) as unknown as IdentityReflectionRow[];
     return rows.map((row) => this.rowToEntry(row));
   }
