@@ -423,7 +423,7 @@ export function evaluateLwwEligibility(
   oldFactOriginalConfidence?: number,
 ): LwwEligibilityResult {
   if (newFact.category !== "project" || oldFact.category !== "project") return { eligible: false };
-  const keyLower = (newFact.key ?? oldFact.key ?? "").toLowerCase();
+  const keyLower = (newFact.key ?? oldFact.key ?? "").trim().toLowerCase();
   if (!PROJECT_STATE_LWW_KEYS.has(keyLower)) return { eligible: false };
   if (!PROJECT_STATE_LWW_TRUSTED_SOURCES.has(newFact.source ?? "")) return { eligible: false };
   const newConf = newFact.confidence ?? 1.0;

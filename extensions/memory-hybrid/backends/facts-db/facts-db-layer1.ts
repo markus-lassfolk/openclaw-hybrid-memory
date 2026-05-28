@@ -513,7 +513,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     const nowSec = Math.floor(Date.now() / 1000);
     const result = this.liveDb
       .prepare(
-        "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
+        "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL AND id NOT IN (SELECT fact_id FROM verified_facts)",
       )
       .run(nowSec, newId, nowSec, oldId);
     if (result.changes > 0) {
