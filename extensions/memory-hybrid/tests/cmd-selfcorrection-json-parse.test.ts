@@ -191,6 +191,37 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.autoFixed).toBe(0);
   });
 
+  it("attempts a repair pass when initial JSON parsing fails", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: "This is not valid JSON output." } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            })
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            }),
+        },
+      },
+    } as any;
+    const ctx = makeCtx(openai);
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.status).toBe("success_analyzed");
+    expect(res.analysed).toBe(1);
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+  });
+
   it("includes a sanitized response excerpt in the error message", async () => {
     const llmContent = "No JSON here, just plain text with 123 numbers and some [brackets].";
     const ctx = makeCtx(makeOpenAIMock(llmContent));
@@ -217,6 +248,22 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     // Empty response: no remediations parsed, but not a hard failure
     expect(res.analysed).toBe(0);
     expect(res.status).toBe("success_analyzed");
+  });
+
+  it("uses configured fallback chain when model is overridden via --model", async () => {
+    const ctx = makeCtx(makeOpenAIMock("[]"));
+    (ctx.cfg as any).llm = { default: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"], heavy: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"] };
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+      model: "custom-model",
+    });
+
+    expect(res.error).toBeUndefined();
+    const infoCalls = ((ctx.logger.info as any).mock?.calls ?? []).flat();
+    expect(infoCalls.some((line: unknown) => String(line).includes("fallback chain = [heavy-primary, heavy-fallback-1, heavy-fallback-2]"))).toBe(true);
   });
 
   it("parse failure with incidents does not update scan cursor as if analysis succeeded", async () => {

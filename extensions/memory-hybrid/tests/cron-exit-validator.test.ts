@@ -273,6 +273,23 @@ error: unknown command 'bar'
       expect(result.missingSteps.length).toBe(0);
     });
 
+    it("reports skipped when a required step explicitly records status=skipped", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(exitPath, "2024-05-08T02:01:00Z self-correct exit=0 status=skipped reason=skipped_cooldown\n");
+
+      const result = validateMaintenanceExecution(
+        exitPath,
+        undefined,
+        ["self-correct"],
+        true, // allowSkip
+      );
+
+      expect(result.maintenanceStatus).toBe("skipped");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.error).toContain("skipped_cooldown");
+    });
+
     it("should fail when unknown command detected in log", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");

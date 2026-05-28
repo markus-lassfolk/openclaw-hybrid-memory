@@ -60,7 +60,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
     .option("--extract-path <path>", "Path to incidents JSON (default: memory/.self-correction-incidents.json)")
     .option("--workspace <w>", "Workspace path (for TOOLS.md)")
     .option("--dry-run", "Show what would be applied without applying")
-    .option("--model <m>", "LLM model (default from autoClassify config)")
+    .option("--model <m>", "LLM model override (default from self-correction heavy tier)")
     .option("--approve", "Auto-approve all corrections (skip review)")
     .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
     .option("--full", "Force full re-scan (bypass 23-hour startup guard)")
@@ -83,7 +83,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           const extractPath = opts?.extractPath;
           const workspace = opts?.workspace;
           const dryRun = !!opts?.dryRun;
-          const model = opts?.model ?? ctx.autoClassifyConfig.model;
+          const model = opts?.model?.trim() || undefined;
           const approve = !!opts?.approve;
           const full = !!opts?.full;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);

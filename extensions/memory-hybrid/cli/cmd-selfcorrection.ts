@@ -246,13 +246,11 @@ export async function runSelfCorrectionRunForCli(
       : heavyPrefWithSources.models[0] === model
         ? (heavyPrefWithSources.sources[0] ?? "built-in")
         : "built-in";
-    const scFallbackModels = opts.model
-      ? []
-      : heavyPref.length > 1
-        ? heavyPref.slice(1)
-        : cfg.llm
-          ? []
-          : (cfg.distill?.fallbackModels ?? []);
+    const scFallbackCandidates = [
+      ...(opts.model ? heavyPref : heavyPref.slice(1)),
+      ...(cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])),
+    ];
+    const scFallbackModels = [...new Set(scFallbackCandidates.filter((m) => m !== model))];
     let analysed: Array<{
       category: string;
       severity: string;
@@ -262,6 +260,38 @@ export async function runSelfCorrectionRunForCli(
     }> = [];
     const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
     try {
+      const attemptAnalysisJsonRepair = async (rawContent: string): Promise<typeof analysed | null> => {
+        const repairPrompt = [
+          "Convert the following model output into a valid JSON array.",
+          "Return ONLY JSON (no markdown, no prose).",
+          "If no valid remediation items can be recovered, return [].",
+          "",
+          "MODEL_OUTPUT_START",
+          rawContent,
+          "MODEL_OUTPUT_END",
+        ].join("\n");
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+          model,
+          modelSource,
+          content: repairPrompt,
+          temperature: 0,
+          maxTokens: distillMaxOutputTokens(model),
+          openai,
+          fallbackModels: scFallbackModels,
+          label: "memory-hybrid: self-correction analyze-repair",
+          feature: CostFeature.selfCorrectionAnalyze,
+          logger,
+          adaptiveStatePath:
+            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+              : undefined,
+          enabled: adaptiveEnabled,
+        });
+        const repaired = tryParseFirstJsonArray(detail.content);
+        return repaired === null ? null : (repaired as typeof analysed);
+      };
+
       let content: string;
       if (useSpawn) {
         const { spawnSync } = await import("node:child_process");
@@ -323,16 +353,30 @@ export async function runSelfCorrectionRunForCli(
       if (parsedArray !== null) {
         analysed = parsedArray as typeof analysed;
       } else if (content.trim().length > 0) {
-        // Log a sanitized excerpt (no private session data) so operators can diagnose
+        // Log a sanitized excerpt (no private session data) so operators can diagnose.
         const excerpt = sanitizeLlmResponseExcerpt(content);
         logger.warn?.(
-          `memory-hybrid: self-correction-run — LLM response could not be parsed as JSON array (strategies: stripFence, balancedSlice, skipInvalidSpans); excerpt: "${excerpt}"`,
+          `memory-hybrid: self-correction-run — initial JSON parse failed; attempting repair pass. excerpt: "${excerpt}"`,
         );
-        const parseError = new Error(
-          `Self-correction analysis: LLM response could not be parsed as a JSON array. excerpt="${excerpt}"`,
-        );
-        (parseError as any).isParseFailure = true;
-        throw parseError;
+        let repaired: typeof analysed | null = null;
+        try {
+          repaired = await attemptAnalysisJsonRepair(content);
+        } catch (repairErr) {
+          capturePluginError(repairErr as Error, {
+            subsystem: "cli",
+            operation: "runSelfCorrectionRunForCli:llm-analysis-repair",
+          });
+        }
+        if (repaired !== null) {
+          analysed = repaired;
+          logger.info?.(`memory-hybrid: self-correction-run — repair pass recovered ${analysed.length} item(s)`);
+        } else {
+          const parseError = new Error(
+            `Self-correction analysis: LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+          );
+          (parseError as any).isParseFailure = true;
+          throw parseError;
+        }
       }
       if (opts.verbose && analysed.length > 0) {
         logger.info?.(
