@@ -224,11 +224,8 @@ export class FactsDB extends FactsDBLayer2 {
   }
 
   recordContradiction(factIdNew: string, factIdOld: string): string {
-    return recordContradictionImpl(
-      this.liveDb,
-      factIdNew,
-      factIdOld,
-      (a, b, t, s) => this.createLink(a, b, t, s ?? 1.0),
+    return recordContradictionImpl(this.liveDb, factIdNew, factIdOld, (a, b, t, s) =>
+      this.createLink(a, b, t, s ?? 1.0),
     ).id;
   }
 

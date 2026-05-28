@@ -557,7 +557,8 @@ export function resolveProjectStateLww(
 
     const { qualifies, newConf, oldConf } = lww;
     const overloaded = isPossiblyOverloadedEntity(newFact, oldFact);
-    const action: "supersede" | "manual-review" = qualifies && !isFactVerified(db, c.factIdOld) ? "supersede" : "manual-review";
+    const action: "supersede" | "manual-review" =
+      qualifies && !isFactVerified(db, c.factIdOld) ? "supersede" : "manual-review";
 
     const entity = newFact.entity ?? oldFact.entity ?? "?";
     const key = newFact.key ?? oldFact.key ?? "?";
