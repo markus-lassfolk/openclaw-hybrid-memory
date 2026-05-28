@@ -1136,7 +1136,17 @@ export function reclassifyDecayClasses(db: DatabaseSync, options: DecayReclassif
   };
 }
 
-export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
+export interface BackfillDecayProgress {
+  scanned: number;
+  total: number;
+  updated: number;
+  decayClass?: string;
+}
+
+export function backfillDecayClasses(
+  db: DatabaseSync,
+  opts?: { onProgress?: (progress: BackfillDecayProgress) => void; reportEvery?: number },
+): Record<string, number> {
   const nowSec = Math.floor(Date.now() / 1000);
   const rows = db
     .prepare(
@@ -1156,18 +1166,31 @@ export function backfillDecayClasses(db: DatabaseSync): Record<string, number> {
 
   const counts: Record<string, number> = {};
   const update = db.prepare("UPDATE facts SET decay_class = ?, expires_at = ? WHERE rowid = ?");
+  const reportEvery = Math.max(1, opts?.reportEvery ?? 250);
+  let scanned = 0;
+  let updated = 0;
+  const total = rows.length;
+  const emitProgress = (decayClass?: string) => {
+    opts?.onProgress?.({ scanned, total, updated, decayClass });
+  };
 
   const run = () => {
     for (const row of rows) {
+      scanned++;
       const next = classifyDecay(row.entity, row.key, row.value, row.text, {
         source: row.source,
         category: row.category,
         importance: row.importance,
       });
       const current = row.decay_class ?? "normal";
-      if (next === current) continue;
-      counts[next] = (counts[next] ?? 0) + 1;
-      update.run(next, calculateExpiry(next, nowSec), row.rowid);
+      if (next !== current) {
+        counts[next] = (counts[next] ?? 0) + 1;
+        update.run(next, calculateExpiry(next, nowSec), row.rowid);
+        updated++;
+      }
+      if (scanned % reportEvery === 0 || scanned === total) {
+        emitProgress(next !== current ? next : undefined);
+      }
     }
   };
 

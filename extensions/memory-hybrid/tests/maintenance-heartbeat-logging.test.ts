@@ -63,4 +63,32 @@ describe("maintenance heartbeat logging", () => {
     expect(logs.some((line) => line.includes("reflect-meta-collapse — start"))).toBe(true);
     expect(logs.some((line) => line.includes("reflect-meta-collapse — complete in"))).toBe(true);
   });
+
+  it("emits periodic still-running lines for synchronous work when heartbeat() is called in-loop", async () => {
+    vi.useFakeTimers();
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logs.push(args.map(String).join(" "));
+    });
+
+    let nowMs = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+
+    await runMaintenanceHeartbeat(
+      "backfill-decay",
+      true,
+      ({ heartbeat }) => {
+        for (let i = 0; i < 7; i++) {
+          nowMs += 500;
+          heartbeat();
+        }
+      },
+      {
+        heartbeatIntervalMs: 1_000,
+        progressSupplier: () => "stage=reclassify-stable-facts; scanned=700/700; updated=33",
+      },
+    );
+
+    expect(logs.filter((line) => line.includes("backfill-decay — still running after")).length).toBeGreaterThanOrEqual(3);
+  });
 });

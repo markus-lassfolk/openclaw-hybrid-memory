@@ -84,10 +84,24 @@ export function registerManageStorageEntitiesDecay(mem: Chainable, b: ManageBind
       withExit(async (opts?: { json?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         const before = factsDb.statsBreakdownByDecayClass();
-        const updated = await runMaintenanceHeartbeat("backfill-decay", verbose, () => factsDb.backfillDecay(), {
-          progressSupplier: () => "stage=reclassify-stable-facts",
-          jsonMode: opts?.json === true,
-        });
+        let progress = { scanned: 0, total: 0, updated: 0 };
+        const updated = await runMaintenanceHeartbeat(
+          "backfill-decay",
+          verbose,
+          (heartbeat) =>
+            factsDb.backfillDecay({
+              reportEvery: 250,
+              onProgress: (next) => {
+                progress = next;
+                heartbeat.heartbeat();
+              },
+            }),
+          {
+            progressSupplier: () =>
+              `stage=reclassify-stable-facts; scanned=${progress.scanned}/${progress.total}; updated=${progress.updated}`,
+            jsonMode: opts?.json === true,
+          },
+        );
         const after = factsDb.statsBreakdownByDecayClass();
         const total = Object.values(updated).reduce((a, b) => a + b, 0);
         const totalBefore = Object.values(before).reduce((sum, count) => sum + count, 0);

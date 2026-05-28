@@ -346,7 +346,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             await runMaintenanceHeartbeat(
               "reflect-meta-collapse",
               verbose,
-              async () => {
+              async (heartbeat) => {
                 for (;;) {
                   batches++;
                   const res = cleanupImplicitFeedbackDuplicates(factsDb, {
@@ -356,10 +356,13 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                     dryRun,
                     seedCanonical: carryCanonical,
                     includeLegacy: opts?.includeLegacy === true,
+                    reportEvery: 250,
+                    onProgress: () => heartbeat.heartbeat(),
                   });
                   scanned += res.scanned;
                   collapsed += res.collapsed;
                   carryCanonical = res.carryCanonical;
+                  heartbeat.heartbeat();
                   if (res.scanned < limit || res.resumeAfterRowid == null) break;
                   afterRowid = res.resumeAfterRowid;
                   await new Promise((resolve) => setImmediate(resolve));
@@ -871,9 +874,28 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const dryRun = !!opts?.dryRun;
           const model = opts?.model;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          let enrichProgress = { processed: 0, total: 0, factsEnriched: 0 };
           let res;
           try {
-            res = await runEntityEnrichment({ limit, dryRun, model, verbose });
+            res = await runMaintenanceHeartbeat(
+              "enrich-entities",
+              verbose,
+              (heartbeat) =>
+                runEntityEnrichment({
+                  limit,
+                  dryRun,
+                  model,
+                  verbose,
+                  onProgress: (next) => {
+                    enrichProgress = next;
+                    heartbeat.heartbeat();
+                  },
+                }),
+              {
+                progressSupplier: () =>
+                  `stage=entity-enrichment; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; dryRun=${dryRun ? "yes" : "no"}`,
+              },
+            );
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
