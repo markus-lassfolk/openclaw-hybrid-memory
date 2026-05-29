@@ -20,6 +20,7 @@ import type {
 
 const INDEX_FILENAME = "_index.json";
 const TERMINAL: GoalStatus[] = ["completed", "failed", "abandoned"];
+const GOAL_HOUSEKEEPING_PREFIX = "_";
 
 export function isTerminalStatus(s: GoalStatus): boolean {
   return TERMINAL.includes(s);
@@ -125,6 +126,22 @@ async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }
 
+function isGoalRegistryJsonFilename(filename: string): boolean {
+  return filename.endsWith(".json") && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
+}
+
+function isGoalLike(value: unknown): value is Goal {
+  if (!value || typeof value !== "object") return false;
+  const goal = value as Record<string, unknown>;
+  return (
+    typeof goal.id === "string" &&
+    typeof goal.label === "string" &&
+    typeof goal.status === "string" &&
+    typeof goal.priority === "string" &&
+    typeof goal.createdAt === "string"
+  );
+}
+
 export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
   await ensureDir(goalsDir);
   let files: string[];
@@ -135,11 +152,11 @@ export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
   }
   const goals: GoalIndex["goals"] = [];
   for (const f of files) {
-    if (!f.endsWith(".json") || f === INDEX_FILENAME || f === "_stewardship_rr.json") continue;
+    if (!isGoalRegistryJsonFilename(f)) continue;
     try {
       const raw = await readFile(join(goalsDir, f), "utf-8");
-      const g = JSON.parse(raw) as Goal;
-      if (g?.id && g?.label && g?.status) {
+      const g = JSON.parse(raw) as unknown;
+      if (isGoalLike(g)) {
         goals.push({
           id: g.id,
           label: g.label,
@@ -175,7 +192,11 @@ export async function readGoal(goalsDir: string, id: string): Promise<Goal | nul
   if (!existsSync(path)) return null;
   try {
     const raw = await readFile(path, "utf-8");
-    return normalizeGoalJson(JSON.parse(raw) as Goal);
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isGoalLike(parsed)) {
+      throw new Error(`Goal file has invalid schema (${path})`);
+    }
+    return normalizeGoalJson(parsed);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw new Error(`Goal file is corrupt or unreadable (${path}): ${String(err)}`);
@@ -187,7 +208,7 @@ export async function listGoals(goalsDir: string): Promise<Goal[]> {
   const files = await readdir(goalsDir);
   const out: Goal[] = [];
   for (const f of files) {
-    if (!f.endsWith(".json") || f === INDEX_FILENAME || f === "_stewardship_rr.json") continue;
+    if (!isGoalRegistryJsonFilename(f)) continue;
     try {
       const g = await readGoal(goalsDir, f.replace(/\.json$/, ""));
       if (g) out.push(g);
@@ -208,14 +229,14 @@ export async function readGoalByLabel(goalsDir: string, label: string): Promise<
   try {
     const raw = await readFile(join(goalsDir, INDEX_FILENAME), "utf-8");
     const index = JSON.parse(raw) as GoalIndex;
-    const matches = index.goals.filter((g) => g.label.toLowerCase() === norm);
+    const matches = index.goals.filter((g) => typeof g?.label === "string" && g.label.toLowerCase() === norm);
     const best = matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0];
     if (best) return readGoal(goalsDir, best.id);
   } catch {
     /* index missing or corrupt — fall through to full scan */
   }
   const all = await listGoals(goalsDir);
-  const matches = all.filter((g) => g.label.toLowerCase() === norm);
+  const matches = all.filter((g) => typeof g?.label === "string" && g.label.toLowerCase() === norm);
   return matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0] ?? null;
 }
 
