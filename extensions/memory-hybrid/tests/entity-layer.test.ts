@@ -357,7 +357,10 @@ describe("FactsDB entity layer persistence", () => {
       ],
       "eng",
     );
-    const row = db.getRawDb().prepare("SELECT COUNT(*) AS c FROM fact_entity_mentions WHERE fact_id = ?").get(fact.id) as {
+    const row = db
+      .getRawDb()
+      .prepare("SELECT COUNT(*) AS c FROM fact_entity_mentions WHERE fact_id = ?")
+      .get(fact.id) as {
       c: number;
     };
     expect(row.c).toBe(1);
@@ -393,7 +396,9 @@ describe("FactsDB entity layer persistence", () => {
 
     const rows = db
       .getRawDb()
-      .prepare("SELECT label, normalized_surface FROM fact_entity_mentions WHERE fact_id = ? ORDER BY normalized_surface")
+      .prepare(
+        "SELECT label, normalized_surface FROM fact_entity_mentions WHERE fact_id = ? ORDER BY normalized_surface",
+      )
       .all(fact.id) as Array<{ label: string; normalized_surface: string }>;
     expect(rows).toEqual([{ label: "MODEL", normalized_surface: "gemini-3.1-pro" }]);
   });

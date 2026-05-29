@@ -60,7 +60,11 @@ const CANONICAL_LABEL_MAP: Array<{ match: RegExp; label: EntityMentionLabel; can
   { match: /\btelegram\b/i, label: "SERVICE", canonicalNormalized: "telegram" },
   { match: /\bhome assistant\b|^ha$/i, label: "SERVICE", canonicalNormalized: "home assistant" },
   { match: /\bduckflux\b/i, label: "PROJECT", canonicalNormalized: "duckflux" },
-  { match: /\bhybrid[- ]memory\b|\bopenclaw-hybrid-memory\b/i, label: "PROJECT", canonicalNormalized: "openclaw-hybrid-memory" },
+  {
+    match: /\bhybrid[- ]memory\b|\bopenclaw-hybrid-memory\b/i,
+    label: "PROJECT",
+    canonicalNormalized: "openclaw-hybrid-memory",
+  },
   { match: /^(forge|scholar|maeve|ralph)$/i, label: "AGENT", canonicalNormalized: "" },
   { match: /^(surgeon|council)$/i, label: "ROLE", canonicalNormalized: "" },
 ];
@@ -117,7 +121,9 @@ export function makeEntityMentionKey(label: string, normalizedSurface: string): 
   return `${label}\u0000${normalizedSurface}`;
 }
 
-export function canonicalizeEntityMention(candidate: EntityMentionCandidate): CanonicalizedEntityMention | RejectedEntityMention {
+export function canonicalizeEntityMention(
+  candidate: EntityMentionCandidate,
+): CanonicalizedEntityMention | RejectedEntityMention {
   const baseSurface = normalizeSurfaceText(candidate.surfaceText ?? "");
   if (baseSurface.length < 2) return { accepted: false, reason: "short" };
   const acronymType = ACRONYM_ALLOWLIST.get(baseSurface.toUpperCase());
@@ -163,7 +169,9 @@ export function canonicalizeEntityMention(candidate: EntityMentionCandidate): Ca
   label = canonical.label;
   normalizedSurface = canonical.normalizedSurface || normalizedSurface;
 
-  const confidence = Number.isFinite(candidate.confidence) ? Math.max(0, Math.min(Number(candidate.confidence), 1)) : 0.75;
+  const confidence = Number.isFinite(candidate.confidence)
+    ? Math.max(0, Math.min(Number(candidate.confidence), 1))
+    : 0.75;
   if (confidence < minConfidenceForLabel(label)) return { accepted: false, reason: "low_confidence" };
 
   return {
