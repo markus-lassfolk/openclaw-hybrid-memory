@@ -160,17 +160,17 @@ export async function runEntityEnrichmentForCli(
       }
       if (extraction.mentions.length > 0) {
         factsEnriched++;
-        if (verbose) {
-          enrichedFacts.push({
-            factId: id,
-            mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
-            rejected: extraction.rejectedMentions.map((m) => ({
-              label: m.label,
-              surfaceText: m.surfaceText,
-              reason: m.reason,
-            })),
-          });
-        }
+      }
+      if (verbose && (extraction.mentions.length > 0 || extraction.rejectedMentions.length > 0)) {
+        enrichedFacts.push({
+          factId: id,
+          mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
+          rejected: extraction.rejectedMentions.map((m) => ({
+            label: m.label,
+            surfaceText: m.surfaceText,
+            reason: m.reason,
+          })),
+        });
       }
     }
     const remainingTotal = pendingTotal - processed;
