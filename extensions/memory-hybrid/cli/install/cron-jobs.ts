@@ -465,7 +465,7 @@ const MAINTENANCE_CRON_JOBS: Array<
         { name: "build-languages", cmd: "openclaw hybrid-mem build-languages" },
         { name: "backfill-decay", cmd: "openclaw hybrid-mem backfill-decay" },
         { name: "reembed-vectorless", cmd: "openclaw hybrid-mem reembed-vectorless --limit 1000 --apply" },
-        { name: "enrich-entities", cmd: "openclaw hybrid-mem enrich-entities --limit 500 --verbose" },
+        { name: "enrich-entities", cmd: "openclaw hybrid-mem enrich-entities --limit 25 --verbose" },
       ],
     }),
     isolated: true,

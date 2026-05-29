@@ -444,7 +444,7 @@ Default job **messages** embed a **bash harness**: one foreground shell (`set -e
 | `hybrid-mem:weekly-extract-procedures` | Sun 04:00 | **weekly-extract-procedures:** extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills (each `--verbose` where supported). |
 | `hybrid-mem:weekly-deep-maintenance` | Sat 04:00 | **weekly-deep-maintenance:** compact → vectordb-optimize → scope promote. |
 | `hybrid-mem:weekly-persona-proposals` | Sun 10:00 | **weekly-persona-proposals:** `generate-proposals --verbose`. Requires personaProposals enabled. |
-| `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay → enrich-entities --limit 500. |
+| `hybrid-mem:monthly-consolidation` | 1st 05:00 | **monthly-consolidation:** consolidate → build-languages → backfill-decay → enrich-entities --limit 25. |
 | `hybrid-mem:sensor-sweep` | every 4h (configurable) | **sensor-sweep:** tier 1 + tier 2. Requires sensorSweep.enabled. |
 
 - **Install:** Adds any missing jobs (does not change existing jobs or re-enable disabled ones).
