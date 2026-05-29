@@ -75,7 +75,6 @@ const ACRONYM_ALLOWLIST = new Map<string, EntityMentionLabel>([
 ]);
 
 function minConfidenceForLabel(label: EntityMentionLabel): number {
-  if (label === "PERSON") return 0.82;
   return 0.75;
 }
 
@@ -103,6 +102,9 @@ function canonicalizeByKnownMap(
 ): { label: EntityMentionLabel; normalizedSurface: string } {
   for (const rule of CANONICAL_LABEL_MAP) {
     if (!rule.match.test(surfaceText) && !rule.match.test(normalizedSurface)) continue;
+    if (fallbackLabel === "PERSON" && rule.label === "MODEL") {
+      continue;
+    }
     if (rule.label === "MODEL") {
       return {
         label: "MODEL",
@@ -119,6 +121,10 @@ function canonicalizeByKnownMap(
 
 export function makeEntityMentionKey(label: string, normalizedSurface: string): string {
   return `${label}\u0000${normalizedSurface}`;
+}
+
+export function countReason(target: Record<string, number>, reason: string): void {
+  target[reason] = (target[reason] ?? 0) + 1;
 }
 
 export function canonicalizeEntityMention(

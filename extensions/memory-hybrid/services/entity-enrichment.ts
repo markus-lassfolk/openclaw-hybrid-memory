@@ -10,6 +10,7 @@ import type { EntityMentionLabel } from "../backends/facts-db/entity-layer.js";
 import { normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
 import {
   canonicalizeEntityMention,
+  countReason,
   type EntityMentionRejectReason,
   makeEntityMentionKey,
 } from "../utils/entity-mention-quality.js";
@@ -64,10 +65,6 @@ export type EntityExtractionQualityStats = {
   duplicates: number;
   rejectReasons: Record<string, number>;
 };
-
-function countReason(target: Record<string, number>, reason: string): void {
-  target[reason] = (target[reason] ?? 0) + 1;
-}
 
 function parseMentionJson(content: string): LlmMention[] {
   const trimmed = content.trim();

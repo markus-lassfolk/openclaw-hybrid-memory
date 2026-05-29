@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { createTransaction } from "../../utils/sqlite-transaction.js";
-import { canonicalizeEntityMention, makeEntityMentionKey } from "../../utils/entity-mention-quality.js";
+import { canonicalizeEntityMention, countReason, makeEntityMentionKey } from "../../utils/entity-mention-quality.js";
 
 export type EntityMentionLabel =
   | "PERSON"
@@ -496,10 +496,6 @@ export function getEntityEnrichmentBacklogSummary(
       unknown: Number(row?.unknown ?? 0),
     },
   };
-}
-
-function countReason(target: Record<string, number>, reason: string): void {
-  target[reason] = (target[reason] ?? 0) + 1;
 }
 
 export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMentionsAuditSummary {
