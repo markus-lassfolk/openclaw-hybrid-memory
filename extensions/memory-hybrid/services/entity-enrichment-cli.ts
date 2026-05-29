@@ -20,6 +20,7 @@ export type EntityEnrichmentMentionSummary = { label: string; surfaceText: strin
 export type EntityEnrichmentVerboseFact = {
   factId: string;
   mentions: EntityEnrichmentMentionSummary[];
+  rejected?: Array<{ label: string; surfaceText: string; reason: string }>;
 };
 
 export type EntityEnrichmentProgress = {
@@ -30,6 +31,10 @@ export type EntityEnrichmentProgress = {
   remainingTotal: number;
   estimatedRunsRemaining: number;
   mode: "bounded" | "all";
+  mentions: number;
+  accepted: number;
+  rejected: number;
+  duplicates: number;
 };
 
 export async function runEntityEnrichmentForCli(
@@ -56,6 +61,11 @@ export async function runEntityEnrichmentForCli(
   effectiveLimit: number | "all";
   remainingTotal: number;
   estimatedRunsRemaining: number;
+  mentions: number;
+  accepted: number;
+  rejected: number;
+  duplicates: number;
+  rejectReasons: Record<string, number>;
   skipped?: boolean;
   pendingFactIds?: string[];
   enrichedFacts?: EntityEnrichmentVerboseFact[];
@@ -78,6 +88,11 @@ export async function runEntityEnrichmentForCli(
       effectiveLimit,
       remainingTotal: pendingTotal,
       estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / Math.max(1, limit)),
+      mentions: 0,
+      accepted: 0,
+      rejected: 0,
+      duplicates: 0,
+      rejectReasons: {},
       skipped: true,
     };
   }
@@ -95,6 +110,11 @@ export async function runEntityEnrichmentForCli(
       effectiveLimit,
       remainingTotal: pendingTotal,
       estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / Math.max(1, limit)),
+      mentions: 0,
+      accepted: 0,
+      rejected: 0,
+      duplicates: 0,
+      rejectReasons: {},
       pendingFactIds: verbose ? [...ids] : undefined,
     };
   }
@@ -104,6 +124,11 @@ export async function runEntityEnrichmentForCli(
   const model = opts.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
   let factsEnriched = 0;
   let processed = 0;
+  let mentions = 0;
+  let accepted = 0;
+  let rejected = 0;
+  let duplicates = 0;
+  const rejectReasons: Record<string, number> = {};
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
   opts.onProgress?.({
     processed: 0,
@@ -113,21 +138,37 @@ export async function runEntityEnrichmentForCli(
     remainingTotal: pendingTotal,
     estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / Math.max(1, limit)),
     mode,
+    mentions: 0,
+    accepted: 0,
+    rejected: 0,
+    duplicates: 0,
   });
   for (const id of ids) {
     processed++;
     const f = factsDb.getById(id);
     if (f?.text) {
-      const { mentions, detectedLang } = await extractEntityMentionsWithLlm(f.text, openai, model, {
+      const extraction = await extractEntityMentionsWithLlm(f.text, openai, model, {
         stopWords: cfg.entityExtraction.stopWords,
       });
-      factsDb.applyEntityEnrichment(id, mentions, detectedLang);
-      if (mentions.length > 0) {
+      factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+      mentions += extraction.quality.mentions;
+      accepted += extraction.quality.accepted;
+      rejected += extraction.quality.rejected;
+      duplicates += extraction.quality.duplicates;
+      for (const [reason, count] of Object.entries(extraction.quality.rejectReasons)) {
+        rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
+      }
+      if (extraction.mentions.length > 0) {
         factsEnriched++;
         if (verbose) {
           enrichedFacts.push({
             factId: id,
-            mentions: mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
+            mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
+            rejected: extraction.rejectedMentions.map((m) => ({
+              label: m.label,
+              surfaceText: m.surfaceText,
+              reason: m.reason,
+            })),
           });
         }
       }
@@ -141,6 +182,10 @@ export async function runEntityEnrichmentForCli(
       remainingTotal,
       estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)),
       mode,
+      mentions,
+      accepted,
+      rejected,
+      duplicates,
     });
   }
   const finalBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
@@ -154,6 +199,11 @@ export async function runEntityEnrichmentForCli(
     effectiveLimit,
     remainingTotal: finalBacklog.total,
     estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(finalBacklog.total / Math.max(1, limit)),
+    mentions,
+    accepted,
+    rejected,
+    duplicates,
+    rejectReasons,
     enrichedFacts: verbose && enrichedFacts.length > 0 ? enrichedFacts : undefined,
   };
 }

@@ -324,4 +324,77 @@ describe("FactsDB entity layer persistence", () => {
     const byPrefix = db.listContactsByNamePrefix("100%", 10);
     expect(byPrefix.some((c) => c.displayName.includes("100%"))).toBe(true);
   });
+
+  it("suppresses duplicate logical mentions per fact via unique index/upsert", () => {
+    const fact = db.store({
+      text: "GitHub and GitHub were both mentioned.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    db.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "SERVICE",
+          surfaceText: "GitHub",
+          normalizedSurface: "github",
+          startOffset: 0,
+          endOffset: 6,
+          confidence: 0.95,
+        },
+        {
+          label: "SERVICE",
+          surfaceText: "GitHub",
+          normalizedSurface: "github",
+          startOffset: 11,
+          endOffset: 17,
+          confidence: 0.94,
+        },
+      ],
+      "eng",
+    );
+    const row = db.getRawDb().prepare("SELECT COUNT(*) AS c FROM fact_entity_mentions WHERE fact_id = ?").get(fact.id) as {
+      c: number;
+    };
+    expect(row.c).toBe(1);
+  });
+
+  it("cleanup removes junk and reclassifies known rows", () => {
+    const fact = db.store({
+      text: "Gemini 3.1 Pro and API were mentioned by Surgeon.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("a", fact.id, "ORG", "Gemini 3.1 Pro", "gemini", 0, 13, 0.9, "eng", "llm", now);
+    ins.run("b", fact.id, "ORG", "api", "api", 20, 23, 0.9, "eng", "llm", now);
+    ins.run("c", fact.id, "PERSON", "Surgeon", "surgeon", 28, 35, 0.95, "eng", "llm", now);
+
+    const dryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+    expect(dryRun.changedFacts).toBeGreaterThan(0);
+
+    const applied = db.cleanupEntityMentions({ limit: 50, apply: true });
+    expect(applied.changedFacts).toBeGreaterThan(0);
+    const secondRun = db.cleanupEntityMentions({ limit: 50, apply: true });
+    expect(secondRun.changedFacts).toBe(0);
+
+    const rows = db
+      .getRawDb()
+      .prepare("SELECT label, normalized_surface FROM fact_entity_mentions WHERE fact_id = ? ORDER BY normalized_surface")
+      .all(fact.id) as Array<{ label: string; normalized_surface: string }>;
+    expect(rows).toEqual([{ label: "MODEL", normalized_surface: "gemini-3.1-pro" }]);
+  });
 });

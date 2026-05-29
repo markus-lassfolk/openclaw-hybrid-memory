@@ -6,8 +6,19 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { canonicalizeEntityMention } from "../../utils/entity-mention-quality.js";
 
-export type EntityMentionLabel = "PERSON" | "ORG";
+export type EntityMentionLabel =
+  | "PERSON"
+  | "ORG"
+  | "SERVICE"
+  | "TOOL"
+  | "MODEL"
+  | "PROJECT"
+  | "AGENT"
+  | "ROLE"
+  | "PRODUCT"
+  | "LOCATION";
 
 type _FactEntityMentionRow = {
   id: string;
@@ -57,6 +68,21 @@ export type EntityEnrichmentBacklogSummary = {
 export type ListFactsNeedingEnrichmentOptions = {
   /** Process full backlog (no LIMIT) for manual one-shot catch-up mode. */
   all?: boolean;
+};
+
+export type EntityMentionsAuditSummary = {
+  factsScanned: number;
+  rowsScanned: number;
+  accepted: number;
+  rejected: number;
+  duplicates: number;
+  reclassified: number;
+  rejectReasons: Record<string, number>;
+};
+
+export type EntityMentionsCleanupSummary = EntityMentionsAuditSummary & {
+  changedFacts: number;
+  removedRows: number;
 };
 
 export function normalizeEntityKey(name: string): string {
@@ -118,6 +144,25 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_fem_org ON fact_entity_mentions(organization_id);
     CREATE INDEX IF NOT EXISTS idx_fem_contact ON fact_entity_mentions(contact_id);
     CREATE INDEX IF NOT EXISTS idx_fem_label ON fact_entity_mentions(label);
+  `);
+  db.exec(`
+    DELETE FROM fact_entity_mentions
+    WHERE id IN (
+      SELECT m1.id
+      FROM fact_entity_mentions m1
+      JOIN fact_entity_mentions m2
+        ON m1.fact_id = m2.fact_id
+       AND m1.label = m2.label
+       AND m1.normalized_surface = m2.normalized_surface
+       AND (
+            m2.created_at < m1.created_at
+         OR (m2.created_at = m1.created_at AND m2.id < m1.id)
+       )
+    );
+  `);
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_fem_fact_label_norm
+    ON fact_entity_mentions(fact_id, label, normalized_surface);
   `);
 
   db.exec(`
@@ -217,7 +262,7 @@ export function replaceFactEntityMentions(
 
     const now = Math.floor(Date.now() / 1000);
     const ins = db.prepare(
-      `INSERT INTO fact_entity_mentions (
+      `INSERT OR IGNORE INTO fact_entity_mentions (
         id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset,
         confidence, detected_lang, source, contact_id, organization_id, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -395,9 +440,7 @@ export function listFactsNeedingEnrichment(
     : `${buildEntityEnrichmentPendingBaseSql()}\n      LIMIT ?`;
   const rows = (
     options?.all ? db.prepare(sql).all(nowSec, minTextLen) : db.prepare(sql).all(nowSec, minTextLen, limit)
-  ) as Array<{
-    id: string;
-  }>;
+  ) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
 
@@ -440,5 +483,227 @@ export function getEntityEnrichmentBacklogSummary(
       cold: Number(row?.cold ?? 0),
       unknown: Number(row?.unknown ?? 0),
     },
+  };
+}
+
+function countReason(target: Record<string, number>, reason: string): void {
+  target[reason] = (target[reason] ?? 0) + 1;
+}
+
+export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMentionsAuditSummary {
+  const factIds = db
+    .prepare(
+      `SELECT DISTINCT fact_id FROM fact_entity_mentions
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<{ fact_id: string }>;
+  let rowsScanned = 0;
+  let accepted = 0;
+  let rejected = 0;
+  let duplicates = 0;
+  let reclassified = 0;
+  const rejectReasons: Record<string, number> = {};
+  for (const fact of factIds) {
+    const rows = db
+      .prepare(
+        `SELECT id, label, surface_text, normalized_surface, confidence
+         FROM fact_entity_mentions
+         WHERE fact_id = ?`,
+      )
+      .all(fact.fact_id) as Array<{
+      id: string;
+      label: string;
+      surface_text: string;
+      normalized_surface: string;
+      confidence: number;
+    }>;
+    const seen = new Set<string>();
+    for (const row of rows) {
+      rowsScanned++;
+      const key = `${row.label}\u0000${row.normalized_surface}`;
+      if (seen.has(key)) {
+        duplicates++;
+      } else {
+        seen.add(key);
+      }
+      const canonical = canonicalizeEntityMention({
+        label: row.label,
+        surfaceText: row.surface_text,
+        normalizedSurface: row.normalized_surface,
+        confidence: row.confidence,
+      });
+      if (!canonical.accepted) {
+        rejected++;
+        countReason(rejectReasons, canonical.reason);
+        continue;
+      }
+      accepted++;
+      if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
+        reclassified++;
+      }
+    }
+  }
+  return {
+    factsScanned: factIds.length,
+    rowsScanned,
+    accepted,
+    rejected,
+    duplicates,
+    reclassified,
+    rejectReasons,
+  };
+}
+
+function rowsSignature(
+  rows: Array<{ label: string; normalizedSurface: string; surfaceText: string; confidence: number }>,
+): string {
+  return rows
+    .map((r) => `${r.label}|${r.normalizedSurface}|${r.surfaceText}|${r.confidence.toFixed(4)}`)
+    .sort()
+    .join("\n");
+}
+
+export function cleanupEntityMentions(
+  db: DatabaseSync,
+  options: { limit: number; apply: boolean },
+): EntityMentionsCleanupSummary {
+  const limit = Math.max(1, Math.floor(options.limit));
+  const factIds = db
+    .prepare(
+      `SELECT DISTINCT fact_id FROM fact_entity_mentions
+       ORDER BY created_at DESC
+       LIMIT ?`,
+    )
+    .all(limit) as Array<{ fact_id: string }>;
+
+  let rowsScanned = 0;
+  let accepted = 0;
+  let rejected = 0;
+  let duplicates = 0;
+  let reclassified = 0;
+  let changedFacts = 0;
+  let removedRows = 0;
+  const rejectReasons: Record<string, number> = {};
+
+  const tx = createTransaction(db, () => {
+    for (const fact of factIds) {
+      const rows = db
+        .prepare(
+          `SELECT label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source
+           FROM fact_entity_mentions
+           WHERE fact_id = ?`,
+        )
+        .all(fact.fact_id) as Array<{
+        label: string;
+        surface_text: string;
+        normalized_surface: string;
+        start_offset: number;
+        end_offset: number;
+        confidence: number;
+        detected_lang: string | null;
+        source: string;
+      }>;
+      const before = rowsSignature(
+        rows.map((row) => ({
+          label: row.label,
+          normalizedSurface: row.normalized_surface,
+          surfaceText: row.surface_text,
+          confidence: row.confidence,
+        })),
+      );
+
+      const acceptedByKey = new Map<
+        string,
+        {
+          label: EntityMentionLabel;
+          surfaceText: string;
+          normalizedSurface: string;
+          startOffset: number;
+          endOffset: number;
+          confidence: number;
+          detectedLang: string | null;
+          source: string;
+        }
+      >();
+
+      for (const row of rows) {
+        rowsScanned++;
+        const canonical = canonicalizeEntityMention({
+          label: row.label,
+          surfaceText: row.surface_text,
+          normalizedSurface: row.normalized_surface,
+          confidence: row.confidence,
+        });
+        if (!canonical.accepted) {
+          rejected++;
+          countReason(rejectReasons, canonical.reason);
+          continue;
+        }
+        accepted++;
+        if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
+          reclassified++;
+        }
+        const key = `${canonical.label}\u0000${canonical.normalizedSurface}`;
+        const existing = acceptedByKey.get(key);
+        if (existing) {
+          duplicates++;
+          if (canonical.confidence > existing.confidence) {
+            acceptedByKey.set(key, {
+              ...existing,
+              confidence: canonical.confidence,
+              surfaceText: canonical.surfaceText,
+              startOffset: row.start_offset,
+              endOffset: row.end_offset,
+            });
+          }
+          continue;
+        }
+        acceptedByKey.set(key, {
+          label: canonical.label,
+          surfaceText: canonical.surfaceText,
+          normalizedSurface: canonical.normalizedSurface,
+          startOffset: row.start_offset,
+          endOffset: row.end_offset,
+          confidence: canonical.confidence,
+          detectedLang: row.detected_lang,
+          source: row.source,
+        });
+      }
+
+      const nextRows = [...acceptedByKey.values()];
+      const after = rowsSignature(
+        nextRows.map((row) => ({
+          label: row.label,
+          normalizedSurface: row.normalizedSurface,
+          surfaceText: row.surfaceText,
+          confidence: row.confidence,
+        })),
+      );
+      if (before !== after || rows.length !== nextRows.length) {
+        changedFacts++;
+        removedRows += Math.max(0, rows.length - nextRows.length);
+        if (options.apply) {
+          replaceFactEntityMentions(db, fact.fact_id, nextRows);
+          if (nextRows.length === 0) {
+            db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
+          }
+        }
+      }
+    }
+  });
+
+  tx();
+
+  return {
+    factsScanned: factIds.length,
+    rowsScanned,
+    accepted,
+    rejected,
+    duplicates,
+    reclassified,
+    rejectReasons,
+    changedFacts,
+    removedRows,
   };
 }
