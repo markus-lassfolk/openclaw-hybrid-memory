@@ -569,6 +569,29 @@ function migrateContradictionsTable(db: DatabaseSync): void {
   if (!cols.some((c) => c.name === "old_fact_original_confidence")) {
     db.exec("ALTER TABLE contradictions ADD COLUMN old_fact_original_confidence REAL");
   }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS contradiction_resolution_audit (
+      id TEXT PRIMARY KEY,
+      contradiction_id TEXT NOT NULL,
+      kept_fact_id TEXT NOT NULL,
+      superseded_fact_id TEXT NOT NULL,
+      strategy TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      reason TEXT NOT NULL,
+      decided_at INTEGER NOT NULL,
+      actor TEXT NOT NULL,
+      tool_version TEXT,
+      mode TEXT NOT NULL DEFAULT 'auto',
+      model TEXT,
+      FOREIGN KEY (contradiction_id) REFERENCES contradictions(id) ON DELETE CASCADE,
+      FOREIGN KEY (kept_fact_id) REFERENCES facts(id) ON DELETE CASCADE,
+      FOREIGN KEY (superseded_fact_id) REFERENCES facts(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_contradiction_resolution_audit_contradiction ON contradiction_resolution_audit(contradiction_id)",
+  );
 }
 
 /** Create clusters and cluster_members tables for topic cluster storage (Issue #146). */

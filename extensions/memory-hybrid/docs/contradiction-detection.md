@@ -47,6 +47,18 @@ Full semantic near-duplicate detection via vector similarity is a future enhance
 | `resolved` | INTEGER | 0 = unresolved, 1 = resolved |
 | `resolution` | TEXT | `superseded` / `kept` / `merged` / NULL |
 
+### `contradiction_resolution_audit` Table
+
+Applied `resolve-contradictions --auto --apply` and `--apply-review` decisions write an audit row with:
+
+- contradiction id
+- kept fact id
+- superseded fact id
+- strategy (`project-state-lww`, `llm-adjudication`, `manual-review-file`, …)
+- confidence
+- reason
+- timestamp / actor / tool version / mode
+
 ### `memory_links` Table (CONTRADICTS entries)
 
 A `CONTRADICTS` link is created in `memory_links` from `fact_id_new` → `fact_id_old` with `strength = 1.0`. This integrates with the existing graph traversal system.
@@ -97,6 +109,16 @@ Contradicted facts naturally rank lower due to reduced confidence, which flows t
   ambiguous:    Array<{ contradictionId, factIdNew, factIdOld }>;
 }
 ```
+
+## Autonomous Resolution Pipeline
+
+`openclaw hybrid-mem resolve-contradictions --auto` adds a safer tiered path:
+
+1. Deterministic latest-wins rules for trusted project-state keys.
+2. Optional LLM adjudication (`--llm [--model ...]`) for the remaining pairs, with a hard confidence threshold before any auto-apply.
+3. Stable JSONL export/apply for the remaining manual-review queue (`--export-review`, `--apply-review`).
+
+Every run prints a summary with total contradictions, deterministic/LLM/manual counts, target rate, and achieved rate so nightly maintenance does not hide leftover backlog.
 
 ---
 
