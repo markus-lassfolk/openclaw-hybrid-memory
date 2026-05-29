@@ -162,6 +162,12 @@ export type ManageContext = {
   runResolveContradictionsProjectStateLww: (opts: {
     dryRun?: boolean;
   }) => Promise<import("../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
+  runResolveContradictionsAuto: (
+    opts: import("../backends/facts-db/contradictions.js").ResolveContradictionsAutoOptions,
+  ) => Promise<import("../backends/facts-db/contradictions.js").ResolveContradictionsAutoResult>;
+  runApplyContradictionReviewDecisions: (
+    decisions: import("../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
+  ) => Promise<import("../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
   runSelfCorrectionExtract: (opts: {
     days?: number;
     outputPath?: string;
