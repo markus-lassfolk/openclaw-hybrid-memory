@@ -117,6 +117,8 @@ jobs:
         with:
           # Allow WIP: prefix so draft/in-progress PRs don't fail the check.
           wip: true
+          ignoreLabels: |
+            stage/implementing
           types: |
             feat
             fix
