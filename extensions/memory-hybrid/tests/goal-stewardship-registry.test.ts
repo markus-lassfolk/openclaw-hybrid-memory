@@ -238,7 +238,11 @@ describe("goal registry", () => {
       "utf-8",
     );
     await writeFile(join(dir, "_future_housekeeping.json"), JSON.stringify({ state: "ok" }), "utf-8");
-    const created = await createGoal(dir, { label: "with_housekeeping", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    const created = await createGoal(
+      dir,
+      { label: "with_housekeeping", description: "d", acceptanceCriteria: ["c"] },
+      defaults,
+    );
     const listed = await listGoals(dir);
     expect(listed.map((g) => g.id)).toEqual([created.id]);
     await expect(readGoalByLabel(dir, "with_housekeeping")).resolves.toMatchObject({ id: created.id });
@@ -246,7 +250,11 @@ describe("goal registry", () => {
 
   it("rebuildGoalIndex excludes housekeeping _*.json files", async () => {
     dir = await makeTempDir();
-    const created = await createGoal(dir, { label: "idx_housekeeping", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    const created = await createGoal(
+      dir,
+      { label: "idx_housekeeping", description: "d", acceptanceCriteria: ["c"] },
+      defaults,
+    );
     await writeFile(join(dir, "_global_dispatch_rate_limit.json"), JSON.stringify({ timestamps: [] }), "utf-8");
     await writeFile(join(dir, "_future_housekeeping.json"), JSON.stringify({ state: "ok" }), "utf-8");
     await rebuildGoalIndex(dir);
@@ -263,7 +271,11 @@ describe("goal registry", () => {
 
   it("listGoals and rebuildGoalIndex skip malformed goal json without label", async () => {
     dir = await makeTempDir();
-    const healthy = await createGoal(dir, { label: "healthy_malformed", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    const healthy = await createGoal(
+      dir,
+      { label: "healthy_malformed", description: "d", acceptanceCriteria: ["c"] },
+      defaults,
+    );
     await writeFile(join(dir, "malformed.json"), JSON.stringify({ id: "malformed" }), "utf-8");
     const listed = await listGoals(dir);
     expect(listed.map((g) => g.id)).toEqual([healthy.id]);
