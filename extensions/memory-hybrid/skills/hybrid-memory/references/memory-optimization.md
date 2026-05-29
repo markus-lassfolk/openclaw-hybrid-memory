@@ -59,7 +59,7 @@ If the user prefers **explicit** steps or `run-all` is too heavy, use this **can
 1. `openclaw hybrid-mem prune` (add `--verbose` for id list when useful)
 2. `openclaw hybrid-mem distill --days 3` (packaged cron uses `--days 1`; adjust window as needed; `--all` for big backfill; `--verbose` in cron)
 3. `openclaw hybrid-mem extract-daily` (as configured; cron uses `--days 7 --verbose`)
-4. `openclaw hybrid-mem resolve-contradictions` (`--verbose` in cron)
+4. `openclaw hybrid-mem resolve-contradictions --auto` (`--auto --verbose` in cron)
 5. `openclaw hybrid-mem enrich-entities --limit 200` (backfill PERSON/ORG rows for facts still missing them; uses LLM when graph is on; `--verbose` in cron)
 
 ### B. Self-correction (after distill if you want fresh incidents)

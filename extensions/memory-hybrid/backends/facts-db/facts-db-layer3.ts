@@ -15,10 +15,12 @@ import {
 } from "./clusters.js";
 import {
   addTag as addTagImpl,
+  applyContradictionReviewDecisions as applyContradictionReviewDecisionsImpl,
   contradictionsCount as contradictionsCountImpl,
   detectContradictions as detectContradictionsImpl,
   evaluateLwwEligibility,
   findConflictingFacts as findConflictingFactsImpl,
+  getContradictionResolutionAudit as getContradictionResolutionAuditImpl,
   getContradictedIds as getContradictedIdsImpl,
   getContradictions as getContradictionsImpl,
   isContradicted as isContradictedImpl,
@@ -28,11 +30,20 @@ import {
   resolveContradiction as resolveContradictionImpl,
   previewResolveContradictionsAuto as previewResolveContradictionsAutoImpl,
   resolveContradictionsAuto as resolveContradictionsAutoImpl,
+  resolveContradictionsAutonomously as resolveContradictionsAutonomouslyImpl,
   resolveProjectStateLww as resolveProjectStateLwwImpl,
   setConfidenceTo as setConfidenceToImpl,
   updateConfidence as updateConfidenceImpl,
 } from "./contradictions.js";
-import type { ContradictionRecord, ProjectStateLwwResult } from "./contradictions.js";
+import type {
+  ApplyContradictionReviewResult,
+  ContradictionRecord,
+  ContradictionResolutionAuditRow,
+  ContradictionReviewDecision,
+  ProjectStateLwwResult,
+  ResolveContradictionsAutoOptions,
+  ResolveContradictionsAutoResult,
+} from "./contradictions.js";
 import {
   autoDetectInstanceOf as autoDetectInstanceOfImpl,
   autoLinkEntities as autoLinkEntitiesImpl,
@@ -316,6 +327,32 @@ export class FactsDB extends FactsDBLayer2 {
       (o, n) => this.supersede(o, n),
       opts,
     );
+  }
+
+  async resolveContradictionsAuto(opts: ResolveContradictionsAutoOptions = {}): Promise<ResolveContradictionsAutoResult> {
+    return resolveContradictionsAutonomouslyImpl(
+      this.liveDb,
+      (id) => this.getById(id),
+      (o, n) => this.supersede(o, n),
+      opts,
+    );
+  }
+
+  applyContradictionReviewDecisions(
+    decisions: ContradictionReviewDecision[],
+    opts: { actor?: string; toolVersion?: string | null } = {},
+  ): ApplyContradictionReviewResult {
+    return applyContradictionReviewDecisionsImpl(
+      this.liveDb,
+      (id) => this.getById(id),
+      (o, n) => this.supersede(o, n),
+      decisions,
+      opts,
+    );
+  }
+
+  getContradictionResolutionAudit(contradictionId?: string): ContradictionResolutionAuditRow[] {
+    return getContradictionResolutionAuditImpl(this.liveDb, contradictionId);
   }
 
   contradictionsCount(): number {

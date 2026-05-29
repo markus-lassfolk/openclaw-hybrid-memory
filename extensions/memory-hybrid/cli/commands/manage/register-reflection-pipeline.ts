@@ -1,6 +1,7 @@
 /**
  * reflection & dream-cycle commands — split from register-corrections-and-pipeline.ts.
  */
+import { readFileSync, writeFileSync } from "node:fs";
 import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
@@ -9,6 +10,7 @@ import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-ver
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
+import type { ContradictionReviewDecision, ContradictionReviewItem } from "../../../backends/facts-db/contradictions.js";
 
 import {
   formatExtractImplicitFeedbackProgress,
@@ -16,6 +18,57 @@ import {
   type RunVerboseFollowUpOptions,
 } from "./dream-cycle-followup.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
+
+function writeContradictionReviewFile(outputPath: string, items: ContradictionReviewItem[]): void {
+  const content = `${items.map((item) => JSON.stringify(item)).join("\n")}${items.length > 0 ? "\n" : ""}`;
+  writeFileSync(outputPath, content, "utf-8");
+}
+
+function parseContradictionReviewFile(inputPath: string): ContradictionReviewDecision[] {
+  const content = readFileSync(inputPath, "utf-8");
+  const decisions: ContradictionReviewDecision[] = [];
+  const errors: string[] = [];
+  for (const [index, line] of content.split("\n").entries()) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      errors.push(`line ${index + 1}: invalid JSON`);
+      continue;
+    }
+    if (!parsed || typeof parsed !== "object") {
+      errors.push(`line ${index + 1}: expected object`);
+      continue;
+    }
+    const candidate = parsed as Partial<ContradictionReviewDecision>;
+    if (typeof candidate.contradictionId !== "string" || candidate.contradictionId.trim() === "") {
+      errors.push(`line ${index + 1}: missing contradictionId`);
+      continue;
+    }
+    if (
+      candidate.decision !== "keep_new" &&
+      candidate.decision !== "keep_old" &&
+      candidate.decision !== "merge" &&
+      candidate.decision !== "manual_review"
+    ) {
+      errors.push(`line ${index + 1}: unsupported decision`);
+      continue;
+    }
+    decisions.push({
+      contradictionId: candidate.contradictionId,
+      decision: candidate.decision,
+      reason: typeof candidate.reason === "string" ? candidate.reason : undefined,
+      confidence: typeof candidate.confidence === "number" ? candidate.confidence : undefined,
+      mergedFactText: typeof candidate.mergedFactText === "string" ? candidate.mergedFactText : undefined,
+    });
+  }
+  if (errors.length > 0) {
+    throw new Error(`Invalid review file ${inputPath}: ${errors.join("; ")}`);
+  }
+  return decisions;
+}
 
 export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindings): void {
   const {
@@ -705,29 +758,73 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "--project-state-lww",
       "Apply project-state latest-wins (LWW) policy: safely resolve stale project/task contradictions for known mutable keys",
     )
+    .option("--auto", "Run the autonomous contradiction-resolution pipeline")
     .option("--dry-run", "Project-state LWW contract mode: preview contradiction-resolution candidates")
     .option("--apply", "Project-state LWW contract mode: apply contradiction-resolution candidates")
+    .option("--target-rate <n>", "Autonomous mode target auto-resolution rate (default 0.80)")
+    .option("--export-review <path>", "Write remaining manual-review items as stable JSONL")
+    .option("--apply-review <path>", "Apply reviewed contradiction decisions from JSONL")
+    .option("--llm", "Enable opt-in LLM adjudication for non-deterministic contradictions")
+    .option("--model <m>", "LLM model for contradiction adjudication")
     .action(
       withExit(
         async (
-          opts?: { verbose?: boolean; details?: boolean; projectStateLww?: boolean; dryRun?: boolean; apply?: boolean },
+          opts?: {
+            verbose?: boolean;
+            details?: boolean;
+            projectStateLww?: boolean;
+            auto?: boolean;
+            dryRun?: boolean;
+            apply?: boolean;
+            targetRate?: string;
+            exportReview?: string;
+            applyReview?: string;
+            llm?: boolean;
+            model?: string;
+          },
           cmd?: CommanderOptsParent,
         ) => {
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           const details = !!opts?.details;
           const projectStateLww = !!opts?.projectStateLww;
+          const auto = !!opts?.auto || !!opts?.exportReview || !!opts?.llm;
           const dryRun = !!opts?.dryRun;
           const apply = !!opts?.apply;
+          const exportReview = opts?.exportReview;
+          const applyReview = opts?.applyReview;
+          const llm = !!opts?.llm;
+          const model = opts?.model;
+          const targetRate = Number.parseFloat(opts?.targetRate ?? "0.80");
 
           if (dryRun && apply) {
             throw new Error("--dry-run and --apply are mutually exclusive");
+          }
+          if (Number.isNaN(targetRate) || targetRate <= 0 || targetRate > 1) {
+            throw new Error("--target-rate must be a number between 0 and 1");
+          }
+          if (applyReview && (auto || projectStateLww || dryRun || apply || exportReview || llm || model)) {
+            throw new Error("--apply-review cannot be combined with --auto, --project-state-lww, --dry-run, --apply, --export-review, --llm, or --model");
+          }
+
+          if (applyReview) {
+            const decisions = parseContradictionReviewFile(applyReview);
+            const res = await ctx.runApplyContradictionReviewDecisions(decisions);
+            console.log(
+              `contradiction-review apply summary applied=${res.applied} kept_new=${res.keptNew} kept_old=${res.keptOld} manual_review=${res.manualReview} rejected=${res.rejected}`,
+            );
+            if (res.errors.length > 0) {
+              for (const error of res.errors) {
+                console.log(`  - ${error}`);
+              }
+            }
+            return;
           }
 
           // Operator contract mode for Issue #1636:
           //   resolve-contradictions --dry-run
           //   resolve-contradictions --apply
           // Legacy compatibility: --project-state-lww keeps working as explicit LWW mode.
-          const projectStateLwwContractMode = projectStateLww || apply || dryRun;
+          const projectStateLwwContractMode = !auto && (projectStateLww || apply || dryRun);
           if (projectStateLwwContractMode) {
             const lwwDryRun = dryRun;
             // Project-state LWW mode: grouped, human-readable output.
@@ -793,6 +890,67 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 `${lwwRes.wouldManualReview} project-state pair(s) require manual review (non-qualifying for LWW).`,
               );
               console.log("  Inspect with: openclaw hybrid-mem resolve-contradictions --details");
+            }
+            return;
+          }
+
+          if (auto) {
+            let res;
+            try {
+              res = await ctx.runResolveContradictionsAuto({
+                dryRun: !apply,
+                targetRate,
+                llm,
+                model,
+              });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "resolve-contradictions-auto",
+              });
+              throw err;
+            }
+
+            console.log(
+              `contradiction-auto summary total=${res.total} deterministic=${res.deterministic} llm=${res.llm} merged=${res.merged} manual_review=${res.manualReview} applied=${res.applied} target=${res.targetRate.toFixed(2)} achieved=${res.achievedRate.toFixed(3)}`,
+            );
+            if (!res.targetMet) {
+              console.log(
+                `contradiction-auto target-missed achieved=${res.achievedRate.toFixed(3)} target=${res.targetRate.toFixed(2)}`,
+              );
+            }
+            if (exportReview) {
+              writeContradictionReviewFile(exportReview, res.reviewItems);
+              console.log(`manual-review exported: ${res.reviewItems.length} item(s) -> ${exportReview}`);
+            } else if (res.reviewItems.length > 0) {
+              console.log(
+                `Manual review remaining: ${res.reviewItems.length}. Export with --export-review <path> for stable JSONL.`,
+              );
+            }
+            if (details && res.reviewItems.length > 0) {
+              console.log("Manual-review items:");
+              for (const item of res.reviewItems) {
+                const scopeLabel =
+                  item.scope && item.scope !== "global"
+                    ? ` [scope=${item.scope}${item.scopeTarget ? `/${item.scopeTarget}` : ""}]`
+                    : "";
+                console.log(`  · [${item.entity}] ${item.key}${scopeLabel}`);
+                console.log(
+                  `      newer ${item.factIdNew}: value=${item.newValueExcerpt} | text=${item.newTextExcerpt} | conf=${item.newConf.toFixed(2)} | src=${item.newSource}`,
+                );
+                console.log(
+                  `      older ${item.factIdOld}: value=${item.oldValueExcerpt} | text=${item.oldTextExcerpt} | conf=${item.oldConf.toFixed(2)} | src=${item.oldSource}`,
+                );
+                console.log(
+                  `      suggested=${item.suggestedDecision} via ${item.suggestedStrategy} (${item.suggestedConfidence.toFixed(2)}) — ${item.suggestedReason}`,
+                );
+                console.log(`      contradiction row ${item.contradictionId}`);
+              }
+            } else if (verbose && res.reviewItems.length > 0) {
+              console.log("Manual-review contradiction ids:");
+              for (const item of res.reviewItems) {
+                console.log(`  - ${item.contradictionId} (${item.factIdNew} ↔ ${item.factIdOld})`);
+              }
             }
             return;
           }

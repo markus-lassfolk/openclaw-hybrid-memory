@@ -67,7 +67,7 @@ The plugin **ensures** these job definitions exist in `~/.openclaw/cron/jobs.jso
 
 | Job name                      | Schedule           | Steps (what the job message tells the agent to run)                                          |
 | ----------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 1 3. extract-daily (7d) 4. resolve-contradictions 5. enrich-entities (default cron message: bash harness + file logs under `~/.openclaw/logs/cron-hybrid-mem/`)   |
+| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 1 3. extract-daily (7d) 4. resolve-contradictions --auto 5. enrich-entities (default cron message: bash harness + file logs under `~/.openclaw/logs/cron-hybrid-mem/`)   |
 | **self-correction-analysis**  | Daily 02:30        | self-correction-run. Exit 0 if selfCorrection disabled.                                      |
 | **nightly-dream-cycle**       | Daily 02:45        | dream-cycle (prune → consolidate → reflect). Exit 0 if nightlyCycle.enabled false.           |
 | **weekly-reflection**         | Sun 03:00          | reflect → reflect-rules → reflect-meta. Exit 0 if reflection.enabled false.                  |

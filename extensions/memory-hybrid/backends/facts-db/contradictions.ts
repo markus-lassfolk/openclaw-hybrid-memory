@@ -401,7 +401,12 @@ export const PROJECT_STATE_LWW_KEYS: ReadonlySet<string> = new Set([
  * Sources trusted for project-state LWW resolution.
  * `distillation` is excluded by default to keep automated distilled facts conservative.
  */
-export const PROJECT_STATE_LWW_TRUSTED_SOURCES: ReadonlySet<string> = new Set(["conversation", "cli", "active-task"]);
+export const PROJECT_STATE_LWW_TRUSTED_SOURCES: ReadonlySet<string> = new Set([
+  "conversation",
+  "cli",
+  "active-task",
+  "tool",
+]);
 
 /** A single candidate contradiction eligible for project-state LWW resolution. */
 export interface ProjectStateLwwCandidate {
@@ -549,7 +554,7 @@ export function resolveProjectStateLww(
     const { qualifies, newConf, oldConf } = lww;
     const overloaded = isPossiblyOverloadedEntity(newFact, oldFact);
     const action: "supersede" | "manual-review" =
-      qualifies && !isFactVerified(db, c.factIdOld) ? "supersede" : "manual-review";
+      qualifies && !overloaded && !isFactVerified(db, c.factIdOld) ? "supersede" : "manual-review";
 
     const entity = newFact.entity ?? oldFact.entity ?? "?";
     const key = newFact.key ?? oldFact.key ?? "?";
@@ -609,6 +614,457 @@ export function resolveProjectStateLww(
   }
 
   return { groups, totalCandidates, wouldSupersede, wouldManualReview, applied };
+}
+
+export interface ContradictionReviewItem {
+  contradictionId: string;
+  factIdNew: string;
+  factIdOld: string;
+  entity: string;
+  key: string;
+  scope: string | null;
+  scopeTarget: string | null;
+  newFactDate: number;
+  oldFactDate: number;
+  newSource: string;
+  oldSource: string;
+  newConf: number;
+  oldConf: number;
+  newValueExcerpt: string;
+  oldValueExcerpt: string;
+  newTextExcerpt: string;
+  oldTextExcerpt: string;
+  possibleOverloadedEntity: boolean;
+  suggestedDecision: "keep_new" | "keep_old" | "manual_review";
+  suggestedStrategy: string;
+  suggestedConfidence: number;
+  suggestedReason: string;
+}
+
+export interface LlmContradictionDecision {
+  decision: "keep_new" | "keep_old" | "merge" | "manual_review";
+  confidence: number;
+  reason: string;
+  mergedFactText?: string | null;
+}
+
+export interface ResolveContradictionsAutoOptions {
+  dryRun?: boolean;
+  targetRate?: number;
+  llm?: boolean;
+  llmConfidenceThreshold?: number;
+  adjudicate?: (item: ContradictionReviewItem) => Promise<LlmContradictionDecision>;
+  actor?: string;
+  toolVersion?: string;
+  model?: string | null;
+}
+
+export interface ResolveContradictionsAutoResult {
+  total: number;
+  deterministic: number;
+  llm: number;
+  merged: number;
+  manualReview: number;
+  applied: boolean;
+  decisionsApplied: number;
+  targetRate: number;
+  achievedRate: number;
+  targetMet: boolean;
+  reviewItems: ContradictionReviewItem[];
+}
+
+export interface ContradictionReviewDecision {
+  contradictionId: string;
+  decision: "keep_new" | "keep_old" | "merge" | "manual_review";
+  reason?: string;
+  confidence?: number;
+  mergedFactText?: string | null;
+}
+
+export interface ApplyContradictionReviewResult {
+  applied: number;
+  keptNew: number;
+  keptOld: number;
+  manualReview: number;
+  rejected: number;
+  errors: string[];
+}
+
+export interface ContradictionResolutionAuditRow {
+  id: string;
+  contradictionId: string;
+  keptFactId: string;
+  supersededFactId: string;
+  strategy: string;
+  confidence: number;
+  reason: string;
+  decidedAt: number;
+  actor: string;
+  toolVersion: string | null;
+  mode: "auto" | "review";
+  model: string | null;
+}
+
+const DEFAULT_CONTRADICTION_TARGET_RATE = 0.8;
+const DEFAULT_LLM_AUTO_APPLY_CONFIDENCE = 0.9;
+
+function buildContradictionReviewItem(
+  contradiction: ContradictionRecord,
+  newFact: MemoryEntry,
+  oldFact: MemoryEntry,
+): ContradictionReviewItem {
+  const oldConf = contradiction.oldFactOriginalConfidence ?? oldFact.confidence ?? 1.0;
+  const newConf = newFact.confidence ?? 1.0;
+  return {
+    contradictionId: contradiction.id,
+    factIdNew: contradiction.factIdNew,
+    factIdOld: contradiction.factIdOld,
+    entity: newFact.entity ?? oldFact.entity ?? "?",
+    key: newFact.key ?? oldFact.key ?? "?",
+    scope: newFact.scope ?? oldFact.scope ?? null,
+    scopeTarget: newFact.scopeTarget ?? oldFact.scopeTarget ?? null,
+    newFactDate: newFact.createdAt,
+    oldFactDate: oldFact.createdAt,
+    newSource: newFact.source ?? "unknown",
+    oldSource: oldFact.source ?? "unknown",
+    newConf,
+    oldConf,
+    newValueExcerpt: truncateExcerpt(newFact.value ?? newFact.text ?? "", 80),
+    oldValueExcerpt: truncateExcerpt(oldFact.value ?? oldFact.text ?? "", 80),
+    newTextExcerpt: truncateExcerpt(newFact.text ?? newFact.value ?? "", 120),
+    oldTextExcerpt: truncateExcerpt(oldFact.text ?? oldFact.value ?? "", 120),
+    possibleOverloadedEntity: isPossiblyOverloadedEntity(newFact, oldFact),
+    suggestedDecision: "manual_review",
+    suggestedStrategy: "manual-review",
+    suggestedConfidence: 0,
+    suggestedReason: "No safe deterministic resolution matched.",
+  };
+}
+
+function compareReviewItems(a: ContradictionReviewItem, b: ContradictionReviewItem): number {
+  return (
+    a.entity.localeCompare(b.entity) ||
+    a.key.localeCompare(b.key) ||
+    (a.scope ?? "").localeCompare(b.scope ?? "") ||
+    (a.scopeTarget ?? "").localeCompare(b.scopeTarget ?? "") ||
+    a.contradictionId.localeCompare(b.contradictionId)
+  );
+}
+
+function clampConfidence(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
+}
+
+function insertContradictionResolutionAudit(db: DatabaseSync, row: Omit<ContradictionResolutionAuditRow, "id">): void {
+  db.prepare(
+    `INSERT INTO contradiction_resolution_audit
+       (id, contradiction_id, kept_fact_id, superseded_fact_id, strategy, confidence, reason, decided_at, actor, tool_version, mode, model)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    randomUUID(),
+    row.contradictionId,
+    row.keptFactId,
+    row.supersededFactId,
+    row.strategy,
+    row.confidence,
+    row.reason,
+    row.decidedAt,
+    row.actor,
+    row.toolVersion,
+    row.mode,
+    row.model,
+  );
+}
+
+export function getContradictionResolutionAudit(
+  db: DatabaseSync,
+  contradictionId?: string,
+): ContradictionResolutionAuditRow[] {
+  const query = contradictionId
+    ? "SELECT * FROM contradiction_resolution_audit WHERE contradiction_id = ? ORDER BY decided_at ASC, id ASC"
+    : "SELECT * FROM contradiction_resolution_audit ORDER BY decided_at ASC, id ASC";
+  const rows = (contradictionId ? db.prepare(query).all(contradictionId) : db.prepare(query).all()) as Array<
+    Record<string, unknown>
+  >;
+  return rows.map((row) => ({
+    id: row.id as string,
+    contradictionId: row.contradiction_id as string,
+    keptFactId: row.kept_fact_id as string,
+    supersededFactId: row.superseded_fact_id as string,
+    strategy: row.strategy as string,
+    confidence: Number(row.confidence ?? 0),
+    reason: (row.reason as string) ?? "",
+    decidedAt: Number(row.decided_at ?? 0),
+    actor: (row.actor as string) ?? "resolve-contradictions",
+    toolVersion: (row.tool_version as string | null) ?? null,
+    mode: ((row.mode as "auto" | "review" | null) ?? "auto") === "review" ? "review" : "auto",
+    model: (row.model as string | null) ?? null,
+  }));
+}
+
+type PersistedDecision = {
+  contradictionId: string;
+  keptFactId: string;
+  supersededFactId: string;
+  resolution: "superseded" | "kept";
+  strategy: string;
+  confidence: number;
+  reason: string;
+  actor: string;
+  toolVersion?: string | null;
+  mode: "auto" | "review";
+  model?: string | null;
+};
+
+function persistContradictionDecision(
+  db: DatabaseSync,
+  getById: (id: string) => MemoryEntry | null,
+  supersede: (oldId: string, newId: string | null) => boolean,
+  decision: PersistedDecision,
+): boolean {
+  const contradiction = db
+    .prepare("SELECT resolved FROM contradictions WHERE id = ?")
+    .get(decision.contradictionId) as { resolved: number } | undefined;
+  if (!contradiction || contradiction.resolved === 1) return false;
+
+  let applied = false;
+  const tx = createTransaction(db, () => {
+    const supersededFact = getById(decision.supersededFactId);
+    if (!supersededFact) {
+      return;
+    }
+
+    if (supersededFact.supersededAt == null) {
+      const didSupersede = supersede(decision.supersededFactId, decision.keptFactId);
+      if (!didSupersede) {
+        return;
+      }
+    }
+
+    const resolved = resolveContradiction(db, decision.contradictionId, decision.resolution);
+    if (!resolved) {
+      return;
+    }
+
+    insertContradictionResolutionAudit(db, {
+      contradictionId: decision.contradictionId,
+      keptFactId: decision.keptFactId,
+      supersededFactId: decision.supersededFactId,
+      strategy: decision.strategy,
+      confidence: decision.confidence,
+      reason: decision.reason,
+      decidedAt: Math.floor(Date.now() / 1000),
+      actor: decision.actor,
+      toolVersion: decision.toolVersion ?? null,
+      mode: decision.mode,
+      model: decision.model ?? null,
+    });
+    applied = true;
+  });
+  tx();
+  return applied;
+}
+
+export async function resolveContradictionsAutonomously(
+  db: DatabaseSync,
+  getById: (id: string) => MemoryEntry | null,
+  supersede: (oldId: string, newId: string | null) => boolean,
+  options: ResolveContradictionsAutoOptions = {},
+): Promise<ResolveContradictionsAutoResult> {
+  const {
+    dryRun = false,
+    targetRate = DEFAULT_CONTRADICTION_TARGET_RATE,
+    llm = false,
+    llmConfidenceThreshold = DEFAULT_LLM_AUTO_APPLY_CONFIDENCE,
+    adjudicate,
+    actor = "resolve-contradictions",
+    toolVersion,
+    model,
+  } = options;
+
+  const unresolved = getContradictions(db);
+  const reviewItems: ContradictionReviewItem[] = [];
+  let total = 0;
+  let deterministic = 0;
+  let llmResolved = 0;
+  const merged = 0;
+  let decisionsApplied = 0;
+
+  for (const contradiction of unresolved) {
+    const newFact = getById(contradiction.factIdNew);
+    const oldFact = getById(contradiction.factIdOld);
+    if (!newFact || !oldFact) continue;
+    total++;
+
+    const reviewItem = buildContradictionReviewItem(contradiction, newFact, oldFact);
+    const lww = evaluateLwwEligibility(newFact, oldFact, contradiction.oldFactOriginalConfidence);
+
+    if (reviewItem.possibleOverloadedEntity) {
+      reviewItem.suggestedReason = "Possible entity reuse detected; leaving for manual review.";
+    } else if (lww.eligible && lww.qualifies && !isFactVerified(db, contradiction.factIdOld)) {
+      reviewItem.suggestedDecision = "keep_new";
+      reviewItem.suggestedStrategy = "project-state-lww";
+      reviewItem.suggestedConfidence = 1;
+      reviewItem.suggestedReason = "Trusted newer project-state fact supersedes the stale value.";
+      deterministic++;
+      if (!dryRun) {
+        const applied = persistContradictionDecision(db, getById, supersede, {
+          contradictionId: contradiction.id,
+          keptFactId: contradiction.factIdNew,
+          supersededFactId: contradiction.factIdOld,
+          resolution: "superseded",
+          strategy: reviewItem.suggestedStrategy,
+          confidence: reviewItem.suggestedConfidence,
+          reason: reviewItem.suggestedReason,
+          actor,
+          toolVersion,
+          mode: "auto",
+          model: null,
+        });
+        if (applied) decisionsApplied++;
+      }
+      continue;
+    } else if (lww.eligible && isFactVerified(db, contradiction.factIdOld)) {
+      reviewItem.suggestedReason = "Older fact is verified; leaving for manual review.";
+    }
+
+    if (llm && adjudicate) {
+      try {
+        const llmDecision = await adjudicate(reviewItem);
+        const confidence = clampConfidence(llmDecision.confidence);
+        if (
+          (llmDecision.decision === "keep_new" || llmDecision.decision === "keep_old") &&
+          confidence >= llmConfidenceThreshold
+        ) {
+          reviewItem.suggestedDecision = llmDecision.decision;
+          reviewItem.suggestedStrategy = "llm-adjudication";
+          reviewItem.suggestedConfidence = confidence;
+          reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM adjudication approved the resolution.";
+          llmResolved++;
+          if (!dryRun) {
+            const keepNew = llmDecision.decision === "keep_new";
+            const applied = persistContradictionDecision(db, getById, supersede, {
+              contradictionId: contradiction.id,
+              keptFactId: keepNew ? contradiction.factIdNew : contradiction.factIdOld,
+              supersededFactId: keepNew ? contradiction.factIdOld : contradiction.factIdNew,
+              resolution: keepNew ? "superseded" : "kept",
+              strategy: reviewItem.suggestedStrategy,
+              confidence,
+              reason: reviewItem.suggestedReason,
+              actor,
+              toolVersion,
+              mode: "auto",
+              model: model ?? null,
+            });
+            if (applied) decisionsApplied++;
+          }
+          continue;
+        }
+
+        if (llmDecision.decision === "merge") {
+          reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM requested merge; keep manual review for safety.";
+        } else if (confidence > 0) {
+          reviewItem.suggestedReason =
+            llmDecision.reason?.trim() || `LLM confidence ${confidence.toFixed(2)} below auto-apply threshold.`;
+        }
+      } catch (err) {
+        reviewItem.suggestedReason = `LLM adjudication failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    reviewItems.push(reviewItem);
+  }
+
+  reviewItems.sort(compareReviewItems);
+  const autoResolved = deterministic + llmResolved + merged;
+  const achievedRate = total === 0 ? 1 : autoResolved / total;
+  return {
+    total,
+    deterministic,
+    llm: llmResolved,
+    merged,
+    manualReview: reviewItems.length,
+    applied: !dryRun,
+    decisionsApplied,
+    targetRate,
+    achievedRate,
+    targetMet: achievedRate >= targetRate,
+    reviewItems,
+  };
+}
+
+export function applyContradictionReviewDecisions(
+  db: DatabaseSync,
+  getById: (id: string) => MemoryEntry | null,
+  supersede: (oldId: string, newId: string | null) => boolean,
+  decisions: ContradictionReviewDecision[],
+  options: { actor?: string; toolVersion?: string | null } = {},
+): ApplyContradictionReviewResult {
+  const actor = options.actor ?? "resolve-contradictions-review";
+  const toolVersion = options.toolVersion ?? null;
+  let applied = 0;
+  let keptNew = 0;
+  let keptOld = 0;
+  let manualReview = 0;
+  let rejected = 0;
+  const errors: string[] = [];
+
+  for (const decision of decisions) {
+    if (!decision.contradictionId?.trim()) {
+      rejected++;
+      errors.push("Decision is missing contradictionId.");
+      continue;
+    }
+    if (decision.decision === "manual_review") {
+      manualReview++;
+      continue;
+    }
+    if (decision.decision === "merge") {
+      rejected++;
+      errors.push(`Contradiction ${decision.contradictionId}: merge decisions must be handled manually.`);
+      continue;
+    }
+
+    const contradiction = db
+      .prepare("SELECT fact_id_new, fact_id_old, resolved FROM contradictions WHERE id = ?")
+      .get(decision.contradictionId) as { fact_id_new: string; fact_id_old: string; resolved: number } | undefined;
+    if (!contradiction) {
+      rejected++;
+      errors.push(`Contradiction ${decision.contradictionId}: row not found.`);
+      continue;
+    }
+    if (contradiction.resolved === 1) {
+      rejected++;
+      errors.push(`Contradiction ${decision.contradictionId}: already resolved.`);
+      continue;
+    }
+
+    const keepNew = decision.decision === "keep_new";
+    const didApply = persistContradictionDecision(db, getById, supersede, {
+      contradictionId: decision.contradictionId,
+      keptFactId: keepNew ? contradiction.fact_id_new : contradiction.fact_id_old,
+      supersededFactId: keepNew ? contradiction.fact_id_old : contradiction.fact_id_new,
+      resolution: keepNew ? "superseded" : "kept",
+      strategy: "manual-review-file",
+      confidence: clampConfidence(decision.confidence) || 1,
+      reason: decision.reason?.trim() || "Applied from contradiction review file.",
+      actor,
+      toolVersion,
+      mode: "review",
+      model: null,
+    });
+    if (!didApply) {
+      rejected++;
+      errors.push(`Contradiction ${decision.contradictionId}: could not persist decision.`);
+      continue;
+    }
+    applied++;
+    if (keepNew) keptNew++;
+    else keptOld++;
+  }
+
+  return { applied, keptNew, keptOld, manualReview, rejected, errors };
 }
 
 export function contradictionsCount(db: DatabaseSync): number {
