@@ -117,7 +117,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # Skip validation for scaffold/draft PRs in the implementing stage.
-          # Note: wip:true only bypasses for titles starting with "[WIP] " (brackets + space).
+          # wip: true also skips titles starting with "wip" (case-insensitive, e.g. "WIP: ...").
           wip: true
           ignoreLabels: |
             stage/implementing
