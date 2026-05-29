@@ -194,7 +194,12 @@ ${body}`;
     for (const m of raw) {
       const lab = String(m.label ?? "").toUpperCase();
       const surface = String(m.text ?? "").trim();
-      if (surface.length < 2 || isEntityStopWord(surface, options?.stopWords)) {
+      if (surface.length < 2) {
+        rejectedMentions.push({ label: lab, surfaceText: surface, reason: "short" });
+        countReason(rejectReasons, "short");
+        continue;
+      }
+      if (isEntityStopWord(surface, options?.stopWords)) {
         rejectedMentions.push({ label: lab, surfaceText: surface, reason: "stopword" });
         countReason(rejectReasons, "stopword");
         continue;
