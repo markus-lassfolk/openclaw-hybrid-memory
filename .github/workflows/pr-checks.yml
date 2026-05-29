@@ -111,13 +111,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR title
+        if: ${{ !startsWith(github.event.pull_request.title, 'WIP:') }}
         uses: amannn/action-semantic-pull-request@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Allow [WIP] prefix (bracket format) for draft/in-progress PRs.
+          # Allow [WIP] prefix (action-semantic-pull-request v6 wip: true requires [WIP] format).
           wip: true
-          # Skip title validation for PRs still in the implementing stage.
+          # Skip validation for PRs in the implementing stage (placeholder/draft PRs).
           ignoreLabels: |
             stage/implementing
           types: |
