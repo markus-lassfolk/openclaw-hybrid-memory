@@ -10,7 +10,7 @@
 
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import type { ReinforcementContext } from "../backends/facts-db.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity } from "../config.js";
@@ -857,6 +857,16 @@ export async function runCrossAgentLearningForCli(
 // tool-effectiveness
 // ---------------------------------------------------------------------------
 
+export function resolveToolEffectivenessCliDbPaths(sqlitePath: string): {
+  workflowDbPath: string;
+  effectivenessDbPath: string;
+} {
+  return {
+    workflowDbPath: join(dirname(sqlitePath), "workflow-traces.db"),
+    effectivenessDbPath: sqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db"),
+  };
+}
+
 /**
  * Compute and format a tool effectiveness report.
  */
@@ -874,11 +884,9 @@ export async function runToolEffectivenessForCli(
   if (opts.verbose) {
     (ctx.logger?.info ?? console.log)("memory-hybrid: tool-effectiveness — computing scores from workflow traces…");
   }
-
   // Derive the workflow store DB path from the sqlite path
   const sqlitePath = cfg.sqlitePath ?? join(homedir(), ".openclaw", "memory", "memory.db");
-  const workflowDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-workflows.db");
-  const effectivenessDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-tool-effectiveness.db");
+  const { workflowDbPath, effectivenessDbPath } = resolveToolEffectivenessCliDbPaths(sqlitePath);
 
   let effStore: ToolEffectivenessStore;
   try {
