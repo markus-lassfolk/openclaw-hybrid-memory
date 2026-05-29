@@ -114,7 +114,7 @@ jobs:
         if: startsWith(github.event.pull_request.title, 'WIP:')
         run: echo "Skipping semantic PR title validation for WIP title."
       - name: Validate PR title
-        if: !startsWith(github.event.pull_request.title, 'WIP:')
+        if: startsWith(github.event.pull_request.title, 'WIP:') == false
         uses: amannn/action-semantic-pull-request@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
