@@ -118,6 +118,7 @@ jobs:
           # Allow WIP: prefix so draft/in-progress PRs don't fail the check.
           wip: true
           types: |
+            WIP
             feat
             fix
             chore
