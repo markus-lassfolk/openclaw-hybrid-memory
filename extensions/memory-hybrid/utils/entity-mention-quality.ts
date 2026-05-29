@@ -48,21 +48,21 @@ const GENERIC_TERMS = new Set([
   "fact",
 ]);
 
-const MODEL_PAT = /\b(gpt|claude|gemini|minimax|sonnet|opus)\b/i;
+const MODEL_MATCHER = /\b(gpt|claude|gemini|minimax|sonnet|opus)\b/i;
 
-const CANONICAL_LABEL_MAP: Array<{ match: RegExp; label: EntityMentionLabel; normalized: string }> = [
-  { match: /\b(gpt|claude|gemini|minimax|sonnet|opus)\b/i, label: "MODEL", normalized: "" },
-  { match: /^gh$/i, label: "TOOL", normalized: "gh" },
-  { match: /^npm$/i, label: "TOOL", normalized: "npm" },
-  { match: /^jq$/i, label: "TOOL", normalized: "jq" },
-  { match: /\bgithub\b/i, label: "SERVICE", normalized: "github" },
-  { match: /\bwhatsapp\b/i, label: "SERVICE", normalized: "whatsapp" },
-  { match: /\btelegram\b/i, label: "SERVICE", normalized: "telegram" },
-  { match: /\bhome assistant\b|^ha$/i, label: "SERVICE", normalized: "home assistant" },
-  { match: /\bduckflux\b/i, label: "PROJECT", normalized: "duckflux" },
-  { match: /\bhybrid[- ]memory\b|\bopenclaw-hybrid-memory\b/i, label: "PROJECT", normalized: "openclaw-hybrid-memory" },
-  { match: /^(forge|scholar|maeve|ralph)$/i, label: "AGENT", normalized: "" },
-  { match: /^(surgeon|council)$/i, label: "ROLE", normalized: "" },
+const CANONICAL_LABEL_MAP: Array<{ match: RegExp; label: EntityMentionLabel; canonicalNormalized: string }> = [
+  { match: MODEL_MATCHER, label: "MODEL", canonicalNormalized: "" },
+  { match: /^gh$/i, label: "TOOL", canonicalNormalized: "gh" },
+  { match: /^npm$/i, label: "TOOL", canonicalNormalized: "npm" },
+  { match: /^jq$/i, label: "TOOL", canonicalNormalized: "jq" },
+  { match: /\bgithub\b/i, label: "SERVICE", canonicalNormalized: "github" },
+  { match: /\bwhatsapp\b/i, label: "SERVICE", canonicalNormalized: "whatsapp" },
+  { match: /\btelegram\b/i, label: "SERVICE", canonicalNormalized: "telegram" },
+  { match: /\bhome assistant\b|^ha$/i, label: "SERVICE", canonicalNormalized: "home assistant" },
+  { match: /\bduckflux\b/i, label: "PROJECT", canonicalNormalized: "duckflux" },
+  { match: /\bhybrid[- ]memory\b|\bopenclaw-hybrid-memory\b/i, label: "PROJECT", canonicalNormalized: "openclaw-hybrid-memory" },
+  { match: /^(forge|scholar|maeve|ralph)$/i, label: "AGENT", canonicalNormalized: "" },
+  { match: /^(surgeon|council)$/i, label: "ROLE", canonicalNormalized: "" },
 ];
 
 const ACRONYM_ALLOWLIST = new Map<string, EntityMentionLabel>([
@@ -107,10 +107,14 @@ function canonicalizeByKnownMap(
     }
     return {
       label: rule.label,
-      normalizedSurface: rule.normalized || normalizeEntityKey(surfaceText),
+      normalizedSurface: rule.canonicalNormalized || normalizeEntityKey(surfaceText),
     };
   }
   return { label: fallbackLabel, normalizedSurface };
+}
+
+export function makeEntityMentionKey(label: string, normalizedSurface: string): string {
+  return `${label}\u0000${normalizedSurface}`;
 }
 
 export function canonicalizeEntityMention(candidate: EntityMentionCandidate): CanonicalizedEntityMention | RejectedEntityMention {
@@ -137,7 +141,7 @@ export function canonicalizeEntityMention(candidate: EntityMentionCandidate): Ca
     "LOCATION",
   ];
   if (!supportedLabels.includes(label)) {
-    if (MODEL_PAT.test(baseSurface)) {
+    if (MODEL_MATCHER.test(baseSurface)) {
       label = "MODEL";
     } else {
       return { accepted: false, reason: "bad_type" };

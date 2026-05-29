@@ -11,6 +11,7 @@ import { normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
 import {
   canonicalizeEntityMention,
   type EntityMentionRejectReason,
+  makeEntityMentionKey,
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { withLLMRetry } from "./chat.js";
@@ -249,7 +250,7 @@ ${body}`;
 
     const deduped = new Map<string, ExtractedMention>();
     for (const m of filteredBySubstring) {
-      const key = `${m.label}\u0000${m.normalizedSurface}`;
+      const key = makeEntityMentionKey(m.label, m.normalizedSurface);
       const existing = deduped.get(key);
       if (!existing) {
         deduped.set(key, m);

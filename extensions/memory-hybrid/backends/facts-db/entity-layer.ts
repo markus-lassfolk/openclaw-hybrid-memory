@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { createTransaction } from "../../utils/sqlite-transaction.js";
-import { canonicalizeEntityMention } from "../../utils/entity-mention-quality.js";
+import { canonicalizeEntityMention, makeEntityMentionKey } from "../../utils/entity-mention-quality.js";
 
 export type EntityMentionLabel =
   | "PERSON"
@@ -145,21 +145,32 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_fem_contact ON fact_entity_mentions(contact_id);
     CREATE INDEX IF NOT EXISTS idx_fem_label ON fact_entity_mentions(label);
   `);
-  db.exec(`
-    DELETE FROM fact_entity_mentions
-    WHERE id IN (
-      SELECT m1.id
-      FROM fact_entity_mentions m1
-      JOIN fact_entity_mentions m2
-        ON m1.fact_id = m2.fact_id
-       AND m1.label = m2.label
-       AND m1.normalized_surface = m2.normalized_surface
-       AND (
-            m2.created_at < m1.created_at
-         OR (m2.created_at = m1.created_at AND m2.id < m1.id)
-       )
-    );
-  `);
+  const hasDuplicates = db
+    .prepare(
+      `SELECT 1
+       FROM fact_entity_mentions
+       GROUP BY fact_id, label, normalized_surface
+       HAVING COUNT(*) > 1
+       LIMIT 1`,
+    )
+    .get() as { 1: number } | undefined;
+  if (hasDuplicates) {
+    db.exec(`
+      DELETE FROM fact_entity_mentions
+      WHERE id IN (
+        SELECT m1.id
+        FROM fact_entity_mentions m1
+        JOIN fact_entity_mentions m2
+          ON m1.fact_id = m2.fact_id
+         AND m1.label = m2.label
+         AND m1.normalized_surface = m2.normalized_surface
+         AND (
+              m2.created_at < m1.created_at
+           OR (m2.created_at = m1.created_at AND m2.id < m1.id)
+         )
+      );
+    `);
+  }
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_fem_fact_label_norm
     ON fact_entity_mentions(fact_id, label, normalized_surface);
@@ -261,6 +272,7 @@ export function replaceFactEntityMentions(
     db.prepare("DELETE FROM org_fact_links WHERE fact_id = ? AND reason = 'ner_mention'").run(factId);
 
     const now = Math.floor(Date.now() / 1000);
+    // Intentional OR IGNORE: idx_fem_fact_label_norm enforces idempotent logical mention writes.
     const ins = db.prepare(
       `INSERT OR IGNORE INTO fact_entity_mentions (
         id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset,
@@ -521,7 +533,7 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
     const seen = new Set<string>();
     for (const row of rows) {
       rowsScanned++;
-      const key = `${row.label}\u0000${row.normalized_surface}`;
+      const key = makeEntityMentionKey(row.label, row.normalized_surface);
       if (seen.has(key)) {
         duplicates++;
       } else {
@@ -558,10 +570,20 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
 function rowsSignature(
   rows: Array<{ label: string; normalizedSurface: string; surfaceText: string; confidence: number }>,
 ): string {
-  return rows
-    .map((r) => `${r.label}|${r.normalizedSurface}|${r.surfaceText}|${r.confidence.toFixed(4)}`)
-    .sort()
-    .join("\n");
+  return JSON.stringify(
+    rows
+      .map((r) => ({
+        label: r.label,
+        normalizedSurface: r.normalizedSurface,
+        surfaceText: r.surfaceText,
+        confidence: Number(r.confidence.toFixed(4)),
+      }))
+      .sort((a, b) =>
+        `${a.label}|${a.normalizedSurface}|${a.surfaceText}|${a.confidence}`.localeCompare(
+          `${b.label}|${b.normalizedSurface}|${b.surfaceText}|${b.confidence}`,
+        ),
+      ),
+  );
 }
 
 export function cleanupEntityMentions(
@@ -644,7 +666,7 @@ export function cleanupEntityMentions(
         if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
           reclassified++;
         }
-        const key = `${canonical.label}\u0000${canonical.normalizedSurface}`;
+        const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
         const existing = acceptedByKey.get(key);
         if (existing) {
           duplicates++;
