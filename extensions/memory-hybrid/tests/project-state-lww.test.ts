@@ -459,3 +459,198 @@ describe("project-state-lww: write-time auto-supersede", () => {
     expect(oldAfter?.supersededAt).not.toBeNull();
   });
 });
+
+describe("resolve-contradictions auto mode", () => {
+  it("auto-resolves terminal lifecycle state transitions", async () => {
+    const older = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "in_progress",
+      text: "Issue #1692 is still in progress",
+      source: "active-task",
+    });
+    const newer = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "done",
+      text: "Issue #1692 is done and merged",
+      source: "conversation",
+      createdAtOffset: 60,
+    });
+    db.recordContradiction(newer.id, older.id);
+
+    const result = await db.resolveContradictionsAuto({ dryRun: true, targetRate: 0.8 });
+    expect(result.deterministic).toBe(1);
+    expect(result.manualReview).toBe(0);
+    expect(result.targetMet).toBe(true);
+  });
+
+  it("keeps the latest timestamp-like project fact", async () => {
+    const older = storeProjectFact({
+      entity: "issue-1692",
+      key: "last_live_verified_at",
+      value: "2026-05-28T00:00:00Z",
+      text: "Live verification last ran on 2026-05-28",
+    });
+    const newer = storeProjectFact({
+      entity: "issue-1692",
+      key: "last_live_verified_at",
+      value: "2026-05-29T00:00:00Z",
+      text: "Live verification last ran on 2026-05-29",
+      source: "tool",
+      createdAtOffset: 60,
+    });
+    db.recordContradiction(newer.id, older.id);
+
+    const result = await db.resolveContradictionsAuto({ dryRun: true });
+    expect(result.deterministic).toBe(1);
+    expect(result.manualReview).toBe(0);
+  });
+
+  it("leaves lower-confidence updates in manual review", async () => {
+    const older = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "blocked",
+      text: "Issue #1692 is blocked",
+      confidence: 1,
+    });
+    const newer = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "done",
+      text: "Issue #1692 might be done",
+      confidence: 0.7,
+      createdAtOffset: 60,
+    });
+    db.recordContradiction(newer.id, older.id);
+
+    const result = await db.resolveContradictionsAuto({ dryRun: true });
+    expect(result.deterministic).toBe(0);
+    expect(result.manualReview).toBe(1);
+  });
+
+  it("keeps possible entity reuse in manual review", async () => {
+    const older = storeProjectFact({
+      entity: "hybrid-memory-issue-1272-pr",
+      key: "status",
+      value: "done — PR #1284 merged",
+      text: "PR #1284 for issue #1272 merged",
+      confidence: 1.0,
+    });
+    const newer = storeProjectFact({
+      entity: "hybrid-memory-issue-1272-pr",
+      key: "status",
+      value: "in_progress — PR #1288 open",
+      text: "Follow-up PR #1288 for issue #1272 in progress, related to issue #999",
+      confidence: 1.0,
+      createdAtOffset: 30,
+    });
+    db.recordContradiction(newer.id, older.id);
+
+    const result = await db.resolveContradictionsAuto({ dryRun: true });
+    expect(result.deterministic).toBe(0);
+    expect(result.manualReview).toBe(1);
+    expect(result.reviewItems[0]?.possibleOverloadedEntity).toBe(true);
+  });
+
+  it("keeps low-confidence LLM adjudication in manual review", async () => {
+    const older = db.store({
+      text: "The current preferred deploy strategy is blue-green",
+      category: "fact",
+      importance: 0.8,
+      entity: "deploy",
+      key: "strategy",
+      value: "blue-green",
+      source: "conversation",
+      confidence: 1,
+    });
+    const newer = db.store({
+      text: "The current preferred deploy strategy is canary",
+      category: "fact",
+      importance: 0.8,
+      entity: "deploy",
+      key: "strategy",
+      value: "canary",
+      source: "conversation",
+      confidence: 1,
+    });
+    db.recordContradiction(newer.id, older.id);
+
+    const result = await db.resolveContradictionsAuto({
+      dryRun: true,
+      llm: true,
+      adjudicate: async () => ({ decision: "keep_new", confidence: 0.5, reason: "Not confident enough." }),
+    });
+    expect(result.llm).toBe(0);
+    expect(result.manualReview).toBe(1);
+  });
+
+  it("writes audit rows for applied decisions", async () => {
+    const older = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "in_progress",
+      text: "Issue #1692 is in progress",
+      source: "active-task",
+    });
+    const newer = storeProjectFact({
+      entity: "issue-1692",
+      key: "status",
+      value: "done",
+      text: "Issue #1692 is done",
+      source: "conversation",
+      createdAtOffset: 60,
+    });
+    const contradictionId = db.recordContradiction(newer.id, older.id);
+
+    const result = await db.resolveContradictionsAuto({ dryRun: false });
+    expect(result.decisionsApplied).toBe(1);
+    const auditRows = db.getContradictionResolutionAudit(contradictionId);
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({
+      contradictionId,
+      keptFactId: newer.id,
+      supersededFactId: older.id,
+      strategy: "project-state-lww",
+      mode: "auto",
+    });
+  });
+
+  it("applies reviewed keep_old decisions with audit trail", () => {
+    const older = db.store({
+      text: "Deployment strategy is blue-green",
+      category: "fact",
+      importance: 0.8,
+      entity: "deploy",
+      key: "strategy",
+      value: "blue-green",
+      source: "conversation",
+      confidence: 1,
+    });
+    const newer = db.store({
+      text: "Deployment strategy is canary",
+      category: "fact",
+      importance: 0.8,
+      entity: "deploy",
+      key: "strategy",
+      value: "canary",
+      source: "conversation",
+      confidence: 1,
+    });
+    const contradictionId = db.recordContradiction(newer.id, older.id);
+
+    const result = db.applyContradictionReviewDecisions([
+      { contradictionId, decision: "keep_old", reason: "Blue-green is still the approved rollout." },
+    ]);
+    expect(result.applied).toBe(1);
+    expect(db.getById(newer.id)?.supersededAt).not.toBeNull();
+    expect(db.getContradictionResolutionAudit(contradictionId)[0]).toMatchObject({
+      contradictionId,
+      keptFactId: older.id,
+      supersededFactId: newer.id,
+      strategy: "manual-review-file",
+      mode: "review",
+    });
+  });
+});
