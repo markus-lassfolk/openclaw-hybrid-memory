@@ -115,7 +115,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Allow WIP: prefix so draft/in-progress PRs don't fail the check.
+          # Skip semantic PR-title validation for implementing-stage PRs.
+          ignoreLabels: |
+            stage/implementing
+          # Allow [WIP] prefix for draft/in-progress PR titles.
           wip: true
           types: |
             feat
