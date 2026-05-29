@@ -675,6 +675,8 @@ export function cleanupEntityMentions(
               surfaceText: canonical.surfaceText,
               startOffset: row.start_offset,
               endOffset: row.end_offset,
+              detectedLang: row.detected_lang,
+              source: row.source,
             });
           }
           continue;
