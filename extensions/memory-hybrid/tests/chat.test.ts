@@ -767,9 +767,9 @@ describe("chatComplete — GlitchTip suppression (#302, #303)", () => {
     const abortCause = Object.assign(new Error("Request was aborted"), { name: "AbortError" });
     const wrappedErr = Object.assign(new Error("stream error"), { cause: abortCause });
     vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(wrappedErr);
-    await expect(
-      chatComplete({ model: "minimax/MiniMax-M2.7", content: "test", openai: mockOpenai }),
-    ).rejects.toThrow("stream error");
+    await expect(chatComplete({ model: "minimax/MiniMax-M2.7", content: "test", openai: mockOpenai })).rejects.toThrow(
+      "stream error",
+    );
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 
