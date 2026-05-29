@@ -49,10 +49,13 @@ export function formatExtractImplicitFeedbackProgress(
 
 export function assessContinuousVerificationResult(result: VerificationCycleResult): ContinuousVerificationAssessment {
   if (result.errors > 0) {
+    const summary = result.checked === 0
+      ? `infrastructure error prevented verification (${result.errors} error(s))`
+      : `${result.errors}/${result.checked} verification check(s) errored`;
     return {
       status: "degraded",
       shouldFailPipeline: true,
-      summary: `${result.errors}/${result.checked} verification check(s) errored`,
+      summary,
     };
   }
   if (result.checked > 0 && result.confirmed === 0 && result.stale === 0) {
