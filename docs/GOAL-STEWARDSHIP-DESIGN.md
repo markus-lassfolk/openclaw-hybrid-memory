@@ -182,6 +182,8 @@ actual work needed.
 One JSON file per goal (`<goal-id>.json`). Individual files avoid the merge and
 optimistic-locking issues that ACTIVE-TASKS.md suffers from. A lightweight index
 (`_index.json`) is regenerated on reads for fast listing.
+Registry scans treat any `_*.json` file as housekeeping/private state, so only
+non-underscore `*.json` files are considered goal records.
 
 **Goal schema:**
 
