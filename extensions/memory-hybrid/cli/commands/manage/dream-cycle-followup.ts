@@ -47,9 +47,7 @@ export function formatExtractImplicitFeedbackProgress(
   return parts.join("; ");
 }
 
-export function assessContinuousVerificationResult(
-  result: VerificationCycleResult,
-): ContinuousVerificationAssessment {
+export function assessContinuousVerificationResult(result: VerificationCycleResult): ContinuousVerificationAssessment {
   if (result.errors > 0) {
     return {
       status: "degraded",

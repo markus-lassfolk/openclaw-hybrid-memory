@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  assessContinuousVerificationResult,
-  runVerboseFollowUp,
-} from "../cli/commands/manage/dream-cycle-followup.js";
+import { assessContinuousVerificationResult, runVerboseFollowUp } from "../cli/commands/manage/dream-cycle-followup.js";
 
 describe("dream-cycle follow-up heartbeat logging", () => {
   afterEach(() => {
