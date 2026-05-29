@@ -315,7 +315,11 @@ describe("resolve-contradictions CLI contract mode", () => {
       .fn()
       .mockResolvedValue({ applied: 1, keptNew: 1, keptOld: 0, manualReview: 0, rejected: 0, errors: [] });
     const mem = makeProgram(makeBindings({ runApplyContradictionReviewDecisions }));
-    writeFileSync(reviewPath, `${JSON.stringify({ contradictionId: "c-1", decision: "keep_new", reason: "Latest fact is correct." })}\n`, "utf-8");
+    writeFileSync(
+      reviewPath,
+      `${JSON.stringify({ contradictionId: "c-1", decision: "keep_new", reason: "Latest fact is correct." })}\n`,
+      "utf-8",
+    );
     const lines: string[] = [];
     vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
       lines.push(args.map((a) => String(a)).join(" "));
@@ -324,8 +328,16 @@ describe("resolve-contradictions CLI contract mode", () => {
     await mem.parseAsync(["resolve-contradictions", "--apply-review", reviewPath], { from: "user" });
 
     expect(runApplyContradictionReviewDecisions).toHaveBeenCalledWith([
-      { contradictionId: "c-1", decision: "keep_new", reason: "Latest fact is correct.", confidence: undefined, mergedFactText: undefined },
+      {
+        contradictionId: "c-1",
+        decision: "keep_new",
+        reason: "Latest fact is correct.",
+        confidence: undefined,
+        mergedFactText: undefined,
+      },
     ]);
-    expect(lines.some((l) => l.includes("contradiction-review apply summary applied=1 kept_new=1 kept_old=0"))).toBe(true);
+    expect(lines.some((l) => l.includes("contradiction-review apply summary applied=1 kept_new=1 kept_old=0"))).toBe(
+      true,
+    );
   });
 });

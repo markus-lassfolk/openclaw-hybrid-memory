@@ -105,9 +105,9 @@ interface CliContextServices {
   runResolveContradictionsProjectStateLww: (opts: {
     dryRun?: boolean;
   }) => Promise<import("../../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
-  runResolveContradictionsAuto: (opts: import("../../backends/facts-db/contradictions.js").ResolveContradictionsAutoOptions) => Promise<
-    import("../../backends/facts-db/contradictions.js").ResolveContradictionsAutoResult
-  >;
+  runResolveContradictionsAuto: (
+    opts: import("../../backends/facts-db/contradictions.js").ResolveContradictionsAutoOptions,
+  ) => Promise<import("../../backends/facts-db/contradictions.js").ResolveContradictionsAutoResult>;
   runApplyContradictionReviewDecisions: (
     decisions: import("../../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
   ) => Promise<import("../../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
@@ -413,7 +413,8 @@ export function buildCliContextServices(
     runResolveContradictionsProjectStateLww: (opts: { dryRun?: boolean }) =>
       Promise.resolve(factsDb.resolveContradictionsProjectStateLww(opts)),
     runResolveContradictionsAuto: (opts) => {
-      const model = opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel;
+      const model =
+        opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel;
       return factsDb.resolveContradictionsAuto({
         ...opts,
         ...(opts.llm

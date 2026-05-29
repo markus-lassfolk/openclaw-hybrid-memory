@@ -329,7 +329,9 @@ export class FactsDB extends FactsDBLayer2 {
     );
   }
 
-  async resolveContradictionsAuto(opts: ResolveContradictionsAutoOptions = {}): Promise<ResolveContradictionsAutoResult> {
+  async resolveContradictionsAuto(
+    opts: ResolveContradictionsAutoOptions = {},
+  ): Promise<ResolveContradictionsAutoResult> {
     return resolveContradictionsAutonomouslyImpl(
       this.liveDb,
       (id) => this.getById(id),

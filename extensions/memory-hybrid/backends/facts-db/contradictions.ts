@@ -823,9 +823,9 @@ function persistContradictionDecision(
   supersede: (oldId: string, newId: string | null) => boolean,
   decision: PersistedDecision,
 ): boolean {
-  const contradiction = db
-    .prepare("SELECT resolved FROM contradictions WHERE id = ?")
-    .get(decision.contradictionId) as { resolved: number } | undefined;
+  const contradiction = db.prepare("SELECT resolved FROM contradictions WHERE id = ?").get(decision.contradictionId) as
+    | { resolved: number }
+    | undefined;
   if (!contradiction || contradiction.resolved === 1) return false;
 
   let applied = false;
@@ -963,7 +963,8 @@ export async function resolveContradictionsAutonomously(
         }
 
         if (llmDecision.decision === "merge") {
-          reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM requested merge; keep manual review for safety.";
+          reviewItem.suggestedReason =
+            llmDecision.reason?.trim() || "LLM requested merge; keep manual review for safety.";
         } else if (confidence > 0) {
           reviewItem.suggestedReason =
             llmDecision.reason?.trim() || `LLM confidence ${confidence.toFixed(2)} below auto-apply threshold.`;

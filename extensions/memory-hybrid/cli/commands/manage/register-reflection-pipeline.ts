@@ -10,7 +10,10 @@ import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-ver
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
-import type { ContradictionReviewDecision, ContradictionReviewItem } from "../../../backends/facts-db/contradictions.js";
+import type {
+  ContradictionReviewDecision,
+  ContradictionReviewItem,
+} from "../../../backends/facts-db/contradictions.js";
 
 import {
   formatExtractImplicitFeedbackProgress,
@@ -803,7 +806,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             throw new Error("--target-rate must be a number between 0 and 1");
           }
           if (applyReview && (auto || projectStateLww || dryRun || apply || exportReview || llm || model)) {
-            throw new Error("--apply-review cannot be combined with --auto, --project-state-lww, --dry-run, --apply, --export-review, --llm, or --model");
+            throw new Error(
+              "--apply-review cannot be combined with --auto, --project-state-lww, --dry-run, --apply, --export-review, --llm, or --model",
+            );
           }
 
           if (applyReview) {
