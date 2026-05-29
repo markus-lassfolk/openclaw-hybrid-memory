@@ -1,6 +1,7 @@
 /** Dream-cycle follow-up progress formatting and verbose stage runner. */
 
 import type { ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
+import type { VerificationCycleResult } from "../../../services/continuous-verifier.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 export type FollowUpProgressSupplier = () => string | undefined;
@@ -10,6 +11,12 @@ export interface RunVerboseFollowUpOptions {
   heartbeatIntervalMs?: number;
   stageIndex?: number;
   stageTotal?: number;
+}
+
+export interface ContinuousVerificationAssessment {
+  status: "healthy" | "degraded";
+  shouldFailPipeline: boolean;
+  summary?: string;
 }
 
 export function formatExtractImplicitFeedbackProgress(
@@ -38,6 +45,26 @@ export function formatExtractImplicitFeedbackProgress(
   }
 
   return parts.join("; ");
+}
+
+export function assessContinuousVerificationResult(
+  result: VerificationCycleResult,
+): ContinuousVerificationAssessment {
+  if (result.errors > 0) {
+    return {
+      status: "degraded",
+      shouldFailPipeline: true,
+      summary: `${result.errors}/${result.checked} verification check(s) errored`,
+    };
+  }
+  if (result.checked > 0 && result.confirmed === 0 && result.stale === 0) {
+    return {
+      status: "degraded",
+      shouldFailPipeline: true,
+      summary: `all ${result.checked} verification check(s) were uncertain`,
+    };
+  }
+  return { status: "healthy", shouldFailPipeline: false };
 }
 
 export async function runVerboseFollowUp<T>(
