@@ -118,7 +118,7 @@ jobs:
           # Skip semantic PR-title validation for implementing-stage PRs.
           ignoreLabels: |
             stage/implementing
-          # Allow [WIP] prefix for draft/in-progress PR titles.
+          # Allow WIP-prefixed draft/in-progress PR titles.
           wip: true
           types: |
             feat
