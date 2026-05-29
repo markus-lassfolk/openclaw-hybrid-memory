@@ -254,9 +254,14 @@ ${body}`;
         continue;
       }
       duplicates++;
-      rejectedMentions.push({ label: m.label, surfaceText: m.surfaceText, reason: "duplicate" });
-      countReason(rejectReasons, "duplicate");
-      if (m.confidence > existing.confidence) deduped.set(key, m);
+      if (m.confidence > existing.confidence) {
+        rejectedMentions.push({ label: existing.label, surfaceText: existing.surfaceText, reason: "duplicate" });
+        countReason(rejectReasons, "duplicate");
+        deduped.set(key, m);
+      } else {
+        rejectedMentions.push({ label: m.label, surfaceText: m.surfaceText, reason: "duplicate" });
+        countReason(rejectReasons, "duplicate");
+      }
     }
 
     return {
