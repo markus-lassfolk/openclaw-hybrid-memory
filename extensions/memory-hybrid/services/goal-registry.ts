@@ -127,7 +127,7 @@ async function ensureDir(dir: string): Promise<void> {
 }
 
 function isGoalRegistryJsonFilename(filename: string): boolean {
-  return filename.endsWith(".json") && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
+  return filename.endsWith(".json") && filename !== INDEX_FILENAME && !filename.startsWith(GOAL_HOUSEKEEPING_PREFIX);
 }
 
 function isGoalLike(value: unknown): value is Goal {
@@ -139,6 +139,20 @@ function isGoalLike(value: unknown): value is Goal {
     typeof goal.status === "string" &&
     typeof goal.priority === "string" &&
     typeof goal.createdAt === "string"
+  );
+}
+
+function asGoalIndexEntries(value: unknown): GoalIndex["goals"] {
+  if (!value || typeof value !== "object") return [];
+  const goals = (value as { goals?: unknown }).goals;
+  if (!Array.isArray(goals)) return [];
+  return goals.filter(
+    (entry): entry is GoalIndex["goals"][number] =>
+      !!entry &&
+      typeof entry === "object" &&
+      typeof (entry as { id?: unknown }).id === "string" &&
+      typeof (entry as { label?: unknown }).label === "string" &&
+      typeof (entry as { status?: unknown }).status === "string",
   );
 }
 
@@ -228,15 +242,15 @@ export async function readGoalByLabel(goalsDir: string, label: string): Promise<
   const norm = label.trim().toLowerCase();
   try {
     const raw = await readFile(join(goalsDir, INDEX_FILENAME), "utf-8");
-    const index = JSON.parse(raw) as GoalIndex;
-    const matches = index.goals.filter((g) => typeof g?.label === "string" && g.label.toLowerCase() === norm);
+    const indexGoals = asGoalIndexEntries(JSON.parse(raw) as unknown);
+    const matches = indexGoals.filter((g) => g.label.toLowerCase() === norm);
     const best = matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0];
     if (best) return readGoal(goalsDir, best.id);
   } catch {
     /* index missing or corrupt — fall through to full scan */
   }
   const all = await listGoals(goalsDir);
-  const matches = all.filter((g) => typeof g?.label === "string" && g.label.toLowerCase() === norm);
+  const matches = all.filter((g) => g.label.toLowerCase() === norm);
   return matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0] ?? null;
 }
 

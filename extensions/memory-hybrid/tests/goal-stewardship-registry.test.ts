@@ -244,10 +244,33 @@ describe("goal registry", () => {
     await expect(readGoalByLabel(dir, "with_housekeeping")).resolves.toMatchObject({ id: created.id });
   });
 
+  it("rebuildGoalIndex excludes housekeeping _*.json files", async () => {
+    dir = await makeTempDir();
+    const created = await createGoal(dir, { label: "idx_housekeeping", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    await writeFile(join(dir, "_global_dispatch_rate_limit.json"), JSON.stringify({ timestamps: [] }), "utf-8");
+    await writeFile(join(dir, "_future_housekeeping.json"), JSON.stringify({ state: "ok" }), "utf-8");
+    await rebuildGoalIndex(dir);
+    const index = JSON.parse(await readFile(join(dir, "_index.json"), "utf-8")) as { goals: Array<{ id: string }> };
+    expect(index.goals).toHaveLength(1);
+    expect(index.goals[0]?.id).toBe(created.id);
+  });
+
   it("readGoalByLabel stays safe when malformed goal json lacks label", async () => {
     dir = await makeTempDir();
     await writeFile(join(dir, "malformed.json"), JSON.stringify({ id: "malformed" }), "utf-8");
     await expect(readGoalByLabel(dir, "anything")).resolves.toBeNull();
+  });
+
+  it("listGoals and rebuildGoalIndex skip malformed goal json without label", async () => {
+    dir = await makeTempDir();
+    const healthy = await createGoal(dir, { label: "healthy_malformed", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    await writeFile(join(dir, "malformed.json"), JSON.stringify({ id: "malformed" }), "utf-8");
+    const listed = await listGoals(dir);
+    expect(listed.map((g) => g.id)).toEqual([healthy.id]);
+    await rebuildGoalIndex(dir);
+    const index = JSON.parse(await readFile(join(dir, "_index.json"), "utf-8")) as { goals: Array<{ id: string }> };
+    expect(index.goals).toHaveLength(1);
+    expect(index.goals[0]?.id).toBe(healthy.id);
   });
 
   it("readGoalByLabel prefers active over terminal when labels collide", async () => {
