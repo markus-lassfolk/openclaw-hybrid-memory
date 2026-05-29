@@ -762,6 +762,26 @@ describe("chatComplete — GlitchTip suppression (#302, #303)", () => {
     await expect(chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai })).rejects.toThrow();
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
+
+  it("#1694: does not report to GlitchTip when AbortError is nested in .cause (e.g. MiniMax wraps abort in outer error)", async () => {
+    const abortCause = Object.assign(new Error("Request was aborted"), { name: "AbortError" });
+    const wrappedErr = Object.assign(new Error("stream error"), { cause: abortCause });
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(wrappedErr);
+    await expect(
+      chatComplete({ model: "minimax/MiniMax-M2.7", content: "test", openai: mockOpenai }),
+    ).rejects.toThrow("stream error");
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#1694: does not report to GlitchTip when cause message says 'Request was aborted' without AbortError name", async () => {
+    const abortCause = new Error("Request was aborted");
+    const wrappedErr = Object.assign(new Error("LLM stream interrupted"), { cause: abortCause });
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(wrappedErr);
+    await expect(
+      chatComplete({ model: "minimax/MiniMax-M2.7", content: "test", openai: mockOpenai }),
+    ).rejects.toThrow();
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
 });
 
 describe("chatCompleteWithRetry — 500 and 404 fallback (#302, #303)", () => {
@@ -1907,6 +1927,30 @@ describe("chatCompleteWithRetry — connection error (#703)", () => {
     });
 
     const expectation = expect(promise).rejects.toThrow("Request was aborted");
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("#1694: does not report to GlitchTip when single MiniMax call aborts with nested AbortError cause", async () => {
+    const abortCause = Object.assign(new Error("Request was aborted"), { name: "AbortError" });
+    const wrappedErr = Object.assign(new Error("stream error"), { cause: abortCause });
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(wrappedErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const promise = chatCompleteWithRetry({
+      model: "minimax/MiniMax-M2.7",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: [],
+    });
+
+    const expectation = expect(promise).rejects.toThrow("stream error");
     await vi.runAllTimersAsync();
     await expectation;
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
