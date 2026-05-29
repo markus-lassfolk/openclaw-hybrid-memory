@@ -631,7 +631,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 });
                 // Keep running the remaining follow-up stages for observability, but make the
                 // standalone CLI exit non-zero once the pipeline completes.
-                process.exitCode = 1;
+                process.exitCode = 2;
               }
             }
           }
