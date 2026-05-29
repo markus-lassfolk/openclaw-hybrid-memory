@@ -175,6 +175,86 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.status).toBe("success_analyzed");
   });
 
+  it("parses array after a <thinking> block (MiniMax M2.7-highspeed, #1718)", async () => {
+    const thinkingBlock = `<thinking>\nLet me analyze these incidents carefully.\nStep 1: review patterns.\n</thinking>`;
+    const llmContent = `${thinkingBlock}\n${JSON.stringify([SAMPLE_REMEDIATION])}`;
+    const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.analysed).toBe(1);
+    expect(res.status).toBe("success_analyzed");
+  });
+
+  it("parses array after a <redacted_thinking> block (#1718)", async () => {
+    const thinkingBlock = `<redacted_thinking>redacted reasoning content</redacted_thinking>`;
+    const llmContent = `${thinkingBlock}\n${JSON.stringify([SAMPLE_REMEDIATION])}`;
+    const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.analysed).toBe(1);
+    expect(res.status).toBe("success_analyzed");
+  });
+
+  it("parses array after a <reasoning> block (#1718)", async () => {
+    const thinkingBlock = `<reasoning>\nAnalyzing incident context...\n</reasoning>`;
+    const llmContent = `${thinkingBlock}\n${JSON.stringify([SAMPLE_REMEDIATION])}`;
+    const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.analysed).toBe(1);
+    expect(res.status).toBe("success_analyzed");
+  });
+
+  it("parses fenced JSON after a thinking block (#1718)", async () => {
+    const thinkingBlock = `<thinking>reasoning here</thinking>`;
+    const fencedJson = `\`\`\`json\n${JSON.stringify([SAMPLE_REMEDIATION])}\n\`\`\``;
+    const llmContent = `${thinkingBlock}\n${fencedJson}`;
+    const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.analysed).toBe(1);
+    expect(res.status).toBe("success_analyzed");
+  });
+
+  it("returns failed_parse when response contains only a thinking block with no JSON (#1718)", async () => {
+    const llmContent = `<thinking>\nI cannot determine the right remediation without more context.\n</thinking>`;
+    const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.status).toBe("failed_parse");
+    expect(res.error).toBeDefined();
+    expect(res.analysed).toBe(0);
+  });
+
   it("returns failed_parse when the LLM response cannot be parsed as a JSON array", async () => {
     const llmContent = "I cannot analyse these incidents due to missing context.";
     const ctx = makeCtx(makeOpenAIMock(llmContent));
