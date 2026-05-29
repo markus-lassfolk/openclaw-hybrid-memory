@@ -505,8 +505,9 @@ function countReason(target: Record<string, number>, reason: string): void {
 export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMentionsAuditSummary {
   const factIds = db
     .prepare(
-      `SELECT DISTINCT fact_id FROM fact_entity_mentions
-       ORDER BY created_at DESC
+      `SELECT fact_id FROM fact_entity_mentions
+       GROUP BY fact_id
+       ORDER BY MAX(created_at) DESC
        LIMIT ?`,
     )
     .all(limit) as Array<{ fact_id: string }>;
@@ -593,8 +594,9 @@ export function cleanupEntityMentions(
   const limit = Math.max(1, Math.floor(options.limit));
   const factIds = db
     .prepare(
-      `SELECT DISTINCT fact_id FROM fact_entity_mentions
-       ORDER BY created_at DESC
+      `SELECT fact_id FROM fact_entity_mentions
+       GROUP BY fact_id
+       ORDER BY MAX(created_at) DESC
        LIMIT ?`,
     )
     .all(limit) as Array<{ fact_id: string }>;
