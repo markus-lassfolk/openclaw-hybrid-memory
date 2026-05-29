@@ -146,6 +146,11 @@ describe("runFactsMigrations", () => {
     expect(tableExists("contradictions")).toBe(true);
   });
 
+  it("creates the contradiction_resolution_audit table", () => {
+    runFactsMigrations(db);
+    expect(tableExists("contradiction_resolution_audit")).toBe(true);
+  });
+
   it("creates the clusters and cluster_members tables", () => {
     runFactsMigrations(db);
     expect(tableExists("clusters")).toBe(true);

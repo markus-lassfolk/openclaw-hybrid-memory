@@ -246,6 +246,12 @@ export type HybridMemCliContext = {
   runResolveContradictionsProjectStateLww: (opts: {
     dryRun?: boolean;
   }) => Promise<import("../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
+  runResolveContradictionsAuto: (
+    opts: import("../backends/facts-db/contradictions.js").ResolveContradictionsAutoOptions,
+  ) => Promise<import("../backends/facts-db/contradictions.js").ResolveContradictionsAutoResult>;
+  runApplyContradictionReviewDecisions: (
+    decisions: import("../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
+  ) => Promise<import("../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;

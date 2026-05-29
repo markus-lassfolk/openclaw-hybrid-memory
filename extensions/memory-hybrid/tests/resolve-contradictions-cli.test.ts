@@ -1,4 +1,7 @@
 import { Command } from "commander";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ManageBindings } from "../cli/commands/manage/bindings.js";
 import { registerManageReflectionPipeline } from "../cli/commands/manage/register-reflection-pipeline.js";
@@ -49,6 +52,22 @@ function makeBindings(overrides: Partial<ManageBindings> = {}): ManageBindings {
       wouldManualReview: 0,
       applied: 0,
     }),
+    runResolveContradictionsAuto: vi.fn().mockResolvedValue({
+      total: 0,
+      deterministic: 0,
+      llm: 0,
+      merged: 0,
+      manualReview: 0,
+      applied: false,
+      decisionsApplied: 0,
+      targetRate: 0.8,
+      achievedRate: 1,
+      targetMet: true,
+      reviewItems: [],
+    }),
+    runApplyContradictionReviewDecisions: vi
+      .fn()
+      .mockResolvedValue({ applied: 0, keptNew: 0, keptOld: 0, manualReview: 0, rejected: 0, errors: [] }),
     vectorDb: {},
     versionInfo: { pluginVersion: "test", memoryManagerVersion: "test", schemaVersion: 1 },
     embeddings: {},
@@ -90,6 +109,8 @@ function makeBindings(overrides: Partial<ManageBindings> = {}): ManageBindings {
       runResolveContradictions: merged.runResolveContradictions,
       runResolveContradictionsDryRun: merged.runResolveContradictionsDryRun,
       runResolveContradictionsProjectStateLww: merged.runResolveContradictionsProjectStateLww,
+      runResolveContradictionsAuto: merged.runResolveContradictionsAuto,
+      runApplyContradictionReviewDecisions: merged.runApplyContradictionReviewDecisions,
     };
   }
   return merged as ManageBindings;
@@ -142,9 +163,15 @@ function sampleLwwResult(overrides: Partial<LwwResult> = {}): LwwResult {
 }
 
 describe("resolve-contradictions CLI contract mode", () => {
+  let tmpDir: string;
+
   afterEach(() => {
     vi.restoreAllMocks();
     process.exitCode = undefined;
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = "";
+    }
   });
 
   it("supports --dry-run contract mode with grouped details and structured summary", async () => {
@@ -215,6 +242,102 @@ describe("resolve-contradictions CLI contract mode", () => {
 
     await expect(mem.parseAsync(["resolve-contradictions", "--dry-run", "--apply"], { from: "user" })).rejects.toThrow(
       "--dry-run and --apply are mutually exclusive",
+    );
+  });
+
+  it("supports --auto dry-run, summary reporting, and review export", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "resolve-contradictions-cli-"));
+    const exportPath = join(tmpDir, "review.jsonl");
+    const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+      total: 5,
+      deterministic: 4,
+      llm: 0,
+      merged: 0,
+      manualReview: 1,
+      applied: false,
+      decisionsApplied: 0,
+      targetRate: 0.8,
+      achievedRate: 0.8,
+      targetMet: true,
+      reviewItems: [
+        {
+          contradictionId: "c-1",
+          factIdNew: "new-1",
+          factIdOld: "old-1",
+          entity: "proj",
+          key: "status",
+          scope: null,
+          scopeTarget: null,
+          newFactDate: 100,
+          oldFactDate: 90,
+          newSource: "conversation",
+          oldSource: "cli",
+          newConf: 1,
+          oldConf: 1,
+          newValueExcerpt: "done",
+          oldValueExcerpt: "blocked",
+          newTextExcerpt: "Project done",
+          oldTextExcerpt: "Project blocked",
+          possibleOverloadedEntity: false,
+          suggestedDecision: "manual_review",
+          suggestedStrategy: "manual-review",
+          suggestedConfidence: 0,
+          suggestedReason: "Needs human review.",
+        },
+      ],
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--auto", "--dry-run", "--export-review", exportPath], {
+      from: "user",
+    });
+
+    expect(runResolveContradictionsAuto).toHaveBeenCalledWith({
+      dryRun: true,
+      targetRate: 0.8,
+      llm: false,
+      model: undefined,
+    });
+    expect(lines.some((l) => l.includes("contradiction-auto summary total=5 deterministic=4 llm=0"))).toBe(true);
+    const exported = readFileSync(exportPath, "utf-8").trim().split("\n");
+    expect(exported).toHaveLength(1);
+    expect(JSON.parse(exported[0])).toMatchObject({ contradictionId: "c-1", suggestedDecision: "manual_review" });
+  });
+
+  it("supports --apply-review with parsed JSONL decisions", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "resolve-contradictions-cli-"));
+    const reviewPath = join(tmpDir, "review-decisions.jsonl");
+    const runApplyContradictionReviewDecisions = vi
+      .fn()
+      .mockResolvedValue({ applied: 1, keptNew: 1, keptOld: 0, manualReview: 0, rejected: 0, errors: [] });
+    const mem = makeProgram(makeBindings({ runApplyContradictionReviewDecisions }));
+    writeFileSync(
+      reviewPath,
+      `${JSON.stringify({ contradictionId: "c-1", decision: "keep_new", reason: "Latest fact is correct." })}\n`,
+      "utf-8",
+    );
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--apply-review", reviewPath], { from: "user" });
+
+    expect(runApplyContradictionReviewDecisions).toHaveBeenCalledWith([
+      {
+        contradictionId: "c-1",
+        decision: "keep_new",
+        reason: "Latest fact is correct.",
+        confidence: undefined,
+        mergedFactText: undefined,
+      },
+    ]);
+    expect(lines.some((l) => l.includes("contradiction-review apply summary applied=1 kept_new=1 kept_old=0"))).toBe(
+      true,
     );
   });
 });

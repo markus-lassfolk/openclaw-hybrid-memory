@@ -14,6 +14,7 @@ import { runFindDuplicates } from "../../services/find-duplicates.js";
 import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
 import { mergeResults } from "../../services/merge-results.js";
 import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
+import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
 import { parseSourceDate } from "../../utils/dates.js";
 import { resolveTierPreferenceWithSources } from "../../utils/llm-selection.js";
@@ -104,6 +105,12 @@ interface CliContextServices {
   runResolveContradictionsProjectStateLww: (opts: {
     dryRun?: boolean;
   }) => Promise<import("../../backends/facts-db/contradictions.js").ProjectStateLwwResult>;
+  runResolveContradictionsAuto: (
+    opts: import("../../backends/facts-db/contradictions.js").ResolveContradictionsAutoOptions,
+  ) => Promise<import("../../backends/facts-db/contradictions.js").ResolveContradictionsAutoResult>;
+  runApplyContradictionReviewDecisions: (
+    decisions: import("../../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
+  ) => Promise<import("../../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
   getMemoryCategories: () => string[];
   mergeResults: HybridMemCliContext["mergeResults"];
   parseSourceDate: (v: string | number | null | undefined) => number | null;
@@ -405,6 +412,28 @@ export function buildCliContextServices(
     runResolveContradictionsDryRun: () => Promise.resolve(factsDb.previewResolveContradictions()),
     runResolveContradictionsProjectStateLww: (opts: { dryRun?: boolean }) =>
       Promise.resolve(factsDb.resolveContradictionsProjectStateLww(opts)),
+    runResolveContradictionsAuto: (opts) => {
+      const model =
+        opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel;
+      return factsDb.resolveContradictionsAuto({
+        ...opts,
+        ...(opts.llm
+          ? {
+              model,
+              adjudicate: (item) => adjudicateContradictionWithLlm(openai, model, item),
+            }
+          : {}),
+        actor: "resolve-contradictions",
+        toolVersion: versionInfo.pluginVersion,
+      });
+    },
+    runApplyContradictionReviewDecisions: (decisions) =>
+      Promise.resolve(
+        factsDb.applyContradictionReviewDecisions(decisions, {
+          actor: "resolve-contradictions-review",
+          toolVersion: versionInfo.pluginVersion,
+        }),
+      ),
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,
     parseSourceDate,
