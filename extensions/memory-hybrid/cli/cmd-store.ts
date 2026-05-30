@@ -323,29 +323,62 @@ export async function runStoreForCli(
       aliasDb?.deleteByFactId(supersedesId);
     }
     try {
-      const vector = await embeddings.embed(text);
-      factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-      if (!(await vectorDb.hasDuplicate(vector))) {
+      if (storeResult.embeddingStale) {
+        // Merge case: the existing fact's text was updated in-place.
+        // Re-embed the merged text and force-replace the stale LanceDB vector.
+        // If embed fails, the vector encodes stale pre-merge text; nightly re-index will repair.
+        const mergedVector = await embeddings.embed(entry.text);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
         await vectorDb.store({
-          text,
-          vector,
+          text: entry.text,
+          vector: mergedVector,
           importance: CLI_STORE_IMPORTANCE,
           category: opts.category ?? "other",
           id: entry.id,
         });
+        persistCanonicalFactEmbedding(
+          factsDb,
+          entry.id,
+          embeddings.modelName,
+          mergedVector,
+          "runStoreForCli:final-fact-embeddings",
+          "cli",
+          log.warn,
+        );
+      } else {
+        const vector = await embeddings.embed(text);
+        factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+        if (!(await vectorDb.hasDuplicate(vector))) {
+          await vectorDb.store({
+            text,
+            vector,
+            importance: CLI_STORE_IMPORTANCE,
+            category: opts.category ?? "other",
+            id: entry.id,
+          });
+        }
+        persistCanonicalFactEmbedding(
+          factsDb,
+          entry.id,
+          embeddings.modelName,
+          vector,
+          "runStoreForCli:final-fact-embeddings",
+          "cli",
+          log.warn,
+        );
       }
-      persistCanonicalFactEmbedding(
-        factsDb,
-        entry.id,
-        embeddings.modelName,
-        vector,
-        "runStoreForCli:final-fact-embeddings",
-        "cli",
-        log.warn,
-      );
     } catch (err) {
-      log.warn(`memory-hybrid: vector store failed: ${err}`);
-      capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-final" });
+      log.warn(
+        storeResult.embeddingStale
+          ? `memory-hybrid: stale vector re-embed failed for merged fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
+          : `memory-hybrid: vector store failed: ${err}`,
+      );
+      capturePluginError(err as Error, {
+        subsystem: "cli",
+        operation: storeResult.embeddingStale
+          ? "runStoreForCli:vector-store-final-stale"
+          : "runStoreForCli:vector-store-final",
+      });
     }
     return {
       outcome: "stored",

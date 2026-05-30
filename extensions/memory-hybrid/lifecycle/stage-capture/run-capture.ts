@@ -659,7 +659,30 @@ export async function runCapture(
               context: "stage-capture",
             });
             try {
-              if (vector) {
+              if (storeResult.embeddingStale) {
+                // Merge case: the existing fact's text was updated in-place.
+                // Re-embed the merged text and force-replace the stale LanceDB vector.
+                // If embed fails, the vector encodes stale pre-merge text; the dream-cycle
+                // re-index will repair it on the next nightly run.
+                const mergedVector = await ctx.embeddings.embed(storedEntry.text);
+                ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
+                await ctx.vectorDb.store({
+                  text: storedEntry.text,
+                  vector: mergedVector,
+                  importance: CLI_STORE_IMPORTANCE,
+                  category,
+                  id: storedEntry.id,
+                });
+                persistCanonicalFactEmbedding(
+                  ctx.factsDb,
+                  storedEntry.id,
+                  ctx.embeddings.modelName,
+                  mergedVector,
+                  "auto-capture-fact-embeddings",
+                  "auto-capture",
+                  api.logger.warn?.bind(api.logger),
+                );
+              } else if (vector) {
                 ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
                 if (!(await ctx.vectorDb.hasDuplicate(vector))) {
                   await ctx.vectorDb.store({
@@ -682,10 +705,14 @@ export async function runCapture(
               }
             } catch (vecErr) {
               capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
-                operation: "auto-capture-vector-store",
+                operation: storeResult.embeddingStale ? "auto-capture-stale-vector-store" : "auto-capture-vector-store",
                 subsystem: "auto-capture",
               });
-              api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
+              api.logger.warn(
+                storeResult.embeddingStale
+                  ? `memory-hybrid: stale vector re-embed failed for merged fact ${storedEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
+                  : `memory-hybrid: vector capture failed: ${vecErr}`,
+              );
             }
             stored++;
             ctx.auditStore?.append({
