@@ -1,5 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
+const MIGRATED_SCAN_CURSOR_DBS = new WeakSet<DatabaseSync>();
+
 interface ScanCursor {
   lastSessionTs: number;
   lastRunAt: number;
@@ -8,6 +10,7 @@ interface ScanCursor {
 }
 
 export function migrateScanCursorsTable(db: DatabaseSync): void {
+  if (MIGRATED_SCAN_CURSOR_DBS.has(db)) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS scan_cursors (
       scan_type TEXT PRIMARY KEY,
@@ -21,6 +24,7 @@ export function migrateScanCursorsTable(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "last_session_file")) {
     db.exec("ALTER TABLE scan_cursors ADD COLUMN last_session_file TEXT");
   }
+  MIGRATED_SCAN_CURSOR_DBS.add(db);
 }
 
 export function getScanCursor(db: DatabaseSync, scanType: string): ScanCursor | null {

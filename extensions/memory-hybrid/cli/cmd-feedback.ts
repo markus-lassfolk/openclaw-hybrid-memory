@@ -550,10 +550,10 @@ export async function runExtractImplicitFeedbackForCli(
   let deferredSignalsForFirstSession: number | undefined;
   let deferredTrajectoriesForFirstSession: number | undefined;
 
-  const maxSessionsPerRun = Math.max(0, implicitCfg.maxSessionsPerRun ?? 0);
-  const maxSignalsPerRun = Math.max(0, implicitCfg.maxSignalsPerRun ?? 0);
-  const maxTrajectoriesPerRun = Math.max(0, implicitCfg.maxTrajectoriesPerRun ?? 0);
-  const maxWallClockMs = Math.max(0, (implicitCfg.maxWallClockSeconds ?? 0) * 1000);
+  const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 0;
+  const maxSignalsPerRun = implicitCfg.maxSignalsPerRun ?? 0;
+  const maxTrajectoriesPerRun = implicitCfg.maxTrajectoriesPerRun ?? 0;
+  const maxWallClockMs = (implicitCfg.maxWallClockSeconds ?? 0) * 1000;
   const rawDb = factsDb.getRawDb();
   const startedAt = Date.now();
 
@@ -1011,6 +1011,8 @@ export async function runExtractImplicitFeedbackForCli(
     progress.stage = "done";
     progress.currentSession = undefined;
     emitProgress();
+    const averageSignals = totalSignals / Math.max(1, progress.sessionsProcessed);
+    const averageTrajectories = trajectoriesBuilt / Math.max(1, progress.sessionsProcessed);
     return {
       signalsExtracted: totalSignals,
       positiveCount,
@@ -1025,16 +1027,12 @@ export async function runExtractImplicitFeedbackForCli(
       backlogSignalsEstimate:
         progress.backlogSignalsEstimate ||
         (progress.sessionsDeferred > 0
-          ? estimateDeferredCount(progress.sessionsDeferred, totalSignals / Math.max(1, progress.sessionsProcessed), deferredSignalsForFirstSession)
+          ? estimateDeferredCount(progress.sessionsDeferred, averageSignals, deferredSignalsForFirstSession)
           : 0),
       backlogTrajectoriesEstimate:
         progress.backlogTrajectoriesEstimate ||
         (progress.sessionsDeferred > 0
-          ? estimateDeferredCount(
-              progress.sessionsDeferred,
-              trajectoriesBuilt / Math.max(1, progress.sessionsProcessed),
-              deferredTrajectoriesForFirstSession,
-            )
+          ? estimateDeferredCount(progress.sessionsDeferred, averageTrajectories, deferredTrajectoriesForFirstSession)
           : 0),
       partial: progress.partial,
       partialReason,
