@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { PROCEDURE_BLOCK_REASONS } from "../backends/facts-db/procedures.js";
 import {
   buildAuditHealthReport,
   recordStorageGrowthSample,
@@ -17,6 +18,16 @@ import {
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
+
+/** Insert a validated procedure row that will be blocked from promotion (success_count < threshold). */
+function insertLowRecallProcedure(db: ReturnType<typeof FactsDB.prototype.getRawDb>, id: string, taskPattern: string): void {
+  db
+    ?.prepare(
+      `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, confidence, promoted_to_skill, last_validated, created_at, updated_at)
+       VALUES (?, ?, ?, 'positive', 1, 0, 0.6, 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))`,
+    )
+    .run(id, taskPattern, JSON.stringify([{ tool: "bash", args: {} }]));
+}
 
 describe("buildAuditHealthReport — JSON schema (#1193)", () => {
   it("produces a versioned report with the expected top-level fields", () => {
@@ -243,11 +254,9 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(report.procedures.byBlockReason).toBeDefined();
     expect(typeof report.procedures.byBlockReason).toBe("object");
     // All standard block reasons must be present as keys.
-    for (const reason of ["duplicate_skill", "low_recall", "missing_anchor", "awaiting_approval", "unknown"]) {
+    for (const reason of PROCEDURE_BLOCK_REASONS) {
       expect(reason in report.procedures.byBlockReason).toBe(true);
-      expect(typeof report.procedures.byBlockReason[reason as keyof typeof report.procedures.byBlockReason]).toBe(
-        "number",
-      );
+      expect(typeof report.procedures.byBlockReason[reason]).toBe("number");
     }
     db.close();
   });
@@ -264,13 +273,7 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
       source: "test",
     });
     // Insert a validated procedure with low success_count so it is blocked with low_recall.
-    const raw = db.getRawDb();
-    raw
-      ?.prepare(
-        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, confidence, promoted_to_skill, last_validated, created_at, updated_at)
-         VALUES ('proc-warn-1', 'do something useful', ?, 'positive', 1, 0, 0.6, 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))`,
-      )
-      .run(JSON.stringify([{ tool: "bash", args: {} }]));
+    insertLowRecallProcedure(db.getRawDb(), "proc-warn-1", "do something useful");
 
     const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
 
@@ -294,13 +297,7 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
       value: null,
       source: "test",
     });
-    const raw = db.getRawDb();
-    raw
-      ?.prepare(
-        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, confidence, promoted_to_skill, last_validated, created_at, updated_at)
-         VALUES ('proc-rem-1', 'low recall task', ?, 'positive', 1, 0, 0.6, 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))`,
-      )
-      .run(JSON.stringify([{ tool: "bash", args: {} }]));
+    insertLowRecallProcedure(db.getRawDb(), "proc-rem-1", "low recall task");
 
     const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
 
