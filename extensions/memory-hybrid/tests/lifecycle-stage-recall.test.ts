@@ -113,7 +113,9 @@ describe("runRecallStage", () => {
 
   it("returns empty instead of throwing when FactsDB closes during teardown", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
-    vi.mocked(recallPipeline.runRecallPipelineQuery).mockRejectedValue(new Error("The database connection is not open"));
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockRejectedValue(
+      new Error("The database connection is not open"),
+    );
     factsDb.permanentClose();
     const sessionState = makeRecallSessionState();
     const api = makeMockStageApi();
