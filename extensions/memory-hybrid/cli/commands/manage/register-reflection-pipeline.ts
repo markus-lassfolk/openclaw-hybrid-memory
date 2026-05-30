@@ -1237,12 +1237,6 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             });
             throw err;
           }
-          if (res.skipped) {
-            console.log(
-              `Entity enrichment skipped: graph.enabled is false (${res.pending} fact${res.pending === 1 ? "" : "s"} would be pending if graph were enabled).`,
-            );
-            return;
-          }
           const pendingTotal = res.pendingTotal ?? res.pending;
           const mode = res.mode ?? (all ? "all" : "bounded");
           const remainingTotal = res.remainingTotal ?? Math.max(0, pendingTotal - res.processed);
@@ -1253,6 +1247,15 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             console.log(
               `Entity enrichment backlog by tier: hot=${res.pendingByTier.hot}, warm=${res.pendingByTier.warm}, structural=${res.pendingByTier.structural}, cold=${res.pendingByTier.cold}, unknown=${res.pendingByTier.unknown}`,
             );
+          }
+          if (res.skipped) {
+            console.log(
+              `Entity enrichment skipped: graph.enabled is false (${res.pending} fact${res.pending === 1 ? "" : "s"} would be pending if graph were enabled).`,
+            );
+            if (mode !== "all") {
+              console.log(`Estimated runs to clear backlog at current limit: ${estimatedRunsRemaining}`);
+            }
+            return;
           }
           if (dryRun) {
             console.log(
