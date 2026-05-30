@@ -48,7 +48,8 @@ const GENERIC_TERMS = new Set([
   "fact",
 ]);
 
-const MODEL_MATCHER = /\b(gpt|claude|gemini|minimax|sonnet|opus)\b/i;
+const MODEL_MATCHER =
+  /\b(gpt[-\s]?\d|claude[-\s]?\d|gemini[-\s]?\d|minimax[-\s]?\d|(gpt|claude|gemini|minimax|sonnet|opus)[-\s](pro|plus|turbo|ultra|flash|preview|vision|instruct))\b/i;
 
 const CANONICAL_LABEL_MAP: Array<{ match: RegExp; label: EntityMentionLabel; canonicalNormalized: string }> = [
   { match: MODEL_MATCHER, label: "MODEL", canonicalNormalized: "" },
