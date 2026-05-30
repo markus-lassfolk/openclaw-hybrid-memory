@@ -652,7 +652,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           let processed = 0;
           let batchNumber = 0;
           let providerCircuitBreak = false;
-          let providerCircuitBreakCause: "max_failures" | "provider_5xx" = "max_failures";
+          let providerCircuitBreakCause: string = "max_failures";
           let consecutiveEmbedFailures = 0;
           let aborted = false;
           if (opts?.apply) {
