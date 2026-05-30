@@ -141,8 +141,7 @@ export function normalizeFactEntityMentionsForPersistence<
   const prepared = mentions
     .map((mention) => {
       const surfaceText = normalizeMentionSurfaceText(mention.surfaceText);
-      const normalizedSurface =
-        normalizeEntityKey(mention.normalizedSurface || surfaceText) || normalizeEntityKey(surfaceText);
+      const normalizedSurface = normalizeEntityKey(surfaceText);
       // Adjust endOffset for trimmed trailing whitespace so stored offsets match the trimmed surfaceText in the original fact text
       const trailingTrim = mention.surfaceText.length - mention.surfaceText.trimEnd().length;
       return {
