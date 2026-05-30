@@ -14,7 +14,7 @@ import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
@@ -312,18 +312,17 @@ export async function runSelfCorrectionRunForCli(
     const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
       incidents_json: JSON.stringify(incidents),
     });
-    const heavyPref = getLLMModelPreference(getCronModelConfig(cfg), "heavy");
+    const heavyResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
     const heavyPrefWithSources = resolveTierPreferenceWithSources(cfg, "heavy");
-    const model = opts.model ?? heavyPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
+    const model = opts.model ?? heavyResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
     const modelSource = opts.model
       ? "--model"
       : heavyPrefWithSources.models[0] === model
         ? (heavyPrefWithSources.sources[0] ?? "built-in")
         : "built-in";
-    const scFallbackCandidates = [
-      ...(opts.model ? heavyPref : heavyPref.slice(1)),
-      ...(cfg.llm ? [] : (cfg.distill?.fallbackModels ?? [])),
-    ];
+    const scFallbackCandidates = opts.model
+      ? [heavyResolved.defaultModel, ...(heavyResolved.fallbackModels ?? [])]
+      : (heavyResolved.fallbackModels ?? []);
     const scFallbackModels = [...new Set(scFallbackCandidates.filter((m) => m !== model))];
     let analysed: Array<{
       category: string;
