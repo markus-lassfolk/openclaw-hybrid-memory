@@ -89,7 +89,7 @@ export function buildHybridMemCronBashBody(
     '  local timeout_raw="${STEP_TIMEOUT_SECONDS:-0}"',
     "  local timeout_secs=0",
     '  if [[ "$timeout_raw" =~ ^[0-9]+$ ]]; then',
-    "    timeout_secs=$timeout_raw",
+    '    timeout_secs=$((10#$timeout_raw))',
     "  fi",
     '  local -a cmd=("$@")',
     '  if [ "$force_mode" -eq 1 ] && [ "${cmd[0]:-}" = "openclaw" ] && [ "${cmd[1]:-}" = "hybrid-mem" ]; then',
