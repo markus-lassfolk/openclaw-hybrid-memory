@@ -53,6 +53,11 @@ export type PendingReviewDigestReport = {
     approved: number;
     rejected: number;
     expired: number;
+    /**
+     * #1742: count of pending entries omitted from `pendingEntries` (by time-window filter or
+     * the per-digest cap). When > 0, the digest renders an explicit truncation marker.
+     */
+    truncated: number;
     pendingEntries: Array<{
       id: string;
       title: string;
@@ -279,6 +284,8 @@ export function buildPendingReviewDigestReport(opts: {
       approved: personaAll.filter((p) => p.status === "approved").length,
       rejected: personaAll.filter((p) => p.status === "rejected").length,
       expired: personaAll.filter((p) => p.status === "expired").length,
+      // #1742: track omitted entries so callers can surface a truncation marker.
+      truncated: Math.max(0, personaPending.length - Math.min(personaRecentPending.length, 10)),
       pendingEntries: personaRecentPending.slice(0, 10).map((p) => ({
         id: p.id,
         title: p.title,
@@ -345,6 +352,13 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
       lines.push(`   - Evidence: ${p.evidence.facts} fact(s)${sample}`);
     }
   });
+  // #1742: when entries were omitted (time-window or cap), surface an explicit marker so
+  // operators know the list is incomplete and how to see the full backlog.
+  if (report.personaProposals.truncated > 0) {
+    lines.push(
+      `_(${report.personaProposals.truncated} more omitted — run \`openclaw hybrid-mem proposals list --status pending\` to see all)_`,
+    );
+  }
   lines.push(
     "",
     `## Procedure promotions (${report.procedures.validatedNotPromoted} backlog, ${report.procedures.newThisWeek} new this week)`,
