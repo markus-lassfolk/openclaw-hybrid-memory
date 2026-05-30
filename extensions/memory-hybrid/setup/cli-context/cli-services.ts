@@ -179,11 +179,7 @@ export function buildCliContextServices(
     },
     runReflection: async (opts) => {
       const requestedModel = opts.model ?? cfg.reflection.model;
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
-        cfg,
-        "maintenance",
-        requestedModel,
-      );
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
       const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
@@ -224,11 +220,7 @@ export function buildCliContextServices(
     },
     runReflectionRules: (opts) => {
       const requestedModel = opts.model ?? cfg.reflection.model;
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
-        cfg,
-        "maintenance",
-        requestedModel,
-      );
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
       const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
@@ -253,11 +245,7 @@ export function buildCliContextServices(
     },
     runReflectionMeta: (opts) => {
       const requestedModel = opts.model ?? cfg.reflection.model;
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
-        cfg,
-        "maintenance",
-        requestedModel,
-      );
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
       const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
