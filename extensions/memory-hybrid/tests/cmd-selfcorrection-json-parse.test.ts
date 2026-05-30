@@ -330,6 +330,31 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.status).toBe("success_analyzed");
   });
 
+  it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {
+    const ctx = makeCtx(makeOpenAIMock("[]"));
+    (ctx.cfg as any).llm = {
+      default: ["default-model"],
+      heavy: ["heavy-primary"],
+    };
+    (ctx.cfg as any).distill = {
+      fallbackModels: ["heavy-fallback-1", "heavy-fallback-2"],
+    };
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    const infoCalls = ((ctx.logger.info as any).mock?.calls ?? []).flat();
+    expect(
+      infoCalls.some((line: unknown) =>
+        String(line).includes("fallback chain = [heavy-fallback-1, heavy-fallback-2]"),
+      ),
+    ).toBe(true);
+  });
+
   it("uses configured fallback chain when model is overridden via --model", async () => {
     const ctx = makeCtx(makeOpenAIMock("[]"));
     (ctx.cfg as any).llm = {
