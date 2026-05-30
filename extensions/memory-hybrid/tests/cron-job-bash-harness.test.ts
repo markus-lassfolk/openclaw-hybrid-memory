@@ -152,6 +152,7 @@ exit 2
     spawnSync("mkdir", ["-p", bin, home]);
     const marker = join(tmp, "validator-called.txt");
     const exitCapture = join(tmp, "exit-captured.txt");
+    const shouldNotRun = join(tmp, "unexpected-second-step.txt");
     const fakeOpenclaw = join(bin, "openclaw");
     writeFileSync(
       fakeOpenclaw,
@@ -161,6 +162,10 @@ if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then
   echo "prune failed"
   exit 17
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
+  echo ran > ${JSON.stringify(shouldNotRun)}
+  exit 0
 fi
 if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
   echo called > ${JSON.stringify(marker)}
@@ -183,6 +188,7 @@ exit 2
 
     const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
       { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      { name: "distill", cmd: "openclaw hybrid-mem distill --verbose" },
     ]);
     const result = spawnSync("bash", ["-c", bash], {
       encoding: "utf-8",
@@ -193,6 +199,9 @@ exit 2
     expect(readFileSync(marker, "utf-8")).toContain("called");
     const exitContents = readFileSync(exitCapture, "utf-8");
     expect(exitContents).toContain("prune exit=17 status=failed reason=nonzero_exit");
+    expect(exitContents).not.toContain("distill");
+    expect(result.stdout + result.stderr).not.toContain("distill --verbose");
+    expect(() => readFileSync(shouldNotRun, "utf-8")).toThrow();
     expect(result.stdout + result.stderr).toContain("validate-cron-exit");
   });
 
