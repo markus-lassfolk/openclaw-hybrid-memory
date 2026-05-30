@@ -102,22 +102,23 @@ function canonicalizeByKnownMap(
   fallbackLabel: EntityMentionLabel,
 ): { label: EntityMentionLabel; normalizedSurface: string } {
   for (const rule of CANONICAL_LABEL_MAP) {
-    const surfaceMatches = rule.match.test(surfaceText);
-    const normalizedMatches = rule.match.test(normalizedSurface);
-    if (!surfaceMatches && !normalizedMatches) continue;
+    const surfaceMatch = rule.match.exec(surfaceText);
+    const normalizedMatch = rule.match.exec(normalizedSurface);
+    if (!surfaceMatch && !normalizedMatch) continue;
     if (fallbackLabel === "PERSON" && rule.label === "MODEL") {
       continue;
     }
     if (rule.label === "MODEL") {
+      const matchedText = surfaceMatch ? surfaceMatch[0] : normalizedMatch![0];
       return {
         label: "MODEL",
-        normalizedSurface: normalizeModelCanonical(surfaceText),
+        normalizedSurface: normalizeModelCanonical(matchedText),
       };
     }
     return {
       label: rule.label,
       normalizedSurface:
-        rule.canonicalNormalized || (normalizedMatches ? normalizedSurface : normalizeEntityKey(surfaceText)),
+        rule.canonicalNormalized || (normalizedMatch ? normalizedSurface : normalizeEntityKey(surfaceText)),
     };
   }
   return { label: fallbackLabel, normalizedSurface };
