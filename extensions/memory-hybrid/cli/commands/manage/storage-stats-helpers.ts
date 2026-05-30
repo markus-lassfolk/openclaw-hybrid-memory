@@ -164,27 +164,93 @@ export function validateSyncEnvelope(raw: unknown): {
 export function recordStorageGrowthSample(
   factsDb: ManageBindings["factsDb"],
   lanceBytes: number | null,
-): { inserted: boolean; recordedAt: number } {
+  opts?: { force?: boolean; dryRun?: boolean },
+): {
+  inserted: boolean;
+  recordedAt: number;
+  sampleId: number | null;
+  status: "recorded" | "skipped" | "dry_run";
+  reason: "already_sampled_today" | "storage_unavailable" | null;
+  sample: {
+    recordedAt: number;
+    sqliteBytes: number | null;
+    lanceBytes: number | null;
+    linkCount: number;
+    factCount: number;
+  };
+} {
   const raw = factsDb.getRawDb?.();
   const nowSecReport = Math.floor(Date.now() / 1000);
-  if (!raw) return { inserted: false, recordedAt: nowSecReport };
   const storageBytes = factsDb.estimateStorageBytes?.();
   const activeFacts = factsDb.getCount();
-  const linkCountTotal = Number(
-    (raw.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as { c: number } | undefined)?.c ?? 0,
-  );
+  const linkCountTotal = raw
+    ? Number((raw.prepare("SELECT COUNT(*) AS c FROM memory_links").get() as { c: number } | undefined)?.c ?? 0)
+    : 0;
+  const sample = {
+    recordedAt: nowSecReport,
+    sqliteBytes: storageBytes?.sqliteBytes ?? null,
+    lanceBytes,
+    linkCount: linkCountTotal,
+    factCount: activeFacts,
+  };
+  if (!raw) {
+    return {
+     inserted: false,
+     recordedAt: nowSecReport,
+     sampleId: null,
+     status: "skipped",
+     reason: "storage_unavailable",
+     sample,
+    };
+  }
+  if (opts?.dryRun) {
+    return {
+     inserted: false,
+     recordedAt: nowSecReport,
+     sampleId: null,
+     status: "dry_run",
+     reason: null,
+     sample,
+    };
+  }
   const d = new Date();
   const startOfDayUtc = Math.floor(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000);
-  const alreadyToday = raw
-    .prepare("SELECT 1 AS ok FROM storage_growth_history WHERE recorded_at >= ? LIMIT 1")
-    .get(startOfDayUtc) as { ok: number } | undefined;
-  if (alreadyToday) return { inserted: false, recordedAt: nowSecReport };
-  raw
+  const alreadyToday =
+    !opts?.force &&
+    (raw.prepare("SELECT 1 AS ok FROM storage_growth_history WHERE recorded_at >= ? LIMIT 1").get(startOfDayUtc) as
+     | { ok: number }
+     | undefined);
+  if (alreadyToday) {
+    return {
+     inserted: false,
+     recordedAt: nowSecReport,
+     sampleId: null,
+     status: "skipped",
+     reason: "already_sampled_today",
+     sample,
+    };
+  }
+  const insertResult = raw
     .prepare(
-      "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)",
+     "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)",
     )
-    .run(nowSecReport, storageBytes?.sqliteBytes ?? null, lanceBytes, linkCountTotal, activeFacts);
-  return { inserted: true, recordedAt: nowSecReport };
+    .run(sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount) as {
+    lastInsertRowid?: number | bigint;
+  };
+  const sampleId =
+    typeof insertResult.lastInsertRowid === "bigint"
+     ? Number(insertResult.lastInsertRowid)
+     : typeof insertResult.lastInsertRowid === "number"
+       ? insertResult.lastInsertRowid
+       : null;
+  return {
+    inserted: true,
+    recordedAt: nowSecReport,
+    sampleId,
+    status: "recorded",
+    reason: null,
+    sample,
+  };
 }
 
 /** Apply optional CLI filters to merged hybrid search results (category/entity/key/source/tier). */
