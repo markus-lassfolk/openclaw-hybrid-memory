@@ -248,6 +248,19 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           dryRun: opts?.dryRun,
         });
         if (opts?.json) {
+          // Emit cron-harness-compatible marker to stderr so hm_step can still
+          // classify skips, while keeping stdout clean for JSON parsers.
+          let marker = "";
+          if (r.status === "recorded") {
+            marker = "status=success_recorded";
+          } else if (r.status === "dry_run") {
+            marker = "status=success_dry_run";
+          } else if (r.reason === "storage_unavailable") {
+            marker = "status=skipped_storage_unavailable";
+          } else {
+            marker = "status=skipped_already_sampled_today";
+          }
+          console.error(`record-storage-sample: ${marker}`);
           console.log(
             JSON.stringify(
               {
