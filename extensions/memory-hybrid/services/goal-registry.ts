@@ -250,7 +250,7 @@ export async function readGoalByLabel(goalsDir: string, label: string): Promise<
     for (const match of orderedMatches) {
       try {
         const goal = await readGoal(goalsDir, match.id);
-        if (goal) return goal;
+        if (goal && !isTerminalStatus(goal.status)) return goal;
       } catch {
         // Corrupt/stale index entries should not abort lookups.
       }
