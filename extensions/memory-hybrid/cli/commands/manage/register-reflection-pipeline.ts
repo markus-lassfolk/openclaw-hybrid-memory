@@ -16,6 +16,7 @@ import type {
 } from "../../../backends/facts-db/contradictions.js";
 
 import {
+  assessContinuousVerificationResult,
   formatExtractImplicitFeedbackProgress,
   runVerboseFollowUp,
   type RunVerboseFollowUpOptions,
@@ -611,6 +612,28 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             console.log(`  Stale: ${verificationRes.stale}`);
             console.log(`  Uncertain: ${verificationRes.uncertain}`);
             console.log(`  Errors: ${verificationRes.errors}`);
+            if (verificationRes.errorSummaries.length > 0) {
+              console.log("  Error summary:");
+              for (const summary of verificationRes.errorSummaries) {
+                console.log(`    - ${summary}`);
+              }
+            }
+            const verificationAssessment = assessContinuousVerificationResult(verificationRes);
+            if (verificationAssessment.status !== "healthy") {
+              console.log(`  Status: ${verificationAssessment.status.toUpperCase()}`);
+              if (verificationAssessment.summary) {
+                console.log(`  Warning: ${verificationAssessment.summary}`);
+              }
+              if (verificationAssessment.shouldFailPipeline) {
+                followUpFailures.push({
+                  phase: "continuous verification",
+                  error: verificationAssessment.summary ?? "verification follow-up degraded",
+                });
+                // Keep running the remaining follow-up stages for observability, but make the
+                // standalone CLI exit non-zero once the pipeline completes.
+                process.exitCode = 2;
+              }
+            }
           }
 
           // Extract implicit feedback signals as part of nightly cycle
