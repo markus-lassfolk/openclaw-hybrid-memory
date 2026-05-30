@@ -832,6 +832,7 @@ export async function runReflectionRules(
   }
   const rules: string[] = [];
   let rejectedLowConfidence = 0;
+  let rejectedLength = 0;
   let parseableLines = 0;
   for (const line of rawResponse.split(/\n/)) {
     const m = line.match(/^\s*RULE:\s*(.+)/);
@@ -841,7 +842,7 @@ export async function runReflectionRules(
     if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) {
       rules.push(text);
     } else {
-      rejectedLowConfidence++;
+      rejectedLength++;
     }
   }
   const seenInBatch = new Set<string>();
@@ -867,15 +868,19 @@ export async function runReflectionRules(
         ? "empty_model_response"
         : looksLikeValidNoRules
           ? "valid_no_actionable_rules"
-          : parseableLines > 0 && rejectedDuplicates > 0 && rejectedLowConfidence === 0
+          : parseableLines > 0 && rejectedDuplicates > 0 && rejectedLowConfidence === 0 && rejectedLength === 0
             ? "all_candidates_duplicate"
-            : parseableLines > 0
-              ? "all_candidates_rejected_low_confidence"
-              : "invalid_response_format";
+            : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
+              ? "all_candidates_rejected_length"
+              : parseableLines > 0 && rejectedLowConfidence > 0
+                ? "all_candidates_rejected_low_confidence"
+                : parseableLines > 0
+                  ? "all_candidates_rejected"
+                  : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
       parseSuccess,
-      parsedCandidates: rules.length,
+      parsedCandidates: parseableLines,
       rejectedDuplicates,
       rejectedLowConfidence,
       stored: 0,

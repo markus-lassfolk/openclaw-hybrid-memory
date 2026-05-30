@@ -344,7 +344,7 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.parseSuccess).toBe(true);
   });
 
-  it("reports partial status when parsed candidates are rejected for low confidence", async () => {
+  it("reports partial status when parsed candidates are rejected for length", async () => {
     const { factsDb, vectorDb, embeddings, openai } = makeDeps("RULE: tiny");
     const res = await runReflectionRules(
       factsDb as never,
@@ -356,8 +356,26 @@ describe("runReflectionRules diagnostics", () => {
     );
 
     expect(res.rulesStored).toBe(0);
-    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_low_confidence");
-    expect(res.diagnostics.status).toBe("partial");
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_length");
+    expect(res.diagnostics.status).toBe("ok");
+  });
+
+  it("counts all parsed RULE lines in parsedCandidates, even if rejected for length", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps("RULE: tiny\nRULE: short");
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.parsedCandidates).toBe(2);
+    expect(res.diagnostics.rejectedLowConfidence).toBe(0);
+    expect(res.diagnostics.parseSuccess).toBe(true);
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_length");
   });
 
   it("reports degraded status when all candidate embeddings fail", async () => {
