@@ -937,6 +937,7 @@ export async function runReflectionRules(
 
   let stored = 0;
   let rulesDuplicatesSkipped = rejectedDuplicates;
+  let embeddingBasedDuplicates = 0;
   let newRuleEmbedFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
@@ -967,6 +968,7 @@ export async function runReflectionRules(
     }
     if (isDuplicate) {
       rulesDuplicatesSkipped++;
+      embeddingBasedDuplicates++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-rules — skipped duplicate: ${ruleText.slice(0, 50)}...`);
       }
@@ -1070,12 +1072,12 @@ export async function runReflectionRules(
 
   let zeroRulesReason: ReflectionRulesDiagnostics["zeroRulesReason"];
   if (stored <= 0) {
-    const allCandidatesBlocked = newRuleEmbedFailures + rulesDuplicatesSkipped === uniqueRules.length;
-    if (allCandidatesBlocked && newRuleEmbedFailures > 0 && rulesDuplicatesSkipped > 0) {
+    const allCandidatesBlocked = newRuleEmbedFailures + embeddingBasedDuplicates === uniqueRules.length;
+    if (allCandidatesBlocked && newRuleEmbedFailures > 0 && embeddingBasedDuplicates > 0) {
       zeroRulesReason = "candidates_duplicate_or_embedding_failed";
     } else if (newRuleEmbedFailures === uniqueRules.length) {
       zeroRulesReason = "all_candidates_embedding_failed";
-    } else if (rulesDuplicatesSkipped === uniqueRules.length) {
+    } else if (embeddingBasedDuplicates === uniqueRules.length) {
       zeroRulesReason = "all_candidates_duplicate";
     } else {
       zeroRulesReason = "no_storable_candidates";
