@@ -42,6 +42,7 @@ beforeEach(() => {
     },
     embeddings: {
       embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
+      modelName: "test-embedding-model",
     },
   } as any;
 });
@@ -89,7 +90,6 @@ describe("runStoreForCli canonical embedding mirror", () => {
   it("stores canonical fact_embeddings rows even when Lance duplicate skipping is active", async () => {
     mockCtx.vectorDb.hasDuplicate = vi.fn().mockResolvedValue(true);
     mockCtx.vectorDb.store = vi.fn();
-    mockCtx.embeddings.modelName = "test-embedding-model";
 
     const opts: StoreCliOpts = {
       text: "Remember to review vectorless ingestion invariants",
