@@ -26,7 +26,7 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
-import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
+import { stripThinkingWrapperBlocks, tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
@@ -75,11 +75,13 @@ function sanitizeLlmResponseExcerpt(content: string): string {
  * The model is instructed to return a bare JSON array, but in practice it may:
  *   - wrap the array in a markdown code fence (```json ... ```)
  *   - add prose before or after the array
+ *   - emit thinking/reasoning tokens before the JSON (e.g. MiniMax M2.7-highspeed, #1718)
  *   - emit placeholder tokens instead of JSON
  *   - return invalid/truncated JSON
  *
- * This function handles all of those cases robustly by scanning balanced `[...]`
- * spans and only accepting arrays that match expected remediation object shape.
+ * This function handles all of those cases robustly by first stripping thinking
+ * wrapper blocks, then scanning balanced `[...]` spans and only accepting arrays
+ * that match expected remediation object shape.
  * Returns `null` when no valid array can be extracted (callers treat this as
  * `failed_parse` — no remediations are applied and the error is reported).
  *
@@ -87,12 +89,14 @@ function sanitizeLlmResponseExcerpt(content: string): string {
  *   - **strict JSON**: `[{"remediationType":"MEMORY_STORE",...}]` → parsed directly
  *   - **fenced JSON**: `` ```json\n[...]\n``` `` → fence stripped, array parsed
  *   - **trailing text**: `[...]\n\nHere is my explanation` → array extracted, text ignored
+ *   - **thinking prefix**: `<thinking>...</thinking>\n[...]` → thinking stripped, array parsed
  *   - **invalid JSON**: `[not valid]` / truncated → null returned, caller handles error
  */
 export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
   let emptyArrayCandidate: unknown[] | null = null;
+  const normalized = stripThinkingWrapperBlocks(content);
 
-  const result = tryParseFirstJsonArray(content, (parsed) => {
+  const result = tryParseFirstJsonArray(normalized, (parsed) => {
     if (parsed.length === 0) {
       emptyArrayCandidate = parsed;
       return null;
