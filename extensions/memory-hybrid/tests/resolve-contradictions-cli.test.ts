@@ -355,9 +355,9 @@ describe("resolve-contradictions CLI contract mode", () => {
       "utf-8",
     );
 
-    await expect(mem.parseAsync(["resolve-contradictions", "--apply-review", reviewPath], { from: "user" })).rejects.toThrow(
-      `Invalid review file ${reviewPath}: line 2: unsupported decision`,
-    );
+    await expect(
+      mem.parseAsync(["resolve-contradictions", "--apply-review", reviewPath], { from: "user" }),
+    ).rejects.toThrow(`Invalid review file ${reviewPath}: line 2: unsupported decision`);
     expect(runApplyContradictionReviewDecisions).not.toHaveBeenCalled();
   });
 
