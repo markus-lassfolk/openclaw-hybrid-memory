@@ -111,6 +111,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate PR title
+        if: ${{ !startsWith(github.event.pull_request.title, 'WIP:') }}
         uses: amannn/action-semantic-pull-request@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -120,7 +121,11 @@ jobs:
           # Adding "WIP" to the types list handles the "WIP: " (colon) prefix used by
           # Issue Stewardship placeholder PRs.
           wip: true
+          # Skip validation for PRs in the implementing stage (placeholder/draft PRs).
+          ignoreLabels: |
+            stage/implementing
           types: |
+            WIP
             feat
             fix
             chore
@@ -132,7 +137,6 @@ jobs:
             build
             ci
             revert
-            WIP
 
   changed-files-summary:
     name: Changed Files Summary
