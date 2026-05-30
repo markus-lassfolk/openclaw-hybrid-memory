@@ -519,6 +519,7 @@ export async function chatComplete(opts: {
       msg.includes("timed out") ||
       msg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
       msg.includes("econnrefused") ||
+      isAbortOrTransientLlmError(err) || // #1694: recursive cause-chain check catches nested AbortError (e.g. MiniMax wraps abort in outer error)
       isConnectionErrorLike(err) || // #703: OpenAI SDK APIConnectionError / "Connection error." is transient
       is429Like(err) || // #397: rate limit is transient
       is403QuotaOrRateLimitLike(err) || // Azure/APIM quota as 403 + headers
@@ -710,6 +711,7 @@ export async function withLLMRetry<T>(
           fullMsg.includes("timed out") ||
           causeMsg.includes("llm request timeout") || // #339: our own timeout message uses "timeout" not "timed out"
           fullMsg.includes("llm request timeout") ||
+          isAbortOrTransientLlmError(lastError) || // #1694: recursive cause-chain check catches nested AbortError (e.g. MiniMax wraps abort in outer error)
           isConnectionErrorLike(lastError) ||
           /^\d+\s*internal\s*error$/i.test(causeMsg.trim()) ||
           /^5\d{2}\s/.test(causeMsg.trim()) ||
