@@ -244,13 +244,22 @@ export async function readGoalByLabel(goalsDir: string, label: string): Promise<
     const raw = await readFile(join(goalsDir, INDEX_FILENAME), "utf-8");
     const indexGoals = asGoalIndexEntries(JSON.parse(raw) as unknown);
     const matches = indexGoals.filter((g) => g.label.toLowerCase() === norm);
-    const best = matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0];
-    if (best) return readGoal(goalsDir, best.id);
+    const activeMatches = matches.filter((g) => !isTerminalStatus(g.status));
+    const terminalMatches = matches.filter((g) => isTerminalStatus(g.status));
+    const orderedMatches = [...activeMatches, ...terminalMatches];
+    for (const match of orderedMatches) {
+      try {
+        const goal = await readGoal(goalsDir, match.id);
+        if (goal) return goal;
+      } catch {
+        // Corrupt/stale index entries should not abort lookups.
+      }
+    }
   } catch {
     /* index missing or corrupt — fall through to full scan */
   }
   const all = await listGoals(goalsDir);
-  const matches = all.filter((g) => g.label.toLowerCase() === norm);
+  const matches = all.filter((g) => typeof g.label === "string" && g.label.toLowerCase() === norm);
   return matches.find((g) => !isTerminalStatus(g.status)) ?? matches[0] ?? null;
 }
 

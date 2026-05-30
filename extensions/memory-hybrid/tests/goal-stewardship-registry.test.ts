@@ -269,6 +269,57 @@ describe("goal registry", () => {
     await expect(readGoalByLabel(dir, "anything")).resolves.toBeNull();
   });
 
+  it("readGoalByLabel falls back when index points to a malformed goal entry", async () => {
+    dir = await makeTempDir();
+    const healthy = await createGoal(dir, { label: "idx_fallback", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    const now = new Date().toISOString();
+    await writeFile(
+      join(dir, "_index.json"),
+      JSON.stringify(
+        {
+          updatedAt: now,
+          goals: [{ id: "malformed", label: "idx_fallback", status: "active", priority: "normal", createdAt: now }],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    await writeFile(join(dir, "malformed.json"), JSON.stringify({ id: "malformed" }), "utf-8");
+    await expect(readGoalByLabel(dir, "idx_fallback")).resolves.toMatchObject({ id: healthy.id });
+  });
+
+  it("createGoal succeeds with _global_dispatch_rate_limit.json when stale index entries are malformed", async () => {
+    dir = await makeTempDir();
+    const now = new Date().toISOString();
+    await writeFile(
+      join(dir, "_global_dispatch_rate_limit.json"),
+      JSON.stringify({ timestamps: [Date.now()], updatedAt: now }),
+      "utf-8",
+    );
+    await writeFile(
+      join(dir, "_index.json"),
+      JSON.stringify(
+        {
+          updatedAt: now,
+          goals: [{ id: "malformed", label: "hybrid-memory-cron-qa", status: "active", priority: "high", createdAt: now }],
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    await writeFile(join(dir, "malformed.json"), JSON.stringify({ id: "malformed" }), "utf-8");
+
+    await expect(
+      createGoal(
+        dir,
+        { label: "hybrid-memory-cron-qa", description: "d", acceptanceCriteria: ["ship"] },
+        defaults,
+      ),
+    ).resolves.toMatchObject({ label: "hybrid-memory-cron-qa" });
+  });
+
   it("listGoals and rebuildGoalIndex skip malformed goal json without label", async () => {
     dir = await makeTempDir();
     const healthy = await createGoal(
