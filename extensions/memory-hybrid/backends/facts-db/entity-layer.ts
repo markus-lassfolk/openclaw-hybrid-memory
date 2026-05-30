@@ -48,7 +48,7 @@ export function normalizeEntityKey(name: string): string {
 
 const MIN_ENTITY_MENTION_LENGTH = 3;
 const NON_ORG_SERVICE_TERMS = new Set(["signal", "telegram", "whatsapp"]);
-const NON_ENTITY_ORG_TERMS = new Set(["hybrid memory plugin", "hybrid-memory plugin", "the agent", "the system"]);
+const NON_ENTITY_ORG_TERMS = new Set(["hybrid memory plugin", "the agent", "the system"]);
 const PERSON_ROLE_TITLES = new Set(["architect", "developer", "director", "engineer", "manager", "surgeon"]);
 
 function normalizeMentionSurfaceText(surfaceText: string): string {
@@ -88,16 +88,25 @@ function isContainedByLongerMention(
     return false;
   }
 
-  const index = other.normalizedSurface.indexOf(mention.normalizedSurface);
-  if (index === -1) {
-    return false;
+  let searchStart = 0;
+  while (searchStart <= other.normalizedSurface.length - mention.normalizedSurface.length) {
+    const index = other.normalizedSurface.indexOf(mention.normalizedSurface, searchStart);
+    if (index === -1) {
+      return false;
+    }
+
+    const endIndex = index + mention.normalizedSurface.length;
+    const beforeChar = index > 0 ? other.normalizedSurface[index - 1] : " ";
+    const afterChar = endIndex < other.normalizedSurface.length ? other.normalizedSurface[endIndex] : " ";
+
+    if (beforeChar === " " && (afterChar === " " || endIndex === other.normalizedSurface.length)) {
+      return true;
+    }
+
+    searchStart = index + 1;
   }
 
-  const endIndex = index + mention.normalizedSurface.length;
-  const beforeChar = index > 0 ? other.normalizedSurface[index - 1] : " ";
-  const afterChar = endIndex < other.normalizedSurface.length ? other.normalizedSurface[endIndex] : " ";
-
-  return beforeChar === " " && (afterChar === " " || endIndex === other.normalizedSurface.length);
+  return false;
 }
 
 function preferEntityMention<
