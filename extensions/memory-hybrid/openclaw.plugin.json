@@ -2046,6 +2046,22 @@
           "cleanupLimit": {
             "type": "number",
             "description": "Max rows scanned per cleanup pass (and per sliding window round)"
+          },
+          "maxSessionsPerRun": {
+            "type": "number",
+            "description": "Maximum sessions to process per extract-implicit run before deferring backlog (default: 50, 0 disables)"
+          },
+          "maxSignalsPerRun": {
+            "type": "number",
+            "description": "Maximum signals to extract per run before deferring backlog (default: 100, 0 disables)"
+          },
+          "maxTrajectoriesPerRun": {
+            "type": "number",
+            "description": "Maximum trajectories to build/store per run before deferring backlog (default: 50, 0 disables)"
+          },
+          "maxWallClockSeconds": {
+            "type": "number",
+            "description": "Maximum wall-clock seconds to spend in one run before deferring backlog (default: 300, 0 disables)"
           }
         },
         "description": "Implicit feedback detection and routing"
