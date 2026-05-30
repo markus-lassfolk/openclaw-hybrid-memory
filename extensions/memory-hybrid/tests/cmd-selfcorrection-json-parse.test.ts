@@ -349,9 +349,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toBeUndefined();
     const infoCalls = ((ctx.logger.info as any).mock?.calls ?? []).flat();
     expect(
-      infoCalls.some((line: unknown) =>
-        String(line).includes("fallback chain = [heavy-fallback-1, heavy-fallback-2]"),
-      ),
+      infoCalls.some((line: unknown) => String(line).includes("fallback chain = [heavy-fallback-1, heavy-fallback-2]")),
     ).toBe(true);
   });
 
