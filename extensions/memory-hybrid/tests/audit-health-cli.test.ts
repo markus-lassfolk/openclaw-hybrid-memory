@@ -225,4 +225,79 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(b.inserted).toBe(false);
     db.close();
   });
+
+  it("warns and records entityStopwordMatches when stop-word entities appear among top entities (#1737)", () => {
+    const db = new FactsDB(":memory:");
+    // Insert facts with stop-word-like entities (User, user, Credentials, convention)
+    for (const entity of ["User", "user", "Credentials", "convention"]) {
+      for (let i = 0; i < 3; i++) {
+        db.store({
+          text: `Fact about ${entity} number ${i}`,
+          category: "technical",
+          importance: 0.5,
+          entity,
+          key: null,
+          value: null,
+          source: "test",
+        });
+      }
+    }
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    // All four stop-word entities must appear in entityStopwordMatches
+    const matchedEntities = report.entityStopwordMatches.map((row) => row.entity.toLowerCase());
+    expect(matchedEntities).toContain("user");
+    expect(matchedEntities).toContain("credentials");
+    expect(matchedEntities).toContain("convention");
+
+    // Warning must be raised
+    expect(report.warnings.some((w) => w.includes("stop-word-like labels"))).toBe(true);
+
+    // Remediation must suggest entities clean
+    expect(report.remediation.some((r) => r.includes("entities clean"))).toBe(true);
+
+    // topEntitiesFiltered must not contain stop-word entities
+    const filteredEntities = report.topEntitiesFiltered.map((row) => row.entity.toLowerCase());
+    expect(filteredEntities).not.toContain("user");
+    expect(filteredEntities).not.toContain("credentials");
+    expect(filteredEntities).not.toContain("convention");
+
+    db.close();
+  });
+
+  it("topEntitiesFiltered excludes stop-word entities and includes real ones (#1737)", () => {
+    const db = new FactsDB(":memory:");
+    // Insert facts: some with stop-word entities, one with a meaningful entity
+    for (let i = 0; i < 5; i++) {
+      db.store({
+        text: `Fact about MyProject ${i}`,
+        category: "technical",
+        importance: 0.5,
+        entity: "MyProject",
+        key: null,
+        value: null,
+        source: "test",
+      });
+    }
+    for (let i = 0; i < 5; i++) {
+      db.store({
+        text: `Generic user fact ${i}`,
+        category: "technical",
+        importance: 0.5,
+        entity: "user",
+        key: null,
+        value: null,
+        source: "test",
+      });
+    }
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    const filteredEntities = report.topEntitiesFiltered.map((row) => row.entity);
+    expect(filteredEntities).toContain("MyProject");
+    expect(filteredEntities).not.toContain("user");
+
+    db.close();
+  });
 });
