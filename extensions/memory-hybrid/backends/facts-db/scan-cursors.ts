@@ -68,7 +68,10 @@ export function updateScanCursor(
          WHEN excluded.sessions_processed > 0 THEN excluded.last_session_file
          ELSE scan_cursors.last_session_file
        END,
-       last_run_at = excluded.last_run_at,
+       last_run_at = CASE
+         WHEN excluded.sessions_processed > 0 THEN excluded.last_run_at
+         ELSE scan_cursors.last_run_at
+       END,
        sessions_processed = scan_cursors.sessions_processed + excluded.sessions_processed`,
   ).run(scanType, lastSessionTs, lastSessionFile ?? null, runAt, sessionsProcessed);
 }
