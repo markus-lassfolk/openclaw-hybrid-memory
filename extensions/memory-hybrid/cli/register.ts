@@ -204,6 +204,16 @@ export type HybridMemCliContext = {
   runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     rulesExtracted: number;
     rulesStored: number;
+    diagnostics?: {
+      modelResponseChars: number;
+      parseSuccess: boolean;
+      parsedCandidates: number;
+      rejectedDuplicates: number;
+      rejectedLowConfidence: number;
+      stored: number;
+      zeroRulesReason?: string;
+      status: "ok" | "partial" | "degraded";
+    };
   }>;
   runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     metaExtracted: number;

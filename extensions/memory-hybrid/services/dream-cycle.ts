@@ -104,6 +104,17 @@ export interface DreamCycleResult {
   patternsFound: number;
   /** New rules stored by runReflectionRules(). */
   rulesGenerated: number;
+  /** Reflect-rules diagnostics for zero/partial outcomes. */
+  reflectionRulesDiagnostics?: {
+    modelResponseChars: number;
+    parseSuccess: boolean;
+    parsedCandidates: number;
+    rejectedDuplicates: number;
+    rejectedLowConfidence: number;
+    stored: number;
+    zeroRulesReason?: string;
+    status: "ok" | "partial" | "degraded";
+  };
   /** Log table rows deleted by pruneLogTables() (Issue #573). */
   logRowsPruned: number;
   /** True when VACUUM + checkpoint was executed (Issue #573). */
@@ -939,6 +950,7 @@ export async function runDreamCycle(
 
   // ── Stage 4: Reflect-rules (optional) ─────────────────────────────────────
   let rulesGenerated = 0;
+  let reflectionRulesDiagnostics: DreamCycleResult["reflectionRulesDiagnostics"];
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
   if (enableReflectionRules && patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
     const stageReflectRules = beginStage("reflect-rules", {
@@ -956,7 +968,10 @@ export async function runDreamCycle(
         provenanceService,
       );
       rulesGenerated = rulesResult.rulesStored;
-      logger.info(`memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored`);
+      reflectionRulesDiagnostics = rulesResult.diagnostics;
+      logger.info(
+        `memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored (status=${rulesResult.diagnostics.status}${rulesResult.diagnostics.zeroRulesReason ? `, zero_rules_reason=${rulesResult.diagnostics.zeroRulesReason}` : ""})`,
+      );
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — reflect-rules step failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -1100,6 +1115,7 @@ export async function runDreamCycle(
     factsCreated,
     patternsFound,
     rulesGenerated,
+    reflectionRulesDiagnostics,
     logRowsPruned,
     vacuumRan,
     decayReclassified,

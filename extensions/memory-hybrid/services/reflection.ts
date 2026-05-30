@@ -86,6 +86,18 @@ interface ReflectionResult {
 interface ReflectionRulesResult {
   rulesExtracted: number;
   rulesStored: number;
+  diagnostics: ReflectionRulesDiagnostics;
+}
+
+export interface ReflectionRulesDiagnostics {
+  modelResponseChars: number;
+  parseSuccess: boolean;
+  parsedCandidates: number;
+  rejectedDuplicates: number;
+  rejectedLowConfidence: number;
+  stored: number;
+  zeroRulesReason?: string;
+  status: "ok" | "partial" | "degraded";
 }
 
 interface ReflectionMetaResult {
@@ -730,6 +742,15 @@ export async function runReflectionRules(
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
 ): Promise<ReflectionRulesResult> {
+  const baseDiagnostics: ReflectionRulesDiagnostics = {
+    modelResponseChars: 0,
+    parseSuccess: false,
+    parsedCandidates: 0,
+    rejectedDuplicates: 0,
+    rejectedLowConfidence: 0,
+    stored: 0,
+    status: "ok",
+  };
   const nowSec = Math.floor(Date.now() / 1000);
   const patternFacts = factsDb
     .getByCategory("pattern")
@@ -737,7 +758,21 @@ export async function runReflectionRules(
   const patterns = patternFacts.slice(0, REFLECTION_MAX_PATTERNS_FOR_RULES).map((f) => f.text);
   if (patterns.length < 2) {
     logger.info(`memory-hybrid: reflect-rules — need at least 2 patterns, have ${patterns.length}`);
-    return { rulesExtracted: 0, rulesStored: 0 };
+    const diagnostics: ReflectionRulesDiagnostics = {
+      ...baseDiagnostics,
+      zeroRulesReason: "insufficient_patterns",
+    };
+    logger.info(
+      "memory-hybrid: reflect-rules — diagnostics: " +
+        `model_response_chars=${diagnostics.modelResponseChars} ` +
+        `parse_success=${diagnostics.parseSuccess} ` +
+        `parsed_candidates=${diagnostics.parsedCandidates} ` +
+        `rejected_duplicates=${diagnostics.rejectedDuplicates} ` +
+        `rejected_low_confidence=${diagnostics.rejectedLowConfidence} ` +
+        `stored=${diagnostics.stored} ` +
+        `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
+    );
+    return { rulesExtracted: 0, rulesStored: 0, diagnostics };
   }
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
   const prompt = fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock });
@@ -775,26 +810,84 @@ export async function runReflectionRules(
       subsystem: "openai",
       retryAttempt,
     });
-    return { rulesExtracted: 0, rulesStored: 0 };
+    const diagnostics: ReflectionRulesDiagnostics = {
+      ...baseDiagnostics,
+      zeroRulesReason: "llm_call_failed",
+      status: "degraded",
+    };
+    logger.info(
+      "memory-hybrid: reflect-rules — diagnostics: " +
+        `model_response_chars=${diagnostics.modelResponseChars} ` +
+        `parse_success=${diagnostics.parseSuccess} ` +
+        `parsed_candidates=${diagnostics.parsedCandidates} ` +
+        `rejected_duplicates=${diagnostics.rejectedDuplicates} ` +
+        `rejected_low_confidence=${diagnostics.rejectedLowConfidence} ` +
+        `stored=${diagnostics.stored} ` +
+        `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
+    );
+    return { rulesExtracted: 0, rulesStored: 0, diagnostics };
   }
   const rules: string[] = [];
+  let rejectedLowConfidence = 0;
+  let parseableLines = 0;
   for (const line of rawResponse.split(/\n/)) {
     const m = line.match(/^\s*RULE:\s*(.+)/);
     if (!m) continue;
+    parseableLines++;
     const text = m[1].trim();
-    if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) rules.push(text);
+    if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) {
+      rules.push(text);
+    } else {
+      rejectedLowConfidence++;
+    }
   }
   const seenInBatch = new Set<string>();
   const uniqueRules: string[] = [];
+  let rejectedDuplicates = 0;
   for (const r of rules) {
     const key = r.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
+    if (seenInBatch.has(key)) {
+      rejectedDuplicates++;
+      continue;
+    }
     seenInBatch.add(key);
     uniqueRules.push(r);
   }
+  const trimmedResponse = rawResponse.trim();
+  const looksLikeValidNoRules = /no\s+(actionable\s+)?rules?|no rules detected/i.test(trimmedResponse);
+  const parseSuccess = parseableLines > 0 || looksLikeValidNoRules;
+  const modelResponseChars = rawResponse.length;
   if (uniqueRules.length === 0) {
     logger.info("memory-hybrid: reflect-rules — 0 rules extracted from LLM");
-    return { rulesExtracted: rules.length, rulesStored: 0 };
+    const zeroRulesReason =
+      modelResponseChars === 0
+        ? "empty_model_response"
+        : parseableLines > 0
+          ? "all_candidates_rejected_low_confidence"
+          : looksLikeValidNoRules
+            ? "valid_no_actionable_rules"
+            : "invalid_response_format";
+    const diagnostics: ReflectionRulesDiagnostics = {
+      modelResponseChars,
+      parseSuccess,
+      parsedCandidates: uniqueRules.length,
+      rejectedDuplicates,
+      rejectedLowConfidence,
+      stored: 0,
+      zeroRulesReason,
+      status: zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response" ? "degraded" : "ok",
+    };
+    logger.info(
+      "memory-hybrid: reflect-rules — diagnostics: " +
+        `model_response_chars=${diagnostics.modelResponseChars} ` +
+        `parse_success=${diagnostics.parseSuccess} ` +
+        `parsed_candidates=${diagnostics.parsedCandidates} ` +
+        `rejected_duplicates=${diagnostics.rejectedDuplicates} ` +
+        `rejected_low_confidence=${diagnostics.rejectedLowConfidence} ` +
+        `stored=${diagnostics.stored} ` +
+        `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
+    );
+    return { rulesExtracted: rules.length, rulesStored: 0, diagnostics };
   }
 
   logger.info(
@@ -834,7 +927,7 @@ export async function runReflectionRules(
   );
 
   let stored = 0;
-  let rulesDuplicatesSkipped = 0;
+  let rulesDuplicatesSkipped = rejectedDuplicates;
   let newRuleEmbedFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
@@ -966,7 +1059,36 @@ export async function runReflectionRules(
     );
   }
 
-  return { rulesExtracted: rules.length, rulesStored: stored };
+  const zeroRulesReason =
+    stored > 0
+      ? undefined
+      : rulesDuplicatesSkipped > 0
+        ? "all_candidates_duplicate"
+        : newRuleEmbedFailures >= uniqueRules.length
+          ? "all_candidates_embedding_failed"
+          : "no_storable_candidates";
+  const diagnostics: ReflectionRulesDiagnostics = {
+    modelResponseChars,
+    parseSuccess,
+    parsedCandidates: uniqueRules.length,
+    rejectedDuplicates: rulesDuplicatesSkipped,
+    rejectedLowConfidence,
+    stored,
+    zeroRulesReason,
+    status: stored > 0 ? "ok" : "partial",
+  };
+  logger.info(
+    "memory-hybrid: reflect-rules — diagnostics: " +
+      `model_response_chars=${diagnostics.modelResponseChars} ` +
+      `parse_success=${diagnostics.parseSuccess} ` +
+      `parsed_candidates=${diagnostics.parsedCandidates} ` +
+      `rejected_duplicates=${diagnostics.rejectedDuplicates} ` +
+      `rejected_low_confidence=${diagnostics.rejectedLowConfidence} ` +
+      `stored=${diagnostics.stored} ` +
+      `status=${diagnostics.status}` +
+      (diagnostics.zeroRulesReason ? ` zero_rules_reason=${diagnostics.zeroRulesReason}` : ""),
+  );
+  return { rulesExtracted: rules.length, rulesStored: stored, diagnostics };
 }
 
 /**

@@ -4,7 +4,7 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
@@ -210,6 +210,134 @@ describe("runReflectionRules cost attribution", () => {
     );
 
     expect(capturedFeature).toBe("reflection-rules");
+  });
+});
+
+describe("runReflectionRules diagnostics", () => {
+  const patternEntries = [
+    makeEntry({
+      id: "p1",
+      category: "pattern",
+      text: "User consistently prefers functional composition over object-oriented patterns",
+    }),
+    makeEntry({
+      id: "p2",
+      category: "pattern",
+      text: "User values type safety and always enables TypeScript strict mode in projects",
+    }),
+  ];
+
+  function makeDeps(responseText: string) {
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: responseText } }] }),
+        },
+      },
+    };
+    return { factsDb, vectorDb, embeddings, openai };
+  }
+
+  it("reports degraded diagnostics for empty model response", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps("");
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.status).toBe("degraded");
+    expect(res.diagnostics.zeroRulesReason).toBe("empty_model_response");
+    expect(res.diagnostics.parseSuccess).toBe(false);
+  });
+
+  it("reports degraded diagnostics for invalid response format", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps("Some prose without RULE lines");
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.status).toBe("degraded");
+    expect(res.diagnostics.zeroRulesReason).toBe("invalid_response_format");
+    expect(res.diagnostics.parseSuccess).toBe(false);
+  });
+
+  it("reports partial diagnostics when all parsed candidates are duplicates", async () => {
+    const existingRule = makeEntry({
+      id: "rule-existing",
+      category: "rule",
+      text: "Always keep strict TypeScript settings enabled across all projects.",
+    });
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : cat === "rule" ? [existingRule] : []),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map([[existingRule.id, [1, 0]]]),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: "RULE: Always keep strict TypeScript settings enabled across all projects." } }],
+          }),
+        },
+      },
+    };
+
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.status).toBe("partial");
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_duplicate");
+    expect(res.diagnostics.rejectedDuplicates).toBeGreaterThan(0);
+  });
+
+  it("reports valid no-op zero-rules reason when model explicitly returns no actionable rules", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps("No actionable rules detected from the supplied patterns.");
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.status).toBe("ok");
+    expect(res.diagnostics.zeroRulesReason).toBe("valid_no_actionable_rules");
+    expect(res.diagnostics.parseSuccess).toBe(true);
   });
 });
 

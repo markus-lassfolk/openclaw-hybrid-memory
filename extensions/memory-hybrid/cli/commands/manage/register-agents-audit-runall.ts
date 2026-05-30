@@ -266,7 +266,10 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 return;
               }
               const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model, verbose });
-              log(`Reflect-rules: ${r.rulesStored} rules stored.`);
+              const zeroReason = r.diagnostics?.zeroRulesReason ? `, zero_rules_reason=${r.diagnostics.zeroRulesReason}` : "";
+              log(
+                `Reflect-rules: ${r.rulesStored} rules stored (model_response_chars=${r.diagnostics?.modelResponseChars ?? 0}, parse_success=${r.diagnostics?.parseSuccess ?? false}, parsed_candidates=${r.diagnostics?.parsedCandidates ?? 0}, rejected_duplicates=${r.diagnostics?.rejectedDuplicates ?? 0}, rejected_low_confidence=${r.diagnostics?.rejectedLowConfidence ?? 0}, stored=${r.diagnostics?.stored ?? r.rulesStored}, status=${r.diagnostics?.status ?? "ok"}${zeroReason}).`,
+              );
             },
           },
           {
