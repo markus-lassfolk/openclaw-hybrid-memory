@@ -50,6 +50,16 @@ describe("canonicalizeEntityMention", () => {
     });
   });
 
+  it("preserves internal whitespace so surface text remains offset-compatible", () => {
+    expect(
+      canonicalizeEntityMention({ label: "SERVICE", surfaceText: "Home   Assistant", confidence: 0.9 }),
+    ).toMatchObject({
+      accepted: true,
+      surfaceText: "Home   Assistant",
+      normalizedSurface: "home assistant",
+    });
+  });
+
   it("reclassifies o-series and gpt-4o model names", () => {
     expect(
       canonicalizeEntityMention({

@@ -4,9 +4,8 @@
 
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-
-import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { canonicalizeEntityMention, countReason, makeEntityMentionKey } from "../../utils/entity-mention-quality.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { readSchemaVersion, runVersionedSchemaMigration } from "../sqlite-schema-meta.js";
 
 export type EntityMentionLabel =
@@ -535,7 +534,15 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
       normalized_surface: string;
       confidence: number;
     }>;
-    const seen = new Set<string>();
+    const acceptedByKey = new Map<
+      string,
+      {
+        label: EntityMentionLabel;
+        surfaceText: string;
+        normalizedSurface: string;
+        confidence: number;
+      }
+    >();
     for (const row of rows) {
       rowsScanned++;
       const canonical = canonicalizeEntityMention({
@@ -550,15 +557,44 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
         continue;
       }
       const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
-      if (seen.has(key)) {
+      const existing = acceptedByKey.get(key);
+      if (existing) {
         duplicates++;
+        if (canonical.confidence > existing.confidence) {
+          acceptedByKey.set(key, {
+            label: canonical.label,
+            surfaceText: canonical.surfaceText,
+            normalizedSurface: canonical.normalizedSurface,
+            confidence: canonical.confidence,
+          });
+        }
       } else {
-        seen.add(key);
+        acceptedByKey.set(key, {
+          label: canonical.label,
+          surfaceText: canonical.surfaceText,
+          normalizedSurface: canonical.normalizedSurface,
+          confidence: canonical.confidence,
+        });
         accepted++;
       }
       if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
         reclassified++;
       }
+    }
+    const allAccepted = [...acceptedByKey.values()];
+    const substringFilteredCount = allAccepted.filter((m) =>
+      allAccepted.some(
+        (other) =>
+          other !== m &&
+          other.label === m.label &&
+          other.normalizedSurface.length > m.normalizedSurface.length &&
+          other.normalizedSurface.includes(m.normalizedSurface),
+      ),
+    ).length;
+    if (substringFilteredCount > 0) {
+      accepted -= substringFilteredCount;
+      rejected += substringFilteredCount;
+      rejectReasons.substring = (rejectReasons.substring ?? 0) + substringFilteredCount;
     }
   }
   return {
@@ -703,6 +739,7 @@ export function cleanupEntityMentions(
 
       const allAccepted = [...acceptedByKey.values()];
       const filteredBySubstring: typeof allAccepted = [];
+      let substringFilteredCount = 0;
       for (const m of allAccepted) {
         const isSubstring = allAccepted.some(
           (other) =>
@@ -711,13 +748,19 @@ export function cleanupEntityMentions(
             other.normalizedSurface.length > m.normalizedSurface.length &&
             other.normalizedSurface.includes(m.normalizedSurface),
         );
-        if (!isSubstring) {
-          filteredBySubstring.push(m);
+        if (isSubstring) {
+          substringFilteredCount++;
+          continue;
         }
+        filteredBySubstring.push(m);
       }
 
       const nextRows = filteredBySubstring;
-      accepted -= allAccepted.length - filteredBySubstring.length;
+      accepted -= substringFilteredCount;
+      rejected += substringFilteredCount;
+      if (substringFilteredCount > 0) {
+        rejectReasons.substring = (rejectReasons.substring ?? 0) + substringFilteredCount;
+      }
       const after = rowsSignature(
         nextRows.map((row) => ({
           label: row.label,

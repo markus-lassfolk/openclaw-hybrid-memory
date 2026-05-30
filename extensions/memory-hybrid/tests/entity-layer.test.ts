@@ -6,9 +6,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { FactsDB } from "../backends/facts-db.js";
 import { escapeLikeLiteralForBackslashEscape, normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
+import { FactsDB } from "../backends/facts-db.js";
 import {
   detectFactTextLanguage,
   extractEntityMentionsWithLlm,
@@ -73,7 +72,7 @@ describe("extractEntityMentionsWithLlm", () => {
     expect(result.mentions).toHaveLength(1);
     expect(result.mentions[0]).toMatchObject({
       label: "SERVICE",
-      surfaceText: "Home Assistant",
+      surfaceText: "Home   Assistant",
       normalizedSurface: "home assistant",
     });
   });
@@ -441,7 +440,7 @@ describe("FactsDB entity layer persistence", () => {
     expect(rows).toEqual([{ label: "MODEL", normalized_surface: "gemini-3.1-pro" }]);
   });
 
-  it("audit and cleanup count duplicates using canonicalized mention keys", () => {
+  it("audit and cleanup count duplicates and substrings using canonicalized mention keys", () => {
     const fact = db.store({
       text: "GitHub and github are the same service mention.",
       entity: null,
@@ -459,11 +458,15 @@ describe("FactsDB entity layer persistence", () => {
     );
     ins.run("d", fact.id, "ORG", "GitHub", "github", 0, 6, 0.9, "eng", "llm", now);
     ins.run("e", fact.id, "SERVICE", "github", "github", 11, 17, 0.89, "eng", "llm", now + 1);
+    ins.run("f", fact.id, "SERVICE", "Hub", "hub", 3, 6, 0.88, "eng", "llm", now + 2);
 
     const audit = db.auditEntityMentions(50);
     const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
 
     expect(audit.duplicates).toBe(1);
     expect(cleanupDryRun.duplicates).toBe(1);
+    expect(audit.accepted).toBe(cleanupDryRun.accepted);
+    expect(audit.rejected).toBe(cleanupDryRun.rejected);
+    expect(audit.rejectReasons.substring).toBe(1);
   });
 });

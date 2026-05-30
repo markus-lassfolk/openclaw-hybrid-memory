@@ -49,7 +49,7 @@ const GENERIC_TERMS = new Set([
 ]);
 
 const MODEL_MATCHER =
-  /\b(gpt[-\s]?\d+[a-z0-9\-]*|claude[-\s]?\d+[a-z0-9\-]*|gemini[-\s]?\d+[a-z0-9\-]*|minimax[-\s]?\d+[a-z0-9\-]*|\bo\d+[-\s]?[a-z0-9\-]*|(gpt|claude|gemini|minimax|sonnet|opus)[-\s](pro|plus|turbo|ultra|flash|preview|vision|instruct))\b/i;
+  /\b(gpt[-\s]?\d+[a-z0-9-]*|claude[-\s]?\d+[a-z0-9-]*|gemini[-\s]?\d+[a-z0-9-]*|minimax[-\s]?\d+[a-z0-9-]*|\bo\d+[-\s]?[a-z0-9-]*|(gpt|claude|gemini|minimax|sonnet|opus)[-\s](pro|plus|turbo|ultra|flash|preview|vision|instruct))\b/i;
 
 const CANONICAL_LABEL_MAP: Array<{ match: RegExp; label: EntityMentionLabel; canonicalNormalized: string }> = [
   { match: MODEL_MATCHER, label: "MODEL", canonicalNormalized: "" },
@@ -80,7 +80,7 @@ function minConfidenceForLabel(label: EntityMentionLabel): number {
 }
 
 function normalizeSurfaceText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
+  return value.trim();
 }
 
 function isNumericLike(value: string): boolean {
@@ -116,7 +116,8 @@ function canonicalizeByKnownMap(
     }
     return {
       label: rule.label,
-      normalizedSurface: rule.canonicalNormalized || (normalizedMatches ? normalizedSurface : normalizeEntityKey(surfaceText)),
+      normalizedSurface:
+        rule.canonicalNormalized || (normalizedMatches ? normalizedSurface : normalizeEntityKey(surfaceText)),
     };
   }
   return { label: fallbackLabel, normalizedSurface };
