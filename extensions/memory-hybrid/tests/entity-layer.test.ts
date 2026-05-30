@@ -5,10 +5,15 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
-import { escapeLikeLiteralForBackslashEscape, normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
+import {
+  escapeLikeLiteralForBackslashEscape,
+  normalizeEntityKey,
+  normalizeFactEntityMentionsForPersistence,
+} from "../backends/facts-db/entity-layer.js";
 import { detectFactTextLanguage, isEntityStopWord } from "../services/entity-enrichment.js";
 
 describe("normalizeEntityKey", () => {
@@ -20,6 +25,88 @@ describe("normalizeEntityKey", () => {
 describe("escapeLikeLiteralForBackslashEscape", () => {
   it("escapes LIKE wildcards and backslashes for ESCAPE '\\'", () => {
     expect(escapeLikeLiteralForBackslashEscape("a%b_c\\d")).toBe("a\\%b\\_c\\\\d");
+  });
+});
+
+describe("normalizeFactEntityMentionsForPersistence", () => {
+  it("normalizes, filters, and deduplicates noisy mentions before persistence", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "  Hybrid-memory   PR Pipeline  ",
+          normalizedSurface: "Hybrid-memory   PR Pipeline",
+          startOffset: 0,
+          endOffset: 28,
+          confidence: 0.6,
+        },
+        {
+          label: "ORG",
+          surfaceText: "hybrid-memory pr pipeline",
+          normalizedSurface: "hybrid-memory pr pipeline",
+          startOffset: 0,
+          endOffset: 26,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "whatsapp",
+          normalizedSurface: "whatsapp",
+          startOffset: 40,
+          endOffset: 48,
+          confidence: 0.8,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Surgeon",
+          normalizedSurface: "surgeon",
+          startOffset: 60,
+          endOffset: 67,
+          confidence: 0.8,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme",
+          normalizedSurface: "acme",
+          startOffset: 80,
+          endOffset: 84,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme Corporation",
+          normalizedSurface: "acme corporation",
+          startOffset: 80,
+          endOffset: 96,
+          confidence: 0.95,
+        },
+        {
+          label: "ORG",
+          surfaceText: "AI",
+          normalizedSurface: "ai",
+          startOffset: 100,
+          endOffset: 102,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "hybrid-memory pr pipeline",
+        normalizedSurface: "hybrid-memory pr pipeline",
+        startOffset: 0,
+        endOffset: 26,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Acme Corporation",
+        normalizedSurface: "acme corporation",
+        startOffset: 80,
+        endOffset: 96,
+        confidence: 0.95,
+      },
+    ]);
   });
 });
 
@@ -43,12 +130,14 @@ describe("detectFactTextLanguage (franc)", () => {
 
 describe("FactsDB entity layer persistence", () => {
   let dir: string;
+  let dbPath: string;
   let db: FactsDB;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "hybrid-entity-"));
     mkdirSync(dir, { recursive: true });
-    db = new FactsDB(join(dir, "facts.db"));
+    dbPath = join(dir, "facts.db");
+    db = new FactsDB(dbPath);
   });
 
   afterEach(() => {
@@ -139,5 +228,103 @@ describe("FactsDB entity layer persistence", () => {
     );
     const byPrefix = db.listContactsByNamePrefix("100%", 10);
     expect(byPrefix.some((c) => c.displayName.includes("100%"))).toBe(true);
+  });
+
+  it("deduplicates persisted mentions after normalization and skips generic noise", () => {
+    const fact = db.store({
+      text: "Hybrid-memory PR Pipeline mentioned Hybrid-memory PR Pipeline while Acme Corporation replaced Acme and Surgeon reviewed whatsapp logs.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+
+    db.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "ORG",
+          surfaceText: " Hybrid-memory   PR Pipeline ",
+          normalizedSurface: "Hybrid-memory   PR Pipeline",
+          startOffset: 0,
+          endOffset: 28,
+          confidence: 0.7,
+        },
+        {
+          label: "ORG",
+          surfaceText: "hybrid-memory pr pipeline",
+          normalizedSurface: "hybrid-memory pr pipeline",
+          startOffset: 36,
+          endOffset: 62,
+          confidence: 0.92,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme",
+          normalizedSurface: "acme",
+          startOffset: 94,
+          endOffset: 98,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme Corporation",
+          normalizedSurface: "Acme   Corporation",
+          startOffset: 77,
+          endOffset: 93,
+          confidence: 0.95,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Surgeon",
+          normalizedSurface: "surgeon",
+          startOffset: 103,
+          endOffset: 110,
+          confidence: 0.8,
+        },
+        {
+          label: "ORG",
+          surfaceText: "whatsapp",
+          normalizedSurface: "whatsapp",
+          startOffset: 120,
+          endOffset: 128,
+          confidence: 0.8,
+        },
+      ],
+      "eng",
+    );
+
+    const raw = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const mentions = raw
+        .prepare(
+          "SELECT label, surface_text, normalized_surface FROM fact_entity_mentions WHERE fact_id = ? ORDER BY normalized_surface",
+        )
+        .all(fact.id) as Array<{ label: string; surface_text: string; normalized_surface: string }>;
+      expect(mentions).toEqual([
+        {
+          label: "ORG",
+          surface_text: "Acme Corporation",
+          normalized_surface: "acme corporation",
+        },
+        {
+          label: "ORG",
+          surface_text: "hybrid-memory pr pipeline",
+          normalized_surface: "hybrid-memory pr pipeline",
+        },
+      ]);
+
+      const orgNames = raw
+        .prepare("SELECT display_name FROM organizations ORDER BY canonical_key")
+        .all() as Array<{ display_name: string }>;
+      expect(orgNames).toEqual([{ display_name: "Acme Corporation" }, { display_name: "hybrid-memory pr pipeline" }]);
+
+      const contactCount = raw.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number };
+      expect(contactCount.count).toBe(0);
+    } finally {
+      raw.close();
+    }
   });
 });

@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
+import { isEntityStopWord, normalizeEntityStopWord } from "../../utils/entity-stopwords.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 
 export type EntityMentionLabel = "PERSON" | "ORG";
@@ -43,6 +44,100 @@ export type ContactRow = {
 
 export function normalizeEntityKey(name: string): string {
   return name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+const MIN_ENTITY_MENTION_LENGTH = 3;
+const NON_ORG_SERVICE_TERMS = new Set(["signal", "telegram", "whatsapp"]);
+const NON_ENTITY_ORG_TERMS = new Set(["hybrid memory plugin", "hybrid-memory plugin", "the agent", "the system"]);
+const PERSON_ROLE_TITLES = new Set(["architect", "developer", "director", "engineer", "manager", "surgeon"]);
+
+function normalizeMentionSurfaceText(surfaceText: string): string {
+  return surfaceText.replace(/\s+/g, " ").trim();
+}
+
+function shouldFilterEntityMention(mention: {
+  label: EntityMentionLabel;
+  surfaceText: string;
+  normalizedSurface: string;
+}): boolean {
+  if (mention.normalizedSurface.length < MIN_ENTITY_MENTION_LENGTH) {
+    return true;
+  }
+
+  if (isEntityStopWord(mention.surfaceText) || isEntityStopWord(mention.normalizedSurface)) {
+    return true;
+  }
+
+  const stopWordKey = normalizeEntityStopWord(mention.surfaceText);
+  if (mention.label === "ORG") {
+    return NON_ORG_SERVICE_TERMS.has(stopWordKey) || NON_ENTITY_ORG_TERMS.has(stopWordKey);
+  }
+
+  return !mention.normalizedSurface.includes(" ") && PERSON_ROLE_TITLES.has(stopWordKey);
+}
+
+function isContainedByLongerMention(
+  mention: { label: EntityMentionLabel; normalizedSurface: string },
+  other: { label: EntityMentionLabel; normalizedSurface: string },
+): boolean {
+  if (mention.label !== other.label || mention.normalizedSurface === other.normalizedSurface) {
+    return false;
+  }
+
+  return (
+    other.normalizedSurface.length > mention.normalizedSurface.length &&
+    other.normalizedSurface.includes(mention.normalizedSurface)
+  );
+}
+
+function preferEntityMention<
+  T extends {
+    confidence: number;
+    surfaceText: string;
+    startOffset: number;
+  },
+>(left: T, right: T): T {
+  if (right.confidence !== left.confidence) {
+    return right.confidence > left.confidence ? right : left;
+  }
+  if (right.surfaceText.length !== left.surfaceText.length) {
+    return right.surfaceText.length > left.surfaceText.length ? right : left;
+  }
+  return right.startOffset < left.startOffset ? right : left;
+}
+
+export function normalizeFactEntityMentionsForPersistence<
+  T extends {
+    label: EntityMentionLabel;
+    surfaceText: string;
+    normalizedSurface: string;
+    startOffset: number;
+    endOffset: number;
+    confidence: number;
+  },
+>(mentions: readonly T[]): T[] {
+  const prepared = mentions
+    .map((mention) => {
+      const surfaceText = normalizeMentionSurfaceText(mention.surfaceText);
+      const normalizedSurface = normalizeEntityKey(mention.normalizedSurface || surfaceText) || normalizeEntityKey(surfaceText);
+      return {
+        ...mention,
+        surfaceText,
+        normalizedSurface,
+      };
+    })
+    .filter((mention) => mention.surfaceText.length > 0 && mention.normalizedSurface.length > 0)
+    .filter((mention) => !shouldFilterEntityMention(mention))
+    .filter((mention, index, all) => !all.some((other, otherIndex) => otherIndex !== index && isContainedByLongerMention(mention, other)));
+
+  const deduplicated = new Map<string, T>();
+  for (const mention of prepared) {
+    const key = `${mention.label}\u0000${mention.normalizedSurface}`;
+    const existing = deduplicated.get(key);
+    deduplicated.set(key, existing ? preferEntityMention(existing, mention) : mention);
+  }
+
+  return [...deduplicated.values()].sort((left, right) => left.startOffset - right.startOffset);
 }
 
 /** Escape `%`, `_`, and `\` for SQLite `LIKE ... ESCAPE '\'` literal matching. */
@@ -196,6 +291,7 @@ export function replaceFactEntityMentions(
   const tx = createTransaction(db, () => {
     db.prepare("DELETE FROM fact_entity_mentions WHERE fact_id = ?").run(factId);
     db.prepare("DELETE FROM org_fact_links WHERE fact_id = ? AND reason = 'ner_mention'").run(factId);
+    const normalizedMentions = normalizeFactEntityMentionsForPersistence(mentions);
 
     const now = Math.floor(Date.now() / 1000);
     const ins = db.prepare(
@@ -211,7 +307,7 @@ export function replaceFactEntityMentions(
     const orgIds: string[] = [];
     const personRows: Array<{ surface: string; contactId: string }> = [];
 
-    for (const m of mentions) {
+    for (const m of normalizedMentions) {
       let contactId: string | null = null;
       let organizationId: string | null = null;
 
