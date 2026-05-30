@@ -402,4 +402,30 @@ describe("FactsDB entity layer persistence", () => {
       .all(fact.id) as Array<{ label: string; normalized_surface: string }>;
     expect(rows).toEqual([{ label: "MODEL", normalized_surface: "gemini-3.1-pro" }]);
   });
+
+  it("audit and cleanup count duplicates using canonicalized mention keys", () => {
+    const fact = db.store({
+      text: "GitHub and github are the same service mention.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("d", fact.id, "ORG", "GitHub", "github", 0, 6, 0.9, "eng", "llm", now);
+    ins.run("e", fact.id, "SERVICE", "github", "github", 11, 17, 0.89, "eng", "llm", now + 1);
+
+    const audit = db.auditEntityMentions(50);
+    const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+
+    expect(audit.duplicates).toBe(1);
+    expect(cleanupDryRun.duplicates).toBe(1);
+  });
 });

@@ -530,12 +530,6 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
     const seen = new Set<string>();
     for (const row of rows) {
       rowsScanned++;
-      const key = makeEntityMentionKey(row.label, row.normalized_surface);
-      if (seen.has(key)) {
-        duplicates++;
-      } else {
-        seen.add(key);
-      }
       const canonical = canonicalizeEntityMention({
         label: row.label,
         surfaceText: row.surface_text,
@@ -548,6 +542,12 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
         continue;
       }
       accepted++;
+      const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
+      if (seen.has(key)) {
+        duplicates++;
+      } else {
+        seen.add(key);
+      }
       if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
         reclassified++;
       }
