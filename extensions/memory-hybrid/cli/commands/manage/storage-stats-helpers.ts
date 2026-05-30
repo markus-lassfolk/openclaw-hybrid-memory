@@ -503,7 +503,17 @@ export function buildAuditHealthReport(
         .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
         .slice(0, 5);
       if (truncated) {
-        const totalSampled = implicitFeedbackPatterns + implicitFeedbackTrajectorySignals;
+        const totalSampled = Number(
+          (
+            raw
+              .prepare(
+                `SELECT COUNT(*) AS cnt FROM facts
+                 WHERE superseded_at IS NULL AND source = 'implicit-feedback'
+                   AND (category = 'pattern' OR (${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}))`,
+              )
+              .get() as { cnt: number } | undefined
+          )?.cnt ?? 0,
+        );
         errors.push({
           section: "implicitFeedbackPrefixHistogram",
           message: `Truncated: histogram sampled first ${cap} of ${totalSampled} implicit-feedback row(s)`,
