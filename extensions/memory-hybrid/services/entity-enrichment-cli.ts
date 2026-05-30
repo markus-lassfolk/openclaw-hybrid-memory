@@ -77,7 +77,7 @@ export async function runEntityEnrichmentForCli(
       mode,
       effectiveLimit,
       remainingTotal: pendingTotal,
-      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / limit),
+      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / Math.max(1, limit)),
       skipped: true,
     };
   }
@@ -95,7 +95,7 @@ export async function runEntityEnrichmentForCli(
       mode,
       effectiveLimit,
       remainingTotal: pendingTotal,
-      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / limit),
+      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / Math.max(1, limit)),
       pendingFactIds: verbose ? [...ids] : undefined,
     };
   }
@@ -104,7 +104,7 @@ export async function runEntityEnrichmentForCli(
   let processed = 0;
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
   const estimatedRunsRemaining = (): number =>
-    mode === "all" ? 0 : Math.ceil(Math.max(0, pendingTotal - processed) / limit);
+    mode === "all" ? 0 : Math.ceil(Math.max(0, pendingTotal - processed) / Math.max(1, limit));
   for (const id of ids) {
     processed++;
     const f = factsDb.getById(id);
