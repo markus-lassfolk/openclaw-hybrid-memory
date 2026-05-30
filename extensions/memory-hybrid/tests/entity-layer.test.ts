@@ -43,38 +43,38 @@ describe("detectFactTextLanguage (franc)", () => {
     const lang = detectFactTextLanguage(t);
     expect(lang).toBe("swe");
   });
+});
 
-  describe("extractEntityMentionsWithLlm", () => {
-    it("stores canonicalized surface text from quality gate output", async () => {
-      const openai = {
-        chat: {
-          completions: {
-            create: vi.fn().mockResolvedValue({
-              choices: [
-                {
-                  message: {
-                    content:
-                      '{"mentions":[{"label":"ORG","text":"Home   Assistant","start":0,"end":16,"confidence":0.9}]}',
-                  },
+describe("extractEntityMentionsWithLlm", () => {
+  it("stores canonicalized surface text from quality gate output", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [
+              {
+                message: {
+                  content:
+                    '{"mentions":[{"label":"ORG","text":"Home   Assistant","start":0,"end":16,"confidence":0.9}]}',
                 },
-              ],
-            }),
-          },
+              },
+            ],
+          }),
         },
-      };
+      },
+    };
 
-      const result = await extractEntityMentionsWithLlm(
-        "Home   Assistant helps with automations and reminders.",
-        openai as never,
-        "gpt-5-mini",
-      );
+    const result = await extractEntityMentionsWithLlm(
+      "Home   Assistant helps with automations and reminders.",
+      openai as never,
+      "gpt-5-mini",
+    );
 
-      expect(result.mentions).toHaveLength(1);
-      expect(result.mentions[0]).toMatchObject({
-        label: "SERVICE",
-        surfaceText: "Home Assistant",
-        normalizedSurface: "home assistant",
-      });
+    expect(result.mentions).toHaveLength(1);
+    expect(result.mentions[0]).toMatchObject({
+      label: "SERVICE",
+      surfaceText: "Home Assistant",
+      normalizedSurface: "home assistant",
     });
   });
 });
