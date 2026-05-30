@@ -169,8 +169,8 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
            AND m1.label = m2.label
            AND m1.normalized_surface = m2.normalized_surface
            AND (
-                m2.created_at < m1.created_at
-             OR (m2.created_at = m1.created_at AND m2.id < m1.id)
+                m2.created_at > m1.created_at
+             OR (m2.created_at = m1.created_at AND m2.id > m1.id)
            )
         );
       `);
@@ -548,12 +548,12 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
         countReason(rejectReasons, canonical.reason);
         continue;
       }
-      accepted++;
       const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
       if (seen.has(key)) {
         duplicates++;
       } else {
         seen.add(key);
+        accepted++;
       }
       if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
         reclassified++;
@@ -667,7 +667,6 @@ export function cleanupEntityMentions(
           countReason(rejectReasons, canonical.reason);
           continue;
         }
-        accepted++;
         if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
           reclassified++;
         }
@@ -688,6 +687,7 @@ export function cleanupEntityMentions(
           }
           continue;
         }
+        accepted++;
         acceptedByKey.set(key, {
           label: canonical.label,
           surfaceText: canonical.surfaceText,
