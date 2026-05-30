@@ -328,7 +328,7 @@ These are optional but recommended for long-running systems:
 | **Review stats** | Weekly | `openclaw hybrid-mem stats` |
 | **Find duplicates** | Monthly | `openclaw hybrid-mem find-duplicates --threshold 0.92` |
 | **Consolidate** | Monthly (after review) | `openclaw hybrid-mem consolidate --dry-run` then `consolidate` |
-| **Entity / contact NER backfill** | Monthly or after bulk import | `openclaw hybrid-mem enrich-entities --limit 25` (fills PERSON/ORG rows when `graph.enabled`; safe per-run cap—re-run to process more; see [GRAPH-MEMORY.md](GRAPH-MEMORY.md)) |
+| **Entity / contact NER backfill** | Monthly or after bulk import | `openclaw hybrid-mem enrich-entities --limit 25` (fills PERSON/ORG rows when `graph.enabled`; safe per-run cap—re-run to process more; set `HYBRID_MEM_CLI_JOB_ENRICH_LIMIT=N` to override the cron default; see [GRAPH-MEMORY.md](GRAPH-MEMORY.md)) |
 | **Review memory files** | Monthly | Read recent `memory/YYYY-MM-DD.md`, update `memory/` files |
 | **Update MEMORY.md index** | When files change | Edit `MEMORY.md` to reflect current structure |
 | **Archive completed projects** | When done | Move from `memory/projects/` to `memory/archive/` |
