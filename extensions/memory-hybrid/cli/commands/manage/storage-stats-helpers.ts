@@ -751,6 +751,11 @@ export function buildAuditHealthReport(
       "Run `openclaw hybrid-mem reflect-meta --collapse-implicit-feedback --include-legacy` (omit `--dry-run` to apply mutations).",
     );
   }
+  if (entityStopwordMatches.length > 0) {
+    remediation.push(
+      "Run `openclaw hybrid-mem entities clean --stopwords --apply` to null stop-word entity labels from existing facts.",
+    );
+  }
 
   let graphHubGuard: AuditHealthReport["graphHubGuard"] = null;
   if (raw && hasBudget("graphHubGuard")) {
