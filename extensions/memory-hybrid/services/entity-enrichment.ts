@@ -225,7 +225,7 @@ ${body}`;
       }
       mentions.push({
         label: canonical.label as EntityMentionLabel,
-        surfaceText: surfaceText,
+        surfaceText: canonical.surfaceText,
         normalizedSurface: canonical.normalizedSurface,
         startOffset: ss,
         endOffset: ee,

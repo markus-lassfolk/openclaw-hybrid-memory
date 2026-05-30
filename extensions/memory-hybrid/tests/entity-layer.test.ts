@@ -5,11 +5,15 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
 import { escapeLikeLiteralForBackslashEscape, normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
-import { detectFactTextLanguage, isEntityStopWord } from "../services/entity-enrichment.js";
+import {
+  detectFactTextLanguage,
+  extractEntityMentionsWithLlm,
+  isEntityStopWord,
+} from "../services/entity-enrichment.js";
 
 describe("normalizeEntityKey", () => {
   it("lowercases and collapses whitespace", () => {
@@ -38,6 +42,40 @@ describe("detectFactTextLanguage (franc)", () => {
     const t = "Mötet med Företag AB och Anna Svensson handlade om budgeten för nästa kvartal och leveransdatum.";
     const lang = detectFactTextLanguage(t);
     expect(lang).toBe("swe");
+  });
+
+  describe("extractEntityMentionsWithLlm", () => {
+    it("stores canonicalized surface text from quality gate output", async () => {
+      const openai = {
+        chat: {
+          completions: {
+            create: vi.fn().mockResolvedValue({
+              choices: [
+                {
+                  message: {
+                    content:
+                      '{"mentions":[{"label":"ORG","text":"Home   Assistant","start":0,"end":16,"confidence":0.9}]}',
+                  },
+                },
+              ],
+            }),
+          },
+        },
+      };
+
+      const result = await extractEntityMentionsWithLlm(
+        "Home   Assistant helps with automations and reminders.",
+        openai as never,
+        "gpt-5-mini",
+      );
+
+      expect(result.mentions).toHaveLength(1);
+      expect(result.mentions[0]).toMatchObject({
+        label: "SERVICE",
+        surfaceText: "Home Assistant",
+        normalizedSurface: "home assistant",
+      });
+    });
   });
 });
 
