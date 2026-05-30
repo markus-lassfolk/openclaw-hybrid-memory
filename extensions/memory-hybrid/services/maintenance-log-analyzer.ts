@@ -220,6 +220,37 @@ function safeStatMtimeMs(path: string): number {
   }
 }
 
+/**
+ * Subdirectory names that hold auxiliary/helper logs and should not be scanned for
+ * missing-exit-ledger anomalies (issue #1685).
+ */
+const AUXILIARY_DIR_NAMES = new Set(["manual-qa", "tmp", "archive"]);
+
+/**
+ * Returns true if filePath is under a known auxiliary subdirectory or a hidden directory
+ * (name starts with '.'), relative to root.  Used to skip non-maintenance artifacts.
+ */
+export function isUnderAuxiliaryDir(filePath: string, root: string): boolean {
+  const normalRoot = root.endsWith("/") ? root : `${root}/`;
+  const rel = filePath.startsWith(normalRoot) ? filePath.slice(normalRoot.length) : filePath;
+  return rel.split("/").some((seg) => seg.length > 0 && (AUXILIARY_DIR_NAMES.has(seg) || seg.startsWith(".")));
+}
+
+/**
+ * Canonical maintenance wrapper log names follow the pattern:
+ *   `<jobname>-YYYYMMDDTHHMMSSz-<pid>.log`  (e.g. `nightly-memory-sweep-20260511T030000Z-555.log`)
+ * or end with `.cron.log`.
+ *
+ * Files like `stdout.log`, `stderr.log`, or arbitrary helper logs do NOT match and
+ * should not be reported as missing-exit-ledger failures (issue #1685).
+ */
+const CANONICAL_MAINTENANCE_LOG_RE = /-\d{8}T\d{6}Z-\d+\.log$/;
+
+export function isCanonicalMaintenanceLog(filePath: string): boolean {
+  const file = basename(filePath);
+  return CANONICAL_MAINTENANCE_LOG_RE.test(file) || file.endsWith(".cron.log");
+}
+
 function collectFilesRecursive(root: string, suffix: string): string[] {
   const out: string[] = [];
   const stack = [root];
@@ -387,10 +418,14 @@ export function collectMaintenanceSteps(
   }
 
   // Catch orphan logs so analyzer never reports 0/0 OK when recent logs exist but no parseable exit rows.
+  // Only consider canonical maintenance wrapper logs; skip auxiliary directories and helper files (issue #1685).
   const logFiles = collectFilesRecursive(root, ".log");
   for (const logPath of logFiles) {
     const logMtime = safeStatMtimeMs(logPath);
     if (logMtime < cutoff) continue;
+    // Skip logs under auxiliary dirs (manual-qa, tmp, archive, hidden dirs) and non-canonical filenames.
+    // Files like stdout.log, stderr.log, or QA transcripts are not maintenance wrapper artifacts.
+    if (isUnderAuxiliaryDir(logPath, root) || !isCanonicalMaintenanceLog(logPath)) continue;
     const exitPath = logPath.replace(/\.log$/, ".exit.txt");
     if (seenExit.has(exitPath) || existsSync(exitPath)) continue;
     const logContent = safeRead(logPath);

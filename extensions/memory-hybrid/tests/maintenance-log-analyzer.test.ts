@@ -23,6 +23,8 @@ import {
   classifyMaintenanceFailure,
   collectMaintenanceSteps,
   countPersistedSqliteBusySince,
+  isCanonicalMaintenanceLog,
+  isUnderAuxiliaryDir,
   maintenanceRules,
   persistMaintenanceFindings,
   pluginVersionGte,
@@ -379,6 +381,76 @@ describe("maintenance log analyzer", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0].classification).toBe("orchestration-bug");
     expect(findings[0].ruleId).toBe("orchestration-missing-exit-ledger");
+  });
+
+  it("ignores manual-qa stdout transcripts: does not report them as missing-exit-ledger", () => {
+    const root = tmpRoot();
+    // Create a canonical wrapper log (should produce a finding — used as baseline)
+    const canonicalLog = join(root, "maintenance-log-analyzer-20260529T050412Z-15978.log");
+    writeFileSync(canonicalLog, "[maintenance-log-analyzer] run started\n");
+
+    // Create manual-qa directory with a stdout.log transcript
+    const qaDir = join(root, "manual-qa", "maintenance-log-analyzer-20260529T050412Z");
+    mkdirSync(qaDir, { recursive: true });
+    writeFileSync(
+      join(qaDir, "stdout.log"),
+      [
+        "SUCCESS: maintenance-log-analyzer",
+        "HM_EXIT=/home/markus/.openclaw/logs/cron-hybrid-mem/maintenance-log-analyzer-20260529T050412Z-15978.exit.txt",
+        "2026-05-29T05:04:27Z analyze-maintenance-logs exit=0",
+        "HM_LOG=/home/markus/.openclaw/logs/cron-hybrid-mem/maintenance-log-analyzer-20260529T050412Z-15978.log",
+        "GUARD_UPDATED=yes",
+      ].join("\n"),
+    );
+
+    const nowMs = Date.UTC(2026, 4, 29, 6, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    // Only the canonical wrapper log should produce a step; the QA transcript must be ignored
+    expect(steps).toHaveLength(1);
+    expect(steps[0].logPath).toBe(canonicalLog);
+    expect(steps.every((s) => !s.logPath.includes("manual-qa"))).toBe(true);
+  });
+
+  it("ignores arbitrary helper logs under subdirectories that lack canonical names", () => {
+    const root = tmpRoot();
+    // Arbitrary helper log without a timestamp-pid suffix — should be skipped
+    const helperDir = join(root, "helpers");
+    mkdirSync(helperDir, { recursive: true });
+    writeFileSync(join(helperDir, "stdout.log"), "helper output\n");
+    writeFileSync(join(helperDir, "debug.log"), "debug output\n");
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    expect(steps).toHaveLength(0);
+  });
+
+  it("still produces missing-exit-ledger for .cron.log files without a matching .exit.txt", () => {
+    const root = tmpRoot();
+    const logPath = join(root, "nightly-memory-sweep-20260511.cron.log");
+    writeFileSync(logPath, "[nightly-memory-sweep] run started\n");
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+  });
+
+  it("isCanonicalMaintenanceLog and isUnderAuxiliaryDir unit checks", () => {
+    expect(isCanonicalMaintenanceLog("/logs/nightly-distill-20260507T021015Z-123.log")).toBe(true);
+    expect(isCanonicalMaintenanceLog("/logs/maintenance-log-analyzer-20260529T050412Z-15978.log")).toBe(true);
+    expect(isCanonicalMaintenanceLog("/logs/nightly-memory-sweep-20260511.cron.log")).toBe(true);
+    expect(isCanonicalMaintenanceLog("/logs/manual-qa/run/stdout.log")).toBe(false);
+    expect(isCanonicalMaintenanceLog("/logs/helpers/debug.log")).toBe(false);
+    expect(isCanonicalMaintenanceLog("/logs/stderr.log")).toBe(false);
+
+    const root = "/home/user/.openclaw/logs/cron-hybrid-mem";
+    expect(isUnderAuxiliaryDir(`${root}/manual-qa/run/stdout.log`, root)).toBe(true);
+    expect(isUnderAuxiliaryDir(`${root}/tmp/scratch.log`, root)).toBe(true);
+    expect(isUnderAuxiliaryDir(`${root}/archive/old.log`, root)).toBe(true);
+    expect(isUnderAuxiliaryDir(`${root}/.hidden/x.log`, root)).toBe(true);
+    expect(isUnderAuxiliaryDir(`${root}/nightly-distill-20260507T021015Z-123.log`, root)).toBe(false);
+    expect(isUnderAuxiliaryDir(`${root}/20260507/nightly-distill-20260507T021015Z-123.log`, root)).toBe(false);
   });
 
   it("keeps normal successful verbose dream-cycle runs as OK", () => {
