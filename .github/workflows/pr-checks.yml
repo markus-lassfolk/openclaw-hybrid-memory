@@ -123,6 +123,7 @@ jobs:
           ignoreLabels: |
             stage/implementing
           types: |
+            WIP
             feat
             fix
             chore
