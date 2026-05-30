@@ -327,6 +327,8 @@ export interface ExtractImplicitFeedbackProgressSnapshot {
   partial?: boolean;
   partialReason?: string;
   sessionsDeferred?: number;
+  backlogSignalsEstimate?: number;
+  backlogTrajectoriesEstimate?: number;
 }
 
 /**
@@ -389,6 +391,14 @@ export async function runExtractImplicitFeedbackForCli(
       }
       return true;
     });
+    // Sort by mtime ascending, then by filename to ensure deterministic processing order
+    filePaths.sort((a, b) => {
+      const statA = statSync(a);
+      const statB = statSync(b);
+      const mtimeDiff = statA.mtimeMs - statB.mtimeMs;
+      if (mtimeDiff !== 0) return mtimeDiff;
+      return basename(a).localeCompare(basename(b));
+    });
     if (opts.verbose && cursor.lastSessionFile) {
       logger?.info?.(
         `memory-hybrid: ${SCAN_TYPE} incremental — resuming after ${cursor.lastSessionFile} (${filePaths.length} files to process)`,
@@ -397,6 +407,14 @@ export async function runExtractImplicitFeedbackForCli(
   } else {
     // Full mode: process all files in the date range
     filePaths = getSessionFilePathsSince(sessionDir, days);
+    // Sort by mtime ascending, then by filename to ensure deterministic processing order
+    filePaths.sort((a, b) => {
+      const statA = statSync(a);
+      const statB = statSync(b);
+      const mtimeDiff = statA.mtimeMs - statB.mtimeMs;
+      if (mtimeDiff !== 0) return mtimeDiff;
+      return basename(a).localeCompare(basename(b));
+    });
     if (opts.verbose && !opts.full) {
       logger?.info?.(`memory-hybrid: ${SCAN_TYPE} full scan — ${filePaths.length} files to process`);
     }
@@ -480,16 +498,47 @@ export async function runExtractImplicitFeedbackForCli(
   const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 50;
   const maxSignalsPerRun = implicitCfg.maxSignalsPerRun ?? 100;
   const maxTrajectoriesPerRun = implicitCfg.maxTrajectoriesPerRun ?? 50;
+  const maxWallClockSeconds = implicitCfg.maxWallClockSeconds ?? 300;
+  const startTimeMs = Date.now();
 
   for (const filePath of filePaths) {
     // Check if we've hit any caps
+    if (maxWallClockSeconds > 0) {
+      const elapsedSeconds = (Date.now() - startTimeMs) / 1000;
+      if (elapsedSeconds >= maxWallClockSeconds) {
+        partial = true;
+        partialReason = "maxWallClock";
+        sessionsDeferred = filePaths.length - progress.sessionsVisited;
+        const backlogSignalsEstimate = sessionsDeferred > 0 
+          ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
+        const backlogTrajectoriesEstimate = sessionsDeferred > 0
+          ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
+        progress.partial = partial;
+        progress.partialReason = partialReason;
+        progress.sessionsDeferred = sessionsDeferred;
+        progress.backlogSignalsEstimate = backlogSignalsEstimate;
+        progress.backlogTrajectoriesEstimate = backlogTrajectoriesEstimate;
+        emitProgress();
+        break;
+      }
+    }
     if (maxSessionsPerRun > 0 && progress.sessionsProcessed >= maxSessionsPerRun) {
       partial = true;
       partialReason = "maxSessions";
       sessionsDeferred = filePaths.length - progress.sessionsVisited;
+      const backlogSignalsEstimate = sessionsDeferred > 0 
+        ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+        : 0;
+      const backlogTrajectoriesEstimate = sessionsDeferred > 0
+        ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+        : 0;
       progress.partial = partial;
       progress.partialReason = partialReason;
       progress.sessionsDeferred = sessionsDeferred;
+      progress.backlogSignalsEstimate = backlogSignalsEstimate;
+      progress.backlogTrajectoriesEstimate = backlogTrajectoriesEstimate;
       emitProgress();
       break;
     }
@@ -497,9 +546,17 @@ export async function runExtractImplicitFeedbackForCli(
       partial = true;
       partialReason = "maxSignals";
       sessionsDeferred = filePaths.length - progress.sessionsVisited;
+      const backlogSignalsEstimate = sessionsDeferred > 0 
+        ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+        : 0;
+      const backlogTrajectoriesEstimate = sessionsDeferred > 0
+        ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+        : 0;
       progress.partial = partial;
       progress.partialReason = partialReason;
       progress.sessionsDeferred = sessionsDeferred;
+      progress.backlogSignalsEstimate = backlogSignalsEstimate;
+      progress.backlogTrajectoriesEstimate = backlogTrajectoriesEstimate;
       emitProgress();
       break;
     }
@@ -507,9 +564,17 @@ export async function runExtractImplicitFeedbackForCli(
       partial = true;
       partialReason = "maxTrajectories";
       sessionsDeferred = filePaths.length - progress.sessionsVisited;
+      const backlogSignalsEstimate = sessionsDeferred > 0 
+        ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+        : 0;
+      const backlogTrajectoriesEstimate = sessionsDeferred > 0
+        ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+        : 0;
       progress.partial = partial;
       progress.partialReason = partialReason;
       progress.sessionsDeferred = sessionsDeferred;
+      progress.backlogSignalsEstimate = backlogSignalsEstimate;
+      progress.backlogTrajectoriesEstimate = backlogTrajectoriesEstimate;
       emitProgress();
       break;
     }
