@@ -663,7 +663,7 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
     lessonDedupeJaccard:
       typeof raw?.lessonDedupeJaccard === "number" && raw.lessonDedupeJaccard > 0 && raw.lessonDedupeJaccard <= 1
         ? raw.lessonDedupeJaccard
-        : 0.8,
+        : 0.7,
     autoCleanup: raw?.autoCleanup !== false,
     cleanupLimit:
       typeof raw?.cleanupLimit === "number" && raw.cleanupLimit >= 0
