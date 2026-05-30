@@ -28,6 +28,8 @@ export interface BuildDailyNarrativeParams {
   model: string;
   logger: { info?: (msg: string) => void; warn: (msg: string) => void };
   fallbackModels?: string[];
+  registrationGeneration?: number;
+  currentRegistrationGenerationRef?: { value: number };
 }
 
 function toSec(iso: string): number {
@@ -50,7 +52,18 @@ function isDatabaseNotOpenError(err: unknown): boolean {
 }
 
 export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Promise<boolean> {
-  const { sessionId, eventLog, workflowStore, narrativesDb, openai, model, logger, fallbackModels } = params;
+  const {
+    sessionId,
+    eventLog,
+    workflowStore,
+    narrativesDb,
+    openai,
+    model,
+    logger,
+    fallbackModels,
+    registrationGeneration,
+    currentRegistrationGenerationRef,
+  } = params;
   if (!eventLog || !narrativesDb) return false;
   if (!eventLog.isOpen()) return false; // session already disposed
   if (!narrativesDb.isOpen()) return false;
@@ -118,6 +131,13 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     const normalized = normalizeNarrative(raw);
     if (!normalized || normalized === "NO_NARRATIVE") return false;
     if (!narrativesDb.isOpen()) return false;
+    if (
+      typeof registrationGeneration === "number" &&
+      currentRegistrationGenerationRef !== undefined &&
+      currentRegistrationGenerationRef.value !== registrationGeneration
+    ) {
+      return false;
+    }
     narrativesDb.store({
       sessionId,
       periodStart,

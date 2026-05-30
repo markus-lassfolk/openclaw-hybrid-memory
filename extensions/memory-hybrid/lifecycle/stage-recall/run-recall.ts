@@ -28,6 +28,7 @@ import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
+import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
 
 function emptyRecallStage(): RecallStageResult {
   return { kind: "empty", prependContext: undefined };
@@ -45,11 +46,7 @@ function isLifecycleSqliteShutdownError(err: unknown, ctx: LifecycleContext): bo
   if (typeof ctx.factsDb.isOpen === "function" && !ctx.factsDb.isOpen()) {
     return true;
   }
-  return (
-    typeof ctx.registrationGeneration === "number" &&
-    ctx.currentRegistrationGenerationRef !== undefined &&
-    ctx.currentRegistrationGenerationRef.value !== ctx.registrationGeneration
-  );
+  return isStaleLifecycleGeneration(ctx);
 }
 
 function clipNarrativeText(text: string, maxChars = 360): string {

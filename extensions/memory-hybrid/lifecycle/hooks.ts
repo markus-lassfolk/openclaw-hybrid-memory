@@ -30,16 +30,9 @@ import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import type { LifecycleContext } from "./types.js";
+import { isStaleLifecycleGeneration } from "../utils/lifecycle-generation.js";
 
 export type { LifecycleContext } from "./types.js";
-
-function isStaleLifecycleGeneration(ctx: LifecycleContext): boolean {
-  return (
-    typeof ctx.registrationGeneration === "number" &&
-    ctx.currentRegistrationGenerationRef !== undefined &&
-    ctx.currentRegistrationGenerationRef.value !== ctx.registrationGeneration
-  );
-}
 
 export function createLifecycleHooks(ctx: LifecycleContext) {
   const sessionState = createSessionState();
@@ -296,6 +289,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           model: getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
           logger: api.logger,
           fallbackModels: [],
+          registrationGeneration: ctx.registrationGeneration,
+          currentRegistrationGenerationRef: ctx.currentRegistrationGenerationRef,
         });
       } catch (err) {
         const transient = isAbortOrTransientLlmError(err);
