@@ -162,6 +162,62 @@ function sampleLwwResult(overrides: Partial<LwwResult> = {}): LwwResult {
   };
 }
 
+describe("enrich-entities CLI options", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("uses default limit=200 for bounded dry-run", async () => {
+    const runEntityEnrichment = vi
+      .fn()
+      .mockResolvedValue({ pending: 0, pendingTotal: 0, processed: 0, factsEnriched: 0, remainingTotal: 0 });
+    const mem = makeProgram(makeBindings({ runEntityEnrichment }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mem.parseAsync(["enrich-entities", "--dry-run"], { from: "user" });
+
+    expect(runEntityEnrichment).toHaveBeenCalledTimes(1);
+    const opts = runEntityEnrichment.mock.calls[0]?.[0];
+    expect(opts.limit).toBe(200);
+    expect(opts.dryRun).toBe(true);
+    expect(opts.all).toBe(false);
+    expect(typeof opts.onProgress).toBe("function");
+  });
+
+  it("accepts explicit high --limit for catch-up runs", async () => {
+    const runEntityEnrichment = vi
+      .fn()
+      .mockResolvedValue({ pending: 0, pendingTotal: 0, processed: 0, factsEnriched: 0, remainingTotal: 0 });
+    const mem = makeProgram(makeBindings({ runEntityEnrichment }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mem.parseAsync(["enrich-entities", "--dry-run", "--limit", "2000"], { from: "user" });
+
+    expect(runEntityEnrichment).toHaveBeenCalledTimes(1);
+    const opts = runEntityEnrichment.mock.calls[0]?.[0];
+    expect(opts.limit).toBe(2000);
+    expect(opts.dryRun).toBe(true);
+    expect(opts.all).toBe(false);
+  });
+
+  it("enables exhaustive catch-up with --all", async () => {
+    const runEntityEnrichment = vi
+      .fn()
+      .mockResolvedValue({ pending: 0, pendingTotal: 0, processed: 0, factsEnriched: 0, remainingTotal: 0 });
+    const mem = makeProgram(makeBindings({ runEntityEnrichment }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mem.parseAsync(["enrich-entities", "--dry-run", "--all"], { from: "user" });
+
+    expect(runEntityEnrichment).toHaveBeenCalledTimes(1);
+    const opts = runEntityEnrichment.mock.calls[0]?.[0];
+    expect(opts.limit).toBe(200);
+    expect(opts.dryRun).toBe(true);
+    expect(opts.all).toBe(true);
+  });
+});
+
 describe("resolve-contradictions CLI contract mode", () => {
   let tmpDir: string;
 
