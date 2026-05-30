@@ -84,10 +84,20 @@ function isContainedByLongerMention(
     return false;
   }
 
-  return (
-    other.normalizedSurface.length > mention.normalizedSurface.length &&
-    other.normalizedSurface.includes(mention.normalizedSurface)
-  );
+  if (other.normalizedSurface.length <= mention.normalizedSurface.length) {
+    return false;
+  }
+
+  const index = other.normalizedSurface.indexOf(mention.normalizedSurface);
+  if (index === -1) {
+    return false;
+  }
+
+  const endIndex = index + mention.normalizedSurface.length;
+  const beforeChar = index > 0 ? other.normalizedSurface[index - 1] : " ";
+  const afterChar = endIndex < other.normalizedSurface.length ? other.normalizedSurface[endIndex] : " ";
+
+  return beforeChar === " " && (afterChar === " " || endIndex === other.normalizedSurface.length);
 }
 
 function preferEntityMention<
@@ -119,7 +129,8 @@ export function normalizeFactEntityMentionsForPersistence<
   const prepared = mentions
     .map((mention) => {
       const surfaceText = normalizeMentionSurfaceText(mention.surfaceText);
-      const normalizedSurface = normalizeEntityKey(mention.normalizedSurface || surfaceText) || normalizeEntityKey(surfaceText);
+      const normalizedSurface =
+        normalizeEntityKey(mention.normalizedSurface || surfaceText) || normalizeEntityKey(surfaceText);
       return {
         ...mention,
         surfaceText,
@@ -128,7 +139,10 @@ export function normalizeFactEntityMentionsForPersistence<
     })
     .filter((mention) => mention.surfaceText.length > 0 && mention.normalizedSurface.length > 0)
     .filter((mention) => !shouldFilterEntityMention(mention))
-    .filter((mention, index, all) => !all.some((other, otherIndex) => otherIndex !== index && isContainedByLongerMention(mention, other)));
+    .filter(
+      (mention, index, all) =>
+        !all.some((other, otherIndex) => otherIndex !== index && isContainedByLongerMention(mention, other)),
+    );
 
   const deduplicated = new Map<string, T>();
   for (const mention of prepared) {

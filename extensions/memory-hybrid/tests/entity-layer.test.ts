@@ -108,6 +108,142 @@ describe("normalizeFactEntityMentionsForPersistence", () => {
       },
     ]);
   });
+
+  it("preserves distinct entities that are coincidental character-level substrings", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "Ford",
+          normalizedSurface: "ford",
+          startOffset: 0,
+          endOffset: 4,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Oxford",
+          normalizedSurface: "oxford",
+          startOffset: 10,
+          endOffset: 16,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Rich",
+          normalizedSurface: "rich",
+          startOffset: 20,
+          endOffset: 24,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Richard",
+          normalizedSurface: "richard",
+          startOffset: 30,
+          endOffset: 37,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Art",
+          normalizedSurface: "art",
+          startOffset: 40,
+          endOffset: 43,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Martin",
+          normalizedSurface: "martin",
+          startOffset: 50,
+          endOffset: 56,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Ace",
+          normalizedSurface: "ace",
+          startOffset: 60,
+          endOffset: 63,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Space",
+          normalizedSurface: "space",
+          startOffset: 70,
+          endOffset: 75,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "Ford",
+        normalizedSurface: "ford",
+        startOffset: 0,
+        endOffset: 4,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Oxford",
+        normalizedSurface: "oxford",
+        startOffset: 10,
+        endOffset: 16,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Rich",
+        normalizedSurface: "rich",
+        startOffset: 20,
+        endOffset: 24,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Richard",
+        normalizedSurface: "richard",
+        startOffset: 30,
+        endOffset: 37,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Art",
+        normalizedSurface: "art",
+        startOffset: 40,
+        endOffset: 43,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Martin",
+        normalizedSurface: "martin",
+        startOffset: 50,
+        endOffset: 56,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Ace",
+        normalizedSurface: "ace",
+        startOffset: 60,
+        endOffset: 63,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Space",
+        normalizedSurface: "space",
+        startOffset: 70,
+        endOffset: 75,
+        confidence: 0.9,
+      },
+    ]);
+  });
 });
 
 describe("entity enrichment stop words", () => {
@@ -316,9 +452,9 @@ describe("FactsDB entity layer persistence", () => {
         },
       ]);
 
-      const orgNames = raw
-        .prepare("SELECT display_name FROM organizations ORDER BY canonical_key")
-        .all() as Array<{ display_name: string }>;
+      const orgNames = raw.prepare("SELECT display_name FROM organizations ORDER BY canonical_key").all() as Array<{
+        display_name: string;
+      }>;
       expect(orgNames).toEqual([{ display_name: "Acme Corporation" }, { display_name: "hybrid-memory pr pipeline" }]);
 
       const contactCount = raw.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number };
