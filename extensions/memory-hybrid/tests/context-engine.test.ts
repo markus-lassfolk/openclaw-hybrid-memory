@@ -498,11 +498,12 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     const engineTight = makeEngine();
 
     const resultFull = await engineFull.assemble({ sessionId: "s1", messages: [], tokenBudget: 10000 });
-    // Keep this low enough that high-numbered facts cannot all fit under the same
-    // char/4 estimate as the header + label (otherwise 150 still fits facts 7–9 — flaky on CI).
-    // Keep 100 below the two-fact threshold with the recalled-data boundary overhead,
-    // while still high enough for at least one fact plus block framing.
-    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 100 });
+    // Budget arithmetic (char/4 estimate):
+    //   base overhead (open/close markers + RECALLED_CONTEXT_BOUNDARY + label) ≈ 59 tokens
+    //   one serialised fact entry ≈ 32 tokens → 1 fact total ≈ 91 tokens
+    //   two facts total ≈ 123 tokens
+    // Pick 95 so exactly one fact fits, regardless of which fact is returned first.
+    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 95 });
 
     // Full budget should include more content
     const fullLength = resultFull.systemPromptAddition?.length ?? 0;
@@ -515,11 +516,11 @@ describe("HybridMemoryContextEngine.assemble()", () => {
 
     // Check exact enforcement on tight
     const tightTokens = estimateTokenCount(resultTight.systemPromptAddition!);
-    expect(tightTokens).toBeLessThanOrEqual(130);
+    expect(tightTokens).toBeLessThanOrEqual(95);
 
-    // Verify the tight budget includes fewer facts than the full budget regardless of DB tie ordering.
-    const fullFactCount = resultFull.systemPromptAddition?.match(/Fact number \d/g)?.length ?? 0;
-    const tightFactCount = resultTight.systemPromptAddition?.match(/Fact number \d/g)?.length ?? 0;
+    // Verify truncation: the tight result must contain fewer facts than the full result.
+    const fullFactCount = (resultFull.systemPromptAddition?.match(/Fact number \d/g) ?? []).length;
+    const tightFactCount = (resultTight.systemPromptAddition?.match(/Fact number \d/g) ?? []).length;
     expect(fullFactCount).toBe(10);
     expect(tightFactCount).toBeGreaterThan(0);
     expect(tightFactCount).toBeLessThan(fullFactCount);
