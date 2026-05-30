@@ -119,6 +119,100 @@ so you see only facts that were valid at that moment.
 
 ---
 
+## Autonomous contradiction resolution pipeline (Issue #1692)
+
+The `resolve-contradictions` command includes a **multi-tier autonomous pipeline** that can resolve ≥80% of ambiguous contradiction pairs without human input while keeping genuinely risky conflicts for manual review.
+
+### Resolution tiers
+
+| Tier | Mechanism | Outcome |
+|------|-----------|---------|
+| **1 — deterministic LWW** | Project-state latest-wins: newer trusted fact supersedes the stale value | Resolved automatically; audit row written |
+| **2 — guard rails** | Detects risky patterns (entity reuse, verified old fact, missing confidence) | Skipped; added to manual-review queue |
+| **3 — LLM adjudication** | Calls a configured LLM; auto-applies when confidence ≥ 0.90 | Resolved if confident; otherwise falls through to Tier 4 |
+| **4 — manual review queue** | Unresolved pairs exported as stable JSONL with suggested decisions | Human edits decisions; applied via `--apply-review` |
+
+**Tier 1 eligibility criteria** — a pair is eligible for deterministic LWW when all of the following hold:
+- `category = project`
+- Key is in the mutable-key set: `status`, `next`, `task_updated`, `related_session`, `coverage`, `last_live_verified_at`, `live_state_hash`, `last_actionable_blocker`, `owner`
+- The newer fact comes from a trusted source: `conversation`, `cli`, `active-task`, or `tool`
+- Timestamps are strictly ordered (newer > older)
+- Newer fact confidence ≥ original fact confidence
+
+Write-time auto-supersede also applies Tier 1 immediately when a newer project-state fact is stored, so many contradictions never enter the backlog at all.
+
+### CLI usage
+
+```bash
+# Preview: what would be resolved, what would stay manual?
+openclaw hybrid-mem resolve-contradictions --auto --dry-run
+
+# Apply: resolve deterministic pairs, write audit trail
+openclaw hybrid-mem resolve-contradictions --auto
+
+# Apply with a different target rate (default 0.80)
+openclaw hybrid-mem resolve-contradictions --auto --target-rate 0.90
+
+# Apply with opt-in LLM adjudication for remaining pairs
+openclaw hybrid-mem resolve-contradictions --auto --llm --model gpt-4o-mini
+
+# Export remaining manual-review items as stable JSONL
+openclaw hybrid-mem resolve-contradictions --auto --dry-run --export-review ./review.jsonl
+
+# Apply reviewed decisions from JSONL (fill in "decision" fields, re-run)
+openclaw hybrid-mem resolve-contradictions --apply-review ./review-decisions.jsonl
+```
+
+The `--export-review` / `--apply-review` round-trip:
+1. Run `--export-review` to write unresolved items with `suggestedDecision`, `suggestedStrategy`, `suggestedConfidence`, and `suggestedReason` fields.
+2. Edit the file: set each item's `decision` to one of:
+   - `keep_new` — discard the older fact, keep the newer one
+   - `keep_old` — discard the newer fact, keep the older one
+   - `merge` — mark both facts as resolved without discarding either
+   - `manual_review` — leave this item unresolved (skip it; no changes applied)
+3. Run `--apply-review` to apply all non-`manual_review` decisions with a full audit trail.
+
+### Structured run reporting
+
+Every `--auto` run prints a machine-readable summary line:
+
+```
+contradiction-auto summary total=222 deterministic=188 llm=0 merged=0 manual_review=34 applied=false target=0.80 achieved=0.846
+```
+
+If the target rate is missed, an additional line is printed:
+
+```
+contradiction-auto target-missed achieved=0.714 target=0.80
+```
+
+### Audit trail
+
+Every applied decision (auto or reviewed) is written to the `contradiction_resolution_audit` table with:
+
+- `contradiction_id` — the contradiction being resolved
+- `kept_fact_id` / `superseded_fact_id` — which fact wins
+- `strategy` — e.g. `project-state-lww`, `llm-adjudication`, `manual-review-file`
+- `confidence` — 0.0–1.0
+- `reason` — human-readable explanation
+- `decided_at` — Unix seconds
+- `actor` — tool name / identity
+- `tool_version` — optional plugin version
+- `mode` — `auto` or `review`
+- `model` — LLM model name if applicable
+
+### Nightly maintenance integration
+
+The default nightly-memory-sweep cron job runs:
+
+```
+openclaw hybrid-mem resolve-contradictions --auto --verbose
+```
+
+This applies deterministic Tier 1 resolutions silently and reports any unresolved pairs. LLM adjudication is opt-in and not part of the default cron schedule; enable it by editing the cron command once proven in your environment.
+
+---
+
 ## Relation to deduplication
 
 Conflicting-memory handling is the **most advanced** layer of deduplication:
@@ -141,6 +235,7 @@ See [DEEP-DIVE.md](DEEP-DIVE.md#deduplication) for the full deduplication sectio
 | **Default search** | Exclude superseded facts so recall is “current” only. |
 | **Point-in-time** | Use `--as-of` (or API equivalent) to query “what was true at date X?”. |
 | **Manual supersedes** | Pass `supersedes: factId` in `memory_store` when you know which fact is replaced. |
+| **Autonomous pipeline** | `resolve-contradictions --auto` resolves ≥80% of project-state contradictions deterministically; opt-in LLM adjudication for the rest; audit trail for every decision. |
 
 ---
 
@@ -150,3 +245,5 @@ See [DEEP-DIVE.md](DEEP-DIVE.md#deduplication) for the full deduplication sectio
 - [FEATURES.md](FEATURES.md) — Classification pipeline and config
 - [CONFIGURATION.md](CONFIGURATION.md) — `store.classifyBeforeWrite` and `store.classifyModel`
 - [GRAPH-MEMORY.md](GRAPH-MEMORY.md) — SUPERSEDES link type and graph traversal
+- [CLI-REFERENCE.md](CLI-REFERENCE.md) — `resolve-contradictions` full flag reference
+- [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md) — nightly-memory-sweep schedule
