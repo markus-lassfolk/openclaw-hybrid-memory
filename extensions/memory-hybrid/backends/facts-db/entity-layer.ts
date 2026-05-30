@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { canonicalizeEntityMention, countReason, makeEntityMentionKey } from "../../utils/entity-mention-quality.js";
+import { readSchemaVersion, writeSchemaVersion } from "../sqlite-schema-meta.js";
 
 export type EntityMentionLabel =
   | "PERSON"
@@ -145,32 +146,38 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_fem_contact ON fact_entity_mentions(contact_id);
     CREATE INDEX IF NOT EXISTS idx_fem_label ON fact_entity_mentions(label);
   `);
-  const hasDuplicates = db
-    .prepare(
-      `SELECT 1
-       FROM fact_entity_mentions
-       GROUP BY fact_id, label, normalized_surface
-       HAVING COUNT(*) > 1
-       LIMIT 1`,
-    )
-    .get() as { 1: number } | undefined;
-  if (hasDuplicates) {
-    db.exec(`
-      DELETE FROM fact_entity_mentions
-      WHERE id IN (
-        SELECT m1.id
-        FROM fact_entity_mentions m1
-        JOIN fact_entity_mentions m2
-          ON m1.fact_id = m2.fact_id
-         AND m1.label = m2.label
-         AND m1.normalized_surface = m2.normalized_surface
-         AND (
-              m2.created_at < m1.created_at
-           OR (m2.created_at = m1.created_at AND m2.id < m1.id)
-         )
-      );
-    `);
+
+  const version = readSchemaVersion(db, "entity_layer");
+  if (version < 1) {
+    const hasDuplicates = db
+      .prepare(
+        `SELECT 1
+         FROM fact_entity_mentions
+         GROUP BY fact_id, label, normalized_surface
+         HAVING COUNT(*) > 1
+         LIMIT 1`,
+      )
+      .get() as { 1: number } | undefined;
+    if (hasDuplicates) {
+      db.exec(`
+        DELETE FROM fact_entity_mentions
+        WHERE id IN (
+          SELECT m1.id
+          FROM fact_entity_mentions m1
+          JOIN fact_entity_mentions m2
+            ON m1.fact_id = m2.fact_id
+           AND m1.label = m2.label
+           AND m1.normalized_surface = m2.normalized_surface
+           AND (
+                m2.created_at < m1.created_at
+             OR (m2.created_at = m1.created_at AND m2.id < m1.id)
+           )
+        );
+      `);
+    }
+    writeSchemaVersion(db, "entity_layer", 1);
   }
+
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_fem_fact_label_norm
     ON fact_entity_mentions(fact_id, label, normalized_surface);
@@ -606,7 +613,7 @@ export function cleanupEntityMentions(
   let removedRows = 0;
   const rejectReasons: Record<string, number> = {};
 
-  const tx = createTransaction(db, () => {
+  const processLoop = () => {
     for (const fact of factIds) {
       const rows = db
         .prepare(
@@ -713,9 +720,14 @@ export function cleanupEntityMentions(
         }
       }
     }
-  });
+  };
 
-  tx();
+  if (options.apply) {
+    const tx = createTransaction(db, processLoop);
+    tx();
+  } else {
+    processLoop();
+  }
 
   return {
     factsScanned: factIds.length,
