@@ -33,6 +33,14 @@ import type { LifecycleContext } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
 
+function isStaleLifecycleGeneration(ctx: LifecycleContext): boolean {
+  return (
+    typeof ctx.registrationGeneration === "number" &&
+    ctx.currentRegistrationGenerationRef !== undefined &&
+    ctx.currentRegistrationGenerationRef.value !== ctx.registrationGeneration
+  );
+}
+
 export function createLifecycleHooks(ctx: LifecycleContext) {
   const sessionState = createSessionState();
   const staleSweepTimer = createStaleSweepTimer(sessionState);
@@ -69,6 +77,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
+          if (isStaleLifecycleGeneration(ctx)) return undefined;
           if (!recallStageResult) {
             if (capturedFirstRecallBegin) {
               recordStartupMemoryCheckpoint({
@@ -115,6 +124,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
           }
           const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
+          if (isStaleLifecycleGeneration(ctx)) return undefined;
           if (capturedFirstRecallBegin) {
             recordStartupMemoryCheckpoint({
               logger: api.logger,
@@ -240,6 +250,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       }
 
       await runCaptureStage(event, rApi, ctx, sessionState);
+      if (isStaleLifecycleGeneration(ctx)) return;
       const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
       if (ctx.cfg.goalStewardship?.enabled) {
         try {
@@ -273,6 +284,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.debug?.(`memory-hybrid: goal session summary failed (non-fatal): ${String(err)}`);
         }
       }
+      if (isStaleLifecycleGeneration(ctx)) return;
 
       try {
         await buildDailyNarrative({
@@ -301,6 +313,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
         }
       }
+      if (isStaleLifecycleGeneration(ctx)) return;
 
       if (ev?.success !== false) {
         try {

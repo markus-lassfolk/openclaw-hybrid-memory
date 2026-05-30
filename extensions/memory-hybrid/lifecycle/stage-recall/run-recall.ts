@@ -37,6 +37,21 @@ function recallAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
+function isLifecycleSqliteShutdownError(err: unknown, ctx: LifecycleContext): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  if (!/not open|connection is not open|database is not open/i.test(message)) {
+    return false;
+  }
+  if (typeof ctx.factsDb.isOpen === "function" && !ctx.factsDb.isOpen()) {
+    return true;
+  }
+  return (
+    typeof ctx.registrationGeneration === "number" &&
+    ctx.currentRegistrationGenerationRef !== undefined &&
+    ctx.currentRegistrationGenerationRef.value !== ctx.registrationGeneration
+  );
+}
+
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
@@ -1048,6 +1063,10 @@ export async function runRecall(
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
+    if (isLifecycleSqliteShutdownError(err, ctx)) {
+      setRecallProbePhase("skip:shutdown");
+      return completeStage(emptyRecallStage());
+    }
     if (!recallStageCompleted) {
       recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, {
         ...(recallStageFields ?? {}),

@@ -44,10 +44,17 @@ function normalizeNarrative(raw: string): string {
   return raw.replace(/\r\n?/g, "\n").trim();
 }
 
+function isDatabaseNotOpenError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /not open|connection is not open|database is not open/i.test(message);
+}
+
 export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Promise<boolean> {
   const { sessionId, eventLog, workflowStore, narrativesDb, openai, model, logger, fallbackModels } = params;
   if (!eventLog || !narrativesDb) return false;
   if (!eventLog.isOpen()) return false; // session already disposed
+  if (!narrativesDb.isOpen()) return false;
+  if (workflowStore && !workflowStore.isOpen()) return false;
 
   try {
     const events = eventLog.getBySession(sessionId, MAX_EVENTS_FOR_PROMPT);
@@ -97,7 +104,6 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
       workflows: workflowsBlock || "none",
       max_chars: String(DEFAULT_MAX_NARRATIVE_CHARS),
     });
-
     const raw = await chatCompleteWithRetry({
       model,
       content: prompt,
@@ -111,6 +117,7 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
     });
     const normalized = normalizeNarrative(raw);
     if (!normalized || normalized === "NO_NARRATIVE") return false;
+    if (!narrativesDb.isOpen()) return false;
     narrativesDb.store({
       sessionId,
       periodStart,
@@ -119,13 +126,27 @@ export async function buildDailyNarrative(params: BuildDailyNarrativeParams): Pr
       narrativeText: clip(normalized, DEFAULT_MAX_NARRATIVE_CHARS),
     });
     // Keep narrative storage bounded.
-    narrativesDb.pruneOlderThan(30);
+    try {
+      if (narrativesDb.isOpen()) {
+        narrativesDb.pruneOlderThan(30);
+      }
+    } catch (err) {
+      if (!isDatabaseNotOpenError(err)) {
+        throw err;
+      }
+    }
     logger.info?.(
       `memory-hybrid: stored session narrative for ${sessionId} (transcript file: ${sessionTranscriptFilename(sessionId)})`,
     );
     return true;
   } catch (err) {
     const asError = err instanceof Error ? err : new Error(String(err));
+    if (
+      isDatabaseNotOpenError(asError) &&
+      (!eventLog.isOpen() || !narrativesDb.isOpen() || (workflowStore !== null && !workflowStore.isOpen()))
+    ) {
+      return false;
+    }
     const transient = isAbortOrTransientLlmError(err) || is500OrWrapped(asError);
     if (!transient) {
       capturePluginError(asError, {
