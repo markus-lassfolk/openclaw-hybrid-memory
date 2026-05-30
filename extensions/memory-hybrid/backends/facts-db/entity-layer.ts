@@ -701,7 +701,22 @@ export function cleanupEntityMentions(
         });
       }
 
-      const nextRows = [...acceptedByKey.values()];
+      const allAccepted = [...acceptedByKey.values()];
+      const filteredBySubstring: typeof allAccepted = [];
+      for (const m of allAccepted) {
+        const isSubstring = allAccepted.some(
+          (other) =>
+            other !== m &&
+            other.label === m.label &&
+            other.normalizedSurface.length > m.normalizedSurface.length &&
+            other.normalizedSurface.includes(m.normalizedSurface),
+        );
+        if (!isSubstring) {
+          filteredBySubstring.push(m);
+        }
+      }
+
+      const nextRows = filteredBySubstring;
       const after = rowsSignature(
         nextRows.map((row) => ({
           label: row.label,

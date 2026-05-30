@@ -49,4 +49,42 @@ describe("canonicalizeEntityMention", () => {
       normalizedSurface: "home assistant",
     });
   });
+
+  it("reclassifies o-series and gpt-4o model names", () => {
+    expect(
+      canonicalizeEntityMention({
+        label: "ORG",
+        surfaceText: "gpt-4o",
+        confidence: 0.9,
+      }),
+    ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "gpt-4o" });
+    expect(
+      canonicalizeEntityMention({
+        label: "ORG",
+        surfaceText: "gpt-4o-mini",
+        confidence: 0.9,
+      }),
+    ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "gpt-4o-mini" });
+    expect(
+      canonicalizeEntityMention({
+        label: "ORG",
+        surfaceText: "o3",
+        confidence: 0.9,
+      }),
+    ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "o3" });
+    expect(
+      canonicalizeEntityMention({
+        label: "ORG",
+        surfaceText: "o3-mini",
+        confidence: 0.9,
+      }),
+    ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "o3-mini" });
+    expect(
+      canonicalizeEntityMention({
+        label: "ORG",
+        surfaceText: "o1-pro",
+        confidence: 0.9,
+      }),
+    ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "o1-pro" });
+  });
 });
