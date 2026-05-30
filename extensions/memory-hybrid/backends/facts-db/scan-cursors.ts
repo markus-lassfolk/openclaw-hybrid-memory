@@ -60,18 +60,9 @@ export function updateScanCursor(
     `INSERT INTO scan_cursors (scan_type, last_session_ts, last_session_file, last_run_at, sessions_processed)
      VALUES (?, ?, ?, ?, ?)
      ON CONFLICT(scan_type) DO UPDATE SET
-       last_session_ts = CASE
-         WHEN excluded.sessions_processed > 0 THEN excluded.last_session_ts
-         ELSE scan_cursors.last_session_ts
-       END,
-       last_session_file = CASE
-         WHEN excluded.sessions_processed > 0 THEN excluded.last_session_file
-         ELSE scan_cursors.last_session_file
-       END,
-       last_run_at = CASE
-         WHEN excluded.sessions_processed > 0 THEN excluded.last_run_at
-         ELSE scan_cursors.last_run_at
-       END,
+       last_session_ts = excluded.last_session_ts,
+       last_session_file = excluded.last_session_file,
+       last_run_at = excluded.last_run_at,
        sessions_processed = scan_cursors.sessions_processed + excluded.sessions_processed`,
   ).run(scanType, lastSessionTs, lastSessionFile ?? null, runAt, sessionsProcessed);
 }

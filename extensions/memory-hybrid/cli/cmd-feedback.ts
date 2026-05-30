@@ -590,7 +590,7 @@ export async function runExtractImplicitFeedbackForCli(
         emitProgress();
         break;
       }
-      if (maxSessionsPerRun > 0 && progress.sessionsProcessed >= maxSessionsPerRun) {
+      if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
         markPartial("maxSessions", sessionCandidates.length - index);
         emitProgress();
         break;
@@ -605,6 +605,7 @@ export async function runExtractImplicitFeedbackForCli(
         lines = readFileSync(candidate.path, "utf-8").split("\n");
       } catch (err) {
         progress.sessionsReadErrors++;
+        lastProcessedCandidate = candidate;
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "runExtractImplicitFeedbackForCli:read-file",
           severity: "info",
