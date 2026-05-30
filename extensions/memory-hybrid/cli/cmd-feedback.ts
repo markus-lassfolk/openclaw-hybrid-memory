@@ -555,7 +555,7 @@ export async function runExtractImplicitFeedbackForCli(
   const maxTrajectoriesPerRun = implicitCfg.maxTrajectoriesPerRun ?? 0;
   const maxWallClockMs = (implicitCfg.maxWallClockSeconds ?? 0) * 1000;
   const rawDb = factsDb.getRawDb();
-  const startedAt = Date.now();
+  const runStartTimeMs = Date.now();
 
   const markPartial = (
     reason: ExtractImplicitFeedbackStopReason,
@@ -581,7 +581,7 @@ export async function runExtractImplicitFeedbackForCli(
   try {
     for (let index = 0; index < sessionCandidates.length; index++) {
       const candidate = sessionCandidates[index];
-      if (maxWallClockMs > 0 && progress.sessionsProcessed > 0 && Date.now() - startedAt >= maxWallClockMs) {
+      if (maxWallClockMs > 0 && progress.sessionsProcessed > 0 && Date.now() - runStartTimeMs >= maxWallClockMs) {
         markPartial("maxWallClockSeconds", sessionCandidates.length - index);
         emitProgress();
         break;
@@ -1011,8 +1011,9 @@ export async function runExtractImplicitFeedbackForCli(
     progress.stage = "done";
     progress.currentSession = undefined;
     emitProgress();
-    const averageSignals = totalSignals / Math.max(1, progress.sessionsProcessed);
-    const averageTrajectories = trajectoriesBuilt / Math.max(1, progress.sessionsProcessed);
+    const sessionsProcessedSafe = Math.max(1, progress.sessionsProcessed);
+    const averageSignals = totalSignals / sessionsProcessedSafe;
+    const averageTrajectories = trajectoriesBuilt / sessionsProcessedSafe;
     return {
       signalsExtracted: totalSignals,
       positiveCount,
