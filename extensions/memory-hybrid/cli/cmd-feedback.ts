@@ -953,6 +953,9 @@ export async function runExtractImplicitFeedbackForCli(
         let batches = 0;
         let carryCanonical: Array<{ id: string; text: string }> | undefined;
         for (;;) {
+          if (maxWallClockMs > 0 && Date.now() - runStartTimeMs >= maxWallClockMs) {
+            break;
+          }
           const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
             threshold,
             limit: cleanupLimit,
