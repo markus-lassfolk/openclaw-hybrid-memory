@@ -654,6 +654,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           let providerCircuitBreak = false;
           let providerCircuitBreakCause: "max_failures" | "provider_5xx" = "max_failures";
           let consecutiveEmbedFailures = 0;
+          let aborted = false;
           if (opts?.apply) {
             await runMaintenanceHeartbeat(
               "reembed-vectorless",
@@ -672,6 +673,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       if (isEmbeddingProviderServerError(batchErr)) {
                         providerCircuitBreak = true;
                         providerCircuitBreakCause = "provider_5xx";
+                        aborted = true;
                         errors.push(
                           `batch ${batchNumber}: embed failed with provider 5xx; fast-failing to avoid per-fact fallback stall — ${String(batchErr)}`,
                         );
@@ -685,9 +687,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                         } catch (singleErr) {
                           errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
                           embedFailures++;
+                          processed++;
                           if (isEmbeddingProviderServerError(singleErr)) {
                             providerCircuitBreak = true;
                             providerCircuitBreakCause = "provider_5xx";
+                            aborted = true;
                             break;
                           }
                           consecutiveEmbedFailures++;
@@ -695,13 +699,14 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                           if (consecutiveEmbedFailures >= maxEmbedFailures) {
                             providerCircuitBreak = true;
                             providerCircuitBreakCause = "max_failures";
+                            aborted = true;
                             break;
                           }
                         }
                       }
                     }
-                    if (providerCircuitBreak) break;
                     for (let i = 0; i < batch.length; i++) {
+                      if (providerCircuitBreak && i >= vectors.length) break;
                       const fact = batch[i];
                       const vec = vectors[i];
                       if (!vec || vec.length === 0) {
@@ -741,6 +746,9 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                     }
                   }
                 });
+                if (aborted) {
+                  throw new Error("reembed-vectorless aborted due to provider circuit break");
+                }
               },
               {
                 progressSupplier: () =>
@@ -761,6 +769,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             storeFailures,
             errors,
             after,
+            processed,
+            aborted,
           };
           if (providerCircuitBreak) {
             report.failedReason =
