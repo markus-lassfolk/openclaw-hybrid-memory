@@ -309,6 +309,8 @@ export function cleanupImplicitFeedbackDuplicates(
 // extract-implicit-feedback
 // ---------------------------------------------------------------------------
 
+export type ExtractImplicitFeedbackStopReason = "maxWallClock" | "maxSessions" | "maxSignals" | "maxTrajectories";
+
 export interface ExtractImplicitFeedbackProgressSnapshot {
   stage: "scan-sessions" | "cleanup-duplicates" | "closed-loop" | "done";
   sessionsDiscovered: number;
@@ -325,8 +327,9 @@ export interface ExtractImplicitFeedbackProgressSnapshot {
   cleanupScanned: number;
   cleanupBatches: number;
   partial?: boolean;
-  partialReason?: string;
+  partialReason?: ExtractImplicitFeedbackStopReason;
   sessionsDeferred?: number;
+  backlogSessionsEstimate?: number;
   backlogSignalsEstimate?: number;
   backlogTrajectoriesEstimate?: number;
 }
@@ -362,7 +365,7 @@ export async function runExtractImplicitFeedbackForCli(
   backlogSignalsEstimate: number;
   backlogTrajectoriesEstimate: number;
   partial: boolean;
-  partialReason?: string;
+  partialReason?: ExtractImplicitFeedbackStopReason;
   closedLoopReport?: string;
   skipped?: boolean;
 }> {
@@ -370,10 +373,10 @@ export async function runExtractImplicitFeedbackForCli(
   const SCAN_TYPE = "extract-implicit-feedback";
   const days = opts.days ?? 3;
   const sessionDir = cfg.procedures.sessionsDir;
-  
+
   // Get scan cursor for incremental mode
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
-  
+
   // Determine which files to scan based on full flag and cursor
   let filePaths: string[];
   if (!opts.full && cursor && cursor.lastSessionTs > 0) {
@@ -488,12 +491,12 @@ export async function runExtractImplicitFeedbackForCli(
   let negativeCount = 0;
   let trajectoriesBuilt = 0;
   let partial = false;
-  let partialReason: string | undefined;
+  let partialReason: ExtractImplicitFeedbackStopReason | undefined;
   let sessionsDeferred = 0;
   let lastProcessedFilePath: string | undefined;
 
   const rawDb = factsDb.getRawDb();
-  
+
   // Capping limits from config
   const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 50;
   const maxSignalsPerRun = implicitCfg.maxSignalsPerRun ?? 100;
@@ -509,12 +512,14 @@ export async function runExtractImplicitFeedbackForCli(
         partial = true;
         partialReason = "maxWallClock";
         sessionsDeferred = filePaths.length - progress.sessionsVisited;
-        const backlogSignalsEstimate = sessionsDeferred > 0 
-          ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-          : 0;
-        const backlogTrajectoriesEstimate = sessionsDeferred > 0
-          ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-          : 0;
+        const backlogSignalsEstimate =
+          sessionsDeferred > 0
+            ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+            : 0;
+        const backlogTrajectoriesEstimate =
+          sessionsDeferred > 0
+            ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+            : 0;
         progress.partial = partial;
         progress.partialReason = partialReason;
         progress.sessionsDeferred = sessionsDeferred;
@@ -528,12 +533,14 @@ export async function runExtractImplicitFeedbackForCli(
       partial = true;
       partialReason = "maxSessions";
       sessionsDeferred = filePaths.length - progress.sessionsVisited;
-      const backlogSignalsEstimate = sessionsDeferred > 0 
-        ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-        : 0;
-      const backlogTrajectoriesEstimate = sessionsDeferred > 0
-        ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-        : 0;
+      const backlogSignalsEstimate =
+        sessionsDeferred > 0
+          ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
+      const backlogTrajectoriesEstimate =
+        sessionsDeferred > 0
+          ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
       progress.partial = partial;
       progress.partialReason = partialReason;
       progress.sessionsDeferred = sessionsDeferred;
@@ -546,12 +553,14 @@ export async function runExtractImplicitFeedbackForCli(
       partial = true;
       partialReason = "maxSignals";
       sessionsDeferred = filePaths.length - progress.sessionsVisited;
-      const backlogSignalsEstimate = sessionsDeferred > 0 
-        ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-        : 0;
-      const backlogTrajectoriesEstimate = sessionsDeferred > 0
-        ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-        : 0;
+      const backlogSignalsEstimate =
+        sessionsDeferred > 0
+          ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
+      const backlogTrajectoriesEstimate =
+        sessionsDeferred > 0
+          ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
       progress.partial = partial;
       progress.partialReason = partialReason;
       progress.sessionsDeferred = sessionsDeferred;
@@ -564,12 +573,14 @@ export async function runExtractImplicitFeedbackForCli(
       partial = true;
       partialReason = "maxTrajectories";
       sessionsDeferred = filePaths.length - progress.sessionsVisited;
-      const backlogSignalsEstimate = sessionsDeferred > 0 
-        ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-        : 0;
-      const backlogTrajectoriesEstimate = sessionsDeferred > 0
-        ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-        : 0;
+      const backlogSignalsEstimate =
+        sessionsDeferred > 0
+          ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
+      const backlogTrajectoriesEstimate =
+        sessionsDeferred > 0
+          ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+          : 0;
       progress.partial = partial;
       progress.partialReason = partialReason;
       progress.sessionsDeferred = sessionsDeferred;
@@ -578,7 +589,7 @@ export async function runExtractImplicitFeedbackForCli(
       emitProgress();
       break;
     }
-    
+
     progress.sessionsVisited++;
     const sessionFile = basename(filePath);
     progress.currentSession = sessionFile;
@@ -956,7 +967,7 @@ export async function runExtractImplicitFeedbackForCli(
 
   progress.stage = "done";
   emitProgress();
-  
+
   // Update scan cursor with the last processed session
   if (!opts.dryRun && lastProcessedFilePath) {
     const stat = statSync(lastProcessedFilePath);
@@ -964,16 +975,18 @@ export async function runExtractImplicitFeedbackForCli(
     const lastSessionFile = basename(lastProcessedFilePath);
     factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsProcessed, lastSessionFile);
   }
-  
+
   // Calculate backlog estimates
   const backlogSessionsEstimate = sessionsDeferred;
-  const backlogSignalsEstimate = partial && sessionsDeferred > 0 
-    ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-    : 0;
-  const backlogTrajectoriesEstimate = partial && sessionsDeferred > 0
-    ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
-    : 0;
-  
+  const backlogSignalsEstimate =
+    partial && sessionsDeferred > 0
+      ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+      : 0;
+  const backlogTrajectoriesEstimate =
+    partial && sessionsDeferred > 0
+      ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+      : 0;
+
   return {
     signalsExtracted: totalSignals,
     positiveCount,

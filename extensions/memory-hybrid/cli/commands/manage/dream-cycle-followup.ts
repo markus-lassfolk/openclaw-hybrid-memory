@@ -46,9 +46,9 @@ export function formatExtractImplicitFeedbackProgress(
 
   if (snapshot.partial) {
     parts.push(`partial=${snapshot.partialReason ?? "capped"}`);
-    if (snapshot.sessionsDeferred > 0) parts.push(`deferred=${snapshot.sessionsDeferred}`);
-    if (snapshot.backlogSignalsEstimate > 0 || snapshot.backlogTrajectoriesEstimate > 0) {
-      parts.push(`backlog≈${snapshot.backlogSignalsEstimate}s/${snapshot.backlogTrajectoriesEstimate}t`);
+    if ((snapshot.sessionsDeferred ?? 0) > 0) parts.push(`deferred=${snapshot.sessionsDeferred}`);
+    if ((snapshot.backlogSignalsEstimate ?? 0) > 0 || (snapshot.backlogTrajectoriesEstimate ?? 0) > 0) {
+      parts.push(`backlog≈${snapshot.backlogSignalsEstimate ?? 0}s/${snapshot.backlogTrajectoriesEstimate ?? 0}t`);
     }
   }
 
