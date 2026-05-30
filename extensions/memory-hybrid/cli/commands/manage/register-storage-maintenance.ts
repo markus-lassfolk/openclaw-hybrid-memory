@@ -687,6 +687,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                         } catch (singleErr) {
                           errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
                           embedFailures++;
+                          vectors.push(null);
                           if (isEmbeddingProviderServerError(singleErr)) {
                             providerCircuitBreak = true;
                             providerCircuitBreakCause = "provider_5xx";
@@ -694,7 +695,6 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                             break;
                           }
                           consecutiveEmbedFailures++;
-                          vectors.push(null);
                           if (consecutiveEmbedFailures >= maxEmbedFailures) {
                             providerCircuitBreak = true;
                             providerCircuitBreakCause = "max_failures";
