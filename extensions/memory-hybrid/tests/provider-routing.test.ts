@@ -1799,6 +1799,11 @@ describe("resolveProviderApiKey", () => {
 // ---------------------------------------------------------------------------
 
 describe("gateway provider log-once deduplication (issue #1691)", () => {
+  function makeLoggerApi() {
+    const infoSpy = vi.fn();
+    return { api: { logger: { info: infoSpy } }, infoSpy };
+  }
+
   beforeEach(() => {
     resetGatewayLogOnceForTesting();
   });
@@ -1808,8 +1813,7 @@ describe("gateway provider log-once deduplication (issue #1691)", () => {
   });
 
   it("logs the 'using gateway provider' message only once across multiple merges", () => {
-    const infoSpy = vi.fn();
-    const api = { logger: { info: infoSpy } };
+    const { api, infoSpy } = makeLoggerApi();
     const gwProviders = { google: { apiKey: "sk-gw-google-test" } };
 
     // First merge — should log once.
@@ -1825,8 +1829,7 @@ describe("gateway provider log-once deduplication (issue #1691)", () => {
   });
 
   it("logs independently for each distinct provider name (first time only)", () => {
-    const infoSpy = vi.fn();
-    const api = { logger: { info: infoSpy } };
+    const { api, infoSpy } = makeLoggerApi();
     const gwProviders = {
       google: { apiKey: "sk-gw-google-test2" },
       minimax: { apiKey: "sk-gw-minimax-test2" },
@@ -1844,8 +1847,7 @@ describe("gateway provider log-once deduplication (issue #1691)", () => {
   });
 
   it("resetGatewayLogOnceForTesting allows the message to appear again", () => {
-    const infoSpy = vi.fn();
-    const api = { logger: { info: infoSpy } };
+    const { api, infoSpy } = makeLoggerApi();
     const gwProviders = { azure: { apiKey: "sk-gw-azure-test" } };
 
     const prov1: Record<string, Record<string, unknown>> = {};

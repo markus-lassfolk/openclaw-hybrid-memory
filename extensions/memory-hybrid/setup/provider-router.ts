@@ -32,6 +32,11 @@ import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { inferFeatureLabel } from "./cost-instrumentation.js";
 
+/** Minimal logger shape accepted by the log-once helpers. */
+interface InfoLogger {
+  logger?: { info?: (msg: string) => void };
+}
+
 /**
  * Process-lifetime set of log keys that have already been emitted.
  * Prevents the same gateway-provider info message from flooding logs when the plugin
@@ -44,7 +49,7 @@ const _loggedOnceKeys = new Set<string>();
  * Emit `msg` via `api.logger.info` at most once per process for the given `key`.
  * Subsequent calls with the same key are silently dropped.
  */
-function logInfoOnce(key: string, msg: string, api: Pick<{ logger?: { info?: (m: string) => void } }, "logger">): void {
+function logInfoOnce(key: string, msg: string, api: InfoLogger): void {
   if (_loggedOnceKeys.has(key)) return;
   _loggedOnceKeys.add(key);
   api.logger?.info?.(msg);
@@ -61,11 +66,7 @@ export function resetGatewayLogOnceForTesting(): void {
  * Public wrapper around logInfoOnce for use outside this module (e.g. bootstrap-databases).
  * Emits `msg` via `api.logger.info` at most once per process for the given `key`.
  */
-export function gatewayLogInfoOnce(
-  key: string,
-  msg: string,
-  api: Pick<{ logger?: { info?: (m: string) => void } }, "logger">,
-): void {
+export function gatewayLogInfoOnce(key: string, msg: string, api: InfoLogger): void {
   logInfoOnce(key, msg, api);
 }
 
