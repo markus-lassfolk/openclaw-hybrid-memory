@@ -226,7 +226,7 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     db.close();
   });
 
-  it("warns and records entityStopwordMatches when stop-word entities appear among top entities (#1737)", () => {
+  it("warns and records entityStopwordMatches when stop-word entities appear among top entities", () => {
     const db = new FactsDB(":memory:");
     // Insert facts with stop-word-like entities (User, user, Credentials, convention)
     for (const entity of ["User", "user", "Credentials", "convention"]) {
@@ -266,7 +266,7 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     db.close();
   });
 
-  it("topEntitiesFiltered excludes stop-word entities and includes real ones (#1737)", () => {
+  it("topEntitiesFiltered excludes stop-word entities and includes real ones", () => {
     const db = new FactsDB(":memory:");
     // Insert facts: some with stop-word entities, one with a meaningful entity
     for (let i = 0; i < 5; i++) {
