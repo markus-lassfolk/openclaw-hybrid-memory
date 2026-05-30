@@ -232,7 +232,9 @@ const AUXILIARY_DIR_NAMES = new Set(["manual-qa", "tmp", "archive"]);
  */
 export function isUnderAuxiliaryDir(filePath: string, root: string): boolean {
   const rel = relative(root, filePath);
-  return rel.split(sep).some((seg) => seg.length > 0 && (AUXILIARY_DIR_NAMES.has(seg) || seg.startsWith(".")));
+  const segments = rel.split(sep);
+  const dirSegments = segments.slice(0, -1);
+  return dirSegments.some((seg) => seg.length > 0 && (AUXILIARY_DIR_NAMES.has(seg) || seg.startsWith(".")));
 }
 
 /**
