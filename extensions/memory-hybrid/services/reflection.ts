@@ -48,11 +48,7 @@ import {
   REFLECTION_RULE_MAX_CHARS,
   REFLECTION_RULE_MIN_CHARS,
 } from "./reflection/shared.js";
-export {
-  dotProductSimilarity,
-  normalizeVector,
-  parsePatternsFromReflectionResponse,
-} from "./reflection/shared.js";
+export { dotProductSimilarity, normalizeVector, parsePatternsFromReflectionResponse } from "./reflection/shared.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 /** Non-superseded, non-expired pattern facts (same filter as reflection dedupe corpus). */
@@ -101,10 +97,12 @@ export interface ReflectionRulesDiagnostics {
 }
 
 // Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
+// Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
 // Anchored to start-of-string but allows leading whitespace so phrases like
 // "No actionable rules detected from ..." are correctly classified.
+// Uses .*$ to allow trailing text on the same line while preventing multiline false positives.
 const VALID_NO_RULES_PATTERN =
-  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)/im;
+  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules).*$/i;
 
 interface ReflectionMetaResult {
   metaExtracted: number;
@@ -1006,8 +1004,6 @@ export async function runReflectionRules(
       },
     );
     if (storeResult.skipped) {
-      rulesDuplicatesSkipped++;
-      storeLevelDuplicates++;
       continue;
     }
     const entry = storeResult.entry;
