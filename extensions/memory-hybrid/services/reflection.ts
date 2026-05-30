@@ -97,7 +97,6 @@ export interface ReflectionRulesDiagnostics {
 }
 
 // Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
-// Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
 // Anchored to start-of-string but allows leading whitespace so phrases like
 // "No actionable rules detected from ..." are correctly classified.
 // Uses .*$ to allow trailing text on the same line while preventing multiline false positives.
