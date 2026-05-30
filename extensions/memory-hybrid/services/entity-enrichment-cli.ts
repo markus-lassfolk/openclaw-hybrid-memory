@@ -133,10 +133,11 @@ export async function runEntityEnrichmentForCli(
       mode,
     });
   }
+  const finalBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
   return {
     pending,
     pendingTotal,
-    pendingByTier: backlog.byTier,
+    pendingByTier: finalBacklog.byTier,
     processed,
     factsEnriched,
     mode,
