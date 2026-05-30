@@ -47,7 +47,7 @@ describe("facts-db scan cursor module", () => {
     });
   });
 
-  it("preserves last_session_file when updating without filename but with sessions_processed > 0", () => {
+  it("clears last_session_file when updating without filename but with sessions_processed > 0", () => {
     db = new DatabaseSync(":memory:");
     migrateScanCursorsTable(db);
 
@@ -55,12 +55,12 @@ describe("facts-db scan cursor module", () => {
     updateScanCursor(db, "extract-implicit-feedback", 1234, 1, "session-a.jsonl", 2000);
 
     // Update without filename but with sessions_processed > 0 (progress was made)
+    // This should clear the filename to prevent stale cursor issues
     updateScanCursor(db, "extract-implicit-feedback", 1500, 2, 3000);
 
-    // Filename should be preserved (not wiped to NULL)
+    // Filename should be cleared (NULL) to avoid pairing stale filename with new timestamp
     expect(getScanCursor(db, "extract-implicit-feedback")).toEqual({
       lastSessionTs: 1500,
-      lastSessionFile: "session-a.jsonl",
       lastRunAt: 3000,
       sessionsProcessed: 3,
     });

@@ -8,7 +8,7 @@
  *   - cost-report               — show LLM cost breakdown by feature or model
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -324,6 +324,9 @@ export interface ExtractImplicitFeedbackProgressSnapshot {
   cleanupCollapsed: number;
   cleanupScanned: number;
   cleanupBatches: number;
+  partial?: boolean;
+  partialReason?: string;
+  sessionsDeferred?: number;
 }
 
 /**
@@ -338,6 +341,7 @@ export async function runExtractImplicitFeedbackForCli(
     days?: number;
     verbose?: boolean;
     dryRun?: boolean;
+    full?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
     onProgress?: (snapshot: ExtractImplicitFeedbackProgressSnapshot) => void;
@@ -348,12 +352,55 @@ export async function runExtractImplicitFeedbackForCli(
   negativeCount: number;
   trajectoriesBuilt: number;
   sessionsScanned: number;
+  sessionsVisited: number;
+  sessionsProcessed: number;
+  sessionsSkipped: number;
+  sessionsDeferred: number;
+  backlogSessionsEstimate: number;
+  backlogSignalsEstimate: number;
+  backlogTrajectoriesEstimate: number;
+  partial: boolean;
+  partialReason?: string;
   closedLoopReport?: string;
+  skipped?: boolean;
 }> {
   const { factsDb, vectorDb, cfg, logger, openai } = ctx;
+  const SCAN_TYPE = "extract-implicit-feedback";
   const days = opts.days ?? 3;
   const sessionDir = cfg.procedures.sessionsDir;
-  const filePaths = getSessionFilePathsSince(sessionDir, days);
+  
+  // Get scan cursor for incremental mode
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+  
+  // Determine which files to scan based on full flag and cursor
+  let filePaths: string[];
+  if (!opts.full && cursor && cursor.lastSessionTs > 0) {
+    // Incremental mode: only process files after the last cursor position
+    const allFiles = getSessionFilePathsSince(sessionDir, days);
+    filePaths = allFiles.filter((path) => {
+      const stat = statSync(path);
+      const mtime = stat.mtimeMs;
+      const fname = basename(path);
+      // Skip files before the cursor watermark
+      if (mtime < cursor.lastSessionTs) return false;
+      // If same mtime, use filename to determine if we've processed this file
+      if (mtime === cursor.lastSessionTs && cursor.lastSessionFile) {
+        return fname > cursor.lastSessionFile;
+      }
+      return true;
+    });
+    if (opts.verbose && cursor.lastSessionFile) {
+      logger?.info?.(
+        `memory-hybrid: ${SCAN_TYPE} incremental — resuming after ${cursor.lastSessionFile} (${filePaths.length} files to process)`,
+      );
+    }
+  } else {
+    // Full mode: process all files in the date range
+    filePaths = getSessionFilePathsSince(sessionDir, days);
+    if (opts.verbose && !opts.full) {
+      logger?.info?.(`memory-hybrid: ${SCAN_TYPE} full scan — ${filePaths.length} files to process`);
+    }
+  }
 
   const progress: ExtractImplicitFeedbackProgressSnapshot = {
     stage: "scan-sessions",
@@ -401,17 +448,72 @@ export async function runExtractImplicitFeedbackForCli(
   if (implicitCfg.enabled === false) {
     progress.stage = "done";
     emitProgress();
-    return { signalsExtracted: 0, positiveCount: 0, negativeCount: 0, trajectoriesBuilt: 0, sessionsScanned: 0 };
+    return {
+      signalsExtracted: 0,
+      positiveCount: 0,
+      negativeCount: 0,
+      trajectoriesBuilt: 0,
+      sessionsScanned: 0,
+      sessionsVisited: 0,
+      sessionsProcessed: 0,
+      sessionsSkipped: 0,
+      sessionsDeferred: 0,
+      backlogSessionsEstimate: 0,
+      backlogSignalsEstimate: 0,
+      backlogTrajectoriesEstimate: 0,
+      partial: false,
+    };
   }
 
   let totalSignals = 0;
   let positiveCount = 0;
   let negativeCount = 0;
   let trajectoriesBuilt = 0;
+  let partial = false;
+  let partialReason: string | undefined;
+  let sessionsDeferred = 0;
+  let lastProcessedFilePath: string | undefined;
 
   const rawDb = factsDb.getRawDb();
+  
+  // Capping limits from config
+  const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 50;
+  const maxSignalsPerRun = implicitCfg.maxSignalsPerRun ?? 100;
+  const maxTrajectoriesPerRun = implicitCfg.maxTrajectoriesPerRun ?? 50;
 
   for (const filePath of filePaths) {
+    // Check if we've hit any caps
+    if (maxSessionsPerRun > 0 && progress.sessionsProcessed >= maxSessionsPerRun) {
+      partial = true;
+      partialReason = "maxSessions";
+      sessionsDeferred = filePaths.length - progress.sessionsVisited;
+      progress.partial = partial;
+      progress.partialReason = partialReason;
+      progress.sessionsDeferred = sessionsDeferred;
+      emitProgress();
+      break;
+    }
+    if (maxSignalsPerRun > 0 && totalSignals >= maxSignalsPerRun) {
+      partial = true;
+      partialReason = "maxSignals";
+      sessionsDeferred = filePaths.length - progress.sessionsVisited;
+      progress.partial = partial;
+      progress.partialReason = partialReason;
+      progress.sessionsDeferred = sessionsDeferred;
+      emitProgress();
+      break;
+    }
+    if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt >= maxTrajectoriesPerRun) {
+      partial = true;
+      partialReason = "maxTrajectories";
+      sessionsDeferred = filePaths.length - progress.sessionsVisited;
+      progress.partial = partial;
+      progress.partialReason = partialReason;
+      progress.sessionsDeferred = sessionsDeferred;
+      emitProgress();
+      break;
+    }
+    
     progress.sessionsVisited++;
     const sessionFile = basename(filePath);
     progress.currentSession = sessionFile;
@@ -437,6 +539,7 @@ export async function runExtractImplicitFeedbackForCli(
       continue;
     }
     progress.sessionsProcessed++;
+    lastProcessedFilePath = filePath;
 
     /**
      * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
@@ -788,12 +891,39 @@ export async function runExtractImplicitFeedbackForCli(
 
   progress.stage = "done";
   emitProgress();
+  
+  // Update scan cursor with the last processed session
+  if (!opts.dryRun && lastProcessedFilePath) {
+    const stat = statSync(lastProcessedFilePath);
+    const lastSessionTs = stat.mtimeMs;
+    const lastSessionFile = basename(lastProcessedFilePath);
+    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsProcessed, lastSessionFile);
+  }
+  
+  // Calculate backlog estimates
+  const backlogSessionsEstimate = sessionsDeferred;
+  const backlogSignalsEstimate = partial && sessionsDeferred > 0 
+    ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+    : 0;
+  const backlogTrajectoriesEstimate = partial && sessionsDeferred > 0
+    ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * sessionsDeferred)
+    : 0;
+  
   return {
     signalsExtracted: totalSignals,
     positiveCount,
     negativeCount,
     trajectoriesBuilt,
     sessionsScanned: filePaths.length,
+    sessionsVisited: progress.sessionsVisited,
+    sessionsProcessed: progress.sessionsProcessed,
+    sessionsSkipped: progress.sessionsReadErrors + progress.sessionsTooShort,
+    sessionsDeferred,
+    backlogSessionsEstimate,
+    backlogSignalsEstimate,
+    backlogTrajectoriesEstimate,
+    partial,
+    partialReason,
     closedLoopReport,
   };
 }
