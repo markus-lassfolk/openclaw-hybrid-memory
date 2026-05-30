@@ -443,13 +443,9 @@ describe("maintenance log analyzer", () => {
     // .cron.log format
     expect(isCanonicalMaintenanceLog("/logs/nightly-memory-sweep-20260511.cron.log")).toBe(true);
     // ISO-with-dashes format produced by runPendingDigestAutopilotCron
+    expect(isCanonicalMaintenanceLog("/logs/weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log")).toBe(true);
     expect(
-      isCanonicalMaintenanceLog("/logs/weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log"),
-    ).toBe(true);
-    expect(
-      isCanonicalMaintenanceLog(
-        "/logs/20260513/weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log",
-      ),
+      isCanonicalMaintenanceLog("/logs/20260513/weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log"),
     ).toBe(true);
     // non-canonical helper logs
     expect(isCanonicalMaintenanceLog("/logs/manual-qa/run/stdout.log")).toBe(false);

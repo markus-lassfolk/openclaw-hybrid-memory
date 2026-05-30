@@ -255,9 +255,7 @@ const CANONICAL_MAINTENANCE_LOG_ISO_RE = /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\
 export function isCanonicalMaintenanceLog(filePath: string): boolean {
   const file = basename(filePath);
   return (
-    CANONICAL_MAINTENANCE_LOG_RE.test(file) ||
-    CANONICAL_MAINTENANCE_LOG_ISO_RE.test(file) ||
-    file.endsWith(".cron.log")
+    CANONICAL_MAINTENANCE_LOG_RE.test(file) || CANONICAL_MAINTENANCE_LOG_ISO_RE.test(file) || file.endsWith(".cron.log")
   );
 }
 
