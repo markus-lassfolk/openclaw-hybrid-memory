@@ -556,16 +556,16 @@ export async function runCapture(
                               category,
                               id: newEntry.id,
                             });
-                            persistCanonicalFactEmbedding(
-                              ctx.factsDb,
-                              newEntry.id,
-                              ctx.embeddings.modelName,
-                              canonicalVector,
-                              "auto-capture-fact-embeddings",
-                              "auto-capture",
-                              api.logger.warn?.bind(api.logger),
-                            );
                           }
+                          persistCanonicalFactEmbedding(
+                            ctx.factsDb,
+                            newEntry.id,
+                            ctx.embeddings.modelName,
+                            canonicalVector,
+                            "auto-capture-fact-embeddings",
+                            "auto-capture",
+                            api.logger.warn?.bind(api.logger),
+                          );
                         }
                       } catch (vecErr) {
                         capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
@@ -669,16 +669,16 @@ export async function runCapture(
                     category,
                     id: storedEntry.id,
                   });
-                  persistCanonicalFactEmbedding(
-                    ctx.factsDb,
-                    storedEntry.id,
-                    ctx.embeddings.modelName,
-                    vector,
-                    "auto-capture-fact-embeddings",
-                    "auto-capture",
-                    api.logger.warn?.bind(api.logger),
-                  );
                 }
+                persistCanonicalFactEmbedding(
+                  ctx.factsDb,
+                  storedEntry.id,
+                  ctx.embeddings.modelName,
+                  vector,
+                  "auto-capture-fact-embeddings",
+                  "auto-capture",
+                  api.logger.warn?.bind(api.logger),
+                );
               }
             } catch (vecErr) {
               capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {

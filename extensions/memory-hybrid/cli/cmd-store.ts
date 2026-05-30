@@ -16,6 +16,7 @@ import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { parseSourceDate } from "../utils/dates.js";
+import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { StoreCliOpts, StoreCliResult } from "./types.js";
@@ -107,6 +108,15 @@ export async function runStoreForCli(
                 id: pointerEntry.id,
               });
             }
+            persistCanonicalFactEmbedding(
+              factsDb,
+              pointerEntry.id,
+              embeddings.modelName,
+              vector,
+              "runStoreForCli:pointer-fact-embeddings",
+              "cli",
+              log.warn,
+            );
           } catch (err) {
             log.warn(`memory-hybrid: vector store failed: ${err}`);
             capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store" });
@@ -246,6 +256,15 @@ export async function runStoreForCli(
                 if (!(await vectorDb.hasDuplicate(vector))) {
                   await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
                 }
+                persistCanonicalFactEmbedding(
+                  factsDb,
+                  newEntry.id,
+                  embeddings.modelName,
+                  vector,
+                  "runStoreForCli:update-fact-embeddings",
+                  "cli",
+                  log.warn,
+                );
               } catch (err) {
                 log.warn(`memory-hybrid: vector store failed: ${err}`);
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-update" });
@@ -315,6 +334,15 @@ export async function runStoreForCli(
           id: entry.id,
         });
       }
+      persistCanonicalFactEmbedding(
+        factsDb,
+        entry.id,
+        embeddings.modelName,
+        vector,
+        "runStoreForCli:final-fact-embeddings",
+        "cli",
+        log.warn,
+      );
     } catch (err) {
       log.warn(`memory-hybrid: vector store failed: ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:vector-store-final" });

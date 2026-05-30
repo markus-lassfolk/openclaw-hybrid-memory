@@ -85,6 +85,26 @@ describe("runStoreForCli credential happy path", () => {
   });
 });
 
+describe("runStoreForCli canonical embedding mirror", () => {
+  it("stores canonical fact_embeddings rows even when Lance duplicate skipping is active", async () => {
+    mockCtx.vectorDb.hasDuplicate = vi.fn().mockResolvedValue(true);
+    mockCtx.vectorDb.store = vi.fn();
+    mockCtx.embeddings.modelName = "test-embedding-model";
+
+    const opts: StoreCliOpts = {
+      text: "Remember to review vectorless ingestion invariants",
+      category: "technical",
+    };
+
+    const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(result.outcome).toBe("stored");
+    if (result.outcome !== "stored") return;
+
+    expect(mockCtx.vectorDb.store).not.toHaveBeenCalled();
+    expect(factsDb.countVectorlessActiveFacts("cli")).toBe(0);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Vault write fails
 // ---------------------------------------------------------------------------
