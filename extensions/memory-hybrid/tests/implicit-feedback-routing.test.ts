@@ -473,77 +473,81 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
   });
 
   describe("implicit feedback routing — incremental caps and resume", () => {
-    let tmpDir: string;
-    let sessionsDir: string;
+    let capsTmpDir: string;
+    let capsSessionsDir: string;
 
     beforeEach(() => {
-      tmpDir = mkdtempSync(join(tmpdir(), "ifr-caps-"));
-      sessionsDir = join(tmpDir, "sessions");
-      mkdirSync(sessionsDir, { recursive: true });
+      capsTmpDir = mkdtempSync(join(tmpdir(), "ifr-caps-"));
+      capsSessionsDir = join(capsTmpDir, "sessions");
+      mkdirSync(capsSessionsDir, { recursive: true });
     });
 
     afterEach(() => {
-      rmSync(tmpDir, { recursive: true, force: true });
+      rmSync(capsTmpDir, { recursive: true, force: true });
     });
 
     it("resumes from the last processed session when multiple sessions share the same mtime", async () => {
       vi.useFakeTimers();
-      vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
-      const db = makeDb(tmpDir);
-      writePositiveSession(sessionsDir, "2026-01-01-a.jsonl");
-      writePositiveSession(sessionsDir, "2026-01-01-b.jsonl");
-      const sharedMtime = new Date("2026-01-01T00:00:00.000Z");
-      utimesSync(join(sessionsDir, "2026-01-01-a.jsonl"), sharedMtime, sharedMtime);
-      utimesSync(join(sessionsDir, "2026-01-01-b.jsonl"), sharedMtime, sharedMtime);
+      try {
+        vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+        const db = makeDb(capsTmpDir);
+        writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+        writePositiveSession(capsSessionsDir, "2026-01-01-b.jsonl");
+        const sharedMtime = new Date("2026-01-01T00:00:00.000Z");
+        utimesSync(join(capsSessionsDir, "2026-01-01-a.jsonl"), sharedMtime, sharedMtime);
+        utimesSync(join(capsSessionsDir, "2026-01-01-b.jsonl"), sharedMtime, sharedMtime);
 
-      const ctx = makeCtx(db, sessionsDir, {
-        feedToSelfCorrection: false,
-        maxSessionsPerRun: 1,
-      });
+        const ctx = makeCtx(db, capsSessionsDir, {
+          feedToSelfCorrection: false,
+          maxSessionsPerRun: 1,
+        });
 
-      const firstRun = await runExtractImplicitFeedbackForCli(ctx, {
-        days: 365,
-        dryRun: false,
-        includeTrajectories: false,
-        includeClosedLoop: false,
-      });
-      expect(firstRun.sessionsProcessed).toBe(1);
-      expect(firstRun.sessionsDeferred).toBe(1);
-      expect(firstRun.partial).toBe(true);
-      expect(firstRun.partialReason).toBe("maxSessions");
-      expect(db.getScanCursor("extract-implicit-feedback")).toEqual({
-        lastSessionTs: sharedMtime.getTime(),
-        lastSessionFile: "2026-01-01-a.jsonl",
-        lastRunAt: expect.any(Number),
-        sessionsProcessed: 1,
-      });
+        const firstRun = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeTrajectories: false,
+          includeClosedLoop: false,
+        });
+        expect(firstRun.sessionsProcessed).toBe(1);
+        expect(firstRun.sessionsDeferred).toBe(1);
+        expect(firstRun.partial).toBe(true);
+        expect(firstRun.partialReason).toBe("maxSessions");
+        expect(db.getScanCursor("extract-implicit-feedback")).toEqual({
+          lastSessionTs: sharedMtime.getTime(),
+          lastSessionFile: "2026-01-01-a.jsonl",
+          lastRunAt: expect.any(Number),
+          sessionsProcessed: 1,
+        });
 
-      vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
-      const secondRun = await runExtractImplicitFeedbackForCli(ctx, {
-        days: 365,
-        dryRun: false,
-        includeTrajectories: false,
-        includeClosedLoop: false,
-      });
-      expect(secondRun.sessionsScanned).toBe(1);
-      expect(secondRun.sessionsProcessed).toBe(1);
-      expect(secondRun.sessionsDeferred).toBe(0);
-      expect(secondRun.partial).toBe(false);
-      expect(db.getScanCursor("extract-implicit-feedback")).toEqual({
-        lastSessionTs: sharedMtime.getTime(),
-        lastSessionFile: "2026-01-01-b.jsonl",
-        lastRunAt: expect.any(Number),
-        sessionsProcessed: 2,
-      });
+        vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
+        const secondRun = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeTrajectories: false,
+          includeClosedLoop: false,
+        });
+        expect(secondRun.sessionsScanned).toBe(1);
+        expect(secondRun.sessionsProcessed).toBe(1);
+        expect(secondRun.sessionsDeferred).toBe(0);
+        expect(secondRun.partial).toBe(false);
+        expect(db.getScanCursor("extract-implicit-feedback")).toEqual({
+          lastSessionTs: sharedMtime.getTime(),
+          lastSessionFile: "2026-01-01-b.jsonl",
+          lastRunAt: expect.any(Number),
+          sessionsProcessed: 2,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("reports partial healthy progress and backlog estimates when a signal cap defers remaining sessions", async () => {
-      const db = makeDb(tmpDir);
-      writePositiveSession(sessionsDir, "2026-01-01-a.jsonl");
-      writeNegativeSession(sessionsDir, "2026-01-01-b.jsonl");
+      const db = makeDb(capsTmpDir);
+      writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+      writeNegativeSession(capsSessionsDir, "2026-01-01-b.jsonl");
 
       const snapshots: Array<{ partial?: boolean; partialReason?: string; sessionsDeferred?: number }> = [];
-      const ctx = makeCtx(db, sessionsDir, {
+      const ctx = makeCtx(db, capsSessionsDir, {
         minConfidence: 0.0,
         feedToReinforcement: false,
         feedToSelfCorrection: false,

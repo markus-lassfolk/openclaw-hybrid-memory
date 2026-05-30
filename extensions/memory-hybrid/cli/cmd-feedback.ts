@@ -1011,9 +1011,9 @@ export async function runExtractImplicitFeedbackForCli(
     progress.stage = "done";
     progress.currentSession = undefined;
     emitProgress();
-    const sessionsProcessedSafe = Math.max(1, progress.sessionsProcessed);
-    const averageSignals = totalSignals / sessionsProcessedSafe;
-    const averageTrajectories = trajectoriesBuilt / sessionsProcessedSafe;
+    const sessionsProcessedForAverage = Math.max(1, progress.sessionsProcessed);
+    const averageSignals = totalSignals / sessionsProcessedForAverage;
+    const averageTrajectories = trajectoriesBuilt / sessionsProcessedForAverage;
     return {
       signalsExtracted: totalSignals,
       positiveCount,
