@@ -1250,7 +1250,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           }
           if (res.skipped) {
             console.log(
-              `Entity enrichment skipped: graph.enabled is false (${res.pending} fact${res.pending === 1 ? "" : "s"} would be pending if graph were enabled).`,
+              `Entity enrichment skipped: graph.enabled is false (${pendingTotal} fact${pendingTotal === 1 ? "" : "s"} would be pending if graph were enabled).`,
             );
             if (mode !== "all") {
               console.log(`Estimated runs to clear backlog at current limit: ${estimatedRunsRemaining}`);
