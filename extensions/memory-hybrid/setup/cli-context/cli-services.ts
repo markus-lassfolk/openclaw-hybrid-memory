@@ -406,7 +406,7 @@ export function buildCliContextServices(
     },
     runContinuousVerification: async (opts?: { verbose?: boolean }) => {
       if (!verificationStore || !cfg.verification.enabled || !cfg.verification.continuousVerification) {
-        return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 };
+        return { checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0, errorSummaries: [] };
       }
       const verbose = !!opts?.verbose;
       return runVerificationCycle(verificationStore, factsDb, openai, {
