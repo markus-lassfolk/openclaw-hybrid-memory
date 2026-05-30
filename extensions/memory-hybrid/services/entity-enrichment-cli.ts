@@ -82,10 +82,9 @@ export async function runEntityEnrichmentForCli(
     };
   }
 
-  const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, 24, { all: mode === "all" });
-  const pending = ids.length;
-
   if (opts.dryRun) {
+    const ids = verbose ? factsDb.listFactIdsNeedingEntityEnrichment(limit, 24, { all: mode === "all" }) : [];
+    const pending = verbose ? ids.length : (mode === "all" ? pendingTotal : Math.min(pendingTotal, limit));
     return {
       pending,
       pendingTotal,
@@ -99,12 +98,24 @@ export async function runEntityEnrichmentForCli(
       pendingFactIds: verbose ? [...ids] : undefined,
     };
   }
+
+  const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, 24, { all: mode === "all" });
+  const pending = ids.length;
   const model = opts.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
   let factsEnriched = 0;
   let processed = 0;
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
   const estimatedRunsRemaining = (): number =>
     mode === "all" ? 0 : Math.ceil(Math.max(0, pendingTotal - processed) / Math.max(1, limit));
+  opts.onProgress?.({
+    processed: 0,
+    total: ids.length,
+    factsEnriched: 0,
+    pendingTotal,
+    remainingTotal: pendingTotal,
+    estimatedRunsRemaining: estimatedRunsRemaining(),
+    mode,
+  });
   for (const id of ids) {
     processed++;
     const f = factsDb.getById(id);
