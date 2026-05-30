@@ -262,15 +262,19 @@ export async function runStoreForCli(
                     category,
                     id: newEntry.id,
                   });
-                  persistCanonicalFactEmbedding(
-                    factsDb,
-                    newEntry.id,
-                    embeddings.modelName,
-                    mergedVector,
-                    "runStoreForCli:update-fact-embeddings",
-                    "cli",
-                    log.warn,
-                  );
+                  const canPersistCanonical =
+                    typeof vectorDb.isLanceDbAvailable === "function" ? vectorDb.isLanceDbAvailable() : true;
+                  if (canPersistCanonical) {
+                    persistCanonicalFactEmbedding(
+                      factsDb,
+                      newEntry.id,
+                      embeddings.modelName,
+                      mergedVector,
+                      "runStoreForCli:update-fact-embeddings",
+                      "cli",
+                      log.warn,
+                    );
+                  }
                 } else {
                   factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(vector))) {
@@ -366,15 +370,19 @@ export async function runStoreForCli(
           category: opts.category ?? "other",
           id: entry.id,
         });
-        persistCanonicalFactEmbedding(
-          factsDb,
-          entry.id,
-          embeddings.modelName,
-          mergedVector,
-          "runStoreForCli:final-fact-embeddings",
-          "cli",
-          log.warn,
-        );
+        const canPersistCanonical =
+          typeof vectorDb.isLanceDbAvailable === "function" ? vectorDb.isLanceDbAvailable() : true;
+        if (canPersistCanonical) {
+          persistCanonicalFactEmbedding(
+            factsDb,
+            entry.id,
+            embeddings.modelName,
+            mergedVector,
+            "runStoreForCli:final-fact-embeddings",
+            "cli",
+            log.warn,
+          );
+        }
       } else {
         const vector = await embeddings.embed(text);
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
