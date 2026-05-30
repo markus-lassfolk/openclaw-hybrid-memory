@@ -39,3 +39,4 @@ export {
   proceduresValidatedSince,
   proceduresPromotedCount,
 } from "./procedures/stats.js";
+export { PROCEDURE_BLOCK_REASONS } from "./procedures/internal.js";
