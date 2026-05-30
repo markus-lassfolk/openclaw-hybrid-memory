@@ -43,99 +43,90 @@ describe("runEntityEnrichmentForCli", () => {
       dryRun: false,
     });
     expect(res.skipped).toBe(true);
-    expect(res.totalBacklog).toBeTypeOf("number");
+    expect(res.pendingTotal).toBeTypeOf("number");
     expect(openai.chat.completions.create).not.toHaveBeenCalled();
   });
 
-  it("returns totalBacklog equal to total pending facts regardless of limit", async () => {
-    const cfg = hybridConfigSchema.parse({
-      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
-      graph: { enabled: false },
-    });
-    // Store 5 facts long enough to be eligible
+  it("reports backlog/eta for bounded dry-run mode", async () => {
     for (let i = 0; i < 5; i++) {
       db.store({
-        text: `This is fact number ${i} with enough text to pass the minimum length filter`,
-        category: "fact",
-        importance: 0.5,
+        text: `Bounded dry-run fact ${i} with enough length for queue planning and enrichment backlog tests.`,
         entity: null,
         key: null,
         value: null,
-        source: "test",
-      });
-    }
-    const res = await runEntityEnrichmentForCli(db, {} as never, cfg, {
-      limit: 2,
-      dryRun: false,
-    });
-    expect(res.totalBacklog).toBe(5);
-    expect(res.skipped).toBe(true);
-  });
-
-  it("countFactIdsNeedingEntityEnrichment returns total pending backlog count", () => {
-    for (let i = 0; i < 4; i++) {
-      db.store({
-        text: `Long enough fact text for enrichment eligibility check number ${i}`,
-        category: "fact",
+        category: "other",
         importance: 0.5,
-        entity: null,
-        key: null,
-        value: null,
         source: "test",
       });
     }
-    expect(db.countFactIdsNeedingEntityEnrichment()).toBe(4);
-  });
 
-  it("--all mode returns all pending facts ignoring limit", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
     const cfg = hybridConfigSchema.parse({
       embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
-      graph: { enabled: false },
+      graph: { enabled: true },
     });
-    for (let i = 0; i < 8; i++) {
-      db.store({
-        text: `Fact with sufficient text length for enrichment pipeline processing ${i}`,
-        category: "fact",
-        importance: 0.5,
-        entity: null,
-        key: null,
-        value: null,
-        source: "test",
-      });
-    }
-    const res = await runEntityEnrichmentForCli(db, {} as never, cfg, {
-      limit: 2,
-      all: true,
-      dryRun: false,
-    });
-    // With all=true the full backlog should be returned in pending even though limit=2
-    expect(res.pending).toBe(8);
-    expect(res.totalBacklog).toBe(8);
-  });
 
-  it("dry-run with limit returns only batch-size pending, totalBacklog reflects full backlog", async () => {
-    const cfg = hybridConfigSchema.parse({
-      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
-      graph: { enabled: true, neo4jUrl: "bolt://localhost:7687" },
-    });
-    for (let i = 0; i < 6; i++) {
-      db.store({
-        text: `Enrichment candidate fact with plenty of text to pass the minimum length filter ${i}`,
-        category: "fact",
-        importance: 0.5,
-        entity: null,
-        key: null,
-        value: null,
-        source: "test",
-      });
-    }
-    const res = await runEntityEnrichmentForCli(db, {} as never, cfg, {
-      limit: 3,
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 2,
       dryRun: true,
     });
+
+    expect(res.mode).toBe("bounded");
+    expect(res.pending).toBe(2);
+    expect(res.pendingTotal).toBe(5);
+    expect(res.remainingTotal).toBe(5);
+    expect(res.estimatedRunsRemaining).toBe(3);
+    expect(openai.chat.completions.create).not.toHaveBeenCalled();
+  });
+
+  it("supports --all catch-up mode and processes full backlog even with small limit", async () => {
+    for (let i = 0; i < 3; i++) {
+      db.store({
+        text: `All-mode fact ${i} with sufficient length to force LLM extraction path for enrichment queue checks.`,
+        entity: null,
+        key: null,
+        value: null,
+        category: "other",
+        importance: 0.5,
+        source: "test",
+      });
+    }
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 1,
+      all: true,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+    });
+
+    expect(res.mode).toBe("all");
+    expect(res.effectiveLimit).toBe("all");
     expect(res.pending).toBe(3);
-    expect(res.totalBacklog).toBe(6);
-    expect(res.processed).toBe(0);
+    expect(res.pendingTotal).toBe(3);
+    expect(res.processed).toBe(3);
+    expect(res.remainingTotal).toBe(0);
+    expect(res.estimatedRunsRemaining).toBe(0);
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(3);
   });
 
   it("listFactIdsNeedingEntityEnrichment returns hot facts before cold facts", () => {

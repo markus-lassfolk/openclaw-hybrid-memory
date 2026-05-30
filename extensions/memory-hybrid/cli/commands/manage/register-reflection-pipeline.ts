@@ -1157,26 +1157,34 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "Backfill PERSON/ORG extraction for facts missing entity mentions (franc language hint + LLM; same pipeline as store-time graph enrichment)",
     )
     .option("--limit <n>", "Max facts to process (default 200)", "200")
-    .option("--all", "Process the entire backlog in one pass (exhaustive catch-up mode; ignores --limit)")
+    .option("--all", "Process the full pending backlog in one catch-up run (ignores --limit cap)")
     .option("--model <m>", "LLM model (default: cron nano tier)")
     .option("--dry-run", "Only report how many facts need enrichment")
     .option("-v, --verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
     .action(
       withExit(
         async (
-          opts?: { limit?: string; all?: boolean; model?: string; dryRun?: boolean; verbose?: boolean },
+          opts?: { limit?: string; model?: string; all?: boolean; dryRun?: boolean; verbose?: boolean },
           cmd?: CommanderOptsParent,
         ) => {
-          const allMode = !!opts?.all;
+          const all = !!opts?.all;
           const limitRaw = Number.parseInt(opts?.limit ?? "200", 10);
-          if (!allMode && (!Number.isFinite(limitRaw) || limitRaw < 1)) {
+          if (!all && (!Number.isFinite(limitRaw) || limitRaw < 1)) {
             throw new Error("--limit must be a positive integer (>= 1).");
           }
-          const limit = allMode ? 200 : limitRaw;
+          const limit = limitRaw;
           const dryRun = !!opts?.dryRun;
           const model = opts?.model;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-          let enrichProgress = { processed: 0, total: 0, factsEnriched: 0 };
+          let enrichProgress = {
+            processed: 0,
+            total: 0,
+            factsEnriched: 0,
+            pendingTotal: 0,
+            remainingTotal: 0,
+            estimatedRunsRemaining: 0,
+            mode: all ? ("all" as const) : ("bounded" as const),
+          };
           let res;
           try {
             res = await runMaintenanceHeartbeat(
@@ -1185,7 +1193,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               (heartbeat) =>
                 runEntityEnrichment({
                   limit,
-                  all: allMode,
+                  all,
                   dryRun,
                   model,
                   verbose,
@@ -1196,7 +1204,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 }),
               {
                 progressSupplier: () =>
-                  `stage=entity-enrichment; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; dryRun=${dryRun ? "yes" : "no"}`,
+                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; dryRun=${dryRun ? "yes" : "no"}`,
               },
             );
           } catch (err) {
@@ -1212,21 +1220,35 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             );
             return;
           }
-          const remaining = res.totalBacklog - res.processed;
-          const backlogNote =
-            !allMode && res.totalBacklog > res.pending
-              ? ` Total backlog: ${res.totalBacklog} facts. At --limit ${limit}/run, ~${Math.ceil(remaining / limit)} run${Math.ceil(remaining / limit) === 1 ? "" : "s"} to clear.`
-              : "";
+          const pendingTotal = res.pendingTotal ?? res.pending;
+          const mode = res.mode ?? (all ? "all" : "bounded");
+          const remainingTotal = res.remainingTotal ?? Math.max(0, pendingTotal - res.processed);
+          const estimatedRunsRemaining =
+            res.estimatedRunsRemaining ?? (mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)));
+          const limitLabel = mode === "all" ? "all" : String(res.effectiveLimit ?? limit);
+          if (res.pendingByTier) {
+            console.log(
+              `Entity enrichment backlog by tier: hot=${res.pendingByTier.hot}, warm=${res.pendingByTier.warm}, structural=${res.pendingByTier.structural}, cold=${res.pendingByTier.cold}, unknown=${res.pendingByTier.unknown}`,
+            );
+          }
           if (dryRun) {
-            console.log(`Entity enrichment (dry-run): ${res.pending} facts pending (no API calls).${backlogNote}`);
+            console.log(
+              `Entity enrichment (dry-run): pending total=${pendingTotal}, batch candidates=${res.pending}, mode=${mode}, limit=${limitLabel} (no API calls).`,
+            );
+            if (mode !== "all") {
+              console.log(`Estimated runs to clear backlog at current limit: ${estimatedRunsRemaining}`);
+            }
             if (verbose && res.pendingFactIds && res.pendingFactIds.length > 0) {
               console.log("Candidate fact ids (--verbose):");
               for (const id of res.pendingFactIds) console.log(`  ${id}`);
             }
           } else {
             console.log(
-              `Entity enrichment: processed ${res.processed} facts, enriched ${res.factsEnriched} (batch had ${res.pending} candidates).${backlogNote}`,
+              `Entity enrichment: processed ${res.processed} facts, enriched ${res.factsEnriched}, batch=${res.pending}, pending-before-run=${pendingTotal}, remaining=${remainingTotal}, mode=${mode}, limit=${limitLabel}.`,
             );
+            if (mode !== "all") {
+              console.log(`Estimated runs remaining at current limit: ${estimatedRunsRemaining}`);
+            }
             if (verbose && res.enrichedFacts && res.enrichedFacts.length > 0) {
               console.log("Enriched facts (--verbose):");
               for (const ef of res.enrichedFacts) {

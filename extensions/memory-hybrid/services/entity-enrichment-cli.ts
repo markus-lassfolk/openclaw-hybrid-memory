@@ -9,8 +9,6 @@ import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { extractEntityMentionsWithLlm } from "./entity-enrichment.js";
 
-const ENRICHMENT_MIN_TEXT_LEN = 24;
-
 function sanitizeEnrichmentLimit(n: number): number {
   const x = Math.floor(Number(n));
   if (!Number.isFinite(x) || x < 1) return 200;
@@ -28,6 +26,10 @@ export type EntityEnrichmentProgress = {
   processed: number;
   total: number;
   factsEnriched: number;
+  pendingTotal: number;
+  remainingTotal: number;
+  estimatedRunsRemaining: number;
+  mode: "bounded" | "all";
 };
 
 export async function runEntityEnrichmentForCli(
@@ -38,34 +40,62 @@ export async function runEntityEnrichmentForCli(
     limit: number;
     dryRun: boolean;
     model?: string;
-    verbose?: boolean;
     all?: boolean;
+    verbose?: boolean;
     onProgress?: (progress: EntityEnrichmentProgress) => void;
   },
 ): Promise<{
+  /** Candidate count in the selected batch. */
   pending: number;
+  /** Full pending backlog count (across all tiers). */
+  pendingTotal: number;
+  pendingByTier: { hot: number; warm: number; structural: number; cold: number; unknown: number };
   processed: number;
   factsEnriched: number;
-  totalBacklog: number;
+  mode: "bounded" | "all";
+  effectiveLimit: number | "all";
+  remainingTotal: number;
+  estimatedRunsRemaining: number;
   skipped?: boolean;
   pendingFactIds?: string[];
   enrichedFacts?: EntityEnrichmentVerboseFact[];
 }> {
-  // -1 means "no limit" (exhaustive/catch-up mode)
-  const limit = opts.all ? -1 : sanitizeEnrichmentLimit(opts.limit);
+  const limit = sanitizeEnrichmentLimit(opts.limit);
+  const mode: "bounded" | "all" = opts.all ? "all" : "bounded";
+  const effectiveLimit: number | "all" = mode === "all" ? "all" : limit;
   const verbose = !!opts.verbose;
-  const totalBacklog = factsDb.countFactIdsNeedingEntityEnrichment(ENRICHMENT_MIN_TEXT_LEN);
+  const backlog = factsDb.getEntityEnrichmentBacklogSummary(24);
+  const pendingTotal = backlog.total;
   if (!cfg.graph?.enabled) {
-    const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, ENRICHMENT_MIN_TEXT_LEN);
-    return { pending: ids.length, processed: 0, factsEnriched: 0, totalBacklog, skipped: true };
-  }
-  const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, ENRICHMENT_MIN_TEXT_LEN);
-  if (opts.dryRun) {
+    const pending = mode === "all" ? pendingTotal : Math.min(pendingTotal, limit);
     return {
-      pending: ids.length,
+      pending,
+      pendingTotal,
+      pendingByTier: backlog.byTier,
       processed: 0,
       factsEnriched: 0,
-      totalBacklog,
+      mode,
+      effectiveLimit,
+      remainingTotal: pendingTotal,
+      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / limit),
+      skipped: true,
+    };
+  }
+
+  const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, 24, { all: mode === "all" });
+  const pending = ids.length;
+
+  if (opts.dryRun) {
+    return {
+      pending,
+      pendingTotal,
+      pendingByTier: backlog.byTier,
+      processed: 0,
+      factsEnriched: 0,
+      mode,
+      effectiveLimit,
+      remainingTotal: pendingTotal,
+      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / limit),
       pendingFactIds: verbose ? [...ids] : undefined,
     };
   }
@@ -73,6 +103,8 @@ export async function runEntityEnrichmentForCli(
   let factsEnriched = 0;
   let processed = 0;
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
+  const estimatedRunsRemaining = (): number =>
+    mode === "all" ? 0 : Math.ceil(Math.max(0, pendingTotal - processed) / limit);
   for (const id of ids) {
     processed++;
     const f = factsDb.getById(id);
@@ -91,13 +123,26 @@ export async function runEntityEnrichmentForCli(
         }
       }
     }
-    opts.onProgress?.({ processed, total: ids.length, factsEnriched });
+    opts.onProgress?.({
+      processed,
+      total: ids.length,
+      factsEnriched,
+      pendingTotal,
+      remainingTotal: Math.max(0, pendingTotal - processed),
+      estimatedRunsRemaining: estimatedRunsRemaining(),
+      mode,
+    });
   }
   return {
-    pending: ids.length,
+    pending,
+    pendingTotal,
+    pendingByTier: backlog.byTier,
     processed,
     factsEnriched,
-    totalBacklog,
+    mode,
+    effectiveLimit,
+    remainingTotal: Math.max(0, pendingTotal - processed),
+    estimatedRunsRemaining: estimatedRunsRemaining(),
     enrichedFacts: verbose && enrichedFacts.length > 0 ? enrichedFacts : undefined,
   };
 }
