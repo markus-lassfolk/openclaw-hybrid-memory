@@ -151,7 +151,7 @@ function findSimilarImplicitFeedbackLesson(
          AND superseded_at IS NULL
          AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}
        ORDER BY created_at DESC
-       LIMIT 500`,
+       LIMIT 2000`,
     )
     .all() as Array<{ id: string; text: string }>;
   for (const row of rows) {
@@ -210,7 +210,7 @@ export function cleanupImplicitFeedbackDuplicates(
   if (!rawDb) {
     return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
   }
-  const threshold = opts.threshold ?? 0.8;
+  const threshold = opts.threshold ?? 0.7;
   const limit = opts.limit ?? 1000;
   if (limit <= 0) {
     return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
@@ -393,7 +393,7 @@ export async function runExtractImplicitFeedbackForCli(
     feedToReinforcement: true,
     feedToSelfCorrection: true,
     maxLessonsPerDay: 50,
-    lessonDedupeJaccard: 0.8,
+    lessonDedupeJaccard: 0.7,
     autoCleanup: true,
     cleanupLimit: 1000,
   };
@@ -539,7 +539,7 @@ export async function runExtractImplicitFeedbackForCli(
     if (!opts.dryRun && implicitCfg.feedToSelfCorrection !== false && signals.length > 0) {
       const minConf = implicitCfg.minConfidence ?? 0.5;
       const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
-      const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
+      const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
         try {
@@ -655,7 +655,7 @@ export async function runExtractImplicitFeedbackForCli(
             );
             // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
             const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
-            const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
+            const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
             for (const lesson of traj.lessonsExtracted) {
               lessonsStoredTodaySession = rawDb
                 ? getImplicitFeedbackLessonsStoredToday(rawDb)
@@ -723,7 +723,7 @@ export async function runExtractImplicitFeedbackForCli(
       progress.stage = "cleanup-duplicates";
       emitProgress();
       const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
-      const threshold = implicitCfg.lessonDedupeJaccard ?? 0.8;
+      const threshold = implicitCfg.lessonDedupeJaccard ?? 0.7;
       let afterRowid = 0;
       let totalCollapsed = 0;
       let totalScanned = 0;
