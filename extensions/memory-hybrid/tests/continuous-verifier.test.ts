@@ -240,7 +240,7 @@ describe("ContinuousVerifier.runCycle — empty due list", () => {
     // Add a fresh fact (not yet due)
     await store.verify("fact-fresh", "Fresh fact", "agent");
     const result = await verifier.runCycle();
-    expect(result).toEqual({ checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 });
+    expect(result).toEqual({ checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0, errorSummaries: [] });
   });
 });
 
@@ -388,6 +388,52 @@ describe("ContinuousVerifier.runCycle — error handling", () => {
     expect(result.checked).toBe(2);
     expect(result.errors).toBe(1);
     expect(result.confirmed).toBe(1);
+    expect(result.errorSummaries).toHaveLength(1);
+    expect(result.errorSummaries[0]).toContain("fact=fact-err");
+    expect(result.errorSummaries[0]).toContain("transient error");
+  });
+
+  it("records compact summaries when every verification call errors", async () => {
+    const mockOpenAI = makeMockOpenAI(new Error("provider timeout while checking fact"));
+    const verifier = new ContinuousVerifier(store, factsDb, mockOpenAI as never);
+
+    const alpha = factsDb.store({
+      text: "Primary API endpoint is api.internal",
+      category: "technical",
+      importance: 0.8,
+      entity: "api",
+      key: "endpoint",
+      value: "api.internal",
+      source: "test",
+    });
+    const beta = factsDb.store({
+      text: "API region is eu-north-1",
+      category: "technical",
+      importance: 0.7,
+      entity: "api",
+      key: "region",
+      value: "eu-north-1",
+      source: "test",
+    });
+
+    const ids = [
+      await store.verify(alpha.id, "Primary API endpoint is api.internal", "agent"),
+      await store.verify(beta.id, "API region is eu-north-1", "agent"),
+    ];
+    const db = (store as unknown as { db: import("node:sqlite").DatabaseSync }).db;
+    for (const id of ids) {
+      db.prepare(`UPDATE verified_facts SET next_verification = '2020-01-01T00:00:00.000Z' WHERE id = ?`).run(id);
+    }
+
+    const result = await verifier.runCycle();
+    expect(result.checked).toBe(2);
+    expect(result.confirmed).toBe(0);
+    expect(result.stale).toBe(0);
+    expect(result.uncertain).toBe(2);
+    expect(result.errors).toBe(2);
+    expect(result.errorSummaries).toHaveLength(2);
+    expect(result.errorSummaries[0]).toContain("provider timeout while checking fact");
+    expect(result.errorSummaries[1]).toContain("provider timeout while checking fact");
   });
 
   it("no-op on STALE when underlying fact is not in FactsDB (no crash)", async () => {
@@ -510,7 +556,7 @@ describe("runVerificationCycle", () => {
   it("returns the same result as runCycle for empty due list", async () => {
     const mockOpenAI = makeMockOpenAI("CONFIRMED");
     const result = await runVerificationCycle(store, factsDb, mockOpenAI as never);
-    expect(result).toEqual({ checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0 });
+    expect(result).toEqual({ checked: 0, confirmed: 0, stale: 0, uncertain: 0, errors: 0, errorSummaries: [] });
   });
 
   it("passes verificationModel option to the verifier", async () => {
