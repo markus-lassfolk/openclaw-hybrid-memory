@@ -762,7 +762,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
           if (providerCircuitBreak) {
             console.error(
-              `Provider circuit-break: ${embedFailures} consecutive embed failure(s) exceeded --max-embed-failures ${maxEmbedFailures}; processed ${processed}/${candidates.length} fact(s) before aborting; partial embeddings stored: ${embedded}. Re-run after provider recovery (exit=1).`,
+              `Provider circuit-break: ${maxEmbedFailures} consecutive embed failure(s) exceeded --max-embed-failures ${maxEmbedFailures}; processed ${processed}/${candidates.length} fact(s) before aborting; partial embeddings stored: ${embedded}. Re-run after provider recovery (exit=1).`,
             );
           } else if (opts?.apply && storeFailures > 0) {
             console.warn(

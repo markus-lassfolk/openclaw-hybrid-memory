@@ -92,7 +92,9 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
     const mem = new Command("hybrid-mem");
 
-    const providerError = new Error("500 The server had an error while processing your request.");
+    const providerError = new Error(
+      "Request failed with status code 500: {\"error\":{\"message\":\"The server had an error while processing your request. Sorry about that!\",\"type\":\"server_error\",\"code\":null}}",
+    );
 
     // 10 facts across 2 batches of 5
     const facts = Array.from({ length: 10 }, (_, i) => ({
