@@ -178,8 +178,13 @@ export function buildCliContextServices(
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: async (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
-      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const requestedModel = opts.model ?? cfg.reflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
+        cfg,
+        "maintenance",
+        requestedModel,
+      );
+      const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
         : cfg.reflection.model?.trim()
@@ -218,8 +223,13 @@ export function buildCliContextServices(
       return result;
     },
     runReflectionRules: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
-      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const requestedModel = opts.model ?? cfg.reflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
+        cfg,
+        "maintenance",
+        requestedModel,
+      );
+      const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
         : cfg.reflection.model?.trim()
@@ -242,8 +252,13 @@ export function buildCliContextServices(
       );
     },
     runReflectionMeta: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
-      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const requestedModel = opts.model ?? cfg.reflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
+        cfg,
+        "maintenance",
+        requestedModel,
+      );
+      const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
         : cfg.reflection.model?.trim()

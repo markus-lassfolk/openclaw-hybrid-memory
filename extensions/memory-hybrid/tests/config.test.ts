@@ -1491,6 +1491,16 @@ describe("hybridConfigSchema.parse", () => {
       expect(r.fallbackModels).toEqual(["openai/gpt-4.1-nano"]);
     });
 
+    it("includes maintenance default as fallback when reflection primary is overridden", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { maintenance: ["openai/gpt-4.1-mini"], default: ["openai/gpt-4.1-mini"], heavy: ["openai/gpt-5.4"] },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance", "minimax/MiniMax-M2.7-highspeed");
+      expect(r.defaultModel).toBe("openai/gpt-4.1-mini");
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
+    });
+
     it("returns heavy tier from llm.heavy with fallbacks when multiple models", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,
