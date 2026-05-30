@@ -60,7 +60,10 @@ function shouldFilterEntityMention(mention: {
   surfaceText: string;
   normalizedSurface: string;
 }): boolean {
-  if (mention.normalizedSurface.length < MIN_ENTITY_MENTION_LENGTH) {
+  if (
+    mention.normalizedSurface.length < MIN_ENTITY_MENTION_LENGTH &&
+    mention.surfaceText.length < MIN_ENTITY_MENTION_LENGTH
+  ) {
     return true;
   }
 
