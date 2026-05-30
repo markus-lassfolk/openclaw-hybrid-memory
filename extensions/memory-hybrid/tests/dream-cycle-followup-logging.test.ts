@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assessContinuousVerificationResult,
   formatExtractImplicitFeedbackProgress,
   runVerboseFollowUp,
 } from "../cli/commands/manage/dream-cycle-followup.js";
@@ -91,5 +92,41 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     ).toBe(
       "stage=scan-sessions; sessions=2/4; signals=5 (2+/3-); traj=1; partial=maxSignals; deferred=2; backlog≈7s/3t",
     );
+  });
+
+  it("treats all-uncertain verification results as degraded", () => {
+    const assessment = assessContinuousVerificationResult({
+      checked: 12,
+      confirmed: 0,
+      stale: 0,
+      uncertain: 12,
+      errors: 0,
+      errorSummaries: [],
+    });
+
+    expect(assessment.status).toBe("degraded");
+    expect(assessment.shouldFailPipeline).toBe(true);
+    expect(assessment.summary).toContain("all 12 verification check(s) were uncertain");
+  });
+
+  it("treats verification errors as degraded even when outcomes are uncertain", () => {
+    const assessment = assessContinuousVerificationResult({
+      checked: 5,
+      confirmed: 0,
+      stale: 0,
+      uncertain: 5,
+      errors: 5,
+      errorSummaries: [
+        "fact=abc12345…: provider timeout",
+        "fact=def67890…: provider timeout",
+        "fact=ghi54321…: provider timeout",
+        "fact=jkl98765…: provider timeout",
+        "fact=mno24680…: provider timeout",
+      ],
+    });
+
+    expect(assessment.status).toBe("degraded");
+    expect(assessment.shouldFailPipeline).toBe(true);
+    expect(assessment.summary).toContain("5/5 verification check(s) errored");
   });
 });
