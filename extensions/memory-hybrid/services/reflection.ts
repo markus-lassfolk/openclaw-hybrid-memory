@@ -884,9 +884,7 @@ export async function runReflectionRules(
       stored: 0,
       zeroRulesReason,
       status:
-        zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response"
-          ? "degraded"
-          : "ok",
+        zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response" ? "degraded" : "ok",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +
