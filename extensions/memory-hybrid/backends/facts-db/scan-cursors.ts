@@ -65,7 +65,7 @@ export function updateScanCursor(
          ELSE scan_cursors.last_session_ts
        END,
        last_session_file = CASE
-         WHEN excluded.sessions_processed > 0 THEN excluded.last_session_file
+         WHEN excluded.sessions_processed > 0 THEN COALESCE(excluded.last_session_file, scan_cursors.last_session_file)
          ELSE scan_cursors.last_session_file
        END,
        last_run_at = excluded.last_run_at,
