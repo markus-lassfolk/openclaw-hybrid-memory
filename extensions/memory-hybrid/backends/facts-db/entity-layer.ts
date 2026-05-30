@@ -717,6 +717,7 @@ export function cleanupEntityMentions(
       }
 
       const nextRows = filteredBySubstring;
+      accepted -= allAccepted.length - filteredBySubstring.length;
       const after = rowsSignature(
         nextRows.map((row) => ({
           label: row.label,
