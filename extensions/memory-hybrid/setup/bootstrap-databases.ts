@@ -45,10 +45,10 @@ import {
   clearOllamaHealthCacheEntry,
   extractGatewayConfig,
   getGatewayModelsProviders,
+  gatewayLogInfoOnce,
   mergeGatewayProviderCredentialsIntoLlmProvidersMap,
   patchEmbeddingEndpointFromGatewayProviders,
   probeOllamaEndpoint,
-  gatewayLogInfoOnce,
 } from "./provider-router.js";
 interface HealthStatus {
   embeddingsOk: boolean;
