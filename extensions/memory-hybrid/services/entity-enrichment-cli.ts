@@ -105,15 +105,13 @@ export async function runEntityEnrichmentForCli(
   let factsEnriched = 0;
   let processed = 0;
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
-  const estimatedRunsRemaining = (): number =>
-    mode === "all" ? 0 : Math.ceil(Math.max(0, pendingTotal - processed) / Math.max(1, limit));
   opts.onProgress?.({
     processed: 0,
     total: ids.length,
     factsEnriched: 0,
     pendingTotal,
     remainingTotal: pendingTotal,
-    estimatedRunsRemaining: estimatedRunsRemaining(),
+    estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / Math.max(1, limit)),
     mode,
   });
   for (const id of ids) {
@@ -134,13 +132,14 @@ export async function runEntityEnrichmentForCli(
         }
       }
     }
+    const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
     opts.onProgress?.({
       processed,
       total: ids.length,
       factsEnriched,
       pendingTotal,
-      remainingTotal: Math.max(0, pendingTotal - processed),
-      estimatedRunsRemaining: estimatedRunsRemaining(),
+      remainingTotal: currentBacklog.total,
+      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(currentBacklog.total / Math.max(1, limit)),
       mode,
     });
   }
@@ -153,8 +152,8 @@ export async function runEntityEnrichmentForCli(
     factsEnriched,
     mode,
     effectiveLimit,
-    remainingTotal: Math.max(0, pendingTotal - processed),
-    estimatedRunsRemaining: estimatedRunsRemaining(),
+    remainingTotal: finalBacklog.total,
+    estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(finalBacklog.total / Math.max(1, limit)),
     enrichedFacts: verbose && enrichedFacts.length > 0 ? enrichedFacts : undefined,
   };
 }
