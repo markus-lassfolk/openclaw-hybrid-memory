@@ -703,9 +703,7 @@ export function buildAuditHealthReport(
       .filter(([, count]) => count > 0)
       .map(([reason, count]) => `${reason}=${count}`)
       .join(", ");
-    warnings.push(
-      `${procedureTriage.summary.total} validated procedure(s) are not promoted (${reasonBreakdown}).`,
-    );
+    warnings.push(`${procedureTriage.summary.total} validated procedure(s) are not promoted (${reasonBreakdown}).`);
   }
   const remediation: string[] = [];
   if ((tiers.hot ?? 0) === 0 || (tiers.structural ?? 0) === 0 || structuralEligibleWarmFacts > 0)

@@ -20,13 +20,15 @@ import { _testing } from "../index.js";
 const { FactsDB } = _testing;
 
 /** Insert a validated procedure row that will be blocked from promotion (success_count < threshold). */
-function insertLowRecallProcedure(db: ReturnType<typeof FactsDB.prototype.getRawDb>, id: string, taskPattern: string): void {
-  db
-    ?.prepare(
-      `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, confidence, promoted_to_skill, last_validated, created_at, updated_at)
+function insertLowRecallProcedure(
+  db: ReturnType<typeof FactsDB.prototype.getRawDb>,
+  id: string,
+  taskPattern: string,
+): void {
+  db?.prepare(
+    `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, confidence, promoted_to_skill, last_validated, created_at, updated_at)
        VALUES (?, ?, ?, 'positive', 1, 0, 0.6, 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))`,
-    )
-    .run(id, taskPattern, JSON.stringify([{ tool: "bash", args: {} }]));
+  ).run(id, taskPattern, JSON.stringify([{ tool: "bash", args: {} }]));
 }
 
 describe("buildAuditHealthReport — JSON schema (#1193)", () => {
