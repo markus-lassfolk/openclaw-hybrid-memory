@@ -639,18 +639,14 @@ export async function runExtractImplicitFeedbackForCli(
         }
       }
 
-      if (maxSignalsPerRun > 0 && totalSignals > 0 && totalSignals + signals.length > maxSignalsPerRun) {
+      if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
         deferredSignalsForFirstSession = signals.length;
         deferredTrajectoriesForFirstSession = projectedTrajectories;
         markPartial("maxSignals", sessionCandidates.length - index, signals.length, projectedTrajectories);
         emitProgress();
         break;
       }
-      if (
-        maxTrajectoriesPerRun > 0 &&
-        trajectoriesBuilt > 0 &&
-        trajectoriesBuilt + projectedTrajectories > maxTrajectoriesPerRun
-      ) {
+      if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + projectedTrajectories > maxTrajectoriesPerRun) {
         deferredSignalsForFirstSession = signals.length;
         deferredTrajectoriesForFirstSession = projectedTrajectories;
         markPartial("maxTrajectories", sessionCandidates.length - index, signals.length, projectedTrajectories);
