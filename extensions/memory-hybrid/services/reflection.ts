@@ -101,8 +101,10 @@ export interface ReflectionRulesDiagnostics {
 }
 
 // Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
+// Anchored to start-of-string but allows leading whitespace so phrases like
+// "No actionable rules detected from ..." are correctly classified.
 const VALID_NO_RULES_PATTERN =
-  /^(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s.:;!]*$/im;
+  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s.:;!]*$/im;
 
 interface ReflectionMetaResult {
   metaExtracted: number;
@@ -866,11 +868,13 @@ export async function runReflectionRules(
     const zeroRulesReason =
       modelResponseChars === 0
         ? "empty_model_response"
-        : parseableLines > 0
+        : parseableLines > 0 && rejectedLowConfidence > 0
           ? "all_candidates_rejected_low_confidence"
-          : looksLikeValidNoRules
-            ? "valid_no_actionable_rules"
-            : "invalid_response_format";
+          : parseableLines > 0 && rejectedDuplicates > 0
+            ? "all_candidates_rejected_batch_duplicate"
+            : looksLikeValidNoRules
+              ? "valid_no_actionable_rules"
+              : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
       parseSuccess,
@@ -936,7 +940,8 @@ export async function runReflectionRules(
   );
 
   let stored = 0;
-  let rulesDuplicatesSkipped = rejectedDuplicates;
+  let rulesDuplicatesSkipped = 0;
+  let batchDuplicatesSkipped = rejectedDuplicates;
   let embeddingBasedDuplicates = 0;
   let storeLevelDuplicates = 0;
   let newRuleEmbedFailures = 0;
@@ -1065,7 +1070,7 @@ export async function runReflectionRules(
   }
 
   logger.info(
-    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`,
+    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${batchDuplicatesSkipped} skipped as batch duplicate(s), ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`
   );
   if (storeDedupeVectorFallbackSuppressed > 0) {
     logger.info(
