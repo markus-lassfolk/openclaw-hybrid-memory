@@ -437,9 +437,21 @@ describe("maintenance log analyzer", () => {
   });
 
   it("isCanonicalMaintenanceLog and isUnderAuxiliaryDir unit checks", () => {
+    // compact timestamp-pid format
     expect(isCanonicalMaintenanceLog("/logs/nightly-distill-20260507T021015Z-123.log")).toBe(true);
     expect(isCanonicalMaintenanceLog("/logs/maintenance-log-analyzer-20260529T050412Z-15978.log")).toBe(true);
+    // .cron.log format
     expect(isCanonicalMaintenanceLog("/logs/nightly-memory-sweep-20260511.cron.log")).toBe(true);
+    // ISO-with-dashes format produced by runPendingDigestAutopilotCron
+    expect(
+      isCanonicalMaintenanceLog("/logs/weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log"),
+    ).toBe(true);
+    expect(
+      isCanonicalMaintenanceLog(
+        "/logs/20260513/weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log",
+      ),
+    ).toBe(true);
+    // non-canonical helper logs
     expect(isCanonicalMaintenanceLog("/logs/manual-qa/run/stdout.log")).toBe(false);
     expect(isCanonicalMaintenanceLog("/logs/helpers/debug.log")).toBe(false);
     expect(isCanonicalMaintenanceLog("/logs/stderr.log")).toBe(false);
@@ -451,6 +463,21 @@ describe("maintenance log analyzer", () => {
     expect(isUnderAuxiliaryDir(`${root}/.hidden/x.log`, root)).toBe(true);
     expect(isUnderAuxiliaryDir(`${root}/nightly-distill-20260507T021015Z-123.log`, root)).toBe(false);
     expect(isUnderAuxiliaryDir(`${root}/20260507/nightly-distill-20260507T021015Z-123.log`, root)).toBe(false);
+  });
+
+  it("produces missing-exit-ledger for autopilot-cron ISO-with-dashes log without a matching .exit.txt", () => {
+    const root = tmpRoot();
+    const dayDir = join(root, "20260513");
+    mkdirSync(dayDir, { recursive: true });
+    // Filename as produced by runPendingDigestAutopilotCron (ISO datetime, colons/dots → dashes, no PID)
+    const logPath = join(dayDir, "weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log");
+    writeFileSync(logPath, "run.start job=weekly-pending-digest-autopilot\n");
+
+    const nowMs = Date.UTC(2026, 4, 13, 9, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].logPath).toBe(logPath);
   });
 
   it("keeps normal successful verbose dream-cycle runs as OK", () => {

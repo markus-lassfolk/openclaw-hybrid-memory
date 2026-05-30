@@ -238,18 +238,27 @@ export function isUnderAuxiliaryDir(filePath: string, root: string): boolean {
 }
 
 /**
- * Canonical maintenance wrapper log names follow the pattern:
- *   `<jobname>-YYYYMMDDTHHMMSSZ-<pid>.log`  (e.g. `nightly-memory-sweep-20260511T030000Z-555.log`)
+ * Canonical maintenance wrapper log names follow one of two patterns:
+ *   1. `<jobname>-YYYYMMDDTHHMMSSZ-<pid>.log`  (e.g. `nightly-memory-sweep-20260511T030000Z-555.log`)
+ *   2. `<jobname>-YYYY-MM-DDTHH-MM-SS-mmmZ.log` — ISO datetime with colons/dots replaced by dashes,
+ *      produced by `runPendingDigestAutopilotCron` (e.g. `weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log`)
  * or end with `.cron.log`.
  *
  * Files like `stdout.log`, `stderr.log`, or arbitrary helper logs do NOT match and
  * should not be reported as missing-exit-ledger failures (issue #1685).
  */
+/** Compact timestamp with PID: `<job>-YYYYMMDDTHHMMSSz-<pid>.log` */
 const CANONICAL_MAINTENANCE_LOG_RE = /-\d{8}T\d{6}Z-\d+\.log$/;
+/** ISO-with-dashes timestamp (no PID): `<job>-YYYY-MM-DDTHH-MM-SS-mmmZ.log` (runPendingDigestAutopilotCron) */
+const CANONICAL_MAINTENANCE_LOG_ISO_RE = /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.log$/;
 
 export function isCanonicalMaintenanceLog(filePath: string): boolean {
   const file = basename(filePath);
-  return CANONICAL_MAINTENANCE_LOG_RE.test(file) || file.endsWith(".cron.log");
+  return (
+    CANONICAL_MAINTENANCE_LOG_RE.test(file) ||
+    CANONICAL_MAINTENANCE_LOG_ISO_RE.test(file) ||
+    file.endsWith(".cron.log")
+  );
 }
 
 function collectFilesRecursive(root: string, suffix: string): string[] {
