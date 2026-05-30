@@ -101,6 +101,13 @@ describe("runStoreForCli canonical embedding mirror", () => {
     if (result.outcome !== "stored") return;
 
     expect(mockCtx.vectorDb.store).not.toHaveBeenCalled();
+    const embeddings = factsDb.getEmbeddings(result.id);
+    expect(embeddings).toHaveLength(1);
+    expect(embeddings[0]).toMatchObject({
+      model: "test-embedding-model",
+      variant: "canonical",
+    });
+    expect(embeddings[0]?.embedding).toHaveLength(3);
     expect(factsDb.countVectorlessActiveFacts("cli")).toBe(0);
   });
 });
