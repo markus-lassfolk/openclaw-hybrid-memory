@@ -37,6 +37,14 @@ export function formatExtractImplicitFeedbackProgress(
     if (snapshot.trajectoriesBuilt > 0) parts.push(`traj=${snapshot.trajectoriesBuilt}`);
   }
 
+  if (snapshot.partial) {
+    parts.push(`partial=${snapshot.partialReason ?? "capped"}`);
+    if (snapshot.sessionsDeferred > 0) parts.push(`deferred=${snapshot.sessionsDeferred}`);
+    if (snapshot.backlogSignalsEstimate > 0 || snapshot.backlogTrajectoriesEstimate > 0) {
+      parts.push(`backlog≈${snapshot.backlogSignalsEstimate}s/${snapshot.backlogTrajectoriesEstimate}t`);
+    }
+  }
+
   return parts.join("; ");
 }
 

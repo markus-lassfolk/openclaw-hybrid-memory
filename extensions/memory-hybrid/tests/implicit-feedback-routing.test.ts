@@ -8,7 +8,7 @@
  *   - CLI command 'extract-implicit' is registered in ManageContext
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -164,6 +164,7 @@ describe("implicit feedback routing — positive → reinforcement", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -471,6 +472,109 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
     mkdirSync(sessionsDir, { recursive: true });
   });
 
+  describe("implicit feedback routing — incremental caps and resume", () => {
+    let tmpDir: string;
+    let sessionsDir: string;
+
+    beforeEach(() => {
+      tmpDir = mkdtempSync(join(tmpdir(), "ifr-caps-"));
+      sessionsDir = join(tmpDir, "sessions");
+      mkdirSync(sessionsDir, { recursive: true });
+    });
+
+    afterEach(() => {
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("resumes from the last processed session when multiple sessions share the same mtime", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+      const db = makeDb(tmpDir);
+      writePositiveSession(sessionsDir, "2026-01-01-a.jsonl");
+      writePositiveSession(sessionsDir, "2026-01-01-b.jsonl");
+      const sharedMtime = new Date("2026-01-01T00:00:00.000Z");
+      utimesSync(join(sessionsDir, "2026-01-01-a.jsonl"), sharedMtime, sharedMtime);
+      utimesSync(join(sessionsDir, "2026-01-01-b.jsonl"), sharedMtime, sharedMtime);
+
+      const ctx = makeCtx(db, sessionsDir, {
+        feedToSelfCorrection: false,
+        maxSessionsPerRun: 1,
+      });
+
+      const firstRun = await runExtractImplicitFeedbackForCli(ctx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+      expect(firstRun.sessionsProcessed).toBe(1);
+      expect(firstRun.sessionsDeferred).toBe(1);
+      expect(firstRun.partial).toBe(true);
+      expect(firstRun.partialReason).toBe("maxSessions");
+      expect(db.getScanCursor("extract-implicit-feedback")).toEqual({
+        lastSessionTs: sharedMtime.getTime(),
+        lastSessionFile: "2026-01-01-a.jsonl",
+        lastRunAt: expect.any(Number),
+        sessionsProcessed: 1,
+      });
+
+      vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
+      const secondRun = await runExtractImplicitFeedbackForCli(ctx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+      expect(secondRun.sessionsScanned).toBe(1);
+      expect(secondRun.sessionsProcessed).toBe(1);
+      expect(secondRun.sessionsDeferred).toBe(0);
+      expect(secondRun.partial).toBe(false);
+      expect(db.getScanCursor("extract-implicit-feedback")).toEqual({
+        lastSessionTs: sharedMtime.getTime(),
+        lastSessionFile: "2026-01-01-b.jsonl",
+        lastRunAt: expect.any(Number),
+        sessionsProcessed: 2,
+      });
+    });
+
+    it("reports partial healthy progress and backlog estimates when a signal cap defers remaining sessions", async () => {
+      const db = makeDb(tmpDir);
+      writePositiveSession(sessionsDir, "2026-01-01-a.jsonl");
+      writeNegativeSession(sessionsDir, "2026-01-01-b.jsonl");
+
+      const snapshots: Array<{ partial?: boolean; partialReason?: string; sessionsDeferred?: number }> = [];
+      const ctx = makeCtx(db, sessionsDir, {
+        minConfidence: 0.0,
+        feedToReinforcement: false,
+        feedToSelfCorrection: false,
+        maxSignalsPerRun: 1,
+      });
+
+      const result = await runExtractImplicitFeedbackForCli(ctx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+        onProgress: (snapshot) => snapshots.push(snapshot),
+      });
+
+      expect(result.sessionsProcessed).toBe(1);
+      expect(result.sessionsDeferred).toBe(1);
+      expect(result.partial).toBe(true);
+      expect(result.partialReason).toBe("maxSignals");
+      expect(result.backlogSessionsEstimate).toBe(1);
+      expect(result.backlogSignalsEstimate).toBeGreaterThan(0);
+      expect(
+        snapshots.some(
+          (snapshot) =>
+            snapshot.partial === true &&
+            snapshot.partialReason === "maxSignals" &&
+            snapshot.sessionsDeferred === 1,
+        ),
+      ).toBe(true);
+    });
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     rmSync(tmpDir, { recursive: true, force: true });
@@ -637,11 +741,31 @@ describe("ImplicitFeedbackConfig — trajectoryLLMAnalysis", () => {
     const { parseImplicitFeedbackConfig } = await import("../config/parsers/features.js");
     const result = parseImplicitFeedbackConfig({});
     expect(result.trajectoryLLMAnalysis).toBe(false);
+    expect(result.maxSessionsPerRun).toBe(50);
+    expect(result.maxSignalsPerRun).toBe(100);
+    expect(result.maxTrajectoriesPerRun).toBe(50);
+    expect(result.maxWallClockSeconds).toBe(300);
   });
 
   it("parseImplicitFeedbackConfig respects trajectoryLLMAnalysis: true", async () => {
     const { parseImplicitFeedbackConfig } = await import("../config/parsers/features.js");
     const result = parseImplicitFeedbackConfig({ implicitFeedback: { trajectoryLLMAnalysis: true } });
     expect(result.trajectoryLLMAnalysis).toBe(true);
+  });
+
+  it("parseImplicitFeedbackConfig clamps new per-run caps", async () => {
+    const { parseImplicitFeedbackConfig } = await import("../config/parsers/features.js");
+    const result = parseImplicitFeedbackConfig({
+      implicitFeedback: {
+        maxSessionsPerRun: 12.8,
+        maxSignalsPerRun: 1234.9,
+        maxTrajectoriesPerRun: 7.6,
+        maxWallClockSeconds: 42.2,
+      },
+    });
+    expect(result.maxSessionsPerRun).toBe(12);
+    expect(result.maxSignalsPerRun).toBe(1234);
+    expect(result.maxTrajectoriesPerRun).toBe(7);
+    expect(result.maxWallClockSeconds).toBe(42);
   });
 });

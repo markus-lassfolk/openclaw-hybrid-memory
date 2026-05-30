@@ -26,6 +26,26 @@ describe("facts-db scan cursor module", () => {
       sessionsProcessed: 4,
     });
   });
+
+  it("stores last_session_file while preserving legacy nowMs call sites", () => {
+    db = new DatabaseSync(":memory:");
+    migrateScanCursorsTable(db);
+
+    updateScanCursor(db, "extract-implicit-feedback", 1234, 1, "session-a.jsonl", 2000);
+    updateScanCursor(db, "self-correction", 4321, 2, 3000);
+
+    expect(getScanCursor(db, "extract-implicit-feedback")).toEqual({
+      lastSessionTs: 1234,
+      lastSessionFile: "session-a.jsonl",
+      lastRunAt: 2000,
+      sessionsProcessed: 1,
+    });
+    expect(getScanCursor(db, "self-correction")).toEqual({
+      lastSessionTs: 4321,
+      lastRunAt: 3000,
+      sessionsProcessed: 2,
+    });
+  });
 });
 
 describe("facts-db reinforcement module", () => {

@@ -292,6 +292,14 @@ export type ImplicitFeedbackConfig = {
   autoCleanup: boolean;
   /** Maximum historical implicit-feedback facts to scan per cleanup run (default: 1000). */
   cleanupLimit: number;
+  /** Maximum sessions to process per extract-implicit run before deferring backlog (default: 50, 0 disables). */
+  maxSessionsPerRun: number;
+  /** Maximum signals to extract per run before deferring backlog (default: 100, 0 disables). */
+  maxSignalsPerRun: number;
+  /** Maximum trajectories to build/store per run before deferring backlog (default: 50, 0 disables). */
+  maxTrajectoriesPerRun: number;
+  /** Maximum wall-clock seconds to spend in one run before deferring backlog (default: 300, 0 disables). */
+  maxWallClockSeconds: number;
 };
 
 /** Frustration signal weights override (Issue #263 — Phase 1). */

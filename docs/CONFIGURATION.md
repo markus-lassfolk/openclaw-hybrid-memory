@@ -1473,6 +1473,10 @@ Defaults are **enabled** (opt-out). You can also control whether these signals f
             "terseResponseRatio": 0.4,
             "feedToReinforcement": true,
             "feedToSelfCorrection": true,
+            "maxSessionsPerRun": 50,
+            "maxSignalsPerRun": 100,
+            "maxTrajectoriesPerRun": 50,
+            "maxWallClockSeconds": 300,
             "trajectoryLLMAnalysis": false
           }
         }
@@ -1492,6 +1496,10 @@ Defaults are **enabled** (opt-out). You can also control whether these signals f
 | `terseResponseRatio` | `0.4` | Fraction of avg message length below which `terse_response` fires |
 | `feedToReinforcement` | `true` | Feed positive implicit signals into reinforcement |
 | `feedToSelfCorrection` | `true` | Feed negative implicit signals into self-correction |
+| `maxSessionsPerRun` | `50` | Maximum session transcripts processed per incremental run before deferring the rest |
+| `maxSignalsPerRun` | `100` | Maximum implicit signals processed per incremental run before deferring remaining sessions |
+| `maxTrajectoriesPerRun` | `50` | Maximum trajectories built per incremental run before deferring remaining sessions |
+| `maxWallClockSeconds` | `300` | Soft wall-clock budget for each incremental run; once exceeded, remaining sessions are deferred |
 | `trajectoryLLMAnalysis` | `false` | Use LLM-based trajectory analysis instead of heuristic lesson extraction |
 
 ---
