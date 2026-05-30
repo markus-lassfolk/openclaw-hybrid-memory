@@ -687,7 +687,6 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                         } catch (singleErr) {
                           errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
                           embedFailures++;
-                          processed++;
                           if (isEmbeddingProviderServerError(singleErr)) {
                             providerCircuitBreak = true;
                             providerCircuitBreakCause = "provider_5xx";
@@ -746,9 +745,6 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                     }
                   }
                 });
-                if (aborted) {
-                  throw new Error("reembed-vectorless aborted due to provider circuit break");
-                }
               },
               {
                 progressSupplier: () =>
