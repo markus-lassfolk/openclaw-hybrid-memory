@@ -15,7 +15,9 @@ import {
   makeEntityMentionKey,
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
+import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { withLLMRetry } from "./chat.js";
+import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 
@@ -67,7 +69,8 @@ export type EntityExtractionQualityStats = {
 };
 
 function parseMentionJson(content: string): LlmMention[] {
-  const trimmed = content.trim();
+  const stripped = stripThinkingWrapperBlocks(content);
+  const trimmed = stripped.trim();
   const start = trimmed.indexOf("{");
   if (start === -1) return [];
 
@@ -174,15 +177,17 @@ INPUT:
 ${body}`;
 
   try {
-    const resp = await withLLMRetry(
-      () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          ...chatCompletionTokenParams(model, 1200),
-        }),
-      { maxRetries: 2 },
+    const resp = await withCostFeature("entity-enrichment", () =>
+      withLLMRetry(
+        () =>
+          openai.chat.completions.create({
+            model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            ...chatCompletionTokenParams(model, 1200),
+          }),
+        { maxRetries: 2 },
+      ),
     );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const raw = parseMentionJson(content);

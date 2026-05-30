@@ -170,19 +170,19 @@ export function migrateEntityLayerTables(db: DatabaseSync): void {
              AND m1.label = m2.label
              AND m1.normalized_surface = m2.normalized_surface
              AND (
-                  m2.created_at > m1.created_at
-               OR (m2.created_at = m1.created_at AND m2.id > m1.id)
+                  m2.confidence > m1.confidence
+               OR (m2.confidence = m1.confidence AND m2.created_at > m1.created_at)
+               OR (m2.confidence = m1.confidence AND m2.created_at = m1.created_at AND m2.id > m1.id)
              )
           );
         `);
       }
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_fem_fact_label_norm
+        ON fact_entity_mentions(fact_id, label, normalized_surface);
+      `);
     });
   }
-
-  db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_fem_fact_label_norm
-    ON fact_entity_mentions(fact_id, label, normalized_surface);
-  `);
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS org_fact_links (
