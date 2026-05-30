@@ -48,6 +48,7 @@ import {
   mergeGatewayProviderCredentialsIntoLlmProvidersMap,
   patchEmbeddingEndpointFromGatewayProviders,
   probeOllamaEndpoint,
+  gatewayLogInfoOnce,
 } from "./provider-router.js";
 interface HealthStatus {
   embeddingsOk: boolean;
@@ -493,8 +494,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     if (appended) {
       (cfg.llm as Record<string, unknown>).default = defaultList;
       (cfg.llm as Record<string, unknown>).heavy = heavyList;
-      api.logger.info?.(
+      gatewayLogInfoOnce(
+        "appended-gateway-models",
         "memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.",
+        api,
       );
     }
   }

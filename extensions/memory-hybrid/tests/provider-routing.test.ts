@@ -42,6 +42,10 @@ import {
   initializeDatabases,
   resolveProviderApiKey,
 } from "../setup/init-databases.js";
+import {
+  mergeGatewayProviderCredentialsIntoLlmProvidersMap,
+  resetGatewayLogOnceForTesting,
+} from "../setup/provider-router.js";
 
 /** Restore an env var to its original value, or delete it if it was originally unset. */
 function restoreEnv(key: string, orig: string | undefined): void {
@@ -1787,5 +1791,71 @@ describe("resolveProviderApiKey", () => {
       });
       expect(source).toBe("OPENAI_API_KEY");
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gateway provider log-once deduplication (issue #1691)
+// ---------------------------------------------------------------------------
+
+describe("gateway provider log-once deduplication (issue #1691)", () => {
+  beforeEach(() => {
+    resetGatewayLogOnceForTesting();
+  });
+
+  afterEach(() => {
+    resetGatewayLogOnceForTesting();
+  });
+
+  it("logs the 'using gateway provider' message only once across multiple merges", () => {
+    const infoSpy = vi.fn();
+    const api = { logger: { info: infoSpy } };
+    const gwProviders = { google: { apiKey: "sk-gw-google-test" } };
+
+    // First merge — should log once.
+    const prov1: Record<string, Record<string, unknown>> = {};
+    mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov1, gwProviders, api);
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+    expect(infoSpy.mock.calls[0][0]).toContain("google");
+
+    // Second merge (simulating a second plugin-load in the same process) — must NOT log again.
+    const prov2: Record<string, Record<string, unknown>> = {};
+    mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov2, gwProviders, api);
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("logs independently for each distinct provider name (first time only)", () => {
+    const infoSpy = vi.fn();
+    const api = { logger: { info: infoSpy } };
+    const gwProviders = {
+      google: { apiKey: "sk-gw-google-test2" },
+      minimax: { apiKey: "sk-gw-minimax-test2" },
+    };
+
+    const prov1: Record<string, Record<string, unknown>> = {};
+    mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov1, gwProviders, api);
+    // Two distinct providers → two log calls.
+    expect(infoSpy).toHaveBeenCalledTimes(2);
+
+    // Second merge — both already seen, so no additional logs.
+    const prov2: Record<string, Record<string, unknown>> = {};
+    mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov2, gwProviders, api);
+    expect(infoSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("resetGatewayLogOnceForTesting allows the message to appear again", () => {
+    const infoSpy = vi.fn();
+    const api = { logger: { info: infoSpy } };
+    const gwProviders = { azure: { apiKey: "sk-gw-azure-test" } };
+
+    const prov1: Record<string, Record<string, unknown>> = {};
+    mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov1, gwProviders, api);
+    expect(infoSpy).toHaveBeenCalledTimes(1);
+
+    // After reset, the next merge should log again.
+    resetGatewayLogOnceForTesting();
+    const prov2: Record<string, Record<string, unknown>> = {};
+    mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov2, gwProviders, api);
+    expect(infoSpy).toHaveBeenCalledTimes(2);
   });
 });
