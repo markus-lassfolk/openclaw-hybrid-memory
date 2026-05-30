@@ -310,7 +310,7 @@ const MAINTENANCE_CRON_JOBS: Array<
       steps: [
         {
           name: "reflect-meta-collapse",
-          cmd: "openclaw hybrid-mem reflect-meta --collapse-implicit-feedback --include-legacy --threshold 0.8 --limit 1000",
+          cmd: "openclaw hybrid-mem reflect-meta --collapse-implicit-feedback --include-legacy --threshold 0.7 --limit 1000",
         },
       ],
     }),

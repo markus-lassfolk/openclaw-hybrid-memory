@@ -8,7 +8,7 @@
  *   - cost-report               — show LLM cost breakdown by feature or model
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
@@ -33,7 +33,6 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
-import { acquireScanSlot, clearScanLock } from "./shared.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -152,7 +151,7 @@ function findSimilarImplicitFeedbackLesson(
          AND superseded_at IS NULL
          AND ${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}
        ORDER BY created_at DESC
-       LIMIT 500`,
+       LIMIT 2000`,
     )
     .all() as Array<{ id: string; text: string }>;
   for (const row of rows) {
@@ -211,7 +210,7 @@ export function cleanupImplicitFeedbackDuplicates(
   if (!rawDb) {
     return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
   }
-  const threshold = opts.threshold ?? 0.8;
+  const threshold = opts.threshold ?? 0.7;
   const limit = opts.limit ?? 1000;
   if (limit <= 0) {
     return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
@@ -317,7 +316,6 @@ export interface ExtractImplicitFeedbackProgressSnapshot {
   sessionsProcessed: number;
   sessionsReadErrors: number;
   sessionsTooShort: number;
-  sessionsDeferred: number;
   currentSession?: string;
   signalsExtracted: number;
   positiveCount: number;
@@ -326,76 +324,6 @@ export interface ExtractImplicitFeedbackProgressSnapshot {
   cleanupCollapsed: number;
   cleanupScanned: number;
   cleanupBatches: number;
-  backlogSessionsEstimate: number;
-  backlogSignalsEstimate: number;
-  backlogTrajectoriesEstimate: number;
-  partial: boolean;
-  partialReason?: ExtractImplicitFeedbackStopReason;
-}
-
-export type ExtractImplicitFeedbackStopReason =
-  | "maxSessions"
-  | "maxSignals"
-  | "maxTrajectories"
-  | "maxWallClockSeconds";
-
-export interface ExtractImplicitFeedbackRunResult {
-  signalsExtracted: number;
-  positiveCount: number;
-  negativeCount: number;
-  trajectoriesBuilt: number;
-  sessionsScanned: number;
-  sessionsVisited: number;
-  sessionsProcessed: number;
-  sessionsSkipped: number;
-  sessionsDeferred: number;
-  backlogSessionsEstimate: number;
-  backlogSignalsEstimate: number;
-  backlogTrajectoriesEstimate: number;
-  partial: boolean;
-  partialReason?: ExtractImplicitFeedbackStopReason;
-  closedLoopReport?: string;
-  skipped?: boolean;
-}
-
-type ImplicitFeedbackSessionCursor = {
-  lastSessionTs: number;
-  lastSessionFile?: string;
-  lastRunAt: number;
-};
-
-type SessionCandidate = {
-  path: string;
-  file: string;
-  mtimeMs: number;
-};
-
-const IMPLICIT_FEEDBACK_SCAN_TYPE = "extract-implicit-feedback";
-
-function compareSessionCandidates(a: SessionCandidate, b: SessionCandidate): number {
-  if (a.mtimeMs !== b.mtimeMs) return a.mtimeMs - b.mtimeMs;
-  return a.file.localeCompare(b.file);
-}
-
-function isSessionAfterCursor(candidate: SessionCandidate, cursor: ImplicitFeedbackSessionCursor | null): boolean {
-  if (!cursor || cursor.lastSessionTs <= 0) return true;
-  if (candidate.mtimeMs > cursor.lastSessionTs) return true;
-  if (candidate.mtimeMs < cursor.lastSessionTs) return false;
-  if (!cursor.lastSessionFile) return true;
-  return candidate.file.localeCompare(cursor.lastSessionFile) > 0;
-}
-
-function estimateDeferredCount(
-  totalDeferred: number,
-  averagePerProcessed: number,
-  firstDeferredCount?: number,
-): number {
-  if (totalDeferred <= 0) return 0;
-  if (firstDeferredCount != null) {
-    if (totalDeferred === 1) return Math.max(0, firstDeferredCount);
-    return Math.max(0, firstDeferredCount + Math.round(averagePerProcessed * (totalDeferred - 1)));
-  }
-  return Math.max(0, Math.round(averagePerProcessed * totalDeferred));
 }
 
 /**
@@ -410,76 +338,30 @@ export async function runExtractImplicitFeedbackForCli(
     days?: number;
     verbose?: boolean;
     dryRun?: boolean;
-    full?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
     onProgress?: (snapshot: ExtractImplicitFeedbackProgressSnapshot) => void;
   },
-): Promise<ExtractImplicitFeedbackRunResult> {
+): Promise<{
+  signalsExtracted: number;
+  positiveCount: number;
+  negativeCount: number;
+  trajectoriesBuilt: number;
+  sessionsScanned: number;
+  closedLoopReport?: string;
+}> {
   const { factsDb, vectorDb, cfg, logger, openai } = ctx;
   const days = opts.days ?? 3;
   const sessionDir = cfg.procedures.sessionsDir;
-  const cursor = opts.dryRun
-    ? null
-    : (factsDb.getScanCursor(IMPLICIT_FEEDBACK_SCAN_TYPE) as ImplicitFeedbackSessionCursor | null);
-
-  if (!opts.full && !opts.dryRun) {
-    const skip = acquireScanSlot(IMPLICIT_FEEDBACK_SCAN_TYPE, cursor?.lastRunAt, logger);
-    if (skip) {
-      return {
-        signalsExtracted: 0,
-        positiveCount: 0,
-        negativeCount: 0,
-        trajectoriesBuilt: 0,
-        sessionsScanned: 0,
-        sessionsVisited: 0,
-        sessionsProcessed: 0,
-        sessionsSkipped: 0,
-        sessionsDeferred: 0,
-        backlogSessionsEstimate: 0,
-        backlogSignalsEstimate: 0,
-        backlogTrajectoriesEstimate: 0,
-        partial: false,
-        skipped: true,
-      };
-    }
-  }
-
-  const sessionCandidates = getSessionFilePathsSince(sessionDir, days)
-    .map((path) => {
-      try {
-        return {
-          path,
-          file: basename(path),
-          mtimeMs: statSync(path).mtimeMs,
-        };
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "runExtractImplicitFeedbackForCli:stat-session",
-          severity: "info",
-          subsystem: "implicit-feedback",
-        });
-        return null;
-      }
-    })
-    .filter((candidate): candidate is SessionCandidate => candidate !== null)
-    .sort(compareSessionCandidates)
-    .filter((candidate) => opts.full === true || isSessionAfterCursor(candidate, cursor));
-
-  if (!opts.dryRun && !opts.full) {
-    logger?.info?.(
-      `memory-hybrid: ${IMPLICIT_FEEDBACK_SCAN_TYPE} incremental — ${sessionCandidates.length} new sessions since last run`,
-    );
-  }
+  const filePaths = getSessionFilePathsSince(sessionDir, days);
 
   const progress: ExtractImplicitFeedbackProgressSnapshot = {
     stage: "scan-sessions",
-    sessionsDiscovered: sessionCandidates.length,
+    sessionsDiscovered: filePaths.length,
     sessionsVisited: 0,
     sessionsProcessed: 0,
     sessionsReadErrors: 0,
     sessionsTooShort: 0,
-    sessionsDeferred: 0,
     currentSession: undefined,
     signalsExtracted: 0,
     positiveCount: 0,
@@ -488,10 +370,6 @@ export async function runExtractImplicitFeedbackForCli(
     cleanupCollapsed: 0,
     cleanupScanned: 0,
     cleanupBatches: 0,
-    backlogSessionsEstimate: 0,
-    backlogSignalsEstimate: 0,
-    backlogTrajectoriesEstimate: 0,
-    partial: false,
   };
 
   const emitProgress = (): void => {
@@ -515,536 +393,409 @@ export async function runExtractImplicitFeedbackForCli(
     feedToReinforcement: true,
     feedToSelfCorrection: true,
     maxLessonsPerDay: 50,
-    lessonDedupeJaccard: 0.8,
+    lessonDedupeJaccard: 0.7,
     autoCleanup: true,
     cleanupLimit: 1000,
-    maxSessionsPerRun: 50,
-    maxSignalsPerRun: 100,
-    maxTrajectoriesPerRun: 50,
-    maxWallClockSeconds: 300,
   };
 
   if (implicitCfg.enabled === false) {
-    if (!opts.full && !opts.dryRun) clearScanLock(IMPLICIT_FEEDBACK_SCAN_TYPE);
     progress.stage = "done";
     emitProgress();
-    return {
-      signalsExtracted: 0,
-      positiveCount: 0,
-      negativeCount: 0,
-      trajectoriesBuilt: 0,
-      sessionsScanned: 0,
-      sessionsVisited: 0,
-      sessionsProcessed: 0,
-      sessionsSkipped: 0,
-      sessionsDeferred: 0,
-      backlogSessionsEstimate: 0,
-      backlogSignalsEstimate: 0,
-      backlogTrajectoriesEstimate: 0,
-      partial: false,
-    };
+    return { signalsExtracted: 0, positiveCount: 0, negativeCount: 0, trajectoriesBuilt: 0, sessionsScanned: 0 };
   }
 
   let totalSignals = 0;
   let positiveCount = 0;
   let negativeCount = 0;
   let trajectoriesBuilt = 0;
-  let partialReason: ExtractImplicitFeedbackStopReason | undefined;
-  let lastProcessedCandidate: SessionCandidate | undefined;
-  let deferredSignalsForFirstSession: number | undefined;
-  let deferredTrajectoriesForFirstSession: number | undefined;
 
-  const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 0;
-  const maxSignalsPerRun = implicitCfg.maxSignalsPerRun ?? 0;
-  const maxTrajectoriesPerRun = implicitCfg.maxTrajectoriesPerRun ?? 0;
-  const maxWallClockMs = (implicitCfg.maxWallClockSeconds ?? 0) * 1000;
   const rawDb = factsDb.getRawDb();
-  const runStartTimeMs = Date.now();
 
-  const markPartial = (
-    reason: ExtractImplicitFeedbackStopReason,
-    deferredCount: number,
-    firstDeferredSignals?: number,
-    firstDeferredTrajectories?: number,
-  ): void => {
-    partialReason = reason;
-    progress.partial = true;
-    progress.partialReason = reason;
-    progress.sessionsDeferred = deferredCount;
-    progress.backlogSessionsEstimate = deferredCount;
-    const averageSignals = progress.sessionsProcessed > 0 ? totalSignals / progress.sessionsProcessed : 0;
-    const averageTrajectories = progress.sessionsProcessed > 0 ? trajectoriesBuilt / progress.sessionsProcessed : 0;
-    progress.backlogSignalsEstimate = estimateDeferredCount(deferredCount, averageSignals, firstDeferredSignals);
-    progress.backlogTrajectoriesEstimate = estimateDeferredCount(
-      deferredCount,
-      averageTrajectories,
-      firstDeferredTrajectories,
-    );
-  };
-
-  try {
-    for (let index = 0; index < sessionCandidates.length; index++) {
-      const candidate = sessionCandidates[index];
-      if (maxWallClockMs > 0 && Date.now() - runStartTimeMs >= maxWallClockMs) {
-        markPartial("maxWallClockSeconds", sessionCandidates.length - index);
-        emitProgress();
-        break;
-      }
-      if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
-        markPartial("maxSessions", sessionCandidates.length - index);
-        emitProgress();
-        break;
-      }
-
-      progress.sessionsVisited++;
-      progress.currentSession = candidate.file;
+  for (const filePath of filePaths) {
+    progress.sessionsVisited++;
+    const sessionFile = basename(filePath);
+    progress.currentSession = sessionFile;
+    emitProgress();
+    let lines: string[];
+    try {
+      lines = readFileSync(filePath, "utf-8").split("\n");
+    } catch (err) {
+      progress.sessionsReadErrors++;
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:read-file",
+        severity: "info",
+        subsystem: "implicit-feedback",
+      });
       emitProgress();
+      continue;
+    }
 
-      let lines: string[];
+    const turns = parseSessionTurns(lines);
+    if (turns.length < 3) {
+      progress.sessionsTooShort++;
+      emitProgress();
+      continue;
+    }
+    progress.sessionsProcessed++;
+
+    /**
+     * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
+     * file; each store path re-reads `getImplicitFeedbackLessonsStoredToday` before quota-gated writes
+     * so counts stay accurate after earlier phases in the same file.
+     */
+    let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
+
+    // Phase 1: Extract implicit signals
+    const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
+
+    if (opts.verbose) {
+      for (const sig of signals) {
+        logger?.info?.(
+          `[${sessionFile}] ${sig.type} (${sig.polarity}, conf ${sig.confidence.toFixed(2)}): ${sig.context.userMessage.slice(0, 60)}`,
+        );
+      }
+    }
+
+    totalSignals += signals.length;
+    for (const sig of signals) {
+      if (sig.polarity === "positive") positiveCount++;
+      else if (sig.polarity === "negative") negativeCount++;
+    }
+
+    progress.signalsExtracted = totalSignals;
+    progress.positiveCount = positiveCount;
+    progress.negativeCount = negativeCount;
+    progress.trajectoriesBuilt = trajectoriesBuilt;
+    emitProgress();
+
+    if (!opts.dryRun && rawDb) {
+      // Store raw signals in implicit_signals table
       try {
-        lines = readFileSync(candidate.path, "utf-8").split("\n");
+        const insert = rawDb.prepare(`
+          INSERT OR IGNORE INTO implicit_signals (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'implicit')
+        `);
+        for (const sig of signals) {
+          try {
+            insert.run(
+              sig.context.sessionFile,
+              sig.type,
+              sig.confidence,
+              sig.polarity,
+              sig.context.userMessage.slice(0, 500),
+              sig.context.agentMessage.slice(0, 500),
+              sig.context.precedingTurns,
+            );
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "runExtractImplicitFeedbackForCli:insert-signal",
+              severity: "info",
+              subsystem: "implicit-feedback",
+            });
+          }
+        }
       } catch (err) {
-        progress.sessionsReadErrors++;
-        lastProcessedCandidate = candidate;
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "runExtractImplicitFeedbackForCli:read-file",
-          severity: "info",
+          operation: "runExtractImplicitFeedbackForCli:store-signals",
+          severity: "warning",
           subsystem: "implicit-feedback",
         });
-        emitProgress();
-        continue;
       }
+    }
 
-      const turns = parseSessionTurns(lines);
-      if (turns.length < 3) {
-        progress.sessionsTooShort++;
-        lastProcessedCandidate = candidate;
-        emitProgress();
-        continue;
-      }
-
-      const signals = extractImplicitSignals(turns, implicitCfg, candidate.file);
-      let trajectories: ReturnType<typeof buildTrajectories> | undefined;
-      let projectedTrajectories = 0;
-      if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
+    // Route positive signals to reinforcement pipeline
+    if (!opts.dryRun && implicitCfg.feedToReinforcement !== false && signals.length > 0) {
+      const minConf = implicitCfg.minConfidence ?? 0.5;
+      const positiveSignals = signals.filter((s) => s.polarity === "positive" && s.confidence >= minConf);
+      const trackContext = cfg.reinforcement?.trackContext !== false;
+      const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
+      for (const sig of positiveSignals) {
         try {
-          trajectories = buildTrajectories(turns, candidate.file);
-          projectedTrajectories = trajectories.length;
+          const searchQuery = sig.context.agentMessage || sig.context.userMessage;
+          const matches = factsDb.search(searchQuery, 3);
+          const context: ReinforcementContext = {
+            querySnippet: sig.context.userMessage.slice(0, 200),
+            topic: sig.type,
+            sessionFile: sig.context.sessionFile,
+          };
+          for (const match of matches) {
+            factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
+              trackContext,
+              maxEventsPerFact,
+              boostAmount: 0.5 * sig.confidence, // weaker than explicit praise
+            });
+          }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "runExtractImplicitFeedbackForCli:build-trajectories",
-            severity: "warning",
+            operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
+            severity: "info",
             subsystem: "implicit-feedback",
           });
         }
       }
+    }
 
-      if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
-        deferredSignalsForFirstSession = signals.length;
-        deferredTrajectoriesForFirstSession = projectedTrajectories;
-        markPartial("maxSignals", sessionCandidates.length - index, signals.length, projectedTrajectories);
-        emitProgress();
-        break;
-      }
-      if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + projectedTrajectories > maxTrajectoriesPerRun) {
-        deferredSignalsForFirstSession = signals.length;
-        deferredTrajectoriesForFirstSession = projectedTrajectories;
-        markPartial("maxTrajectories", sessionCandidates.length - index, signals.length, projectedTrajectories);
-        emitProgress();
-        break;
-      }
-
-      progress.sessionsProcessed++;
-
-      /**
-       * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
-       * file; each store path re-reads `getImplicitFeedbackLessonsStoredToday` before quota-gated writes
-       * so counts stay accurate after earlier phases in the same file.
-       */
-      let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
-
-      if (opts.verbose) {
-        for (const sig of signals) {
-          logger?.info?.(
-            `[${candidate.file}] ${sig.type} (${sig.polarity}, conf ${sig.confidence.toFixed(2)}): ${sig.context.userMessage.slice(0, 60)}`,
-          );
-        }
-      }
-
-      totalSignals += signals.length;
-      for (const sig of signals) {
-        if (sig.polarity === "positive") positiveCount++;
-        else if (sig.polarity === "negative") negativeCount++;
-      }
-
-      progress.signalsExtracted = totalSignals;
-      progress.positiveCount = positiveCount;
-      progress.negativeCount = negativeCount;
-      progress.trajectoriesBuilt = trajectoriesBuilt;
-      emitProgress();
-
-      if (!opts.dryRun && rawDb) {
+    // Route negative signals to self-correction as technical implicit_feedback_signal facts (same dedupe/quota as trajectory lessons).
+    if (!opts.dryRun && implicitCfg.feedToSelfCorrection !== false && signals.length > 0) {
+      const minConf = implicitCfg.minConfidence ?? 0.5;
+      const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
+      const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
+      const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
+      for (const sig of negativeSignals) {
         try {
-          const insert = rawDb.prepare(`
-            INSERT OR IGNORE INTO implicit_signals (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'implicit')
-          `);
-          for (const sig of signals) {
-            try {
-              insert.run(
-                sig.context.sessionFile,
-                sig.type,
-                sig.confidence,
-                sig.polarity,
-                sig.context.userMessage.slice(0, 500),
-                sig.context.agentMessage.slice(0, 500),
-                sig.context.precedingTurns,
-              );
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "runExtractImplicitFeedbackForCli:insert-signal",
-                severity: "info",
-                subsystem: "implicit-feedback",
-              });
-            }
+          lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
+          const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
+          const similarId = rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, text, lessonDedupeJaccard) : null;
+          if (similarId) {
+            if (rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+            continue;
           }
+          if (factsDb.hasDuplicate(text, "implicit-feedback")) continue;
+          if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
+          const storeResult = factsDb.storeWithResult({
+            text,
+            category: "technical",
+            importance: Math.max(0.3, sig.confidence * 0.6),
+            entity: null,
+            key: "implicit_feedback_signal",
+            value: text.slice(0, 200),
+            source: "implicit-feedback",
+            tags: ["implicit-feedback", "negative", sig.type],
+            decayClass: "normal",
+          });
+          if (storeResult.skipped) {
+            continue;
+          }
+          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+          await cleanupEvictedVector({
+            vectorDb: vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger: logger,
+            context: "implicit-feedback",
+          });
+          lessonsStoredTodaySession++;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "runExtractImplicitFeedbackForCli:store-signals",
-            severity: "warning",
+            operation: "runExtractImplicitFeedbackForCli:feed-self-correction",
+            severity: "info",
             subsystem: "implicit-feedback",
           });
         }
       }
+    }
 
-      if (!opts.dryRun && implicitCfg.feedToReinforcement !== false && signals.length > 0) {
-        const minConf = implicitCfg.minConfidence ?? 0.5;
-        const positiveSignals = signals.filter((s) => s.polarity === "positive" && s.confidence >= minConf);
-        const trackContext = cfg.reinforcement?.trackContext !== false;
-        const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
-        for (const sig of positiveSignals) {
-          try {
-            const searchQuery = sig.context.agentMessage || sig.context.userMessage;
-            const matches = factsDb.search(searchQuery, 3);
-            const context: ReinforcementContext = {
-              querySnippet: sig.context.userMessage.slice(0, 200),
-              topic: sig.type,
-              sessionFile: sig.context.sessionFile,
-            };
-            for (const match of matches) {
-              factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
-                trackContext,
-                maxEventsPerFact,
-                boostAmount: 0.5 * sig.confidence,
-              });
-            }
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
-              severity: "info",
-              subsystem: "implicit-feedback",
-            });
-          }
-        }
-      }
-
-      if (!opts.dryRun && implicitCfg.feedToSelfCorrection !== false && signals.length > 0) {
-        const minConf = implicitCfg.minConfidence ?? 0.5;
-        const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
-        const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
-        const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
-        for (const sig of negativeSignals) {
-          try {
-            lessonsStoredTodaySession = rawDb
-              ? getImplicitFeedbackLessonsStoredToday(rawDb)
-              : lessonsStoredTodaySession;
-            const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
-            const similarId =
-              rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, text, lessonDedupeJaccard) : null;
-            if (similarId) {
-              if (rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
-              continue;
-            }
-            if (factsDb.hasDuplicate(text, "implicit-feedback")) continue;
-            if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
-            const storeResult = factsDb.storeWithResult({
-              text,
-              category: "technical",
-              importance: Math.max(0.3, sig.confidence * 0.6),
-              entity: null,
-              key: "implicit_feedback_signal",
-              value: text.slice(0, 200),
-              source: "implicit-feedback",
-              tags: ["implicit-feedback", "negative", sig.type],
-              decayClass: "normal",
-            });
-            if (storeResult.skipped) {
-              continue;
-            }
-            await cleanupEvictedVector({
-              vectorDb: vectorDb,
-              evictedFactId: storeResult.evictedFactId,
-              logger: logger,
-              context: "implicit-feedback",
-            });
-            lessonsStoredTodaySession++;
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "runExtractImplicitFeedbackForCli:feed-self-correction",
-              severity: "info",
-              subsystem: "implicit-feedback",
-            });
-          }
-        }
-      }
-
-      if (opts.includeTrajectories !== false && !opts.dryRun && rawDb && trajectories) {
+    // Phase 2: Build trajectories
+    if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
+      try {
+        const trajectories = buildTrajectories(turns, sessionFile);
         trajectoriesBuilt += trajectories.length;
         progress.trajectoriesBuilt = trajectoriesBuilt;
         emitProgress();
 
-        try {
-          const insertTraj = rawDb.prepare(`
-            INSERT OR REPLACE INTO feedback_trajectories
-              (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          for (const traj of trajectories) {
-            try {
-              if (implicitCfg.trajectoryLLMAnalysis) {
-                try {
-                  const prompt = loadPrompt("trajectory-analyze");
-                  const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
-                  const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-                  const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
-                  const chatFn = async (opts: {
-                    model?: string;
-                    messages: Array<{ role: string; content: string }>;
-                  }) => {
-                    const userMessage = opts.messages.find((m) => m.role === "user");
-                    if (!userMessage) throw new Error("No user message found");
-                    return await chatCompleteWithRetry({
-                      model: opts.model ?? model,
-                      content: userMessage.content,
-                      temperature: 0.2,
-                      maxTokens: 4000,
-                      openai,
-                      fallbackModels,
-                      label: "memory-hybrid: trajectory-analyze",
-                      feature: CostFeature.trajectoryAnalyze,
-                    });
-                  };
-                  const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
-                  if (llmAnalysis) {
-                    traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
-                    if (llmAnalysis.pivotTurn !== null) {
-                      traj.keyPivot = llmAnalysis.pivotTurn;
-                    }
-                    if (llmAnalysis.outcome) {
-                      traj.outcome = llmAnalysis.outcome;
-                    }
-                  }
-                } catch (err) {
-                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
-                    severity: "info",
-                    subsystem: "implicit-feedback",
+        const insertTraj = rawDb.prepare(`
+          INSERT OR REPLACE INTO feedback_trajectories
+            (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const traj of trajectories) {
+          try {
+            // If LLM analysis is enabled, use it to enhance lessons
+            if (implicitCfg.trajectoryLLMAnalysis) {
+              try {
+                const prompt = loadPrompt("trajectory-analyze");
+                const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+                const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
+                const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+                const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
+                  const userMessage = opts.messages.find((m) => m.role === "user");
+                  if (!userMessage) throw new Error("No user message found");
+                  return await chatCompleteWithRetry({
+                    model: opts.model ?? model,
+                    content: userMessage.content,
+                    temperature: 0.2,
+                    maxTokens: 4000,
+                    openai,
+                    fallbackModels,
+                    label: "memory-hybrid: trajectory-analyze",
+                    feature: CostFeature.trajectoryAnalyze,
                   });
+                };
+                const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+                if (llmAnalysis) {
+                  // Replace heuristic lessons with LLM-produced lesson and patterns
+                  traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
+                  if (llmAnalysis.pivotTurn !== null) {
+                    traj.keyPivot = llmAnalysis.pivotTurn;
+                  }
+                  if (llmAnalysis.outcome) {
+                    traj.outcome = llmAnalysis.outcome;
+                  }
                 }
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
+                  severity: "info",
+                  subsystem: "implicit-feedback",
+                });
               }
+            }
 
-              const row = serializeTrajectory(traj);
-              insertTraj.run(
-                row.id,
-                row.session_file,
-                row.turns_json,
-                row.outcome,
-                row.outcome_signal,
-                row.key_pivot,
-                row.lessons_json,
-                row.topic,
-                row.tools_used,
-                row.turn_count,
-              );
-              const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
-              const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
-              for (const lesson of traj.lessonsExtracted) {
-                lessonsStoredTodaySession = rawDb
-                  ? getImplicitFeedbackLessonsStoredToday(rawDb)
-                  : lessonsStoredTodaySession;
-                const trimmedLesson = lesson.trim();
-                if (!trimmedLesson) continue;
-                const similarId =
-                  rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard) : null;
-                if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
-                  if (similarId && rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+            const row = serializeTrajectory(traj);
+            insertTraj.run(
+              row.id,
+              row.session_file,
+              row.turns_json,
+              row.outcome,
+              row.outcome_signal,
+              row.key_pivot,
+              row.lessons_json,
+              row.topic,
+              row.tools_used,
+              row.turn_count,
+            );
+            // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
+            const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
+            const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
+            for (const lesson of traj.lessonsExtracted) {
+              lessonsStoredTodaySession = rawDb
+                ? getImplicitFeedbackLessonsStoredToday(rawDb)
+                : lessonsStoredTodaySession;
+              const trimmedLesson = lesson.trim();
+              if (!trimmedLesson) continue;
+              const similarId =
+                rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard) : null;
+              if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
+                if (similarId && rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
+                continue;
+              }
+              if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
+              try {
+                const storeResult = factsDb.storeWithResult({
+                  text: trimmedLesson,
+                  category: "technical",
+                  importance: 0.5,
+                  entity: null,
+                  key: "implicit_feedback_signal",
+                  value: trimmedLesson.slice(0, 200),
+                  source: "implicit-feedback",
+                  tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
+                  decayClass: "normal",
+                });
+                if (storeResult.skipped) {
                   continue;
                 }
-                if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
-                try {
-                  const storeResult = factsDb.storeWithResult({
-                    text: trimmedLesson,
-                    category: "technical",
-                    importance: 0.5,
-                    entity: null,
-                    key: "implicit_feedback_signal",
-                    value: trimmedLesson.slice(0, 200),
-                    source: "implicit-feedback",
-                    tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
-                    decayClass: "normal",
-                  });
-                  if (storeResult.skipped) {
-                    continue;
-                  }
-                  await cleanupEvictedVector({
-                    vectorDb: vectorDb,
-                    evictedFactId: storeResult.evictedFactId,
-                    logger: logger,
-                    context: "implicit-feedback",
-                  });
-                  lessonsStoredTodaySession++;
-                } catch (err) {
-                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                    operation: "runExtractImplicitFeedbackForCli:store-lesson",
-                    severity: "info",
-                    subsystem: "implicit-feedback",
-                  });
-                }
+                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+                await cleanupEvictedVector({
+                  vectorDb: vectorDb,
+                  evictedFactId: storeResult.evictedFactId,
+                  logger: logger,
+                  context: "implicit-feedback",
+                });
+                lessonsStoredTodaySession++;
+              } catch (err) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "runExtractImplicitFeedbackForCli:store-lesson",
+                  severity: "info",
+                  subsystem: "implicit-feedback",
+                });
               }
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "runExtractImplicitFeedbackForCli:insert-trajectory",
-                severity: "info",
-                subsystem: "implicit-feedback",
-              });
             }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "runExtractImplicitFeedbackForCli:insert-trajectory",
+              severity: "info",
+              subsystem: "implicit-feedback",
+            });
           }
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "runExtractImplicitFeedbackForCli:insert-trajectory-batch",
-            severity: "warning",
-            subsystem: "implicit-feedback",
-          });
-        }
-      }
-
-      lastProcessedCandidate = candidate;
-      progress.currentSession = undefined;
-    }
-
-    if (!opts.dryRun) {
-      factsDb.updateScanCursor(
-        IMPLICIT_FEEDBACK_SCAN_TYPE,
-        lastProcessedCandidate?.mtimeMs ?? 0,
-        progress.sessionsProcessed,
-        lastProcessedCandidate?.file,
-      );
-    }
-
-    if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
-      try {
-        progress.stage = "cleanup-duplicates";
-        emitProgress();
-        const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
-        const threshold = implicitCfg.lessonDedupeJaccard ?? 0.8;
-        let afterRowid = 0;
-        let totalCollapsed = 0;
-        let totalScanned = 0;
-        let batches = 0;
-        let carryCanonical: Array<{ id: string; text: string }> | undefined;
-        for (;;) {
-          if (maxWallClockMs > 0 && Date.now() - runStartTimeMs >= maxWallClockMs) {
-            break;
-          }
-          const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
-            threshold,
-            limit: cleanupLimit,
-            afterRowid,
-            seedCanonical: carryCanonical,
-          });
-          totalCollapsed += cleanup.collapsed;
-          totalScanned += cleanup.scanned;
-          batches++;
-          carryCanonical = cleanup.carryCanonical;
-          progress.cleanupCollapsed = totalCollapsed;
-          progress.cleanupScanned = totalScanned;
-          progress.cleanupBatches = batches;
-          emitProgress();
-          if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
-          afterRowid = cleanup.resumeAfterRowid;
-        }
-        if (opts.verbose && totalCollapsed > 0) {
-          logger?.info?.(`Implicit-feedback cleanup: collapsed ${totalCollapsed} near-duplicate signal fact(s)`);
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "runExtractImplicitFeedbackForCli:cleanup-duplicates",
+          operation: "runExtractImplicitFeedbackForCli:build-trajectories",
           severity: "warning",
           subsystem: "implicit-feedback",
         });
       }
     }
-
-    let closedLoopReport: string | undefined;
-    if (opts.includeClosedLoop !== false && !opts.dryRun) {
-      try {
-        progress.stage = "closed-loop";
-        emitProgress();
-        const clCfg = cfg.closedLoop ?? { enabled: true };
-        if (clCfg.enabled !== false) {
-          const report = runClosedLoopAnalysis(factsDb, clCfg);
-          if (report.rulesAnalyzed > 0) {
-            if (opts.verbose) {
-              closedLoopReport = getEffectivenessReport(factsDb);
-            }
-            logger?.info?.(
-              `Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`,
-            );
-          }
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "runExtractImplicitFeedbackForCli:closed-loop",
-          severity: "warning",
-          subsystem: "implicit-feedback",
-        });
-      }
-    }
-
-    progress.stage = "done";
-    progress.currentSession = undefined;
-    emitProgress();
-    const sessionsProcessedForAverage = Math.max(1, progress.sessionsProcessed);
-    const averageSignals = totalSignals / sessionsProcessedForAverage;
-    const averageTrajectories = trajectoriesBuilt / sessionsProcessedForAverage;
-    return {
-      signalsExtracted: totalSignals,
-      positiveCount,
-      negativeCount,
-      trajectoriesBuilt,
-      sessionsScanned: sessionCandidates.length,
-      sessionsVisited: progress.sessionsVisited,
-      sessionsProcessed: progress.sessionsProcessed,
-      sessionsSkipped: progress.sessionsReadErrors + progress.sessionsTooShort,
-      sessionsDeferred: progress.sessionsDeferred,
-      backlogSessionsEstimate: progress.backlogSessionsEstimate,
-      backlogSignalsEstimate:
-        progress.backlogSignalsEstimate ||
-        (progress.sessionsDeferred > 0
-          ? estimateDeferredCount(progress.sessionsDeferred, averageSignals, deferredSignalsForFirstSession)
-          : 0),
-      backlogTrajectoriesEstimate:
-        progress.backlogTrajectoriesEstimate ||
-        (progress.sessionsDeferred > 0
-          ? estimateDeferredCount(progress.sessionsDeferred, averageTrajectories, deferredTrajectoriesForFirstSession)
-          : 0),
-      partial: progress.partial,
-      partialReason,
-      closedLoopReport,
-    };
-  } finally {
-    if (!opts.full && !opts.dryRun) clearScanLock(IMPLICIT_FEEDBACK_SCAN_TYPE);
   }
+
+  if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
+    try {
+      progress.stage = "cleanup-duplicates";
+      emitProgress();
+      const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
+      const threshold = implicitCfg.lessonDedupeJaccard ?? 0.7;
+      let afterRowid = 0;
+      let totalCollapsed = 0;
+      let totalScanned = 0;
+      let batches = 0;
+      let carryCanonical: Array<{ id: string; text: string }> | undefined;
+      for (;;) {
+        const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
+          threshold,
+          limit: cleanupLimit,
+          afterRowid,
+          seedCanonical: carryCanonical,
+        });
+        totalCollapsed += cleanup.collapsed;
+        totalScanned += cleanup.scanned;
+        batches++;
+        carryCanonical = cleanup.carryCanonical;
+        progress.cleanupCollapsed = totalCollapsed;
+        progress.cleanupScanned = totalScanned;
+        progress.cleanupBatches = batches;
+        emitProgress();
+        if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
+        afterRowid = cleanup.resumeAfterRowid;
+      }
+      if (opts.verbose && totalCollapsed > 0) {
+        logger?.info?.(`Implicit-feedback cleanup: collapsed ${totalCollapsed} near-duplicate signal fact(s)`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:cleanup-duplicates",
+        severity: "warning",
+        subsystem: "implicit-feedback",
+      });
+    }
+  }
+
+  // Phase 3: Closed-loop analysis
+  let closedLoopReport: string | undefined;
+  if (opts.includeClosedLoop !== false && !opts.dryRun) {
+    try {
+      progress.stage = "closed-loop";
+      emitProgress();
+      const clCfg = cfg.closedLoop ?? { enabled: true };
+      if (clCfg.enabled !== false) {
+        const report = runClosedLoopAnalysis(factsDb, clCfg);
+        if (report.rulesAnalyzed > 0) {
+          if (opts.verbose) {
+            closedLoopReport = getEffectivenessReport(factsDb);
+          }
+          logger?.info?.(
+            `Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`,
+          );
+        }
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:closed-loop",
+        severity: "warning",
+        subsystem: "implicit-feedback",
+      });
+    }
+  }
+
+  progress.stage = "done";
+  emitProgress();
+  return {
+    signalsExtracted: totalSignals,
+    positiveCount,
+    negativeCount,
+    trajectoriesBuilt,
+    sessionsScanned: filePaths.length,
+    closedLoopReport,
+  };
 }
 
 // ---------------------------------------------------------------------------
