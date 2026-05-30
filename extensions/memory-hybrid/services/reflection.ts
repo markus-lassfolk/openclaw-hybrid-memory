@@ -100,6 +100,10 @@ export interface ReflectionRulesDiagnostics {
   status: "ok" | "partial" | "degraded";
 }
 
+// Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
+const VALID_NO_RULES_PATTERN =
+  /no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules/i;
+
 interface ReflectionMetaResult {
   metaExtracted: number;
   metaStored: number;
@@ -854,7 +858,7 @@ export async function runReflectionRules(
     uniqueRules.push(r);
   }
   const trimmedResponse = rawResponse.trim();
-  const looksLikeValidNoRules = /no\s+(actionable\s+)?rules?|no rules detected/i.test(trimmedResponse);
+  const looksLikeValidNoRules = VALID_NO_RULES_PATTERN.test(trimmedResponse);
   const parseSuccess = parseableLines > 0 || looksLikeValidNoRules;
   const modelResponseChars = rawResponse.length;
   if (uniqueRules.length === 0) {
@@ -870,12 +874,17 @@ export async function runReflectionRules(
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
       parseSuccess,
-      parsedCandidates: uniqueRules.length,
+      parsedCandidates: rules.length,
       rejectedDuplicates,
       rejectedLowConfidence,
       stored: 0,
       zeroRulesReason,
-      status: zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response" ? "degraded" : "ok",
+      status:
+        zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response"
+          ? "degraded"
+          : zeroRulesReason === "all_candidates_rejected_low_confidence"
+            ? "partial"
+            : "ok",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1059,14 +1068,19 @@ export async function runReflectionRules(
     );
   }
 
-  const zeroRulesReason =
-    stored > 0
-      ? undefined
-      : rulesDuplicatesSkipped > 0
-        ? "all_candidates_duplicate"
-        : newRuleEmbedFailures >= uniqueRules.length
-          ? "all_candidates_embedding_failed"
-          : "no_storable_candidates";
+  let zeroRulesReason: ReflectionRulesDiagnostics["zeroRulesReason"];
+  if (stored <= 0) {
+    const allCandidatesBlocked = newRuleEmbedFailures + rulesDuplicatesSkipped === uniqueRules.length;
+    if (allCandidatesBlocked && newRuleEmbedFailures > 0 && rulesDuplicatesSkipped > 0) {
+      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
+    } else if (newRuleEmbedFailures === uniqueRules.length) {
+      zeroRulesReason = "all_candidates_embedding_failed";
+    } else if (rulesDuplicatesSkipped === uniqueRules.length) {
+      zeroRulesReason = "all_candidates_duplicate";
+    } else {
+      zeroRulesReason = "no_storable_candidates";
+    }
+  }
   const diagnostics: ReflectionRulesDiagnostics = {
     modelResponseChars,
     parseSuccess,
@@ -1075,7 +1089,13 @@ export async function runReflectionRules(
     rejectedLowConfidence,
     stored,
     zeroRulesReason,
-    status: stored > 0 ? "ok" : "partial",
+    status:
+      stored > 0
+        ? "ok"
+        : zeroRulesReason === "all_candidates_embedding_failed" ||
+            zeroRulesReason === "candidates_duplicate_or_embedding_failed"
+          ? "degraded"
+          : "partial",
   };
   logger.info(
     "memory-hybrid: reflect-rules — diagnostics: " +

@@ -4,7 +4,7 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
@@ -290,7 +290,7 @@ describe("runReflectionRules diagnostics", () => {
     });
     const factsDb = {
       getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : cat === "rule" ? [existingRule] : []),
-      setEmbeddingModel: vi.fn(),
+      setEmbeddingModel: () => undefined,
     };
     const vectorDb = {
       store: async () => undefined,
@@ -338,6 +338,46 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.status).toBe("ok");
     expect(res.diagnostics.zeroRulesReason).toBe("valid_no_actionable_rules");
     expect(res.diagnostics.parseSuccess).toBe(true);
+  });
+
+  it("reports partial status when parsed candidates are rejected for low confidence", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps("RULE: tiny");
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_low_confidence");
+    expect(res.diagnostics.status).toBe("partial");
+  });
+
+  it("reports degraded status when all candidate embeddings fail", async () => {
+    const { factsDb, vectorDb, openai } = makeDeps(
+      "RULE: Always keep strict TypeScript settings enabled across all projects.",
+    );
+    const embeddings = {
+      modelName: "test-model",
+      embed: async () => {
+        throw new Error("embedding unavailable");
+      },
+    };
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_embedding_failed");
+    expect(res.diagnostics.status).toBe("degraded");
   });
 });
 
