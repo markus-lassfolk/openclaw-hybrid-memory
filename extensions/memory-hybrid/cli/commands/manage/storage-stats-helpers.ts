@@ -195,22 +195,22 @@ export function recordStorageGrowthSample(
   };
   if (!raw) {
     return {
-     inserted: false,
-     recordedAt: nowSecReport,
-     sampleId: null,
-     status: "skipped",
-     reason: "storage_unavailable",
-     sample,
+      inserted: false,
+      recordedAt: nowSecReport,
+      sampleId: null,
+      status: "skipped",
+      reason: "storage_unavailable",
+      sample,
     };
   }
   if (opts?.dryRun) {
     return {
-     inserted: false,
-     recordedAt: nowSecReport,
-     sampleId: null,
-     status: "dry_run",
-     reason: null,
-     sample,
+      inserted: false,
+      recordedAt: nowSecReport,
+      sampleId: null,
+      status: "dry_run",
+      reason: null,
+      sample,
     };
   }
   const d = new Date();
@@ -218,24 +218,24 @@ export function recordStorageGrowthSample(
   const alreadyToday =
     !opts?.force &&
     (raw.prepare("SELECT 1 AS ok FROM storage_growth_history WHERE recorded_at >= ? LIMIT 1").get(startOfDayUtc) as
-     | { ok: number }
-     | undefined);
+      | { ok: number }
+      | undefined);
   if (alreadyToday) {
-  return {
-     inserted: false,
-     recordedAt: nowSecReport,
-     sampleId: null,
-     status: "skipped",
-     reason: "already_sampled_today",
-     sample,
-  };
+    return {
+      inserted: false,
+      recordedAt: nowSecReport,
+      sampleId: null,
+      status: "skipped",
+      reason: "already_sampled_today",
+      sample,
+    };
   }
   const insertResult = raw
-  .prepare(
-     "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)",
-  )
-  .run(sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount) as {
-     lastInsertRowid?: number | bigint;
+    .prepare(
+      "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount) as {
+    lastInsertRowid?: number | bigint;
   };
   const sampleId = insertResult.lastInsertRowid ? Number(insertResult.lastInsertRowid) : null;
   return {
