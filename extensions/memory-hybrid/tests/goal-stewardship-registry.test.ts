@@ -271,7 +271,11 @@ describe("goal registry", () => {
 
   it("readGoalByLabel falls back when index points to a malformed goal entry", async () => {
     dir = await makeTempDir();
-    const healthy = await createGoal(dir, { label: "idx_fallback", description: "d", acceptanceCriteria: ["c"] }, defaults);
+    const healthy = await createGoal(
+      dir,
+      { label: "idx_fallback", description: "d", acceptanceCriteria: ["c"] },
+      defaults,
+    );
     const now = new Date().toISOString();
     await writeFile(
       join(dir, "_index.json"),
@@ -302,7 +306,9 @@ describe("goal registry", () => {
       JSON.stringify(
         {
           updatedAt: now,
-          goals: [{ id: "malformed", label: "hybrid-memory-cron-qa", status: "active", priority: "high", createdAt: now }],
+          goals: [
+            { id: "malformed", label: "hybrid-memory-cron-qa", status: "active", priority: "high", createdAt: now },
+          ],
         },
         null,
         2,
@@ -312,11 +318,7 @@ describe("goal registry", () => {
     await writeFile(join(dir, "malformed.json"), JSON.stringify({ id: "malformed" }), "utf-8");
 
     await expect(
-      createGoal(
-        dir,
-        { label: "hybrid-memory-cron-qa", description: "d", acceptanceCriteria: ["ship"] },
-        defaults,
-      ),
+      createGoal(dir, { label: "hybrid-memory-cron-qa", description: "d", acceptanceCriteria: ["ship"] }, defaults),
     ).resolves.toMatchObject({ label: "hybrid-memory-cron-qa" });
   });
 
