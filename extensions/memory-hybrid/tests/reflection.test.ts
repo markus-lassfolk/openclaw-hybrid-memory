@@ -302,7 +302,9 @@ describe("runReflectionRules diagnostics", () => {
       chat: {
         completions: {
           create: async () => ({
-            choices: [{ message: { content: "RULE: Always keep strict TypeScript settings enabled across all projects." } }],
+            choices: [
+              { message: { content: "RULE: Always keep strict TypeScript settings enabled across all projects." } },
+            ],
           }),
         },
       },
@@ -324,7 +326,9 @@ describe("runReflectionRules diagnostics", () => {
   });
 
   it("reports valid no-op zero-rules reason when model explicitly returns no actionable rules", async () => {
-    const { factsDb, vectorDb, embeddings, openai } = makeDeps("No actionable rules detected from the supplied patterns.");
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps(
+      "No actionable rules detected from the supplied patterns.",
+    );
     const res = await runReflectionRules(
       factsDb as never,
       vectorDb as never,

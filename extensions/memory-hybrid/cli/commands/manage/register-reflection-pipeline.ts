@@ -357,7 +357,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           `Reflection (rules) complete: extracted ${res.rulesExtracted} rules, stored ${res.rulesStored} ${dryRun ? "(dry-run)" : ""}`,
         );
         if (res.diagnostics) {
-          const zeroReason = res.diagnostics.zeroRulesReason ? ` zero_rules_reason=${res.diagnostics.zeroRulesReason}` : "";
+          const zeroReason = res.diagnostics.zeroRulesReason
+            ? ` zero_rules_reason=${res.diagnostics.zeroRulesReason}`
+            : "";
           console.log(
             `Reflection (rules) diagnostics: model_response_chars=${res.diagnostics.modelResponseChars} parse_success=${res.diagnostics.parseSuccess} parsed_candidates=${res.diagnostics.parsedCandidates} rejected_duplicates=${res.diagnostics.rejectedDuplicates} rejected_low_confidence=${res.diagnostics.rejectedLowConfidence} stored=${res.diagnostics.stored} status=${res.diagnostics.status}${zeroReason}`,
           );

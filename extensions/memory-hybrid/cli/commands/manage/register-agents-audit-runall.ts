@@ -266,7 +266,9 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 return;
               }
               const r = await runReflectionRules({ dryRun: false, model: reflectionConfig.model, verbose });
-              const zeroReason = r.diagnostics?.zeroRulesReason ? `, zero_rules_reason=${r.diagnostics.zeroRulesReason}` : "";
+              const zeroReason = r.diagnostics?.zeroRulesReason
+                ? `, zero_rules_reason=${r.diagnostics.zeroRulesReason}`
+                : "";
               const diagnosticsSummary =
                 `model_response_chars=${r.diagnostics?.modelResponseChars ?? 0}, ` +
                 `parse_success=${r.diagnostics?.parseSuccess ?? false}, ` +
@@ -275,9 +277,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 `rejected_low_confidence=${r.diagnostics?.rejectedLowConfidence ?? 0}, ` +
                 `stored=${r.rulesStored}, ` +
                 `status=${r.diagnostics?.status ?? "ok"}`;
-              log(
-                `Reflect-rules: ${r.rulesStored} rules stored (${diagnosticsSummary}${zeroReason}).`,
-              );
+              log(`Reflect-rules: ${r.rulesStored} rules stored (${diagnosticsSummary}${zeroReason}).`);
             },
           },
           {

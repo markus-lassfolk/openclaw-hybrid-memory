@@ -104,7 +104,7 @@ export interface ReflectionRulesDiagnostics {
 // Anchored to start-of-string but allows leading whitespace so phrases like
 // "No actionable rules detected from ..." are correctly classified.
 const VALID_NO_RULES_PATTERN =
-  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s.:;!]*$/im;
+  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)/im;
 
 interface ReflectionMetaResult {
   metaExtracted: number;
@@ -868,12 +868,12 @@ export async function runReflectionRules(
     const zeroRulesReason =
       modelResponseChars === 0
         ? "empty_model_response"
-        : parseableLines > 0 && rejectedLowConfidence > 0
-          ? "all_candidates_rejected_low_confidence"
-          : parseableLines > 0 && rejectedDuplicates > 0
-            ? "all_candidates_rejected_batch_duplicate"
-            : looksLikeValidNoRules
-              ? "valid_no_actionable_rules"
+        : looksLikeValidNoRules
+          ? "valid_no_actionable_rules"
+          : parseableLines > 0 && rejectedDuplicates > 0 && rejectedLowConfidence === 0
+            ? "all_candidates_duplicate"
+            : parseableLines > 0
+              ? "all_candidates_rejected_low_confidence"
               : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
@@ -1070,7 +1070,7 @@ export async function runReflectionRules(
   }
 
   logger.info(
-    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${batchDuplicatesSkipped} skipped as batch duplicate(s), ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`
+    `memory-hybrid: reflect-rules — finished: ${stored} rule(s) stored, ${batchDuplicatesSkipped} skipped as batch duplicate(s), ${rulesDuplicatesSkipped} skipped as near-duplicate(s), ${newRuleEmbedFailures} new-rule embed failure(s), ${uniqueRules.length} candidate(s) total`,
   );
   if (storeDedupeVectorFallbackSuppressed > 0) {
     logger.info(
@@ -1080,7 +1080,8 @@ export async function runReflectionRules(
 
   let zeroRulesReason: ReflectionRulesDiagnostics["zeroRulesReason"];
   if (stored <= 0) {
-    const allCandidatesBlocked = newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length;
+    const allCandidatesBlocked =
+      newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length;
     if (allCandidatesBlocked && newRuleEmbedFailures > 0 && embeddingBasedDuplicates > 0) {
       zeroRulesReason = "candidates_duplicate_or_embedding_failed";
     } else if (allCandidatesBlocked && newRuleEmbedFailures > 0 && storeLevelDuplicates > 0) {
@@ -1099,7 +1100,7 @@ export async function runReflectionRules(
     modelResponseChars,
     parseSuccess,
     parsedCandidates: uniqueRules.length,
-    rejectedDuplicates: rulesDuplicatesSkipped,
+    rejectedDuplicates: batchDuplicatesSkipped + rulesDuplicatesSkipped,
     rejectedLowConfidence,
     stored,
     zeroRulesReason,
