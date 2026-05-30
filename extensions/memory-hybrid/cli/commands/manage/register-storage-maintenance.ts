@@ -6,6 +6,7 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { AllEmbeddingProvidersFailed } from "../../../services/embeddings.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
@@ -14,6 +15,7 @@ import {
   collectVectorBackendObservability,
 } from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
+import { is500OrWrapped } from "../../../services/chat.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
@@ -90,6 +92,15 @@ function hasGetBatch(db: object): db is object & FactsDbWithBatch {
 
 function hasGetRawDb(db: object): db is object & FactsDbWithRawDb {
   return "getRawDb" in db && typeof (db as { getRawDb?: unknown }).getRawDb === "function";
+}
+
+function isEmbeddingProviderServerError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (is500OrWrapped(err)) return true;
+  if (err instanceof AllEmbeddingProvidersFailed) {
+    return err.causes.some((cause) => is500OrWrapped(cause));
+  }
+  return false;
 }
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
@@ -641,6 +652,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           let processed = 0;
           let batchNumber = 0;
           let providerCircuitBreak = false;
+          let providerCircuitBreakCause: "max_failures" | "provider_5xx" = "max_failures";
           let consecutiveEmbedFailures = 0;
           if (opts?.apply) {
             await runMaintenanceHeartbeat(
@@ -656,7 +668,15 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                     try {
                       vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
                       consecutiveEmbedFailures = 0;
-                    } catch (_err) {
+                    } catch (batchErr) {
+                      if (isEmbeddingProviderServerError(batchErr)) {
+                        providerCircuitBreak = true;
+                        providerCircuitBreakCause = "provider_5xx";
+                        errors.push(
+                          `batch ${batchNumber}: embed failed with provider 5xx; fast-failing to avoid per-fact fallback stall — ${String(batchErr)}`,
+                        );
+                        break;
+                      }
                       vectors = [];
                       for (const fact of batch) {
                         try {
@@ -665,10 +685,16 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                         } catch (singleErr) {
                           errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
                           embedFailures++;
+                          if (isEmbeddingProviderServerError(singleErr)) {
+                            providerCircuitBreak = true;
+                            providerCircuitBreakCause = "provider_5xx";
+                            break;
+                          }
                           consecutiveEmbedFailures++;
                           vectors.push(null);
                           if (consecutiveEmbedFailures >= maxEmbedFailures) {
                             providerCircuitBreak = true;
+                            providerCircuitBreakCause = "max_failures";
                             break;
                           }
                         }
@@ -737,7 +763,10 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             after,
           };
           if (providerCircuitBreak) {
-            report.failedReason = "failed_embedding_provider";
+            report.failedReason =
+              providerCircuitBreakCause === "provider_5xx"
+                ? "failed_embedding_provider_5xx"
+                : "failed_embedding_provider";
             process.exitCode = 1;
           } else if (opts?.apply && storeFailures > 0) {
             process.exitCode = 2;
@@ -761,9 +790,15 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             for (const err of errors.slice(0, 10)) console.warn(`  - ${err}`);
           }
           if (providerCircuitBreak) {
-            console.error(
-              `Provider circuit-break: ${maxEmbedFailures} consecutive embed failure(s) exceeded --max-embed-failures ${maxEmbedFailures}; processed ${processed}/${candidates.length} fact(s) before aborting; partial embeddings stored: ${embedded}. Re-run after provider recovery (exit=1).`,
-            );
+            if (providerCircuitBreakCause === "provider_5xx") {
+              console.error(
+                `Provider fast-fail: embedding provider returned 5xx; aborted reembed-vectorless immediately to avoid per-fact fallback stall. Processed ${processed}/${candidates.length} fact(s); embedded ${embedded} (exit=1).`,
+              );
+            } else {
+              console.error(
+                `Provider circuit-break: ${maxEmbedFailures} consecutive embed failure(s) exceeded --max-embed-failures ${maxEmbedFailures}; processed ${processed}/${candidates.length} fact(s) before aborting; partial embeddings stored: ${embedded}. Re-run after provider recovery (exit=1).`,
+              );
+            }
           } else if (opts?.apply && storeFailures > 0) {
             console.warn(
               `Partial success: ${storeFailures} write failure(s) occurred during vector re-embedding; retryable LanceDB conflicts were retried where applicable (exit=2).`,

@@ -88,12 +88,15 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(vectorDb.runWithAutoOptimizePaused).toHaveBeenCalledTimes(1);
   });
 
-  it("circuit-breaks and exits with code 1 when embedding provider repeatedly fails", async () => {
+  it("fast-fails and exits with code 1 on embedding provider 5xx (no per-fact fallback)", async () => {
     process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
     const mem = new Command("hybrid-mem");
 
-    const providerError = new Error(
-      "Request failed with status code 500: {\"error\":{\"message\":\"The server had an error while processing your request. Sorry about that!\",\"type\":\"server_error\",\"code\":null}}",
+    const providerError = Object.assign(
+      new Error(
+        'Request failed with status code 500: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","code":null}}',
+      ),
+      { status: 500 },
     );
 
     // 10 facts across 2 batches of 5
@@ -117,9 +120,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     };
     const embeddings = {
       modelName: "test-embedding-model",
-      // embedBatch always fails to simulate provider outage
+      // embedBatch fails with 5xx; command should abort before per-fact fallback.
       embedBatch: vi.fn().mockRejectedValue(providerError),
-      // individual embed also fails
       embed: vi.fn().mockRejectedValue(providerError),
     };
 
@@ -146,17 +148,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     await mem.parseAsync(
-      [
-        "reembed-vectorless",
-        "--apply",
-        "--limit",
-        "10",
-        "--batch-size",
-        "5",
-        "--max-embed-failures",
-        "3",
-        "--json",
-      ],
+      ["reembed-vectorless", "--apply", "--limit", "10", "--batch-size", "5", "--max-embed-failures", "3", "--json"],
       { from: "user" },
     );
 
@@ -166,13 +158,10 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embedFailures?: number;
       embedded?: number;
     };
-    expect(payload.failedReason).toBe("failed_embedding_provider");
-    // Circuit broke after 3 individual failures; no facts were successfully embedded
+    expect(payload.failedReason).toBe("failed_embedding_provider_5xx");
     expect(payload.embedded).toBe(0);
-    // embedFailures should match the threshold (3 consecutive failures triggered break)
-    expect(payload.embedFailures).toBe(3);
-    // Second batch should not have been attempted after circuit break
+    expect(payload.embedFailures).toBe(0);
+    expect(embeddings.embed).not.toHaveBeenCalled();
     expect(embeddings.embedBatch).toHaveBeenCalledTimes(1);
   });
 });
-
