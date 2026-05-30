@@ -116,7 +116,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # Allow [WIP] prefix (action-semantic-pull-request v6 wip: true requires [WIP] format).
+          # Allow WIP: prefix so draft/in-progress PRs don't fail the check.
+          # Note: `wip: true` only exempts titles starting with "[WIP] " (square brackets).
+          # Adding "WIP" to the types list handles the "WIP: " (colon) prefix used by
+          # Issue Stewardship placeholder PRs.
           wip: true
           # Skip validation for PRs in the implementing stage (placeholder/draft PRs).
           ignoreLabels: |
