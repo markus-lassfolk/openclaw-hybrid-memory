@@ -270,7 +270,7 @@ exit 2
     expect(readFileSync(marker, "utf-8")).toContain("extract-procedures --days 7 --verbose --full");
   });
 
-  it("adds --force to reflection commands when forced rerun env is enabled", () => {
+  it("does not add --force to reflection commands when forced rerun env is enabled", () => {
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
@@ -307,6 +307,7 @@ exit 2
     });
 
     expect(result.status).toBe(0);
-    expect(readFileSync(marker, "utf-8")).toContain("reflect --verbose --force");
+    expect(readFileSync(marker, "utf-8")).toContain("reflect --verbose");
+    expect(readFileSync(marker, "utf-8")).not.toContain("--force");
   });
 });
