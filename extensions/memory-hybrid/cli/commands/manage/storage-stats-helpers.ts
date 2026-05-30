@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { GraphConnectedStats } from "../../../backends/facts-db/links.js";
+import type { ProcedurePromotionBlockReason } from "../../../backends/facts-db/procedures.js";
 import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
 import type { MemoryEntry } from "../../../types/memory.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
@@ -228,6 +229,8 @@ export type AuditHealthReport = {
     validatedNotPromoted: number;
     blocked: number;
     topBlockReason: string | null;
+    /** Breakdown of blocked (validated, not-promoted) procedures by block reason. */
+    byBlockReason: Record<ProcedurePromotionBlockReason, number>;
   };
   graphHubs: Array<{
     id: string;
@@ -695,10 +698,13 @@ export function buildAuditHealthReport(
     warnings.push(
       `Vector lifecycle SLO breach(es): ${vectorLifecycleSloBreaches.map((b) => `${b.key} actual=${b.actual} target=${b.target}`).join("; ")}`,
     );
-  if (procedureTriage.summary.total > 0)
-    warnings.push(
-      `${procedureTriage.summary.total} validated procedure(s) are not promoted (top reason: ${procedureTriage.summary.topReason ?? "unknown"}).`,
-    );
+  if (procedureTriage.summary.total > 0) {
+    const reasonBreakdown = Object.entries(procedureTriage.summary.byReason)
+      .filter(([, count]) => count > 0)
+      .map(([reason, count]) => `${reason}=${count}`)
+      .join(", ");
+    warnings.push(`${procedureTriage.summary.total} validated procedure(s) are not promoted (${reasonBreakdown}).`);
+  }
   const remediation: string[] = [];
   if ((tiers.hot ?? 0) === 0 || (tiers.structural ?? 0) === 0 || structuralEligibleWarmFacts > 0)
     remediation.push("Run `openclaw hybrid-mem retier --apply`.");
@@ -715,10 +721,15 @@ export function buildAuditHealthReport(
   }
   if (vectorless > 0) remediation.push("Run `openclaw hybrid-mem reembed-vectorless --apply`.");
   if (degraded) remediation.push("Run `openclaw hybrid-mem repair-vectors` and validate LanceDB connectivity.");
-  if (procedureTriage.summary.total > 0)
+  if (procedureTriage.summary.total > 0) {
     remediation.push(
       "Run `openclaw hybrid-mem procedures triage --not-promoted` and `generate-auto-skills` where appropriate.",
     );
+    if ((procedureTriage.summary.byReason.low_recall ?? 0) > 0)
+      remediation.push(
+        "Low-recall procedures need more successful uses before promotion; retrain or merge duplicates via `openclaw hybrid-mem procedures triage --not-promoted --reason low_recall`.",
+      );
+  }
   if (
     implicitFeedbackPatterns > 1000 ||
     (implicitFeedbackPrefixHistogram.length > 0 && implicitFeedbackPrefixHistogram[0].count >= 10)
@@ -779,6 +790,7 @@ export function buildAuditHealthReport(
       validatedNotPromoted: Math.max(0, validated - promoted),
       blocked: procedureTriage.summary.total,
       topBlockReason: procedureTriage.summary.topReason,
+      byBlockReason: procedureTriage.summary.byReason,
     },
     graphHubs,
     structuralEligibleWarmFacts,
