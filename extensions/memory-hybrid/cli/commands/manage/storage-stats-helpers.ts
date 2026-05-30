@@ -254,7 +254,7 @@ export type AuditHealthReport = {
   structuralEligibleWarmFacts: number;
   patternBloat: {
     implicitFeedbackPatterns: number;
-    /** Top 5 leading-token prefixes for `category=pattern AND source=implicit-feedback` (#1193). */
+    /** Top 5 leading-token prefixes for implicit-feedback rows (legacy category=pattern and trajectory lessons, #1193, #1736). */
     implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }>;
   };
   entityStopwordMatches: Array<{ entity: string; count: number }>;
@@ -487,19 +487,21 @@ export function buildAuditHealthReport(
         )?.cnt ?? 0,
       )
     : 0;
-  // #1193: aggregate the leading 6 tokens of `category=pattern AND source=implicit-feedback`
-  // facts to surface "should never store" duplicate prefixes (e.g. paraphrases of the same
-  // self-correction) without scanning every row.
+  // #1193, #1736: aggregate the leading 6 tokens of implicit-feedback rows (legacy category=pattern
+  // and modern trajectory lessons) to surface "should never store" duplicate prefixes (e.g. paraphrases
+  // of the same self-correction) without scanning every row.
   // LIMIT added to prevent hanging on long-lived stores with thousands of implicit-feedback patterns.
   const implicitFeedbackPrefixHistogram: Array<{ prefix: string; count: number }> = (() => {
     if (!raw || !hasBudget("implicitFeedbackPrefixHistogram")) return [];
     const cap = IMPLICIT_FEEDBACK_HISTOGRAM_SAMPLE_CAP;
     try {
       // Fetch cap + 1 rows so we only flag truncation when another row exists (exactly `cap` rows is not truncated).
+      // Include both legacy category=pattern rows and modern trajectory lesson rows (#1736).
       const rows = raw
         .prepare(
           `SELECT text FROM facts
-           WHERE superseded_at IS NULL AND category = 'pattern' AND source = 'implicit-feedback'
+           WHERE superseded_at IS NULL AND source = 'implicit-feedback'
+             AND (category = 'pattern' OR (${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}))
            LIMIT ?`,
         )
         .all(cap + 1) as Array<{ text: string | null }>;
@@ -520,9 +522,20 @@ export function buildAuditHealthReport(
         .sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
         .slice(0, 5);
       if (truncated) {
+        const totalSampled = Number(
+          (
+            raw
+              .prepare(
+                `SELECT COUNT(*) AS cnt FROM facts
+                 WHERE superseded_at IS NULL AND source = 'implicit-feedback'
+                   AND (category = 'pattern' OR (${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER}))`,
+              )
+              .get() as { cnt: number } | undefined
+          )?.cnt ?? 0,
+        );
         errors.push({
           section: "implicitFeedbackPrefixHistogram",
-          message: `Truncated: histogram sampled first ${cap} of ${implicitFeedbackPatterns} implicit-feedback pattern row(s)`,
+          message: `Truncated: histogram sampled first ${cap} of ${totalSampled} implicit-feedback row(s)`,
         });
       }
       return result;
