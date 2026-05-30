@@ -370,7 +370,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "--include-legacy",
       "With --collapse-implicit-feedback, also collapse legacy category=pattern implicit-feedback rows",
     )
-    .option("--threshold <n>", "Jaccard similarity threshold for implicit-feedback collapse", "0.8")
+    .option("--threshold <n>", "Jaccard similarity threshold for implicit-feedback collapse", "0.7")
     .option("--limit <n>", "Maximum implicit-feedback rows to scan per page", "1000")
     .action(
       withExit(
@@ -391,9 +391,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           if (opts?.collapseImplicitFeedback) {
-            const thresholdRaw = opts?.threshold ? Number.parseFloat(opts.threshold) : 0.8;
+            const thresholdRaw = opts?.threshold ? Number.parseFloat(opts.threshold) : 0.7;
             const threshold =
-              Number.isFinite(thresholdRaw) && thresholdRaw > 0 && thresholdRaw <= 1 ? thresholdRaw : 0.8;
+              Number.isFinite(thresholdRaw) && thresholdRaw > 0 && thresholdRaw <= 1 ? thresholdRaw : 0.7;
             const limitRaw = opts?.limit ? Number.parseInt(opts.limit, 10) : 1000;
             const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(10000, Math.floor(limitRaw)) : 1000;
             let afterRowid = 0;
