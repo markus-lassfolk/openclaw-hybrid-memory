@@ -764,6 +764,7 @@ export async function runReflectionRules(
     const diagnostics: ReflectionRulesDiagnostics = {
       ...baseDiagnostics,
       zeroRulesReason: "insufficient_patterns",
+      status: "degraded",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +
@@ -864,7 +865,7 @@ export async function runReflectionRules(
   if (uniqueRules.length === 0) {
     logger.info("memory-hybrid: reflect-rules — 0 rules extracted from LLM");
     const zeroRulesReason =
-      modelResponseChars === 0
+      trimmedResponse.length === 0
         ? "empty_model_response"
         : looksLikeValidNoRules
           ? "valid_no_actionable_rules"
