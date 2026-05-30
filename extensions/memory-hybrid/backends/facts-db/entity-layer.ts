@@ -388,14 +388,19 @@ export function listFactsNeedingEnrichment(
   minTextLen: number,
   options?: ListFactsNeedingEnrichmentOptions,
 ): string[] {
-  const sql = options?.all ? buildEntityEnrichmentPendingBaseSql() : `${buildEntityEnrichmentPendingBaseSql()}\n      LIMIT ?`;
-  const rows = (options?.all
-    ? db.prepare(sql).all(minTextLen)
-    : db.prepare(sql).all(minTextLen, limit)) as Array<{ id: string }>;
+  const sql = options?.all
+    ? buildEntityEnrichmentPendingBaseSql()
+    : `${buildEntityEnrichmentPendingBaseSql()}\n      LIMIT ?`;
+  const rows = (options?.all ? db.prepare(sql).all(minTextLen) : db.prepare(sql).all(minTextLen, limit)) as Array<{
+    id: string;
+  }>;
   return rows.map((r) => r.id);
 }
 
-export function getEntityEnrichmentBacklogSummary(db: DatabaseSync, minTextLen: number): EntityEnrichmentBacklogSummary {
+export function getEntityEnrichmentBacklogSummary(
+  db: DatabaseSync,
+  minTextLen: number,
+): EntityEnrichmentBacklogSummary {
   const row = db
     .prepare(
       `SELECT
