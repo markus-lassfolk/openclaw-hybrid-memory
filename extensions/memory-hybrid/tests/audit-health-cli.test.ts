@@ -142,6 +142,54 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     const drift = report.categories.unknown.find((row) => row.category === "off-roster");
     expect(drift).toBeDefined();
     expect(drift?.count).toBe(2);
+    expect(report.warnings.some((w) => w.includes("Unconfigured categories present in DB: off-roster=2"))).toBe(true);
+    db.close();
+  });
+
+  it("does not warn for legacy category aliases when their configured remap targets exist", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Legacy forge category",
+      category: "forge_busy",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.store({
+      text: "Legacy episode category",
+      category: "episode",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const report = buildAuditHealthReport(db as never, () => ["forge", "ops_summary"], [], 500);
+    expect(report.categories.unknown).toEqual([
+      { category: "episode", count: 1 },
+      { category: "forge_busy", count: 1 },
+    ]);
+    expect(report.warnings.some((w) => w.includes("Unconfigured categories present in DB"))).toBe(false);
+    db.close();
+  });
+
+  it("still warns for legacy aliases when canonical remap target is not configured", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Episode category without configured target",
+      category: "episode",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const report = buildAuditHealthReport(db as never, () => ["forge"], [], 500);
+    expect(report.warnings.some((w) => w.includes("Unconfigured categories present in DB: episode=1"))).toBe(true);
     db.close();
   });
 
