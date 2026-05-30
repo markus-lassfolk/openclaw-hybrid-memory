@@ -84,7 +84,7 @@ export async function runEntityEnrichmentForCli(
 
   if (opts.dryRun) {
     const ids = verbose ? factsDb.listFactIdsNeedingEntityEnrichment(limit, 24, { all: mode === "all" }) : [];
-    const pending = verbose ? ids.length : (mode === "all" ? pendingTotal : Math.min(pendingTotal, limit));
+    const pending = verbose ? ids.length : mode === "all" ? pendingTotal : Math.min(pendingTotal, limit);
     return {
       pending,
       pendingTotal,
