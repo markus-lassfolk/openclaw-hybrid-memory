@@ -285,7 +285,7 @@ export function buildPendingReviewDigestReport(opts: {
       rejected: personaAll.filter((p) => p.status === "rejected").length,
       expired: personaAll.filter((p) => p.status === "expired").length,
       // #1742: track omitted entries so callers can surface a truncation marker.
-      truncated: Math.max(0, personaPending.length - Math.min(personaRecentPending.length, 10)),
+      truncated: personaPending.length - personaRecentPending.slice(0, 10).length,
       pendingEntries: personaRecentPending.slice(0, 10).map((p) => ({
         id: p.id,
         title: p.title,

@@ -223,8 +223,9 @@ describe("pending review digest (#1197)", () => {
     // Close the store, then use a raw DatabaseSync to backdate the two old proposals
     persona.close();
     const rawDb = new DatabaseSync(paths.proposals);
-    rawDb.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(oldEpoch, p1.id);
-    rawDb.prepare("UPDATE proposals SET created_at = ? WHERE id = ?").run(oldEpoch, p2.id);
+    const backdate = rawDb.prepare("UPDATE proposals SET created_at = ? WHERE id = ?");
+    backdate.run(oldEpoch, p1.id);
+    backdate.run(oldEpoch, p2.id);
     rawDb.close();
 
     const report = buildPendingReviewDigestReport({
