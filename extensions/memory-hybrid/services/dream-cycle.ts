@@ -978,6 +978,16 @@ export async function runDreamCycle(
         operation: "dream-cycle-reflect-rules",
         subsystem: "reflection",
       });
+      reflectionRulesDiagnostics = {
+        modelResponseChars: 0,
+        parseSuccess: false,
+        parsedCandidates: 0,
+        rejectedDuplicates: 0,
+        rejectedLowConfidence: 0,
+        stored: 0,
+        zeroRulesReason: "reflect_rules_threw",
+        status: "degraded",
+      };
     }
     stageReflectRules.complete(`rulesStored=${rulesGenerated}`);
   } else if (!enableReflectionRules && v) {
