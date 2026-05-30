@@ -87,7 +87,6 @@ export function buildHybridMemCronBashBody(
     "  set +e",
     '  "$@" 2>&1 | tee -a "$HM_LOG" "$step_output"',
     '  local ec="${PIPESTATUS[0]}"',
-    "  set -e",
     '  local hm_status=""',
     '  local hm_reason=""',
     '  local reported_status=""',
