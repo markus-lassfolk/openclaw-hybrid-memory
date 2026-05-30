@@ -225,4 +225,86 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(b.inserted).toBe(false);
     db.close();
   });
+
+  it("procedures.byBlockReason is present in report and contains all block reasons (#1739)", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Fact for byBlockReason test",
+      category: "technical",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    expect(report.procedures.byBlockReason).toBeDefined();
+    expect(typeof report.procedures.byBlockReason).toBe("object");
+    // All standard block reasons must be present as keys.
+    for (const reason of ["duplicate_skill", "low_recall", "missing_anchor", "awaiting_approval", "unknown"]) {
+      expect(reason in report.procedures.byBlockReason).toBe(true);
+      expect(typeof report.procedures.byBlockReason[reason as keyof typeof report.procedures.byBlockReason]).toBe(
+        "number",
+      );
+    }
+    db.close();
+  });
+
+  it("warning includes per-reason breakdown when validated procedures are blocked (#1739)", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Context fact",
+      category: "technical",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    // Insert a validated procedure with low success_count so it is blocked with low_recall.
+    const raw = db.getRawDb();
+    raw
+      ?.prepare(
+        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, confidence, promoted_to_skill, last_validated, created_at, updated_at)
+         VALUES ('proc-warn-1', 'do something useful', ?, 'positive', 1, 0, 0.6, 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))`,
+      )
+      .run(JSON.stringify([{ tool: "bash", args: {} }]));
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    // The warning should show a breakdown like "low_recall=1" rather than just "top reason: low_recall".
+    const procWarning = report.warnings.find((w) => w.includes("validated procedure(s) are not promoted"));
+    expect(procWarning).toBeDefined();
+    expect(procWarning).toMatch(/low_recall=\d+/);
+    // Must NOT use the old "top reason:" format.
+    expect(procWarning).not.toMatch(/top reason:/);
+    db.close();
+  });
+
+  it("remediation includes low_recall hint when low-recall procedures are blocked (#1739)", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Context fact",
+      category: "technical",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const raw = db.getRawDb();
+    raw
+      ?.prepare(
+        `INSERT INTO procedures (id, task_pattern, recipe_json, procedure_type, success_count, failure_count, confidence, promoted_to_skill, last_validated, created_at, updated_at)
+         VALUES ('proc-rem-1', 'low recall task', ?, 'positive', 1, 0, 0.6, 0, strftime('%s','now'), strftime('%s','now'), strftime('%s','now'))`,
+      )
+      .run(JSON.stringify([{ tool: "bash", args: {} }]));
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    expect(report.remediation.some((r) => r.includes("low_recall"))).toBe(true);
+    db.close();
+  });
 });
