@@ -357,16 +357,31 @@ describe("FactsDB.list / listForDashboard filter allowlist", () => {
 
   it("listForDashboard search pagination is not capped at 2000 matches", () => {
     const totalFacts = 2050;
-    for (let i = 0; i < totalFacts; i += 1) {
-      db.store({
-        text: `Dashboard pagination marker ${i}`,
-        category: "fact",
-        importance: 0.6,
-        entity: null,
-        key: null,
-        value: null,
-        source: "test",
-      });
+    const raw = db.getRawDb();
+    const baseCreatedAt = Math.floor(Date.now() / 1000);
+    const insert = raw.prepare(
+      `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    raw.exec("BEGIN");
+    try {
+      for (let i = 0; i < totalFacts; i += 1) {
+        insert.run(
+          `dashboard-pagination-marker-${i}`,
+          `Dashboard pagination marker ${i}`,
+          "fact",
+          0.6,
+          null,
+          null,
+          null,
+          "test",
+          baseCreatedAt + i,
+        );
+      }
+      raw.exec("COMMIT");
+    } catch (err) {
+      raw.exec("ROLLBACK");
+      throw err;
     }
 
     const firstPage = db.listForDashboard({ limit: 25, offset: 0, search: "dashboard pagination marker" });
