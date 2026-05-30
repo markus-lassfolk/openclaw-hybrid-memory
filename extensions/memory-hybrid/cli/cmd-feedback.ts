@@ -381,11 +381,15 @@ function isSessionAfterCursor(candidate: SessionCandidate, cursor: ImplicitFeedb
   if (!cursor || cursor.lastSessionTs <= 0) return true;
   if (candidate.mtimeMs > cursor.lastSessionTs) return true;
   if (candidate.mtimeMs < cursor.lastSessionTs) return false;
-  if (!cursor.lastSessionFile) return false;
+  if (!cursor.lastSessionFile) return true;
   return candidate.file.localeCompare(cursor.lastSessionFile) > 0;
 }
 
-function estimateDeferredCount(totalDeferred: number, averagePerProcessed: number, firstDeferredCount?: number): number {
+function estimateDeferredCount(
+  totalDeferred: number,
+  averagePerProcessed: number,
+  firstDeferredCount?: number,
+): number {
   if (totalDeferred <= 0) return 0;
   if (firstDeferredCount != null) {
     if (totalDeferred === 1) return Math.max(0, firstDeferredCount);
@@ -606,6 +610,7 @@ export async function runExtractImplicitFeedbackForCli(
           severity: "info",
           subsystem: "implicit-feedback",
         });
+        lastProcessedCandidate = candidate;
         emitProgress();
         continue;
       }
@@ -613,6 +618,7 @@ export async function runExtractImplicitFeedbackForCli(
       const turns = parseSessionTurns(lines);
       if (turns.length < 3) {
         progress.sessionsTooShort++;
+        lastProcessedCandidate = candidate;
         emitProgress();
         continue;
       }
@@ -633,11 +639,7 @@ export async function runExtractImplicitFeedbackForCli(
         }
       }
 
-      if (
-        progress.sessionsProcessed > 0 &&
-        maxSignalsPerRun > 0 &&
-        totalSignals + signals.length > maxSignalsPerRun
-      ) {
+      if (progress.sessionsProcessed > 0 && maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
         deferredSignalsForFirstSession = signals.length;
         deferredTrajectoriesForFirstSession = projectedTrajectories;
         markPartial("maxSignals", sessionCandidates.length - index, signals.length, projectedTrajectories);
@@ -757,7 +759,9 @@ export async function runExtractImplicitFeedbackForCli(
         const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
         for (const sig of negativeSignals) {
           try {
-            lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
+            lessonsStoredTodaySession = rawDb
+              ? getImplicitFeedbackLessonsStoredToday(rawDb)
+              : lessonsStoredTodaySession;
             const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
             const similarId =
               rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, text, lessonDedupeJaccard) : null;
@@ -869,13 +873,13 @@ export async function runExtractImplicitFeedbackForCli(
               const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
               const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.8;
               for (const lesson of traj.lessonsExtracted) {
-                lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
+                lessonsStoredTodaySession = rawDb
+                  ? getImplicitFeedbackLessonsStoredToday(rawDb)
+                  : lessonsStoredTodaySession;
                 const trimmedLesson = lesson.trim();
                 if (!trimmedLesson) continue;
                 const similarId =
-                  rawDb != null
-                    ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard)
-                    : null;
+                  rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard) : null;
                 if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
                   if (similarId && rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
                   continue;
@@ -933,12 +937,35 @@ export async function runExtractImplicitFeedbackForCli(
     }
 
     if (!opts.dryRun) {
-      factsDb.updateScanCursor(
-        IMPLICIT_FEEDBACK_SCAN_TYPE,
-        lastProcessedCandidate?.mtimeMs ?? 0,
-        progress.sessionsProcessed,
-        lastProcessedCandidate?.file,
-      );
+      const cursorRunAt = progress.partial ? undefined : Date.now();
+      if (cursorRunAt !== undefined) {
+        factsDb.updateScanCursor(
+          IMPLICIT_FEEDBACK_SCAN_TYPE,
+          lastProcessedCandidate?.mtimeMs ?? 0,
+          progress.sessionsProcessed,
+          lastProcessedCandidate?.file,
+        );
+      } else {
+        const rawDb = factsDb.getRawDb();
+        if (rawDb) {
+          rawDb
+            .prepare(
+              `UPDATE scan_cursors 
+               SET last_session_ts = CASE WHEN ? > 0 THEN ? ELSE last_session_ts END,
+                   last_session_file = CASE WHEN ? > 0 THEN ? ELSE last_session_file END,
+                   sessions_processed = sessions_processed + ?
+               WHERE scan_type = ?`,
+            )
+            .run(
+              progress.sessionsProcessed,
+              lastProcessedCandidate?.mtimeMs ?? 0,
+              progress.sessionsProcessed,
+              lastProcessedCandidate?.file ?? null,
+              progress.sessionsProcessed,
+              IMPLICIT_FEEDBACK_SCAN_TYPE,
+            );
+        }
+      }
     }
 
     if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
