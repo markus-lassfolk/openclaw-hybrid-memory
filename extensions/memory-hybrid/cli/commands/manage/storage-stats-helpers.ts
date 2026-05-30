@@ -221,28 +221,23 @@ export function recordStorageGrowthSample(
      | { ok: number }
      | undefined);
   if (alreadyToday) {
-    return {
+  return {
      inserted: false,
      recordedAt: nowSecReport,
      sampleId: null,
      status: "skipped",
      reason: "already_sampled_today",
      sample,
-    };
+  };
   }
   const insertResult = raw
-    .prepare(
+  .prepare(
      "INSERT INTO storage_growth_history (recorded_at, sqlite_bytes, lance_bytes, link_count, fact_count) VALUES (?, ?, ?, ?, ?)",
-    )
-    .run(sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount) as {
-    lastInsertRowid?: number | bigint;
+  )
+  .run(sample.recordedAt, sample.sqliteBytes, sample.lanceBytes, sample.linkCount, sample.factCount) as {
+     lastInsertRowid?: number | bigint;
   };
-  const sampleId =
-    typeof insertResult.lastInsertRowid === "bigint"
-     ? Number(insertResult.lastInsertRowid)
-     : typeof insertResult.lastInsertRowid === "number"
-       ? insertResult.lastInsertRowid
-       : null;
+  const sampleId = insertResult.lastInsertRowid ? Number(insertResult.lastInsertRowid) : null;
   return {
     inserted: true,
     recordedAt: nowSecReport,
