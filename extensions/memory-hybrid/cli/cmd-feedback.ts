@@ -932,34 +932,12 @@ export async function runExtractImplicitFeedbackForCli(
     }
 
     if (!opts.dryRun) {
-      const cursorRunAt = progress.partial ? undefined : Date.now();
-      if (cursorRunAt !== undefined) {
-        factsDb.updateScanCursor(
-          IMPLICIT_FEEDBACK_SCAN_TYPE,
-          lastProcessedCandidate?.mtimeMs ?? 0,
-          progress.sessionsProcessed,
-          lastProcessedCandidate?.file,
-        );
-      } else {
-        const rawDb = factsDb.getRawDb();
-        if (rawDb && progress.sessionsProcessed > 0) {
-          rawDb
-            .prepare(
-              `INSERT INTO scan_cursors (scan_type, last_session_ts, last_session_file, sessions_processed, last_run_at)
-               VALUES (?, ?, ?, ?, NULL)
-               ON CONFLICT(scan_type) DO UPDATE SET
-                 last_session_ts = CASE WHEN excluded.sessions_processed > 0 THEN excluded.last_session_ts ELSE last_session_ts END,
-                 last_session_file = CASE WHEN excluded.sessions_processed > 0 THEN excluded.last_session_file ELSE last_session_file END,
-                 sessions_processed = sessions_processed + excluded.sessions_processed`,
-            )
-            .run(
-              IMPLICIT_FEEDBACK_SCAN_TYPE,
-              lastProcessedCandidate?.mtimeMs ?? 0,
-              lastProcessedCandidate?.file ?? null,
-              progress.sessionsProcessed,
-            );
-        }
-      }
+      factsDb.updateScanCursor(
+        IMPLICIT_FEEDBACK_SCAN_TYPE,
+        lastProcessedCandidate?.mtimeMs ?? 0,
+        progress.sessionsProcessed,
+        lastProcessedCandidate?.file,
+      );
     }
 
     if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {

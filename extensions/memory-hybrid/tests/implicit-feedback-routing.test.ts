@@ -571,9 +571,7 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
       expect(
         snapshots.some(
           (snapshot) =>
-            snapshot.partial === true &&
-            snapshot.partialReason === "maxSignals" &&
-            snapshot.sessionsDeferred === 1,
+            snapshot.partial === true && snapshot.partialReason === "maxSignals" && snapshot.sessionsDeferred === 1,
         ),
       ).toBe(true);
     });

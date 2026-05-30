@@ -203,7 +203,9 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             console.log(`  Sessions skipped: ${res.sessionsSkipped}`);
             if (res.sessionsDeferred > 0) {
               console.log(`  Sessions deferred: ${res.sessionsDeferred}`);
-              console.log(`  Backlog estimate: ${res.backlogSignalsEstimate} signals, ${res.backlogTrajectoriesEstimate} trajectories`);
+              console.log(
+                `  Backlog estimate: ${res.backlogSignalsEstimate} signals, ${res.backlogTrajectoriesEstimate} trajectories`,
+              );
             }
             console.log(`  Positive signals: ${res.positiveCount}`);
             console.log(`  Negative signals: ${res.negativeCount}`);
