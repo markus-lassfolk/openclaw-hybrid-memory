@@ -872,11 +872,9 @@ export async function runReflectionRules(
             ? "all_candidates_duplicate"
             : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
               ? "all_candidates_rejected_length"
-              : parseableLines > 0 && rejectedLowConfidence > 0
-                ? "all_candidates_rejected_low_confidence"
-                : parseableLines > 0
-                  ? "all_candidates_rejected"
-                  : "invalid_response_format";
+              : parseableLines > 0
+                ? "all_candidates_rejected"
+                : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
       parseSuccess,
@@ -888,9 +886,7 @@ export async function runReflectionRules(
       status:
         zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response"
           ? "degraded"
-          : zeroRulesReason === "all_candidates_rejected_low_confidence"
-            ? "partial"
-            : "ok",
+          : "ok",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1099,18 +1095,20 @@ export async function runReflectionRules(
   const diagnostics: ReflectionRulesDiagnostics = {
     modelResponseChars,
     parseSuccess,
-    parsedCandidates: uniqueRules.length,
+    parsedCandidates: parseableLines,
     rejectedDuplicates: batchDuplicatesSkipped + rulesDuplicatesSkipped,
     rejectedLowConfidence,
     stored,
     zeroRulesReason,
     status:
-      stored > 0
+      stored > 0 && stored === uniqueRules.length
         ? "ok"
-        : zeroRulesReason === "all_candidates_embedding_failed" ||
-            zeroRulesReason === "candidates_duplicate_or_embedding_failed"
-          ? "degraded"
-          : "partial",
+        : stored > 0
+          ? "partial"
+          : zeroRulesReason === "all_candidates_embedding_failed" ||
+              zeroRulesReason === "candidates_duplicate_or_embedding_failed"
+            ? "degraded"
+            : "partial",
   };
   logger.info(
     "memory-hybrid: reflect-rules — diagnostics: " +
