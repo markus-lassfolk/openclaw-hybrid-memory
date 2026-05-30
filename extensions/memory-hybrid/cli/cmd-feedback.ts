@@ -585,7 +585,7 @@ export async function runExtractImplicitFeedbackForCli(
   try {
     for (let index = 0; index < sessionCandidates.length; index++) {
       const candidate = sessionCandidates[index];
-      if (maxWallClockMs > 0 && progress.sessionsProcessed > 0 && Date.now() - runStartTimeMs >= maxWallClockMs) {
+      if (maxWallClockMs > 0 && Date.now() - runStartTimeMs >= maxWallClockMs) {
         markPartial("maxWallClockSeconds", sessionCandidates.length - index);
         emitProgress();
         break;
@@ -610,7 +610,6 @@ export async function runExtractImplicitFeedbackForCli(
           severity: "info",
           subsystem: "implicit-feedback",
         });
-        lastProcessedCandidate = candidate;
         emitProgress();
         continue;
       }
@@ -639,18 +638,14 @@ export async function runExtractImplicitFeedbackForCli(
         }
       }
 
-      if (progress.sessionsProcessed > 0 && maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
+      if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
         deferredSignalsForFirstSession = signals.length;
         deferredTrajectoriesForFirstSession = projectedTrajectories;
         markPartial("maxSignals", sessionCandidates.length - index, signals.length, projectedTrajectories);
         emitProgress();
         break;
       }
-      if (
-        progress.sessionsProcessed > 0 &&
-        maxTrajectoriesPerRun > 0 &&
-        trajectoriesBuilt + projectedTrajectories > maxTrajectoriesPerRun
-      ) {
+      if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + projectedTrajectories > maxTrajectoriesPerRun) {
         deferredSignalsForFirstSession = signals.length;
         deferredTrajectoriesForFirstSession = projectedTrajectories;
         markPartial("maxTrajectories", sessionCandidates.length - index, signals.length, projectedTrajectories);
@@ -947,22 +942,21 @@ export async function runExtractImplicitFeedbackForCli(
         );
       } else {
         const rawDb = factsDb.getRawDb();
-        if (rawDb) {
+        if (rawDb && progress.sessionsProcessed > 0) {
           rawDb
             .prepare(
-              `UPDATE scan_cursors 
-               SET last_session_ts = CASE WHEN ? > 0 THEN ? ELSE last_session_ts END,
-                   last_session_file = CASE WHEN ? > 0 THEN ? ELSE last_session_file END,
-                   sessions_processed = sessions_processed + ?
-               WHERE scan_type = ?`,
+              `INSERT INTO scan_cursors (scan_type, last_session_ts, last_session_file, sessions_processed, last_run_at)
+               VALUES (?, ?, ?, ?, NULL)
+               ON CONFLICT(scan_type) DO UPDATE SET
+                 last_session_ts = CASE WHEN excluded.sessions_processed > 0 THEN excluded.last_session_ts ELSE last_session_ts END,
+                 last_session_file = CASE WHEN excluded.sessions_processed > 0 THEN excluded.last_session_file ELSE last_session_file END,
+                 sessions_processed = sessions_processed + excluded.sessions_processed`,
             )
             .run(
-              progress.sessionsProcessed,
+              IMPLICIT_FEEDBACK_SCAN_TYPE,
               lastProcessedCandidate?.mtimeMs ?? 0,
-              progress.sessionsProcessed,
               lastProcessedCandidate?.file ?? null,
               progress.sessionsProcessed,
-              IMPLICIT_FEEDBACK_SCAN_TYPE,
             );
         }
       }
