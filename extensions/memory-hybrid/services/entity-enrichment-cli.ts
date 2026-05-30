@@ -9,6 +9,8 @@ import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { extractEntityMentionsWithLlm } from "./entity-enrichment.js";
 
+const ENRICHMENT_MIN_TEXT_LEN = 24;
+
 function sanitizeEnrichmentLimit(n: number): number {
   const x = Math.floor(Number(n));
   if (!Number.isFinite(x) || x < 1) return 200;
@@ -37,28 +39,33 @@ export async function runEntityEnrichmentForCli(
     dryRun: boolean;
     model?: string;
     verbose?: boolean;
+    all?: boolean;
     onProgress?: (progress: EntityEnrichmentProgress) => void;
   },
 ): Promise<{
   pending: number;
   processed: number;
   factsEnriched: number;
+  totalBacklog: number;
   skipped?: boolean;
   pendingFactIds?: string[];
   enrichedFacts?: EntityEnrichmentVerboseFact[];
 }> {
-  const limit = sanitizeEnrichmentLimit(opts.limit);
+  // -1 means "no limit" (exhaustive/catch-up mode)
+  const limit = opts.all ? -1 : sanitizeEnrichmentLimit(opts.limit);
   const verbose = !!opts.verbose;
+  const totalBacklog = factsDb.countFactIdsNeedingEntityEnrichment(ENRICHMENT_MIN_TEXT_LEN);
   if (!cfg.graph?.enabled) {
-    const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, 24);
-    return { pending: ids.length, processed: 0, factsEnriched: 0, skipped: true };
+    const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, ENRICHMENT_MIN_TEXT_LEN);
+    return { pending: ids.length, processed: 0, factsEnriched: 0, totalBacklog, skipped: true };
   }
-  const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, 24);
+  const ids = factsDb.listFactIdsNeedingEntityEnrichment(limit, ENRICHMENT_MIN_TEXT_LEN);
   if (opts.dryRun) {
     return {
       pending: ids.length,
       processed: 0,
       factsEnriched: 0,
+      totalBacklog,
       pendingFactIds: verbose ? [...ids] : undefined,
     };
   }
@@ -90,6 +97,7 @@ export async function runEntityEnrichmentForCli(
     pending: ids.length,
     processed,
     factsEnriched,
+    totalBacklog,
     enrichedFacts: verbose && enrichedFacts.length > 0 ? enrichedFacts : undefined,
   };
 }

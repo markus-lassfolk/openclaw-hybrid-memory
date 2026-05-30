@@ -282,11 +282,13 @@ export type HybridMemCliContext = {
     dryRun: boolean;
     model?: string;
     verbose?: boolean;
+    all?: boolean;
     onProgress?: (progress: import("../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
   }) => Promise<{
     pending: number;
     processed: number;
     factsEnriched: number;
+    totalBacklog: number;
     skipped?: boolean;
     pendingFactIds?: string[];
     enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];

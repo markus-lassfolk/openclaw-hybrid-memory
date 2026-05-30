@@ -344,16 +344,36 @@ export function listFactIdsForOrg(db: DatabaseSync, orgId: string, limit: number
   return rows.map((r) => r.fact_id);
 }
 
-export function listFactsNeedingEnrichment(db: DatabaseSync, limit: number, minTextLen: number): string[] {
-  const rows = db
-    .prepare(
-      `SELECT f.id FROM facts f
+const ENRICHMENT_ORDER_BY = `ORDER BY
+       CASE COALESCE(f.tier, 'warm') WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'structural' THEN 2 WHEN 'cold' THEN 3 ELSE 4 END,
+       COALESCE(f.last_accessed, f.last_confirmed_at, f.created_at) DESC,
+       COALESCE(f.recall_count, f.access_count, 0) DESC,
+       f.importance DESC,
+       f.created_at DESC`;
+
+const ENRICHMENT_WHERE = `FROM facts f
        WHERE f.superseded_at IS NULL
          AND length(f.text) >= ?
-         AND f.entity_enrichment_at IS NULL
-       ORDER BY f.created_at DESC
-       LIMIT ?`,
-    )
-    .all(minTextLen, limit) as Array<{ id: string }>;
+         AND f.entity_enrichment_at IS NULL`;
+
+/**
+ * Returns fact ids needing entity enrichment, ordered by priority (tier → recency → recall → importance).
+ * Pass `limit = -1` for exhaustive/no-limit mode (processes entire backlog).
+ */
+export function listFactsNeedingEnrichment(db: DatabaseSync, limit: number, minTextLen: number): string[] {
+  const sql =
+    limit < 0
+      ? `SELECT f.id ${ENRICHMENT_WHERE} ${ENRICHMENT_ORDER_BY}`
+      : `SELECT f.id ${ENRICHMENT_WHERE} ${ENRICHMENT_ORDER_BY} LIMIT ?`;
+  const params: number[] = limit < 0 ? [minTextLen] : [minTextLen, limit];
+  const rows = db.prepare(sql).all(...params) as Array<{ id: string }>;
   return rows.map((r) => r.id);
+}
+
+/** Returns the total count of facts not yet processed by entity enrichment. */
+export function countFactsNeedingEnrichment(db: DatabaseSync, minTextLen: number): number {
+  const row = db
+    .prepare(`SELECT COUNT(*) AS cnt ${ENRICHMENT_WHERE}`)
+    .get(minTextLen) as { cnt: number } | undefined;
+  return row?.cnt ?? 0;
 }

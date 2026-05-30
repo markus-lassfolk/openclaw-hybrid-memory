@@ -58,6 +58,7 @@ import {
   listContactsForOrg as entityLayerListContactsForOrg,
   listFactIdsForOrg as entityLayerListFactIdsForOrg,
   listFactsNeedingEnrichment as entityLayerListFactsNeedingEnrichment,
+  countFactsNeedingEnrichment as entityLayerCountFactsNeedingEnrichment,
   getOrganizationByKeyOrName as lookupOrganizationByKeyOrName,
   replaceFactEntityMentions,
 } from "./entity-layer.js";
@@ -546,5 +547,10 @@ export class FactsDB extends FactsDBLayer2 {
   /** Facts not yet processed by entity enrichment (see `facts.entity_enrichment_at`). */
   listFactIdsNeedingEntityEnrichment(limit: number, minTextLen = 24): string[] {
     return entityLayerListFactsNeedingEnrichment(this.liveDb, limit, minTextLen);
+  }
+
+  /** Total count of facts not yet processed by entity enrichment (for backlog reporting). */
+  countFactIdsNeedingEntityEnrichment(minTextLen = 24): number {
+    return entityLayerCountFactsNeedingEnrichment(this.liveDb, minTextLen);
   }
 }
