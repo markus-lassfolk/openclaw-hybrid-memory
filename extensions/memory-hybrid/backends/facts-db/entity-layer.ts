@@ -67,7 +67,7 @@ function shouldFilterEntityMention(mention: {
     return true;
   }
 
-  if (isEntityStopWord(mention.surfaceText) || isEntityStopWord(mention.normalizedSurface)) {
+  if (isEntityStopWord(mention.surfaceText)) {
     return true;
   }
 
