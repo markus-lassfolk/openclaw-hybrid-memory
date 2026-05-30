@@ -61,7 +61,7 @@ function shouldFilterEntityMention(mention: {
   normalizedSurface: string;
 }): boolean {
   if (
-    mention.normalizedSurface.length < MIN_ENTITY_MENTION_LENGTH &&
+    mention.normalizedSurface.length < MIN_ENTITY_MENTION_LENGTH ||
     mention.surfaceText.length < MIN_ENTITY_MENTION_LENGTH
   ) {
     return true;
@@ -143,10 +143,13 @@ export function normalizeFactEntityMentionsForPersistence<
       const surfaceText = normalizeMentionSurfaceText(mention.surfaceText);
       const normalizedSurface =
         normalizeEntityKey(mention.normalizedSurface || surfaceText) || normalizeEntityKey(surfaceText);
+      // Adjust endOffset for trimmed trailing whitespace so stored offsets match the trimmed surfaceText in the original fact text
+      const trailingTrim = mention.surfaceText.length - mention.surfaceText.trimEnd().length;
       return {
         ...mention,
         surfaceText,
         normalizedSurface,
+        endOffset: mention.endOffset - trailingTrim,
       };
     })
     .filter((mention) => mention.surfaceText.length > 0 && mention.normalizedSurface.length > 0)
@@ -158,7 +161,8 @@ export function normalizeFactEntityMentionsForPersistence<
 
   const deduplicated = new Map<string, T>();
   for (const mention of prepared) {
-    const key = `${mention.label}\u0000${mention.normalizedSurface}`;
+    // Use surfaceText for the dedup key so it matches what upsertOrganization/upsertContact compute for canonical_key
+    const key = `${mention.label}\u0000${normalizeEntityKey(mention.surfaceText)}`;
     const existing = deduplicated.get(key);
     deduplicated.set(key, existing ? preferEntityMention(existing, mention) : mention);
   }
