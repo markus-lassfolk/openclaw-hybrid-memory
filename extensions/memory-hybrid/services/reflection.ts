@@ -102,7 +102,7 @@ export interface ReflectionRulesDiagnostics {
 
 // Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
 const VALID_NO_RULES_PATTERN =
-  /no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules/i;
+  /^(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s.:;!]*$/im;
 
 interface ReflectionMetaResult {
   metaExtracted: number;
@@ -938,6 +938,7 @@ export async function runReflectionRules(
   let stored = 0;
   let rulesDuplicatesSkipped = rejectedDuplicates;
   let embeddingBasedDuplicates = 0;
+  let storeLevelDuplicates = 0;
   let newRuleEmbedFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
@@ -1000,6 +1001,8 @@ export async function runReflectionRules(
       },
     );
     if (storeResult.skipped) {
+      rulesDuplicatesSkipped++;
+      storeLevelDuplicates++;
       continue;
     }
     const entry = storeResult.entry;
@@ -1072,12 +1075,16 @@ export async function runReflectionRules(
 
   let zeroRulesReason: ReflectionRulesDiagnostics["zeroRulesReason"];
   if (stored <= 0) {
-    const allCandidatesBlocked = newRuleEmbedFailures + embeddingBasedDuplicates === uniqueRules.length;
+    const allCandidatesBlocked = newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length;
     if (allCandidatesBlocked && newRuleEmbedFailures > 0 && embeddingBasedDuplicates > 0) {
       zeroRulesReason = "candidates_duplicate_or_embedding_failed";
+    } else if (allCandidatesBlocked && newRuleEmbedFailures > 0 && storeLevelDuplicates > 0) {
+      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
+    } else if (allCandidatesBlocked && embeddingBasedDuplicates > 0 && storeLevelDuplicates > 0) {
+      zeroRulesReason = "all_candidates_duplicate";
     } else if (newRuleEmbedFailures === uniqueRules.length) {
       zeroRulesReason = "all_candidates_embedding_failed";
-    } else if (embeddingBasedDuplicates === uniqueRules.length) {
+    } else if (embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length) {
       zeroRulesReason = "all_candidates_duplicate";
     } else {
       zeroRulesReason = "no_storable_candidates";
@@ -1110,7 +1117,7 @@ export async function runReflectionRules(
       `status=${diagnostics.status}` +
       (diagnostics.zeroRulesReason ? ` zero_rules_reason=${diagnostics.zeroRulesReason}` : ""),
   );
-  return { rulesExtracted: rules.length, rulesStored: stored, diagnostics };
+  return { rulesExtracted: uniqueRules.length, rulesStored: stored, diagnostics };
 }
 
 /**
