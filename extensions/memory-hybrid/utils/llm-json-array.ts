@@ -13,6 +13,19 @@ export function stripMarkdownCodeFence(raw: string): string {
 }
 
 /**
+ * Remove common model "thinking" wrappers that appear before JSON (#1718).
+ * Handles <thinking>, <redacted_thinking>, and <reasoning> blocks emitted by
+ * models such as MiniMax M2.7-highspeed before the actual JSON payload.
+ */
+export function stripThinkingWrapperBlocks(s: string): string {
+  return s
+    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, "")
+    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
+    .trim();
+}
+
+/**
  * Strip gateway/model bracket lines like `[Context: …]` that precede real JSON (#1166).
  */
 export function stripBracketContextPreamble(raw: string): string {

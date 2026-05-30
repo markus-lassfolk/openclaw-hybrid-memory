@@ -26,6 +26,7 @@ export interface VerificationCycleResult {
   stale: number;
   uncertain: number;
   errors: number;
+  errorSummaries: string[];
 }
 
 export interface ContinuousVerifierOptions {
@@ -85,11 +86,25 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const RECENT_FACTS_DAYS = 90;
 const MAX_CONTEXT_PER_ENTITY = 20;
 const MAX_CONTEXT_CHARS_PER_FACT = 500;
+const MAX_ERROR_SUMMARIES = 5;
+const MAX_ERROR_SUMMARY_LENGTH = 160;
 // Confidence assigned to facts the LLM determines are stale. Kept below 0.3
 // so that natural decay cycles will eventually remove them, while still
 // preventing immediate deletion (threshold is < 0.1). Previously 0.5, which
 // was misleadingly high — stale facts should not appear reliable in recall.
 const STALE_CONFIDENCE = 0.2;
+
+function compactVerificationError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const compact = raw.replace(/\s+/g, " ").trim() || "unknown error";
+  if (compact.length <= MAX_ERROR_SUMMARY_LENGTH) return compact;
+  return `${compact.slice(0, MAX_ERROR_SUMMARY_LENGTH - 3)}...`;
+}
+
+function recordVerificationError(result: VerificationCycleResult, prefix: string, err: unknown): void {
+  if (result.errorSummaries.length >= MAX_ERROR_SUMMARIES) return;
+  result.errorSummaries.push(`${prefix}: ${compactVerificationError(err)}`);
+}
 
 export class ContinuousVerifier {
   private readonly store: VerificationStore;
@@ -162,6 +177,7 @@ export class ContinuousVerifier {
       stale: 0,
       uncertain: 0,
       errors: 0,
+      errorSummaries: [],
     };
 
     if (this.cycleDays !== undefined && this.lastRunDate !== null) {
@@ -178,6 +194,7 @@ export class ContinuousVerifier {
         operation: "listDueForReverification",
       });
       result.errors++;
+      recordVerificationError(result, "listDueForReverification", err);
       return result;
     }
 
@@ -233,6 +250,7 @@ export class ContinuousVerifier {
             metadata: { factId: fact.factId },
           });
           result.errors++;
+          recordVerificationError(result, `fact=${fact.factId.slice(0, 8)}…`, err);
           outcome = "UNCERTAIN";
         }
 
@@ -266,6 +284,7 @@ export class ContinuousVerifier {
           metadata: { factId: fact.factId },
         });
         result.errors++;
+        recordVerificationError(result, `fact=${fact.factId.slice(0, 8)}…`, err);
       }
     }
 
