@@ -342,13 +342,14 @@ export function resolveReflectionModelAndFallbacks(
   }
 
   const primaryOverride = primaryModelOverride?.trim();
+  const effectivePrimary = primaryOverride || defaultModel;
   if (primaryOverride) {
-    appendUniqueFallback(chain, defaultModel, primaryOverride);
-    appendUniqueFallbackList(chain, pref, primaryOverride);
+    appendUniqueFallback(chain, defaultModel, effectivePrimary);
+    appendUniqueFallbackList(chain, pref, effectivePrimary);
   }
 
   if (tier === "maintenance" && maintPolicy === "cheap-only") {
-    chain = filterMaintenanceTierFallbackModels(chain, primaryOverride || defaultModel, explicitMaintenanceSet);
+    chain = filterMaintenanceTierFallbackModels(chain, effectivePrimary, explicitMaintenanceSet);
   }
 
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };

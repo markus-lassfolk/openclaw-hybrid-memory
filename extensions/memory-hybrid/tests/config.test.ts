@@ -1512,6 +1512,7 @@ describe("hybridConfigSchema.parse", () => {
       });
       const r = resolveReflectionModelAndFallbacks(cfg, "maintenance", "minimax/MiniMax-M2.7-highspeed");
       expect(r.defaultModel).toBe("openai/gpt-4.1-mini");
+      // Existing maintenance fallbacks stay in order; the tier default is appended as a final safety fallback.
       expect(r.fallbackModels).toEqual(["openai/gpt-4.1-nano", "openai/gpt-4.1-mini"]);
       expect(r.fallbackModels).not.toContain("minimax/MiniMax-M2.7-highspeed");
     });
