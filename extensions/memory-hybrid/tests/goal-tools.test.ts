@@ -5,6 +5,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hybridConfigSchema } from "../config.js";
 import {
@@ -128,9 +129,9 @@ describe("goal tools registry primitives", () => {
     });
 
     const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
-    const api = {
-      registerTool(opts: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
-        tools.set(opts.name, { execute: opts.execute });
+    const api: Pick<ClawdbotPluginApi, "registerTool"> = {
+      registerTool(toolDefinition) {
+        tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };
     registerGoalTools(
@@ -143,7 +144,7 @@ describe("goal tools registry primitives", () => {
         eventLog: null,
         memoryDir: join(workspaceRoot, "memory"),
       },
-      api as never,
+      api as ClawdbotPluginApi,
     );
 
     const goalRegister = tools.get("goal_register");
