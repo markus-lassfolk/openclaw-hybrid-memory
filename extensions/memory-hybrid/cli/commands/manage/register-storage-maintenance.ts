@@ -238,8 +238,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .description(
       "Record one storage_growth_history row per UTC day (SQLite + Lance sizes). Use with daily cron so audit-health can compute 7d deltas.",
     )
+    .option("--force", "Bypass the once-per-UTC-day guard and record a fresh sample")
+    .option("--dry-run", "Compute and print the sample payload without writing a row")
+    .option("--json", "Emit parseable JSON")
     .action(
-      withExit(async () => {
+      withExit(async (opts?: { force?: boolean; dryRun?: boolean; json?: boolean }) => {
         let lanceBytes: number | null = null;
         try {
           const sizes = await Promise.resolve(ctx.richStatsExtras?.getStorageSizes());
@@ -251,11 +254,59 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             subsystem: "cli",
           });
         }
-        const r = recordStorageGrowthSample(factsDb, lanceBytes);
+        const r = recordStorageGrowthSample(factsDb, lanceBytes, {
+          force: opts?.force,
+          dryRun: opts?.dryRun,
+        });
+        if (opts?.json) {
+          // Emit cron-harness-compatible marker to stderr so hm_step can still
+          // classify skips, while keeping stdout clean for JSON parsers.
+          let marker = "";
+          if (r.status === "recorded") {
+            marker = "status=success_recorded";
+          } else if (r.status === "dry_run") {
+            marker = "status=success_dry_run";
+          } else if (r.reason === "storage_unavailable") {
+            marker = "status=skipped_storage_unavailable";
+          } else {
+            marker = "status=skipped_already_sampled_today";
+          }
+          console.error(`record-storage-sample: ${marker}`);
+          console.log(
+            JSON.stringify(
+              {
+                schemaVersion: 1,
+                status: r.status,
+                reason: r.reason,
+                inserted: r.inserted,
+                force: !!opts.force,
+                dryRun: !!opts.dryRun,
+                sampleId: r.sampleId,
+                recordedAt: r.recordedAt,
+                sample: r.sample,
+              },
+              null,
+              2,
+            ),
+          );
+          return;
+        }
+        if (r.status === "recorded") {
+          console.log(
+            `record-storage-sample: inserted row (unix=${r.recordedAt}; sampleId=${r.sampleId ?? "n/a"}) status=success_recorded`,
+          );
+          return;
+        }
+        if (r.status === "dry_run") {
+          console.log(
+            `record-storage-sample: dry-run (unix=${r.sample.recordedAt}; sqliteBytes=${r.sample.sqliteBytes ?? "null"}; lanceBytes=${r.sample.lanceBytes ?? "null"}; linkCount=${r.sample.linkCount}; factCount=${r.sample.factCount}) status=success_dry_run`,
+          );
+          return;
+        }
         console.log(
-          r.inserted
-            ? `record-storage-sample: inserted row (unix=${r.recordedAt})`
-            : `record-storage-sample: skipped (already sampled today UTC; unix=${r.recordedAt})`,
+          r.reason === "storage_unavailable"
+            ? `record-storage-sample: skipped (storage database unavailable; unix=${r.recordedAt}) status=skipped_storage_unavailable`
+            : `record-storage-sample: skipped (already sampled today UTC; unix=${r.recordedAt}) status=skipped_already_sampled_today`,
         );
       }),
     );
