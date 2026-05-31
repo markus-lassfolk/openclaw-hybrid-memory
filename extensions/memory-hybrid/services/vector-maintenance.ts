@@ -114,14 +114,20 @@ export async function storeCanonicalVectorForFact(options: {
   const canPersistEmbeddingModel =
     typeof options.vectorDb.isLanceDbAvailable === "function" ? options.vectorDb.isLanceDbAvailable() : true;
   if (canPersistEmbeddingModel) {
-    options.factsDb.setEmbeddingModel(options.factId, options.embeddingModel);
-    options.factsDb.storeEmbedding(
-      options.factId,
-      options.embeddingModel,
-      "canonical",
-      new Float32Array(options.vector),
-      options.vector.length,
-    );
+    try {
+      options.factsDb.setEmbeddingModel(options.factId, options.embeddingModel);
+      options.factsDb.storeEmbedding(
+        options.factId,
+        options.embeddingModel,
+        "canonical",
+        new Float32Array(options.vector),
+        options.vector.length,
+      );
+    } catch {
+      // LanceDB is already updated. Do not make callers treat vector storage as
+      // failed; higher-level callers may run their own canonical SQLite
+      // embedding retry after this helper returns successfully.
+    }
   }
   return storedId;
 }
