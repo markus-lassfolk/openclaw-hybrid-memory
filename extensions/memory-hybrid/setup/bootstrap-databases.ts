@@ -37,6 +37,7 @@ import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { spawn } from "../utils/process-runner.js";
+import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import {
   OLLAMA_DEFAULT_BASE_URL,
@@ -45,7 +46,6 @@ import {
   clearOllamaHealthCacheEntry,
   extractGatewayConfig,
   getGatewayModelsProviders,
-  gatewayLogInfoOnce,
   mergeGatewayProviderCredentialsIntoLlmProvidersMap,
   patchEmbeddingEndpointFromGatewayProviders,
   probeOllamaEndpoint,
@@ -182,7 +182,13 @@ export function maybeAutoStartOllama(cfg: HybridMemoryConfig, api: ClawdbotPlugi
  * - Discovered categories loading
  * - Async verification checks
  */
-export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): DatabaseContext {
+export function initializeDatabases(
+  cfg: HybridMemoryConfig,
+  api: ClawdbotPluginApi,
+  opts?: { bootRegistrationGeneration?: number },
+): DatabaseContext {
+  const bootRegistrationGeneration = opts?.bootRegistrationGeneration ?? -1;
+  const isBootstrapSuperseded = (): boolean => isRegistrationSuperseded(bootRegistrationGeneration);
   const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
@@ -494,10 +500,8 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
     if (appended) {
       (cfg.llm as Record<string, unknown>).default = defaultList;
       (cfg.llm as Record<string, unknown>).heavy = heavyList;
-      gatewayLogInfoOnce(
-        "appended-gateway-models",
+      api.logger.info?.(
         "memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.",
-        api,
       );
     }
   }
@@ -597,6 +601,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // Prerequisite checks (async, don't block plugin start): verify keys and model access
   // Health status can be queried by tools to fail gracefully instead of throwing at runtime.
   const initialized = (async () => {
+    if (isBootstrapSuperseded()) return;
     if (wal) {
       try {
         await wal.init();
@@ -609,8 +614,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         api.logger.warn(`memory-hybrid: WAL initialization failed: ${e}`);
       }
     }
+    if (isBootstrapSuperseded()) return;
     try {
       await embeddings.embed("verify");
+      if (isBootstrapSuperseded()) return;
       health.embeddingsOk = true;
       const effectiveProvider = embeddings.activeProvider ?? cfg.embedding.provider;
       const modelForLog =
@@ -623,6 +630,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog})`,
       );
     } catch (e) {
+      if (isBootstrapSuperseded()) return;
       const asErr = e instanceof Error ? e : new Error(String(e));
       if (!shouldSuppressEmbeddingError(asErr)) {
         capturePluginError(asErr, {
@@ -654,15 +662,39 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       );
     }
     if (cfg.credentials.enabled && credentialsDb) {
+      if (isBootstrapSuperseded()) return;
       try {
-        const items = credentialsDb.list();
-        if (items.length > 0) {
-          const first = items[0];
-          credentialsDb.get(first.service, first.type as CredentialType);
+        const verifyVault = (): void => {
+          const items = credentialsDb.list();
+          if (items.length > 0) {
+            const first = items[0];
+            credentialsDb.get(first.service, first.type as CredentialType);
+          }
+        };
+        let lastErr: unknown;
+        for (let attempt = 0; attempt < 5; attempt++) {
+          try {
+            verifyVault();
+            lastErr = undefined;
+            break;
+          } catch (e) {
+            lastErr = e;
+            const msg = String(e);
+            if (!/database connection is not open/i.test(msg) || attempt >= 4) {
+              throw e;
+            }
+            await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
+          }
         }
+        if (lastErr) throw lastErr;
+        if (isBootstrapSuperseded()) return;
         health.credentialsVaultOk = true;
         api.logger.info("memory-hybrid: credentials vault check OK");
       } catch (e) {
+        if (isBootstrapSuperseded() && isDbClosedError(e)) {
+          api.logger.debug?.("memory-hybrid: credentials vault check skipped (registration superseded)");
+          return;
+        }
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {
           subsystem: "credentials",
           operation: "vault-verify",

@@ -30,6 +30,11 @@ import {
   shallowClonePluginConfigForGatewayMerge,
 } from "./provider-router.js";
 import { getHybridMemoryRegistrationState } from "./hybrid-memory-generation-state.js";
+import {
+  awaitReloadTeardownBeforeOpen,
+  drainOldBootstrap,
+  schedulePluginTeardown,
+} from "./hybrid-memory-reload-coordinator.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
@@ -199,37 +204,50 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     resetStartupMemoryAttribution();
     // Dispose tool registrations when API exposes unregister/dispose handles.
     old.toolRegistrationHandle?.dispose();
-    // Close SQLite/Lance and related stores before opening new connections (issue #802 — same paths must not be double-opened).
-    closeOldDatabases({
-      factsDb: old.factsDb,
-      edictStore: old.edictStore,
-      vectorDb: old.vectorDb,
-      credentialsDb: old.credentialsDb,
-      proposalsDb: old.proposalsDb,
-      identityReflectionStore: old.identityReflectionStore,
-      personaStateStore: old.personaStateStore,
-      eventLog: old.eventLog,
-      narrativesDb: old.narrativesDb,
-      aliasDb: old.aliasDb,
-      eventBus: old.eventBus,
-      issueStore: old.issueStore,
-      workflowStore: old.workflowStore,
-      crystallizationStore: old.crystallizationStore,
-      toolProposalStore: old.toolProposalStore,
-      verificationStore: old.verificationStore,
-      provenanceService: old.provenanceService,
-      learningsDb: old.learningsDb,
-      apitapStore: old.apitapStore,
-      auditStore: old.auditStore,
-      agentHealthStore: old.agentHealthStore,
-    });
+    const oldRuntime = old;
     old.pythonBridge?.shutdown().catch(() => {});
     runtimeRef.value = null;
+    // Let in-flight bootstrap (vault check, embedding verify) finish before permanentClose (#1550 reload race).
+    schedulePluginTeardown(async () => {
+      await drainOldBootstrap(oldRuntime.bootstrapAsyncInit);
+      closeOldDatabases({
+        factsDb: oldRuntime.factsDb,
+        edictStore: oldRuntime.edictStore,
+        vectorDb: oldRuntime.vectorDb,
+        credentialsDb: oldRuntime.credentialsDb,
+        proposalsDb: oldRuntime.proposalsDb,
+        identityReflectionStore: oldRuntime.identityReflectionStore,
+        personaStateStore: oldRuntime.personaStateStore,
+        eventLog: oldRuntime.eventLog,
+        narrativesDb: oldRuntime.narrativesDb,
+        aliasDb: oldRuntime.aliasDb,
+        eventBus: oldRuntime.eventBus,
+        issueStore: oldRuntime.issueStore,
+        workflowStore: oldRuntime.workflowStore,
+        crystallizationStore: oldRuntime.crystallizationStore,
+        toolProposalStore: oldRuntime.toolProposalStore,
+        verificationStore: oldRuntime.verificationStore,
+        provenanceService: oldRuntime.provenanceService,
+        learningsDb: oldRuntime.learningsDb,
+        apitapStore: oldRuntime.apitapStore,
+        auditStore: oldRuntime.auditStore,
+        agentHealthStore: oldRuntime.agentHealthStore,
+      });
+    });
+  }
+
+  if (old) {
+    const teardownSettled = awaitReloadTeardownBeforeOpen();
+    if (!teardownSettled) {
+      logApi.logger.debug?.(
+        "memory-hybrid: reload teardown still in progress after wait; opening new DB handles (superseded bootstrap/recall guarded)",
+      );
+    }
   }
 
   let dbContext: ReturnType<typeof initializeDatabases>;
   try {
-    dbContext = initializeDatabases(cfg, logApi);
+    dbContext = initializeDatabases(cfg, logApi, { bootRegistrationGeneration: registrationGeneration });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",

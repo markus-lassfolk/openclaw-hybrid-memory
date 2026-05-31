@@ -8,6 +8,7 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
+import { isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import type { LifecycleContext, RecallStageResult, SessionState } from "./types.js";
 import { runRecall } from "./stage-recall/run-recall.js";
 
@@ -19,6 +20,14 @@ export async function runRecallStage(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<RecallStageResult | null> {
+  const ownerGeneration = ctx.registrationGeneration ?? -1;
+  const liveGeneration = ctx.currentRegistrationGenerationRef?.value;
+  if (ownerGeneration >= 0 && liveGeneration !== undefined && liveGeneration !== ownerGeneration) {
+    return null;
+  }
+  if (ownerGeneration >= 0 && isRegistrationSuperseded(ownerGeneration)) {
+    return null;
+  }
   const ac = new AbortController();
   const { signal } = ac;
   let timer: ReturnType<typeof setTimeout> | undefined;

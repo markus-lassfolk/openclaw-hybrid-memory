@@ -77,6 +77,9 @@ export interface LifecycleContext {
   recallInFlightRef: { value: number };
   /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
   lastAutoRecallPromptRef: { value: string | null };
+  /** Plugin registration generation for this hook instance (hot-reload guard). */
+  registrationGeneration?: number;
+  currentRegistrationGenerationRef?: { value: number };
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */

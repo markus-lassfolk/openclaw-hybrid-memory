@@ -1,0 +1,81 @@
+import { receiveMessageOnPort, MessageChannel } from "node:worker_threads";
+
+/** Max time to wait for superseded instance bootstrap before permanentClose (embedding verify can take minutes). */
+export const BOOTSTRAP_DRAIN_MS = 3_000;
+
+/** Max time register() blocks waiting for scheduled teardown before opening new DB handles. */
+export const TEARDOWN_WAIT_MS = 5_000;
+
+/** Serializes plugin teardown (bootstrap settle → close DBs) across hot reloads (#1550 / reload race). */
+let reloadTeardownChain: Promise<void> = Promise.resolve();
+
+export function schedulePluginTeardown(teardown: () => Promise<void>): void {
+  reloadTeardownChain = reloadTeardownChain.then(teardown, teardown);
+}
+
+/** Wait for superseded bootstrap work with a short cap; then close old handles regardless. */
+export async function drainOldBootstrap(bootstrap: Promise<void>): Promise<void> {
+  await Promise.race([
+    bootstrap.catch(() => {
+      /* embedding/vault init may fail; still close handles */
+    }),
+    new Promise<void>((resolve) => setTimeout(resolve, BOOTSTRAP_DRAIN_MS)),
+  ]);
+}
+
+/**
+ * Block until scheduled teardowns finish before opening new DB handles (issue #802).
+ * Returns false if teardown is still in flight (caller may proceed; generation guards apply).
+ */
+export function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boolean {
+  try {
+    awaitPromiseOnEventLoop(reloadTeardownChain, timeoutMs);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Reset chain for unit tests only. */
+export function resetReloadTeardownChainForTests(): void {
+  reloadTeardownChain = Promise.resolve();
+}
+
+function awaitPromiseOnEventLoop(promise: Promise<void>, timeoutMs: number): void {
+  let settled = false;
+  let error: unknown;
+  void promise.then(
+    () => {
+      settled = true;
+    },
+    (e) => {
+      error = e;
+      settled = true;
+    },
+  );
+
+  const { port1, port2 } = new MessageChannel();
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (!settled && Date.now() < deadline) {
+      setImmediate(() => {
+        try {
+          port2.postMessage(null);
+        } catch {
+          /* port may be closed */
+        }
+      });
+      receiveMessageOnPort(port1, { timeout: 100 });
+    }
+  } finally {
+    port1.close();
+    port2.close();
+  }
+
+  if (!settled) {
+    throw new Error(`memory-hybrid: plugin reload teardown timed out after ${timeoutMs}ms`);
+  }
+  if (error) {
+    throw error instanceof Error ? error : new Error(String(error));
+  }
+}

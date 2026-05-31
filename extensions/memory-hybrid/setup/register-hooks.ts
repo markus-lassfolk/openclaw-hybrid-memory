@@ -177,6 +177,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       issueStore: ctx.issueStore,
       recallInFlightRef: ctx.recallInFlightRef,
       lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
+      registrationGeneration: ctx.registrationGeneration,
+      currentRegistrationGenerationRef: ctx.currentRegistrationGenerationRef,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
