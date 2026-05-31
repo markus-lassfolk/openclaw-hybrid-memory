@@ -242,9 +242,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
       }
 
+      if (isStaleLifecycleGeneration(ctx)) return;
       await runCaptureStage(event, rApi, ctx, sessionState);
       if (isStaleLifecycleGeneration(ctx)) return;
       const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+      if (isStaleLifecycleGeneration(ctx)) return;
       if (ctx.cfg.goalStewardship?.enabled) {
         try {
           const { listActiveGoals, resolveGoalsDir } = await import("../services/goal-stewardship.js");
