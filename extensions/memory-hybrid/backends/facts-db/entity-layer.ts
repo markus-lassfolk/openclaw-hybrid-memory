@@ -739,90 +739,27 @@ export function cleanupEntityMentions(
         })),
       );
 
-      const acceptedByKey = new Map<
-        string,
-        {
-          label: EntityMentionLabel;
-          surfaceText: string;
-          normalizedSurface: string;
-          startOffset: number;
-          endOffset: number;
-          confidence: number;
-          detectedLang: string | null;
-          source: string;
-        }
-      >();
-
-      for (const row of rows) {
-        rowsScanned++;
-        const canonical = canonicalizeEntityMention({
-          label: row.label,
-          surfaceText: row.surface_text,
-          normalizedSurface: row.normalized_surface,
-          confidence: row.confidence,
-        });
-        if (!canonical.accepted) {
-          rejected++;
-          countReason(rejectReasons, canonical.reason);
-          continue;
-        }
-        if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
-          reclassified++;
-        }
-        const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
-        const existing = acceptedByKey.get(key);
-        if (existing) {
-          duplicates++;
-          if (canonical.confidence > existing.confidence) {
-            acceptedByKey.set(key, {
-              ...existing,
-              confidence: canonical.confidence,
-              surfaceText: canonical.surfaceText,
-              startOffset: row.start_offset,
-              endOffset: row.end_offset,
-              detectedLang: row.detected_lang,
-              source: row.source,
-            });
-          }
-          continue;
-        }
-        accepted++;
-        acceptedByKey.set(key, {
-          label: canonical.label,
-          surfaceText: canonical.surfaceText,
-          normalizedSurface: canonical.normalizedSurface,
-          startOffset: row.start_offset,
-          endOffset: row.end_offset,
-          confidence: canonical.confidence,
-          detectedLang: row.detected_lang,
-          source: row.source,
-        });
+      const result = processEntityMentionsForFact(rows);
+      rowsScanned += result.counters.rowsScanned;
+      accepted += result.counters.accepted;
+      rejected += result.counters.rejected;
+      duplicates += result.counters.duplicates;
+      reclassified += result.counters.reclassified;
+      for (const [reason, count] of Object.entries(result.counters.rejectReasons)) {
+        rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
       }
 
-      const allAccepted = [...acceptedByKey.values()];
-      const filteredBySubstring: typeof allAccepted = [];
-      let substringFilteredCount = 0;
-      for (const m of allAccepted) {
-        const isSubstring = allAccepted.some(
-          (other) =>
-            other !== m &&
-            other.label === m.label &&
-            other.normalizedSurface.length > m.normalizedSurface.length &&
-            other.normalizedSurface.includes(m.normalizedSurface),
-        );
-        if (isSubstring) {
-          substringFilteredCount++;
-          continue;
-        }
-        filteredBySubstring.push(m);
-      }
+      const nextRows = result.accepted.map((m) => ({
+        label: m.label,
+        surfaceText: m.surfaceText,
+        normalizedSurface: m.normalizedSurface,
+        startOffset: m.sourceRow.start_offset,
+        endOffset: m.sourceRow.end_offset,
+        confidence: m.confidence,
+        detectedLang: m.sourceRow.detected_lang,
+        source: m.sourceRow.source,
+      }));
 
-      const nextRows = filteredBySubstring;
-      accepted -= substringFilteredCount;
-      rejected += substringFilteredCount;
-      if (substringFilteredCount > 0) {
-        rejectReasons.substring = (rejectReasons.substring ?? 0) + substringFilteredCount;
-      }
       const after = rowsSignature(
         nextRows.map((row) => ({
           label: row.label,
