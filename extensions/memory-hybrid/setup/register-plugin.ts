@@ -259,6 +259,7 @@ export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<v
   }
 
   if (old && !reuseDatabases) {
+    // Wait for teardown to complete before opening new DB handles (#802).
     const teardownSettled = await awaitReloadTeardownBeforeOpen();
     if (!teardownSettled) {
       logApi.logger.debug?.(
