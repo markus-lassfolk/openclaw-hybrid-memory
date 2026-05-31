@@ -73,14 +73,27 @@ function normalizeMentionSurfaceText(surfaceText: string): string {
   return surfaceText.trim();
 }
 
+function isValidTwoCharacterMention(mention: { label: EntityMentionLabel; surfaceText: string }): boolean {
+  const surface = mention.surfaceText.trim();
+  if (surface.length !== 2) {
+    return false;
+  }
+
+  if (mention.label === "PERSON") {
+    return /^\p{L}{2}$/u.test(surface);
+  }
+
+  return /^[\p{L}\p{N}]{2}$/u.test(surface) && (/\p{Lu}/u.test(surface) || /\p{N}/u.test(surface));
+}
+
 function shouldFilterEntityMention(mention: {
   label: EntityMentionLabel;
   surfaceText: string;
   normalizedSurface: string;
 }): boolean {
   if (
-    mention.normalizedSurface.length < MIN_ENTITY_MENTION_LENGTH ||
-    mention.surfaceText.length < MIN_ENTITY_MENTION_LENGTH
+    mention.surfaceText.length < MIN_ENTITY_MENTION_LENGTH &&
+    !isValidTwoCharacterMention({ label: mention.label, surfaceText: mention.surfaceText })
   ) {
     return true;
   }
@@ -169,7 +182,7 @@ export function normalizeFactEntityMentionsForPersistence<
   const prepared = mentions
     .map((mention) => {
       const surfaceText = normalizeMentionSurfaceText(mention.surfaceText);
-      const normalizedSurface = normalizeEntityKey(surfaceText);
+      const normalizedSurface = normalizeEntityKey(mention.normalizedSurface) || normalizeEntityKey(surfaceText);
       // Adjust offsets for trimmed whitespace so stored offsets match the trimmed surfaceText in the original fact text
       const leadingTrim = mention.surfaceText.length - mention.surfaceText.trimStart().length;
       const trailingTrim = mention.surfaceText.length - mention.surfaceText.trimEnd().length;

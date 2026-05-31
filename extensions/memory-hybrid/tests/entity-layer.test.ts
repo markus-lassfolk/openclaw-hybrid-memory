@@ -82,10 +82,10 @@ describe("normalizeFactEntityMentionsForPersistence", () => {
         },
         {
           label: "ORG",
-          surfaceText: "AI",
-          normalizedSurface: "ai",
+          surfaceText: "A",
+          normalizedSurface: "a",
           startOffset: 100,
-          endOffset: 102,
+          endOffset: 101,
           confidence: 0.9,
         },
       ]),
@@ -105,6 +105,199 @@ describe("normalizeFactEntityMentionsForPersistence", () => {
         startOffset: 80,
         endOffset: 96,
         confidence: 0.95,
+      },
+    ]);
+  });
+
+  it("preserves extractor-provided canonical normalized surfaces", () => {
+    const result = normalizeFactEntityMentionsForPersistence([
+      {
+        label: "ORG",
+        surfaceText: "OpenAI",
+        normalizedSurface: "OpenAI",
+        startOffset: 0,
+        endOffset: 6,
+        confidence: 0.8,
+      },
+      {
+        label: "ORG",
+        surfaceText: "OpenAI, Inc.",
+        normalizedSurface: "OpenAI",
+        startOffset: 0,
+        endOffset: 12,
+        confidence: 0.9,
+      },
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result.map((mention) => mention.normalizedSurface)).toEqual(["openai", "openai"]);
+    expect(result.map((mention) => mention.surfaceText)).toEqual(["OpenAI", "OpenAI, Inc."]);
+  });
+
+  it("keeps valid two-character entity mentions", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "PERSON",
+          surfaceText: "Li",
+          normalizedSurface: "li",
+          startOffset: 0,
+          endOffset: 2,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Xi",
+          normalizedSurface: "xi",
+          startOffset: 3,
+          endOffset: 5,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "HP",
+          normalizedSurface: "hp",
+          startOffset: 6,
+          endOffset: 8,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "3M",
+          normalizedSurface: "3m",
+          startOffset: 9,
+          endOffset: 11,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "PERSON",
+        surfaceText: "Li",
+        normalizedSurface: "li",
+        startOffset: 0,
+        endOffset: 2,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Xi",
+        normalizedSurface: "xi",
+        startOffset: 3,
+        endOffset: 5,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "HP",
+        normalizedSurface: "hp",
+        startOffset: 6,
+        endOffset: 8,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "3M",
+        normalizedSurface: "3m",
+        startOffset: 9,
+        endOffset: 11,
+        confidence: 0.9,
+      },
+    ]);
+  });
+
+  it("does not drop non-overlapping mentions that share a token", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "PERSON",
+          surfaceText: "Lee",
+          normalizedSurface: "lee",
+          startOffset: 0,
+          endOffset: 3,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Lee Chang",
+          normalizedSurface: "lee chang",
+          startOffset: 20,
+          endOffset: 29,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "PERSON",
+        surfaceText: "Lee",
+        normalizedSurface: "lee",
+        startOffset: 0,
+        endOffset: 3,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Lee Chang",
+        normalizedSurface: "lee chang",
+        startOffset: 20,
+        endOffset: 29,
+        confidence: 0.9,
+      },
+    ]);
+  });
+
+  it("treats punctuation as a boundary when pruning overlapping contained mentions", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "Acme",
+          normalizedSurface: "acme",
+          startOffset: 0,
+          endOffset: 4,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme, Inc.",
+          normalizedSurface: "acme, inc.",
+          startOffset: 0,
+          endOffset: 10,
+          confidence: 0.95,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "Acme, Inc.",
+        normalizedSurface: "acme, inc.",
+        startOffset: 0,
+        endOffset: 10,
+        confidence: 0.95,
+      },
+    ]);
+  });
+
+  it("keeps offsets aligned with trimmed surface text", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "  OpenAI  ",
+          normalizedSurface: "openai",
+          startOffset: 10,
+          endOffset: 20,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "OpenAI",
+        normalizedSurface: "openai",
+        startOffset: 12,
+        endOffset: 18,
+        confidence: 0.9,
       },
     ]);
   });
