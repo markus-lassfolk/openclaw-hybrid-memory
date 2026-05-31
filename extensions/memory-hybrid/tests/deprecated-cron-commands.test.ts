@@ -3,13 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
-
+import { ensureMaintenanceCronJobs } from "../cli/cmd-install.js";
 import {
   collectRecentHmExitLedgerPaths,
   findDeprecatedHybridMemCronTokens,
   findDeprecatedTokensInHmExitContent,
 } from "../services/deprecated-cron-commands.js";
-import { ensureMaintenanceCronJobs } from "../cli/cmd-install.js";
 
 describe("deprecated-cron-commands", () => {
   it("detects deprecated command tokens in cron message text", () => {
@@ -22,6 +21,65 @@ describe("deprecated-cron-commands", () => {
     const msg = "note: consolidate-episodes-v2 is not a command";
     const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);
     expect(hits).toEqual([]);
+  });
+
+  it("detects the stale monthly enrich-entities limit 500 command", () => {
+    const msg = 'hm_step "enrich-entities" openclaw hybrid-mem enrich-entities --limit 500 --verbose';
+    const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);
+    expect(hits).toContain("enrich-entities --limit 500");
+  });
+
+  it("verify --fix path normalizes stale monthly enrich-entities limit 500 messages", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
+    try {
+      mkdirSync(join(openclawDir, "cron"), { recursive: true });
+      writeFileSync(join(openclawDir, "openclaw.json"), "{}", "utf-8");
+
+      const jobsPath = join(openclawDir, "cron", "jobs.json");
+      writeFileSync(
+        jobsPath,
+        JSON.stringify(
+          {
+            jobs: [
+              {
+                pluginJobId: "hybrid-mem:monthly-consolidation",
+                name: "monthly-consolidation",
+                schedule: { kind: "cron", expr: "0 5 1 * *" },
+                enabled: true,
+                payload: {
+                  kind: "agentTurn",
+                  message:
+                    'EXECUTION\n```bash\nhm_step "enrich-entities" openclaw hybrid-mem enrich-entities --limit 500 --verbose\n```',
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
+        normalizeExisting: true,
+        reEnableDisabled: false,
+      });
+      expect(result.normalized).toContain("monthly-consolidation");
+
+      const next = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs: Array<Record<string, unknown>> };
+      const job = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:monthly-consolidation") as
+        | Record<string, unknown>
+        | undefined;
+      expect(job).toBeTruthy();
+      const payload = job?.payload as { message?: unknown } | undefined;
+      const msg = String(payload?.message ?? job?.message ?? "");
+      expect(msg).toContain(
+        `openclaw hybrid-mem enrich-entities --limit "\${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}" --verbose`,
+      );
+      expect(msg).not.toContain("enrich-entities --limit 500");
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
   });
 
   it("detects deprecated step tokens in HM_EXIT output", () => {
