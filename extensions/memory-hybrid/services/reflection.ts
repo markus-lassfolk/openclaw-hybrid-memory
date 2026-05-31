@@ -105,8 +105,10 @@ export interface ReflectionRulesDiagnostics {
 // Only accepts single-line no-op responses; multiline outputs must be parsed for RULE lines.
 const VALID_NO_RULES_PATTERN =
   /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[^\n\r]*$/i;
-const LOW_CONFIDENCE_PREFIX_PATTERN = /^\s*(?:\[(?:low[-\s]?confidence)\]|\((?:low[-\s]?confidence)\)|low[-\s]?confidence\s*[:\-])\s*/i;
-const EXPLICIT_CONFIDENCE_PREFIX_PATTERN = /^\s*(?:\[|\()?\s*confidence\s*[:=]\s*(?<value>0(?:\.\d+)?|1(?:\.0+)?)\s*(?:\]|\))?\s*/i;
+const LOW_CONFIDENCE_PREFIX_PATTERN =
+  /^\s*(?:\[(?:low[-\s]?confidence)\]|\((?:low[-\s]?confidence)\)|low[-\s]?confidence\s*[:\-])\s*/i;
+const EXPLICIT_CONFIDENCE_PREFIX_PATTERN =
+  /^\s*(?:\[|\()?\s*confidence\s*[:=]\s*(?<value>0(?:\.\d+)?|1(?:\.0+)?)\s*(?:\]|\))?\s*/i;
 const REFLECTION_RULE_MIN_CONFIDENCE = 0.5;
 
 const THINKING_WRAPPER_TAGS_PATTERN = /<\/?(?:redacted_thinking|thinking|reasoning|think)>/gi;
@@ -1300,15 +1302,15 @@ export async function runReflectionRules(
         ? "all_candidates_duplicate"
         : parseableLines > 0 && rejectedLowConfidence > 0 && rejectedDuplicates === 0 && rejectedLength === 0
           ? "all_candidates_rejected_low_confidence"
-        : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
-          ? "all_candidates_rejected_length"
-          : parseableLines > 0
-            ? "all_candidates_rejected"
-            : looksLikeValidNoRules
-              ? "valid_no_actionable_rules"
-              : noRulesClassificationResponse.length === 0
-                ? "empty_model_response"
-                : "invalid_response_format";
+          : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
+            ? "all_candidates_rejected_length"
+            : parseableLines > 0
+              ? "all_candidates_rejected"
+              : looksLikeValidNoRules
+                ? "valid_no_actionable_rules"
+                : noRulesClassificationResponse.length === 0
+                  ? "empty_model_response"
+                  : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
       parseSuccess,
@@ -1320,9 +1322,9 @@ export async function runReflectionRules(
       status:
         zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response"
           ? "degraded"
-          : zeroRulesReason === "all_candidates_duplicate"
-            ? "partial"
-            : "ok",
+          : zeroRulesReason === "valid_no_actionable_rules"
+            ? "ok"
+            : "partial",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +

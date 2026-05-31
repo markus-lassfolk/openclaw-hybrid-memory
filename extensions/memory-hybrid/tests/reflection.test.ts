@@ -546,7 +546,7 @@ describe("runReflectionRules diagnostics", () => {
 
     expect(res.rulesStored).toBe(0);
     expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_length");
-    expect(res.diagnostics.status).toBe("ok");
+    expect(res.diagnostics.status).toBe("partial");
   });
 
   it("counts low-confidence prefixed RULE candidates as rejectedLowConfidence", async () => {
@@ -566,6 +566,28 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.rejectedLowConfidence).toBe(1);
     expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_low_confidence");
     expect(res.diagnostics.parseSuccess).toBe(true);
+    expect(res.diagnostics.status).toBe("partial");
+  });
+
+  it("reports partial status when candidates are rejected for mixed low-confidence and length", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps(
+      ["RULE: [low confidence] Always keep strict TypeScript settings enabled across all projects.", "RULE: tiny"].join(
+        "\n",
+      ),
+    );
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.rejectedLowConfidence).toBe(1);
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected");
+    expect(res.diagnostics.status).toBe("partial");
   });
 
   it("counts all parsed RULE lines in parsedCandidates, even if rejected for length", async () => {
