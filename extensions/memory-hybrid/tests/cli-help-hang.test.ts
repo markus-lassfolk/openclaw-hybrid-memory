@@ -59,7 +59,7 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
+    memoryHybridPlugin.register(mockApi as never);
     expect(existsSync(sqlitePath)).toBe(false);
     expect(api.registerCli).toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalled();
@@ -83,7 +83,7 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
+    memoryHybridPlugin.register(mockApi as never);
     expect(existsSync(sqlitePath)).toBe(false);
     expect(api.registerCli).toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalled();
@@ -107,7 +107,7 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
+    memoryHybridPlugin.register(mockApi as never);
     expect(api.registerTool).toHaveBeenCalled();
     expect(api.registerService).toHaveBeenCalled();
   });
@@ -124,7 +124,7 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
+    memoryHybridPlugin.register(mockApi as never);
     expect(api.registerCli).toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalled();
     expect(api.registerService).not.toHaveBeenCalled();

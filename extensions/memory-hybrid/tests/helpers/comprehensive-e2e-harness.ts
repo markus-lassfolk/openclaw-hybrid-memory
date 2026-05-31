@@ -137,9 +137,9 @@ export function makeFullStackApi(tmpDir: string): {
   return api;
 }
 
-export async function registerFullPlugin(api: FullStackApi, pluginConfig: Record<string, unknown>): Promise<void> {
+export function registerFullPlugin(api: FullStackApi, pluginConfig: Record<string, unknown>): void {
   api.pluginConfig = pluginConfig;
-  await memoryHybridPlugin.register(api as never);
+  memoryHybridPlugin.register(api as never);
 }
 
 export async function invokeHooks(
