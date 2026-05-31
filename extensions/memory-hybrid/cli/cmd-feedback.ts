@@ -610,6 +610,12 @@ export async function runExtractImplicitFeedbackForCli(
     progress.trajectoriesBuilt = trajectoriesBuilt;
     emitProgress();
 
+    // Check if signal cap exceeded after accumulating signals from this session
+    if (maxSignalsPerRun > 0 && totalSignals >= maxSignalsPerRun) {
+      markPartialProgress("maxSignals");
+      break;
+    }
+
     if (!opts.dryRun && rawDb) {
       // Store raw signals in implicit_signals table
       try {
@@ -733,6 +739,12 @@ export async function runExtractImplicitFeedbackForCli(
         trajectoriesBuilt += trajectories.length;
         progress.trajectoriesBuilt = trajectoriesBuilt;
         emitProgress();
+
+        // Check if trajectory cap exceeded after accumulating trajectories from this session
+        if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt >= maxTrajectoriesPerRun) {
+          markPartialProgress("maxTrajectories");
+          break;
+        }
 
         const insertTraj = rawDb.prepare(`
           INSERT OR REPLACE INTO feedback_trajectories
