@@ -290,6 +290,26 @@ error: unknown command 'bar'
       expect(result.error).toContain("skipped_cooldown");
     });
 
+    it("treats explicit skipped statuses as skipped for maintenance QA markers", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(
+        exitPath,
+        "2024-05-08T02:01:00Z record-storage-sample exit=0 status=skipped reason=skipped_already_sampled_today\n",
+      );
+
+      const result = validateMaintenanceExecution(
+        exitPath,
+        undefined,
+        ["record-storage-sample"],
+        true, // allowSkip
+      );
+
+      expect(result.maintenanceStatus).toBe("skipped");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.error).toContain("skipped_already_sampled_today");
+    });
+
     it("reports success and updates guard when only some steps are skipped in multi-step job", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
