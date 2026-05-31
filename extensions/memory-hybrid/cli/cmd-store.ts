@@ -47,7 +47,6 @@ export async function runStoreForCli(
   const entity = opts.entity ?? extracted.entity ?? null;
   const key = opts.key ?? extracted.key ?? null;
   const value = opts.value ?? extracted.value ?? null;
-
   if (isCredentialLike(text, entity, key, value)) {
     if (cfg.credentials.enabled && credentialsDb) {
       const parsed = tryParseCredentialForVault(text, entity, key, value, {
