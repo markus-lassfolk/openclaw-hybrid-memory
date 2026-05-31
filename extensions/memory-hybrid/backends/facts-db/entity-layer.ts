@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
+import { isEntityStopWord, normalizeEntityStopWord } from "../../utils/entity-stopwords.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 
 export type EntityMentionLabel = "PERSON" | "ORG";
@@ -61,6 +62,163 @@ export type ListFactsNeedingEnrichmentOptions = {
 
 export function normalizeEntityKey(name: string): string {
   return name.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+const MIN_ENTITY_MENTION_LENGTH = 3;
+const NON_ORG_SERVICE_TERMS = new Set(["signal", "telegram", "whatsapp"]);
+const NON_ENTITY_ORG_TERMS = new Set(["hybrid memory plugin", "the agent", "the system"]);
+const PERSON_ROLE_TITLES = new Set(["architect", "developer", "director", "engineer", "manager", "surgeon"]);
+
+function normalizeMentionSurfaceText(surfaceText: string): string {
+  return surfaceText.trim();
+}
+
+function isValidTwoCharacterMention(mention: { label: EntityMentionLabel; surfaceText: string }): boolean {
+  const surface = mention.surfaceText.trim();
+  if (surface.length !== 2) {
+    return false;
+  }
+
+  if (mention.label === "PERSON") {
+    return /^\p{L}{2}$/u.test(surface);
+  }
+
+  if (!/^[\p{L}\p{N}]{2}$/u.test(surface)) {
+    return false;
+  }
+
+  if (/\p{N}/u.test(surface) || /\p{Lu}/u.test(surface)) {
+    return true;
+  }
+
+  // Allow two-character org mentions in scripts without uppercase variants (e.g. Han).
+  return /\P{Script=Latin}/u.test(surface);
+}
+
+function shouldFilterEntityMention(mention: {
+  label: EntityMentionLabel;
+  surfaceText: string;
+  normalizedSurface: string;
+}): boolean {
+  if (
+    mention.surfaceText.length < MIN_ENTITY_MENTION_LENGTH &&
+    !isValidTwoCharacterMention({ label: mention.label, surfaceText: mention.surfaceText })
+  ) {
+    return true;
+  }
+
+  if (isEntityStopWord(mention.surfaceText)) {
+    return true;
+  }
+
+  const stopWordKey = normalizeEntityStopWord(mention.surfaceText);
+  if (mention.label === "ORG") {
+    return NON_ORG_SERVICE_TERMS.has(stopWordKey) || NON_ENTITY_ORG_TERMS.has(stopWordKey);
+  }
+
+  return !mention.normalizedSurface.includes(" ") && PERSON_ROLE_TITLES.has(stopWordKey);
+}
+
+function isContainedByLongerMention(
+  mention: { label: EntityMentionLabel; normalizedSurface: string; startOffset: number; endOffset: number },
+  other: { label: EntityMentionLabel; normalizedSurface: string; startOffset: number; endOffset: number },
+): boolean {
+  if (mention.label !== other.label || mention.normalizedSurface === other.normalizedSurface) {
+    return false;
+  }
+
+  if (other.normalizedSurface.length <= mention.normalizedSurface.length) {
+    return false;
+  }
+
+  // Check if spans overlap: they must overlap for containment to apply
+  const spansOverlap = mention.startOffset < other.endOffset && other.startOffset < mention.endOffset;
+  if (!spansOverlap) {
+    return false;
+  }
+
+  const isWordBoundary = (char: string): boolean => {
+    return char === " " || /[,\-.\/()\[\]{}:;!?'"&]/.test(char);
+  };
+
+  let searchStart = 0;
+  while (searchStart <= other.normalizedSurface.length - mention.normalizedSurface.length) {
+    const index = other.normalizedSurface.indexOf(mention.normalizedSurface, searchStart);
+    if (index === -1) {
+      return false;
+    }
+
+    const endIndex = index + mention.normalizedSurface.length;
+    const beforeChar = index > 0 ? other.normalizedSurface[index - 1] : " ";
+    const afterChar = endIndex < other.normalizedSurface.length ? other.normalizedSurface[endIndex] : " ";
+
+    if (isWordBoundary(beforeChar) && (isWordBoundary(afterChar) || endIndex === other.normalizedSurface.length)) {
+      return true;
+    }
+
+    searchStart = index + 1;
+  }
+
+  return false;
+}
+
+function preferEntityMention<
+  T extends {
+    confidence: number;
+    surfaceText: string;
+    startOffset: number;
+  },
+>(left: T, right: T): T {
+  if (right.confidence !== left.confidence) {
+    return right.confidence > left.confidence ? right : left;
+  }
+  if (right.surfaceText.length !== left.surfaceText.length) {
+    return right.surfaceText.length > left.surfaceText.length ? right : left;
+  }
+  return right.startOffset < left.startOffset ? right : left;
+}
+
+export function normalizeFactEntityMentionsForPersistence<
+  T extends {
+    label: EntityMentionLabel;
+    surfaceText: string;
+    normalizedSurface: string;
+    startOffset: number;
+    endOffset: number;
+    confidence: number;
+  },
+>(mentions: readonly T[]): T[] {
+  const prepared = mentions
+    .map((mention) => {
+      const surfaceText = normalizeMentionSurfaceText(mention.surfaceText);
+      const normalizedSurface = normalizeEntityKey(mention.normalizedSurface) || normalizeEntityKey(surfaceText);
+      // Adjust offsets for trimmed whitespace so stored offsets match the trimmed surfaceText in the original fact text
+      const leadingTrim = mention.surfaceText.length - mention.surfaceText.trimStart().length;
+      const trailingTrim = mention.surfaceText.length - mention.surfaceText.trimEnd().length;
+      return {
+        ...mention,
+        surfaceText,
+        normalizedSurface,
+        startOffset: mention.startOffset + leadingTrim,
+        endOffset: mention.endOffset - trailingTrim,
+      };
+    })
+    .filter((mention) => mention.surfaceText.length > 0 && mention.normalizedSurface.length > 0)
+    .filter((mention) => !shouldFilterEntityMention(mention))
+    .filter(
+      (mention, index, all) =>
+        !all.some((other, otherIndex) => otherIndex !== index && isContainedByLongerMention(mention, other)),
+    );
+
+  const deduplicated = new Map<string, T>();
+  for (const mention of prepared) {
+    // Use surfaceText for the dedup key so it matches what upsertOrganization/upsertContact compute for canonical_key
+    const key = `${mention.label}\u0000${normalizeEntityKey(mention.surfaceText)}`;
+    const existing = deduplicated.get(key);
+    deduplicated.set(key, existing ? preferEntityMention(existing, mention) : mention);
+  }
+
+  return [...deduplicated.values()].sort((left, right) => left.startOffset - right.startOffset);
 }
 
 /** Escape `%`, `_`, and `\` for SQLite `LIKE ... ESCAPE '\'` literal matching. */
@@ -214,6 +372,7 @@ export function replaceFactEntityMentions(
   const tx = createTransaction(db, () => {
     db.prepare("DELETE FROM fact_entity_mentions WHERE fact_id = ?").run(factId);
     db.prepare("DELETE FROM org_fact_links WHERE fact_id = ? AND reason = 'ner_mention'").run(factId);
+    const normalizedMentions = normalizeFactEntityMentionsForPersistence(mentions);
 
     const now = Math.floor(Date.now() / 1000);
     const ins = db.prepare(
@@ -229,7 +388,7 @@ export function replaceFactEntityMentions(
     const orgIds: string[] = [];
     const personRows: Array<{ surface: string; contactId: string }> = [];
 
-    for (const m of mentions) {
+    for (const m of normalizedMentions) {
       let contactId: string | null = null;
       let organizationId: string | null = null;
 

@@ -79,7 +79,7 @@ All tools use **underscore** names (`memory_store`, `memory_recall`, …). Dotte
 
 ## Entity layer (contacts, organizations, NER)
 
-When **`graph.enabled`** is true, new facts are enriched asynchronously with **PERSON** and **ORG** mentions (language hint via **franc**, extraction via LLM). Data lives in SQLite (`organizations`, `contacts`, `fact_entity_mentions`, `org_fact_links`). The **`memory_directory`** tool exposes **`list_contacts`** and **`org_view`** for structured lists—use **`memory_recall`** for ranked semantic search. Backfill older facts with **`openclaw hybrid-mem enrich-entities`**. See [GRAPH-MEMORY.md](../../docs/GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) and [MULTILINGUAL-SUPPORT.md](../../docs/MULTILINGUAL-SUPPORT.md).
+When **`graph.enabled`** is true, new facts are enriched asynchronously with **PERSON** and **ORG** mentions (language hint via **franc**, extraction via LLM). Before mention rows are written to SQLite (`organizations`, `contacts`, `fact_entity_mentions`, `org_fact_links`), they are normalized, deduplicated per fact/label, and filtered for short or generic noise. The **`memory_directory`** tool exposes **`list_contacts`** and **`org_view`** for structured lists—use **`memory_recall`** for ranked semantic search. Backfill older facts with **`openclaw hybrid-mem enrich-entities`**. See [GRAPH-MEMORY.md](../../docs/GRAPH-MEMORY.md#person-and-organization-enrichment-entity-layer) and [MULTILINGUAL-SUPPORT.md](../../docs/MULTILINGUAL-SUPPORT.md).
 
 ## Event Bus
 
