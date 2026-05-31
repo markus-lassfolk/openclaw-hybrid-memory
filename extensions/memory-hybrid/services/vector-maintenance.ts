@@ -114,21 +114,14 @@ export async function storeCanonicalVectorForFact(options: {
   const canPersistEmbeddingModel =
     typeof options.vectorDb.isLanceDbAvailable === "function" ? options.vectorDb.isLanceDbAvailable() : true;
   if (canPersistEmbeddingModel) {
-    try {
-      options.factsDb.setEmbeddingModel(options.factId, options.embeddingModel);
-      options.factsDb.storeEmbedding(
-        options.factId,
-        options.embeddingModel,
-        "canonical",
-        new Float32Array(options.vector),
-        options.vector.length,
-      );
-    } catch (err) {
-      // Log SQLite persistence errors after successful Lance store.
-      // Callers may optionally retry via persistCanonicalFactEmbedding utility.
-      const error = err instanceof Error ? err : new Error(String(err));
-      throw new Error(`SQLite fact_embeddings persist failed: ${error.message}`, { cause: err });
-    }
+    options.factsDb.setEmbeddingModel(options.factId, options.embeddingModel);
+    options.factsDb.storeEmbedding(
+      options.factId,
+      options.embeddingModel,
+      "canonical",
+      new Float32Array(options.vector),
+      options.vector.length,
+    );
   }
   return storedId;
 }

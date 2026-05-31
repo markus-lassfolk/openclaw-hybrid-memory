@@ -575,7 +575,7 @@ export async function runCapture(
                     await ctx.walRemove(walEntryId, api.logger);
                     continue;
                   } // close if (oldFact) guard
-                  continue;
+                  // Validation failed: fall through to default ADD-style store path
                 }
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
