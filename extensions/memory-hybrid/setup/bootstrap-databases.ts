@@ -350,6 +350,13 @@ export function createReusedDatabaseBootstrap(
             migrationFlagPath,
             markDone: false,
           });
+          if (isBootstrapSuperseded()) {
+            await clearMigrationFlagForRetry("registration superseded after migration");
+            api.logger.debug?.(
+              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
+            );
+            return;
+          }
           if (result.migrated > 0) {
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
           }
@@ -357,17 +364,6 @@ export function createReusedDatabaseBootstrap(
             api.logger.warn(
               `memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`,
             );
-          }
-          if (isBootstrapSuperseded()) {
-            if (result.errors.length > 0) {
-              await clearMigrationFlagForRetry("registration superseded after migration with errors");
-            }
-            api.logger.debug?.(
-              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
-            );
-            return;
-          }
-          if (result.errors.length > 0) {
             await clearMigrationFlagForRetry("credential migration completed with errors");
           }
         } catch (e) {
@@ -1001,8 +997,6 @@ export function initializeDatabases(
             markDone: false, // Flag already created atomically above
           });
           if (isBootstrapSuperseded()) {
-            // Superseded mid-migration: stale generation should not leave a success marker that
-            // suppresses future retries on the live generation.
             await clearMigrationFlagForRetry("registration superseded after migration");
             api.logger.debug?.(
               "memory-hybrid: credential migration finished after supersession; suppressing stale logs",

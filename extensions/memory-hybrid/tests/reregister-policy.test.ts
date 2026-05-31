@@ -22,6 +22,7 @@ function mockOldRuntime(paths: { sqlite: string; lance: string }): PluginRuntime
   return {
     resolvedSqlitePath: paths.sqlite,
     resolvedLancePath: paths.lance,
+    bootstrapSettledRef: { value: true },
   } as PluginRuntime;
 }
 
