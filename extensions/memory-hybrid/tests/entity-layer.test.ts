@@ -442,6 +442,11 @@ describe("FactsDB entity layer persistence", () => {
       expect(mentions).toEqual([
         {
           label: "ORG",
+          surface_text: "Acme",
+          normalized_surface: "acme",
+        },
+        {
+          label: "ORG",
           surface_text: "Acme Corporation",
           normalized_surface: "acme corporation",
         },
@@ -455,7 +460,11 @@ describe("FactsDB entity layer persistence", () => {
       const orgNames = raw.prepare("SELECT display_name FROM organizations ORDER BY canonical_key").all() as Array<{
         display_name: string;
       }>;
-      expect(orgNames).toEqual([{ display_name: "Acme Corporation" }, { display_name: "hybrid-memory pr pipeline" }]);
+      expect(orgNames).toEqual([
+        { display_name: "Acme" },
+        { display_name: "Acme Corporation" },
+        { display_name: "hybrid-memory pr pipeline" },
+      ]);
 
       const contactCount = raw.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number };
       expect(contactCount.count).toBe(0);

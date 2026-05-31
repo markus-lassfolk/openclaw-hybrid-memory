@@ -80,14 +80,20 @@ function shouldFilterEntityMention(mention: {
 }
 
 function isContainedByLongerMention(
-  mention: { label: EntityMentionLabel; normalizedSurface: string },
-  other: { label: EntityMentionLabel; normalizedSurface: string },
+  mention: { label: EntityMentionLabel; normalizedSurface: string; startOffset: number; endOffset: number },
+  other: { label: EntityMentionLabel; normalizedSurface: string; startOffset: number; endOffset: number },
 ): boolean {
   if (mention.label !== other.label || mention.normalizedSurface === other.normalizedSurface) {
     return false;
   }
 
   if (other.normalizedSurface.length <= mention.normalizedSurface.length) {
+    return false;
+  }
+
+  // Check if spans overlap: they must overlap for containment to apply
+  const spansOverlap = mention.startOffset < other.endOffset && other.startOffset < mention.endOffset;
+  if (!spansOverlap) {
     return false;
   }
 
