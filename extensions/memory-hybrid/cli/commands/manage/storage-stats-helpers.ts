@@ -14,6 +14,18 @@ import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import type { ManageBindings } from "./bindings.js";
 /** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
 export const IMPLICIT_FEEDBACK_HISTOGRAM_SAMPLE_CAP = 20_000;
+/**
+ * Legacy category aliases observed in long-lived stores.
+ * These are treated as intentionally remappable when their configured
+ * canonical targets exist, so audit health can avoid strict-mode noise
+ * while still surfacing counts in categories.unknown.
+ */
+const LEGACY_CATEGORY_REMAPS: Readonly<Record<string, string>> = {
+  forge_busy: "forge",
+  forge_dispatch: "forge",
+  forge_ops: "forge",
+  episode: "ops_summary",
+};
 
 type ReindexCheckpoint = {
   offset: number;
@@ -448,6 +460,10 @@ export function buildAuditHealthReport(
       return { category, count: Number(row?.cnt ?? 0) };
     });
   })();
+  const unconfiguredCategories = unknown.filter((row) => {
+    const mappedTarget = LEGACY_CATEGORY_REMAPS[row.category];
+    return !mappedTarget || !configuredSet.has(mappedTarget);
+  });
 
   // #1193: store age (days) gates sparse-store warnings — a brand-new install with hot=0 is
   // expected, and the operator should not get a "memory is broken" warning during the first
@@ -741,9 +757,9 @@ export function buildAuditHealthReport(
       `${(stableStickinessRatio * 100).toFixed(1)}% of active facts are stable+permanent — decay reclassifier may need to run.`,
     );
   }
-  if (unknown.length > 0)
+  if (unconfiguredCategories.length > 0)
     warnings.push(
-      `Categories present in DB but not configured: ${unknown.map((u) => `${u.category}=${u.count}`).join(", ")}`,
+      `Unconfigured categories present in DB: ${unconfiguredCategories.map((u) => `${u.category}=${u.count}`).join(", ")}`,
     );
   if (graphHubs.some((hub) => hub.overCap))
     warnings.push(
@@ -786,7 +802,7 @@ export function buildAuditHealthReport(
     remediation.push(
       "Run `openclaw hybrid-mem graph repair --collapse-event-hubs --apply` and keep graph hub guards enabled.",
     );
-  if (unknown.length > 0)
+  if (unconfiguredCategories.length > 0)
     remediation.push("Run `openclaw hybrid-mem categories audit`, then `categories remap --apply` where appropriate.");
   if (activeFacts > 0 && stableStickinessRatio > 0.6) {
     remediation.push(
@@ -810,6 +826,11 @@ export function buildAuditHealthReport(
   ) {
     remediation.push(
       "Run `openclaw hybrid-mem reflect-meta --collapse-implicit-feedback --include-legacy` (omit `--dry-run` to apply mutations).",
+    );
+  }
+  if (entityStopwordMatches.length > 0) {
+    remediation.push(
+      "Run `openclaw hybrid-mem entities clean --stopwords --apply` to null stop-word entity labels from existing facts.",
     );
   }
 
