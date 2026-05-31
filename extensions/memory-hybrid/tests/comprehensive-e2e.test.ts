@@ -39,6 +39,7 @@ const { VectorDB } = _testing;
 
 const SESSION = "agent:main:telegram:e2e-comprehensive";
 const HOOK_CTX = { sessionKey: SESSION, sessionId: SESSION, agentId: "main" };
+const RELOAD_TEARDOWN_ERROR_FRAGMENT = "reload teardown did not drain";
 
 describe("Comprehensive e2e — full plugin register()", () => {
   let tmpDir: string;
@@ -87,7 +88,11 @@ describe("Comprehensive e2e — full plugin register()", () => {
       const stableConfig = getFullStackConfig(tmpDir);
       registerFullPlugin(api, stableConfig);
       const bootstrap = runtimeRef.value?.bootstrapAsyncInit;
-      if (bootstrap) await bootstrap.catch(() => {});
+      if (bootstrap) {
+        await bootstrap.catch(() => {
+          // Non-fatal in this e2e: hot-reload persistence path still validates via store/recall round-trip below.
+        });
+      }
       const store = api.getTool("memory_store")!;
       const stored = (await store.execute("c1", {
         text: "Survives plugin hot reload",
@@ -100,7 +105,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
       try {
         registerFullPlugin(api, stableConfig);
       } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes("reload teardown did not drain")) {
+        if (!(err instanceof Error) || !err.message.includes(RELOAD_TEARDOWN_ERROR_FRAGMENT)) {
           throw err;
         }
         // Vitest runs register() synchronously; if a full-teardown fallback races, retry once.
