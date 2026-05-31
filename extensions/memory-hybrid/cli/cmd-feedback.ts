@@ -393,8 +393,8 @@ export async function runExtractImplicitFeedbackForCli(
         if (cursor.lastSessionFile) {
           return fname.localeCompare(cursor.lastSessionFile) > 0;
         }
-        // No filename: skip entire mtime to avoid reprocessing
-        return false;
+        // No filename: reprocess entire mtime tier to avoid stuck backlog
+        return true;
       }
       return true;
     });
@@ -520,7 +520,7 @@ export async function runExtractImplicitFeedbackForCli(
 
   const markPartialProgress = (
     reason: ExtractImplicitFeedbackStopReason,
-    deferredSessions = filePaths.length - progress.sessionsProcessed,
+    deferredSessions = filePaths.length - progress.sessionsVisited,
   ): void => {
     partial = true;
     partialReason = reason;
