@@ -408,7 +408,17 @@ export async function runExtractImplicitFeedbackForCli(
     const cursorFloor = Math.max(0, cursor.lastSessionTs - 1);
     const allFiles = getSessionFilePathsSince(sessionDir, 0, cursorFloor);
     filePaths = allFiles.filter((path) => {
-      const stat = statSync(path);
+      let stat;
+      try {
+        stat = statSync(path);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:filter-stat",
+          severity: "info",
+          subsystem: "implicit-feedback",
+        });
+        return false;
+      }
       const mtime = stat.mtimeMs;
       const fname = basename(path);
       // Skip files before the cursor watermark
@@ -427,8 +437,17 @@ export async function runExtractImplicitFeedbackForCli(
     });
     // Sort by mtime ascending, then by filename to ensure deterministic processing order
     filePaths.sort((a, b) => {
-      const statA = statSync(a);
-      const statB = statSync(b);
+      let statA, statB;
+      try {
+        statA = statSync(a);
+      } catch {
+        return 1;
+      }
+      try {
+        statB = statSync(b);
+      } catch {
+        return -1;
+      }
       const mtimeDiff = statA.mtimeMs - statB.mtimeMs;
       if (mtimeDiff !== 0) return mtimeDiff;
       return basename(a).localeCompare(basename(b));
@@ -443,8 +462,17 @@ export async function runExtractImplicitFeedbackForCli(
     filePaths = getSessionFilePathsSince(sessionDir, days);
     // Sort by mtime ascending, then by filename to ensure deterministic processing order
     filePaths.sort((a, b) => {
-      const statA = statSync(a);
-      const statB = statSync(b);
+      let statA, statB;
+      try {
+        statA = statSync(a);
+      } catch {
+        return 1;
+      }
+      try {
+        statB = statSync(b);
+      } catch {
+        return -1;
+      }
       const mtimeDiff = statA.mtimeMs - statB.mtimeMs;
       if (mtimeDiff !== 0) return mtimeDiff;
       return basename(a).localeCompare(basename(b));
@@ -926,6 +954,10 @@ export async function runExtractImplicitFeedbackForCli(
             const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
             const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
             for (const lesson of traj.lessonsExtracted) {
+              if (wallClockLimitReached()) {
+                markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+                break;
+              }
               lessonsStoredTodaySession = rawDb
                 ? getImplicitFeedbackLessonsStoredToday(rawDb)
                 : lessonsStoredTodaySession;
@@ -968,6 +1000,9 @@ export async function runExtractImplicitFeedbackForCli(
                   subsystem: "implicit-feedback",
                 });
               }
+            }
+            if (partial && partialReason === "maxWallClock") {
+              break;
             }
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
