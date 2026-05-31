@@ -1143,6 +1143,7 @@ export async function runReflectionRules(
   let storeLevelDuplicates = 0;
   let newRuleEmbedFailures = 0;
   let vectorStoreFailures = 0;
+  let metadataFailures = 0;
   let storeSkipped = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
@@ -1337,7 +1338,7 @@ export async function runReflectionRules(
         );
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
-        vectorStoreFailures++;
+        metadataFailures++;
         logger.warn(`memory-hybrid: reflect-rules metadata update failed after vector store: ${err}`);
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "reflection-rules-metadata-update",
@@ -1407,7 +1408,12 @@ export async function runReflectionRules(
   let zeroRulesReason: ReflectionRulesDiagnostics["zeroRulesReason"];
   if (stored <= 0) {
     const allCandidatesBlocked =
-      newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates + vectorStoreFailures + storeSkipped ===
+      newRuleEmbedFailures +
+        embeddingBasedDuplicates +
+        storeLevelDuplicates +
+        vectorStoreFailures +
+        metadataFailures +
+        storeSkipped ===
       uniqueRules.length;
     if (vectorStoreFailures === uniqueRules.length) {
       // All candidates failed only at vector store
@@ -1441,7 +1447,11 @@ export async function runReflectionRules(
     stored,
     zeroRulesReason,
     status:
-      stored > 0 && stored === uniqueRules.length && newRuleEmbedFailures === 0 && vectorStoreFailures === 0
+      stored > 0 &&
+      stored === uniqueRules.length &&
+      newRuleEmbedFailures === 0 &&
+      vectorStoreFailures === 0 &&
+      metadataFailures === 0
         ? "ok"
         : stored > 0
           ? "partial"
