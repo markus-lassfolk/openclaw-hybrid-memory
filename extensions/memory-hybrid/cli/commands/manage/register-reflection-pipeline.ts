@@ -17,6 +17,7 @@ import type {
 
 import {
   assessContinuousVerificationResult,
+  formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
   runVerboseFollowUp,
   type RunVerboseFollowUpOptions,
@@ -637,6 +638,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             const verificationAssessment = assessContinuousVerificationResult(verificationRes);
             if (verificationAssessment.status !== "healthy") {
               console.log(`  Status: ${verificationAssessment.status.toUpperCase()}`);
+              console.log(
+                `  Machine status: ${formatContinuousVerificationAssessmentLine(verificationRes, verificationAssessment)}`,
+              );
               if (verificationAssessment.summary) {
                 console.log(`  Warning: ${verificationAssessment.summary}`);
               }
