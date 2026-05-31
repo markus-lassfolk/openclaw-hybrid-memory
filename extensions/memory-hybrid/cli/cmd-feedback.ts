@@ -900,14 +900,13 @@ export function explainToolEffectivenessNoData(
   workflowDbPath: string,
   workflowTrackingEnabled: boolean,
 ): string {
-  if (!workflowTrackingEnabled) {
-    return "workflow tracking is disabled (workflowTracking.enabled=false)";
-  }
-
   if (!existsSync(workflowDbPath)) {
     const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
     if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
       return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+    }
+    if (!workflowTrackingEnabled) {
+      return "workflow tracking is disabled (workflowTracking.enabled=false)";
     }
     return `workflow traces DB not found at ${workflowDbPath}`;
   }
@@ -927,6 +926,9 @@ export function explainToolEffectivenessNoData(
         if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
           return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
         }
+        if (!workflowTrackingEnabled) {
+          return "workflow tracking is disabled (workflowTracking.enabled=false)";
+        }
         return "no workflow traces recorded yet";
       }
 
@@ -938,6 +940,9 @@ export function explainToolEffectivenessNoData(
         if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
           return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
         }
+        if (!workflowTrackingEnabled) {
+          return "workflow tracking is disabled (workflowTracking.enabled=false)";
+        }
         return "no workflow traces recorded yet";
       }
 
@@ -947,7 +952,10 @@ export function explainToolEffectivenessNoData(
       db.close();
     }
   } catch (err) {
-    // If we can't read the DB, fall back to generic message
+    // If we can't read the DB, fall back to check if tracking is disabled
+    if (!workflowTrackingEnabled) {
+      return "workflow tracking is disabled (workflowTracking.enabled=false)";
+    }
     return "no workflow traces recorded yet";
   }
 }
