@@ -462,6 +462,63 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       ),
     );
 
+  const entityMentions = mem.command("entity-mentions").description("Audit and cleanup stored entity mention rows");
+
+  entityMentions
+    .command("audit")
+    .description("Audit mention quality and duplicates in fact_entity_mentions")
+    .option("--limit <n>", "Max facts to inspect (default 500)", "500")
+    .option("--json", "Output JSON")
+    .action(
+      withExit(async (opts?: { limit?: string; json?: boolean }) => {
+        const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
+        if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
+        const summary = factsDb.auditEntityMentions(limitRaw);
+        if (opts?.json) {
+          console.log(JSON.stringify(summary));
+          return;
+        }
+        console.log(
+          `Entity mentions audit: facts=${summary.factsScanned} rows=${summary.rowsScanned} accepted=${summary.accepted} rejected=${summary.rejected} duplicates=${summary.duplicates} reclassified=${summary.reclassified}`,
+        );
+        if (Object.keys(summary.rejectReasons).length > 0) {
+          console.log("Reject reasons:");
+          for (const [reason, count] of Object.entries(summary.rejectReasons)) {
+            console.log(`  ${reason}: ${count}`);
+          }
+        }
+      }),
+    );
+
+  entityMentions
+    .command("cleanup")
+    .description("Remove duplicate/junk mentions and canonicalize known entity types")
+    .option("--limit <n>", "Max facts to process (default 500)", "500")
+    .option("--dry-run", "Preview cleanup changes without writing")
+    .option("--apply", "Apply cleanup changes")
+    .option("--json", "Output JSON")
+    .action(
+      withExit(async (opts?: { limit?: string; dryRun?: boolean; apply?: boolean; json?: boolean }) => {
+        const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
+        if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
+        const apply = opts?.apply === true && opts?.dryRun !== true;
+        const summary = factsDb.cleanupEntityMentions({ limit: limitRaw, apply });
+        if (opts?.json) {
+          console.log(JSON.stringify({ ...summary, apply }));
+          return;
+        }
+        console.log(
+          `Entity mentions cleanup${apply ? "" : " (dry-run)"}: facts=${summary.factsScanned} changed=${summary.changedFacts} removed_rows=${summary.removedRows} duplicates=${summary.duplicates} rejected=${summary.rejected} reclassified=${summary.reclassified}`,
+        );
+        if (Object.keys(summary.rejectReasons).length > 0) {
+          console.log("Reject reasons:");
+          for (const [reason, count] of Object.entries(summary.rejectReasons)) {
+            console.log(`  ${reason}: ${count}`);
+          }
+        }
+      }),
+    );
+
   if (runReflectIdentity) {
     mem
       .command("reflect-identity")
@@ -489,62 +546,6 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
         ),
       );
 
-    const entityMentions = mem.command("entity-mentions").description("Audit and cleanup stored entity mention rows");
-
-    entityMentions
-      .command("audit")
-      .description("Audit mention quality and duplicates in fact_entity_mentions")
-      .option("--limit <n>", "Max facts to inspect (default 500)", "500")
-      .option("--json", "Output JSON")
-      .action(
-        withExit(async (opts?: { limit?: string; json?: boolean }) => {
-          const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
-          if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
-          const summary = factsDb.auditEntityMentions(limitRaw);
-          if (opts?.json) {
-            console.log(JSON.stringify(summary));
-            return;
-          }
-          console.log(
-            `Entity mentions audit: facts=${summary.factsScanned} rows=${summary.rowsScanned} accepted=${summary.accepted} rejected=${summary.rejected} duplicates=${summary.duplicates} reclassified=${summary.reclassified}`,
-          );
-          if (Object.keys(summary.rejectReasons).length > 0) {
-            console.log("Reject reasons:");
-            for (const [reason, count] of Object.entries(summary.rejectReasons)) {
-              console.log(`  ${reason}: ${count}`);
-            }
-          }
-        }),
-      );
-
-    entityMentions
-      .command("cleanup")
-      .description("Remove duplicate/junk mentions and canonicalize known entity types")
-      .option("--limit <n>", "Max facts to process (default 500)", "500")
-      .option("--dry-run", "Preview cleanup changes without writing")
-      .option("--apply", "Apply cleanup changes")
-      .option("--json", "Output JSON")
-      .action(
-        withExit(async (opts?: { limit?: string; dryRun?: boolean; apply?: boolean; json?: boolean }) => {
-          const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
-          if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
-          const apply = opts?.apply === true && opts?.dryRun !== true;
-          const summary = factsDb.cleanupEntityMentions({ limit: limitRaw, apply });
-          if (opts?.json) {
-            console.log(JSON.stringify({ ...summary, apply }));
-            return;
-          }
-          console.log(
-            `Entity mentions cleanup${apply ? "" : " (dry-run)"}: facts=${summary.factsScanned} changed=${summary.changedFacts} removed_rows=${summary.removedRows} duplicates=${summary.duplicates} rejected=${summary.rejected} reclassified=${summary.reclassified}`,
-          );
-          if (Object.keys(summary.rejectReasons).length > 0) {
-            console.log("Reject reasons:");
-            for (const [reason, count] of Object.entries(summary.rejectReasons)) {
-              console.log(`  ${reason}: ${count}`);
-            }
-          }
-        }),
-      );
   }
 
   if (runDreamCycle) {

@@ -245,7 +245,9 @@ ${body}`;
           other !== m &&
           other.label === m.label &&
           other.normalizedSurface.length > m.normalizedSurface.length &&
-          other.normalizedSurface.includes(m.normalizedSurface),
+          other.normalizedSurface.includes(m.normalizedSurface) &&
+          other.startOffset <= m.startOffset &&
+          other.endOffset >= m.endOffset,
       );
       if (isSubstring) {
         rejectedMentions.push({ label: m.label, surfaceText: m.surfaceText, reason: "substring" });
