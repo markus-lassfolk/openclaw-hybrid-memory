@@ -4,7 +4,7 @@ import { receiveMessageOnPort, MessageChannel } from "node:worker_threads";
 export const BOOTSTRAP_DRAIN_MS = 3_000;
 
 /** Max time register() blocks waiting for scheduled teardown before opening new DB handles. */
-export const TEARDOWN_WAIT_MS = 5_000;
+export const TEARDOWN_WAIT_MS = 6_000;
 
 /** Brief wait for in-flight auto-recall before permanentClose (directives can run 20s+). */
 export const RECALL_DRAIN_MS = 2_000;
