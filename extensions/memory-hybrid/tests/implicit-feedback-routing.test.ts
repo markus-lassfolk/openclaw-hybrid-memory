@@ -149,6 +149,48 @@ function writeNegativeSession(sessionsDir: string, filename: string) {
   writeFileSync(join(sessionsDir, filename), lines.join("\n"), "utf-8");
 }
 
+/** Write a session long enough to produce a trajectory. */
+function writeTrajectorySession(sessionsDir: string, filename: string) {
+  const lines = [
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "How do I set up webpack configuration for my project?" }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Create a webpack.config.js with entry and output." }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "How do I set up the webpack configuration entry point and output?" }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Set entry to src/index.js and output to dist." }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "Perfect, that worked great! Thanks." }],
+      },
+    }),
+  ];
+  writeFileSync(join(sessionsDir, filename), lines.join("\n"), "utf-8");
+}
+
 // ---------------------------------------------------------------------------
 // Tests — positive signals → reinforcement pipeline
 // ---------------------------------------------------------------------------
@@ -574,6 +616,70 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
             snapshot.partial === true && snapshot.partialReason === "maxSignals" && snapshot.sessionsDeferred === 1,
         ),
       ).toBe(true);
+    });
+
+    it("defers remaining sessions when a trajectory cap is reached", async () => {
+      const db = makeDb(capsTmpDir);
+      writeTrajectorySession(capsSessionsDir, "2026-01-01-a.jsonl");
+      writeTrajectorySession(capsSessionsDir, "2026-01-01-b.jsonl");
+
+      const ctx = makeCtx(db, capsSessionsDir, {
+        feedToSelfCorrection: false,
+        maxTrajectoriesPerRun: 1,
+      });
+
+      const result = await runExtractImplicitFeedbackForCli(ctx, {
+        days: 365,
+        dryRun: false,
+        includeClosedLoop: false,
+      });
+
+      expect(result.trajectoriesBuilt).toBe(1);
+      expect(result.sessionsProcessed).toBe(1);
+      expect(result.sessionsDeferred).toBe(1);
+      expect(result.partial).toBe(true);
+      expect(result.partialReason).toBe("maxTrajectories");
+      expect(result.backlogSessionsEstimate).toBe(1);
+      expect(result.backlogTrajectoriesEstimate).toBeGreaterThan(0);
+    });
+
+    it("skips cleanup and closed-loop phases once the wall-clock budget is exhausted", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+        const db = makeDb(capsTmpDir);
+        writeNegativeSession(capsSessionsDir, "2026-01-01-a.jsonl");
+
+        const stages: string[] = [];
+        let advancedClock = false;
+        const ctx = makeCtx(db, capsSessionsDir, {
+          autoCleanup: true,
+          cleanupLimit: 1,
+          maxWallClockSeconds: 1,
+        });
+        ctx.cfg.closedLoop = { enabled: true } as HybridMemoryConfig["closedLoop"];
+
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          onProgress: (snapshot) => {
+            stages.push(snapshot.stage);
+            if (!advancedClock && snapshot.stage === "scan-sessions" && snapshot.sessionsProcessed >= 1) {
+              vi.setSystemTime(new Date("2026-05-01T00:00:02.000Z"));
+              advancedClock = true;
+            }
+          },
+        });
+
+        expect(result.sessionsProcessed).toBe(1);
+        expect(result.sessionsDeferred).toBe(0);
+        expect(result.partial).toBe(true);
+        expect(result.partialReason).toBe("maxWallClock");
+        expect(stages).not.toContain("cleanup-duplicates");
+        expect(stages).not.toContain("closed-loop");
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

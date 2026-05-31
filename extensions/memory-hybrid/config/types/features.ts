@@ -298,7 +298,7 @@ export type ImplicitFeedbackConfig = {
   maxSignalsPerRun: number;
   /** Maximum trajectories to build/store per run before deferring backlog (default: 50, 0 disables). */
   maxTrajectoriesPerRun: number;
-  /** Maximum wall-clock seconds to spend in one run before deferring backlog (default: 300, 0 disables). */
+  /** Maximum wall-clock seconds to spend in one run before deferring backlog and skipping later follow-up phases (default: 300, 0 disables). */
   maxWallClockSeconds: number;
 };
 
