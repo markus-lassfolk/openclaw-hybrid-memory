@@ -15,6 +15,7 @@ export interface RunVerboseFollowUpOptions {
 
 export interface ContinuousVerificationAssessment {
   status: "healthy" | "degraded";
+  reason: "healthy" | "errors_present" | "all_uncertain";
   shouldFailPipeline: boolean;
   summary?: string;
 }
@@ -63,6 +64,7 @@ export function assessContinuousVerificationResult(result: VerificationCycleResu
         : `${result.errors}/${result.checked} verification check(s) errored`;
     return {
       status: "degraded",
+      reason: "errors_present",
       shouldFailPipeline: true,
       summary,
     };
@@ -70,11 +72,27 @@ export function assessContinuousVerificationResult(result: VerificationCycleResu
   if (result.checked > 0 && result.confirmed === 0 && result.stale === 0) {
     return {
       status: "degraded",
+      reason: "all_uncertain",
       shouldFailPipeline: true,
       summary: `all ${result.checked} verification check(s) were uncertain`,
     };
   }
-  return { status: "healthy", shouldFailPipeline: false };
+  return { status: "healthy", reason: "healthy", shouldFailPipeline: false };
+}
+
+export function formatContinuousVerificationAssessmentLine(
+  result: VerificationCycleResult,
+  assessment: ContinuousVerificationAssessment,
+): string {
+  return [
+    `status=${assessment.status}`,
+    `reason=${assessment.reason}`,
+    `checked=${result.checked}`,
+    `confirmed=${result.confirmed}`,
+    `stale=${result.stale}`,
+    `uncertain=${result.uncertain}`,
+    `errors=${result.errors}`,
+  ].join(" ");
 }
 
 export async function runVerboseFollowUp<T>(

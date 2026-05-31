@@ -498,11 +498,12 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     const engineTight = makeEngine();
 
     const resultFull = await engineFull.assemble({ sessionId: "s1", messages: [], tokenBudget: 10000 });
-    // Keep this low enough that high-numbered facts cannot all fit under the same
-    // char/4 estimate as the header + label (otherwise 150 still fits facts 7–9 — flaky on CI).
-    // The boundary comment overhead adds ~29 tokens vs the prior implementation,
-    // so the tight budget is increased to 130 accordingly.
-    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 130 });
+    // Budget arithmetic (char/4 estimate):
+    //   base overhead (open/close markers + RECALLED_CONTEXT_BOUNDARY + label) ≈ 59 tokens
+    //   one serialised fact entry ≈ 32 tokens → 1 fact total ≈ 91 tokens
+    //   two facts total ≈ 123 tokens
+    // Pick 95 so exactly one fact fits, regardless of which fact is returned first.
+    const resultTight = await engineTight.assemble({ sessionId: "s1", messages: [], tokenBudget: 95 });
 
     // Full budget should include more content
     const fullLength = resultFull.systemPromptAddition?.length ?? 0;
@@ -515,11 +516,12 @@ describe("HybridMemoryContextEngine.assemble()", () => {
 
     // Check exact enforcement on tight
     const tightTokens = estimateTokenCount(resultTight.systemPromptAddition!);
-    expect(tightTokens).toBeLessThanOrEqual(130);
+    expect(tightTokens).toBeLessThanOrEqual(95);
 
-    // Verify some facts are missing in tight vs full
-    expect(resultFull.systemPromptAddition).toContain("Fact number 9");
-    expect(resultTight.systemPromptAddition).not.toContain("Fact number 9");
+    // Verify truncation: the tight result must contain fewer facts than the full result.
+    const fullFactCount = (resultFull.systemPromptAddition?.match(/Fact number \d/g) ?? []).length;
+    const tightFactCount = (resultTight.systemPromptAddition?.match(/Fact number \d/g) ?? []).length;
+    expect(tightFactCount).toBeLessThan(fullFactCount);
   });
 
   it("uses cfg.autoRecall.maxTokens as default budget when tokenBudget is omitted", async () => {
