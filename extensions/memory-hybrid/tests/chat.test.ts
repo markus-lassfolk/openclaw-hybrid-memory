@@ -764,6 +764,16 @@ describe("chatComplete — GlitchTip suppression (#302, #303)", () => {
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 
+  it("#1776: does not report ByteString serialization errors to GlitchTip", async () => {
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
+      new Error(
+        "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+      ),
+    );
+    await expect(chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai })).rejects.toThrow(/ByteString/i);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
   it("#1694: does not report to GlitchTip when AbortError is nested in .cause (e.g. MiniMax wraps abort in outer error)", async () => {
     const abortCause = Object.assign(new Error("Request was aborted"), { name: "AbortError" });
     const wrappedErr = Object.assign(new Error("stream error"), { cause: abortCause });
@@ -1926,6 +1936,47 @@ describe("chatCompleteWithRetry — context-length error (#488)", () => {
     const drained = warnings.drain();
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatch(/context window|input.*long|exceeds/i);
+  });
+});
+
+describe("chatCompleteWithRetry — ByteString serialization error (#1776)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#1776: does not report to GlitchTip when all models fail with ByteString serialization errors", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(byteStringErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["openai/gpt-4o-mini"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow(/ByteString/i);
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/non-ASCII characters in HTTP headers/i);
   });
 });
 
