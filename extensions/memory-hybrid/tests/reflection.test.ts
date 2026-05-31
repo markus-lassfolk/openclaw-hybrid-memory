@@ -283,6 +283,7 @@ describe("runReflectionRules diagnostics", () => {
   });
 
   it("reports partial insufficient_patterns when fewer than 2 pattern facts are available", async () => {
+    const create = vi.fn(async () => ({ choices: [{ message: { content: "RULE: should not be called" } }] }));
     const factsDb = {
       getByCategory: (cat: string) =>
         cat === "pattern"
@@ -305,7 +306,7 @@ describe("runReflectionRules diagnostics", () => {
     const openai = {
       chat: {
         completions: {
-          create: async () => ({ choices: [{ message: { content: "RULE: should not be called" } }] }),
+          create,
         },
       },
     };
@@ -323,6 +324,7 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.zeroRulesReason).toBe("insufficient_patterns");
     expect(res.diagnostics.status).toBe("partial");
     expect(res.diagnostics.parseSuccess).toBe(false);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("reports partial diagnostics when all parsed candidates are duplicates", async () => {
