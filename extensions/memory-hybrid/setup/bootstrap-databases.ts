@@ -763,7 +763,6 @@ export function initializeDatabases(
             markDone: false, // Flag already created atomically above
           });
           if (isBootstrapSuperseded()) {
-            await clearMigrationFlagForRetry("registration superseded after migration");
             api.logger.debug?.(
               "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
             );

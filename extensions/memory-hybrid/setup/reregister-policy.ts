@@ -101,10 +101,6 @@ export function databaseContextFromRuntime(old: PluginRuntime) {
     resolvedSqlitePath: old.resolvedSqlitePath,
     apitapStore: old.apitapStore!,
     initialized: old.bootstrapAsyncInit,
-    health: {
-      embeddingsOk: true,
-      credentialsVaultOk: true,
-      lastCheckTime: Date.now(),
-    },
+    health: old.health,
   };
 }

@@ -25,7 +25,7 @@ import { validateScopedClassificationTarget } from "../../services/classificatio
 import { extractCredentialsFromToolCalls } from "../../services/credential-scanner.js";
 import { isOllamaCircuitBreakerOpen } from "../../services/embeddings.js";
 import { capturePluginError } from "../../services/error-reporter.js";
-import { shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
+import { isRecallContextSuperseded, shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
@@ -41,7 +41,11 @@ import type { LifecycleContext, SessionState } from "../types.js";
 const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
 function suppressCaptureStageError(ctx: LifecycleContext, api: ClawdbotPluginApi, err: unknown): boolean {
-  if (!shouldSuppressStaleLifecycleError(ctx, err)) return false;
+  if (!isRecallContextSuperseded(ctx)) return false;
+  if (!shouldSuppressStaleLifecycleError(ctx, err)) {
+    api.logger.debug?.("memory-hybrid: capture skipped (registration superseded during reload)");
+    return true;
+  }
   api.logger.debug?.("memory-hybrid: capture skipped (registration superseded during reload)");
   return true;
 }
