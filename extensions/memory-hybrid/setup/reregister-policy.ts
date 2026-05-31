@@ -96,10 +96,11 @@ export function canReuseDatabasesOnReregister(
   if (JSON.stringify(oldLlm?.nano) !== JSON.stringify(newLlm?.nano)) return false;
   if (JSON.stringify(oldLlm?.providers) !== JSON.stringify(newLlm?.providers)) return false;
 
-  // Compare credentials.enabled to detect when vault should be opened or closed
+  // Compare credentials.enabled to detect when vault should be opened or closed.
+  // encryptionKey is non-enumerable after parsing, so structuredClone() drops empty keys;
+  // normalize missing keys to "" to avoid false full-teardown on hot reload.
   if (oldCfg.credentials?.enabled !== cfg.credentials?.enabled) return false;
-  // Compare credentials.encryptionKey to detect when vault key has changed
-  if (oldCfg.credentials?.encryptionKey !== cfg.credentials?.encryptionKey) return false;
+  if ((oldCfg.credentials?.encryptionKey ?? "") !== (cfg.credentials?.encryptionKey ?? "")) return false;
 
   return true;
 }

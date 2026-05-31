@@ -94,6 +94,34 @@ describe("reregister-policy", () => {
     expect(canReuseDatabasesOnReregister(old, parsedCfg, api)).toBe(true);
   });
 
+  it("reuse-databases treats missing cloned empty credential key as unchanged", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const cfg = minimalCfg();
+    (cfg as { credentials?: { enabled: boolean; encryptionKey: string } }).credentials = {
+      enabled: false,
+      encryptionKey: "",
+    };
+    Object.defineProperty(cfg.credentials, "encryptionKey", {
+      value: "",
+      enumerable: false,
+      writable: false,
+    });
+    const clonedSnapshot = structuredClone(cfg);
+    expect(clonedSnapshot.credentials?.encryptionKey).toBeUndefined();
+    const old = mockOldRuntime(
+      {
+        sqlite: api.resolvePath(cfg.sqlitePath),
+        lance: api.resolvePath(cfg.lanceDbPath),
+      },
+      cfg,
+    );
+    old.parsedCfgSnapshot = clonedSnapshot;
+    expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(true);
+  });
+
   it("reuse-databases declines when sqlite path changes", () => {
     vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
     const api = { resolvePath: (p: string) => `/data/${p}` };
