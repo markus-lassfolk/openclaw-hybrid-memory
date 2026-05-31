@@ -548,7 +548,8 @@ export async function chatComplete(opts: {
       is404Like(err) || // #303: model not found = wrong model name in config, not a bug
       is403Like(err) || // #394: country/region restriction = operator config issue, not a bug
       is401Like(err) || // #475: invalid API key = operator config issue, not a bug
-      isContextLengthError(err); // #488: input too long for model context window = wrong model choice, not a bug
+      isContextLengthError(err) || // #488: input too long for model context window = wrong model choice, not a bug
+      isByteStringSerializationError(err); // #1776: non-ASCII in HTTP header = config issue, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
