@@ -125,6 +125,23 @@ describe("runRecallStage", () => {
     expect(result).toBeNull();
   });
 
+  it("returns empty (not timeout null) when registration is superseded before timeout fires", async () => {
+    vi.useFakeTimers();
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    ctx.registrationGeneration = 1;
+    ctx.currentRegistrationGenerationRef = { value: 1 };
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation(() => new Promise(() => undefined));
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+
+    const pending = runRecallStage({ prompt: "long running recall query here" }, api as never, ctx, sessionState);
+    ctx.currentRegistrationGenerationRef.value = 2;
+    await vi.advanceTimersByTimeAsync(INTERACTIVE_RECALL_STAGE_TIMEOUT_MS + 1);
+    const result = await pending;
+
+    expect(result).toEqual({ kind: "empty", prependContext: undefined });
+  });
+
   it("invokes recall pipeline and returns full result for normal prompts", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     const pipelineHit = {

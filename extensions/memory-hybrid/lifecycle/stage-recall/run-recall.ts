@@ -165,6 +165,7 @@ export async function runRecall(
   if (isRecallContextSuperseded(ctx)) {
     return emptyRecallStage();
   }
+  const shouldAbortRecall = (): boolean => recallAborted(signal) || isRecallContextSuperseded(ctx);
 
   ctx.recallInFlightRef.value++;
   const recallStartMs = Date.now();
@@ -211,7 +212,7 @@ export async function runRecall(
   };
   const recallSpan = recallTiming.span;
   try {
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const { currentAgentIdRef } = ctx;
     const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen } =
@@ -228,7 +229,7 @@ export async function runRecall(
 
     // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
     await yieldEventLoop();
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const fmt = ctx.cfg.autoRecall.injectionFormat;
     const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -282,6 +283,7 @@ export async function runRecall(
       const degradedLimit = ctx.cfg.autoRecall.limit;
       const trimmed = e.prompt.trim();
       await yieldEventLoop();
+      if (shouldAbortRecall()) return completeStage(emptyRecallStage());
       const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
       const totalBudget = interactivePolicy.contextBudgetTokens;
       const {
@@ -466,6 +468,7 @@ export async function runRecall(
     }
     recallTiming.phaseCompleted("procedures_block", proceduresStartedAt, { injected: procedureBlock.length > 0 });
     await yieldEventLoop();
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
     const withProcedures = (s: string) => (procedureBlock ? `${procedureBlock}\n${s}` : s);
 
     // HOT block
@@ -491,7 +494,7 @@ export async function runRecall(
     recallTiming.phaseCompleted("hot_facts_block", hotFactsStartedAt, { injected: hotBlock.length > 0 });
 
     await yieldEventLoop();
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const recallOpts = {
       tierFilter,
@@ -538,7 +541,7 @@ export async function runRecall(
     const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     let promptEmbedding: number[] | null = null;
     setRecallProbePhase("prompt_embedding");
@@ -555,7 +558,7 @@ export async function runRecall(
       }
     }
 
-    if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+    if (shouldAbortRecall()) {
       return completeStage(emptyRecallStage());
     }
 
@@ -572,7 +575,7 @@ export async function runRecall(
     });
     recallTiming.phaseCompleted("main_pipeline", mainPipelineStartedAt, { candidates: candidates.length });
 
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
       setRecallProbePhase("ambient_multi_query");
@@ -597,7 +600,7 @@ export async function runRecall(
         if (extraQueries.length > 0) {
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
-            if (recallAborted(signal)) {
+            if (shouldAbortRecall()) {
               recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
                 status: "aborted",
                 queries_run: ambientQueriesRun,
@@ -748,7 +751,7 @@ export async function runRecall(
     recallTiming.phaseCompleted("narrative_block", narrativeStartedAt, { injected: narrativeBlock.length > 0 });
 
     await yieldEventLoop();
-    if (recallAborted(signal) || isRecallContextSuperseded(ctx)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;

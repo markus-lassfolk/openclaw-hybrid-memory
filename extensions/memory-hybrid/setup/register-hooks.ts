@@ -104,9 +104,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     api.logger.error?.(
       "memory-hybrid: lifecycle generation ref missing; stale hooks will NOT be blocked on re-registration. This is a critical registration bug.",
     );
-    throw new Error(
-      "currentRegistrationGenerationRef is required for safe hook registration but was not provided",
-    );
+    throw new Error("currentRegistrationGenerationRef is required for safe hook registration but was not provided");
   }
   const effectiveRegistrationGenerationRef = currentRegistrationGenerationRef;
   const hookUnsubscribers: Array<() => void> = [];
@@ -181,7 +179,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       recallInFlightRef: ctx.recallInFlightRef,
       lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
       registrationGeneration: ctx.registrationGeneration,
-      currentRegistrationGenerationRef: ctx.currentRegistrationGenerationRef,
+      currentRegistrationGenerationRef: effectiveRegistrationGenerationRef,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

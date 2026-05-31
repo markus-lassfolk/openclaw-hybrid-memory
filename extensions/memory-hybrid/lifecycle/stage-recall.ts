@@ -32,6 +32,10 @@ export async function runRecallStage(
       new Promise<RecallStageResult | null>((resolve) => {
         timer = setTimeout(() => {
           ac.abort();
+          if (isRecallContextSuperseded(ctx)) {
+            resolve({ kind: "empty", prependContext: undefined });
+            return;
+          }
           resolve(null);
         }, RECALL_STAGE_TIMEOUT_MS);
       }),

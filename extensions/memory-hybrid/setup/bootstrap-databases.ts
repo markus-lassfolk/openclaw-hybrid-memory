@@ -682,8 +682,8 @@ export function initializeDatabases(
             break;
           } catch (e) {
             lastErr = e;
-            const msg = String(e);
-            if (!/database connection is not open/i.test(msg) || attempt >= 4) {
+            const dbClosed = isDbClosedError(e);
+            if (!dbClosed || isBootstrapSuperseded() || attempt >= 4) {
               throw e;
             }
             await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));

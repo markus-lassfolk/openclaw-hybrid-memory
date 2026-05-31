@@ -477,7 +477,11 @@ export async function runRecallPipelineQuery(
       });
 
       vectorStepPromise.catch((err) => {
-        if (!directiveAbort.signal.aborted && !shouldSuppressEmbeddingError(err)) {
+        if (
+          !directiveAbort.signal.aborted &&
+          !isStalePipelineDbError(deps, err) &&
+          !shouldSuppressEmbeddingError(err)
+        ) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: `${opts?.errorPrefix ?? ""}vector-recall-post-timeout`,
             subsystem: "auto-recall",
