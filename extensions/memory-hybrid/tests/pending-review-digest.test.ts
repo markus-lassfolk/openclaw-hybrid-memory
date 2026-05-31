@@ -241,7 +241,8 @@ describe("pending review digest (#1197)", () => {
     expect(report.personaProposals.truncated).toBe(2);
 
     const md = renderPendingReviewDigestMarkdown(report);
-    expect(md).toContain("2 more omitted");
+    expect(md).toContain("Showing 1 of 3 pending persona proposals");
+    expect(md).toContain("2 omitted");
     expect(md).toContain("openclaw hybrid-mem proposals list --status pending");
 
     factsDb.close();
@@ -279,7 +280,8 @@ describe("pending review digest (#1197)", () => {
     expect(report.personaProposals.truncated).toBe(2);
 
     const md = renderPendingReviewDigestMarkdown(report);
-    expect(md).toContain("2 more omitted");
+    expect(md).toContain("Showing 10 of 12 pending persona proposals");
+    expect(md).toContain("2 omitted");
     expect(md).toContain("openclaw hybrid-mem proposals list --status pending");
 
     persona.close();
