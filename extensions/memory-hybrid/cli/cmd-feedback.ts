@@ -389,8 +389,12 @@ export async function runExtractImplicitFeedbackForCli(
       // Skip files before the cursor watermark
       if (mtime < cursor.lastSessionTs) return false;
       // If same mtime, use filename to determine if we've processed this file
-      if (mtime === cursor.lastSessionTs && cursor.lastSessionFile) {
-        return fname.localeCompare(cursor.lastSessionFile) > 0;
+      if (mtime === cursor.lastSessionTs) {
+        if (cursor.lastSessionFile) {
+          return fname.localeCompare(cursor.lastSessionFile) > 0;
+        }
+        // No filename: skip entire mtime to avoid reprocessing
+        return false;
       }
       return true;
     });
@@ -540,9 +544,8 @@ export async function runExtractImplicitFeedbackForCli(
       markPartialProgress("maxWallClock");
       break;
     }
-    // BUG FIX #2: Check against sessionsVisited instead of sessionsProcessed
-    // to ensure the cap includes all visited sessions (read errors, too-short transcripts, etc.)
-    if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
+    // Check against sessionsProcessed to ensure cursor advances only when work completes
+    if (maxSessionsPerRun > 0 && progress.sessionsProcessed >= maxSessionsPerRun) {
       markPartialProgress("maxSessions");
       break;
     }
