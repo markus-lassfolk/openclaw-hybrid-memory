@@ -28,6 +28,7 @@ import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
+import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
 
 function emptyRecallStage(): RecallStageResult {
   return { kind: "empty", prependContext: undefined };
@@ -35,6 +36,17 @@ function emptyRecallStage(): RecallStageResult {
 
 function recallAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
+}
+
+function isLifecycleSqliteShutdownError(err: unknown, ctx: LifecycleContext): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  if (!/not open|connection is not open|database is not open/i.test(message)) {
+    return false;
+  }
+  if (typeof ctx.factsDb.isOpen === "function" && !ctx.factsDb.isOpen()) {
+    return true;
+  }
+  return isStaleLifecycleGeneration(ctx);
 }
 
 function clipNarrativeText(text: string, maxChars = 360): string {
@@ -1048,6 +1060,10 @@ export async function runRecall(
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
+    if (isLifecycleSqliteShutdownError(err, ctx)) {
+      setRecallProbePhase("skip:shutdown");
+      return completeStage(emptyRecallStage());
+    }
     if (!recallStageCompleted) {
       recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, {
         ...(recallStageFields ?? {}),

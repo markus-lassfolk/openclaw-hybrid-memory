@@ -77,6 +77,10 @@ export interface LifecycleContext {
   recallInFlightRef: { value: number };
   /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
   lastAutoRecallPromptRef: { value: string | null };
+  /** Registration generation that owns this lifecycle context; used to detect stale in-flight hooks. */
+  registrationGeneration?: number;
+  /** Shared current generation ref; differs from registrationGeneration after plugin re-registration. */
+  currentRegistrationGenerationRef?: { value: number };
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */

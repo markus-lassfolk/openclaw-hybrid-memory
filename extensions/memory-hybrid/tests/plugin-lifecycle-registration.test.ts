@@ -10,6 +10,7 @@ import { FactsDB } from "../backends/facts-db.js";
 import { resetStartupMemoryAttributionForTests } from "../services/startup-memory-attribution.js";
 import { runCaptureStage } from "../lifecycle/stage-capture.js";
 import { registerLifecycleHooks } from "../setup/register-hooks.js";
+import { buildDailyNarrative } from "../src/worker/narratives.js";
 import { buildGuardTestConfig, buildGuardTestLifecycleContext } from "./helpers/lifecycle-hook-harness.js";
 
 vi.mock("../lifecycle/stage-capture.js", () => ({
@@ -153,6 +154,72 @@ describe("registerLifecycleHooks", () => {
     for (const unsubscribe of unsubscribers) {
       expect(unsubscribe).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it("skips post-await agent_end work when the lifecycle generation goes stale mid-flight", async () => {
+    const lifecycleCtx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const cfg = buildGuardTestConfig(tmpDir);
+    const currentRegistrationGenerationRef = { value: 1 };
+    let releaseCapture: (() => void) | undefined;
+    vi.mocked(runCaptureStage).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseCapture = resolve;
+        }),
+    );
+    const narrativeMock = vi.mocked(buildDailyNarrative);
+    narrativeMock.mockClear();
+
+    const api = {
+      on: vi.fn(),
+      logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+      context: { sessionId: "e2e-session", sessionKey: "e2e-session", agentId: "e2e-agent" },
+    };
+
+    const pluginApi = {
+      ...lifecycleCtx,
+      cfg,
+      embeddingRegistry: null,
+      credentialsDb: null,
+      aliasDb: null,
+      wal: null,
+      proposalsDb: null,
+      eventLog: null,
+      narrativesDb: null,
+      workflowStore: null,
+      issueStore: null,
+      crystallizationStore: null,
+      toolProposalStore: null,
+      verificationStore: null,
+      variantQueue: null,
+      pythonBridge: null,
+      apitapStore: null,
+      auditStore: null,
+      agentHealthStore: null,
+      provenanceService: null,
+      timers: { proposalsPruneTimer: { value: null } },
+      buildToolScopeFilter: () => undefined,
+      runReflection: vi.fn(),
+      runReflectionRules: vi.fn(),
+      runReflectionMeta: vi.fn(),
+      registrationGeneration: 1,
+      currentRegistrationGenerationRef,
+    };
+
+    registerLifecycleHooks(pluginApi as never, api as never);
+    const agentEndHandler = (api.on as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "agent_end")?.[1] as
+      | ((event: unknown, hookCtx: unknown) => Promise<unknown>)
+      | undefined;
+
+    const pending = agentEndHandler?.(
+      { messages: [], success: true, sessionKey: "e2e-session", sessionId: "e2e-session" },
+      { sessionKey: "e2e-session", sessionId: "e2e-session", agentId: "e2e-agent" },
+    );
+    currentRegistrationGenerationRef.value = 2;
+    releaseCapture?.();
+    await pending;
+
+    expect(narrativeMock).not.toHaveBeenCalled();
   });
 
   it("logs first agent_end compaction checkpoint with subsystem attribution", async () => {
