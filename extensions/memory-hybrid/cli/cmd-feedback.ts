@@ -8,7 +8,7 @@
  *   - cost-report               — show LLM cost breakdown by feature or model
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -867,6 +867,145 @@ export function resolveToolEffectivenessCliDbPaths(sqlitePath: string): {
   };
 }
 
+function resolveLegacyWorkflowDbPath(sqlitePath: string): string {
+  const sqliteBaseName = basename(sqlitePath);
+  const extIndex = sqliteBaseName.lastIndexOf(".");
+  const sqliteStem = extIndex > 0 ? sqliteBaseName.slice(0, extIndex) : sqliteBaseName;
+  return join(dirname(sqlitePath), `${sqliteStem}-workflows.db`);
+}
+
+/** Helper to check if a DB path has valid workflow traces. */
+function hasValidWorkflowTraces(dbPath: string): boolean {
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const tableExists = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_traces'`)
+        .get() as { name: string } | undefined;
+      if (!tableExists) return false;
+
+      const rows = db.prepare("SELECT tool_sequence FROM workflow_traces").all() as { tool_sequence: string }[];
+      for (const row of rows) {
+        try {
+          const parsed = JSON.parse(row.tool_sequence) as unknown;
+          if (!Array.isArray(parsed)) continue;
+          const nonEmptyTools = parsed.filter(
+            (tool): tool is string => typeof tool === "string" && tool.trim().length > 0,
+          );
+          if (nonEmptyTools.length > 0) return true;
+        } catch {
+          continue;
+        }
+      }
+      return false;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+export function explainToolEffectivenessNoData(
+  sqlitePath: string,
+  workflowDbPath: string,
+  workflowTrackingEnabled: boolean,
+): string {
+  if (!existsSync(workflowDbPath)) {
+    const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
+    if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
+      return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+    }
+    if (!workflowTrackingEnabled) {
+      return "workflow tracking is disabled (workflowTracking.enabled=false)";
+    }
+    return `workflow traces DB not found at ${workflowDbPath}`;
+  }
+
+  // Bug fix: Even when new DB exists, check if it's empty and legacy DB has actual traces
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(workflowDbPath, { readOnly: true });
+    try {
+      const tableExists = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_traces'`)
+        .get() as { name: string } | undefined;
+
+      if (!tableExists) {
+        // No table yet - check for legacy DB with actual workflow traces
+        const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
+        if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
+          return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+        }
+        if (!workflowTrackingEnabled) {
+          return "workflow tracking is disabled (workflowTracking.enabled=false)";
+        }
+        return "no workflow traces recorded yet";
+      }
+
+      const rowCount = (db.prepare("SELECT COUNT(*) as count FROM workflow_traces").get() as { count: number }).count;
+
+      if (rowCount === 0) {
+        // Empty table - check for legacy DB with actual workflow traces
+        const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
+        if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
+          return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+        }
+        if (!workflowTrackingEnabled) {
+          return "workflow tracking is disabled (workflowTracking.enabled=false)";
+        }
+        return "no workflow traces recorded yet";
+      }
+
+      // Classify trace rows so zero-score explanations can distinguish
+      // invalid/empty rows from below-threshold scoring.
+      const rows = db.prepare("SELECT tool_sequence FROM workflow_traces").all() as { tool_sequence: string }[];
+      let rowsWithNonEmptyTools = 0;
+      let rowsWithInvalidOrEmptyTools = 0;
+      for (const row of rows) {
+        try {
+          const parsed = JSON.parse(row.tool_sequence) as unknown;
+          if (!Array.isArray(parsed)) {
+            rowsWithInvalidOrEmptyTools++;
+            continue;
+          }
+          const nonEmptyTools = parsed.filter(
+            (tool): tool is string => typeof tool === "string" && tool.trim().length > 0,
+          );
+          if (nonEmptyTools.length > 0) rowsWithNonEmptyTools++;
+          else rowsWithInvalidOrEmptyTools++;
+        } catch {
+          rowsWithInvalidOrEmptyTools++;
+        }
+      }
+
+      if (rowsWithNonEmptyTools === 0) {
+        // Only check for legacy DB migration when current DB has no valid traces.
+        // If we have valid traces but zero scored tools, the issue is threshold-related.
+        const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
+        if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
+          return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+        }
+        return "workflow traces exist but all have invalid or empty tool sequences";
+      }
+
+      if (rowsWithInvalidOrEmptyTools > 0) {
+        return "workflow traces include invalid or empty tool sequences and no tools meet minimum call threshold for scoring";
+      }
+
+      // Has valid non-empty traces but none met scoring criteria (e.g., below minCalls threshold)
+      return "workflow traces exist but no tools meet minimum call threshold for scoring";
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    // Database exists but cannot be read - report the error
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return `failed to read workflow traces DB: ${errMsg}`;
+  }
+}
+
 /**
  * Compute and format a tool effectiveness report.
  */
@@ -885,8 +1024,9 @@ export async function runToolEffectivenessForCli(
     (ctx.logger?.info ?? console.log)("memory-hybrid: tool-effectiveness — computing scores from workflow traces…");
   }
   // Derive the workflow store DB path from the sqlite path
-  const sqlitePath = cfg.sqlitePath ?? join(homedir(), ".openclaw", "memory", "memory.db");
-  const { workflowDbPath, effectivenessDbPath } = resolveToolEffectivenessCliDbPaths(sqlitePath);
+  const resolvedSqlitePath =
+    ctx.resolvedSqlitePath ?? cfg.sqlitePath ?? join(homedir(), ".openclaw", "memory", "memory.db");
+  const { workflowDbPath, effectivenessDbPath } = resolveToolEffectivenessCliDbPaths(resolvedSqlitePath);
 
   let effStore: ToolEffectivenessStore;
   try {
@@ -918,6 +1058,14 @@ export async function runToolEffectivenessForCli(
         subsystem: "tool-effectiveness",
         severity: "info",
       });
+    }
+
+    if (report.toolsScored === 0) {
+      return `No tool effectiveness data available (${explainToolEffectivenessNoData(
+        resolvedSqlitePath,
+        workflowDbPath,
+        cfg.workflowTracking?.enabled === true,
+      )}).`;
     }
 
     return formatToolEffectivenessReport(report);
