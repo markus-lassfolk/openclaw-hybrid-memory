@@ -958,14 +958,17 @@ export async function runExtractImplicitFeedbackForCli(
                 };
                 // Calculate remaining wall clock budget and abort if LLM call exceeds it
                 const remainingMs = maxWallClockSeconds * 1000 - (Date.now() - startTimeMs);
-                const timeoutPromise = new Promise<null>((resolve) => {
-                  setTimeout(() => resolve(null), Math.max(0, remainingMs));
+                const timeoutSymbol = Symbol("timeout");
+                const timeoutPromise = new Promise<typeof timeoutSymbol>((resolve) => {
+                  if (maxWallClockSeconds > 0) {
+                    setTimeout(() => resolve(timeoutSymbol), Math.max(0, remainingMs));
+                  }
                 });
                 const llmAnalysis = await Promise.race([
                   analyzeTrajectoriesWithLLM(traj, prompt, chatFn),
                   timeoutPromise,
                 ]);
-                if (wallClockLimitReached() || llmAnalysis === null) {
+                if (llmAnalysis === timeoutSymbol || wallClockLimitReached()) {
                   markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
                   break;
                 }
