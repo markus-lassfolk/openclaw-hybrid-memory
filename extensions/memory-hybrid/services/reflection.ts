@@ -839,6 +839,13 @@ export async function runReflection(
         if (storeResult.embeddingStale) {
           // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
           try {
+            (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
+          } catch (embErr) {
+            logger.warn(
+              `memory-hybrid: reflection — failed to delete canonical embeddings for pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
+            );
+          }
+          try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
             logger.warn(
@@ -1390,6 +1397,13 @@ export async function runReflectionRules(
         if (storeResult.embeddingStale) {
           // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
           try {
+            (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
+          } catch (embErr) {
+            logger.warn(
+              `memory-hybrid: reflect-rules — failed to delete canonical embeddings for rule fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
+            );
+          }
+          try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
             logger.warn(
@@ -1893,6 +1907,13 @@ export async function runReflectionMeta(
         });
         if (storeResult.embeddingStale) {
           // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
+          try {
+            (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
+          } catch (embErr) {
+            logger.warn(
+              `memory-hybrid: reflect-meta — failed to delete canonical embeddings for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
+            );
+          }
           try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
