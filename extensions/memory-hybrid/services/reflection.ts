@@ -1242,6 +1242,7 @@ export async function runReflectionRules(
   }
   const trimmedResponse = rawResponse.trim();
   const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
+  const wrapperContents = extractThinkingWrapperContents(trimmedResponse);
   const responseForParsing = strippedResponse.length > 0 ? strippedResponse : trimmedResponse;
   const rules: string[] = [];
   let rejectedLowConfidence = 0;
@@ -1271,6 +1272,32 @@ export async function runReflectionRules(
       rejectedLength++;
     }
   }
+  for (const wrapperContent of wrapperContents) {
+    for (const line of wrapperContent.split(/\n/)) {
+      const m = line.match(/^\s*RULE:\s*(.+)/);
+      if (!m) continue;
+      parseableLines++;
+      let text = m[1].trim();
+      if (LOW_CONFIDENCE_PREFIX_PATTERN.test(text)) {
+        rejectedLowConfidence++;
+        continue;
+      }
+      const confidencePrefix = text.match(EXPLICIT_CONFIDENCE_PREFIX_PATTERN);
+      if (confidencePrefix?.groups?.value) {
+        const confidence = Number.parseFloat(confidencePrefix.groups.value);
+        text = text.slice(confidencePrefix[0].length).trim();
+        if (Number.isFinite(confidence) && confidence < REFLECTION_RULE_MIN_CONFIDENCE) {
+          rejectedLowConfidence++;
+          continue;
+        }
+      }
+      if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) {
+        rules.push(text);
+      } else {
+        rejectedLength++;
+      }
+    }
+  }
   const seenInBatch = new Set<string>();
   const uniqueRules: string[] = [];
   let rejectedDuplicates = 0;
@@ -1284,7 +1311,6 @@ export async function runReflectionRules(
     uniqueRules.push(r);
   }
   const wrapperTagStrippedResponse = stripThinkingWrapperTagsKeepContent(trimmedResponse);
-  const wrapperContents = extractThinkingWrapperContents(trimmedResponse);
   const noRulesClassificationResponse = strippedResponse.length > 0 ? strippedResponse : wrapperTagStrippedResponse;
   const containsRuleLineInResponse =
     /(?:^|\n)\s*RULE:/i.test(noRulesClassificationResponse) ||
