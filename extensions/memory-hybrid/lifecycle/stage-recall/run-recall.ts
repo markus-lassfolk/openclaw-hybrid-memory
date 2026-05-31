@@ -28,7 +28,6 @@ import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
 import {
   isRecallContextSuperseded,
-  shouldSuppressStaleLifecycleError,
   suppressStaleLifecycleDbError,
 } from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
@@ -911,7 +910,7 @@ export async function runRecall(
           }
         }
       } catch (err) {
-        if (shouldSuppressStaleLifecycleError(ctx, err)) {
+        if (isRecallContextSuperseded(ctx)) {
           api.logger.debug?.("memory-hybrid: directive recall skipped (registration superseded)");
           return abortDirectives();
         }
@@ -1104,7 +1103,7 @@ export async function runRecall(
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
-    if (shouldSuppressStaleLifecycleError(ctx, err)) {
+    if (isRecallContextSuperseded(ctx)) {
       api.logger.debug?.(
         `memory-hybrid: recall-probe id=${recallProbeId} skipped (registration superseded) elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase}`,
       );

@@ -694,7 +694,7 @@ export function initializeDatabases(
         health.credentialsVaultOk = true;
         api.logger.info("memory-hybrid: credentials vault check OK");
       } catch (e) {
-        if (isBootstrapSuperseded() && isDbClosedError(e)) {
+        if (isBootstrapSuperseded()) {
           api.logger.debug?.("memory-hybrid: credentials vault check skipped (registration superseded)");
           return;
         }
