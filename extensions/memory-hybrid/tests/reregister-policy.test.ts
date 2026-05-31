@@ -80,6 +80,31 @@ describe("reregister-policy", () => {
     expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(false);
   });
 
+  it("reuse-databases declines when encryption key changes", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const oldCfg = minimalCfg();
+    (oldCfg as { credentials?: { enabled: boolean; encryptionKey: string } }).credentials = {
+      enabled: true,
+      encryptionKey: "old-key",
+    };
+    const newCfg = minimalCfg();
+    (newCfg as { credentials?: { enabled: boolean; encryptionKey: string } }).credentials = {
+      enabled: true,
+      encryptionKey: "new-key",
+    };
+    const old = mockOldRuntime(
+      {
+        sqlite: api.resolvePath(oldCfg.sqlitePath),
+        lance: api.resolvePath(oldCfg.lanceDbPath),
+      },
+      oldCfg,
+    );
+    expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(false);
+  });
+
   it("records metrics counters", () => {
     vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "full");
     expect(resolveReregisterPolicy()).toBe("full");

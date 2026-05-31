@@ -98,6 +98,8 @@ export function canReuseDatabasesOnReregister(
 
   // Compare credentials.enabled to detect when vault should be opened or closed
   if (oldCfg.credentials?.enabled !== cfg.credentials?.enabled) return false;
+  // Compare credentials.encryptionKey to detect when vault key has changed
+  if (oldCfg.credentials?.encryptionKey !== cfg.credentials?.encryptionKey) return false;
 
   return true;
 }
