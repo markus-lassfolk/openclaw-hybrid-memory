@@ -1158,6 +1158,7 @@ export async function runExtractImplicitFeedbackForCli(
           severity: "info",
           subsystem: "implicit-feedback",
         });
+        break;
       }
     }
 
