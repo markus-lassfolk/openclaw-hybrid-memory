@@ -13,6 +13,11 @@ export const DEPRECATED_HYBRID_MEM_CRON_TOKENS: readonly DeprecatedCronToken[] =
     replacement: "dream-cycle",
     note: "Old nightly dream-cycle step name; replaced by `openclaw hybrid-mem dream-cycle`.",
   },
+  {
+    token: "enrich-entities --limit 500",
+    replacement: `enrich-entities --limit "\${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}" --verbose`,
+    note: "Old monthly-consolidation entity enrichment cap was too large for live throughput; use the safe configurable cap.",
+  },
 ];
 
 function escapeRegExpLiteral(token: string): string {
