@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginRuntime } from "../api/plugin-runtime.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
@@ -15,11 +15,25 @@ function minimalCfg(sqlite = "memory/facts.db", lance = "memory/lancedb"): Hybri
   return {
     sqlitePath: sqlite,
     lanceDbPath: lance,
+    embedding: {
+      provider: "openai",
+      model: "text-embedding-3-small",
+      endpoint: "https://api.openai.com/v1",
+      apiKey: "sk-test-key",
+      deployment: undefined,
+    },
+    llm: {
+      default: ["openai/gpt-4.1"],
+      heavy: [],
+      nano: [],
+      providers: {},
+    },
   } as HybridMemoryConfig;
 }
 
-function mockOldRuntime(paths: { sqlite: string; lance: string }): PluginRuntime {
+function mockOldRuntime(paths: { sqlite: string; lance: string }, cfg: HybridMemoryConfig): PluginRuntime {
   return {
+    cfg,
     resolvedSqlitePath: paths.sqlite,
     resolvedLancePath: paths.lance,
     bootstrapSettledRef: { value: true },
@@ -27,6 +41,10 @@ function mockOldRuntime(paths: { sqlite: string; lance: string }): PluginRuntime
 }
 
 describe("reregister-policy", () => {
+  beforeEach(() => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "");
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     resetReregisterPolicyForTests();
@@ -43,10 +61,13 @@ describe("reregister-policy", () => {
       resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
     };
     const cfg = minimalCfg();
-    const old = mockOldRuntime({
-      sqlite: api.resolvePath(cfg.sqlitePath),
-      lance: api.resolvePath(cfg.lanceDbPath),
-    });
+    const old = mockOldRuntime(
+      {
+        sqlite: api.resolvePath(cfg.sqlitePath),
+        lance: api.resolvePath(cfg.lanceDbPath),
+      },
+      cfg,
+    );
     expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(true);
     expect(shouldFullTeardownOnReregister()).toBe(false);
   });
@@ -55,7 +76,7 @@ describe("reregister-policy", () => {
     vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
     const api = { resolvePath: (p: string) => `/data/${p}` };
     const cfg = minimalCfg("memory/other.db");
-    const old = mockOldRuntime({ sqlite: "/data/memory/facts.db", lance: "/data/memory/lancedb" });
+    const old = mockOldRuntime({ sqlite: "/data/memory/facts.db", lance: "/data/memory/lancedb" }, minimalCfg());
     expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(false);
   });
 

@@ -77,6 +77,7 @@ export function canReuseDatabasesOnReregister(
 
   // Compare embedding config to detect provider/model/endpoint changes that require rebuilding clients
   const oldCfg = old.cfg;
+  if (!oldCfg?.embedding || !cfg.embedding) return false;
   if (
     oldCfg.embedding.provider !== cfg.embedding.provider ||
     oldCfg.embedding.model !== cfg.embedding.model ||

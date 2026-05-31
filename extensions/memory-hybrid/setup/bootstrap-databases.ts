@@ -179,14 +179,7 @@ export function createReusedDatabaseBootstrap(
   api: ClawdbotPluginApi,
   ctx: Pick<
     DatabaseContext,
-    | "embeddings"
-    | "wal"
-    | "credentialsDb"
-    | "factsDb"
-    | "vectorDb"
-    | "aliasDb"
-    | "resolvedSqlitePath"
-    | "health"
+    "embeddings" | "wal" | "credentialsDb" | "factsDb" | "vectorDb" | "aliasDb" | "resolvedSqlitePath" | "health"
   >,
   opts: { bootRegistrationGeneration: number },
 ): Promise<void> {

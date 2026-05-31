@@ -111,8 +111,25 @@ describe("runRecallStage", () => {
     expect(ctx.recallInFlightRef.value).toBe(0);
   });
 
-  it("returns empty instead of throwing when FactsDB closes during teardown", async () => {
+  it("surfaces DB-close errors when recall generation is still current", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockRejectedValue(
+      new Error("The database connection is not open"),
+    );
+    factsDb.permanentClose();
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+
+    await expect(
+      runRecallStage({ prompt: "find credentials for github api" }, api as never, ctx, sessionState),
+    ).rejects.toThrow("The database connection is not open");
+    expect(ctx.recallInFlightRef.value).toBe(0);
+  });
+
+  it("suppresses DB-close errors after registration supersession", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    ctx.registrationGeneration = 1;
+    ctx.currentRegistrationGenerationRef = { value: 2 };
     vi.mocked(recallPipeline.runRecallPipelineQuery).mockRejectedValue(
       new Error("The database connection is not open"),
     );
