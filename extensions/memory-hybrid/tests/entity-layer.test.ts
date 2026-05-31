@@ -169,6 +169,30 @@ describe("normalizeFactEntityMentionsForPersistence", () => {
           endOffset: 11,
           confidence: 0.9,
         },
+        {
+          label: "ORG",
+          surfaceText: "小米",
+          normalizedSurface: "小米",
+          startOffset: 12,
+          endOffset: 14,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "腾讯",
+          normalizedSurface: "腾讯",
+          startOffset: 15,
+          endOffset: 17,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "ab",
+          normalizedSurface: "ab",
+          startOffset: 18,
+          endOffset: 20,
+          confidence: 0.9,
+        },
       ]),
     ).toEqual([
       {
@@ -201,6 +225,22 @@ describe("normalizeFactEntityMentionsForPersistence", () => {
         normalizedSurface: "3m",
         startOffset: 9,
         endOffset: 11,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "小米",
+        normalizedSurface: "小米",
+        startOffset: 12,
+        endOffset: 14,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "腾讯",
+        normalizedSurface: "腾讯",
+        startOffset: 15,
+        endOffset: 17,
         confidence: 0.9,
       },
     ]);

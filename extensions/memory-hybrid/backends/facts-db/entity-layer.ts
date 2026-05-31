@@ -83,7 +83,16 @@ function isValidTwoCharacterMention(mention: { label: EntityMentionLabel; surfac
     return /^\p{L}{2}$/u.test(surface);
   }
 
-  return /^[\p{L}\p{N}]{2}$/u.test(surface) && (/\p{Lu}/u.test(surface) || /\p{N}/u.test(surface));
+  if (!/^[\p{L}\p{N}]{2}$/u.test(surface)) {
+    return false;
+  }
+
+  if (/\p{N}/u.test(surface) || /\p{Lu}/u.test(surface)) {
+    return true;
+  }
+
+  // Allow two-character org mentions in scripts without uppercase variants (e.g. Han).
+  return /\P{Script=Latin}/u.test(surface);
 }
 
 function shouldFilterEntityMention(mention: {
