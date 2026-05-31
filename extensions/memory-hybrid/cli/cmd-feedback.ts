@@ -1184,7 +1184,10 @@ export async function runExtractImplicitFeedbackForCli(
     emitProgress();
 
     if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock");
+      const remainingDeferred = filePaths.length - progress.sessionsVisited;
+      if (remainingDeferred > 0) {
+        markPartialProgress("maxWallClock", remainingDeferred);
+      }
       break;
     }
   }
