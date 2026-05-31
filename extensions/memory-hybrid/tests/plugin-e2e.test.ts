@@ -167,7 +167,7 @@ describe("Plugin registration e2e", () => {
     expect(mockApi.getTool("memory_promote")).toBeDefined();
   });
 
-  it("full register() creates on-disk database paths (heavy bootstrap)", () => {
+  it("full register() creates on-disk database paths (heavy bootstrap)", async () => {
     const sqlitePath = join(tmpDir, "facts.db");
     const lancePath = join(tmpDir, "lancedb");
     const pluginConfig = getMinimalConfig({
@@ -180,7 +180,7 @@ describe("Plugin registration e2e", () => {
       registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    memoryHybridPlugin.register(mockApi as never);
+    await memoryHybridPlugin.register(mockApi as never);
     expect(existsSync(sqlitePath)).toBe(true);
   });
 

@@ -150,7 +150,7 @@ async function performHybridMemCliTeardown(): Promise<void> {
   }
 }
 
-export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
+export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<void> {
   // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
   // Check this FIRST, before any logger init or config parsing, so an incomplete config
   // cannot block lightweight metadata registration.
@@ -259,16 +259,12 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   }
 
   if (old && !reuseDatabases) {
-    // Start async wait for teardown (#802). Generation guards prevent corruption if init races.
-    awaitReloadTeardownBeforeOpen().then((teardownSettled) => {
-      if (!teardownSettled) {
-        logApi.logger.debug?.(
-          "memory-hybrid: reload teardown still in progress after wait; DB handles opened (superseded bootstrap/recall guarded)",
-        );
-      }
-    }).catch(() => {
-      /* non-fatal */
-    });
+    const teardownSettled = await awaitReloadTeardownBeforeOpen();
+    if (!teardownSettled) {
+      logApi.logger.debug?.(
+        "memory-hybrid: reload teardown still in progress after wait; opening new DB handles (superseded bootstrap/recall guarded)",
+      );
+    }
   }
 
   let dbContext: ReturnType<typeof initializeDatabases>;
