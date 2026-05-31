@@ -110,6 +110,54 @@ describe("runStoreForCli canonical embedding mirror", () => {
     expect(embeddings[0]?.embedding).toHaveLength(3);
     expect(factsDb.countVectorlessActiveFacts("cli")).toBe(0);
   });
+
+  it("stores canonical fact_embeddings rows for stale dedupe merges even when Lance is unavailable", async () => {
+    factsDb.close();
+    factsDb = new FactsDB(join(tmpDir, "merge-facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig: {
+        fuzzyDedupe: true,
+        defaultProfile: { onDuplicate: "merge" },
+        sourceProfiles: { cli: { onDuplicate: "merge" } },
+      },
+    });
+    mockCtx.factsDb = factsDb;
+    mockCtx.cfg.store = { classifyBeforeWrite: false, fuzzyDedupe: true, defaultProfile: { onDuplicate: "merge" } };
+    mockCtx.vectorDb.hasDuplicate = vi.fn().mockResolvedValue(false);
+    mockCtx.vectorDb.isLanceDbAvailable = vi.fn().mockReturnValue(false);
+    mockCtx.vectorDb.store = vi.fn().mockResolvedValue(undefined);
+
+    const first = await runStoreForCli(
+      mockCtx,
+      {
+        text: "Audit health should count canonical SQLite embeddings",
+        category: "technical",
+      },
+      { warn: vi.fn() },
+    );
+    expect(first.outcome).toBe("stored");
+    if (first.outcome !== "stored") return;
+
+    const merged = await runStoreForCli(
+      mockCtx,
+      {
+        text: "audit health should count canonical sqlite embeddings",
+        category: "technical",
+      },
+      { warn: vi.fn() },
+    );
+    expect(merged.outcome).toBe("stored");
+    if (merged.outcome !== "stored") return;
+
+    expect(merged.id).toBe(first.id);
+    const embeddings = factsDb.getEmbeddings(merged.id);
+    expect(embeddings).toHaveLength(1);
+    expect(embeddings[0]).toMatchObject({
+      model: "test-embedding-model",
+      variant: "canonical",
+    });
+    expect(factsDb.countVectorlessActiveFacts("cli")).toBe(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

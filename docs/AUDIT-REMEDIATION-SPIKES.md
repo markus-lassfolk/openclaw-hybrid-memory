@@ -81,6 +81,9 @@ Re-run **plugin install / cron sync** after upgrading so OpenClaw picks up new j
 
 ```bash
 openclaw hybrid-mem record-storage-sample
+openclaw hybrid-mem record-storage-sample --force
+openclaw hybrid-mem record-storage-sample --dry-run --json
 ```
 
 Idempotent: at most one insert per UTC calendar day; enables **7d storage deltas** in `audit health` once daily samples exist.
+Use `--force` for same-day manual QA reruns, or `--dry-run --json` to preview the sample payload without writing a row. Human output now includes parseable markers such as `status=success_recorded` and `status=skipped_already_sampled_today`.

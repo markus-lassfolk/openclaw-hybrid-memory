@@ -156,6 +156,8 @@ The **weekly-extract-procedures** job (Sunday 04:00 by default) runs four steps 
 - **Job model:** The job is scheduled with the **nano** tier, so the agent that runs these steps uses a cheap model (e.g. gpt-4.1-nano). Your primary model stays free for interactive use.
 - **extract-reinforcement LLM:** The only step that calls an LLM is **extract-reinforcement**. Its model is set by **`distill.extractionModelTier`**: unset → **nano** tier (e.g. gpt-4.1-nano); **`"maintenance"`** → maintenance tier; **`"default"`** → default tier; **`"heavy"`** → heavy tier. Prefer `"nano"` or `"maintenance"` for cost safety. Run **`openclaw hybrid-mem config`** to see the effective routing and **`openclaw hybrid-mem verify`** for warnings.
 - **When it runs:** The job is already at night (Sunday 04:00). Ensure your OpenClaw cron/scheduler runs at that time so the pipeline doesn’t run during active use. After upgrading, if you run **`openclaw hybrid-mem verify --fix`**, the job is re-created with the nano model; existing jobs keep their current model until you re-run install or verify --fix.
+- **Forced QA reruns:** when you manually bypass wrapper guard checks (`HYBRID_MEM_CLI_JOB_GUARD_WINDOW_MS=0` or `QA_FORCE=1` / `HYBRID_MEM_QA_FORCE=1`), guarded extraction commands automatically receive `--full` so their internal 23h scan cooldown is bypassed too.
+- **Step timeout bypass:** the cron bash harness honors `STEP_TIMEOUT_SECONDS`; set it to `0` to run steps without the external `timeout` wrapper.
 
 ---
 
@@ -328,7 +330,7 @@ These are optional but recommended for long-running systems:
 | **Review stats** | Weekly | `openclaw hybrid-mem stats` |
 | **Find duplicates** | Monthly | `openclaw hybrid-mem find-duplicates --threshold 0.92` |
 | **Consolidate** | Monthly (after review) | `openclaw hybrid-mem consolidate --dry-run` then `consolidate` |
-| **Entity / contact NER backfill** | Monthly or after bulk import | `openclaw hybrid-mem enrich-entities --limit 500` (fills PERSON/ORG rows when `graph.enabled`; see [GRAPH-MEMORY.md](GRAPH-MEMORY.md)) |
+| **Entity / contact NER backfill** | Monthly or after bulk import | `openclaw hybrid-mem enrich-entities --limit 25` (fills PERSON/ORG rows when `graph.enabled`; safe per-run cap—re-run to process more; set `HYBRID_MEM_CLI_JOB_ENRICH_LIMIT=N` to override the cron default; see [GRAPH-MEMORY.md](GRAPH-MEMORY.md)) |
 | **Review memory files** | Monthly | Read recent `memory/YYYY-MM-DD.md`, update `memory/` files |
 | **Update MEMORY.md index** | When files change | Edit `MEMORY.md` to reflect current structure |
 | **Archive completed projects** | When done | Move from `memory/projects/` to `memory/archive/` |

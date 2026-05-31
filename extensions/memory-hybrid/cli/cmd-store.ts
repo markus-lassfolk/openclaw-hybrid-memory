@@ -42,7 +42,6 @@ export async function runStoreForCli(
 ): Promise<StoreCliResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;
   const text = opts.text;
-  if (factsDb.hasDuplicate(text, "cli")) return { outcome: "duplicate" };
   const sourceDate = opts.sourceDate ? parseSourceDate(opts.sourceDate) : null;
   const extracted = extractStructuredFields(text, (opts.category ?? "other") as MemoryCategory);
   const entity = opts.entity ?? extracted.entity ?? null;
@@ -149,6 +148,20 @@ export async function runStoreForCli(
         .filter(Boolean)
     : undefined;
   const category = (opts.category ?? "other") as MemoryCategory;
+  const dedupeProfile = cfg.store.sourceProfiles?.cli ?? cfg.store.defaultProfile;
+  const cliDuplicatesCanMutateExistingFact =
+    dedupeProfile?.onDuplicate === "merge" || dedupeProfile?.onDuplicate === "boost";
+  if (
+    !cliDuplicatesCanMutateExistingFact &&
+    factsDb.hasDuplicate(text, "cli", {
+      category,
+      entity,
+      key,
+      value,
+    })
+  ) {
+    return { outcome: "duplicate" };
+  }
 
   // FR-006: Compute scope early so it's available for classify-before-write UPDATE path
   const scope = opts.scope ?? "global";
@@ -262,19 +275,15 @@ export async function runStoreForCli(
                     category,
                     id: newEntry.id,
                   });
-                  const canPersistCanonical =
-                    typeof vectorDb.isLanceDbAvailable === "function" ? vectorDb.isLanceDbAvailable() : true;
-                  if (canPersistCanonical) {
-                    persistCanonicalFactEmbedding(
-                      factsDb,
-                      newEntry.id,
-                      embeddings.modelName,
-                      mergedVector,
-                      "runStoreForCli:update-fact-embeddings",
-                      "cli",
-                      log.warn,
-                    );
-                  }
+                  persistCanonicalFactEmbedding(
+                    factsDb,
+                    newEntry.id,
+                    embeddings.modelName,
+                    mergedVector,
+                    "runStoreForCli:update-fact-embeddings",
+                    "cli",
+                    log.warn,
+                  );
                 } else {
                   factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(vector))) {
@@ -370,19 +379,15 @@ export async function runStoreForCli(
           category: opts.category ?? "other",
           id: entry.id,
         });
-        const canPersistCanonical =
-          typeof vectorDb.isLanceDbAvailable === "function" ? vectorDb.isLanceDbAvailable() : true;
-        if (canPersistCanonical) {
-          persistCanonicalFactEmbedding(
-            factsDb,
-            entry.id,
-            embeddings.modelName,
-            mergedVector,
-            "runStoreForCli:final-fact-embeddings",
-            "cli",
-            log.warn,
-          );
-        }
+        persistCanonicalFactEmbedding(
+          factsDb,
+          entry.id,
+          embeddings.modelName,
+          mergedVector,
+          "runStoreForCli:final-fact-embeddings",
+          "cli",
+          log.warn,
+        );
       } else {
         const vector = await embeddings.embed(text);
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
