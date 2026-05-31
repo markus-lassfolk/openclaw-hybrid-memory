@@ -28,7 +28,7 @@ function minimalCfg(sqlite = "memory/facts.db", lance = "memory/lancedb"): Hybri
       nano: [],
       providers: {},
     },
-  } as HybridMemoryConfig;
+  } as unknown as HybridMemoryConfig;
 }
 
 function mockOldRuntime(paths: { sqlite: string; lance: string }, cfg: HybridMemoryConfig): PluginRuntime {
