@@ -805,6 +805,8 @@ export async function runReflection(
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, patternText) && !storeResult.embeddingStale) {
       duplicatesSkipped++;
+      // Keep this candidate in the in-run dedupe corpus so later patterns don't miss near-duplicates.
+      existingVectors.push(normVec);
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflection — skipped store-level duplicate: ${patternText.slice(0, 60)}...`);
       }
@@ -1979,6 +1981,8 @@ export async function runReflectionMeta(
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, metaText) && !storeResult.embeddingStale) {
       metaDuplicatesSkipped++;
+      // Keep this candidate in the in-run dedupe corpus so later meta-patterns don't miss near-duplicates.
+      existingVectors.push(normVec);
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-meta — skipped store-level duplicate: ${metaText.slice(0, 50)}...`);
       }
