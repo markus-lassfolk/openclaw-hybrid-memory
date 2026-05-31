@@ -885,8 +885,20 @@ function hasValidWorkflowTraces(dbPath: string): boolean {
         .get() as { name: string } | undefined;
       if (!tableExists) return false;
 
-      const rowCount = (db.prepare("SELECT COUNT(*) as count FROM workflow_traces").get() as { count: number }).count;
-      return rowCount > 0;
+      const rows = db.prepare("SELECT tool_sequence FROM workflow_traces").all() as { tool_sequence: string }[];
+      for (const row of rows) {
+        try {
+          const parsed = JSON.parse(row.tool_sequence) as unknown;
+          if (!Array.isArray(parsed)) continue;
+          const nonEmptyTools = parsed.filter(
+            (tool): tool is string => typeof tool === "string" && tool.trim().length > 0,
+          );
+          if (nonEmptyTools.length > 0) return true;
+        } catch {
+          continue;
+        }
+      }
+      return false;
     } finally {
       db.close();
     }
@@ -1027,13 +1039,6 @@ export async function runToolEffectivenessForCli(
   }
   try {
     const report = await computeToolEffectiveness(workflowDbPath, effStore, teCfg ?? {}, ctx.logger ?? {});
-    if (report.toolsScored === 0) {
-      return `No tool effectiveness data available (${explainToolEffectivenessNoData(
-        resolvedSqlitePath,
-        workflowDbPath,
-        cfg.workflowTracking?.enabled === true,
-      )}).`;
-    }
 
     // Gap 3 (#263): Generate monthly report, gated to once per calendar month
     const month = new Date().toISOString().slice(0, 7); // YYYY-MM
@@ -1052,6 +1057,14 @@ export async function runToolEffectivenessForCli(
         subsystem: "tool-effectiveness",
         severity: "info",
       });
+    }
+
+    if (report.toolsScored === 0) {
+      return `No tool effectiveness data available (${explainToolEffectivenessNoData(
+        resolvedSqlitePath,
+        workflowDbPath,
+        cfg.workflowTracking?.enabled === true,
+      )}).`;
     }
 
     return formatToolEffectivenessReport(report);
