@@ -145,10 +145,10 @@ export async function runCapture(
     } catch (err) {
       if (!suppressCaptureStageError(ctx, api, err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "frustration-assistant-capture",
-        subsystem: "frustration",
-        severity: "info",
-      });
+          operation: "frustration-assistant-capture",
+          subsystem: "frustration",
+          severity: "info",
+        });
       }
     }
   }

@@ -20,6 +20,7 @@ import {
   schedulePluginTeardown,
 } from "../setup/hybrid-memory-reload-coordinator.js";
 import { runRecallPipelineQuery } from "../services/recall-pipeline.js";
+import { createPendingLLMWarnings } from "../services/chat.js";
 import { shouldSuppressStaleLifecycleError } from "../utils/registration-superseded.js";
 
 describe("plugin hot-reload race", () => {
@@ -85,7 +86,7 @@ describe("plugin hot-reload race", () => {
           diversityWeight: 1,
         },
         minScore: 0,
-        pendingLLMWarnings: { warnings: [] },
+        pendingLLMWarnings: createPendingLLMWarnings(),
         logger,
         registrationGeneration: ownerGeneration,
       },

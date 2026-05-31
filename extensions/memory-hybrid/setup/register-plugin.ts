@@ -313,8 +313,7 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Initialized lazily -- PythonBridge only spawns the subprocess on first convert() call.
   // Dependency check runs from plugin service start() so `register()` stays lighter (issue #1111).
   const pythonBridge =
-    donorRuntime?.pythonBridge ??
-    (cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null);
+    donorRuntime?.pythonBridge ?? (cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null);
 
   // ========================================================================
   // Contextual Variant Generator (Issue #159)
@@ -335,54 +334,57 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // ========================================================================
 
   let learningsDb: LearningsDB | null = donorRuntime?.learningsDb ?? null;
-  if (!learningsDb) try {
-    const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
-    learningsDb = new LearningsDB(learningsDbPath);
-    logApi.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:learnings-db-init",
-      severity: "warning",
-    });
-    learningsDb = null;
-  }
+  if (!learningsDb)
+    try {
+      const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
+      learningsDb = new LearningsDB(learningsDbPath);
+      logApi.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:learnings-db-init",
+        severity: "warning",
+      });
+      learningsDb = null;
+    }
 
   // ========================================================================
   // Audit log (Issue #790)
   // ========================================================================
 
   let auditStore: AuditStore | null = donorRuntime?.auditStore ?? null;
-  if (!auditStore) try {
-    const auditPath = auditDbPathForMemorySqlite(resolvedSqlitePath);
-    if (auditPath) {
-      auditStore = new AuditStore(auditPath);
-      logApi.logger.info(`memory-hybrid: audit store initialized at ${auditPath}`);
+  if (!auditStore)
+    try {
+      const auditPath = auditDbPathForMemorySqlite(resolvedSqlitePath);
+      if (auditPath) {
+        auditStore = new AuditStore(auditPath);
+        logApi.logger.info(`memory-hybrid: audit store initialized at ${auditPath}`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:audit-store-init",
+        severity: "warning",
+      });
+      auditStore = null;
     }
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:audit-store-init",
-      severity: "warning",
-    });
-    auditStore = null;
-  }
 
   let agentHealthStore: AgentHealthStore | null = donorRuntime?.agentHealthStore ?? null;
-  if (!agentHealthStore) try {
-    const ahPath = agentHealthDbPathForMemorySqlite(resolvedSqlitePath);
-    if (ahPath) {
-      agentHealthStore = new AgentHealthStore(ahPath);
-      logApi.logger.info(`memory-hybrid: agent health store initialized at ${ahPath}`);
+  if (!agentHealthStore)
+    try {
+      const ahPath = agentHealthDbPathForMemorySqlite(resolvedSqlitePath);
+      if (ahPath) {
+        agentHealthStore = new AgentHealthStore(ahPath);
+        logApi.logger.info(`memory-hybrid: agent health store initialized at ${ahPath}`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:agent-health-store-init",
+        severity: "warning",
+      });
+      agentHealthStore = null;
     }
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:agent-health-store-init",
-      severity: "warning",
-    });
-    agentHealthStore = null;
-  }
 
   // ========================================================================
   // Build PluginRuntime -- single instance-scoped container for all state

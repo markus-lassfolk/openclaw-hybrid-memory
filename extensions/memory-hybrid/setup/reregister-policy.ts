@@ -88,7 +88,7 @@ export function databaseContextFromRuntime(old: PluginRuntime) {
     identityReflectionStore: old.identityReflectionStore,
     personaStateStore: old.personaStateStore,
     eventLog: old.eventLog,
-    narrativesDb: old.narrativesDb,
+    narrativesDb: old.narrativesDb!,
     aliasDb: old.aliasDb,
     issueStore: old.issueStore!,
     workflowStore: old.workflowStore!,
