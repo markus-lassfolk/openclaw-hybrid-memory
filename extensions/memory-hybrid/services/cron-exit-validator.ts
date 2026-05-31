@@ -294,7 +294,7 @@ export function validateMaintenanceExecution(
   if (logPath && requiredSteps.includes("dream-cycle")) {
     const degradedVerification = detectDegradedContinuousVerificationStatus(logContent);
     if (degradedVerification) {
-      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? new Date().toISOString();
+      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? "unknown";
       failedSteps.push({
         timestamp: dreamCycleTimestamp,
         step: "continuous-verification",
