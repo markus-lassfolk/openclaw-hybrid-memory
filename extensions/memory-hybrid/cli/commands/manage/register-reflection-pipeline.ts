@@ -512,6 +512,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const coreStartedAt = Date.now();
           let res;
           const followUpFailures: Array<{ phase: string; error: string }> = [];
+          let toolEffectivenessSummary: string | null = null;
           try {
             res = await runDreamCycle(verbose ? { verbose: true } : undefined);
           } catch (err) {
@@ -742,19 +743,47 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           ) {
             try {
               const teOutput = await runFollowUpStage("tool effectiveness", () => runToolEffectiveness({ verbose }));
-              if (teOutput && !teOutput.startsWith("No tool")) {
-                console.log(`Tool effectiveness: ${teOutput.split("\n")[0]}`);
+              const firstLine = (typeof teOutput === "string" ? teOutput : "").split("\n")[0]?.trim() ?? "";
+              if (firstLine.startsWith("No tool effectiveness data available")) {
+                toolEffectivenessSummary = `no-op (${firstLine})`;
+              } else if (firstLine.startsWith("Tool Effectiveness Report")) {
+                toolEffectivenessSummary = `ran (${firstLine})`;
+              } else if (firstLine.length > 0) {
+                toolEffectivenessSummary = `degraded (unexpected output: ${firstLine})`;
+                followUpFailures.push({
+                  phase: "tool effectiveness",
+                  error: `unexpected output: ${firstLine}`,
+                });
+              } else {
+                toolEffectivenessSummary = "degraded (unexpected empty output)";
+                followUpFailures.push({
+                  phase: "tool effectiveness",
+                  error: "unexpected empty output",
+                });
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
                 operation: "dream-cycle:tool-effectiveness",
               });
+              toolEffectivenessSummary = `degraded (${err instanceof Error ? err.message : String(err)})`;
               followUpFailures.push({
                 phase: "tool effectiveness",
                 error: err instanceof Error ? err.message : String(err),
               });
             }
+          } else if (!res.skipped) {
+            if (!runToolEffectiveness) {
+              toolEffectivenessSummary = "no-op (tool-effectiveness handler unavailable)";
+            } else if (cfg.toolEffectiveness?.enabled === false) {
+              toolEffectivenessSummary = "no-op (toolEffectiveness.enabled=false)";
+            } else if (cfg.toolEffectiveness?.runInNightlyCycle === false) {
+              toolEffectivenessSummary = "no-op (toolEffectiveness.runInNightlyCycle=false)";
+            }
+          }
+
+          if (!res.skipped && toolEffectivenessSummary) {
+            console.log(`Tool effectiveness: ${toolEffectivenessSummary}`);
           }
           // Cost log pruning (Issue #270)
           if (
