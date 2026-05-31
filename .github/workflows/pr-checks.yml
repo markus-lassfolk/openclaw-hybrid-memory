@@ -117,12 +117,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          # Skip validation for scaffold/draft PRs in the implementing stage.
           # Allow WIP: prefix so draft/in-progress PRs don't fail the check.
-          # Note: `wip: true` only exempts titles starting with "[WIP] " (square brackets).
+          # wip: true also skips titles starting with "wip" (case-insensitive, e.g. "WIP: ...").
           # Adding "WIP" to the types list handles the "WIP: " (colon) prefix used by
           # Issue Stewardship placeholder PRs.
           wip: true
-          # Skip validation for PRs in the implementing stage (placeholder/draft PRs).
           ignoreLabels: |
             stage/implementing
           types: |

@@ -52,8 +52,11 @@ import {
   getKnownEntities as getKnownEntitiesImpl,
 } from "./entity-autolink.js";
 import {
+  type EntityEnrichmentBacklogSummary,
   type ContactRow,
+  type ListFactsNeedingEnrichmentOptions,
   type OrganizationRow,
+  getEntityEnrichmentBacklogSummary as entityLayerGetEntityEnrichmentBacklogSummary,
   listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
   listContactsForOrg as entityLayerListContactsForOrg,
   listFactIdsForOrg as entityLayerListFactIdsForOrg,
@@ -544,7 +547,16 @@ export class FactsDB extends FactsDBLayer2 {
   }
 
   /** Facts not yet processed by entity enrichment (see `facts.entity_enrichment_at`). */
-  listFactIdsNeedingEntityEnrichment(limit: number, minTextLen = 24): string[] {
-    return entityLayerListFactsNeedingEnrichment(this.liveDb, limit, minTextLen);
+  listFactIdsNeedingEntityEnrichment(
+    limit: number,
+    minTextLen = 24,
+    options?: ListFactsNeedingEnrichmentOptions,
+  ): string[] {
+    return entityLayerListFactsNeedingEnrichment(this.liveDb, limit, minTextLen, options);
+  }
+
+  /** Aggregate pending enrichment backlog by tier for progress reporting and catch-up planning. */
+  getEntityEnrichmentBacklogSummary(minTextLen = 24): EntityEnrichmentBacklogSummary {
+    return entityLayerGetEntityEnrichmentBacklogSummary(this.liveDb, minTextLen);
   }
 }
