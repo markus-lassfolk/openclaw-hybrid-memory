@@ -946,21 +946,29 @@ export function explainToolEffectivenessNoData(
         return "no workflow traces recorded yet";
       }
 
-      // Check if there are any parseable rows with non-empty tool sequences
+      // Classify trace rows so zero-score explanations can distinguish
+      // invalid/empty rows from below-threshold scoring.
       const rows = db.prepare("SELECT tool_sequence FROM workflow_traces").all() as { tool_sequence: string }[];
-      let validRowCount = 0;
+      let rowsWithNonEmptyTools = 0;
+      let rowsWithInvalidOrEmptyTools = 0;
       for (const row of rows) {
         try {
-          const seq = JSON.parse(row.tool_sequence) as string[];
-          if (seq.length > 0) {
-            validRowCount++;
+          const parsed = JSON.parse(row.tool_sequence) as unknown;
+          if (!Array.isArray(parsed)) {
+            rowsWithInvalidOrEmptyTools++;
+            continue;
           }
+          const nonEmptyTools = parsed.filter(
+            (tool): tool is string => typeof tool === "string" && tool.trim().length > 0,
+          );
+          if (nonEmptyTools.length > 0) rowsWithNonEmptyTools++;
+          else rowsWithInvalidOrEmptyTools++;
         } catch {
-          // Skip unparseable rows
+          rowsWithInvalidOrEmptyTools++;
         }
       }
 
-      if (validRowCount === 0) {
+      if (rowsWithNonEmptyTools === 0) {
         // Check for legacy DB with actual workflow traces
         const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
         if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
@@ -969,7 +977,11 @@ export function explainToolEffectivenessNoData(
         return "workflow traces exist but all have invalid or empty tool sequences";
       }
 
-      // Has valid traces but none met scoring criteria (e.g., below minCalls threshold)
+      if (rowsWithInvalidOrEmptyTools > 0) {
+        return "workflow traces include invalid or empty tool sequences and no tools meet minimum call threshold for scoring";
+      }
+
+      // Has valid non-empty traces but none met scoring criteria (e.g., below minCalls threshold)
       return "workflow traces exist but no tools meet minimum call threshold for scoring";
     } finally {
       db.close();
