@@ -50,6 +50,7 @@ import {
 } from "./reflection/shared.js";
 export { dotProductSimilarity, normalizeVector, parsePatternsFromReflectionResponse } from "./reflection/shared.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
+import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 
 /** Non-superseded, non-expired pattern facts (same filter as reflection dedupe corpus). */
 export function countActivePatternFactsForMaintenance(factsDb: FactsDB): number {
@@ -674,10 +675,12 @@ export async function runReflection(
     // If embeddingStale=true (merge path), re-embed the updated merged text
     const textToEmbed = storeResult.embeddingStale ? entry.text : patternText;
     let vectorToStore: number[];
+    let reEmbedFailed = false;
     try {
       vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
     } catch (err) {
       newPatternEmbedFailures++;
+      reEmbedFailed = true;
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "embed-pattern-merge",
@@ -685,8 +688,8 @@ export async function runReflection(
           subsystem: "reflection",
         });
       }
-      // On re-embed failure after merge, fall back to original vector to maintain SQLite-Lance consistency
-      vectorToStore = vec;
+      // On re-embed failure after merge, skip this entry to avoid storing mismatched vector
+      continue;
     }
     try {
       await vectorDb.store({
@@ -884,7 +887,7 @@ export async function runReflectionRules(
     seenInBatch.add(key);
     uniqueRules.push(r);
   }
-  const trimmedResponse = rawResponse.trim();
+  const trimmedResponse = stripThinkingWrapperBlocks(rawResponse.trim());
   const looksLikeValidNoRules = VALID_NO_RULES_PATTERN.test(trimmedResponse);
   const parseSuccess = parseableLines > 0 || looksLikeValidNoRules;
   const modelResponseChars = rawResponse.length;
@@ -1073,11 +1076,14 @@ export async function runReflectionRules(
     // If embeddingStale=true (merge path), re-embed the updated merged text
     let textToEmbed = ruleText;
     let vectorToStore: number[];
+    let reEmbedFailed = false;
     if (storeResult.embeddingStale) {
       try {
         textToEmbed = entry.text;
         vectorToStore = await embeddings.embed(textToEmbed);
       } catch (err) {
+        newRuleEmbedFailures++;
+        reEmbedFailed = true;
         if (!shouldSuppressEmbeddingError(err)) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "embed-rule-merge",
@@ -1119,7 +1125,9 @@ export async function runReflectionRules(
       });
     }
     existingVectors.push(normalizeVector(vectorToStore));
-    stored++;
+    if (!reEmbedFailed) {
+      stored++;
+    }
   }
 
   logger.info(
@@ -1411,10 +1419,12 @@ export async function runReflectionMeta(
     // If embeddingStale=true (merge path), re-embed the updated merged text
     const textToEmbed = storeResult.embeddingStale ? entry.text : metaText;
     let vectorToStore: number[];
+    let reEmbedFailed = false;
     try {
       vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
     } catch (err) {
       newMetaEmbedFailures++;
+      reEmbedFailed = true;
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "embed-meta-merge",
@@ -1422,8 +1432,8 @@ export async function runReflectionMeta(
           subsystem: "reflection",
         });
       }
-      // On re-embed failure after merge, fall back to original vector to maintain SQLite-Lance consistency
-      vectorToStore = vec;
+      // On re-embed failure after merge, skip this entry to avoid storing mismatched vector
+      continue;
     }
     try {
       await vectorDb.store({
