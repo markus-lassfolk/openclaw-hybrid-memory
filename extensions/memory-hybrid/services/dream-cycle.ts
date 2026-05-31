@@ -1007,12 +1007,12 @@ export async function runDreamCycle(
   } else {
     reflectionRulesDiagnostics = {
       modelResponseChars: 0,
-      parseSuccess: false,
+      parseSuccess: true,
       parsedCandidates: 0,
       rejectedDuplicates: 0,
       rejectedLowConfidence: 0,
       stored: 0,
-      zeroRulesReason: "insufficient_patterns",
+      zeroRulesReason: "stage_skipped_pattern_gate",
       status: "ok",
     };
     if (v) {

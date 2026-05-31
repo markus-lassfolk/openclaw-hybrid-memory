@@ -675,12 +675,10 @@ export async function runReflection(
     // If embeddingStale=true (merge path), re-embed the updated merged text
     const textToEmbed = storeResult.embeddingStale ? entry.text : patternText;
     let vectorToStore: number[];
-    let reEmbedFailed = false;
     try {
       vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
     } catch (err) {
       newPatternEmbedFailures++;
-      reEmbedFailed = true;
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "embed-pattern-merge",
@@ -914,7 +912,11 @@ export async function runReflectionRules(
       stored: 0,
       zeroRulesReason,
       status:
-        zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response" ? "degraded" : "ok",
+        zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response"
+          ? "degraded"
+          : zeroRulesReason === "all_candidates_duplicate"
+            ? "ok"
+            : "ok",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1076,14 +1078,12 @@ export async function runReflectionRules(
     // If embeddingStale=true (merge path), re-embed the updated merged text
     let textToEmbed = ruleText;
     let vectorToStore: number[];
-    let reEmbedFailed = false;
     if (storeResult.embeddingStale) {
       try {
         textToEmbed = entry.text;
         vectorToStore = await embeddings.embed(textToEmbed);
       } catch (err) {
         newRuleEmbedFailures++;
-        reEmbedFailed = true;
         if (!shouldSuppressEmbeddingError(err)) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "embed-rule-merge",
@@ -1091,9 +1091,8 @@ export async function runReflectionRules(
             subsystem: "reflection",
           });
         }
-        // On re-embed failure after merge, fall back to original text and vector to maintain consistency
-        textToEmbed = ruleText;
-        vectorToStore = vec;
+        // On re-embed failure after merge, skip this entry to avoid storing mismatched vector
+        continue;
       }
     } else {
       vectorToStore = vec;
@@ -1125,9 +1124,7 @@ export async function runReflectionRules(
       });
     }
     existingVectors.push(normalizeVector(vectorToStore));
-    if (!reEmbedFailed) {
-      stored++;
-    }
+    stored++;
   }
 
   logger.info(
@@ -1170,10 +1167,13 @@ export async function runReflectionRules(
         ? "ok"
         : stored > 0
           ? "partial"
-          : zeroRulesReason === "all_candidates_embedding_failed" ||
-              zeroRulesReason === "candidates_duplicate_or_embedding_failed"
+          : zeroRulesReason === "all_candidates_embedding_failed"
             ? "degraded"
-            : "partial",
+            : zeroRulesReason === "candidates_duplicate_or_embedding_failed"
+              ? "degraded"
+              : zeroRulesReason === "all_candidates_duplicate"
+                ? "ok"
+                : "partial",
   };
   logger.info(
     "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1417,23 +1417,27 @@ export async function runReflectionMeta(
       );
     }
     // If embeddingStale=true (merge path), re-embed the updated merged text
-    const textToEmbed = storeResult.embeddingStale ? entry.text : metaText;
+    let textToEmbed: string;
     let vectorToStore: number[];
-    let reEmbedFailed = false;
-    try {
-      vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
-    } catch (err) {
-      newMetaEmbedFailures++;
-      reEmbedFailed = true;
-      if (!shouldSuppressEmbeddingError(err)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "embed-meta-merge",
-          severity: "info",
-          subsystem: "reflection",
-        });
+    if (storeResult.embeddingStale) {
+      try {
+        textToEmbed = entry.text;
+        vectorToStore = await embeddings.embed(textToEmbed);
+      } catch (err) {
+        newMetaEmbedFailures++;
+        if (!shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "embed-meta-merge",
+            severity: "info",
+            subsystem: "reflection",
+          });
+        }
+        // On re-embed failure after merge, skip this entry to avoid storing mismatched vector
+        continue;
       }
-      // On re-embed failure after merge, skip this entry to avoid storing mismatched vector
-      continue;
+    } else {
+      textToEmbed = metaText;
+      vectorToStore = vec;
     }
     try {
       await vectorDb.store({
