@@ -634,6 +634,14 @@ export async function runReflection(
       continue;
     }
     const entry = storeResult.entry;
+    // Check if store returned an existing fact due to dedupe (text won't match our candidate)
+    if (entry.text !== patternText) {
+      duplicatesSkipped++;
+      if (opts.verbose) {
+        logger.info(`memory-hybrid: reflection — skipped store-level duplicate: ${patternText.slice(0, 60)}...`);
+      }
+      continue;
+    }
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
       vectorDb: vectorDb,
@@ -897,7 +905,7 @@ export async function runReflectionRules(
         `stored=${diagnostics.stored} ` +
         `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
     );
-    return { rulesExtracted: rules.length, rulesStored: 0, diagnostics };
+    return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
   }
 
   logger.info(
@@ -1006,6 +1014,15 @@ export async function runReflectionRules(
       continue;
     }
     const entry = storeResult.entry;
+    // Check if store returned an existing fact due to dedupe (text won't match our candidate)
+    if (entry.text !== ruleText) {
+      storeLevelDuplicates++;
+      rulesDuplicatesSkipped++;
+      if (opts.verbose) {
+        logger.info(`memory-hybrid: reflect-rules — skipped store-level duplicate: ${ruleText.slice(0, 50)}...`);
+      }
+      continue;
+    }
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
       vectorDb: vectorDb,
@@ -1313,6 +1330,14 @@ export async function runReflectionMeta(
       continue;
     }
     const entry = storeResult.entry;
+    // Check if store returned an existing fact due to dedupe (text won't match our candidate)
+    if (entry.text !== metaText) {
+      metaDuplicatesSkipped++;
+      if (opts.verbose) {
+        logger.info(`memory-hybrid: reflect-meta — skipped store-level duplicate: ${metaText.slice(0, 50)}...`);
+      }
+      continue;
+    }
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
       vectorDb: vectorDb,
