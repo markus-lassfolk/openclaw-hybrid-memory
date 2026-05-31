@@ -21,7 +21,7 @@ export async function runRecallStage(
   sessionState: SessionState,
 ): Promise<RecallStageResult | null> {
   if (isRecallContextSuperseded(ctx)) {
-    return null;
+    return { kind: "empty", prependContext: undefined };
   }
   const ac = new AbortController();
   const { signal } = ac;
