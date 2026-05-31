@@ -369,7 +369,12 @@ describe("resolveToolEffectivenessCliDbPaths", () => {
       const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
       const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
       try {
-        legacyDb.exec("CREATE TABLE IF NOT EXISTS workflow_traces_legacy (id INTEGER PRIMARY KEY)");
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"tool1\"]', 'success', 100, 'session1')",
+        );
       } finally {
         legacyDb.close();
       }
@@ -404,12 +409,19 @@ describe("resolveToolEffectivenessCliDbPaths", () => {
       const sqlitePath = join(tmpDir, "facts.db");
       const workflowDbPath = join(tmpDir, "workflow-traces.db");
       const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+      // Create legacy DB with traces
       const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
       try {
-        legacyDb.exec("CREATE TABLE IF NOT EXISTS workflow_traces_legacy (id INTEGER PRIMARY KEY)");
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"legacyTool\"]', 'success', 100, 'session1')",
+        );
       } finally {
         legacyDb.close();
       }
+      // Create new DB with NO traces (empty)
       const workflowDb = new DatabaseSync(workflowDbPath);
       try {
         workflowDb.exec(
@@ -419,7 +431,8 @@ describe("resolveToolEffectivenessCliDbPaths", () => {
         workflowDb.close();
       }
 
-      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe("no workflow traces recorded yet");
+      // When new DB is empty but legacy has data, should report path mismatch (bug fix)
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toContain("workflow path mismatch");
 
       rmSync(tmpDir, { recursive: true, force: true });
     });

@@ -874,6 +874,27 @@ function resolveLegacyWorkflowDbPath(sqlitePath: string): string {
   return join(dirname(sqlitePath), `${sqliteStem}-workflows.db`);
 }
 
+/** Helper to check if a DB path has valid workflow traces. */
+function hasValidWorkflowTraces(dbPath: string): boolean {
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const tableExists = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_traces'`)
+        .get() as { name: string } | undefined;
+      if (!tableExists) return false;
+
+      const rowCount = (db.prepare("SELECT COUNT(*) as count FROM workflow_traces").get() as { count: number }).count;
+      return rowCount > 0;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
 export function explainToolEffectivenessNoData(
   sqlitePath: string,
   workflowDbPath: string,
@@ -885,13 +906,50 @@ export function explainToolEffectivenessNoData(
 
   if (!existsSync(workflowDbPath)) {
     const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
-    if (existsSync(legacyWorkflowDbPath)) {
+    if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
       return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
     }
     return `workflow traces DB not found at ${workflowDbPath}`;
   }
 
-  return "no workflow traces recorded yet";
+  // Bug fix: Even when new DB exists, check if it's empty and legacy DB has actual traces
+  try {
+    const { DatabaseSync } = require("node:sqlite");
+    const db = new DatabaseSync(workflowDbPath, { readOnly: true });
+    try {
+      const tableExists = db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_traces'`)
+        .get() as { name: string } | undefined;
+
+      if (!tableExists) {
+        // No table yet - check for legacy DB with actual workflow traces
+        const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
+        if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
+          return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+        }
+        return "no workflow traces recorded yet";
+      }
+
+      const rowCount = (db.prepare("SELECT COUNT(*) as count FROM workflow_traces").get() as { count: number }).count;
+
+      if (rowCount === 0) {
+        // Empty table - check for legacy DB with actual workflow traces
+        const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
+        if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
+          return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+        }
+        return "no workflow traces recorded yet";
+      }
+
+      // Has traces but none met scoring criteria (e.g., below minCalls threshold)
+      return "workflow traces exist but no tools meet minimum call threshold for scoring";
+    } finally {
+      db.close();
+    }
+  } catch (err) {
+    // If we can't read the DB, fall back to generic message
+    return "no workflow traces recorded yet";
+  }
 }
 
 /**
