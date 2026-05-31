@@ -414,51 +414,42 @@ export async function runExtractImplicitFeedbackForCli(
     // first would permanently strand old-but-unprocessed sessions after the cursor.
     const cursorFloor = Math.max(0, cursor.lastSessionTs - 1);
     const allFiles = getSessionFilePathsSince(sessionDir, 0, cursorFloor);
-    filePaths = allFiles.filter((path) => {
-      let stat;
+    const incrementalCandidates: Array<{ path: string; mtime: number; fname: string }> = [];
+    for (const path of allFiles) {
       try {
-        stat = statSync(path);
+        const stat = statSync(path);
+        incrementalCandidates.push({ path, mtime: stat.mtimeMs, fname: basename(path) });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "runExtractImplicitFeedbackForCli:filter-stat",
+          operation: "runExtractImplicitFeedbackForCli:incremental-stat",
           severity: "info",
           subsystem: "implicit-feedback",
         });
-        return false;
       }
-      const mtime = stat.mtimeMs;
-      const fname = basename(path);
-      // Skip files before the cursor watermark
-      if (mtime < cursor.lastSessionTs) return false;
-      // If same mtime, use filename to determine if we've processed this file
-      if (mtime === cursor.lastSessionTs) {
-        if (cursor.lastSessionFile) {
-          return fname.localeCompare(cursor.lastSessionFile) > 0;
+    }
+    filePaths = incrementalCandidates
+      .filter(({ mtime, fname }) => {
+        // Skip files before the cursor watermark
+        if (mtime < cursor.lastSessionTs) return false;
+        // If same mtime, use filename to determine if we've processed this file
+        if (mtime === cursor.lastSessionTs) {
+          if (cursor.lastSessionFile) {
+            return fname.localeCompare(cursor.lastSessionFile) > 0;
+          }
+          // Legacy cursors without a filename cannot safely order peers in the same
+          // mtime tier. Treat that tier as already covered to avoid re-routing
+          // signals/reinforcement for files that may already have been processed.
+          return false;
         }
-        // Legacy cursors without a filename cannot safely order peers in the same
-        // mtime tier. Treat that tier as already covered to avoid re-routing
-        // signals/reinforcement for files that may already have been processed.
-        return false;
-      }
-      return true;
-    });
-    // Sort by mtime ascending, then by filename to ensure deterministic processing order
-    filePaths.sort((a, b) => {
-      let statA, statB;
-      try {
-        statA = statSync(a);
-      } catch {
-        return 1;
-      }
-      try {
-        statB = statSync(b);
-      } catch {
-        return -1;
-      }
-      const mtimeDiff = statA.mtimeMs - statB.mtimeMs;
-      if (mtimeDiff !== 0) return mtimeDiff;
-      return basename(a).localeCompare(basename(b));
-    });
+        return true;
+      })
+      // Sort by mtime ascending, then by filename to ensure deterministic processing order
+      .sort((a, b) => {
+        const mtimeDiff = a.mtime - b.mtime;
+        if (mtimeDiff !== 0) return mtimeDiff;
+        return a.fname.localeCompare(b.fname);
+      })
+      .map((entry) => entry.path);
     if (opts.verbose && cursor.lastSessionFile) {
       logger?.info?.(
         `memory-hybrid: ${SCAN_TYPE} incremental — resuming after ${cursor.lastSessionFile} (${filePaths.length} files to process)`,
@@ -1137,6 +1128,10 @@ export async function runExtractImplicitFeedbackForCli(
           progress.cleanupScanned = totalScanned;
           progress.cleanupBatches = batches;
           emitProgress();
+          if (wallClockLimitReached()) {
+            if (!partial) markPartialProgress("maxWallClock");
+            break;
+          }
           if (cleanup.interrupted) {
             if (!partial) markPartialProgress("maxWallClock");
             break;
@@ -1170,6 +1165,9 @@ export async function runExtractImplicitFeedbackForCli(
         if (clCfg.enabled !== false) {
           const report = runClosedLoopAnalysis(factsDb, clCfg, { wallClockCheck: wallClockLimitReached });
           if (report.interrupted) {
+            if (!partial) markPartialProgress("maxWallClock");
+          }
+          if (wallClockLimitReached()) {
             if (!partial) markPartialProgress("maxWallClock");
           }
           if (report.rulesAnalyzed > 0) {

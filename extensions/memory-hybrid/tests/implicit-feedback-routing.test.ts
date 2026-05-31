@@ -950,6 +950,109 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
         vi.useRealTimers();
       }
     });
+
+    it("stops a session before marking it processed when wall-clock expires during trajectory lesson storage", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+        const db = makeDb(capsTmpDir);
+        writeTrajectorySession(capsSessionsDir, "2026-01-01-a.jsonl");
+
+        let advancedClock = false;
+        const ctx = makeCtx(db, capsSessionsDir, {
+          feedToSelfCorrection: false,
+          maxWallClockSeconds: 1,
+        });
+
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeClosedLoop: false,
+          onProgress: (snapshot) => {
+            if (!advancedClock && snapshot.stage === "scan-sessions" && snapshot.trajectoriesBuilt >= 1) {
+              vi.setSystemTime(new Date("2026-05-01T00:00:02.000Z"));
+              advancedClock = true;
+            }
+          },
+        });
+
+        expect(result.partial).toBe(true);
+        expect(result.partialReason).toBe("maxWallClock");
+        expect(result.sessionsProcessed).toBe(0);
+        expect(result.sessionsDeferred).toBe(1);
+        expect(db.getScanCursor("extract-implicit-feedback")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("marks runs partial when wall-clock expires during cleanup even when closed-loop is disabled", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+        const db = makeDb(capsTmpDir);
+        writeNegativeSession(capsSessionsDir, "2026-01-01-a.jsonl");
+
+        let advancedClock = false;
+        const ctx = makeCtx(db, capsSessionsDir, {
+          autoCleanup: true,
+          cleanupLimit: 1,
+          maxWallClockSeconds: 1,
+        });
+
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeClosedLoop: false,
+          onProgress: (snapshot) => {
+            if (!advancedClock && snapshot.stage === "cleanup-duplicates" && (snapshot.cleanupBatches ?? 0) >= 1) {
+              vi.setSystemTime(new Date("2026-05-01T00:00:02.000Z"));
+              advancedClock = true;
+            }
+          },
+        });
+
+        expect(result.partial).toBe(true);
+        expect(result.partialReason).toBe("maxWallClock");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("marks runs partial when wall-clock expires after entering closed-loop analysis", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+        const db = makeDb(capsTmpDir);
+        writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+
+        let advancedClock = false;
+        const ctx = makeCtx(db, capsSessionsDir, {
+          feedToSelfCorrection: false,
+          autoCleanup: false,
+          maxWallClockSeconds: 1,
+        });
+        ctx.cfg.closedLoop = { enabled: true } as HybridMemoryConfig["closedLoop"];
+
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeTrajectories: false,
+          includeClosedLoop: true,
+          onProgress: (snapshot) => {
+            if (!advancedClock && snapshot.stage === "closed-loop") {
+              vi.setSystemTime(new Date("2026-05-01T00:00:02.000Z"));
+              advancedClock = true;
+            }
+          },
+        });
+
+        expect(result.partial).toBe(true);
+        expect(result.partialReason).toBe("maxWallClock");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   afterEach(() => {
