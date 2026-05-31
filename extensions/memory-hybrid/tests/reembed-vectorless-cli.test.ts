@@ -87,4 +87,81 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(payload.skipped).toBe(1);
     expect(vectorDb.runWithAutoOptimizePaused).toHaveBeenCalledTimes(1);
   });
+
+  it("fast-fails and exits with code 1 on embedding provider 5xx (no per-fact fallback)", async () => {
+    process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+    const mem = new Command("hybrid-mem");
+
+    const providerError = Object.assign(
+      new Error(
+        'Request failed with status code 500: {"error":{"message":"The server had an error while processing your request. Sorry about that!","type":"server_error","code":null}}',
+      ),
+      { status: 500 },
+    );
+
+    // 10 facts across 2 batches of 5
+    const facts = Array.from({ length: 10 }, (_, i) => ({
+      id: `fact-id-${i.toString().padStart(2, "0")}`,
+      text: `fact text ${i}`,
+      category: "fact",
+      source: "manual",
+    }));
+
+    const factsDb = {
+      countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
+      listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
+      storeEmbedding: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+      delete: vi.fn().mockResolvedValue(false),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      modelName: "test-embedding-model",
+      // embedBatch fails with 5xx; command should abort before per-fact fallback.
+      embedBatch: vi.fn().mockRejectedValue(providerError),
+      embed: vi.fn().mockRejectedValue(providerError),
+    };
+
+    registerManageStorageAndStats(mem, {
+      factsDb,
+      vectorDb,
+      aliasDb: {},
+      versionInfo: { version: "test" },
+      embeddings,
+      mergeResults: vi.fn(),
+      getMemoryCategories: () => ["fact"],
+      cfg: { memory: { categories: ["fact"] } },
+      runCompaction: vi.fn(),
+      tieringEnabled: false,
+      ctx: { resolvedSqlitePath: null },
+      listCommands: () => [],
+      auditStore: null,
+      merge: vi.fn(),
+      BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    } as any);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(
+      ["reembed-vectorless", "--apply", "--limit", "10", "--batch-size", "5", "--max-embed-failures", "3", "--json"],
+      { from: "user" },
+    );
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      failedReason?: string;
+      embedFailures?: number;
+      embedded?: number;
+    };
+    expect(payload.failedReason).toBe("failed_embedding_provider_5xx");
+    expect(payload.embedded).toBe(0);
+    expect(payload.embedFailures).toBe(0);
+    expect(embeddings.embed).not.toHaveBeenCalled();
+    expect(embeddings.embedBatch).toHaveBeenCalledTimes(1);
+  });
 });
