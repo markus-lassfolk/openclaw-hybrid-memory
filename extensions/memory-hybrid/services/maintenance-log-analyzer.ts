@@ -201,7 +201,12 @@ export interface CollectMaintenanceStepsOptions {
 }
 
 function extractJobName(file: string): string {
-  return file.replace(/-[0-9]{8}T.*$/, "").replace(/\.exit\.txt$/, "");
+  const withoutExitSuffix = file.replace(/\.exit\.txt$/, "");
+  return withoutExitSuffix
+    .replace(/-\d{8}T\d{6}Z-\d+$/, "")
+    .replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/, "")
+    .replace(/-\d{8}\.cron$/, "")
+    .replace(/-\d{8}T.*$/, "");
 }
 
 function safeRead(path: string): string {

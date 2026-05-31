@@ -434,6 +434,7 @@ describe("maintenance log analyzer", () => {
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
     expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].job).toBe("nightly-memory-sweep");
   });
 
   it("isCanonicalMaintenanceLog and isUnderAuxiliaryDir unit checks", () => {
@@ -473,6 +474,7 @@ describe("maintenance log analyzer", () => {
     const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
     expect(steps).toHaveLength(1);
     expect(steps[0].step).toBe("orchestration-missing-exit-ledger");
+    expect(steps[0].job).toBe("weekly-pending-digest-autopilot");
     expect(steps[0].logPath).toBe(logPath);
   });
 
