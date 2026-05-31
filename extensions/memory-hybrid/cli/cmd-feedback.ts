@@ -1168,7 +1168,7 @@ export async function runExtractImplicitFeedbackForCli(
     emitProgress();
 
     if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      markPartialProgress("maxWallClock");
       break;
     }
   }
