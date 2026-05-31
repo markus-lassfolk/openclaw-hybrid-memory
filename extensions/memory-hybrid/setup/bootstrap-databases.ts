@@ -739,8 +739,16 @@ export function initializeDatabases(
         }
       }
       if (shouldMigrate) {
-        if (isBootstrapSuperseded()) return;
         try {
+          if (isBootstrapSuperseded()) {
+            const { unlinkSync } = await import("node:fs");
+            try {
+              unlinkSync(migrationFlagPath);
+            } catch {
+              /* ignore cleanup errors */
+            }
+            return;
+          }
           const result = await migrateCredentialsToVault({
             factsDb,
             vectorDb,
@@ -759,6 +767,10 @@ export function initializeDatabases(
             );
           }
         } catch (e) {
+          if (isBootstrapSuperseded() || isDbClosedError(e)) {
+            api.logger.debug?.("memory-hybrid: credential migration aborted (registration superseded or DB closed)");
+            return;
+          }
           capturePluginError(e instanceof Error ? e : new Error(String(e)), {
             subsystem: "credentials",
             operation: "migration-to-vault",
