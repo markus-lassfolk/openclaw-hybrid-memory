@@ -78,6 +78,9 @@ function detectCategory(text: string): MemoryCategory {
 const runtimeRef: { value: PluginRuntime | null } = { value: null };
 const registrationGenerationRef = getHybridMemoryRegistrationState().registrationGenerationRef;
 
+/** Guard to prevent concurrent registrations from interleaving (Issue #802 re-entrancy). */
+let registrationInProgress: Promise<void> | null = null;
+
 /** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
 async function performHybridMemCliTeardown(): Promise<void> {
   // Restore stdout before checking runtime ref, so teardown without runtime still cleans up (issue #1618).
@@ -172,6 +175,28 @@ export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<v
     return;
   }
 
+  // Issue #802 re-entrancy: If another registration is already in flight, wait for it to complete
+  // before starting a new one. This prevents interleaving of generation bumps, teardown scheduling,
+  // and database initialization across concurrent register() calls.
+  if (registrationInProgress) {
+    await registrationInProgress;
+  }
+
+  const registrationPromise = (async () => {
+    await runMemoryHybridRegisterImpl(api);
+  })();
+  registrationInProgress = registrationPromise;
+
+  try {
+    await registrationPromise;
+  } finally {
+    if (registrationInProgress === registrationPromise) {
+      registrationInProgress = null;
+    }
+  }
+}
+
+async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void> {
   // Issue #1230 / #1234: JSON CLI must not write plugin telemetry to stdout (cron harnesses, jq).
   // Wrap api.logger to stderr before bootstrap; keep pluginLogger on that same logger delegate.
   const logApi = wrapApiLoggerStderrForJsonCli(api);
@@ -260,12 +285,8 @@ export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<v
 
   if (old && !reuseDatabases) {
     // Wait for teardown to complete before opening new DB handles (#802).
-    const teardownSettled = await awaitReloadTeardownBeforeOpen();
-    if (!teardownSettled) {
-      logApi.logger.debug?.(
-        "memory-hybrid: reload teardown still in progress after wait; opening new DB handles (superseded bootstrap/recall guarded)",
-      );
-    }
+    // Do NOT timeout — proceed only after prior generation fully closes to prevent double-opens.
+    await awaitReloadTeardownBeforeOpen(0);
   }
 
   let dbContext: ReturnType<typeof initializeDatabases>;

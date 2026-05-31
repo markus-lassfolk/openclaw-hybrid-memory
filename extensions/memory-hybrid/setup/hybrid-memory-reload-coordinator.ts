@@ -47,11 +47,19 @@ export async function drainOldRecall(recallInFlightRef: { value: number } | unde
 
 /**
  * Block until scheduled teardowns finish before opening new DB handles (issue #802).
+ * If timeoutMs is 0, waits indefinitely until teardown completes.
  * Returns a promise that resolves to false if teardown is still in flight after timeout.
  */
 export async function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): Promise<boolean> {
   if (reloadTeardownQueueDepth === 0) return true;
-  if (timeoutMs <= 0) return false;
+  if (timeoutMs === 0) {
+    // Wait indefinitely for teardown to complete (no timeout).
+    await reloadTeardownChain.catch(() => {
+      /* teardown error already logged */
+    });
+    return reloadTeardownQueueDepth === 0;
+  }
+  if (timeoutMs < 0) return false;
   const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
   await Promise.race([
     reloadTeardownChain.catch(() => {
