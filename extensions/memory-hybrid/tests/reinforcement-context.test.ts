@@ -169,13 +169,19 @@ describe("calculateDiversityScore (#259)", () => {
   });
 });
 
-describe("trackContext: false skips reinforcement_log entries (#259)", () => {
-  it("does not create a log entry when trackContext is false", () => {
+describe("trackContext: false limits stored context (#259, #1706)", () => {
+  it("creates a log entry for deduplication even when trackContext is false", () => {
     const fact = storeFact();
-    db.reinforceFact(fact.id, "praise", { querySnippet: "some query" }, { trackContext: false });
+    db.reinforceFact(
+      fact.id,
+      "praise",
+      { querySnippet: "some query", toolSequence: ["tool1", "tool2"] },
+      { trackContext: false },
+    );
 
     const events = db.getReinforcementEvents(fact.id);
-    expect(events.length).toBe(0);
+    expect(events.length).toBe(1);
+    expect(events[0].toolSequence).toBeNull();
   });
 
   it("still increments reinforced_count when trackContext is false", () => {
@@ -185,7 +191,7 @@ describe("trackContext: false skips reinforcement_log entries (#259)", () => {
     const all = db.getAll({});
     const updated = all.find((f) => f.id === fact.id);
     expect(updated?.reinforcedCount).toBeGreaterThan(0);
-    expect(db.getReinforcementEvents(fact.id).length).toBe(0);
+    expect(db.getReinforcementEvents(fact.id).length).toBe(1);
   });
 });
 

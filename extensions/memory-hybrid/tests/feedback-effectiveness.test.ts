@@ -137,6 +137,7 @@ describe("runClosedLoopAnalysis", () => {
     expect(report.deprecated).toBe(0);
     expect(report.boosted).toBe(0);
     expect(report.measurements).toHaveLength(0);
+    expect(report.interrupted).toBe(false);
   });
 
   it("runs without error when no qualifying rules", () => {

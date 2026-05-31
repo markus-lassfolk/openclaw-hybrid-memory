@@ -33,12 +33,15 @@ interface ClosedLoopReport {
   deprecated: number;
   boosted: number;
   measurements: FeedbackEffectiveness[];
+  interrupted: boolean;
 }
 
 interface ClosedLoopRunOptions {
   verbose?: boolean;
   logger?: (message: string) => void;
   progressEvery?: number;
+  /** Optional wall-clock budget check to stop processing early. Returns true if budget exceeded. */
+  wallClockCheck?: () => boolean;
 }
 
 /**
@@ -202,6 +205,7 @@ export function runClosedLoopAnalysis(
     deprecated: 0,
     boosted: 0,
     measurements: [],
+    interrupted: false,
   };
 
   if (config.enabled === false) return report;
@@ -235,6 +239,12 @@ export function runClosedLoopAnalysis(
     let belowSample = 0;
     for (const row of rows) {
       processed++;
+      // Check wall-clock budget periodically
+      if (options.wallClockCheck?.()) {
+        report.interrupted = true;
+        log(`memory-hybrid: closed-loop — interrupted by wall-clock limit after ${processed} rows`);
+        break;
+      }
       try {
         const m = measureRuleEffectiveness(row.id, factsDb, config);
         if (!m) continue;

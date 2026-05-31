@@ -150,6 +150,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
     lastSessionTs: number;
     lastRunAt: number;
     sessionsProcessed: number;
+    lastSessionFile?: string;
   } | null {
     return getScanCursorHelper(this.liveDb, scanType);
   }
@@ -160,9 +161,10 @@ export class FactsDBLayer1 extends BaseSqliteStore {
    *   when no session watermark is available (e.g. self-correction). Pass `0` when no sessions
    *   were processed — `last_session_ts` will not be updated in that case.
    * @param sessionsProcessed Number of sessions processed in this run.
+   * @param lastSessionFile Optional tie-breaker when multiple sessions share the same mtime.
    */
-  updateScanCursor(scanType: string, lastSessionTs: number, sessionsProcessed: number): void {
-    updateScanCursorHelper(this.liveDb, scanType, lastSessionTs, sessionsProcessed);
+  updateScanCursor(scanType: string, lastSessionTs: number, sessionsProcessed: number, lastSessionFile?: string): void {
+    updateScanCursorHelper(this.liveDb, scanType, lastSessionTs, sessionsProcessed, lastSessionFile);
   }
 
   /**

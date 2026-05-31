@@ -361,6 +361,7 @@ export type HybridMemCliContext = {
     days?: number;
     verbose?: boolean;
     dryRun?: boolean;
+    full?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
     onProgress?: (snapshot: import("./cmd-feedback.js").ExtractImplicitFeedbackProgressSnapshot) => void;
@@ -370,7 +371,17 @@ export type HybridMemCliContext = {
     negativeCount: number;
     trajectoriesBuilt: number;
     sessionsScanned: number;
+    sessionsVisited: number;
+    sessionsProcessed: number;
+    sessionsSkipped: number;
+    sessionsDeferred: number;
+    backlogSessionsEstimate: number;
+    backlogSignalsEstimate: number;
+    backlogTrajectoriesEstimate: number;
+    partial: boolean;
+    partialReason?: import("./cmd-feedback.js").ExtractImplicitFeedbackStopReason;
     closedLoopReport?: string;
+    skipped?: boolean;
   }>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
   runExport: (opts: {
