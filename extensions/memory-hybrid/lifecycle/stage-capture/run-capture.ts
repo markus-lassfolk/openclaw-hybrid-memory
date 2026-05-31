@@ -133,10 +133,14 @@ export async function runCapture(
     api.logger.debug?.(`memory-hybrid: capture skipped (registration superseded during reload) phase=${phase}`);
     return true;
   };
-  if (abortIfSuperseded("start")) return;
-
   const { resolveSessionKey, clearSessionState, frustrationStateMap } = sessionState;
   const sessionKey = resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+
+  if (abortIfSuperseded("start")) {
+    clearSessionState(sessionKey);
+    return;
+  }
+
   const ev = event as { success?: boolean; messages?: unknown[] };
   const messages = ev?.messages ?? [];
 
@@ -207,7 +211,10 @@ export async function runCapture(
       }
     }
   }
-  if (abortIfSuperseded("post-humanizer")) return;
+  if (abortIfSuperseded("post-humanizer")) {
+    clearSessionState(sessionKey);
+    return;
+  }
 
   // 3. Event log session_end
   if (ctx.eventLog) {
@@ -224,7 +231,10 @@ export async function runCapture(
   }
 
   // 4. Compaction on session end
-  if (isStaleLifecycleGeneration(ctx)) return;
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.compactionOnSessionEnd) {
     try {
       const counts = ctx.factsDb.runCompaction({
@@ -253,7 +263,10 @@ export async function runCapture(
       }
     }
   }
-  if (abortIfSuperseded("post-compaction")) return;
+  if (abortIfSuperseded("post-compaction")) {
+    clearSessionState(sessionKey);
+    return;
+  }
 
   // 5. Centralized session state cleanup (Issue #463)
   // Moved here to ensure it only runs after compaction and supersession checks
@@ -261,7 +274,10 @@ export async function runCapture(
   api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
 
   // 6. Auto-capture from conversation messages
-  if (isStaleLifecycleGeneration(ctx)) return;
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (ctx.cfg.autoCapture && ev.success && messages.length > 0) {
     try {
       const captureProvenance = resolveCaptureProvenance(event, api, sessionKey);
@@ -322,7 +338,10 @@ export async function runCapture(
 
         const prepared: CapturePrepared[] = [];
         for (const candidate of toCapture.slice(0, 3)) {
-          if (abortIfSuperseded("auto-capture-prepare")) return;
+          if (abortIfSuperseded("auto-capture-prepare")) {
+            clearSessionState(sessionKey);
+            return;
+          }
           let textToStore = candidate.text;
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
           const category: MemoryCategory = ctx.detectCategory(textToStore);
@@ -403,7 +422,10 @@ export async function runCapture(
         }
 
         for (let pi = 0; pi < prepared.length; pi++) {
-          if (abortIfSuperseded("auto-capture-store")) return;
+          if (abortIfSuperseded("auto-capture-store")) {
+            clearSessionState(sessionKey);
+            return;
+          }
           const { candidate, textToStore, category, extracted, summary, vector, similarFacts } = prepared[pi];
           if (ctx.cfg.store.classifyBeforeWrite) {
             if (similarFacts.length > 0) {
@@ -753,9 +775,15 @@ export async function runCapture(
   // 6b. Episodic memory auto-capture (#781): scan conversation for outcome-indicating phrases
   // and create episode records. This runs regardless of autoCapture config flag, because
   // capturing outcomes is low-cost and high-value for the episodic history.
-  if (isStaleLifecycleGeneration(ctx)) return;
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   {
-    if (abortIfSuperseded("episodic-capture")) return;
+    if (abortIfSuperseded("episodic-capture")) {
+      clearSessionState(sessionKey);
+      return;
+    }
     const sessionId = sessionKey;
     const agentId = ctx.currentAgentIdRef.value ?? undefined;
     // Collect all text from the session for scanning
@@ -782,7 +810,10 @@ export async function runCapture(
     }
 
     for (const { text } of sessionTexts) {
-      if (abortIfSuperseded("episodic-capture-loop")) return;
+      if (abortIfSuperseded("episodic-capture-loop")) {
+        clearSessionState(sessionKey);
+        return;
+      }
       // Scan for success indicators
       for (const pattern of SUCCESS_PATTERNS) {
         const match = pattern.regex.exec(text);
@@ -863,14 +894,20 @@ export async function runCapture(
   }
 
   // 7. Credential auto-detect: persist hint for next turn
-  if (isStaleLifecycleGeneration(ctx)) return;
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (
     ctx.cfg.credentials.enabled &&
     ctx.cfg.credentials.autoDetect &&
     ctx.cfg.verbosity !== "silent" &&
     messages.length > 0
   ) {
-    if (abortIfSuperseded("credential-hint-capture")) return;
+    if (abortIfSuperseded("credential-hint-capture")) {
+      clearSessionState(sessionKey);
+      return;
+    }
     const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
     try {
       const texts: string[] = [];
@@ -921,13 +958,22 @@ export async function runCapture(
   }
 
   // 8. Tool-call credential auto-capture
-  if (isStaleLifecycleGeneration(ctx)) return;
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoCapture?.toolCalls && messages.length > 0) {
-    if (abortIfSuperseded("credential-tool-call-capture")) return;
+    if (abortIfSuperseded("credential-tool-call-capture")) {
+      clearSessionState(sessionKey);
+      return;
+    }
     const logCaptures = ctx.cfg.credentials.autoCapture.logCaptures !== false;
     try {
       for (const msg of messages as unknown[]) {
-        if (abortIfSuperseded("credential-tool-call-loop")) return;
+        if (abortIfSuperseded("credential-tool-call-loop")) {
+          clearSessionState(sessionKey);
+          return;
+        }
         if (!msg || typeof msg !== "object") continue;
         const msgObj = msg as Record<string, unknown>;
         if (msgObj.role !== "assistant") continue;

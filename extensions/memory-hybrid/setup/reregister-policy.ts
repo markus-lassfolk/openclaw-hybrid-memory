@@ -74,18 +74,19 @@ export function canReuseDatabasesOnReregister(
   const nextSqlite = api.resolvePath(cfg.sqlitePath);
   const nextLance = api.resolvePath(cfg.lanceDbPath);
   if (old.resolvedSqlitePath !== nextSqlite || old.resolvedLancePath !== nextLance) return false;
-  
+
   // Compare embedding config to detect provider/model/endpoint changes that require rebuilding clients
   const oldCfg = old.cfg;
   if (
     oldCfg.embedding.provider !== cfg.embedding.provider ||
     oldCfg.embedding.model !== cfg.embedding.model ||
     oldCfg.embedding.endpoint !== cfg.embedding.endpoint ||
-    oldCfg.embedding.apiKey !== cfg.embedding.apiKey
+    oldCfg.embedding.apiKey !== cfg.embedding.apiKey ||
+    oldCfg.embedding.deployment !== cfg.embedding.deployment
   ) {
     return false;
   }
-  
+
   // Compare LLM config to detect model/provider changes that require rebuilding openai client
   const oldLlm = oldCfg.llm;
   const newLlm = cfg.llm;
@@ -93,7 +94,7 @@ export function canReuseDatabasesOnReregister(
   if (JSON.stringify(oldLlm?.heavy) !== JSON.stringify(newLlm?.heavy)) return false;
   if (JSON.stringify(oldLlm?.nano) !== JSON.stringify(newLlm?.nano)) return false;
   if (JSON.stringify(oldLlm?.providers) !== JSON.stringify(newLlm?.providers)) return false;
-  
+
   return true;
 }
 

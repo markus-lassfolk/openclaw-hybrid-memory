@@ -44,8 +44,10 @@ function isLifecycleSqliteShutdownError(err: unknown, ctx: LifecycleContext): bo
   if (!/not open|connection is not open|database is not open/i.test(message)) {
     return false;
   }
+  // Only suppress if the database is closed AND the generation is stale
+  // If the generation is current but the DB is closed, it's a real error that should be reported
   if (typeof ctx.factsDb.isOpen === "function" && !ctx.factsDb.isOpen()) {
-    return true;
+    return isStaleLifecycleGeneration(ctx);
   }
   return isStaleLifecycleGeneration(ctx);
 }
@@ -840,7 +842,9 @@ export async function runRecall(
         candidates: candidates.length,
         aborted: true,
       });
-      return completeStage(emptyRecallStage());
+      // Preserve fixed blocks that were already built
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     };
     if (directivesCfg.enabled) {
       try {
@@ -1097,7 +1101,10 @@ export async function runRecall(
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     }
-    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) {
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+    }
 
     setRecallProbePhase("finalize");
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
@@ -1105,7 +1112,8 @@ export async function runRecall(
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
 
     if (isRecallContextSuperseded(ctx)) {
-      return completeStage(emptyRecallStage());
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     }
 
     const result: RecallResult = {
