@@ -452,16 +452,16 @@ export async function runRecallPipelineQuery(
               probeDebug(
                 `memory-hybrid: recall-probe id=${probeId} ${opts?.errorPrefix ?? ""}vector recall skipped (registration superseded)`,
               );
-            } else {
-              if (!shouldSuppressEmbeddingError(err)) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: `${opts?.errorPrefix ?? ""}vector-recall`,
-                  subsystem: "auto-recall",
-                  backend: "lancedb",
-                });
-              }
-              logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+              return [] as SearchResult[];
             }
+            if (!shouldSuppressEmbeddingError(err)) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+                subsystem: "auto-recall",
+                backend: "lancedb",
+              });
+            }
+            logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
           }
           return [] as SearchResult[];
         })

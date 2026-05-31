@@ -910,6 +910,16 @@ export async function runRecall(
           }
         }
       } catch (err) {
+        if (
+          suppressStaleLifecycleDbError(
+            ctx,
+            err,
+            api.logger,
+            "memory-hybrid: directive recall skipped (registration superseded)",
+          )
+        ) {
+          return abortDirectives();
+        }
         if (isRecallContextSuperseded(ctx)) {
           api.logger.debug?.("memory-hybrid: directive recall skipped (registration superseded)");
           return abortDirectives();
@@ -1068,6 +1078,7 @@ export async function runRecall(
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     }
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     setRecallProbePhase("finalize");
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);

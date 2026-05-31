@@ -37,7 +37,7 @@ import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { spawn } from "../utils/process-runner.js";
-import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
+import { isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import {
   OLLAMA_DEFAULT_BASE_URL,
@@ -606,6 +606,10 @@ export function initializeDatabases(
       try {
         await wal.init();
       } catch (e) {
+        if (isBootstrapSuperseded()) {
+          api.logger.debug?.("memory-hybrid: WAL init skipped (registration superseded)");
+          return;
+        }
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {
           subsystem: "wal",
           operation: "init",
@@ -674,22 +678,7 @@ export function initializeDatabases(
             credentialsDb.get(first.service, first.type as CredentialType);
           }
         };
-        let lastErr: unknown;
-        for (let attempt = 0; attempt < 5; attempt++) {
-          try {
-            verifyVault();
-            lastErr = undefined;
-            break;
-          } catch (e) {
-            lastErr = e;
-            const dbClosed = isDbClosedError(e);
-            if (!dbClosed || isBootstrapSuperseded() || attempt >= 4) {
-              throw e;
-            }
-            await new Promise((r) => setTimeout(r, 50 * (attempt + 1)));
-          }
-        }
-        if (lastErr) throw lastErr;
+        verifyVault();
         if (isBootstrapSuperseded()) return;
         health.credentialsVaultOk = true;
         api.logger.info("memory-hybrid: credentials vault check OK");
@@ -724,6 +713,7 @@ export function initializeDatabases(
           });
         }
       } catch (err: any) {
+        if (isBootstrapSuperseded()) return;
         if (err.code === "EEXIST") {
           // Another process already created the flag - skip migration
           shouldMigrate = false;
@@ -758,6 +748,7 @@ export function initializeDatabases(
             migrationFlagPath,
             markDone: false, // Flag already created atomically above
           });
+          if (isBootstrapSuperseded()) return;
           if (result.migrated > 0) {
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
           }
@@ -768,7 +759,7 @@ export function initializeDatabases(
           }
         } catch (e) {
           if (isBootstrapSuperseded() || isDbClosedError(e)) {
-            api.logger.debug?.("memory-hybrid: credential migration aborted (registration superseded or DB closed)");
+            api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded or DB closed)");
             return;
           }
           capturePluginError(e instanceof Error ? e : new Error(String(e)), {
@@ -782,6 +773,7 @@ export function initializeDatabases(
       }
     }
   })().catch((err: unknown) => {
+    if (isBootstrapSuperseded()) return;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "init",
       operation: "async-initialization",
