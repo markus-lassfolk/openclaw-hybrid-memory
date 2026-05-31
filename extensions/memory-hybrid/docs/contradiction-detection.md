@@ -120,6 +120,8 @@ Contradicted facts naturally rank lower due to reduced confidence, which flows t
 
 Every run prints a summary with total contradictions, deterministic/LLM/manual counts, target rate, and achieved rate so nightly maintenance does not hide leftover backlog.
 
+Review exports include value/text excerpts plus source provenance for each ambiguous pair. Treat the JSONL file as sensitive local memory data and avoid sharing it outside the trusted review path.
+
 ---
 
 ## API Reference
