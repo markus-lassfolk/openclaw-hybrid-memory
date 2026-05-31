@@ -222,6 +222,16 @@ async function restoreMergedFactVectorState(opts: {
     opts.logger.warn(
       `memory-hybrid: ${opts.context} — failed to restore pre-merge vector for ${opts.factId.slice(0, 8)} after rollback: ${err}`,
     );
+    try {
+      await opts.vectorDb.delete(opts.factId);
+      opts.logger.warn(
+        `memory-hybrid: ${opts.context} — deleted merged vector for ${opts.factId.slice(0, 8)} to prevent Lance drift after restore failure`,
+      );
+    } catch (delErr) {
+      opts.logger.warn(
+        `memory-hybrid: ${opts.context} — failed to delete merged vector for ${opts.factId.slice(0, 8)} after restore failure: ${delErr}`,
+      );
+    }
     return;
   }
   const embeddingModel =
@@ -955,7 +965,7 @@ export async function runReflection(
             logger.warn(
               `memory-hybrid: reflection — metadata rollback skipped for pattern fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
             );
-            vectorStored = false;
+            stored++;
             continue;
           }
           try {
@@ -1577,7 +1587,7 @@ export async function runReflectionRules(
             logger.warn(
               `memory-hybrid: reflect-rules — metadata rollback skipped for rule fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
             );
-            vectorStored = false;
+            stored++;
             continue;
           }
           try {
@@ -2148,7 +2158,7 @@ export async function runReflectionMeta(
             logger.warn(
               `memory-hybrid: reflect-meta — metadata rollback skipped for meta-pattern fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
             );
-            vectorStored = false;
+            stored++;
             continue;
           }
           try {
