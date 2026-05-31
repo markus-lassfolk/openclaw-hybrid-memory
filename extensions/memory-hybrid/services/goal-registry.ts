@@ -8,6 +8,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { isAbsolute, join } from "node:path";
 
 import type { EventLog } from "../backends/event-log.js";
+import { capturePluginError } from "./error-reporter.js";
 import type {
   CreateGoalInput,
   Goal,
@@ -142,6 +143,17 @@ function isGoalLike(value: unknown): value is Goal {
   );
 }
 
+function captureInvalidGoalRegistryEntry(filename: string, err?: unknown): void {
+  const reason = err instanceof Error ? err.message : err === undefined ? "invalid persisted Goal shape" : String(err);
+  capturePluginError(new Error(`invalid_goal_registry_entry: ${filename}: ${reason}`), {
+    subsystem: "goal-registry",
+    operation: "invalid_goal_registry_entry",
+    severity: "warning",
+    filename,
+    reason,
+  });
+}
+
 function asGoalIndexEntries(value: unknown): GoalIndex["goals"] {
   if (!value || typeof value !== "object") return [];
   const goals = (value as { goals?: unknown }).goals;
@@ -179,9 +191,11 @@ export async function rebuildGoalIndex(goalsDir: string): Promise<void> {
           createdAt: g.createdAt,
           lastAssessedAt: g.lastAssessedAt,
         });
+      } else {
+        captureInvalidGoalRegistryEntry(f);
       }
-    } catch {
-      /* skip corrupt */
+    } catch (err) {
+      captureInvalidGoalRegistryEntry(f, err);
     }
   }
   const index: GoalIndex = { updatedAt: nowIso(), goals };
@@ -226,8 +240,9 @@ export async function listGoals(goalsDir: string): Promise<Goal[]> {
     try {
       const g = await readGoal(goalsDir, f.replace(/\.json$/, ""));
       if (g) out.push(g);
-    } catch {
+    } catch (err) {
       // Keep registry scans isolated: one corrupt goal file must not abort all goal processing.
+      captureInvalidGoalRegistryEntry(f, err);
     }
   }
   return out;
