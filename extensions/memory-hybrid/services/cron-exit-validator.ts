@@ -297,7 +297,7 @@ export function validateMaintenanceExecution(
     const degradedVerification = detectDegradedContinuousVerificationStatus(logPath);
     if (degradedVerification) {
       failedSteps.push({
-        timestamp: "",
+        timestamp: "N/A",
         step: "continuous-verification",
         exitCode: 2,
         line: degradedVerification.machineLine,
