@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { hybridConfigSchema } from "../config.js";
 import memoryHybridPlugin, { isHybridMemHelpInvocation } from "../index.js";
+import { resetPluginRegistrationStateForTests } from "../setup/register-plugin.js";
 
 function makeMockApi() {
   return {
@@ -40,6 +41,7 @@ describe("hybrid-mem help invocations", () => {
   afterEach(() => {
     process.argv = oldArgv;
     rmSync(tmpDir, { recursive: true, force: true });
+    resetPluginRegistrationStateForTests();
   });
 
   it("openclaw hybrid-mem --help registers CLI only (no DB bootstrap, no tools/services)", () => {

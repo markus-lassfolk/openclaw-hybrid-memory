@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IssueStore } from "../backends/issue-store.js";
 import { hybridConfigSchema } from "../config.js";
 import memoryHybridPlugin from "../index.js";
+import { resetPluginRegistrationStateForTests } from "../setup/register-plugin.js";
 import { _testing } from "../index.js";
 import { groupProjectFactsByEntity } from "../services/task-ledger-facts.js";
 import { closeOldDatabases, initializeDatabases } from "../setup/init-databases.js";
@@ -140,11 +141,13 @@ describe("Plugin registration e2e", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "plugin-e2e-reg-"));
     api = makeMockApi();
+    resetPluginRegistrationStateForTests();
   });
 
   afterEach(() => {
     api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
+    resetPluginRegistrationStateForTests();
   });
 
   it("register() is synchronous (OpenClaw rejects Promise-returning register)", () => {

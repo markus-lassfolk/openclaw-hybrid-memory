@@ -49,6 +49,8 @@ import type { ToolRegistrationHandle } from "../setup/register-tools.js";
 export interface PluginRuntime {
   // --- Config & resolved paths ---
   cfg: HybridMemoryConfig;
+  /** Parse-time config snapshot for hot-reload reuse checks (bootstrap may mutate `cfg`). */
+  parsedCfgSnapshot: HybridMemoryConfig;
   resolvedLancePath: string;
   resolvedSqlitePath: string;
 

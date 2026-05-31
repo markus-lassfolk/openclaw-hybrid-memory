@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { _testing } from "../index.js";
+import { resetPluginRegistrationStateForTests, runtimeRef } from "../setup/register-plugin.js";
 import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
   E2E_EMBEDDING_DIM,
@@ -46,6 +47,8 @@ describe("Comprehensive e2e — full plugin register()", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "comprehensive-e2e-"));
     api = makeFullStackApi(tmpDir);
+    process.env.OPENCLAW_HYBRID_MEM_REREGISTER_POLICY = "reuse-databases";
+    resetPluginRegistrationStateForTests();
   });
 
   afterEach(async () => {
@@ -56,15 +59,17 @@ describe("Comprehensive e2e — full plugin register()", () => {
     }
     rmSync(tmpDir, { recursive: true, force: true });
     vi.clearAllMocks();
+    resetPluginRegistrationStateForTests();
+    delete process.env.OPENCLAW_HYBRID_MEM_REREGISTER_POLICY;
   });
 
-  async function register(overrides: Record<string, unknown> = {}): Promise<void> {
-    await registerFullPlugin(api, getFullStackConfig(tmpDir, overrides));
+  function register(overrides: Record<string, unknown> = {}): void {
+    registerFullPlugin(api, getFullStackConfig(tmpDir, overrides));
   }
 
   describe("registration stack", () => {
     it("bootstraps databases, tools, CLI, service, and lifecycle hooks", async () => {
-      await register();
+      register();
       assertFullStackPaths(tmpDir);
       expect(api.getTool("memory_store")).toBeDefined();
       expect(api.getTool("memory_recall")).toBeDefined();
@@ -79,7 +84,9 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("survives hot reload (second register closes prior runtime)", async () => {
-      await register();
+      register();
+      const bootstrap = runtimeRef.value?.bootstrapAsyncInit;
+      if (bootstrap) await bootstrap.catch(() => {});
       const store = api.getTool("memory_store")!;
       const stored = (await store.execute("c1", {
         text: "Survives plugin hot reload",
@@ -89,7 +96,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
       const factId = stored.details?.id;
       expect(factId).toBeDefined();
 
-      await register();
+      register();
       const recall = api.getTool("memory_recall")!;
       const recalled = (await recall.execute("c2", { id: factId })) as {
         details?: { count: number; memories?: { text: string }[] };
@@ -99,14 +106,14 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("service start() and stop() complete without throwing", async () => {
-      await register();
+      register();
       await expect(api.startService()).resolves.toBeUndefined();
       await expect(api.stopService()).resolves.toBeUndefined();
     });
   });
 
   describe("tool round-trip (registered tools + real backends)", () => {
-    beforeEach(async () => await register());
+    beforeEach(() => register());
 
     it("memory_store → memory_recall by id → memory_forget", async () => {
       const text = "Comprehensive e2e round-trip fact 10.0.0.99";
@@ -149,7 +156,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
   describe("simulated agent turn (lifecycle hooks from register)", () => {
     it("agent_end allows benign finalization messages", async () => {
-      await register();
+      register();
       const handlers = api.hookHandlers("agent_end");
       expect(handlers.length).toBeGreaterThan(0);
 
@@ -159,7 +166,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("agent_end allows when CI is pending and project ledger is empty (#1479)", async () => {
-      await register();
+      register();
       const handler = api.hookHandlers("agent_end")[0]!;
       await expect(handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX)).resolves.toBeUndefined();
       expect(api.logger.warn).not.toHaveBeenCalled();
@@ -185,7 +192,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
   describe("persistence and verify boundaries", () => {
     it("facts persist on disk and can be read from a new FactsDB connection", async () => {
-      await register();
+      register();
       const text = "Persisted on disk for secondary connection read";
       const id = (
         (await api.getTool("memory_store")?.execute("c1", {
@@ -206,7 +213,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("runVerifyForCli reconcile reports in-sync after store + vector write", async () => {
-      await register();
+      register();
       const sqlitePath = join(tmpDir, "facts.db");
       const lancePath = join(tmpDir, "lancedb");
       const stored = (
