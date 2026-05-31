@@ -154,6 +154,11 @@ export type ManageContext = {
     effectiveLimit?: number | "all";
     remainingTotal?: number;
     estimatedRunsRemaining?: number;
+    mentions: number;
+    accepted: number;
+    rejected: number;
+    duplicates: number;
+    rejectReasons: Record<string, number>;
     skipped?: boolean;
     pendingFactIds?: string[];
     enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];

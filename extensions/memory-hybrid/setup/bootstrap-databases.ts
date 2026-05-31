@@ -1,5 +1,5 @@
 import { constants, existsSync, readFileSync } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, unlink } from "node:fs/promises";
 /** @module bootstrap-databases — Database bootstrap, optional stores, and lifecycle teardown. */
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
@@ -37,6 +37,7 @@ import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { spawn } from "../utils/process-runner.js";
+import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import {
   OLLAMA_DEFAULT_BASE_URL,
@@ -44,8 +45,8 @@ import {
   buildMultiProviderOpenAI,
   clearOllamaHealthCacheEntry,
   extractGatewayConfig,
-  getGatewayModelsProviders,
   gatewayLogInfoOnce,
+  getGatewayModelsProviders,
   mergeGatewayProviderCredentialsIntoLlmProvidersMap,
   patchEmbeddingEndpointFromGatewayProviders,
   probeOllamaEndpoint,
@@ -169,6 +170,230 @@ export function maybeAutoStartOllama(cfg: HybridMemoryConfig, api: ClawdbotPlugi
 }
 
 /**
+ * Run bootstrap checks (WAL init, embedding verify, vault check, credential migration)
+ * for a new registration generation when reusing database handles.
+ * @internal Exported for reregister-policy; not part of public API.
+ */
+export function createReusedDatabaseBootstrap(
+  cfg: HybridMemoryConfig,
+  api: ClawdbotPluginApi,
+  ctx: Pick<
+    DatabaseContext,
+    "embeddings" | "wal" | "credentialsDb" | "factsDb" | "vectorDb" | "aliasDb" | "resolvedSqlitePath" | "health"
+  >,
+  opts: { bootRegistrationGeneration: number },
+): Promise<void> {
+  const { embeddings, wal, credentialsDb, factsDb, vectorDb, aliasDb, resolvedSqlitePath, health } = ctx;
+  const bootRegistrationGeneration = opts.bootRegistrationGeneration;
+  const isBootstrapSuperseded = (): boolean => isRegistrationSuperseded(bootRegistrationGeneration);
+
+  return (async () => {
+    if (isBootstrapSuperseded()) return;
+    if (wal) {
+      try {
+        await wal.init();
+      } catch (e) {
+        if (isBootstrapSuperseded()) {
+          api.logger.debug?.("memory-hybrid: WAL initialization skipped (registration superseded)");
+          return;
+        }
+        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+          subsystem: "wal",
+          operation: "init",
+          phase: "initialization",
+        });
+        api.logger.warn(`memory-hybrid: WAL initialization failed: ${e}`);
+      }
+    }
+    if (isBootstrapSuperseded()) return;
+    try {
+      await embeddings.embed("verify");
+      if (isBootstrapSuperseded()) return;
+      health.embeddingsOk = true;
+      const effectiveProvider = embeddings.activeProvider ?? cfg.embedding.provider;
+      const modelForLog =
+        effectiveProvider === "openai"
+          ? formatOpenAiEmbeddingDisplayLabel(embeddings.modelName, cfg.embedding.endpoint)
+          : embeddings.modelName;
+      api.logger.info(
+        effectiveProvider !== cfg.embedding.provider
+          ? `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog} — using fallback; ${cfg.embedding.provider} unavailable)`
+          : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog})`,
+      );
+    } catch (e) {
+      if (isBootstrapSuperseded()) {
+        api.logger.debug?.("memory-hybrid: embedding check skipped (registration superseded)");
+        return;
+      }
+      const asErr = e instanceof Error ? e : new Error(String(e));
+      if (!shouldSuppressEmbeddingError(asErr)) {
+        capturePluginError(asErr, {
+          subsystem: "embeddings",
+          operation: "init-verify",
+          phase: "initialization",
+          backend: cfg.embedding.provider,
+        });
+      }
+      const errText = String(e);
+      const quota403 = is403QuotaOrRateLimitLike(e);
+      const azure404 =
+        typeof cfg.embedding.endpoint === "string" &&
+        /\.openai\.azure\.com/i.test(cfg.embedding.endpoint) &&
+        (/404|not found/i.test(errText) || /Model not found/i.test(errText));
+      const hint = quota403
+        ? "The provider returned 403 with quota/rate-limit signals (e.g. remaining-tokens=0, Retry-After). Wait for the window to reset or raise quota; your key may still be valid. Run 'openclaw hybrid-mem verify' for details."
+        : cfg.embedding.provider === "ollama"
+          ? `Ensure Ollama is running at ${cfg.embedding.endpoint ?? "http://localhost:11434"} and model '${cfg.embedding.model}' is pulled. Run 'openclaw hybrid-mem verify' for details.`
+          : azure404
+            ? 'Azure OpenAI embeddings use the deployment name as the API model id. In plugins.entries["openclaw-hybrid-memory"].config.embedding set "deployment" to the exact embedding deployment name from Azure Portal (Resource → Model deployments), or rename the deployment to match embedding.model. Ensure embedding.endpoint is the resource URL (e.g. …/openai/v1). Run \'openclaw hybrid-mem verify\' for details.'
+            : "Set a valid embedding.apiKey in plugin config and ensure the model is accessible. Run 'openclaw hybrid-mem verify' for details.";
+      const logEmbFailure = quota403 || is429OrWrapped(asErr) ? api.logger.warn : api.logger.error;
+      const embTag = quota403 || is429OrWrapped(asErr) ? "[embedding-quota]" : "[embedding-init]";
+      logEmbFailure(
+        `${embTag} memory-hybrid: ⚠️  EMBEDDING CHECK FAILED (provider=${cfg.embedding.provider}) — ${String(e)}. ` +
+          `Plugin will continue but semantic search will not work. ${hint}`,
+      );
+    }
+    if (cfg.credentials.enabled && credentialsDb) {
+      if (isBootstrapSuperseded()) return;
+      try {
+        const verifyVault = (): void => {
+          const items = credentialsDb.list();
+          if (items.length > 0) {
+            const first = items[0];
+            credentialsDb.get(first.service, first.type as CredentialType);
+          }
+        };
+        verifyVault();
+        if (isBootstrapSuperseded()) return;
+        health.credentialsVaultOk = true;
+        api.logger.info("memory-hybrid: credentials vault check OK");
+      } catch (e) {
+        if (isBootstrapSuperseded()) {
+          api.logger.debug?.("memory-hybrid: credentials vault check skipped (registration superseded)");
+          return;
+        }
+        capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+          subsystem: "credentials",
+          operation: "vault-verify",
+          phase: "initialization",
+          backend: "sqlite",
+        });
+        api.logger.error(
+          `memory-hybrid: ⚠️  CREDENTIALS VAULT CHECK FAILED — ${String(e)}. Plugin will continue but credential storage will not work. Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.`,
+        );
+      }
+      if (isBootstrapSuperseded()) return;
+      const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
+      const clearMigrationFlagForRetry = async (reason: string): Promise<void> => {
+        try {
+          await unlink(migrationFlagPath);
+          api.logger.debug?.(`memory-hybrid: cleared credential migration flag (${reason})`);
+        } catch (err: unknown) {
+          const errCode =
+            typeof err === "object" && err !== null && "code" in err ? (err as { code?: unknown }).code : undefined;
+          if (errCode === "ENOENT") return;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "credentials",
+            operation: "migration-flag-clear",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: failed to clear migration flag for retry: ${err}`);
+        }
+      };
+      let shouldMigrate = false;
+      try {
+        const handle = await open(migrationFlagPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY);
+        try {
+          await handle.writeFile("1", "utf8");
+          shouldMigrate = true;
+        } finally {
+          await handle.close().catch(() => {});
+        }
+      } catch (err: unknown) {
+        const errCode =
+          typeof err === "object" && err !== null && "code" in err ? (err as { code?: unknown }).code : undefined;
+        if (isBootstrapSuperseded()) return;
+        if (errCode === "EEXIST") {
+          shouldMigrate = false;
+        } else {
+          shouldMigrate = false;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "credentials",
+            operation: "migration-flag-create",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: failed to create migration flag (skipping migration): ${err}`);
+        }
+      }
+      if (shouldMigrate) {
+        if (isBootstrapSuperseded()) {
+          await clearMigrationFlagForRetry("registration superseded before migration");
+          return;
+        }
+        try {
+          const result = await migrateCredentialsToVault({
+            factsDb,
+            vectorDb,
+            embeddings,
+            credentialsDb,
+            aliasDb,
+            migrationFlagPath,
+            markDone: false,
+          });
+          if (isBootstrapSuperseded()) {
+            await clearMigrationFlagForRetry("registration superseded after migration");
+            api.logger.debug?.(
+              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
+            );
+            return;
+          }
+          if (result.migrated > 0) {
+            api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
+          }
+          if (result.errors.length > 0) {
+            api.logger.warn(
+              `memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`,
+            );
+            await clearMigrationFlagForRetry("credential migration completed with errors");
+          }
+        } catch (e) {
+          if (isBootstrapSuperseded()) {
+            await clearMigrationFlagForRetry("registration superseded during migration");
+            const isDbClosed = isDbClosedError(e);
+            if (!isDbClosed) {
+              api.logger.debug?.(
+                "memory-hybrid: credential migration error during superseded bootstrap cleared for retry",
+              );
+            } else {
+              api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
+            }
+            return;
+          }
+          capturePluginError(e instanceof Error ? e : new Error(String(e)), {
+            subsystem: "credentials",
+            operation: "migration-to-vault",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: credential migration failed: ${e}`);
+        }
+      }
+    }
+  })().catch((err: unknown) => {
+    if (isBootstrapSuperseded()) return;
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "init",
+      operation: "async-initialization",
+      phase: "initialization",
+    });
+    api.logger.warn(`memory-hybrid: async initialization encountered an error: ${err}`);
+  });
+}
+
+/**
  * Initializes all databases and services for the plugin.
  *
  * This includes:
@@ -182,7 +407,13 @@ export function maybeAutoStartOllama(cfg: HybridMemoryConfig, api: ClawdbotPlugi
  * - Discovered categories loading
  * - Async verification checks
  */
-export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPluginApi): DatabaseContext {
+export function initializeDatabases(
+  cfg: HybridMemoryConfig,
+  api: ClawdbotPluginApi,
+  opts?: { bootRegistrationGeneration?: number },
+): DatabaseContext {
+  const bootRegistrationGeneration = opts?.bootRegistrationGeneration ?? -1;
+  const isBootstrapSuperseded = (): boolean => isRegistrationSuperseded(bootRegistrationGeneration);
   const resolvedLancePath = api.resolvePath(cfg.lanceDbPath);
   const resolvedSqlitePath = api.resolvePath(cfg.sqlitePath);
   setKeywordsPath(dirname(resolvedSqlitePath));
@@ -597,10 +828,15 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
   // Prerequisite checks (async, don't block plugin start): verify keys and model access
   // Health status can be queried by tools to fail gracefully instead of throwing at runtime.
   const initialized = (async () => {
+    if (isBootstrapSuperseded()) return;
     if (wal) {
       try {
         await wal.init();
       } catch (e) {
+        if (isBootstrapSuperseded()) {
+          api.logger.debug?.("memory-hybrid: WAL initialization skipped (registration superseded)");
+          return;
+        }
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {
           subsystem: "wal",
           operation: "init",
@@ -609,8 +845,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         api.logger.warn(`memory-hybrid: WAL initialization failed: ${e}`);
       }
     }
+    if (isBootstrapSuperseded()) return;
     try {
       await embeddings.embed("verify");
+      if (isBootstrapSuperseded()) return;
       health.embeddingsOk = true;
       const effectiveProvider = embeddings.activeProvider ?? cfg.embedding.provider;
       const modelForLog =
@@ -623,6 +861,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog})`,
       );
     } catch (e) {
+      if (isBootstrapSuperseded()) {
+        api.logger.debug?.("memory-hybrid: embedding check skipped (registration superseded)");
+        return;
+      }
       const asErr = e instanceof Error ? e : new Error(String(e));
       if (!shouldSuppressEmbeddingError(asErr)) {
         capturePluginError(asErr, {
@@ -654,15 +896,24 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       );
     }
     if (cfg.credentials.enabled && credentialsDb) {
+      if (isBootstrapSuperseded()) return;
       try {
-        const items = credentialsDb.list();
-        if (items.length > 0) {
-          const first = items[0];
-          credentialsDb.get(first.service, first.type as CredentialType);
-        }
+        const verifyVault = (): void => {
+          const items = credentialsDb.list();
+          if (items.length > 0) {
+            const first = items[0];
+            credentialsDb.get(first.service, first.type as CredentialType);
+          }
+        };
+        verifyVault();
+        if (isBootstrapSuperseded()) return;
         health.credentialsVaultOk = true;
         api.logger.info("memory-hybrid: credentials vault check OK");
       } catch (e) {
+        if (isBootstrapSuperseded()) {
+          api.logger.debug?.("memory-hybrid: credentials vault check skipped (registration superseded)");
+          return;
+        }
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {
           subsystem: "credentials",
           operation: "vault-verify",
@@ -673,8 +924,26 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
           `memory-hybrid: ⚠️  CREDENTIALS VAULT CHECK FAILED — ${String(e)}. Plugin will continue but credential storage will not work. Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.`,
         );
       }
+      if (isBootstrapSuperseded()) return;
       // When vault is enabled: once per install, move existing credential facts into vault and redact from memory
       const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
+      const clearMigrationFlagForRetry = async (reason: string): Promise<void> => {
+        try {
+          await unlink(migrationFlagPath);
+          api.logger.debug?.(`memory-hybrid: cleared credential migration flag (${reason})`);
+        } catch (err: unknown) {
+          const errCode =
+            typeof err === "object" && err !== null && "code" in err ? (err as { code?: unknown }).code : undefined;
+          if (errCode === "ENOENT") return;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "credentials",
+            operation: "migration-flag-clear",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: failed to clear migration flag for retry: ${err}`);
+        }
+      };
       // Atomic flag creation to prevent race condition with multiple processes
       let shouldMigrate = false;
       try {
@@ -687,8 +956,11 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
             /* ignore close errors */
           });
         }
-      } catch (err: any) {
-        if (err.code === "EEXIST") {
+      } catch (err: unknown) {
+        const errCode =
+          typeof err === "object" && err !== null && "code" in err ? (err as { code?: unknown }).code : undefined;
+        if (isBootstrapSuperseded()) return;
+        if (errCode === "EEXIST") {
           // Another process already created the flag - skip migration
           shouldMigrate = false;
         } else {
@@ -703,6 +975,10 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
         }
       }
       if (shouldMigrate) {
+        if (isBootstrapSuperseded()) {
+          await clearMigrationFlagForRetry("registration superseded before migration");
+          return;
+        }
         try {
           const result = await migrateCredentialsToVault({
             factsDb,
@@ -713,6 +989,13 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
             migrationFlagPath,
             markDone: false, // Flag already created atomically above
           });
+          if (isBootstrapSuperseded()) {
+            await clearMigrationFlagForRetry("registration superseded after migration");
+            api.logger.debug?.(
+              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
+            );
+            return;
+          }
           if (result.migrated > 0) {
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
           }
@@ -720,8 +1003,23 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
             api.logger.warn(
               `memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`,
             );
+            await clearMigrationFlagForRetry("credential migration completed with errors");
           }
         } catch (e) {
+          if (isBootstrapSuperseded()) {
+            await clearMigrationFlagForRetry("registration superseded during migration");
+            const isDbClosed = isDbClosedError(e);
+            if (!isDbClosed) {
+              // Non-DB-closed error during superseded bootstrap: flag was set but bootstrap
+              // was superseded before or during migration. Clear flag so retry can run fresh.
+              api.logger.debug?.(
+                "memory-hybrid: credential migration error during superseded bootstrap cleared for retry",
+              );
+            } else {
+              api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
+            }
+            return;
+          }
           capturePluginError(e instanceof Error ? e : new Error(String(e)), {
             subsystem: "credentials",
             operation: "migration-to-vault",
@@ -733,6 +1031,7 @@ export function initializeDatabases(cfg: HybridMemoryConfig, api: ClawdbotPlugin
       }
     }
   })().catch((err: unknown) => {
+    if (isBootstrapSuperseded()) return;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "init",
       operation: "async-initialization",

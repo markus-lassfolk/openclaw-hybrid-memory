@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
 import {
@@ -14,7 +14,11 @@ import {
   normalizeEntityKey,
   normalizeFactEntityMentionsForPersistence,
 } from "../backends/facts-db/entity-layer.js";
-import { detectFactTextLanguage, isEntityStopWord } from "../services/entity-enrichment.js";
+import {
+  detectFactTextLanguage,
+  extractEntityMentionsWithLlm,
+  isEntityStopWord,
+} from "../services/entity-enrichment.js";
 
 describe("normalizeEntityKey", () => {
   it("lowercases and collapses whitespace", () => {
@@ -497,6 +501,76 @@ describe("detectFactTextLanguage (franc)", () => {
   });
 });
 
+describe("extractEntityMentionsWithLlm", () => {
+  it("stores canonicalized surface text from quality gate output", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [
+              {
+                message: {
+                  content:
+                    '{"mentions":[{"label":"ORG","text":"Home   Assistant","start":0,"end":16,"confidence":0.9}]}',
+                },
+              },
+            ],
+          }),
+        },
+      },
+    };
+
+    const result = await extractEntityMentionsWithLlm(
+      "Home   Assistant helps with automations and reminders.",
+      openai as never,
+      "gpt-5-mini",
+    );
+
+    expect(result.mentions).toHaveLength(1);
+    expect(result.mentions[0]).toMatchObject({
+      label: "SERVICE",
+      surfaceText: "Home   Assistant",
+      normalizedSurface: "home assistant",
+    });
+  });
+
+  it("counts duplicate removals as rejected mentions in quality stats", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [
+              {
+                message: {
+                  content:
+                    '{"mentions":[{"label":"ORG","text":"Acme Corporation","start":0,"end":16,"normalized":"acme corporation","confidence":0.99},{"label":"ORG","text":"Acme Corporation","start":0,"end":16,"normalized":"acme corporation","confidence":0.98}]}',
+                },
+              },
+            ],
+          }),
+        },
+      },
+    };
+
+    const result = await extractEntityMentionsWithLlm(
+      "Acme Corporation announced a product update for enterprise customers.",
+      openai as never,
+      "gpt-5-mini",
+    );
+
+    expect(result.mentions).toHaveLength(1);
+    expect(result.quality.accepted).toBe(1);
+    expect(result.quality.duplicates).toBe(1);
+    expect(result.quality.rejected).toBe(1);
+    expect(result.quality.rejectReasons.duplicate).toBe(1);
+    expect(result.rejectedMentions).toContainEqual({
+      label: "ORG",
+      surfaceText: "Acme Corporation",
+      reason: "duplicate",
+    });
+  });
+});
+
 describe("FactsDB entity layer persistence", () => {
   let dir: string;
   let dbPath: string;
@@ -783,6 +857,47 @@ describe("FactsDB entity layer persistence", () => {
     expect(byPrefix.some((c) => c.displayName.includes("100%"))).toBe(true);
   });
 
+  it("suppresses duplicate logical mentions per fact via unique index/upsert", () => {
+    const fact = db.store({
+      text: "GitHub and GitHub were both mentioned.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    db.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "SERVICE",
+          surfaceText: "GitHub",
+          normalizedSurface: "github",
+          startOffset: 0,
+          endOffset: 6,
+          confidence: 0.95,
+        },
+        {
+          label: "SERVICE",
+          surfaceText: "GitHub",
+          normalizedSurface: "github",
+          startOffset: 11,
+          endOffset: 17,
+          confidence: 0.94,
+        },
+      ],
+      "eng",
+    );
+    const row = db
+      .getRawDb()
+      .prepare("SELECT COUNT(*) AS c FROM fact_entity_mentions WHERE fact_id = ?")
+      .get(fact.id) as {
+      c: number;
+    };
+    expect(row.c).toBe(1);
+  });
+
   it("deduplicates persisted mentions after normalization and skips generic noise", () => {
     const fact = db.store({
       text: "Hybrid-memory PR Pipeline mentioned Hybrid-memory PR Pipeline while Acme Corporation replaced Acme and Surgeon reviewed whatsapp logs.",
@@ -793,7 +908,6 @@ describe("FactsDB entity layer persistence", () => {
       importance: 0.5,
       source: "test",
     });
-
     db.applyEntityEnrichment(
       fact.id,
       [
@@ -888,5 +1002,125 @@ describe("FactsDB entity layer persistence", () => {
     } finally {
       raw.close();
     }
+  });
+
+  it("cleanup removes junk and reclassifies known rows", () => {
+    const fact = db.store({
+      text: "Gemini 3.1 Pro and API were mentioned by Surgeon.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("a", fact.id, "ORG", "Gemini 3.1 Pro", "gemini", 0, 13, 0.9, "eng", "llm", now);
+    ins.run("b", fact.id, "ORG", "api", "api", 20, 23, 0.9, "eng", "llm", now);
+    ins.run("c", fact.id, "PERSON", "Surgeon", "surgeon", 28, 35, 0.95, "eng", "llm", now);
+
+    const dryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+    expect(dryRun.changedFacts).toBeGreaterThan(0);
+
+    const applied = db.cleanupEntityMentions({ limit: 50, apply: true });
+    expect(applied.changedFacts).toBeGreaterThan(0);
+    const secondRun = db.cleanupEntityMentions({ limit: 50, apply: true });
+    expect(secondRun.changedFacts).toBe(0);
+
+    const rows = db
+      .getRawDb()
+      .prepare(
+        "SELECT label, normalized_surface FROM fact_entity_mentions WHERE fact_id = ? ORDER BY normalized_surface",
+      )
+      .all(fact.id) as Array<{ label: string; normalized_surface: string }>;
+    expect(rows).toEqual([{ label: "MODEL", normalized_surface: "gemini-3.1-pro" }]);
+  });
+
+  it("audit and cleanup count duplicates and substrings using canonicalized mention keys", () => {
+    const fact = db.store({
+      text: "GitHub and github are the same service mention.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("d", fact.id, "ORG", "GitHub", "github", 0, 6, 0.9, "eng", "llm", now);
+    ins.run("e", fact.id, "SERVICE", "github", "github", 11, 17, 0.89, "eng", "llm", now + 1);
+    ins.run("f", fact.id, "SERVICE", "Hub", "hub", 3, 6, 0.88, "eng", "llm", now + 2);
+
+    const audit = db.auditEntityMentions(50);
+    const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+
+    expect(audit.duplicates).toBe(1);
+    expect(cleanupDryRun.duplicates).toBe(1);
+    expect(audit.accepted).toBe(cleanupDryRun.accepted);
+    expect(audit.rejected).toBe(cleanupDryRun.rejected);
+    expect(audit.rejectReasons.substring).toBe(1);
+  });
+
+  it("counts reclassified mentions after substring filtering using retained rows only", () => {
+    const fact = db.store({
+      text: "Gemini 3.1 Pro supersedes Gemini 3.1 in this mention window.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("j", fact.id, "ORG", "Gemini 3.1", "gemini 3.1", 0, 10, 0.9, "eng", "llm", now);
+    ins.run("k", fact.id, "ORG", "Gemini 3.1 Pro", "gemini 3.1 pro", 0, 14, 0.95, "eng", "llm", now + 1);
+
+    const audit = db.auditEntityMentions(50);
+    const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+
+    expect(audit.reclassified).toBe(1);
+    expect(cleanupDryRun.reclassified).toBe(1);
+  });
+
+  it("does not reject substring mentions when offsets do not overlap", () => {
+    const fact = db.store({
+      text: "GitHub and Hub are separate mentions here.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("g", fact.id, "ORG", "GitHub", "github", 0, 6, 0.95, "eng", "llm", now);
+    ins.run("h", fact.id, "SERVICE", "Hub", "hub", 11, 14, 0.9, "eng", "llm", now + 1);
+
+    const audit = db.auditEntityMentions(50);
+    const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+
+    expect(audit.accepted).toBe(cleanupDryRun.accepted);
+    expect(audit.rejected).toBe(cleanupDryRun.rejected);
+    expect(audit.rejectReasons.substring ?? 0).toBe(0);
   });
 });

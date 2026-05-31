@@ -22,6 +22,10 @@ import { createPendingLLMWarnings } from "../services/chat.js";
 import * as chatModule from "../services/chat.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import {
+  getHybridMemoryRegistrationState,
+  resetHybridMemoryRegistrationStateForTests,
+} from "../setup/hybrid-memory-generation-state.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../services/recall-pipeline.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "../services/retrieval-mode-policy.js";
 import { RETRIEVAL_MODE } from "../services/retrieval-mode-policy.js";
@@ -36,7 +40,12 @@ vi.mock("../services/error-reporter.js", () => ({
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
+  resetHybridMemoryRegistrationStateForTests();
   vi.mocked(capturePluginError).mockClear();
+});
+
+afterEach(() => {
+  resetHybridMemoryRegistrationStateForTests();
 });
 
 function makeEntry(id: string, overrides: Partial<MemoryEntry> = {}): MemoryEntry {
@@ -287,6 +296,36 @@ describe("runRecallPipelineQuery — semantic mode", () => {
     await runRecallPipelineQuery("vector query", 10, deps, { value: false });
 
     expect(vi.mocked(capturePluginError)).toHaveBeenCalled();
+  });
+
+  it("suppresses stale vector DB-close reports after generation supersession", async () => {
+    const registrationState = getHybridMemoryRegistrationState();
+    registrationState.registrationGenerationRef.value = 2;
+    const ownerGeneration = 1;
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+      registrationGeneration: ownerGeneration,
+    });
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockResolvedValue([0.1, 0.2, 0.3]);
+    (deps.vectorDb.search as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("database connection is not open"));
+
+    const result = await runRecallPipelineQuery("vector query", 10, deps, { value: false });
+
+    expect(result).toEqual([]);
+    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+    expect(deps.logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("vector recall failed"));
   });
 });
 

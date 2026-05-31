@@ -147,7 +147,7 @@ describe("Plugin registration e2e", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("register() does not throw and core memory tools are registered", () => {
+  it("register() does not throw and core memory tools are registered", async () => {
     const pluginConfig = getMinimalConfig({
       sqlitePath: join(tmpDir, "facts.db"),
       lanceDbPath: join(tmpDir, "lancedb"),
@@ -158,7 +158,7 @@ describe("Plugin registration e2e", () => {
       registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
+    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
 
     expect(mockApi.getTool("memory_store")).toBeDefined();
     expect(mockApi.getTool("memory_recall")).toBeDefined();
@@ -167,7 +167,7 @@ describe("Plugin registration e2e", () => {
     expect(mockApi.getTool("memory_promote")).toBeDefined();
   });
 
-  it("full register() creates on-disk database paths (heavy bootstrap)", () => {
+  it("full register() creates on-disk database paths (heavy bootstrap)", async () => {
     const sqlitePath = join(tmpDir, "facts.db");
     const lancePath = join(tmpDir, "lancedb");
     const pluginConfig = getMinimalConfig({
@@ -180,11 +180,11 @@ describe("Plugin registration e2e", () => {
       registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    memoryHybridPlugin.register(mockApi as never);
+    await memoryHybridPlugin.register(mockApi as never);
     expect(existsSync(sqlitePath)).toBe(true);
   });
 
-  it("cli-metadata register() does not create database files and only registers CLI metadata (issue #1111)", () => {
+  it("cli-metadata register() does not create database files and only registers CLI metadata (issue #1111)", async () => {
     const sqlitePath = join(tmpDir, "facts.db");
     const lancePath = join(tmpDir, "lancedb");
     const pluginConfig = getMinimalConfig({
@@ -203,7 +203,7 @@ describe("Plugin registration e2e", () => {
       registrationMode: "cli-metadata" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    memoryHybridPlugin.register(mockApi as never);
+    await memoryHybridPlugin.register(mockApi as never);
     expect(existsSync(sqlitePath)).toBe(false);
     expect(existsSync(lancePath)).toBe(false);
     expect(registerCli).toHaveBeenCalled();

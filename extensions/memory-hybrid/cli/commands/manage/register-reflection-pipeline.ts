@@ -462,6 +462,63 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       ),
     );
 
+  const entityMentions = mem.command("entity-mentions").description("Audit and cleanup stored entity mention rows");
+
+  entityMentions
+    .command("audit")
+    .description("Audit mention quality and duplicates in fact_entity_mentions")
+    .option("--limit <n>", "Max facts to inspect (default 500)", "500")
+    .option("--json", "Output JSON")
+    .action(
+      withExit(async (opts?: { limit?: string; json?: boolean }) => {
+        const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
+        if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
+        const summary = factsDb.auditEntityMentions(limitRaw);
+        if (opts?.json) {
+          console.log(JSON.stringify(summary));
+          return;
+        }
+        console.log(
+          `Entity mentions audit: facts=${summary.factsScanned} rows=${summary.rowsScanned} accepted=${summary.accepted} rejected=${summary.rejected} duplicates=${summary.duplicates} reclassified=${summary.reclassified}`,
+        );
+        if (Object.keys(summary.rejectReasons).length > 0) {
+          console.log("Reject reasons:");
+          for (const [reason, count] of Object.entries(summary.rejectReasons)) {
+            console.log(`  ${reason}: ${count}`);
+          }
+        }
+      }),
+    );
+
+  entityMentions
+    .command("cleanup")
+    .description("Remove duplicate/junk mentions and canonicalize known entity types")
+    .option("--limit <n>", "Max facts to process (default 500)", "500")
+    .option("--dry-run", "Preview cleanup changes without writing")
+    .option("--apply", "Apply cleanup changes")
+    .option("--json", "Output JSON")
+    .action(
+      withExit(async (opts?: { limit?: string; dryRun?: boolean; apply?: boolean; json?: boolean }) => {
+        const limitRaw = Number.parseInt(opts?.limit ?? "500", 10);
+        if (!Number.isFinite(limitRaw) || limitRaw < 1) throw new Error("--limit must be >= 1");
+        const apply = opts?.apply === true && opts?.dryRun !== true;
+        const summary = factsDb.cleanupEntityMentions({ limit: limitRaw, apply });
+        if (opts?.json) {
+          console.log(JSON.stringify({ ...summary, apply }));
+          return;
+        }
+        console.log(
+          `Entity mentions cleanup${apply ? "" : " (dry-run)"}: facts=${summary.factsScanned} changed=${summary.changedFacts} removed_rows=${summary.removedRows} duplicates=${summary.duplicates} rejected=${summary.rejected} reclassified=${summary.reclassified}`,
+        );
+        if (Object.keys(summary.rejectReasons).length > 0) {
+          console.log("Reject reasons:");
+          for (const [reason, count] of Object.entries(summary.rejectReasons)) {
+            console.log(`  ${reason}: ${count}`);
+          }
+        }
+      }),
+    );
+
   if (runReflectIdentity) {
     mem
       .command("reflect-identity")
@@ -1213,7 +1270,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
   mem
     .command("enrich-entities")
     .description(
-      "Backfill PERSON/ORG extraction for facts missing entity mentions (franc language hint + LLM; same pipeline as store-time graph enrichment)",
+      "Backfill typed entity extraction for facts missing mention rows (franc language hint + LLM + quality gate)",
     )
     .option("--limit <n>", "Max facts to process (default 200)", "200")
     .option("--all", "Process the full pending backlog in one catch-up run (ignores --limit cap)")
@@ -1243,6 +1300,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             remainingTotal: 0,
             estimatedRunsRemaining: 0,
             mode: all ? ("all" as const) : ("bounded" as const),
+            mentions: 0,
+            accepted: 0,
+            rejected: 0,
+            duplicates: 0,
+            rejectReasons: {},
           };
           let res;
           try {
@@ -1263,7 +1325,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 }),
               {
                 progressSupplier: () =>
-                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; dryRun=${dryRun ? "yes" : "no"}`,
+                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; dryRun=${dryRun ? "yes" : "no"}`,
               },
             );
           } catch (err) {
@@ -1303,7 +1365,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             }
           } else {
             console.log(
-              `Entity enrichment: processed ${res.processed} facts, enriched ${res.factsEnriched}, batch=${res.pending}, pending-before-run=${pendingTotal}, remaining=${remainingTotal}, mode=${mode}, limit=${limitLabel}.`,
+              `Entity enrichment: processed=${res.processed} enriched=${res.factsEnriched} mentions=${res.mentions} accepted=${res.accepted} rejected=${res.rejected} duplicates=${res.duplicates}, batch=${res.pending}, pending-before-run=${pendingTotal}, remaining=${remainingTotal}, mode=${mode}, limit=${limitLabel}.`,
             );
             if (mode !== "all") {
               console.log(`Estimated runs remaining at current limit: ${estimatedRunsRemaining}`);
@@ -1313,6 +1375,19 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               for (const ef of res.enrichedFacts) {
                 const parts = ef.mentions.map((m) => `${m.label}:${JSON.stringify(m.surfaceText)}`).join(", ");
                 console.log(`  ${ef.factId}  ${parts}`);
+                if (ef.rejected && ef.rejected.length > 0) {
+                  for (const rej of ef.rejected) {
+                    console.log(
+                      `    rejected ${rej.reason}: ${rej.label || "UNKNOWN"}:${JSON.stringify(rej.surfaceText || "")}`,
+                    );
+                  }
+                }
+              }
+            }
+            if (Object.keys(res.rejectReasons).length > 0) {
+              console.log("Rejected mention reasons:");
+              for (const [reason, count] of Object.entries(res.rejectReasons)) {
+                console.log(`  ${reason}: ${count}`);
               }
             }
           }

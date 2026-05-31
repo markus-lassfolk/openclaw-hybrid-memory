@@ -18,18 +18,32 @@ import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { resetStartupMemoryAttribution } from "../services/startup-memory-attribution.js";
 import { walRemove, walWrite } from "../services/wal-helpers.js";
-import {
-  registerHybridMemCliHelpOnlyWithApi,
-  registerHybridMemCliMetadataOnly,
-  registerHybridMemCliWithApi,
-} from "./cli-context.js";
-import { closeOldDatabases, initializeDatabases } from "./init-databases.js";
+import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
+import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
+import { registerHybridMemCliWithApi } from "./cli-context/register-full.js";
+import "./cli-context.js";
+import { closeOldDatabases, createReusedDatabaseBootstrap, initializeDatabases } from "./bootstrap-databases.js";
+import "./init-databases.js";
 import { createPluginService } from "./plugin-service.js";
+import {
+  canReuseDatabasesOnReregister,
+  databaseContextFromRuntime,
+  recordReregisterDatabaseReuse,
+  recordReregisterFullTeardown,
+  recordReregisterRegistration,
+  resolveReregisterPolicy,
+} from "./reregister-policy.js";
 import {
   applyGatewayEmbeddingInheritanceBeforeParse,
   shallowClonePluginConfigForGatewayMerge,
 } from "./provider-router.js";
 import { getHybridMemoryRegistrationState } from "./hybrid-memory-generation-state.js";
+import {
+  awaitReloadTeardownBeforeOpen,
+  drainOldBootstrap,
+  drainOldRecall,
+  schedulePluginTeardown,
+} from "./hybrid-memory-reload-coordinator.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
@@ -63,6 +77,9 @@ function detectCategory(text: string): MemoryCategory {
 
 const runtimeRef: { value: PluginRuntime | null } = { value: null };
 const registrationGenerationRef = getHybridMemoryRegistrationState().registrationGenerationRef;
+
+/** Guard to prevent concurrent registrations from interleaving (Issue #802 re-entrancy). */
+let registrationInProgress: Promise<void> | null = null;
 
 /** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
 async function performHybridMemCliTeardown(): Promise<void> {
@@ -136,7 +153,7 @@ async function performHybridMemCliTeardown(): Promise<void> {
   }
 }
 
-export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
+export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<void> {
   // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
   // Check this FIRST, before any logger init or config parsing, so an incomplete config
   // cannot block lightweight metadata registration.
@@ -158,6 +175,28 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     return;
   }
 
+  // Issue #802 re-entrancy: If another registration is already in flight, wait for it to complete
+  // before starting a new one. Install our own gate before awaiting prior work to avoid
+  // TOCTOU races when multiple callers enter concurrently.
+  const previousRegistration = registrationInProgress ?? Promise.resolve();
+  let releaseRegistrationGate = (): void => {};
+  const registrationPromise = new Promise<void>((resolve) => {
+    releaseRegistrationGate = resolve;
+  });
+  registrationInProgress = registrationPromise;
+
+  try {
+    await previousRegistration;
+    await runMemoryHybridRegisterImpl(api);
+  } finally {
+    releaseRegistrationGate();
+    if (registrationInProgress === registrationPromise) {
+      registrationInProgress = null;
+    }
+  }
+}
+
+async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void> {
   // Issue #1230 / #1234: JSON CLI must not write plugin telemetry to stdout (cron harnesses, jq).
   // Wrap api.logger to stderr before bootstrap; keep pluginLogger on that same logger delegate.
   const logApi = wrapApiLoggerStderrForJsonCli(api);
@@ -189,6 +228,16 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
   const registrationGeneration = registrationGenerationRef.value + 1;
   registrationGenerationRef.value = registrationGeneration;
+  recordReregisterRegistration();
+
+  const reusePolicy = resolveReregisterPolicy();
+  const reuseDatabases = canReuseDatabasesOnReregister(old, cfg, logApi);
+  if (old && reusePolicy === "reuse-databases" && !reuseDatabases) {
+    logApi.logger.debug?.(
+      "memory-hybrid: re-register falling back to full teardown (reuse policy requested but donor bootstrap not reusable)",
+    );
+  }
+  const donorRuntime = reuseDatabases && old ? old : null;
 
   if (old) {
     // Clear old timer handles to prevent leaks.
@@ -199,37 +248,79 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     resetStartupMemoryAttribution();
     // Dispose tool registrations when API exposes unregister/dispose handles.
     old.toolRegistrationHandle?.dispose();
-    // Close SQLite/Lance and related stores before opening new connections (issue #802 — same paths must not be double-opened).
-    closeOldDatabases({
-      factsDb: old.factsDb,
-      edictStore: old.edictStore,
-      vectorDb: old.vectorDb,
-      credentialsDb: old.credentialsDb,
-      proposalsDb: old.proposalsDb,
-      identityReflectionStore: old.identityReflectionStore,
-      personaStateStore: old.personaStateStore,
-      eventLog: old.eventLog,
-      narrativesDb: old.narrativesDb,
-      aliasDb: old.aliasDb,
-      eventBus: old.eventBus,
-      issueStore: old.issueStore,
-      workflowStore: old.workflowStore,
-      crystallizationStore: old.crystallizationStore,
-      toolProposalStore: old.toolProposalStore,
-      verificationStore: old.verificationStore,
-      provenanceService: old.provenanceService,
-      learningsDb: old.learningsDb,
-      apitapStore: old.apitapStore,
-      auditStore: old.auditStore,
-      agentHealthStore: old.agentHealthStore,
-    });
-    old.pythonBridge?.shutdown().catch(() => {});
+    if (reuseDatabases) {
+      recordReregisterDatabaseReuse();
+      logApi.logger.debug?.(
+        `memory-hybrid: re-register reusing database handles (policy=${resolveReregisterPolicy()})`,
+      );
+    } else {
+      recordReregisterFullTeardown();
+      const oldRuntime = old;
+      old.pythonBridge?.shutdown().catch(() => {});
+      // Let in-flight bootstrap (vault check, embedding verify) finish before permanentClose (#1550 reload race).
+      schedulePluginTeardown(async () => {
+        await drainOldBootstrap(oldRuntime.bootstrapAsyncInit);
+        await drainOldRecall(oldRuntime.recallInFlightRef);
+        closeOldDatabases({
+          factsDb: oldRuntime.factsDb,
+          edictStore: oldRuntime.edictStore,
+          vectorDb: oldRuntime.vectorDb,
+          credentialsDb: oldRuntime.credentialsDb,
+          proposalsDb: oldRuntime.proposalsDb,
+          identityReflectionStore: oldRuntime.identityReflectionStore,
+          personaStateStore: oldRuntime.personaStateStore,
+          eventLog: oldRuntime.eventLog,
+          narrativesDb: oldRuntime.narrativesDb,
+          aliasDb: oldRuntime.aliasDb,
+          eventBus: oldRuntime.eventBus,
+          issueStore: oldRuntime.issueStore,
+          workflowStore: oldRuntime.workflowStore,
+          crystallizationStore: oldRuntime.crystallizationStore,
+          toolProposalStore: oldRuntime.toolProposalStore,
+          verificationStore: oldRuntime.verificationStore,
+          provenanceService: oldRuntime.provenanceService,
+          learningsDb: oldRuntime.learningsDb,
+          apitapStore: oldRuntime.apitapStore,
+          auditStore: oldRuntime.auditStore,
+          agentHealthStore: oldRuntime.agentHealthStore,
+        });
+      });
+    }
     runtimeRef.value = null;
+  }
+
+  if (old && !reuseDatabases) {
+    // Wait for teardown to complete before opening new DB handles (#802).
+    // Do NOT timeout — proceed only after prior generation fully closes to prevent double-opens.
+    const drained = await awaitReloadTeardownBeforeOpen(0);
+    if (!drained) {
+      throw new Error("memory-hybrid: reload teardown did not drain before opening new databases");
+    }
   }
 
   let dbContext: ReturnType<typeof initializeDatabases>;
   try {
-    dbContext = initializeDatabases(cfg, logApi);
+    if (donorRuntime) {
+      const health = { embeddingsOk: false, credentialsVaultOk: false, lastCheckTime: Date.now() };
+      const newBootstrapPromise = createReusedDatabaseBootstrap(
+        cfg,
+        logApi,
+        {
+          embeddings: donorRuntime.embeddings,
+          wal: donorRuntime.wal,
+          credentialsDb: donorRuntime.credentialsDb,
+          factsDb: donorRuntime.factsDb,
+          vectorDb: donorRuntime.vectorDb,
+          aliasDb: donorRuntime.aliasDb,
+          resolvedSqlitePath: donorRuntime.resolvedSqlitePath,
+          health,
+        },
+        { bootRegistrationGeneration: registrationGeneration },
+      );
+      dbContext = databaseContextFromRuntime(donorRuntime, { newBootstrapPromise, health });
+    } else {
+      dbContext = initializeDatabases(cfg, logApi, { bootRegistrationGeneration: registrationGeneration });
+    }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -248,8 +339,8 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Event Bus for Sensor Sweep (Issue #236)
   // ========================================================================
 
-  let eventBus: EventBus | null = null;
-  if (cfg.sensorSweep.enabled) {
+  let eventBus: EventBus | null = donorRuntime?.eventBus ?? null;
+  if (cfg.sensorSweep.enabled && !eventBus) {
     try {
       const eventBusPath = join(dirname(resolvedSqlitePath), "event-bus.db");
       eventBus = new EventBus(eventBusPath);
@@ -270,7 +361,8 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 
   // Initialized lazily -- PythonBridge only spawns the subprocess on first convert() call.
   // Dependency check runs from plugin service start() so `register()` stays lighter (issue #1111).
-  const pythonBridge = cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null;
+  const pythonBridge =
+    donorRuntime?.pythonBridge ?? (cfg.documents.enabled ? new PythonBridge(cfg.documents.pythonPath) : null);
 
   // ========================================================================
   // Contextual Variant Generator (Issue #159)
@@ -290,59 +382,67 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // Learnings Intake Buffer (Issue #617)
   // ========================================================================
 
-  let learningsDb: LearningsDB | null = null;
-  try {
-    const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
-    learningsDb = new LearningsDB(learningsDbPath);
-    logApi.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:learnings-db-init",
-      severity: "warning",
-    });
-    learningsDb = null;
-  }
+  let learningsDb: LearningsDB | null = donorRuntime?.learningsDb ?? null;
+  if (!learningsDb)
+    try {
+      const learningsDbPath = join(dirname(resolvedSqlitePath), "learnings.db");
+      learningsDb = new LearningsDB(learningsDbPath);
+      logApi.logger.info(`memory-hybrid: learnings DB initialized at ${learningsDbPath}`);
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:learnings-db-init",
+        severity: "warning",
+      });
+      learningsDb = null;
+    }
 
   // ========================================================================
   // Audit log (Issue #790)
   // ========================================================================
 
-  let auditStore: AuditStore | null = null;
-  try {
-    const auditPath = auditDbPathForMemorySqlite(resolvedSqlitePath);
-    if (auditPath) {
-      auditStore = new AuditStore(auditPath);
-      logApi.logger.info(`memory-hybrid: audit store initialized at ${auditPath}`);
+  let auditStore: AuditStore | null = donorRuntime?.auditStore ?? null;
+  if (!auditStore)
+    try {
+      const auditPath = auditDbPathForMemorySqlite(resolvedSqlitePath);
+      if (auditPath) {
+        auditStore = new AuditStore(auditPath);
+        logApi.logger.info(`memory-hybrid: audit store initialized at ${auditPath}`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:audit-store-init",
+        severity: "warning",
+      });
+      auditStore = null;
     }
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:audit-store-init",
-      severity: "warning",
-    });
-    auditStore = null;
-  }
 
-  let agentHealthStore: AgentHealthStore | null = null;
-  try {
-    const ahPath = agentHealthDbPathForMemorySqlite(resolvedSqlitePath);
-    if (ahPath) {
-      agentHealthStore = new AgentHealthStore(ahPath);
-      logApi.logger.info(`memory-hybrid: agent health store initialized at ${ahPath}`);
+  let agentHealthStore: AgentHealthStore | null = donorRuntime?.agentHealthStore ?? null;
+  if (!agentHealthStore)
+    try {
+      const ahPath = agentHealthDbPathForMemorySqlite(resolvedSqlitePath);
+      if (ahPath) {
+        agentHealthStore = new AgentHealthStore(ahPath);
+        logApi.logger.info(`memory-hybrid: agent health store initialized at ${ahPath}`);
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-register:agent-health-store-init",
+        severity: "warning",
+      });
+      agentHealthStore = null;
     }
-  } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "registration",
-      operation: "plugin-register:agent-health-store-init",
-      severity: "warning",
-    });
-    agentHealthStore = null;
-  }
 
   // ========================================================================
   // Build PluginRuntime -- single instance-scoped container for all state
   // ========================================================================
+
+  const bootstrapSettledRef = { value: false };
+  const bootstrapAsyncInit = dbContext.initialized.finally(() => {
+    bootstrapSettledRef.value = true;
+  });
 
   const newRuntime: PluginRuntime = {
     cfg,
@@ -378,7 +478,9 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     agentHealthStore,
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
     toolRegistrationHandle: null, // set after registerTools below
-    bootstrapAsyncInit: dbContext.initialized,
+    bootstrapAsyncInit,
+    bootstrapSettledRef,
+    bootstrapHealth: dbContext.health,
     pendingLLMWarnings: createPendingLLMWarnings(),
     currentAgentIdRef: { value: null },
     restartPendingClearedRef: { value: false },

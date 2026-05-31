@@ -1,5 +1,5 @@
 /**
- * Multilingual fact text enrichment: language detection (franc) + PERSON/ORG extraction (LLM).
+ * Multilingual fact text enrichment: language detection (franc) + typed entity extraction (LLM).
  * (#985) Complements existing getKnownEntities / autoLinkEntities — does not replace structured `entity` fields.
  */
 
@@ -8,8 +8,16 @@ import type OpenAI from "openai";
 
 import type { EntityMentionLabel } from "../backends/facts-db/entity-layer.js";
 import { normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
+import {
+  canonicalizeEntityMention,
+  countReason,
+  type EntityMentionRejectReason,
+  makeEntityMentionKey,
+} from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
+import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { withLLMRetry } from "./chat.js";
+import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 
@@ -46,8 +54,23 @@ type LlmMention = {
   confidence?: number;
 };
 
+export type EntityMentionRejection = {
+  label: string;
+  surfaceText: string;
+  reason: EntityMentionRejectReason | "stopword" | "substring" | "duplicate";
+};
+
+export type EntityExtractionQualityStats = {
+  mentions: number;
+  accepted: number;
+  rejected: number;
+  duplicates: number;
+  rejectReasons: Record<string, number>;
+};
+
 function parseMentionJson(content: string): LlmMention[] {
-  const trimmed = content.trim();
+  const stripped = stripThinkingWrapperBlocks(content);
+  const trimmed = stripped.trim();
   const start = trimmed.indexOf("{");
   if (start === -1) return [];
 
@@ -111,7 +134,7 @@ function clampOffsets(text: string, surface: string, start: number, end: number)
 }
 
 /**
- * Extract PERSON and ORG spans using a cheap LLM call. Skips when text too short or API fails.
+ * Extract typed entity spans using a cheap LLM call. Skips when text too short or API fails.
  * `detectedLang` is ISO 639-3 from franc, passed to the model for multilingual context.
  */
 export async function extractEntityMentionsWithLlm(
@@ -119,21 +142,31 @@ export async function extractEntityMentionsWithLlm(
   openai: OpenAI,
   model: string,
   options?: { stopWords?: readonly string[] },
-): Promise<{ mentions: ExtractedMention[]; detectedLang: string }> {
+): Promise<{
+  mentions: ExtractedMention[];
+  detectedLang: string;
+  quality: EntityExtractionQualityStats;
+  rejectedMentions: EntityMentionRejection[];
+}> {
   const detectedLang = detectFactTextLanguage(text);
   const trimmed = text.trim();
   if (trimmed.length < MIN_CHARS) {
-    return { mentions: [], detectedLang };
+    return {
+      mentions: [],
+      detectedLang,
+      quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+      rejectedMentions: [],
+    };
   }
   const body = trimmed.length > MAX_CHARS ? `${trimmed.slice(0, MAX_CHARS)}\n…` : trimmed;
 
   const prompt = `You extract named entities from user memory facts. The text may be in any language; the primary language detected is ISO 639-3: "${detectedLang}" (use "und" if unknown).
 
 Return ONLY valid JSON (no markdown, no commentary) with this shape:
-{"mentions":[{"label":"PERSON"|"ORG","text":"exact substring from the input","start":0,"end":10,"normalized":"optional canonical form in original language","confidence":0.0-1.0}]}
+{"mentions":[{"label":"PERSON"|"ORG"|"SERVICE"|"TOOL"|"MODEL"|"PROJECT"|"AGENT"|"ROLE"|"PRODUCT"|"LOCATION","text":"exact substring from the input","start":0,"end":10,"normalized":"optional canonical form in original language","confidence":0.0-1.0}]}
 
 Rules:
-- label must be only PERSON or ORG.
+- label must be one of PERSON, ORG, SERVICE, TOOL, MODEL, PROJECT, AGENT, ROLE, PRODUCT, LOCATION.
 - text must be copied exactly from the input (same Unicode characters).
 - start/end are UTF-16 code unit offsets into the INPUT string below (0-based, end exclusive).
 - Do not invent entities; skip if unsure.
@@ -144,25 +177,38 @@ INPUT:
 ${body}`;
 
   try {
-    const resp = await withLLMRetry(
-      () =>
-        openai.chat.completions.create({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          temperature: 0,
-          ...chatCompletionTokenParams(model, 1200),
-        }),
-      { maxRetries: 2 },
+    const resp = await withCostFeature("entity-enrichment", () =>
+      withLLMRetry(
+        () =>
+          openai.chat.completions.create({
+            model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0,
+            ...chatCompletionTokenParams(model, 1200),
+          }),
+        { maxRetries: 2 },
+      ),
     );
     const content = (resp.choices[0]?.message?.content ?? "").trim();
     const raw = parseMentionJson(content);
     const mentions: ExtractedMention[] = [];
+    const rejectedMentions: EntityMentionRejection[] = [];
+    const rejectReasons: Record<string, number> = {};
+    let duplicates = 0;
 
     for (const m of raw) {
       const lab = String(m.label ?? "").toUpperCase();
-      if (lab !== "PERSON" && lab !== "ORG") continue;
       const surface = String(m.text ?? "").trim();
-      if (surface.length < 2 || isEntityStopWord(surface, options?.stopWords)) continue;
+      if (surface.length < 2) {
+        rejectedMentions.push({ label: lab, surfaceText: surface, reason: "short" });
+        countReason(rejectReasons, "short");
+        continue;
+      }
+      if (isEntityStopWord(surface, options?.stopWords)) {
+        rejectedMentions.push({ label: lab, surfaceText: surface, reason: "stopword" });
+        countReason(rejectReasons, "stopword");
+        continue;
+      }
 
       const start = typeof m.start === "number" ? m.start : 0;
       const end = typeof m.end === "number" ? m.end : start + surface.length;
@@ -171,23 +217,85 @@ ${body}`;
       const surfaceText = slice === surface ? surface : slice || surface;
       const conf = typeof m.confidence === "number" && m.confidence >= 0 && m.confidence <= 1 ? m.confidence : 0.75;
       const norm = m.normalized?.trim() ? m.normalized.trim() : surfaceText;
-      mentions.push({
-        label: lab as EntityMentionLabel,
+      const canonical = canonicalizeEntityMention({
+        label: lab,
         surfaceText,
         normalizedSurface: normalizeEntityKey(norm) || norm.toLowerCase(),
+        confidence: conf,
+      });
+      if (!canonical.accepted) {
+        rejectedMentions.push({ label: lab, surfaceText, reason: canonical.reason });
+        countReason(rejectReasons, canonical.reason);
+        continue;
+      }
+      mentions.push({
+        label: canonical.label as EntityMentionLabel,
+        surfaceText: canonical.surfaceText,
+        normalizedSurface: canonical.normalizedSurface,
         startOffset: ss,
         endOffset: ee,
-        confidence: conf,
+        confidence: canonical.confidence,
       });
     }
 
-    return { mentions, detectedLang };
+    const filteredBySubstring: ExtractedMention[] = [];
+    for (const m of mentions) {
+      const isSubstring = mentions.some(
+        (other) =>
+          other !== m &&
+          other.label === m.label &&
+          other.normalizedSurface.length > m.normalizedSurface.length &&
+          other.normalizedSurface.includes(m.normalizedSurface) &&
+          other.startOffset <= m.startOffset &&
+          other.endOffset >= m.endOffset,
+      );
+      if (isSubstring) {
+        rejectedMentions.push({ label: m.label, surfaceText: m.surfaceText, reason: "substring" });
+        countReason(rejectReasons, "substring");
+        continue;
+      }
+      filteredBySubstring.push(m);
+    }
+
+    const deduped = new Map<string, ExtractedMention>();
+    for (const m of filteredBySubstring) {
+      const key = makeEntityMentionKey(m.label, m.normalizedSurface);
+      const existing = deduped.get(key);
+      if (!existing) {
+        deduped.set(key, m);
+        continue;
+      }
+      duplicates++;
+      rejectedMentions.push({ label: m.label, surfaceText: m.surfaceText, reason: "duplicate" });
+      countReason(rejectReasons, "duplicate");
+      if (m.confidence > existing.confidence) {
+        deduped.set(key, m);
+      }
+    }
+
+    return {
+      mentions: [...deduped.values()],
+      detectedLang,
+      quality: {
+        mentions: raw.length,
+        accepted: deduped.size,
+        rejected: rejectedMentions.length,
+        duplicates,
+        rejectReasons,
+      },
+      rejectedMentions,
+    };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "entity-enrichment-llm",
       subsystem: "openai",
       model,
     });
-    return { mentions: [], detectedLang };
+    return {
+      mentions: [],
+      detectedLang,
+      quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+      rejectedMentions: [],
+    };
   }
 }
