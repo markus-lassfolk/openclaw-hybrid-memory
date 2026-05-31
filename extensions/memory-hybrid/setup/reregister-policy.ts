@@ -98,8 +98,10 @@ export function canReuseDatabasesOnReregister(
 
   // Compare credentials.enabled to detect when vault should be opened or closed
   if (oldCfg.credentials?.enabled !== cfg.credentials?.enabled) return false;
-  // Compare credentials.encryptionKey to detect when vault key has changed
-  if (oldCfg.credentials?.encryptionKey !== cfg.credentials?.encryptionKey) return false;
+  // encryptionKey is non-enumerable on parsed config; treat missing as empty (structuredClone drops it).
+  const oldEncKey = oldCfg.credentials?.encryptionKey ?? "";
+  const newEncKey = cfg.credentials?.encryptionKey ?? "";
+  if (oldEncKey !== newEncKey) return false;
 
   return true;
 }

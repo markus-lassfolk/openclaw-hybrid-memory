@@ -73,6 +73,28 @@ describe("reregister-policy", () => {
     expect(shouldFullTeardownOnReregister()).toBe(false);
   });
 
+  it("reuse-databases treats missing encryptionKey same as empty string", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const parsedCfg = minimalCfg();
+    const snapCfg = { ...parsedCfg, credentials: { enabled: false, store: "sqlite" as const } };
+    const newCfg = minimalCfg();
+    (newCfg as { credentials?: { enabled: boolean; encryptionKey?: string } }).credentials = {
+      enabled: false,
+      encryptionKey: "",
+    };
+    const old = {
+      cfg: snapCfg,
+      parsedCfgSnapshot: snapCfg,
+      resolvedSqlitePath: api.resolvePath(parsedCfg.sqlitePath),
+      resolvedLancePath: api.resolvePath(parsedCfg.lanceDbPath),
+      bootstrapSettledRef: { value: true },
+    } as PluginRuntime;
+    expect(canReuseDatabasesOnReregister(old, newCfg, api)).toBe(true);
+  });
+
   it("reuse-databases compares parse-time snapshot not bootstrap-mutated llm", () => {
     vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
     const api = {
