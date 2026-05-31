@@ -1505,6 +1505,9 @@ export async function runReflectionRules(
     } else if (newRuleEmbedFailures === uniqueRules.length) {
       // All candidates failed at embedding
       zeroRulesReason = "all_candidates_embedding_failed";
+    } else if (metadataFailures === uniqueRules.length) {
+      // All candidates failed at metadata persistence
+      zeroRulesReason = "no_storable_candidates";
     } else if (embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length) {
       // All candidates are duplicates (no failures)
       zeroRulesReason = "all_candidates_duplicate";
@@ -1889,13 +1892,21 @@ export async function runReflectionMeta(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
+          // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflect-meta — failed to delete merged vector for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+            );
+          }
           rollbackMergedFactText(factsDb, logger, {
             context: "reflect-meta",
             factId: entry.id,
             mergedText: entry.text,
             appendedText: metaText,
             preMergeText: storeResult.preMergeText,
-            reason: "vector-store-failure",
+            reason: "metadata-update-failure",
           });
           vectorStored = false;
           continue;
