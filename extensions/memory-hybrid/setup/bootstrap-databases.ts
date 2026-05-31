@@ -576,8 +576,8 @@ export function initializeDatabases(
     const previousEmbeddingMeta = factsDb.getEmbeddingMeta();
     embeddingConfigChanged = Boolean(
       previousEmbeddingMeta &&
-        (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
-          previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
+      (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
+        previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
     // When autoMigrate is enabled, still record the initial baseline on first run so future
     // changes can be detected. For subsequent runs with a config change, let runEmbeddingMaintenance
@@ -758,7 +758,7 @@ export function initializeDatabases(
             );
           }
         } catch (e) {
-          if (isBootstrapSuperseded() || isDbClosedError(e)) {
+          if (isBootstrapSuperseded() && isDbClosedError(e)) {
             api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded or DB closed)");
             return;
           }
