@@ -648,6 +648,36 @@ export async function runExtractImplicitFeedbackForCli(
       break;
     }
 
+    // Build set of signals that already existed (for idempotency check to prevent duplicate reinforcement)
+    const preexistingSignalKeys = new Set<string>();
+    if (!opts.dryRun && rawDb) {
+      try {
+        const checkExisting = rawDb.prepare(`
+          SELECT 1 FROM implicit_signals
+          WHERE session_file = ? AND signal_type = ? AND user_message = ? AND polarity = ?
+          LIMIT 1
+        `);
+        for (const sig of signals) {
+          const row = checkExisting.get(
+            sig.context.sessionFile,
+            sig.type,
+            sig.context.userMessage.slice(0, 500),
+            sig.polarity,
+          );
+          if (row) {
+            const key = `${sig.context.sessionFile}|${sig.type}|${sig.context.userMessage.slice(0, 500)}|${sig.polarity}`;
+            preexistingSignalKeys.add(key);
+          }
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:check-existing-signals",
+          severity: "info",
+          subsystem: "implicit-feedback",
+        });
+      }
+    }
+
     if (!opts.dryRun && rawDb) {
       // Store raw signals in implicit_signals table
       try {
@@ -694,6 +724,11 @@ export async function runExtractImplicitFeedbackForCli(
           markPartialProgress("maxWallClock");
           break;
         }
+        // Skip reinforcement for signals that already existed (idempotency guard for partial runs)
+        const sigKey = `${sig.context.sessionFile}|${sig.type}|${sig.context.userMessage.slice(0, 500)}|${sig.polarity}`;
+        if (preexistingSignalKeys.has(sigKey)) {
+          continue;
+        }
         try {
           const searchQuery = sig.context.agentMessage || sig.context.userMessage;
           const matches = factsDb.search(searchQuery, 3);
@@ -717,6 +752,10 @@ export async function runExtractImplicitFeedbackForCli(
           });
         }
       }
+      // If wall clock limit was reached during positive reinforcement, exit session loop
+      if (partial && partialReason === "maxWallClock") {
+        break;
+      }
     }
 
     // Route negative signals to self-correction as technical implicit_feedback_signal facts (same dedupe/quota as trajectory lessons).
@@ -729,6 +768,11 @@ export async function runExtractImplicitFeedbackForCli(
         if (wallClockLimitReached()) {
           markPartialProgress("maxWallClock");
           break;
+        }
+        // Skip processing for signals that already existed (idempotency guard for partial runs)
+        const sigKey = `${sig.context.sessionFile}|${sig.type}|${sig.context.userMessage.slice(0, 500)}|${sig.polarity}`;
+        if (preexistingSignalKeys.has(sigKey)) {
+          continue;
         }
         try {
           lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
@@ -769,6 +813,10 @@ export async function runExtractImplicitFeedbackForCli(
             subsystem: "implicit-feedback",
           });
         }
+      }
+      // If wall clock limit was reached during negative signal processing, exit session loop
+      if (partial && partialReason === "maxWallClock") {
+        break;
       }
     }
 
@@ -934,7 +982,7 @@ export async function runExtractImplicitFeedbackForCli(
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
     if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock");
+      if (!partial) markPartialProgress("maxWallClock");
     } else {
       try {
         progress.stage = "cleanup-duplicates";
@@ -948,7 +996,7 @@ export async function runExtractImplicitFeedbackForCli(
         let carryCanonical: Array<{ id: string; text: string }> | undefined;
         for (;;) {
           if (wallClockLimitReached()) {
-            markPartialProgress("maxWallClock");
+            if (!partial) markPartialProgress("maxWallClock");
             break;
           }
           const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
@@ -985,7 +1033,7 @@ export async function runExtractImplicitFeedbackForCli(
   let closedLoopReport: string | undefined;
   if (opts.includeClosedLoop !== false && !opts.dryRun) {
     if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock");
+      if (!partial) markPartialProgress("maxWallClock");
     } else {
       try {
         progress.stage = "closed-loop";
