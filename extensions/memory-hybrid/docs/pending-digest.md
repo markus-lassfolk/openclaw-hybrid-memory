@@ -28,6 +28,8 @@ pendingReview: { persona, procedures, tools, crystallization, verified }
 - Approve: `openclaw hybrid-mem proposals approve <id>`
 - Decline: `openclaw hybrid-mem proposals reject <id>`
 - Defer: leave pending, or list later with `openclaw hybrid-mem proposals list --status pending`
+- If the digest preview is truncated, it explicitly says `Showing X of Y ...` and includes
+  `openclaw hybrid-mem proposals list --status pending` to list all pending proposals.
 
 ### Procedure promotions
 
