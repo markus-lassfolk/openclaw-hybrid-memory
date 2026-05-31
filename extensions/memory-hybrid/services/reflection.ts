@@ -106,6 +106,24 @@ export interface ReflectionRulesDiagnostics {
 const VALID_NO_RULES_PATTERN =
   /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s\S]*/i;
 
+const THINKING_WRAPPER_TAGS_PATTERN = /<\/?(?:redacted_thinking|thinking|reasoning|think)>/gi;
+
+function stripThinkingWrapperTagsKeepContent(s: string): string {
+  return s.replace(THINKING_WRAPPER_TAGS_PATTERN, "").trim();
+}
+
+function extractThinkingWrapperContents(s: string): string[] {
+  const matches = s.matchAll(
+    /<(?:redacted_thinking|thinking|reasoning|think)>([\s\S]*?)<\/(?:redacted_thinking|thinking|reasoning|think)>/gi,
+  );
+  const contents: string[] = [];
+  for (const match of matches) {
+    const content = match[1]?.trim();
+    if (content) contents.push(content);
+  }
+  return contents;
+}
+
 function derivePreMergeText(mergedText: string, appendedText: string): string | null {
   const appendSuffix = `\n${appendedText}`;
   const maxSuffixLen = Math.min(appendSuffix.length, mergedText.length);
@@ -126,7 +144,7 @@ function rollbackMergedFactText(
     mergedText: string;
     appendedText: string;
     preMergeText?: string | null;
-    reason: "merge-reembed-failure" | "vector-store-failure";
+    reason: "merge-reembed-failure" | "vector-store-failure" | "metadata-update-failure";
   },
 ): boolean {
   const previousText = opts.preMergeText ?? derivePreMergeText(opts.mergedText, opts.appendedText);
@@ -161,6 +179,70 @@ function rollbackMergedFactText(
       `memory-hybrid: ${opts.context} — failed to roll back merged text for fact ${opts.factId.slice(0, 8)} after ${opts.reason}: ${err}`,
     );
     return false;
+  }
+}
+
+function resolvePreMergeText(mergedText: string, appendedText: string, preMergeText?: string | null): string | null {
+  return preMergeText ?? derivePreMergeText(mergedText, appendedText);
+}
+
+async function restoreMergedFactVectorState(opts: {
+  context: string;
+  factId: string;
+  category: "pattern" | "rule";
+  preMergeText: string | null;
+  preMergeVector: number[] | null;
+  preMergeEmbeddingModel: string | null;
+  fallbackEmbeddingModel: string;
+  vectorDb: VectorDB;
+  factsDb: FactsDB;
+  logger: { warn: (msg: string) => void };
+}): Promise<void> {
+  if (!opts.preMergeText) {
+    opts.logger.warn(
+      `memory-hybrid: ${opts.context} — pre-merge text unavailable for ${opts.factId.slice(0, 8)}; cannot restore vector state`,
+    );
+    return;
+  }
+  if (!opts.preMergeVector || opts.preMergeVector.length === 0) {
+    opts.logger.warn(
+      `memory-hybrid: ${opts.context} — pre-merge vector unavailable for ${opts.factId.slice(0, 8)}; leaving post-rollback vector state empty`,
+    );
+    return;
+  }
+  try {
+    await opts.vectorDb.store({
+      text: opts.preMergeText,
+      vector: opts.preMergeVector,
+      importance: REFLECTION_IMPORTANCE,
+      category: opts.category,
+      id: opts.factId,
+    });
+  } catch (err) {
+    opts.logger.warn(
+      `memory-hybrid: ${opts.context} — failed to restore pre-merge vector for ${opts.factId.slice(0, 8)} after rollback: ${err}`,
+    );
+    return;
+  }
+  const embeddingModel =
+    opts.preMergeEmbeddingModel && opts.preMergeEmbeddingModel.trim().length > 0
+      ? opts.preMergeEmbeddingModel
+      : opts.fallbackEmbeddingModel;
+  try {
+    persistCanonicalFactEmbedding(
+      opts.factsDb,
+      opts.factId,
+      embeddingModel,
+      opts.preMergeVector,
+      "reflection-fact-embeddings",
+      opts.context,
+      opts.logger.warn.bind(opts.logger),
+    );
+    opts.factsDb.setEmbeddingModel(opts.factId, embeddingModel);
+  } catch (err) {
+    opts.logger.warn(
+      `memory-hybrid: ${opts.context} — failed to restore canonical embeddings for ${opts.factId.slice(0, 8)} after rollback: ${err}`,
+    );
   }
 }
 
@@ -707,6 +789,15 @@ export async function runReflection(
       continue;
     }
     const entry = storeResult.entry;
+    const mergeExistingIndex = storeResult.embeddingStale
+      ? existingPatternFacts.findIndex((f) => f.id === entry.id)
+      : -1;
+    const preMergeVector =
+      mergeExistingIndex >= 0 && mergeExistingIndex < existingVectors.length
+        ? existingVectors[mergeExistingIndex]
+        : null;
+    const preMergeEmbeddingModel =
+      mergeExistingIndex >= 0 ? (existingPatternFacts[mergeExistingIndex]?.embeddingModel ?? null) : null;
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, patternText) && !storeResult.embeddingStale) {
       duplicatesSkipped++;
@@ -771,7 +862,15 @@ export async function runReflection(
         factId: entry.id,
       });
       if (storeResult.embeddingStale) {
-        rollbackMergedFactText(factsDb, logger, {
+        const preMergeText = resolvePreMergeText(entry.text, patternText, storeResult.preMergeText);
+        try {
+          await vectorDb.delete(entry.id);
+        } catch (vecErr) {
+          logger.warn(
+            `memory-hybrid: reflection — failed to delete merged vector for pattern fact ${entry.id.slice(0, 8)} after vector store failure: ${vecErr}`,
+          );
+        }
+        const rolledBack = rollbackMergedFactText(factsDb, logger, {
           context: "reflection",
           factId: entry.id,
           mergedText: entry.text,
@@ -779,6 +878,20 @@ export async function runReflection(
           preMergeText: storeResult.preMergeText,
           reason: "vector-store-failure",
         });
+        if (rolledBack) {
+          await restoreMergedFactVectorState({
+            context: "reflection",
+            factId: entry.id,
+            category: "pattern",
+            preMergeText,
+            preMergeVector,
+            preMergeEmbeddingModel,
+            fallbackEmbeddingModel: embeddings.modelName,
+            vectorDb,
+            factsDb,
+            logger,
+          });
+        }
         continue;
       }
       if (storeResult.newlyStored === false) {
@@ -837,6 +950,7 @@ export async function runReflection(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
+          const preMergeText = resolvePreMergeText(entry.text, patternText, storeResult.preMergeText);
           // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
           try {
             (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
@@ -859,6 +973,18 @@ export async function runReflection(
             appendedText: patternText,
             preMergeText: storeResult.preMergeText,
             reason: "metadata-update-failure",
+          });
+          await restoreMergedFactVectorState({
+            context: "reflection",
+            factId: entry.id,
+            category: "pattern",
+            preMergeText,
+            preMergeVector,
+            preMergeEmbeddingModel,
+            fallbackEmbeddingModel: embeddings.modelName,
+            vectorDb,
+            factsDb,
+            logger,
           });
           vectorStored = false;
           continue;
@@ -1104,7 +1230,12 @@ export async function runReflectionRules(
   }
   const trimmedResponse = rawResponse.trim();
   const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
-  const looksLikeValidNoRules = VALID_NO_RULES_PATTERN.test(strippedResponse);
+  const wrapperTagStrippedResponse = stripThinkingWrapperTagsKeepContent(trimmedResponse);
+  const wrapperContents = extractThinkingWrapperContents(trimmedResponse);
+  const noRulesClassificationResponse = strippedResponse.length > 0 ? strippedResponse : wrapperTagStrippedResponse;
+  const looksLikeValidNoRules =
+    VALID_NO_RULES_PATTERN.test(noRulesClassificationResponse) ||
+    wrapperContents.some((content) => VALID_NO_RULES_PATTERN.test(content));
   const parseSuccess = parseableLines > 0 || looksLikeValidNoRules;
   const modelResponseChars = rawResponse.length;
   if (uniqueRules.length === 0) {
@@ -1118,7 +1249,7 @@ export async function runReflectionRules(
             ? "all_candidates_rejected"
             : looksLikeValidNoRules
               ? "valid_no_actionable_rules"
-              : strippedResponse.length === 0
+              : noRulesClassificationResponse.length === 0
                 ? "empty_model_response"
                 : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
@@ -1259,10 +1390,19 @@ export async function runReflectionRules(
       continue;
     }
     const entry = storeResult.entry;
+    const mergeExistingIndex = storeResult.embeddingStale ? existingRuleFacts.findIndex((f) => f.id === entry.id) : -1;
+    const preMergeVector =
+      mergeExistingIndex >= 0 && mergeExistingIndex < existingVectors.length
+        ? existingVectors[mergeExistingIndex]
+        : null;
+    const preMergeEmbeddingModel =
+      mergeExistingIndex >= 0 ? (existingRuleFacts[mergeExistingIndex]?.embeddingModel ?? null) : null;
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, ruleText) && !storeResult.embeddingStale) {
       storeLevelDuplicates++;
       rulesDuplicatesSkipped++;
+      // Keep this candidate in the in-run dedupe corpus so later rules don't miss near-duplicates.
+      existingVectors.push(normVec);
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-rules — skipped store-level duplicate: ${ruleText.slice(0, 50)}...`);
       }
@@ -1328,7 +1468,15 @@ export async function runReflectionRules(
         factId: entry.id,
       });
       if (storeResult.embeddingStale) {
-        rollbackMergedFactText(factsDb, logger, {
+        const preMergeText = resolvePreMergeText(entry.text, ruleText, storeResult.preMergeText);
+        try {
+          await vectorDb.delete(entry.id);
+        } catch (vecErr) {
+          logger.warn(
+            `memory-hybrid: reflect-rules — failed to delete merged vector for rule fact ${entry.id.slice(0, 8)} after vector store failure: ${vecErr}`,
+          );
+        }
+        const rolledBack = rollbackMergedFactText(factsDb, logger, {
           context: "reflect-rules",
           factId: entry.id,
           mergedText: entry.text,
@@ -1336,6 +1484,20 @@ export async function runReflectionRules(
           preMergeText: storeResult.preMergeText,
           reason: "vector-store-failure",
         });
+        if (rolledBack) {
+          await restoreMergedFactVectorState({
+            context: "reflect-rules",
+            factId: entry.id,
+            category: "rule",
+            preMergeText,
+            preMergeVector,
+            preMergeEmbeddingModel,
+            fallbackEmbeddingModel: embeddings.modelName,
+            vectorDb,
+            factsDb,
+            logger,
+          });
+        }
         continue;
       }
       if (storeResult.newlyStored === false) {
@@ -1395,6 +1557,7 @@ export async function runReflectionRules(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
+          const preMergeText = resolvePreMergeText(entry.text, ruleText, storeResult.preMergeText);
           // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
           try {
             (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
@@ -1410,7 +1573,7 @@ export async function runReflectionRules(
               `memory-hybrid: reflect-rules — failed to delete merged vector for rule fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
             );
           }
-          rollbackMergedFactText(factsDb, logger, {
+          const rolledBack = rollbackMergedFactText(factsDb, logger, {
             context: "reflect-rules",
             factId: entry.id,
             mergedText: entry.text,
@@ -1418,6 +1581,20 @@ export async function runReflectionRules(
             preMergeText: storeResult.preMergeText,
             reason: "metadata-update-failure",
           });
+          if (rolledBack) {
+            await restoreMergedFactVectorState({
+              context: "reflect-rules",
+              factId: entry.id,
+              category: "rule",
+              preMergeText,
+              preMergeVector,
+              preMergeEmbeddingModel,
+              fallbackEmbeddingModel: embeddings.modelName,
+              vectorDb,
+              factsDb,
+              logger,
+            });
+          }
           vectorStored = false;
           continue;
         }
@@ -1521,7 +1698,7 @@ export async function runReflectionRules(
       zeroRulesReason = "all_candidates_embedding_failed";
     } else if (metadataFailures === uniqueRules.length) {
       // All candidates failed at metadata persistence
-      zeroRulesReason = "no_storable_candidates";
+      zeroRulesReason = "all_candidates_metadata_failed";
     } else if (embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length) {
       // All candidates are duplicates (no failures)
       zeroRulesReason = "all_candidates_duplicate";
@@ -1566,7 +1743,9 @@ export async function runReflectionRules(
                   ? "partial"
                   : zeroRulesReason === "vector_store_failed"
                     ? "partial"
-                    : "partial",
+                    : zeroRulesReason === "all_candidates_metadata_failed"
+                      ? "partial"
+                      : "partial",
   };
   logger.info(
     "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1772,6 +1951,13 @@ export async function runReflectionMeta(
       continue;
     }
     const entry = storeResult.entry;
+    const mergeExistingIndex = storeResult.embeddingStale ? existingMetaFacts.findIndex((f) => f.id === entry.id) : -1;
+    const preMergeVector =
+      mergeExistingIndex >= 0 && mergeExistingIndex < existingVectors.length
+        ? existingVectors[mergeExistingIndex]
+        : null;
+    const preMergeEmbeddingModel =
+      mergeExistingIndex >= 0 ? (existingMetaFacts[mergeExistingIndex]?.embeddingModel ?? null) : null;
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, metaText) && !storeResult.embeddingStale) {
       metaDuplicatesSkipped++;
@@ -1840,7 +2026,15 @@ export async function runReflectionMeta(
         factId: entry.id,
       });
       if (storeResult.embeddingStale) {
-        rollbackMergedFactText(factsDb, logger, {
+        const preMergeText = resolvePreMergeText(entry.text, metaText, storeResult.preMergeText);
+        try {
+          await vectorDb.delete(entry.id);
+        } catch (vecErr) {
+          logger.warn(
+            `memory-hybrid: reflect-meta — failed to delete merged vector for meta-pattern fact ${entry.id.slice(0, 8)} after vector store failure: ${vecErr}`,
+          );
+        }
+        const rolledBack = rollbackMergedFactText(factsDb, logger, {
           context: "reflect-meta",
           factId: entry.id,
           mergedText: entry.text,
@@ -1848,6 +2042,20 @@ export async function runReflectionMeta(
           preMergeText: storeResult.preMergeText,
           reason: "vector-store-failure",
         });
+        if (rolledBack) {
+          await restoreMergedFactVectorState({
+            context: "reflect-meta",
+            factId: entry.id,
+            category: "pattern",
+            preMergeText,
+            preMergeVector,
+            preMergeEmbeddingModel,
+            fallbackEmbeddingModel: embeddings.modelName,
+            vectorDb,
+            factsDb,
+            logger,
+          });
+        }
         continue;
       }
       if (storeResult.newlyStored === false) {
@@ -1906,6 +2114,7 @@ export async function runReflectionMeta(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
+          const preMergeText = resolvePreMergeText(entry.text, metaText, storeResult.preMergeText);
           // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
           try {
             (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
@@ -1921,7 +2130,7 @@ export async function runReflectionMeta(
               `memory-hybrid: reflect-meta — failed to delete merged vector for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
             );
           }
-          rollbackMergedFactText(factsDb, logger, {
+          const rolledBack = rollbackMergedFactText(factsDb, logger, {
             context: "reflect-meta",
             factId: entry.id,
             mergedText: entry.text,
@@ -1929,6 +2138,20 @@ export async function runReflectionMeta(
             preMergeText: storeResult.preMergeText,
             reason: "metadata-update-failure",
           });
+          if (rolledBack) {
+            await restoreMergedFactVectorState({
+              context: "reflect-meta",
+              factId: entry.id,
+              category: "pattern",
+              preMergeText,
+              preMergeVector,
+              preMergeEmbeddingModel,
+              fallbackEmbeddingModel: embeddings.modelName,
+              vectorDb,
+              factsDb,
+              logger,
+            });
+          }
           vectorStored = false;
           continue;
         }
