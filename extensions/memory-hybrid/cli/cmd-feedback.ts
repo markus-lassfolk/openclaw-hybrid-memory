@@ -989,12 +989,6 @@ export function explainToolEffectivenessNoData(
         return "workflow traces exist but all have invalid or empty tool sequences";
       }
 
-      // Check for legacy DB with actual workflow traces before reporting minCalls issues
-      const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
-      if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
-        return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
-      }
-
       if (rowsWithInvalidOrEmptyTools > 0) {
         return "workflow traces include invalid or empty tool sequences and no tools meet minimum call threshold for scoring";
       }
