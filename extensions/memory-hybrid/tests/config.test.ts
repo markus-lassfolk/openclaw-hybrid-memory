@@ -1491,6 +1491,32 @@ describe("hybridConfigSchema.parse", () => {
       expect(r.fallbackModels).toEqual(["openai/gpt-4.1-nano"]);
     });
 
+    it("includes maintenance default as fallback when reflection primary is overridden", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: { maintenance: ["openai/gpt-4.1-mini"], default: ["openai/gpt-4.1-mini"], heavy: ["openai/gpt-5.4"] },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance", "minimax/MiniMax-M2.7-highspeed");
+      expect(r.defaultModel).toBe("openai/gpt-4.1-mini");
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
+    });
+
+    it("keeps maintenance fallback order when reflection primary is overridden", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          maintenance: ["openai/gpt-4.1-mini", "openai/gpt-4.1-nano"],
+          default: ["openai/gpt-4.1-mini"],
+          heavy: ["openai/gpt-5.4"],
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance", "minimax/MiniMax-M2.7-highspeed");
+      expect(r.defaultModel).toBe("openai/gpt-4.1-mini");
+      // Existing maintenance fallbacks stay in order; the tier default is appended as a final safety fallback.
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-nano", "openai/gpt-4.1-mini"]);
+      expect(r.fallbackModels).not.toContain("minimax/MiniMax-M2.7-highspeed");
+    });
+
     it("returns heavy tier from llm.heavy with fallbacks when multiple models", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,
