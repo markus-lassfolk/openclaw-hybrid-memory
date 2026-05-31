@@ -565,6 +565,12 @@ function processEntityMentionsForFact<
     if (existing) {
       duplicates++;
       if (canonical.confidence > existing.confidence) {
+        const existingWasReclassified = existing.label !== existing.sourceRow.label || existing.normalizedSurface !== existing.sourceRow.normalized_surface;
+        if (existingWasReclassified && !wasReclassified) {
+          reclassified--;
+        } else if (!existingWasReclassified && wasReclassified) {
+          reclassified++;
+        }
         acceptedByKey.set(key, {
           label: canonical.label,
           surfaceText: canonical.surfaceText,
@@ -572,9 +578,6 @@ function processEntityMentionsForFact<
           confidence: canonical.confidence,
           sourceRow: row,
         });
-        if (wasReclassified) {
-          reclassified++;
-        }
       }
     } else {
       acceptedByKey.set(key, {
@@ -721,81 +724,77 @@ export function cleanupEntityMentions(
   let removedRows = 0;
   const rejectReasons: Record<string, number> = {};
 
-  const processLoop = () => {
-    for (const fact of factIds) {
-      const rows = db
-        .prepare(
-          `SELECT label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source
-           FROM fact_entity_mentions
-           WHERE fact_id = ?`,
-        )
-        .all(fact.fact_id) as Array<{
-        label: string;
-        surface_text: string;
-        normalized_surface: string;
-        start_offset: number;
-        end_offset: number;
-        confidence: number;
-        detected_lang: string | null;
-        source: string;
-      }>;
-      const before = rowsSignature(
-        rows.map((row) => ({
-          label: row.label,
-          normalizedSurface: row.normalized_surface,
-          surfaceText: row.surface_text,
-          confidence: row.confidence,
-        })),
-      );
+  for (const fact of factIds) {
+    const rows = db
+      .prepare(
+        `SELECT label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source
+         FROM fact_entity_mentions
+         WHERE fact_id = ?`,
+      )
+      .all(fact.fact_id) as Array<{
+      label: string;
+      surface_text: string;
+      normalized_surface: string;
+      start_offset: number;
+      end_offset: number;
+      confidence: number;
+      detected_lang: string | null;
+      source: string;
+    }>;
+    const before = rowsSignature(
+      rows.map((row) => ({
+        label: row.label,
+        normalizedSurface: row.normalized_surface,
+        surfaceText: row.surface_text,
+        confidence: row.confidence,
+      })),
+    );
 
-      const result = processEntityMentionsForFact(rows);
-      rowsScanned += result.counters.rowsScanned;
-      accepted += result.counters.accepted;
-      rejected += result.counters.rejected;
-      duplicates += result.counters.duplicates;
-      reclassified += result.counters.reclassified;
-      for (const [reason, count] of Object.entries(result.counters.rejectReasons)) {
-        rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
-      }
+    const result = processEntityMentionsForFact(rows);
+    rowsScanned += result.counters.rowsScanned;
+    accepted += result.counters.accepted;
+    rejected += result.counters.rejected;
+    duplicates += result.counters.duplicates;
+    reclassified += result.counters.reclassified;
+    for (const [reason, count] of Object.entries(result.counters.rejectReasons)) {
+      rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
+    }
 
-      const nextRows = result.accepted.map((m) => ({
-        label: m.label,
-        surfaceText: m.surfaceText,
-        normalizedSurface: m.normalizedSurface,
-        startOffset: m.sourceRow.start_offset,
-        endOffset: m.sourceRow.end_offset,
-        confidence: m.confidence,
-        detectedLang: m.sourceRow.detected_lang,
-        source: m.sourceRow.source,
-      }));
+    const nextRows = result.accepted.map((m) => ({
+      label: m.label,
+      surfaceText: m.surfaceText,
+      normalizedSurface: m.normalizedSurface,
+      startOffset: m.sourceRow.start_offset,
+      endOffset: m.sourceRow.end_offset,
+      confidence: m.confidence,
+      detectedLang: m.sourceRow.detected_lang,
+      source: m.sourceRow.source,
+    }));
 
-      const after = rowsSignature(
-        nextRows.map((row) => ({
-          label: row.label,
-          normalizedSurface: row.normalizedSurface,
-          surfaceText: row.surfaceText,
-          confidence: row.confidence,
-        })),
-      );
-      if (before !== after || rows.length !== nextRows.length) {
-        changedFacts++;
-        removedRows += Math.max(0, rows.length - nextRows.length);
-        if (options.apply) {
-          if (nextRows.length === 0) {
-            const tx = createTransaction(db, () => {
-              replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
-              db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
-            });
-            tx();
-          } else {
+    const after = rowsSignature(
+      nextRows.map((row) => ({
+        label: row.label,
+        normalizedSurface: row.normalizedSurface,
+        surfaceText: row.surfaceText,
+        confidence: row.confidence,
+      })),
+    );
+    if (before !== after || rows.length !== nextRows.length) {
+      changedFacts++;
+      removedRows += Math.max(0, rows.length - nextRows.length);
+      if (options.apply) {
+        if (nextRows.length === 0) {
+          const tx = createTransaction(db, () => {
             replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
-          }
+            db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
+          });
+          tx();
+        } else {
+          replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
         }
       }
     }
-  };
-
-  processLoop();
+  }
 
   return {
     factsScanned: factIds.length,
