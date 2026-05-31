@@ -2,7 +2,7 @@ import { getHybridMemoryRegistrationState } from "../setup/hybrid-memory-generat
 
 export function isDbClosedError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /(?:database\s+)?connection is not open/i.test(msg);
+  return /not open|connection is not open|database is not open/i.test(msg);
 }
 
 /** True when a newer plugin registration replaced this bootstrap / hook generation. */

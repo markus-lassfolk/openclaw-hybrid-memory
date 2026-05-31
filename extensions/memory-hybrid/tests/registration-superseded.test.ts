@@ -19,6 +19,8 @@ describe("registration-superseded", () => {
   it("isDbClosedError matches plugin SQLite message", () => {
     expect(isDbClosedError(new Error("The database connection is not open"))).toBe(true);
     expect(isDbClosedError("connection is not open")).toBe(true);
+    expect(isDbClosedError(new Error("database is not open"))).toBe(true);
+    expect(isDbClosedError("not open")).toBe(true);
     expect(isDbClosedError(new Error("ENOENT"))).toBe(false);
   });
 
