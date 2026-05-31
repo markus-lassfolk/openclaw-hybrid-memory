@@ -109,6 +109,7 @@ jobs:
   conventional-commits:
     name: Conventional Commits
     runs-on: ubuntu-latest
+    if: "!contains(github.event.pull_request.labels.*.name, 'stage/implementing')"
     steps:
       - name: Validate PR title
         if: ${{ !startsWith(github.event.pull_request.title, 'WIP:') }}

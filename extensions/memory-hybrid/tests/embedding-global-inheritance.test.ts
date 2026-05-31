@@ -7,8 +7,11 @@ import { hybridConfigSchema } from "../config.js";
 import {
   applyGatewayEmbeddingInheritanceBeforeParse,
   clearOllamaHealthCacheEntry,
+  gatewayLogInfoOnce,
+  mergeGatewayProviderCredentialsIntoLlmProvidersMap,
   OLLAMA_HEALTH_TIMEOUT_MS,
   probeOllamaEndpoint,
+  resetGatewayLogOnceForTesting,
   shallowClonePluginConfigForGatewayMerge,
 } from "../setup/provider-router.js";
 
@@ -179,6 +182,74 @@ describe("embedding global inheritance (issue #1002)", () => {
       gateway,
     );
     expect(cfg.embedding.model).toBe("text-embedding-3-small");
+  });
+});
+
+describe("gateway provider notice dedupe", () => {
+  beforeEach(() => {
+    resetGatewayLogOnceForTesting();
+  });
+
+  afterEach(() => {
+    resetGatewayLogOnceForTesting();
+  });
+
+  it("logs gateway provider merge notices once across repeated plugin-load merges in one process", () => {
+    const gateway = {
+      models: {
+        providers: {
+          google: { apiKey: FAKE_OPENAI_KEY },
+        },
+      },
+    };
+    const api = {
+      config: gateway,
+      logger: { info: vi.fn(), warn: vi.fn() },
+    } as unknown as ClawdbotPluginApi;
+
+    const applyMerge = () => {
+      const raw: Record<string, unknown> = { mode: "minimal", embedding: {}, llm: { providers: {} } };
+      const clone = shallowClonePluginConfigForGatewayMerge(raw);
+      applyGatewayEmbeddingInheritanceBeforeParse(clone, api);
+      return clone;
+    };
+
+    applyMerge();
+    applyMerge();
+
+    const infoMessages = (api.logger.info as ReturnType<typeof vi.fn>).mock.calls
+      .map(([msg]) => String(msg))
+      .filter((msg) => msg.includes("gateway provider") || msg.includes("llm.providers before config parse"));
+
+    expect(infoMessages.filter((msg) => msg.includes('using gateway provider "google"'))).toHaveLength(1);
+    expect(infoMessages.filter((msg) => msg.includes("merged 1 gateway provider credential(s)"))).toHaveLength(1);
+  });
+
+  it("suppresses duplicate keyed notices", () => {
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn() },
+    } as unknown as Pick<ClawdbotPluginApi, "logger">;
+
+    gatewayLogInfoOnce("appended-gateway-models", "notice", api);
+    gatewayLogInfoOnce("appended-gateway-models", "notice", api);
+    expect(api.logger.info).toHaveBeenCalledTimes(1);
+  });
+
+  it("still merges provider credentials when notices are deduped", () => {
+    const api = {
+      logger: { info: vi.fn(), warn: vi.fn() },
+    } as unknown as Pick<ClawdbotPluginApi, "logger">;
+    const providers: Record<string, Record<string, unknown>> = {};
+    const gatewayProviders = {
+      google: { apiKey: FAKE_OPENAI_KEY },
+    };
+
+    const mergedFirst = mergeGatewayProviderCredentialsIntoLlmProvidersMap(providers, gatewayProviders, api);
+    const mergedSecond = mergeGatewayProviderCredentialsIntoLlmProvidersMap(providers, gatewayProviders, api);
+
+    expect(mergedFirst).toBe(1);
+    expect(mergedSecond).toBe(0);
+    expect((providers.google?.apiKey as string) ?? "").toBe(FAKE_OPENAI_KEY);
   });
 });
 
