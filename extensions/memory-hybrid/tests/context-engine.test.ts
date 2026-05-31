@@ -521,6 +521,8 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     // Verify truncation: the tight result must contain fewer facts than the full result.
     const fullFactCount = (resultFull.systemPromptAddition?.match(/Fact number \d/g) ?? []).length;
     const tightFactCount = (resultTight.systemPromptAddition?.match(/Fact number \d/g) ?? []).length;
+    expect(fullFactCount).toBe(10);
+    expect(tightFactCount).toBeGreaterThan(0);
     expect(tightFactCount).toBeLessThan(fullFactCount);
   });
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
@@ -201,7 +201,12 @@ export interface CollectMaintenanceStepsOptions {
 }
 
 function extractJobName(file: string): string {
-  return file.replace(/-[0-9]{8}T.*$/, "").replace(/\.exit\.txt$/, "");
+  const withoutExitSuffix = file.replace(/\.exit\.txt$/, "");
+  return withoutExitSuffix
+    .replace(/-\d{8}T\d{6}Z-\d+$/, "")
+    .replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/, "")
+    .replace(/-\d{8}\.cron$/, "")
+    .replace(/-\d{8}T.*$/, "");
 }
 
 function safeRead(path: string): string {
@@ -218,6 +223,45 @@ function safeStatMtimeMs(path: string): number {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Subdirectory names that hold auxiliary/helper logs and should not be scanned for
+ * missing-exit-ledger anomalies (issue #1685).
+ */
+const AUXILIARY_DIR_NAMES = new Set(["manual-qa", "tmp", "archive"]);
+
+/**
+ * Returns true if filePath is under a known auxiliary subdirectory or a hidden directory
+ * (name starts with '.'), relative to root.  Used to skip non-maintenance artifacts.
+ */
+export function isUnderAuxiliaryDir(filePath: string, root: string): boolean {
+  const rel = relative(root, filePath);
+  const segments = rel.split(sep);
+  const dirSegments = segments.slice(0, -1);
+  return dirSegments.some((seg) => seg.length > 0 && (AUXILIARY_DIR_NAMES.has(seg) || seg.startsWith(".")));
+}
+
+/**
+ * Canonical maintenance wrapper log names follow one of three patterns:
+ *   1. `<jobname>-YYYYMMDDTHHMMSSZ-<pid>.log`  (e.g. `nightly-memory-sweep-20260511T030000Z-555.log`)
+ *   2. `<jobname>-YYYY-MM-DDTHH-MM-SS-mmmZ.log` — ISO datetime with colons/dots replaced by dashes,
+ *      produced by `runPendingDigestAutopilotCron` (e.g. `weekly-pending-digest-autopilot-2026-05-13T08-20-00-000Z.log`)
+ *   3. Files ending with `.cron.log`.
+ *
+ * Files like `stdout.log`, `stderr.log`, or arbitrary helper logs do NOT match and
+ * should not be reported as missing-exit-ledger failures (issue #1685).
+ */
+/** Compact timestamp with PID: `<job>-YYYYMMDDTHHMMSSz-<pid>.log` */
+const CANONICAL_MAINTENANCE_LOG_RE = /-\d{8}T\d{6}Z-\d+\.log$/;
+/** ISO-with-dashes timestamp (no PID): `<job>-YYYY-MM-DDTHH-MM-SS-mmmZ.log` (runPendingDigestAutopilotCron) */
+const CANONICAL_MAINTENANCE_LOG_ISO_RE = /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.log$/;
+
+export function isCanonicalMaintenanceLog(filePath: string): boolean {
+  const file = basename(filePath);
+  return (
+    CANONICAL_MAINTENANCE_LOG_RE.test(file) || CANONICAL_MAINTENANCE_LOG_ISO_RE.test(file) || file.endsWith(".cron.log")
+  );
 }
 
 function collectFilesRecursive(root: string, suffix: string): string[] {
@@ -387,10 +431,14 @@ export function collectMaintenanceSteps(
   }
 
   // Catch orphan logs so analyzer never reports 0/0 OK when recent logs exist but no parseable exit rows.
+  // Only consider canonical maintenance wrapper logs; skip auxiliary directories and helper files (issue #1685).
   const logFiles = collectFilesRecursive(root, ".log");
   for (const logPath of logFiles) {
     const logMtime = safeStatMtimeMs(logPath);
     if (logMtime < cutoff) continue;
+    // Skip logs under auxiliary dirs (manual-qa, tmp, archive, hidden dirs) and non-canonical filenames.
+    // Files like stdout.log, stderr.log, or QA transcripts are not maintenance wrapper artifacts.
+    if (isUnderAuxiliaryDir(logPath, root) || !isCanonicalMaintenanceLog(logPath)) continue;
     const exitPath = logPath.replace(/\.log$/, ".exit.txt");
     if (seenExit.has(exitPath) || existsSync(exitPath)) continue;
     const logContent = safeRead(logPath);
