@@ -684,7 +684,8 @@ export async function runCapture(
                 );
               } else if (vector) {
                 const canonicalText = storedEntry.text;
-                const canonicalVector = canonicalText === textToStore ? vector : await ctx.embeddings.embed(canonicalText);
+                const canonicalVector =
+                  canonicalText === textToStore ? vector : await ctx.embeddings.embed(canonicalText);
                 ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
                 if (!(await ctx.vectorDb.hasDuplicate(canonicalVector))) {
                   await ctx.vectorDb.store({

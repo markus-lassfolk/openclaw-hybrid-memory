@@ -288,7 +288,13 @@ export async function runStoreForCli(
                   const canonicalVector = canonicalText === text ? vector : await embeddings.embed(canonicalText);
                   factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                   if (!(await vectorDb.hasDuplicate(canonicalVector))) {
-                    await vectorDb.store({ text: canonicalText, vector: canonicalVector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
+                    await vectorDb.store({
+                      text: canonicalText,
+                      vector: canonicalVector,
+                      importance: CLI_STORE_IMPORTANCE,
+                      category,
+                      id: newEntry.id,
+                    });
                   }
                   persistCanonicalFactEmbedding(
                     factsDb,
