@@ -980,12 +980,14 @@ export function explainToolEffectivenessNoData(
         }
       }
 
+      // Prefer actionable migration diagnostics whenever legacy traces still
+      // exist but the current DB yielded zero scored tools.
+      const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
+      if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
+        return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+      }
+
       if (rowsWithNonEmptyTools === 0) {
-        // Check for legacy DB with actual workflow traces
-        const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
-        if (existsSync(legacyWorkflowDbPath) && hasValidWorkflowTraces(legacyWorkflowDbPath)) {
-          return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
-        }
         return "workflow traces exist but all have invalid or empty tool sequences";
       }
 
