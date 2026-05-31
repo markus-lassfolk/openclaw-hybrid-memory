@@ -88,34 +88,27 @@ export async function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS
   return reloadTeardownQueueDepth === 0;
 }
 
-/** Shared buffer for Atomics.wait/notify while synchronously blocking register(). */
+/** Shared buffer for Atomics.wait while synchronously blocking register(). */
 const syncWaitBuffer = new SharedArrayBuffer(4);
 const syncWaitArray = new Int32Array(syncWaitBuffer);
 
-/** Block the current call stack while pumping the event loop until `condition()` is true. */
-function blockUntilSync(condition: () => boolean, timeoutMs: number): boolean {
-  const deadline = timeoutMs === 0 ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
-  while (!condition()) {
-    if (Number.isFinite(deadline) && Date.now() >= deadline) return false;
-    Atomics.wait(syncWaitArray, 0, 0, 50);
-  }
-  return true;
-}
-
 /**
  * Synchronous variant of `awaitReloadTeardownBeforeOpen` for OpenClaw's sync `register()` contract.
- * Uses Atomics.wait so scheduled teardown promises can settle while register() blocks.
+ * Polls teardown queue depth while pumping the event loop via Atomics.wait (50ms ticks).
  */
 export function blockReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boolean {
-  let result = false;
-  let settled = false;
-  void awaitReloadTeardownBeforeOpen(timeoutMs).then((drained) => {
-    result = drained;
-    settled = true;
-    Atomics.notify(syncWaitArray, 0, 1);
-  });
-  blockUntilSync(() => settled, timeoutMs);
-  return result;
+  if (timeoutMs < 0) return false;
+  const deadline = timeoutMs === 0 ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const chainSnapshot = reloadTeardownChain;
+    if (reloadTeardownQueueDepth === 0 && chainSnapshot === reloadTeardownChain) {
+      return true;
+    }
+    Atomics.wait(syncWaitArray, 0, 0, 50);
+    if (!Number.isFinite(deadline)) continue;
+    if (Date.now() >= deadline) break;
+  }
+  return reloadTeardownQueueDepth === 0;
 }
 
 /** Reset chain for unit tests only. */
