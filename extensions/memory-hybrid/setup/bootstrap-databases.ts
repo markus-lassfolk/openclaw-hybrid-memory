@@ -630,7 +630,10 @@ export function initializeDatabases(
           : `memory-hybrid: embedding check OK (provider=${effectiveProvider}, model=${modelForLog})`,
       );
     } catch (e) {
-      if (isBootstrapSuperseded()) return;
+      if (isBootstrapSuperseded()) {
+        api.logger.debug?.("memory-hybrid: embedding check skipped (registration superseded)");
+        return;
+      }
       const asErr = e instanceof Error ? e : new Error(String(e));
       if (!shouldSuppressEmbeddingError(asErr)) {
         capturePluginError(asErr, {

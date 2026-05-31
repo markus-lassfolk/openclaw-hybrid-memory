@@ -11,11 +11,13 @@ export function isRegistrationSuperseded(bootRegistrationGeneration: number): bo
   return getHybridMemoryRegistrationState().registrationGenerationRef.value !== bootRegistrationGeneration;
 }
 
-/** Lifecycle / recall work tied to a specific plugin registration generation. */
-export function isRecallContextSuperseded(ctx: {
+export type LifecycleGenerationContext = {
   registrationGeneration?: number;
   currentRegistrationGenerationRef?: { value: number };
-}): boolean {
+};
+
+/** Lifecycle / recall work tied to a specific plugin registration generation. */
+export function isRecallContextSuperseded(ctx: LifecycleGenerationContext): boolean {
   const ownerGeneration = ctx.registrationGeneration ?? -1;
   if (ownerGeneration < 0) return false;
   const liveGeneration = ctx.currentRegistrationGenerationRef?.value;
@@ -23,13 +25,25 @@ export function isRecallContextSuperseded(ctx: {
   return isRegistrationSuperseded(ownerGeneration);
 }
 
-/** Suppress noisy errors when reload closed DBs under in-flight recall (not a user-facing outage). */
-export function shouldSuppressStaleRecallError(
-  ctx: {
-    registrationGeneration?: number;
-    currentRegistrationGenerationRef?: { value: number };
-  },
-  err: unknown,
-): boolean {
+/** Suppress noisy errors when reload closed DBs under in-flight work (not a user-facing outage). */
+export function shouldSuppressStaleLifecycleError(ctx: LifecycleGenerationContext, err: unknown): boolean {
   return isRecallContextSuperseded(ctx) && isDbClosedError(err);
+}
+
+/** @deprecated Use shouldSuppressStaleLifecycleError */
+export const shouldSuppressStaleRecallError = shouldSuppressStaleLifecycleError;
+
+/**
+ * Log at debug and return true when err is a superseded-generation DB close.
+ * Callers should return early without capturePluginError / logger.warn.
+ */
+export function suppressStaleLifecycleDbError(
+  ctx: LifecycleGenerationContext,
+  err: unknown,
+  logger: { debug?: (msg: string) => void },
+  debugMessage: string,
+): boolean {
+  if (!shouldSuppressStaleLifecycleError(ctx, err)) return false;
+  logger.debug?.(debugMessage);
+  return true;
 }

@@ -13,6 +13,7 @@ import { createRecallSpan, createRecallTimingLogger } from "../services/recall-t
 import { sanitizePromptInjection, RECALLED_CONTEXT_BOUNDARY } from "../services/skill-prompt-injection.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
+import { suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 
@@ -23,7 +24,8 @@ const HEBBIAN_MAX_K = 8;
 function strengthenHebbianLinks(
   ids: string[],
   factsDb: LifecycleContext["factsDb"],
-  logger: { warn: (msg: string) => void },
+  logger: { warn: (msg: string) => void; debug?: (msg: string) => void },
+  staleCtx?: LifecycleContext,
 ): void {
   const topK = Array.from(new Set(ids)).slice(0, HEBBIAN_MAX_K);
   const pairs: [string, string][] = [];
@@ -41,8 +43,18 @@ function strengthenHebbianLinks(
       }
       factsDb.strengthenRelatedLinksBatch(pairs);
     } catch (err) {
+      if (
+        staleCtx &&
+        suppressStaleLifecycleDbError(
+          staleCtx,
+          err,
+          logger,
+          "memory-hybrid: hebbian link strengthening skipped (registration superseded)",
+        )
+      ) {
+        return;
+      }
       const e = err instanceof Error ? err : new Error(String(err));
-      // Expected when the plugin is shutting down or the database closed mid-operation
       if (!/database connection is not open/i.test(e.message)) {
         capturePluginError(e, {
           operation: "hebbian-strengthen",
@@ -69,8 +81,17 @@ function buildEdictBlock(ctx: LifecycleContext): string {
     const { renderForPrompt } = ctx.edictStore.getEdicts({ format: "prompt" });
     return renderForPrompt;
   } catch (err) {
+    if (
+      suppressStaleLifecycleDbError(
+        ctx,
+        err,
+        { debug: () => {} },
+        "memory-hybrid: edict block skipped (registration superseded)",
+      )
+    ) {
+      return "";
+    }
     const e = err instanceof Error ? err : new Error(String(err));
-    // Expected when the plugin is shutting down or the edict DB closed mid-hook (#1162).
     if (!/database connection is not open/i.test(e.message)) {
       capturePluginError(e, {
         subsystem: "stage-injection",
@@ -266,7 +287,7 @@ async function runInjection(
         ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
         if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedPinnedIds);
         if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedPinnedIds.length >= 2) {
-          strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger);
+          strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger, ctx);
         }
         const fullContent = `${pinnedHeader}${pinnedPart.join("\n")}\n</relevant-memories>`;
         api.logger.info?.(
@@ -302,7 +323,7 @@ async function runInjection(
     const allIds = [...injectedPinnedIds, ...indexIds];
     if (ambientSeenFacts && allIds.length > 0) ambientSeenFacts.markSeen(allIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
-      strengthenHebbianLinks(allIds, ctx.factsDb, api.logger);
+      strengthenHebbianLinks(allIds, ctx.factsDb, api.logger, ctx);
     }
     const indexContent = indexLines.join("\n");
     const fullContent =
@@ -348,7 +369,7 @@ async function runInjection(
     ctx.factsDb.refreshIndexedFacts(indexIds);
     if (ambientSeenFacts && indexIds.length > 0) ambientSeenFacts.markSeen(indexIds);
     if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && indexIds.length >= 2) {
-      strengthenHebbianLinks(indexIds, ctx.factsDb, api.logger);
+      strengthenHebbianLinks(indexIds, ctx.factsDb, api.logger, ctx);
     }
     const indexContent = indexLines.join("\n");
     api.logger.info?.(
@@ -402,7 +423,7 @@ async function runInjection(
   ctx.factsDb.refreshAccessedFacts(injectedIds);
   if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedIds);
   if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedIds.length >= 2) {
-    strengthenHebbianLinks(injectedIds, ctx.factsDb, api.logger);
+    strengthenHebbianLinks(injectedIds, ctx.factsDb, api.logger, ctx);
   }
 
   let memoryContext = lines.join("\n");
@@ -457,11 +478,20 @@ async function runInjection(
         });
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "summarize-when-over-budget",
-        subsystem: "auto-recall",
-      });
-      api.logger.warn(`memory-hybrid: summarize-when-over-budget failed: ${err}`);
+      if (
+        !suppressStaleLifecycleDbError(
+          ctx,
+          err,
+          api.logger,
+          "memory-hybrid: summarize-when-over-budget skipped (registration superseded)",
+        )
+      ) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "summarize-when-over-budget",
+          subsystem: "auto-recall",
+        });
+        api.logger.warn(`memory-hybrid: summarize-when-over-budget failed: ${err}`);
+      }
       recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, { status: "error" });
     }
   }

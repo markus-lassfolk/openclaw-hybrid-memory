@@ -26,7 +26,11 @@ import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
-import { isRecallContextSuperseded, shouldSuppressStaleRecallError } from "../../utils/registration-superseded.js";
+import {
+  isRecallContextSuperseded,
+  shouldSuppressStaleLifecycleError,
+  suppressStaleLifecycleDbError,
+} from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 
@@ -616,10 +620,19 @@ export async function runRecall(
               ambientQueriesRun += 1;
               extraResultSets.push(qResults);
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: `ambient-query-${q.type}`,
-                subsystem: "auto-recall",
-              });
+              if (
+                !suppressStaleLifecycleDbError(
+                  ctx,
+                  err,
+                  api.logger,
+                  `memory-hybrid: ambient query skipped (registration superseded) type=${q.type}`,
+                )
+              ) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: `ambient-query-${q.type}`,
+                  subsystem: "auto-recall",
+                });
+              }
             }
           }
           const merged = deduplicateResultsById(extraResultSets, (r) => r.entry.id);
@@ -632,11 +645,20 @@ export async function runRecall(
           candidates: candidates.length,
         });
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "ambient-multi-query",
-          subsystem: "auto-recall",
-        });
-        api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+        if (
+          !suppressStaleLifecycleDbError(
+            ctx,
+            err,
+            api.logger,
+            "memory-hybrid: ambient multi-query skipped (registration superseded)",
+          )
+        ) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "ambient-multi-query",
+            subsystem: "auto-recall",
+          });
+          api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+        }
         recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
           status: "error",
           queries_run: ambientQueriesRun,
@@ -673,10 +695,19 @@ export async function runRecall(
           if (issueLines.length > 0) issueBlock = `${issueLines.join("\n")}\n\n`;
         }
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "ambient-issue-retrieval",
-          subsystem: "auto-recall",
-        });
+        if (
+          !suppressStaleLifecycleDbError(
+            ctx,
+            err,
+            api.logger,
+            "memory-hybrid: ambient issue retrieval skipped (registration superseded)",
+          )
+        ) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "ambient-issue-retrieval",
+            subsystem: "auto-recall",
+          });
+        }
       }
     }
     recallTiming.phaseCompleted("issues_block", issuesStartedAt, { injected: issueBlock.length > 0 });
@@ -700,10 +731,19 @@ export async function runRecall(
           narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
         }
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "recent-narrative-retrieval",
-          subsystem: "auto-recall",
-        });
+        if (
+          !suppressStaleLifecycleDbError(
+            ctx,
+            err,
+            api.logger,
+            "memory-hybrid: recent narrative retrieval skipped (registration superseded)",
+          )
+        ) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "recent-narrative-retrieval",
+            subsystem: "auto-recall",
+          });
+        }
       }
     }
     recallTiming.phaseCompleted("narrative_block", narrativeStartedAt, { injected: narrativeBlock.length > 0 });
@@ -871,7 +911,7 @@ export async function runRecall(
           }
         }
       } catch (err) {
-        if (shouldSuppressStaleRecallError(ctx, err)) {
+        if (shouldSuppressStaleLifecycleError(ctx, err)) {
           api.logger.debug?.("memory-hybrid: directive recall skipped (registration superseded)");
           return abortDirectives();
         }
@@ -1060,7 +1100,7 @@ export async function runRecall(
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
-    if (shouldSuppressStaleRecallError(ctx, err)) {
+    if (shouldSuppressStaleLifecycleError(ctx, err)) {
       api.logger.debug?.(
         `memory-hybrid: recall-probe id=${recallProbeId} skipped (registration superseded) elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase}`,
       );
