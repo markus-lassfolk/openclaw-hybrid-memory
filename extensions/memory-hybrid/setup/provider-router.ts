@@ -32,6 +32,44 @@ import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { inferFeatureLabel } from "./cost-instrumentation.js";
 
+/** Minimal logger shape accepted by the log-once helpers. */
+interface InfoLogger {
+  logger?: { info?: (msg: string) => void };
+}
+
+/**
+ * Process-lifetime set of log keys that have already been emitted.
+ * Prevents the same gateway-provider info message from flooding logs when the plugin
+ * initialises multiple times in the same process (e.g. once per CLI invocation in a step).
+ * Reset via resetGatewayLogOnceForTesting() in unit tests for isolation.
+ */
+const _loggedOnceKeys = new Set<string>();
+
+/**
+ * Emit `msg` via `api.logger.info` at most once per process for the given `key`.
+ * Subsequent calls with the same key are silently dropped.
+ */
+function logInfoOnce(key: string, msg: string, api: InfoLogger): void {
+  if (_loggedOnceKeys.has(key)) return;
+  _loggedOnceKeys.add(key);
+  api.logger?.info?.(msg);
+}
+
+/**
+ * Reset the log-once guard.  Call this in tests to ensure each test starts clean.
+ */
+export function resetGatewayLogOnceForTesting(): void {
+  _loggedOnceKeys.clear();
+}
+
+/**
+ * Public wrapper around logInfoOnce for use outside this module (e.g. bootstrap-databases).
+ * Emits `msg` via `api.logger.info` at most once per process for the given `key`.
+ */
+export function gatewayLogInfoOnce(key: string, msg: string, api: InfoLogger): void {
+  logInfoOnce(key, msg, api);
+}
+
 /**
  * Normalize baseURL vs baseUrl (OpenClaw config uses camelCase `baseUrl`; SDK uses `baseURL`).
  * Intentionally duplicated from config/parsers/index.ts to avoid a circular module dependency —
@@ -131,8 +169,10 @@ export function mergeGatewayProviderCredentialsIntoLlmProvidersMap(
       };
       mergedNames?.push(normalizedName);
       mergedOriginals?.set(normalizedName, name);
-      api.logger?.info?.(
+      logInfoOnce(
+        `gateway-provider:${normalizedName}`,
         `memory-hybrid: using gateway provider "${name}" for llm.providers (add ${normalizedName}/<model> to llm.default or llm.heavy to use)`,
+        api,
       );
     } else {
       const gwBase =
@@ -242,8 +282,10 @@ export function applyGatewayEmbeddingInheritanceBeforeParse(
     const prov = plm.providers as Record<string, Record<string, unknown>>;
     const n = mergeGatewayProviderCredentialsIntoLlmProvidersMap(prov, gwProviders, api);
     if (n > 0) {
-      api.logger?.info?.(
+      logInfoOnce(
+        "merged-gateway-providers",
         `memory-hybrid: merged ${n} gateway provider credential(s) into plugin llm.providers before config parse (issue #1002)`,
+        api,
       );
     }
   }
