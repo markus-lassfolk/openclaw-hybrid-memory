@@ -28,6 +28,9 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('HM_REQUIRED_STEPS=("prune")');
     expect(bash).toContain('local ec="${PIPESTATUS[0]}"');
     expect(bash).toContain('hm_step "prune" openclaw hybrid-mem prune --verbose');
+    expect(bash).toContain('local timeout_raw="${STEP_TIMEOUT_SECONDS:-0}"');
+    expect(bash).toContain('if [ "$timeout_secs" -gt 0 ]; then');
+    expect(bash).toContain('timeout "$timeout_secs" "${cmd[@]}" 2>&1 | tee -a "$HM_LOG" "$step_output"');
     expect(bash).toContain("openclaw --version");
     expect(bash).toContain(
       'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps',
@@ -250,5 +253,121 @@ exit 2
     expect(result.status).toBe(0);
     const exitContents = readFileSync(marker, "utf-8");
     expect(exitContents).toContain("self-correct exit=0 status=skipped reason=skipped_cooldown");
+  });
+
+  it("skips timeout wrapper when STEP_TIMEOUT_SECONDS=0", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OPENCLAW_HOME: home,
+        STEP_TIMEOUT_SECONDS: "0",
+      },
+    });
+
+    expect(result.status).toBe(0);
+  });
+
+  it("adds --full to guarded extraction commands when forced rerun env is enabled", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const marker = join(tmp, "extract-procedures-args.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-procedures" ]; then
+  printf '%s\n' "$*" > ${JSON.stringify(marker)}
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("weekly-extract-procedures", [
+      { name: "extract-procedures", cmd: "openclaw hybrid-mem extract-procedures --days 7 --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OPENCLAW_HOME: home,
+        HYBRID_MEM_CLI_JOB_GUARD_WINDOW_MS: "0",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf-8")).toContain("extract-procedures --days 7 --verbose --full");
+  });
+
+  it("does not add --force to reflection commands when forced rerun env is enabled", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const marker = join(tmp, "reflect-args.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "reflect" ]; then
+  printf '%s\n' "$*" > ${JSON.stringify(marker)}
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("weekly-reflection", [
+      { name: "reflect", cmd: "openclaw hybrid-mem reflect --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OPENCLAW_HOME: home,
+        HYBRID_MEM_QA_FORCE: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf-8")).toContain("reflect --verbose");
+    expect(readFileSync(marker, "utf-8")).not.toContain("--force");
   });
 });
