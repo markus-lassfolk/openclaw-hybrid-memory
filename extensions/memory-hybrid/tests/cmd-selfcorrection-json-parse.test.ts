@@ -57,6 +57,25 @@ function makeOpenAIMock(responseText: string) {
   } as any;
 }
 
+function makeOpenAIFailoverMock(primaryModel: string, fallbackModel: string, responseText = "[]") {
+  return {
+    chat: {
+      completions: {
+        create: vi.fn().mockImplementation(async (req: { model?: string }) => {
+          if (req?.model === primaryModel) throw new Error(`simulated failure for ${primaryModel}`);
+          if (req?.model === fallbackModel) {
+            return {
+              choices: [{ message: { content: responseText } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            };
+          }
+          throw new Error(`unexpected model: ${String(req?.model)}`);
+        }),
+      },
+    },
+  } as any;
+}
+
 function makeCtx(openai: any): HandlerContext {
   return {
     factsDb,
@@ -331,7 +350,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
   });
 
   it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {
-    const ctx = makeCtx(makeOpenAIMock("[]"));
+    const openai = makeOpenAIFailoverMock("heavy-primary", "heavy-fallback-1");
+    const ctx = makeCtx(openai);
     (ctx.cfg as any).llm = {
       default: ["default-model"],
       heavy: ["heavy-primary"],
@@ -347,6 +367,12 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     });
 
     expect(res.error).toBeUndefined();
+    expect(res.status).toBe("success_analyzed");
+    const modelCalls = ((openai.chat.completions.create as any).mock?.calls ?? []).map((args: unknown[]) =>
+      String((args?.[0] as { model?: string })?.model),
+    );
+    expect(modelCalls).toContain("heavy-primary");
+    expect(modelCalls).toContain("heavy-fallback-1");
     const infoCalls = ((ctx.logger.info as any).mock?.calls ?? []).flat();
     expect(
       infoCalls.some((line: unknown) => String(line).includes("fallback chain = [heavy-fallback-1, heavy-fallback-2]")),
@@ -354,10 +380,14 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
   });
 
   it("uses configured fallback chain when model is overridden via --model", async () => {
-    const ctx = makeCtx(makeOpenAIMock("[]"));
+    const openai = makeOpenAIFailoverMock("custom-model", "heavy-primary");
+    const ctx = makeCtx(openai);
     (ctx.cfg as any).llm = {
-      default: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"],
-      heavy: ["heavy-primary", "heavy-fallback-1", "heavy-fallback-2"],
+      default: ["default-model"],
+      heavy: ["heavy-primary"],
+    };
+    (ctx.cfg as any).distill = {
+      fallbackModels: ["heavy-fallback-1", "heavy-fallback-2"],
     };
 
     const res = await runSelfCorrectionRunForCli(ctx, {
@@ -368,6 +398,12 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     });
 
     expect(res.error).toBeUndefined();
+    expect(res.status).toBe("success_analyzed");
+    const modelCalls = ((openai.chat.completions.create as any).mock?.calls ?? []).map((args: unknown[]) =>
+      String((args?.[0] as { model?: string })?.model),
+    );
+    expect(modelCalls).toContain("custom-model");
+    expect(modelCalls).toContain("heavy-primary");
     const infoCalls = ((ctx.logger.info as any).mock?.calls ?? []).flat();
     expect(
       infoCalls.some((line: unknown) =>
