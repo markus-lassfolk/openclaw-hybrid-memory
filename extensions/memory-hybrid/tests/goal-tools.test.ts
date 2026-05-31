@@ -2,10 +2,11 @@
  * Registry/store coverage for primitives that goal tools call (no full plugin API mock).
  */
 
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { hybridConfigSchema } from "../config.js";
 import {
   createGoal,
   listActiveGoals,
@@ -15,6 +16,7 @@ import {
   updateGoal,
 } from "../services/goal-registry.js";
 import { resolveGoalsDir } from "../services/goal-stewardship.js";
+import { registerGoalTools } from "../tools/goal-tools.js";
 import { setEnv } from "../utils/env-manager.js";
 
 const defaults = {
@@ -105,5 +107,52 @@ describe("goal tools registry primitives", () => {
     expect(after).toBeDefined();
     if (!after) throw new Error("fixture: goal missing");
     expect(after.assessmentCount >= after.maxAssessments).toBe(true);
+  });
+
+  it("goal_register succeeds when goals dir contains _global_dispatch_rate_limit.json", async () => {
+    await writeFile(
+      join(goalsDir, "_global_dispatch_rate_limit.json"),
+      JSON.stringify({ timestamps: [Date.now()], updatedAt: new Date().toISOString() }),
+      "utf-8",
+    );
+
+    const cfg = hybridConfigSchema.parse({
+      embedding: {
+        apiKey: "sk-test-key-that-is-long-enough-to-pass",
+        model: "text-embedding-3-small",
+      },
+      goalStewardship: {
+        enabled: true,
+        goalsDir: "state/goals",
+      },
+    });
+
+    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    const api = {
+      registerTool(opts: { name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }) {
+        tools.set(opts.name, { execute: opts.execute });
+      },
+    };
+    registerGoalTools(
+      {
+        cfg,
+        goalsDir,
+        workspaceRoot,
+        resolvedActiveTaskPath: join(workspaceRoot, "ACTIVE-TASKS.md"),
+        factsDb: null,
+        eventLog: null,
+        memoryDir: join(workspaceRoot, "memory"),
+      },
+      api as never,
+    );
+
+    const goalRegister = tools.get("goal_register");
+    expect(goalRegister).toBeDefined();
+    const result = (await goalRegister?.execute("test-call-id", {
+      label: "global_rate_file_present",
+      description: "register despite housekeeping file",
+      acceptance_criteria: ["goal saved"],
+    })) as { details?: { goal?: { label?: string } } };
+    expect(result?.details?.goal?.label).toBe("global_rate_file_present");
   });
 });
