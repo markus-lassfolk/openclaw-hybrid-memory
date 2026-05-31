@@ -101,11 +101,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
   const registrationGeneration = ctx.registrationGeneration ?? -1;
   const currentRegistrationGenerationRef = ctx.currentRegistrationGenerationRef;
   if (!currentRegistrationGenerationRef) {
-    api.logger.warn?.(
-      "memory-hybrid: lifecycle generation ref missing; stale hooks may not be blocked on re-registration",
+    api.logger.error?.(
+      "memory-hybrid: lifecycle generation ref missing; stale hooks will NOT be blocked on re-registration. This is a critical registration bug.",
+    );
+    throw new Error(
+      "currentRegistrationGenerationRef is required for safe hook registration but was not provided",
     );
   }
-  const effectiveRegistrationGenerationRef = currentRegistrationGenerationRef ?? { value: registrationGeneration };
+  const effectiveRegistrationGenerationRef = currentRegistrationGenerationRef;
   const hookUnsubscribers: Array<() => void> = [];
   const trackUnsubscribe = (unsubscribe: unknown): void => {
     if (typeof unsubscribe === "function") {

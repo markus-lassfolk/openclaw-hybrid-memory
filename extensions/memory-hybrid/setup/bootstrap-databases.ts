@@ -708,6 +708,7 @@ export function initializeDatabases(
           `memory-hybrid: ⚠️  CREDENTIALS VAULT CHECK FAILED — ${String(e)}. Plugin will continue but credential storage will not work. Check OPENCLAW_CRED_KEY (or credentials.encryptionKey). Wrong key or corrupted DB. Run 'openclaw hybrid-mem verify' for details.`,
         );
       }
+      if (isBootstrapSuperseded()) return;
       // When vault is enabled: once per install, move existing credential facts into vault and redact from memory
       const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
       // Atomic flag creation to prevent race condition with multiple processes
@@ -738,6 +739,7 @@ export function initializeDatabases(
         }
       }
       if (shouldMigrate) {
+        if (isBootstrapSuperseded()) return;
         try {
           const result = await migrateCredentialsToVault({
             factsDb,
