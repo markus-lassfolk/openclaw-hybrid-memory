@@ -95,6 +95,9 @@ const syncWaitArray = new Int32Array(syncWaitBuffer);
 /**
  * Synchronous variant of `awaitReloadTeardownBeforeOpen` for OpenClaw's sync `register()` contract.
  * Polls teardown queue depth while pumping the event loop via Atomics.wait (50ms ticks).
+ *
+ * Prefer a bounded `timeoutMs` (default {@link TEARDOWN_WAIT_MS}). Avoid `timeoutMs === 0`
+ * in tests: vitest cannot interrupt synchronous Atomics.wait loops, so unbounded waits hang CI.
  */
 export function blockReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boolean {
   if (timeoutMs < 0) return false;
