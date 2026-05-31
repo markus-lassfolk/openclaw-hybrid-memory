@@ -97,6 +97,10 @@ function isContainedByLongerMention(
     return false;
   }
 
+  const isWordBoundary = (char: string): boolean => {
+    return char === " " || /[,\-.\/()\[\]{}:;!?'"&]/.test(char);
+  };
+
   let searchStart = 0;
   while (searchStart <= other.normalizedSurface.length - mention.normalizedSurface.length) {
     const index = other.normalizedSurface.indexOf(mention.normalizedSurface, searchStart);
@@ -108,7 +112,7 @@ function isContainedByLongerMention(
     const beforeChar = index > 0 ? other.normalizedSurface[index - 1] : " ";
     const afterChar = endIndex < other.normalizedSurface.length ? other.normalizedSurface[endIndex] : " ";
 
-    if (beforeChar === " " && (afterChar === " " || endIndex === other.normalizedSurface.length)) {
+    if (isWordBoundary(beforeChar) && (isWordBoundary(afterChar) || endIndex === other.normalizedSurface.length)) {
       return true;
     }
 
