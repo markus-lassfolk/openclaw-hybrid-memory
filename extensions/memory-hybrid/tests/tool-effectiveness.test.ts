@@ -12,9 +12,10 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import { resolveToolEffectivenessCliDbPaths } from "../cli/cmd-feedback.js";
+import { explainToolEffectivenessNoData, resolveToolEffectivenessCliDbPaths } from "../cli/cmd-feedback.js";
 import {
   ToolEffectivenessStore,
   type ToolMetrics,
@@ -349,6 +350,323 @@ describe("resolveToolEffectivenessCliDbPaths", () => {
     expect(resolveToolEffectivenessCliDbPaths(sqlitePath)).toEqual({
       workflowDbPath: join(tmpdir(), "tool-effectiveness-cli-paths", "workflow-traces.db"),
       effectivenessDbPath: join(tmpdir(), "tool-effectiveness-cli-paths", "facts-tool-effectiveness.db"),
+    });
+  });
+
+  describe("explainToolEffectivenessNoData", () => {
+    it("reports disabled workflow tracking", () => {
+      const sqlitePath = join(tmpdir(), "tool-effectiveness-cli-paths", "facts.db");
+      const workflowDbPath = join(tmpdir(), "tool-effectiveness-cli-paths", "workflow-traces.db");
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, false)).toBe(
+        "workflow tracking is disabled (workflowTracking.enabled=false)",
+      );
+    });
+
+    it("reports path mismatch when legacy workflow DB exists", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+      const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
+      try {
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"tool1\"]', 'success', 100, 'session1')",
+        );
+      } finally {
+        legacyDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toContain(
+        `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}`,
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports missing traces when workflow DB exists but has no data", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe("no workflow traces recorded yet");
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("prefers existing workflow-traces.db over legacy path when both are present", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+      // Create legacy DB with traces
+      const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
+      try {
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"legacyTool\"]', 'success', 100, 'session1')",
+        );
+      } finally {
+        legacyDb.close();
+      }
+      // Create new DB with NO traces (empty)
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      // When new DB is empty but legacy has data, should report path mismatch (bug fix)
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toContain("workflow path mismatch");
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports invalid/empty tool sequences when rows exist but none are scorable", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('not-json', 'success', 100, 'session1')",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[]', 'success', 100, 'session2')",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe(
+        "workflow traces exist but all have invalid or empty tool sequences",
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports mixed invalid/empty + minCalls reason when traces include both", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"tool1\"]', 'success', 100, 'session1')",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('not-json', 'success', 100, 'session2')",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe(
+        "workflow traces include invalid or empty tool sequences and no tools meet minimum call threshold for scoring",
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports minCalls reason when rows are valid but below threshold", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"tool1\"]', 'success', 100, 'session1')",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"tool2\"]', 'success', 100, 'session2')",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe(
+        "workflow traces exist but no tools meet minimum call threshold for scoring",
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports minCalls reason when current DB has sparse valid traces even if legacy DB has data", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"tool1\"]', 'success', 100, 'session1')",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
+      try {
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"legacyTool\"]', 'success', 100, 'session1')",
+        );
+      } finally {
+        legacyDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe(
+        "workflow traces exist but no tools meet minimum call threshold for scoring",
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports mixed invalid/empty + minCalls reason when current DB has valid rows and legacy DB has data", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"tool1\"]', 'success', 100, 'session1')",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('not-json', 'success', 100, 'session2')",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
+      try {
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"legacyTool\"]', 'success', 100, 'session1')",
+        );
+      } finally {
+        legacyDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe(
+        "workflow traces include invalid or empty tool sequences and no tools meet minimum call threshold for scoring",
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports legacy path mismatch when current DB has only invalid rows", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('not-json', 'success', 100, 'session1')",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
+      try {
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[\"legacyTool\"]', 'success', 100, 'session1')",
+        );
+      } finally {
+        legacyDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toContain(
+        `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}`,
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("does not report legacy path mismatch when legacy DB also has only invalid rows", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+
+      const workflowDb = new DatabaseSync(workflowDbPath);
+      try {
+        workflowDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        workflowDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('not-json', 'success', 100, 'session1')",
+        );
+      } finally {
+        workflowDb.close();
+      }
+
+      const legacyDb = new DatabaseSync(legacyWorkflowDbPath);
+      try {
+        legacyDb.exec(
+          "CREATE TABLE IF NOT EXISTS workflow_traces (tool_sequence TEXT, outcome TEXT, duration_ms INTEGER, session_id TEXT)",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('[]', 'success', 100, 'session1')",
+        );
+        legacyDb.exec(
+          "INSERT INTO workflow_traces (tool_sequence, outcome, duration_ms, session_id) VALUES ('not-json', 'success', 100, 'session2')",
+        );
+      } finally {
+        legacyDb.close();
+      }
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe(
+        "workflow traces exist but all have invalid or empty tool sequences",
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
     });
   });
 });
