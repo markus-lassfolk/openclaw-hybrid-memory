@@ -1211,7 +1211,8 @@ export async function runReflectionRules(
   let zeroRulesReason: ReflectionRulesDiagnostics["zeroRulesReason"];
   if (stored <= 0) {
     const allCandidatesBlocked =
-      newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates + vectorStoreFailures === uniqueRules.length;
+      newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates + vectorStoreFailures ===
+      uniqueRules.length;
     if (vectorStoreFailures === uniqueRules.length) {
       // All candidates failed only at vector store
       zeroRulesReason = "vector_store_failed";
@@ -1224,7 +1225,11 @@ export async function runReflectionRules(
     } else if (allCandidatesBlocked && newRuleEmbedFailures > 0) {
       // Mixed: some embedding failures and other blocks
       zeroRulesReason = "candidates_duplicate_or_embedding_failed";
-    } else if (allCandidatesBlocked && vectorStoreFailures > 0 && (embeddingBasedDuplicates > 0 || storeLevelDuplicates > 0)) {
+    } else if (
+      allCandidatesBlocked &&
+      vectorStoreFailures > 0 &&
+      (embeddingBasedDuplicates > 0 || storeLevelDuplicates > 0)
+    ) {
       // Mixed: some vector store failures and some duplicates
       zeroRulesReason = "candidates_duplicate_or_vector_store_failed";
     } else {
