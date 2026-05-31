@@ -958,6 +958,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
+  const finalIsByteString = isByteStringSerializationError(finalError); // #1776: non-ASCII in HTTP header = config issue
   const finalIsReasoningSequence = isResponsesReasoningSequenceError(finalError); // #1034
   /** Unwraps LLMRetryError so "Request was aborted" in the cause is detected (#935, #936). */
   const finalIsTransientLlm = isAbortOrTransientLlmError(finalError);
@@ -985,6 +986,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
       !finalIs500 &&
       !finalIsOOM &&
       !finalIsContextLength && // #488: context window exceeded = config issue, not a bug
+      !finalIsByteString && // #1776: non-ASCII in HTTP header = config issue, not a bug
       !finalIsUnconfigured &&
       !finalIsTransientLlm &&
       !finalIs403 &&
@@ -1011,6 +1013,13 @@ export async function chatCompleteWithRetryDetailed(opts: {
     pendingWarnings?.add(
       "⚠️ Memory plugin: LLM input exceeds model context window. " +
         "Consider using a model with a larger context window or reducing input size. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
+    );
+  } else if (finalIsByteString) {
+    // #1776: ByteString serialization error (non-ASCII in HTTP header) — config issue, not a code bug
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM request contains non-ASCII characters in HTTP headers (API key, model name, or custom header). " +
+        "Check your provider configuration for invalid characters (e.g. copy-pasted ellipsis U+2026). " +
         "Run: openclaw hybrid-mem verify --test-llm",
     );
   } else if (finalIs500) {
