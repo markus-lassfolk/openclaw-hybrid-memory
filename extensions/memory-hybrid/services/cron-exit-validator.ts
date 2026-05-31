@@ -286,6 +286,10 @@ export function validateMaintenanceExecution(
     }
   }
 
+  for (const step of failedSteps) {
+    if (!step.failureReason && step.reason) step.failureReason = step.reason;
+  }
+
   if (logPath && failedSteps.some((s) => s.step === "audit-health")) {
     for (const step of failedSteps) {
       if (step.step !== "audit-health") continue;
