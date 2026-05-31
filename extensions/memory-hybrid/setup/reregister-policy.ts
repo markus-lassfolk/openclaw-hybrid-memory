@@ -70,7 +70,7 @@ export function canReuseDatabasesOnReregister(
   if (resolveReregisterPolicy() !== "reuse-databases") return false;
   // Reuse only after donor bootstrap has fully settled. If bootstrap is still in flight when
   // generation bumps, supersession can skip one-shot init work (vault/migration checks).
-  if (old.bootstrapSettledRef && old.bootstrapSettledRef.value !== true) return false;
+  if (!old.bootstrapSettledRef || old.bootstrapSettledRef.value !== true) return false;
   const nextSqlite = api.resolvePath(cfg.sqlitePath);
   const nextLance = api.resolvePath(cfg.lanceDbPath);
   return old.resolvedSqlitePath === nextSqlite && old.resolvedLancePath === nextLance;

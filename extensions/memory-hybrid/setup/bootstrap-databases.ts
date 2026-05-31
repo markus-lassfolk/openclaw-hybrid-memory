@@ -367,6 +367,9 @@ export function createReusedDatabaseBootstrap(
             );
             return;
           }
+          if (result.errors.length > 0) {
+            await clearMigrationFlagForRetry("credential migration completed with errors");
+          }
         } catch (e) {
           if (isBootstrapSuperseded()) {
             await clearMigrationFlagForRetry("registration superseded during migration");
