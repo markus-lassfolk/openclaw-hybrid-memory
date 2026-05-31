@@ -966,18 +966,31 @@ export async function runReflection(
             reason: "metadata-update-failure",
           });
           if (rolledBack) {
-            await restoreMergedFactVectorState({
-              context: "reflection",
-              factId: entry.id,
-              category: "pattern",
-              preMergeText,
-              preMergeVector,
-              preMergeEmbeddingModel,
-              fallbackEmbeddingModel: embeddings.modelName,
-              vectorDb,
-              factsDb,
-              logger,
-            });
+            if (preMergeVector && preMergeVector.length > 0) {
+              await restoreMergedFactVectorState({
+                context: "reflection",
+                factId: entry.id,
+                category: "pattern",
+                preMergeText,
+                preMergeVector,
+                preMergeEmbeddingModel,
+                fallbackEmbeddingModel: embeddings.modelName,
+                vectorDb,
+                factsDb,
+                logger,
+              });
+            } else {
+              try {
+                await vectorDb.delete(entry.id);
+                logger.warn(
+                  `memory-hybrid: reflection — deleted merged vector for pattern fact ${entry.id.slice(0, 8)} after metadata failure (no pre-merge vector to restore)`,
+                );
+              } catch (vecErr) {
+                logger.warn(
+                  `memory-hybrid: reflection — failed to delete merged vector for pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+                );
+              }
+            }
           }
           vectorStored = false;
           continue;
@@ -1566,18 +1579,31 @@ export async function runReflectionRules(
             reason: "metadata-update-failure",
           });
           if (rolledBack) {
-            await restoreMergedFactVectorState({
-              context: "reflect-rules",
-              factId: entry.id,
-              category: "rule",
-              preMergeText,
-              preMergeVector,
-              preMergeEmbeddingModel,
-              fallbackEmbeddingModel: embeddings.modelName,
-              vectorDb,
-              factsDb,
-              logger,
-            });
+            if (preMergeVector && preMergeVector.length > 0) {
+              await restoreMergedFactVectorState({
+                context: "reflect-rules",
+                factId: entry.id,
+                category: "rule",
+                preMergeText,
+                preMergeVector,
+                preMergeEmbeddingModel,
+                fallbackEmbeddingModel: embeddings.modelName,
+                vectorDb,
+                factsDb,
+                logger,
+              });
+            } else {
+              try {
+                await vectorDb.delete(entry.id);
+                logger.warn(
+                  `memory-hybrid: reflect-rules — deleted merged vector for rule fact ${entry.id.slice(0, 8)} after metadata failure (no pre-merge vector to restore)`,
+                );
+              } catch (vecErr) {
+                logger.warn(
+                  `memory-hybrid: reflect-rules — failed to delete merged vector for rule fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+                );
+              }
+            }
           }
           vectorStored = false;
           continue;
@@ -2116,18 +2142,31 @@ export async function runReflectionMeta(
             reason: "metadata-update-failure",
           });
           if (rolledBack) {
-            await restoreMergedFactVectorState({
-              context: "reflect-meta",
-              factId: entry.id,
-              category: "pattern",
-              preMergeText,
-              preMergeVector,
-              preMergeEmbeddingModel,
-              fallbackEmbeddingModel: embeddings.modelName,
-              vectorDb,
-              factsDb,
-              logger,
-            });
+            if (preMergeVector && preMergeVector.length > 0) {
+              await restoreMergedFactVectorState({
+                context: "reflect-meta",
+                factId: entry.id,
+                category: "pattern",
+                preMergeText,
+                preMergeVector,
+                preMergeEmbeddingModel,
+                fallbackEmbeddingModel: embeddings.modelName,
+                vectorDb,
+                factsDb,
+                logger,
+              });
+            } else {
+              try {
+                await vectorDb.delete(entry.id);
+                logger.warn(
+                  `memory-hybrid: reflect-meta — deleted merged vector for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure (no pre-merge vector to restore)`,
+                );
+              } catch (vecErr) {
+                logger.warn(
+                  `memory-hybrid: reflect-meta — failed to delete merged vector for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+                );
+              }
+            }
           }
           vectorStored = false;
           continue;
