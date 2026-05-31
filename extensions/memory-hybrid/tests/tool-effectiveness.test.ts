@@ -9,12 +9,12 @@
  *   - formatToolEffectivenessReport: output format
  */
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
-import { resolveToolEffectivenessCliDbPaths } from "../cli/cmd-feedback.js";
+import { explainToolEffectivenessNoData, resolveToolEffectivenessCliDbPaths } from "../cli/cmd-feedback.js";
 import {
   ToolEffectivenessStore,
   type ToolMetrics,
@@ -349,6 +349,41 @@ describe("resolveToolEffectivenessCliDbPaths", () => {
     expect(resolveToolEffectivenessCliDbPaths(sqlitePath)).toEqual({
       workflowDbPath: join(tmpdir(), "tool-effectiveness-cli-paths", "workflow-traces.db"),
       effectivenessDbPath: join(tmpdir(), "tool-effectiveness-cli-paths", "facts-tool-effectiveness.db"),
+    });
+  });
+
+  describe("explainToolEffectivenessNoData", () => {
+    it("reports disabled workflow tracking", () => {
+      const sqlitePath = join(tmpdir(), "tool-effectiveness-cli-paths", "facts.db");
+      const workflowDbPath = join(tmpdir(), "tool-effectiveness-cli-paths", "workflow-traces.db");
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, false)).toBe(
+        "workflow tracking is disabled (workflowTracking.enabled=false)",
+      );
+    });
+
+    it("reports path mismatch when legacy workflow DB exists", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      const legacyWorkflowDbPath = join(tmpDir, "facts-workflows.db");
+      writeFileSync(legacyWorkflowDbPath, "");
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toContain(
+        `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}`,
+      );
+
+      rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("reports missing traces when workflow DB exists but has no data", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
+      const sqlitePath = join(tmpDir, "facts.db");
+      const workflowDbPath = join(tmpDir, "workflow-traces.db");
+      writeFileSync(workflowDbPath, "");
+
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe("no workflow traces recorded yet");
+
+      rmSync(tmpDir, { recursive: true, force: true });
     });
   });
 });

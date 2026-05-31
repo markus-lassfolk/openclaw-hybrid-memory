@@ -8,7 +8,7 @@
  *   - cost-report               — show LLM cost breakdown by feature or model
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -867,6 +867,26 @@ export function resolveToolEffectivenessCliDbPaths(sqlitePath: string): {
   };
 }
 
+export function explainToolEffectivenessNoData(
+  sqlitePath: string,
+  workflowDbPath: string,
+  workflowTrackingEnabled: boolean,
+): string {
+  if (!workflowTrackingEnabled) {
+    return "workflow tracking is disabled (workflowTracking.enabled=false)";
+  }
+
+  if (!existsSync(workflowDbPath)) {
+    const legacyWorkflowDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-workflows.db");
+    if (existsSync(legacyWorkflowDbPath)) {
+      return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
+    }
+    return `workflow traces DB not found at ${workflowDbPath}`;
+  }
+
+  return "no workflow traces recorded yet";
+}
+
 /**
  * Compute and format a tool effectiveness report.
  */
@@ -885,7 +905,7 @@ export async function runToolEffectivenessForCli(
     (ctx.logger?.info ?? console.log)("memory-hybrid: tool-effectiveness — computing scores from workflow traces…");
   }
   // Derive the workflow store DB path from the sqlite path
-  const sqlitePath = cfg.sqlitePath ?? join(homedir(), ".openclaw", "memory", "memory.db");
+  const sqlitePath = ctx.resolvedSqlitePath || cfg.sqlitePath || join(homedir(), ".openclaw", "memory", "memory.db");
   const { workflowDbPath, effectivenessDbPath } = resolveToolEffectivenessCliDbPaths(sqlitePath);
 
   let effStore: ToolEffectivenessStore;
@@ -900,6 +920,13 @@ export async function runToolEffectivenessForCli(
   }
   try {
     const report = await computeToolEffectiveness(workflowDbPath, effStore, teCfg ?? {}, ctx.logger ?? {});
+    if (report.toolsScored === 0) {
+      return `No tool effectiveness data available (${explainToolEffectivenessNoData(
+        sqlitePath,
+        workflowDbPath,
+        cfg.workflowTracking?.enabled === true,
+      )}).`;
+    }
 
     // Gap 3 (#263): Generate monthly report, gated to once per calendar month
     const month = new Date().toISOString().slice(0, 7); // YYYY-MM
