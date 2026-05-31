@@ -520,7 +520,7 @@ export async function runExtractImplicitFeedbackForCli(
 
   const markPartialProgress = (
     reason: ExtractImplicitFeedbackStopReason,
-    deferredSessions = filePaths.length - progress.sessionsVisited,
+    deferredSessions = filePaths.length - progress.sessionsProcessed,
   ): void => {
     partial = true;
     partialReason = reason;
@@ -573,6 +573,8 @@ export async function runExtractImplicitFeedbackForCli(
         subsystem: "implicit-feedback",
       });
       emitProgress();
+      // BUG FIX #1: Update lastProcessedFilePath for skipped sessions so incremental cursor advances
+      lastProcessedFilePath = filePath;
       continue;
     }
 
@@ -580,6 +582,8 @@ export async function runExtractImplicitFeedbackForCli(
     if (turns.length < 3) {
       progress.sessionsTooShort++;
       emitProgress();
+      // BUG FIX #1: Update lastProcessedFilePath for skipped sessions so incremental cursor advances
+      lastProcessedFilePath = filePath;
       continue;
     }
 
@@ -589,6 +593,17 @@ export async function runExtractImplicitFeedbackForCli(
      * so counts stay accurate after earlier phases in the same file.
      */
     let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
+
+    // BUG FIX #2: Build trajectories early to check cap BEFORE phase one work (signal storage/reinforcement)
+    // This prevents duplicate phase-one side effects when trajectory cap is hit.
+    const trajectories =
+      opts.includeTrajectories !== false && !opts.dryRun && rawDb ? buildTrajectories(turns, sessionFile) : [];
+
+    // Check if trajectory cap would be exceeded by this session's trajectories BEFORE phase one work
+    if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
+      markPartialProgress("maxTrajectories");
+      break;
+    }
 
     // Phase 1: Extract implicit signals
     const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
@@ -735,21 +750,9 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    // Phase 2: Build trajectories
-    if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
+    // Phase 2: Process trajectories (already built earlier for cap check)
+    if (trajectories.length > 0 && opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
       try {
-        const trajectories = buildTrajectories(turns, sessionFile);
-
-        // BUG FIX #1: Check if trajectory cap would be exceeded by this session's trajectories.
-        // If so, break BEFORE marking the session as processed, so it will be retried in the next run.
-        const wouldExceedCap =
-          maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun;
-
-        if (wouldExceedCap) {
-          markPartialProgress("maxTrajectories");
-          break;
-        }
-
         trajectoriesBuilt += trajectories.length;
         progress.trajectoriesBuilt = trajectoriesBuilt;
         emitProgress();
