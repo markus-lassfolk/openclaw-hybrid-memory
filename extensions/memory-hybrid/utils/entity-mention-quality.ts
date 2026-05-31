@@ -117,10 +117,15 @@ function canonicalizeByKnownMap(
         normalizedSurface: normalizeModelCanonical(matchedText),
       };
     }
+    const finalNormalized = normalizedMatch ? normalizedSurface : normalizeEntityKey(surfaceText);
+    const matchedPart = normalizedMatch?.[0] || surfaceMatch?.[0] || "";
+    const isFullMatch = matchedPart.length === finalNormalized.length;
     return {
       label: rule.label,
       normalizedSurface:
-        rule.canonicalNormalized || (normalizedMatch ? normalizedSurface : normalizeEntityKey(surfaceText)),
+        rule.canonicalNormalized && (finalNormalized === rule.canonicalNormalized || isFullMatch)
+          ? rule.canonicalNormalized
+          : finalNormalized,
     };
   }
   return { label: fallbackLabel, normalizedSurface };
