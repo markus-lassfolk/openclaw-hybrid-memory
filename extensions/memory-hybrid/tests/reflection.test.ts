@@ -699,7 +699,7 @@ describe("runReflectionRules diagnostics", () => {
     expect(vectorStore).not.toHaveBeenCalled();
   });
 
-  it("rolls back merged text without deleting vector when metadata update fails and no pre-merge vector is known", async () => {
+  it("keeps merged text when metadata update fails and pre-merge vector state is unknown", async () => {
     const ruleText = "Always keep strict TypeScript settings enabled across all projects.";
     const existingRuleText = "Always keep strict TypeScript settings enabled for every project.";
     const mergedRuleText = `${existingRuleText}\n${ruleText}`;
@@ -761,7 +761,7 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.rulesStored).toBe(0);
     expect(vectorStore).toHaveBeenCalledTimes(1);
     expect(vectorDelete).not.toHaveBeenCalled();
-    expect(restoreMergedFactText).toHaveBeenCalledTimes(1);
+    expect(restoreMergedFactText).not.toHaveBeenCalled();
   });
 
   it("restores pre-merge vector after merge metadata rollback when prior vector is known", async () => {

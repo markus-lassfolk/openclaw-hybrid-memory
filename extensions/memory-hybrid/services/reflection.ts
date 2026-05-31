@@ -950,6 +950,14 @@ export async function runReflection(
         });
         if (storeResult.embeddingStale) {
           const preMergeText = resolvePreMergeText(entry.text, patternText, storeResult.preMergeText);
+          const hasPreMergeVector = Array.isArray(preMergeVector) && preMergeVector.length > 0;
+          if (!preMergeText || !hasPreMergeVector) {
+            logger.warn(
+              `memory-hybrid: reflection — metadata rollback skipped for pattern fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
+            );
+            vectorStored = false;
+            continue;
+          }
           try {
             (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
           } catch (embErr) {
@@ -1563,6 +1571,14 @@ export async function runReflectionRules(
         });
         if (storeResult.embeddingStale) {
           const preMergeText = resolvePreMergeText(entry.text, ruleText, storeResult.preMergeText);
+          const hasPreMergeVector = Array.isArray(preMergeVector) && preMergeVector.length > 0;
+          if (!preMergeText || !hasPreMergeVector) {
+            logger.warn(
+              `memory-hybrid: reflect-rules — metadata rollback skipped for rule fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
+            );
+            vectorStored = false;
+            continue;
+          }
           try {
             (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
           } catch (embErr) {
@@ -2126,6 +2142,14 @@ export async function runReflectionMeta(
         });
         if (storeResult.embeddingStale) {
           const preMergeText = resolvePreMergeText(entry.text, metaText, storeResult.preMergeText);
+          const hasPreMergeVector = Array.isArray(preMergeVector) && preMergeVector.length > 0;
+          if (!preMergeText || !hasPreMergeVector) {
+            logger.warn(
+              `memory-hybrid: reflect-meta — metadata rollback skipped for meta-pattern fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
+            );
+            vectorStored = false;
+            continue;
+          }
           try {
             (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
           } catch (embErr) {
