@@ -1007,7 +1007,7 @@ export async function runDreamCycle(
   } else {
     reflectionRulesDiagnostics = {
       modelResponseChars: 0,
-      parseSuccess: true,
+      parseSuccess: false,
       parsedCandidates: 0,
       rejectedDuplicates: 0,
       rejectedLowConfidence: 0,
