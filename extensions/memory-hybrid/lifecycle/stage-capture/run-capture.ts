@@ -532,21 +532,15 @@ export async function runCapture(
                             category,
                             id: newEntry.id,
                           });
-                          const canPersistCanonical =
-                            typeof ctx.vectorDb.isLanceDbAvailable === "function"
-                              ? ctx.vectorDb.isLanceDbAvailable()
-                              : true;
-                          if (canPersistCanonical) {
-                            persistCanonicalFactEmbedding(
-                              ctx.factsDb,
-                              newEntry.id,
-                              ctx.embeddings.modelName,
-                              mergedVector,
-                              "auto-capture-fact-embeddings",
-                              "auto-capture",
-                              api.logger.warn?.bind(api.logger),
-                            );
-                          }
+                          persistCanonicalFactEmbedding(
+                            ctx.factsDb,
+                            newEntry.id,
+                            ctx.embeddings.modelName,
+                            mergedVector,
+                            "auto-capture-fact-embeddings",
+                            "auto-capture",
+                            api.logger.warn?.bind(api.logger),
+                          );
                         } else if (vector) {
                           // `storeWithResult()` can return an existing deduped fact whose text
                           // differs from `textToStore`; keep vector content aligned to stored text.
@@ -679,19 +673,15 @@ export async function runCapture(
                   category,
                   id: storedEntry.id,
                 });
-                const canPersistCanonical =
-                  typeof ctx.vectorDb.isLanceDbAvailable === "function" ? ctx.vectorDb.isLanceDbAvailable() : true;
-                if (canPersistCanonical) {
-                  persistCanonicalFactEmbedding(
-                    ctx.factsDb,
-                    storedEntry.id,
-                    ctx.embeddings.modelName,
-                    mergedVector,
-                    "auto-capture-fact-embeddings",
-                    "auto-capture",
-                    api.logger.warn?.bind(api.logger),
-                  );
-                }
+                persistCanonicalFactEmbedding(
+                  ctx.factsDb,
+                  storedEntry.id,
+                  ctx.embeddings.modelName,
+                  mergedVector,
+                  "auto-capture-fact-embeddings",
+                  "auto-capture",
+                  api.logger.warn?.bind(api.logger),
+                );
               } else if (vector) {
                 ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
                 if (!(await ctx.vectorDb.hasDuplicate(vector))) {
@@ -989,21 +979,15 @@ export async function runCapture(
                         category: "technical",
                         id: entry.id,
                       });
-                      const canPersistCanonical =
-                        typeof ctx.vectorDb.isLanceDbAvailable === "function"
-                          ? ctx.vectorDb.isLanceDbAvailable()
-                          : true;
-                      if (canPersistCanonical) {
-                        persistCanonicalFactEmbedding(
-                          ctx.factsDb,
-                          entry.id,
-                          ctx.embeddings.modelName,
-                          mergedVector,
-                          "auto-capture-fact-embeddings",
-                          "auto-capture",
-                          api.logger.warn?.bind(api.logger),
-                        );
-                      }
+                      persistCanonicalFactEmbedding(
+                        ctx.factsDb,
+                        entry.id,
+                        ctx.embeddings.modelName,
+                        mergedVector,
+                        "auto-capture-fact-embeddings",
+                        "auto-capture",
+                        api.logger.warn?.bind(api.logger),
+                      );
                     } else {
                       const vector = await ctx.embeddings.embed(entry.text);
                       ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
