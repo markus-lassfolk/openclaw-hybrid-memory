@@ -581,31 +581,25 @@ function processEntityMentionsForFact<
   }
 
   const allAccepted = [...acceptedByKey.values()];
-  const substringFilteredCount = allAccepted.filter((m) =>
-    allAccepted.some(
+  let substringFilteredCount = 0;
+  const filteredAccepted = allAccepted.filter((m) => {
+    const isSubstring = allAccepted.some(
       (other) =>
         other !== m &&
         other.label === m.label &&
         other.normalizedSurface.length > m.normalizedSurface.length &&
         other.normalizedSurface.includes(m.normalizedSurface),
-    ),
-  ).length;
+    );
+    if (isSubstring) {
+      substringFilteredCount++;
+    }
+    return !isSubstring;
+  });
   if (substringFilteredCount > 0) {
     accepted -= substringFilteredCount;
     rejected += substringFilteredCount;
     rejectReasons.substring = (rejectReasons.substring ?? 0) + substringFilteredCount;
   }
-
-  const filteredAccepted = allAccepted.filter(
-    (m) =>
-      !allAccepted.some(
-        (other) =>
-          other !== m &&
-          other.label === m.label &&
-          other.normalizedSurface.length > m.normalizedSurface.length &&
-          other.normalizedSurface.includes(m.normalizedSurface),
-      ),
-  );
 
   return {
     accepted: filteredAccepted,
