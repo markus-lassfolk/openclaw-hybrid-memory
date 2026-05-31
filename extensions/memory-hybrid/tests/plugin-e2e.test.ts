@@ -174,7 +174,7 @@ describe("Plugin registration e2e", () => {
       registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
+    memoryHybridPlugin.register(mockApi as never);
 
     expect(mockApi.getTool("memory_store")).toBeDefined();
     expect(mockApi.getTool("memory_recall")).toBeDefined();

@@ -31,6 +31,7 @@ import {
   recordReregisterDatabaseReuse,
   recordReregisterFullTeardown,
   recordReregisterRegistration,
+  resetReregisterPolicyForTests,
   resolveReregisterPolicy,
 } from "./reregister-policy.js";
 import {
@@ -42,6 +43,7 @@ import {
   blockReloadTeardownBeforeOpen,
   drainOldBootstrap,
   drainOldRecall,
+  resetReloadTeardownChainForTests,
   schedulePluginTeardown,
   TEARDOWN_WAIT_MS,
 } from "./hybrid-memory-reload-coordinator.js";
@@ -692,3 +694,26 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
 }
 
 export { runtimeRef, shouldCapture, detectCategory, performHybridMemCliTeardown };
+
+/** Reset plugin singleton state between vitest cases (runtime, reload chain, generation). */
+export function resetPluginRegistrationStateForTests(): void {
+  const old = runtimeRef.value;
+  if (old) {
+    clearRuntimeTimers(old.timers);
+    try {
+      old.lifecycleHooksHandle?.dispose();
+    } catch {
+      /* non-fatal */
+    }
+    try {
+      old.toolRegistrationHandle?.dispose();
+    } catch {
+      /* non-fatal */
+    }
+    runtimeRef.value = null;
+  }
+  resetReloadTeardownChainForTests();
+  resetReregisterPolicyForTests();
+  getHybridMemoryRegistrationState().registrationGenerationRef.value = 0;
+  getHybridMemoryRegistrationState().toolExecutorsByName.clear();
+}
