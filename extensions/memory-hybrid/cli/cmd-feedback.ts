@@ -601,10 +601,8 @@ export async function runExtractImplicitFeedbackForCli(
 
     // Check if trajectory cap would be exceeded by this session's trajectories BEFORE phase one work
     if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
-      // BUG FIX #1: Set lastProcessedFilePath so cursor advances past this session, preventing infinite stall
-      lastProcessedFilePath = filePath;
-      // BUG FIX #2: Account for the currently visited but unprocessed session in deferred count
-      markPartialProgress("maxTrajectories", filePaths.length - progress.sessionsVisited + 1);
+      // Don't update lastProcessedFilePath - this session was not processed and must be retried
+      markPartialProgress("maxTrajectories", filePaths.length - progress.sessionsVisited);
       break;
     }
 
@@ -621,10 +619,8 @@ export async function runExtractImplicitFeedbackForCli(
 
     // Check if signal cap would be exceeded by this session's signals
     if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
-      // BUG FIX #1: Set lastProcessedFilePath so cursor advances past this session, preventing infinite stall
-      lastProcessedFilePath = filePath;
-      // BUG FIX #2: Account for the currently visited but unprocessed session in deferred count
-      markPartialProgress("maxSignals", filePaths.length - progress.sessionsVisited + 1);
+      // Don't update lastProcessedFilePath - this session was not processed and must be retried
+      markPartialProgress("maxSignals", filePaths.length - progress.sessionsVisited);
       break;
     }
 
@@ -639,6 +635,12 @@ export async function runExtractImplicitFeedbackForCli(
     progress.negativeCount = negativeCount;
     progress.trajectoriesBuilt = trajectoriesBuilt;
     emitProgress();
+
+    // Check wall clock limit after signal extraction
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock");
+      break;
+    }
 
     if (!opts.dryRun && rawDb) {
       // Store raw signals in implicit_signals table
@@ -756,6 +758,12 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
+    // Check wall clock limit after signal storage and reinforcement
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock");
+      break;
+    }
+
     // Phase 2: Process trajectories (already built earlier for cap check)
     if (trajectories.length > 0 && opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
       try {
@@ -770,6 +778,12 @@ export async function runExtractImplicitFeedbackForCli(
         `);
         for (const traj of trajectories) {
           try {
+            // Check wall clock limit before processing each trajectory (especially before LLM analysis)
+            if (wallClockLimitReached()) {
+              markPartialProgress("maxWallClock");
+              break;
+            }
+
             // If LLM analysis is enabled, use it to enhance lessons
             if (implicitCfg.trajectoryLLMAnalysis) {
               try {
@@ -886,6 +900,11 @@ export async function runExtractImplicitFeedbackForCli(
           subsystem: "implicit-feedback",
         });
       }
+    }
+
+    // Check if wall clock limit was hit during trajectory processing
+    if (partial && partialReason === "maxWallClock") {
+      break;
     }
 
     // Mark session as processed after both Phase 1 (signal extraction) and Phase 2 (trajectories) complete.
