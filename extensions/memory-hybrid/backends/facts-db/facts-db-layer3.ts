@@ -53,10 +53,14 @@ import {
 } from "./entity-autolink.js";
 import {
   type EntityEnrichmentBacklogSummary,
+  type EntityMentionsAuditSummary,
+  type EntityMentionsCleanupSummary,
   type ContactRow,
   type ListFactsNeedingEnrichmentOptions,
   type OrganizationRow,
   getEntityEnrichmentBacklogSummary as entityLayerGetEntityEnrichmentBacklogSummary,
+  auditEntityMentions as entityLayerAuditEntityMentions,
+  cleanupEntityMentions as entityLayerCleanupEntityMentions,
   listContactsByNamePrefix as entityLayerListContactsByNamePrefix,
   listContactsForOrg as entityLayerListContactsForOrg,
   listFactIdsForOrg as entityLayerListFactIdsForOrg,
@@ -558,5 +562,16 @@ export class FactsDB extends FactsDBLayer2 {
   /** Aggregate pending enrichment backlog by tier for progress reporting and catch-up planning. */
   getEntityEnrichmentBacklogSummary(minTextLen = 24): EntityEnrichmentBacklogSummary {
     return entityLayerGetEntityEnrichmentBacklogSummary(this.liveDb, minTextLen);
+  }
+
+  auditEntityMentions(limit = 500): EntityMentionsAuditSummary {
+    return entityLayerAuditEntityMentions(this.liveDb, limit);
+  }
+
+  cleanupEntityMentions(opts: { limit?: number; apply?: boolean } = {}): EntityMentionsCleanupSummary {
+    return entityLayerCleanupEntityMentions(this.liveDb, {
+      limit: opts.limit ?? 500,
+      apply: opts.apply === true,
+    });
   }
 }

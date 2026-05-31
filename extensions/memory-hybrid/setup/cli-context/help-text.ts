@@ -65,7 +65,8 @@ Commands by category:
     reflect-meta         Extract meta-patterns
     classify             Reclassify facts with LLM
     build-languages      Build language keywords for self-correction
-    enrich-entities      Backfill PERSON/ORG extraction for facts missing NER rows
+    enrich-entities      Backfill typed entity extraction for facts missing NER rows
+    entity-mentions audit|cleanup   Audit/cleanup mention quality and duplicates
 
   Dedup & consolidation
     find-duplicates      Find near-duplicate facts (--threshold)

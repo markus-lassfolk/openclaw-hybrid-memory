@@ -450,16 +450,32 @@ describe("active-task-checkpoint", () => {
     );
     expect(baseline.ok).toBe(true);
 
-    for (let i = 0; i < 8105; i++) {
-      factsDb.store({
-        text: `Noise task status ${i}`,
-        category: "project",
-        importance: 0.2,
-        entity: `noise-${i}`,
-        key: "status",
-        value: "in_progress",
-        source: "conversation",
-      });
+    const noiseCount = 8105;
+    const raw = factsDb.getRawDb();
+    const baseCreatedAt = Math.floor(Date.now() / 1000) + 1;
+    const insert = raw.prepare(
+      `INSERT INTO facts (id, text, category, importance, entity, key, value, source, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    raw.exec("BEGIN");
+    try {
+      for (let i = 0; i < noiseCount; i += 1) {
+        insert.run(
+          `active-task-noise-${i}`,
+          `Noise task status ${i}`,
+          "project",
+          0.2,
+          `noise-${i}`,
+          "status",
+          "in_progress",
+          "conversation",
+          baseCreatedAt + i,
+        );
+      }
+      raw.exec("COMMIT");
+    } catch (err) {
+      raw.exec("ROLLBACK");
+      throw err;
     }
 
     const followup = await runActiveTaskCheckpoint(

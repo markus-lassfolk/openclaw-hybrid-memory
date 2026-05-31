@@ -6,7 +6,8 @@
  */
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
+import "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";

@@ -42,7 +42,7 @@ describe("hybrid-mem help invocations", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("openclaw hybrid-mem --help registers CLI only (no DB bootstrap, no tools/services)", () => {
+  it("openclaw hybrid-mem --help registers CLI only (no DB bootstrap, no tools/services)", async () => {
     process.argv = ["node", "openclaw", "hybrid-mem", "--help"];
     const api = makeMockApi();
     const sqlitePath = join(tmpDir, "facts.db");
@@ -59,14 +59,14 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
+    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
     expect(existsSync(sqlitePath)).toBe(false);
     expect(api.registerCli).toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalled();
     expect(api.registerService).not.toHaveBeenCalled();
   });
 
-  it("openclaw hybrid-mem verify --help registers CLI only (no DB bootstrap, no tools/services)", () => {
+  it("openclaw hybrid-mem verify --help registers CLI only (no DB bootstrap, no tools/services)", async () => {
     process.argv = ["node", "openclaw", "hybrid-mem", "verify", "--help"];
     const api = makeMockApi();
     const sqlitePath = join(tmpDir, "facts.db");
@@ -83,14 +83,14 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
+    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
     expect(existsSync(sqlitePath)).toBe(false);
     expect(api.registerCli).toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalled();
     expect(api.registerService).not.toHaveBeenCalled();
   });
 
-  it("openclaw hybrid-mem store -- --help uses full registration (not help fast-path)", () => {
+  it("openclaw hybrid-mem store -- --help uses full registration (not help fast-path)", async () => {
     process.argv = ["node", "openclaw", "hybrid-mem", "store", "--", "--help"];
     const api = makeMockApi();
     const sqlitePath = join(tmpDir, "facts.db");
@@ -107,12 +107,12 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
+    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
     expect(api.registerTool).toHaveBeenCalled();
     expect(api.registerService).toHaveBeenCalled();
   });
 
-  it("help is deterministic even with invalid/unresolvable plugin config", () => {
+  it("help is deterministic even with invalid/unresolvable plugin config", async () => {
     process.argv = ["node", "openclaw", "hybrid-mem", "--help"];
     const api = makeMockApi();
     const mockApi = {
@@ -124,7 +124,7 @@ describe("hybrid-mem help invocations", () => {
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
 
-    expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
+    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
     expect(api.registerCli).toHaveBeenCalled();
     expect(api.registerTool).not.toHaveBeenCalled();
     expect(api.registerService).not.toHaveBeenCalled();

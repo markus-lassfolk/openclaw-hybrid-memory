@@ -83,6 +83,50 @@ describe("registerLifecycleHooks", () => {
     expect(handle.dispose).toBeTypeOf("function");
   });
 
+  it("throws when lifecycle generation ref is missing", () => {
+    const lifecycleCtx = buildGuardTestLifecycleContext(tmpDir, factsDb);
+    const cfg = buildGuardTestConfig(tmpDir);
+    const api = {
+      on: vi.fn(),
+      logger: { info: vi.fn(), warn: vi.fn(), debug: vi.fn(), error: vi.fn() },
+      context: { sessionId: "e2e-session", agentId: "e2e-agent" },
+    };
+
+    const pluginApi = {
+      ...lifecycleCtx,
+      cfg,
+      embeddingRegistry: null,
+      credentialsDb: null,
+      aliasDb: null,
+      wal: null,
+      proposalsDb: null,
+      eventLog: null,
+      narrativesDb: null,
+      workflowStore: null,
+      issueStore: null,
+      crystallizationStore: null,
+      toolProposalStore: null,
+      verificationStore: null,
+      variantQueue: null,
+      pythonBridge: null,
+      apitapStore: null,
+      auditStore: null,
+      agentHealthStore: null,
+      provenanceService: null,
+      timers: { proposalsPruneTimer: { value: null } },
+      buildToolScopeFilter: () => undefined,
+      runReflection: vi.fn(),
+      runReflectionRules: vi.fn(),
+      runReflectionMeta: vi.fn(),
+      registrationGeneration: 1,
+    };
+
+    expect(() => registerLifecycleHooks(pluginApi as never, api as never)).toThrow(
+      "currentRegistrationGenerationRef is required for safe hook registration but was not provided",
+    );
+    expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("lifecycle generation ref missing"));
+  });
+
   it("stale generation hooks no-op and dispose unsubscribes all handlers", async () => {
     const lifecycleCtx = buildGuardTestLifecycleContext(tmpDir, factsDb);
     const cfg = buildGuardTestConfig(tmpDir);
