@@ -583,6 +583,122 @@ describe("implicit feedback routing — cleanup progress reporting", () => {
       }
     });
 
+    it("resumes capped incremental backlog outside the moving day window", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-10T00:00:00.000Z"));
+        const db = makeDb(capsTmpDir);
+        writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+        writePositiveSession(capsSessionsDir, "2026-01-01-b.jsonl");
+        const oldMtimeA = new Date("2026-01-01T00:00:00.000Z");
+        const oldMtimeB = new Date("2026-01-01T00:00:01.000Z");
+        utimesSync(join(capsSessionsDir, "2026-01-01-a.jsonl"), oldMtimeA, oldMtimeA);
+        utimesSync(join(capsSessionsDir, "2026-01-01-b.jsonl"), oldMtimeB, oldMtimeB);
+
+        db.updateScanCursor("extract-implicit-feedback", oldMtimeA.getTime(), 1, "2026-01-01-a.jsonl");
+
+        const ctx = makeCtx(db, capsSessionsDir, {
+          feedToSelfCorrection: false,
+          maxSessionsPerRun: 1,
+        });
+
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 3,
+          dryRun: false,
+          includeTrajectories: false,
+          includeClosedLoop: false,
+        });
+
+        expect(result.sessionsScanned).toBe(1);
+        expect(result.sessionsProcessed).toBe(1);
+        expect(db.getScanCursor("extract-implicit-feedback")?.lastSessionFile).toBe("2026-01-01-b.jsonl");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not reprocess same-mtime peers when a legacy cursor has no filename", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+        const db = makeDb(capsTmpDir);
+        writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+        writePositiveSession(capsSessionsDir, "2026-01-01-b.jsonl");
+        const sharedMtime = new Date("2026-01-01T00:00:00.000Z");
+        utimesSync(join(capsSessionsDir, "2026-01-01-a.jsonl"), sharedMtime, sharedMtime);
+        utimesSync(join(capsSessionsDir, "2026-01-01-b.jsonl"), sharedMtime, sharedMtime);
+        db.updateScanCursor("extract-implicit-feedback", sharedMtime.getTime(), 1);
+
+        const ctx = makeCtx(db, capsSessionsDir, {
+          feedToSelfCorrection: false,
+          maxSessionsPerRun: 10,
+        });
+
+        const result = await runExtractImplicitFeedbackForCli(ctx, {
+          days: 365,
+          dryRun: false,
+          includeTrajectories: false,
+          includeClosedLoop: false,
+        });
+
+        expect(result.sessionsScanned).toBe(0);
+        expect(result.sessionsProcessed).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("counts the current session as deferred when a cap stops before processing it", async () => {
+      const db = makeDb(capsTmpDir);
+      writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");
+      writeNegativeSession(capsSessionsDir, "2026-01-01-b.jsonl");
+
+      const ctx = makeCtx(db, capsSessionsDir, {
+        minConfidence: 0.0,
+        feedToReinforcement: false,
+        feedToSelfCorrection: false,
+        maxSignalsPerRun: 2,
+      });
+
+      const result = await runExtractImplicitFeedbackForCli(ctx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+
+      expect(result.sessionsProcessed).toBe(1);
+      expect(result.sessionsVisited).toBe(2);
+      expect(result.sessionsDeferred).toBe(1);
+      expect(result.backlogSessionsEstimate).toBe(1);
+      expect(db.getScanCursor("extract-implicit-feedback")?.lastSessionFile).toBe("2026-01-01-a.jsonl");
+    });
+
+    it("processes one oversized session instead of stalling on per-run caps", async () => {
+      const db = makeDb(capsTmpDir);
+      writeNegativeSession(capsSessionsDir, "2026-01-01-oversized.jsonl");
+
+      const ctx = makeCtx(db, capsSessionsDir, {
+        minConfidence: 0.0,
+        feedToReinforcement: false,
+        feedToSelfCorrection: false,
+        maxSignalsPerRun: 1,
+      });
+
+      const result = await runExtractImplicitFeedbackForCli(ctx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+
+      expect(result.signalsExtracted).toBeGreaterThan(1);
+      expect(result.sessionsProcessed).toBe(1);
+      expect(result.sessionsDeferred).toBe(0);
+      expect(result.partial).toBe(false);
+      expect(db.getScanCursor("extract-implicit-feedback")?.lastSessionFile).toBe("2026-01-01-oversized.jsonl");
+    });
+
     it("reports partial healthy progress and backlog estimates when a signal cap defers remaining sessions", async () => {
       const db = makeDb(capsTmpDir);
       writePositiveSession(capsSessionsDir, "2026-01-01-a.jsonl");

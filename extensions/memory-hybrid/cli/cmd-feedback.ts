@@ -380,8 +380,11 @@ export async function runExtractImplicitFeedbackForCli(
   // Determine which files to scan based on full flag and cursor
   let filePaths: string[];
   if (!opts.full && cursor && cursor.lastSessionTs > 0) {
-    // Incremental mode: only process files after the last cursor position
-    const allFiles = getSessionFilePathsSince(sessionDir, days);
+    // Incremental mode: resume from the stored cursor, not the moving day window.
+    // A capped backlog may take longer than `days` to drain; using the day window
+    // first would permanently strand old-but-unprocessed sessions after the cursor.
+    const cursorFloor = Math.max(0, cursor.lastSessionTs - 1);
+    const allFiles = getSessionFilePathsSince(sessionDir, 0, cursorFloor);
     filePaths = allFiles.filter((path) => {
       const stat = statSync(path);
       const mtime = stat.mtimeMs;
@@ -393,8 +396,10 @@ export async function runExtractImplicitFeedbackForCli(
         if (cursor.lastSessionFile) {
           return fname.localeCompare(cursor.lastSessionFile) > 0;
         }
-        // No filename: reprocess entire mtime tier to avoid stuck backlog
-        return true;
+        // Legacy cursors without a filename cannot safely order peers in the same
+        // mtime tier. Treat that tier as already covered to avoid re-routing
+        // signals/reinforcement for files that may already have been processed.
+        return false;
       }
       return true;
     });
@@ -538,6 +543,8 @@ export async function runExtractImplicitFeedbackForCli(
   const wallClockLimitReached = (): boolean =>
     maxWallClockSeconds > 0 && (Date.now() - startTimeMs) / 1000 >= maxWallClockSeconds;
 
+  const deferredIncludingCurrentSession = (): number => Math.max(0, filePaths.length - progress.sessionsVisited + 1);
+
   for (const filePath of filePaths) {
     // Check if we've hit any caps
     if (wallClockLimitReached()) {
@@ -606,16 +613,20 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    // BUG FIX #1: Check if signal or trajectory cap would be exceeded by this session.
-    // If so, update cursor so this session can be skipped in the next run.
-    if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
-      lastProcessedFilePath = filePath;
-      markPartialProgress("maxSignals", filePaths.length - progress.sessionsVisited);
+    // If adding this session would exceed a per-run cap after prior work, defer the
+    // current session without advancing the cursor past it. If this single session
+    // alone exceeds the cap, process it anyway so one oversized transcript cannot
+    // stall the incremental cursor forever.
+    if (maxSignalsPerRun > 0 && totalSignals > 0 && totalSignals + signals.length > maxSignalsPerRun) {
+      markPartialProgress("maxSignals", deferredIncludingCurrentSession());
       break;
     }
-    if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
-      lastProcessedFilePath = filePath;
-      markPartialProgress("maxTrajectories", filePaths.length - progress.sessionsVisited);
+    if (
+      maxTrajectoriesPerRun > 0 &&
+      trajectoriesBuilt > 0 &&
+      trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun
+    ) {
+      markPartialProgress("maxTrajectories", deferredIncludingCurrentSession());
       break;
     }
 
@@ -679,6 +690,10 @@ export async function runExtractImplicitFeedbackForCli(
       const trackContext = cfg.reinforcement?.trackContext !== false;
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const sig of positiveSignals) {
+        if (wallClockLimitReached()) {
+          markPartialProgress("maxWallClock");
+          break;
+        }
         try {
           const searchQuery = sig.context.agentMessage || sig.context.userMessage;
           const matches = factsDb.search(searchQuery, 3);
@@ -711,6 +726,10 @@ export async function runExtractImplicitFeedbackForCli(
       const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
+        if (wallClockLimitReached()) {
+          markPartialProgress("maxWallClock");
+          break;
+        }
         try {
           lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
           const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
@@ -797,6 +816,10 @@ export async function runExtractImplicitFeedbackForCli(
                   });
                 };
                 const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+                if (wallClockLimitReached()) {
+                  markPartialProgress("maxWallClock");
+                  break;
+                }
                 if (llmAnalysis) {
                   // Replace heuristic lessons with LLM-produced lesson and patterns
                   traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
@@ -906,6 +929,7 @@ export async function runExtractImplicitFeedbackForCli(
     // This ensures the cursor only advances past sessions that have been fully processed.
     progress.sessionsProcessed++;
     lastProcessedFilePath = filePath;
+    emitProgress();
   }
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
