@@ -58,13 +58,13 @@ describe("Comprehensive e2e — full plugin register()", () => {
     vi.clearAllMocks();
   });
 
-  function register(overrides: Record<string, unknown> = {}): void {
-    registerFullPlugin(api, getFullStackConfig(tmpDir, overrides));
+  async function register(overrides: Record<string, unknown> = {}): Promise<void> {
+    await registerFullPlugin(api, getFullStackConfig(tmpDir, overrides));
   }
 
   describe("registration stack", () => {
-    it("bootstraps databases, tools, CLI, service, and lifecycle hooks", () => {
-      register();
+    it("bootstraps databases, tools, CLI, service, and lifecycle hooks", async () => {
+      await register();
       assertFullStackPaths(tmpDir);
       expect(api.getTool("memory_store")).toBeDefined();
       expect(api.getTool("memory_recall")).toBeDefined();
@@ -79,7 +79,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("survives hot reload (second register closes prior runtime)", async () => {
-      register();
+      await register();
       const store = api.getTool("memory_store")!;
       const stored = (await store.execute("c1", {
         text: "Survives plugin hot reload",
@@ -89,7 +89,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
       const factId = stored.details?.id;
       expect(factId).toBeDefined();
 
-      register();
+      await register();
       const recall = api.getTool("memory_recall")!;
       const recalled = (await recall.execute("c2", { id: factId })) as {
         details?: { count: number; memories?: { text: string }[] };
@@ -99,14 +99,14 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("service start() and stop() complete without throwing", async () => {
-      register();
+      await register();
       await expect(api.startService()).resolves.toBeUndefined();
       await expect(api.stopService()).resolves.toBeUndefined();
     });
   });
 
   describe("tool round-trip (registered tools + real backends)", () => {
-    beforeEach(() => register());
+    beforeEach(async () => await register());
 
     it("memory_store → memory_recall by id → memory_forget", async () => {
       const text = "Comprehensive e2e round-trip fact 10.0.0.99";
@@ -149,7 +149,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
   describe("simulated agent turn (lifecycle hooks from register)", () => {
     it("agent_end allows benign finalization messages", async () => {
-      register();
+      await register();
       const handlers = api.hookHandlers("agent_end");
       expect(handlers.length).toBeGreaterThan(0);
 
@@ -159,14 +159,14 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("agent_end allows when CI is pending and project ledger is empty (#1479)", async () => {
-      register();
+      await register();
       const handler = api.hookHandlers("agent_end")[0]!;
       await expect(handler({ messages: pendingCiTurnMessages(), success: true }, HOOK_CTX)).resolves.toBeUndefined();
       expect(api.logger.warn).not.toHaveBeenCalled();
     });
 
     it("after_compaction injects post-compaction memory summary for stored facts", async () => {
-      register({ verbosity: "normal", autoRecall: { enabled: true, authFailure: { enabled: false } } });
+      await register({ verbosity: "normal", autoRecall: { enabled: true, authFailure: { enabled: false } } });
       await api.getTool("memory_store")?.execute("c1", {
         text: "Fact retained across compaction for comprehensive e2e",
         category: "fact",
@@ -185,7 +185,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
   describe("persistence and verify boundaries", () => {
     it("facts persist on disk and can be read from a new FactsDB connection", async () => {
-      register();
+      await register();
       const text = "Persisted on disk for secondary connection read";
       const id = (
         (await api.getTool("memory_store")?.execute("c1", {
@@ -206,7 +206,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("runVerifyForCli reconcile reports in-sync after store + vector write", async () => {
-      register();
+      await register();
       const sqlitePath = join(tmpDir, "facts.db");
       const lancePath = join(tmpDir, "lancedb");
       const stored = (
