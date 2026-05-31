@@ -469,4 +469,31 @@ describe("FactsDB entity layer persistence", () => {
     expect(audit.rejected).toBe(cleanupDryRun.rejected);
     expect(audit.rejectReasons.substring).toBe(1);
   });
+
+  it("does not reject substring mentions when offsets do not overlap", () => {
+    const fact = db.store({
+      text: "GitHub and Hub are separate mentions here.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("g", fact.id, "ORG", "GitHub", "github", 0, 6, 0.95, "eng", "llm", now);
+    ins.run("h", fact.id, "SERVICE", "Hub", "hub", 11, 14, 0.9, "eng", "llm", now + 1);
+
+    const audit = db.auditEntityMentions(50);
+    const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+
+    expect(audit.accepted).toBe(cleanupDryRun.accepted);
+    expect(audit.rejected).toBe(cleanupDryRun.rejected);
+    expect(audit.rejectReasons.substring ?? 0).toBe(0);
+  });
 });

@@ -545,7 +545,6 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           },
         ),
       );
-
   }
 
   if (runDreamCycle) {

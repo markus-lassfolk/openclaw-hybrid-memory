@@ -48,10 +48,10 @@ const GENERIC_TERMS = new Set([
   "fact",
 ]);
 
-const MODEL_VERSION =
-  "\\d+[a-z]?(?:\\.\\d+[a-z]?)*(?:[-\\s](?:mini|pro|plus|turbo|ultra|flash|preview|vision|instruct|sonnet|opus|haiku)\\b)?";
+const MODEL_SUFFIX = "mini|pro|plus|turbo|ultra|flash|preview|vision|instruct|sonnet|opus|haiku|codex|nano";
+const MODEL_VERSION = `\\d+[a-z]?(?:\\.\\d+[a-z]?)*(?:[-\\s](?:${MODEL_SUFFIX})\\b)?`;
 const MODEL_MATCHER = new RegExp(
-  `\\b(gpt[-\\s]?${MODEL_VERSION}|claude[-\\s]?${MODEL_VERSION}|gemini[-\\s]?${MODEL_VERSION}|minimax[-\\s]?${MODEL_VERSION}|o[1-4](?:[-\\s](?:mini|pro|plus|turbo|ultra|flash|preview|vision)\\b)?|(gpt|claude|gemini|minimax|sonnet|opus)[-\\s](pro|plus|turbo|ultra|flash|preview|vision|instruct))\\b`,
+  `\\b(gpt[-\\s]?${MODEL_VERSION}|claude[-\\s]?${MODEL_VERSION}|gemini[-\\s]?${MODEL_VERSION}|minimax[-\\s]?${MODEL_VERSION}|o(?:1|3|4)(?:[-\\s](?:mini|pro|plus|turbo|ultra|flash|preview|vision)\\b)?|(gpt|claude|gemini|minimax|sonnet|opus|haiku|codex)[-\\s](pro|plus|turbo|ultra|flash|preview|vision|instruct|mini|nano))\\b`,
   "i",
 );
 

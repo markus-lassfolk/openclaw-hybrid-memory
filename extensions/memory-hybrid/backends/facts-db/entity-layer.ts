@@ -529,7 +529,14 @@ type EntityMentionProcessingResult<T = void> = {
 };
 
 function processEntityMentionsForFact<
-  T extends { label: string; surface_text: string; normalized_surface: string; confidence: number },
+  T extends {
+    label: string;
+    surface_text: string;
+    normalized_surface: string;
+    confidence: number;
+    start_offset: number;
+    end_offset: number;
+  },
 >(rows: T[]): EntityMentionProcessingResult<T> {
   const acceptedByKey = new Map<string, ProcessedEntityMention<T>>();
   let rowsScanned = 0;

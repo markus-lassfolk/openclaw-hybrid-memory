@@ -97,4 +97,29 @@ describe("canonicalizeEntityMention", () => {
       }),
     ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "o1-pro" });
   });
+
+  it("preserves codex suffixes in GPT model canonicalization", () => {
+    expect(
+      canonicalizeEntityMention({
+        label: "ORG",
+        surfaceText: "gpt-5-codex",
+        confidence: 0.9,
+      }),
+    ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "gpt-5-codex" });
+    expect(
+      canonicalizeEntityMention({
+        label: "ORG",
+        surfaceText: "gpt-5.3-codex",
+        confidence: 0.9,
+      }),
+    ).toMatchObject({ accepted: true, label: "MODEL", normalizedSurface: "gpt-5.3-codex" });
+  });
+
+  it("does not force non-model o2 mentions into MODEL", () => {
+    expect(canonicalizeEntityMention({ label: "ORG", surfaceText: "O2 Arena", confidence: 0.9 })).toMatchObject({
+      accepted: true,
+      label: "ORG",
+      normalizedSurface: "o2 arena",
+    });
+  });
 });
