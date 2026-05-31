@@ -730,36 +730,30 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    // Mark session as processed after Phase 1 (signal extraction) completes
-    // This ensures that even if we break early due to trajectory cap in Phase 2,
-    // the session won't be reprocessed and duplicate signals won't be extracted
-    progress.sessionsProcessed++;
-    lastProcessedFilePath = filePath;
-
     // Phase 2: Build trajectories
     if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
       try {
         const trajectories = buildTrajectories(turns, sessionFile);
 
-        // Check if trajectory cap would be exceeded by this session's trajectories
-        if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
-          markPartialProgress("maxTrajectories");
-          break;
-        }
+        // Check if trajectory cap would be exceeded by this session's trajectories.
+        // If so, skip trajectory storage for this session but still mark it processed,
+        // then stop processing additional sessions.
+        const wouldExceedCap = maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun;
+        
+        if (!wouldExceedCap) {
+          trajectoriesBuilt += trajectories.length;
+          progress.trajectoriesBuilt = trajectoriesBuilt;
+          emitProgress();
 
-        trajectoriesBuilt += trajectories.length;
-        progress.trajectoriesBuilt = trajectoriesBuilt;
-        emitProgress();
-
-        const insertTraj = rawDb.prepare(`
-          INSERT OR REPLACE INTO feedback_trajectories
-            (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-        for (const traj of trajectories) {
-          try {
-            // If LLM analysis is enabled, use it to enhance lessons
-            if (implicitCfg.trajectoryLLMAnalysis) {
+          const insertTraj = rawDb.prepare(`
+            INSERT OR REPLACE INTO feedback_trajectories
+              (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+          for (const traj of trajectories) {
+            try {
+              // If LLM analysis is enabled, use it to enhance lessons
+              if (implicitCfg.trajectoryLLMAnalysis) {
               try {
                 const prompt = loadPrompt("trajectory-analyze");
                 const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
@@ -859,13 +853,23 @@ export async function runExtractImplicitFeedbackForCli(
                 });
               }
             }
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              operation: "runExtractImplicitFeedbackForCli:insert-trajectory",
-              severity: "info",
-              subsystem: "implicit-feedback",
-            });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: "runExtractImplicitFeedbackForCli:insert-trajectory",
+                severity: "info",
+                subsystem: "implicit-feedback",
+              });
+            }
           }
+        }
+        
+        // If we skipped trajectories due to cap, mark partial progress and break after marking session processed
+        if (wouldExceedCap) {
+          // Mark session as processed first to avoid re-extracting signals
+          progress.sessionsProcessed++;
+          lastProcessedFilePath = filePath;
+          markPartialProgress("maxTrajectories");
+          break;
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -875,6 +879,11 @@ export async function runExtractImplicitFeedbackForCli(
         });
       }
     }
+
+    // Mark session as processed after both Phase 1 (signal extraction) and Phase 2 (trajectories) complete.
+    // This ensures the cursor only advances past sessions that have been fully processed.
+    progress.sessionsProcessed++;
+    lastProcessedFilePath = filePath;
   }
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
