@@ -685,6 +685,8 @@ export async function runReflection(
           subsystem: "reflection",
         });
       }
+      // Increment stored counter even on re-embed failure to reflect SQLite merge
+      stored++;
       continue;
     }
     try {
@@ -1083,6 +1085,8 @@ export async function runReflectionRules(
           subsystem: "reflection",
         });
       }
+      // Increment stored counter even on re-embed failure to reflect SQLite merge
+      stored++;
       continue;
     }
     try {
@@ -1415,6 +1419,8 @@ export async function runReflectionMeta(
           subsystem: "reflection",
         });
       }
+      // Increment stored counter even on re-embed failure to reflect SQLite merge
+      stored++;
       continue;
     }
     try {

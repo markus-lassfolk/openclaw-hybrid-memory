@@ -990,12 +990,36 @@ export async function runDreamCycle(
       };
     }
     stageReflectRules.complete(`rulesStored=${rulesGenerated}`);
-  } else if (!enableReflectionRules && v) {
-    logger.info("memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)");
-  } else if (v) {
-    logger.info(
-      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
-    );
+  } else if (!enableReflectionRules) {
+    reflectionRulesDiagnostics = {
+      modelResponseChars: 0,
+      parseSuccess: false,
+      parsedCandidates: 0,
+      rejectedDuplicates: 0,
+      rejectedLowConfidence: 0,
+      stored: 0,
+      zeroRulesReason: "stage_disabled",
+      status: "ok",
+    };
+    if (v) {
+      logger.info("memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)");
+    }
+  } else {
+    reflectionRulesDiagnostics = {
+      modelResponseChars: 0,
+      parseSuccess: false,
+      parsedCandidates: 0,
+      rejectedDuplicates: 0,
+      rejectedLowConfidence: 0,
+      stored: 0,
+      zeroRulesReason: "insufficient_patterns",
+      status: "ok",
+    };
+    if (v) {
+      logger.info(
+        `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
+      );
+    }
   }
 
   // ── Stage 5: Refresh memory awareness index ───────────────────────────────
