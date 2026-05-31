@@ -210,17 +210,21 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   const old = runtimeRef.value;
 
   let cfg: HybridMemoryConfig;
+  let parsedCfgSnapshot: HybridMemoryConfig;
   try {
     const rawPc = api.pluginConfig;
-    const toParse =
-      rawPc && typeof rawPc === "object" && !Array.isArray(rawPc)
-        ? (() => {
-            const clone = shallowClonePluginConfigForGatewayMerge(rawPc as Record<string, unknown>);
-            applyGatewayEmbeddingInheritanceBeforeParse(clone, api);
-            return clone;
-          })()
-        : rawPc;
-    cfg = hybridConfigSchema.parse(toParse);
+    const buildConfigToParse = (): unknown => {
+      if (rawPc && typeof rawPc === "object" && !Array.isArray(rawPc)) {
+        const clone = shallowClonePluginConfigForGatewayMerge(rawPc as Record<string, unknown>);
+        applyGatewayEmbeddingInheritanceBeforeParse(clone, api);
+        return clone;
+      }
+      return rawPc;
+    };
+    cfg = hybridConfigSchema.parse(buildConfigToParse());
+    // Re-parse from raw plugin config so snapshot matches a fresh register() parse (structuredClone
+    // drops non-enumerable fields such as credentials.encryptionKey).
+    parsedCfgSnapshot = hybridConfigSchema.parse(buildConfigToParse());
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -228,7 +232,6 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     });
     throw err;
   }
-  const parsedCfgSnapshot = structuredClone(cfg);
 
   const registrationGeneration = registrationGenerationRef.value + 1;
   registrationGenerationRef.value = registrationGeneration;
