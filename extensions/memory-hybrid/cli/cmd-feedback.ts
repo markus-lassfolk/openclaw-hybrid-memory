@@ -540,7 +540,9 @@ export async function runExtractImplicitFeedbackForCli(
       markPartialProgress("maxWallClock");
       break;
     }
-    if (maxSessionsPerRun > 0 && progress.sessionsProcessed >= maxSessionsPerRun) {
+    // BUG FIX #2: Check against sessionsVisited instead of sessionsProcessed
+    // to ensure the cap includes all visited sessions (read errors, too-short transcripts, etc.)
+    if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
       markPartialProgress("maxSessions");
       break;
     }
@@ -735,25 +737,29 @@ export async function runExtractImplicitFeedbackForCli(
       try {
         const trajectories = buildTrajectories(turns, sessionFile);
 
-        // Check if trajectory cap would be exceeded by this session's trajectories.
-        // If so, skip trajectory storage for this session but still mark it processed,
-        // then stop processing additional sessions.
-        const wouldExceedCap = maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun;
-        
-        if (!wouldExceedCap) {
-          trajectoriesBuilt += trajectories.length;
-          progress.trajectoriesBuilt = trajectoriesBuilt;
-          emitProgress();
+        // BUG FIX #1: Check if trajectory cap would be exceeded by this session's trajectories.
+        // If so, break BEFORE marking the session as processed, so it will be retried in the next run.
+        const wouldExceedCap =
+          maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun;
 
-          const insertTraj = rawDb.prepare(`
-            INSERT OR REPLACE INTO feedback_trajectories
-              (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          `);
-          for (const traj of trajectories) {
-            try {
-              // If LLM analysis is enabled, use it to enhance lessons
-              if (implicitCfg.trajectoryLLMAnalysis) {
+        if (wouldExceedCap) {
+          markPartialProgress("maxTrajectories");
+          break;
+        }
+
+        trajectoriesBuilt += trajectories.length;
+        progress.trajectoriesBuilt = trajectoriesBuilt;
+        emitProgress();
+
+        const insertTraj = rawDb.prepare(`
+          INSERT OR REPLACE INTO feedback_trajectories
+            (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const traj of trajectories) {
+          try {
+            // If LLM analysis is enabled, use it to enhance lessons
+            if (implicitCfg.trajectoryLLMAnalysis) {
               try {
                 const prompt = loadPrompt("trajectory-analyze");
                 const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
@@ -853,23 +859,13 @@ export async function runExtractImplicitFeedbackForCli(
                 });
               }
             }
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "runExtractImplicitFeedbackForCli:insert-trajectory",
-                severity: "info",
-                subsystem: "implicit-feedback",
-              });
-            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "runExtractImplicitFeedbackForCli:insert-trajectory",
+              severity: "info",
+              subsystem: "implicit-feedback",
+            });
           }
-        }
-        
-        // If we skipped trajectories due to cap, mark partial progress and break after marking session processed
-        if (wouldExceedCap) {
-          // Mark session as processed first to avoid re-extracting signals
-          progress.sessionsProcessed++;
-          lastProcessedFilePath = filePath;
-          markPartialProgress("maxTrajectories");
-          break;
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
