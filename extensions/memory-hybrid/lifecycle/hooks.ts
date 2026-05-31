@@ -70,7 +70,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
-          if (isStaleLifecycleGeneration(ctx)) return undefined;
+          if (isStaleLifecycleGeneration(ctx)) {
+            if (capturedFirstRecallBegin) {
+              firstRecallCheckpointCaptured = false;
+            }
+            return undefined;
+          }
           if (!recallStageResult) {
             if (capturedFirstRecallBegin) {
               recordStartupMemoryCheckpoint({
@@ -117,7 +122,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
           }
           const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
-          if (isStaleLifecycleGeneration(ctx)) return undefined;
+          if (isStaleLifecycleGeneration(ctx)) {
+            if (capturedFirstRecallBegin) {
+              firstRecallCheckpointCaptured = false;
+            }
+            return undefined;
+          }
           if (capturedFirstRecallBegin) {
             recordStartupMemoryCheckpoint({
               logger: api.logger,
@@ -187,6 +197,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     api.on("agent_end", async (event: unknown, hookCtx: unknown) => {
       const rApi = withHookResolutionApi(api, hookCtx);
       const ev = event as { messages?: unknown[]; success?: boolean };
+
+      if (isStaleLifecycleGeneration(ctx)) return;
 
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
