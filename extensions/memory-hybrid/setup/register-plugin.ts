@@ -38,7 +38,10 @@ import {
   applyGatewayEmbeddingInheritanceBeforeParse,
   shallowClonePluginConfigForGatewayMerge,
 } from "./provider-router.js";
-import { getHybridMemoryRegistrationState } from "./hybrid-memory-generation-state.js";
+import {
+  getHybridMemoryRegistrationState,
+  resetHybridMemoryRegistrationStateForTests,
+} from "./hybrid-memory-generation-state.js";
 import {
   blockReloadTeardownBeforeOpen,
   drainOldBootstrap,
@@ -714,6 +717,5 @@ export function resetPluginRegistrationStateForTests(): void {
   }
   resetReloadTeardownChainForTests();
   resetReregisterPolicyForTests();
-  getHybridMemoryRegistrationState().registrationGenerationRef.value = 0;
-  getHybridMemoryRegistrationState().toolExecutorsByName.clear();
+  resetHybridMemoryRegistrationStateForTests();
 }
