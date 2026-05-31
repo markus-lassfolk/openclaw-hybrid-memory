@@ -976,7 +976,9 @@ export async function runExtractImplicitFeedbackForCli(
     const stat = statSync(lastProcessedFilePath);
     const lastSessionTs = stat.mtimeMs;
     const lastSessionFile = basename(lastProcessedFilePath);
-    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsProcessed, lastSessionFile);
+    // BUG FIX: Use sessionsVisited instead of sessionsProcessed for cursor advancement
+    // so that skipped sessions (read errors, too short) also advance the watermark
+    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
   }
 
   // Calculate backlog estimates
