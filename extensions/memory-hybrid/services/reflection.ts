@@ -102,9 +102,12 @@ export interface ReflectionRulesDiagnostics {
 // Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
 // Anchored to start-of-string but allows leading whitespace so phrases like
 // "No actionable rules detected from ..." are correctly classified.
-// Uses [\s\S]* to allow trailing text including newlines for multiline responses.
+// Only accepts single-line no-op responses; multiline outputs must be parsed for RULE lines.
 const VALID_NO_RULES_PATTERN =
-  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s\S]*/i;
+  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[^\n\r]*$/i;
+const LOW_CONFIDENCE_PREFIX_PATTERN = /^\s*(?:\[(?:low[-\s]?confidence)\]|\((?:low[-\s]?confidence)\)|low[-\s]?confidence\s*[:\-])\s*/i;
+const EXPLICIT_CONFIDENCE_PREFIX_PATTERN = /^\s*(?:\[|\()?\s*confidence\s*[:=]\s*(?<value>0(?:\.\d+)?|1(?:\.0+)?)\s*(?:\]|\))?\s*/i;
+const REFLECTION_RULE_MIN_CONFIDENCE = 0.5;
 
 const THINKING_WRAPPER_TAGS_PATTERN = /<\/?(?:redacted_thinking|thinking|reasoning|think)>/gi;
 
@@ -1168,7 +1171,7 @@ export async function runReflectionRules(
     const diagnostics: ReflectionRulesDiagnostics = {
       ...baseDiagnostics,
       zeroRulesReason: "insufficient_patterns",
-      status: "ok",
+      status: "partial",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1239,14 +1242,27 @@ export async function runReflectionRules(
   const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
   const responseForParsing = strippedResponse.length > 0 ? strippedResponse : trimmedResponse;
   const rules: string[] = [];
-  const rejectedLowConfidence = 0;
+  let rejectedLowConfidence = 0;
   let rejectedLength = 0;
   let parseableLines = 0;
   for (const line of responseForParsing.split(/\n/)) {
     const m = line.match(/^\s*RULE:\s*(.+)/);
     if (!m) continue;
     parseableLines++;
-    const text = m[1].trim();
+    let text = m[1].trim();
+    if (LOW_CONFIDENCE_PREFIX_PATTERN.test(text)) {
+      rejectedLowConfidence++;
+      continue;
+    }
+    const confidencePrefix = text.match(EXPLICIT_CONFIDENCE_PREFIX_PATTERN);
+    if (confidencePrefix?.groups?.value) {
+      const confidence = Number.parseFloat(confidencePrefix.groups.value);
+      text = text.slice(confidencePrefix[0].length).trim();
+      if (Number.isFinite(confidence) && confidence < REFLECTION_RULE_MIN_CONFIDENCE) {
+        rejectedLowConfidence++;
+        continue;
+      }
+    }
     if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) {
       rules.push(text);
     } else {
@@ -1268,9 +1284,13 @@ export async function runReflectionRules(
   const wrapperTagStrippedResponse = stripThinkingWrapperTagsKeepContent(trimmedResponse);
   const wrapperContents = extractThinkingWrapperContents(trimmedResponse);
   const noRulesClassificationResponse = strippedResponse.length > 0 ? strippedResponse : wrapperTagStrippedResponse;
+  const containsRuleLineInResponse =
+    /(?:^|\n)\s*RULE:/i.test(noRulesClassificationResponse) ||
+    wrapperContents.some((content) => /(?:^|\n)\s*RULE:/i.test(content));
   const looksLikeValidNoRules =
-    VALID_NO_RULES_PATTERN.test(noRulesClassificationResponse) ||
-    wrapperContents.some((content) => VALID_NO_RULES_PATTERN.test(content));
+    !containsRuleLineInResponse &&
+    (VALID_NO_RULES_PATTERN.test(noRulesClassificationResponse) ||
+      wrapperContents.some((content) => VALID_NO_RULES_PATTERN.test(content)));
   const parseSuccess = parseableLines > 0 || looksLikeValidNoRules;
   const modelResponseChars = rawResponse.length;
   if (uniqueRules.length === 0) {
@@ -1278,6 +1298,8 @@ export async function runReflectionRules(
     const zeroRulesReason =
       parseableLines > 0 && rejectedDuplicates > 0 && rejectedLowConfidence === 0 && rejectedLength === 0
         ? "all_candidates_duplicate"
+        : parseableLines > 0 && rejectedLowConfidence > 0 && rejectedDuplicates === 0 && rejectedLength === 0
+          ? "all_candidates_rejected_low_confidence"
         : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
           ? "all_candidates_rejected_length"
           : parseableLines > 0

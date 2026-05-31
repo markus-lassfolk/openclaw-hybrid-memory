@@ -282,6 +282,49 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.parseSuccess).toBe(false);
   });
 
+  it("reports partial insufficient_patterns when fewer than 2 pattern facts are available", async () => {
+    const factsDb = {
+      getByCategory: (cat: string) =>
+        cat === "pattern"
+          ? [
+              makeEntry({
+                id: "p1",
+                category: "pattern",
+                text: "User prefers explicit error handling with clear failure boundaries",
+              }),
+            ]
+          : [],
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: "RULE: should not be called" } }] }),
+        },
+      },
+    };
+
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.zeroRulesReason).toBe("insufficient_patterns");
+    expect(res.diagnostics.status).toBe("partial");
+    expect(res.diagnostics.parseSuccess).toBe(false);
+  });
+
   it("reports partial diagnostics when all parsed candidates are duplicates", async () => {
     const existingRule = makeEntry({
       id: "rule-existing",
@@ -472,6 +515,22 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.parseSuccess).toBe(true);
   });
 
+  it("does not classify multiline no-rules text with RULE lines as valid_no_actionable_rules", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps("No rules detected.\nRULE: tiny");
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_length");
+    expect(res.diagnostics.parseSuccess).toBe(true);
+  });
+
   it("reports partial status when parsed candidates are rejected for length", async () => {
     const { factsDb, vectorDb, embeddings, openai } = makeDeps("RULE: tiny");
     const res = await runReflectionRules(
@@ -486,6 +545,25 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.rulesStored).toBe(0);
     expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_length");
     expect(res.diagnostics.status).toBe("ok");
+  });
+
+  it("counts low-confidence prefixed RULE candidates as rejectedLowConfidence", async () => {
+    const { factsDb, vectorDb, embeddings, openai } = makeDeps(
+      "RULE: [low confidence] Always keep strict TypeScript settings enabled across all projects.",
+    );
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: true, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.rejectedLowConfidence).toBe(1);
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_rejected_low_confidence");
+    expect(res.diagnostics.parseSuccess).toBe(true);
   });
 
   it("counts all parsed RULE lines in parsedCandidates, even if rejected for length", async () => {
