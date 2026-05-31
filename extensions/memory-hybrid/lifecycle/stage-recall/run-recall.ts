@@ -176,7 +176,7 @@ export async function runRecall(
   }
   const shouldAbortRecall = (): boolean => recallAborted(signal) || isRecallContextSuperseded(ctx);
   const suppressSupersededRecallError = (err: unknown, debugMessage: string): boolean => {
-    if (isRecallContextSuperseded(ctx)) {
+    if (isRecallContextSuperseded(ctx) || isLifecycleSqliteShutdownError(err, ctx)) {
       api.logger.debug?.(debugMessage);
       return true;
     }

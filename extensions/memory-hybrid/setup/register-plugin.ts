@@ -230,7 +230,13 @@ async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void
   registrationGenerationRef.value = registrationGeneration;
   recordReregisterRegistration();
 
+  const reusePolicy = resolveReregisterPolicy();
   const reuseDatabases = canReuseDatabasesOnReregister(old, cfg, logApi);
+  if (old && reusePolicy === "reuse-databases" && !reuseDatabases) {
+    logApi.logger.debug?.(
+      "memory-hybrid: re-register falling back to full teardown (reuse policy requested but donor bootstrap not reusable)",
+    );
+  }
   const donorRuntime = reuseDatabases && old ? old : null;
 
   if (old) {
@@ -286,7 +292,10 @@ async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void
   if (old && !reuseDatabases) {
     // Wait for teardown to complete before opening new DB handles (#802).
     // Do NOT timeout — proceed only after prior generation fully closes to prevent double-opens.
-    await awaitReloadTeardownBeforeOpen(0);
+    const drained = await awaitReloadTeardownBeforeOpen(0);
+    if (!drained) {
+      throw new Error("memory-hybrid: reload teardown did not drain before opening new databases");
+    }
   }
 
   let dbContext: ReturnType<typeof initializeDatabases>;
@@ -430,6 +439,11 @@ async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void
   // Build PluginRuntime -- single instance-scoped container for all state
   // ========================================================================
 
+  const bootstrapSettledRef = { value: false };
+  const bootstrapAsyncInit = dbContext.initialized.finally(() => {
+    bootstrapSettledRef.value = true;
+  });
+
   const newRuntime: PluginRuntime = {
     cfg,
     resolvedLancePath,
@@ -464,7 +478,9 @@ async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void
     agentHealthStore,
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
     toolRegistrationHandle: null, // set after registerTools below
-    bootstrapAsyncInit: dbContext.initialized,
+    bootstrapAsyncInit,
+    bootstrapSettledRef,
+    bootstrapHealth: dbContext.health,
     pendingLLMWarnings: createPendingLLMWarnings(),
     currentAgentIdRef: { value: null },
     restartPendingClearedRef: { value: false },

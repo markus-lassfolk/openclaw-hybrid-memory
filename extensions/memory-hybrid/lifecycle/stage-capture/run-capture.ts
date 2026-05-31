@@ -128,6 +128,12 @@ export async function runCapture(
   sessionState: SessionState,
 ): Promise<void> {
   if (isStaleLifecycleGeneration(ctx)) return;
+  const abortIfSuperseded = (phase: string): boolean => {
+    if (!isRecallContextSuperseded(ctx)) return false;
+    api.logger.debug?.(`memory-hybrid: capture skipped (registration superseded during reload) phase=${phase}`);
+    return true;
+  };
+  if (abortIfSuperseded("start")) return;
 
   const { resolveSessionKey, clearSessionState, frustrationStateMap } = sessionState;
   const sessionKey = resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
@@ -201,6 +207,7 @@ export async function runCapture(
       }
     }
   }
+  if (abortIfSuperseded("post-humanizer")) return;
 
   // 3. Event log session_end
   if (ctx.eventLog) {
@@ -250,6 +257,7 @@ export async function runCapture(
       }
     }
   }
+  if (abortIfSuperseded("post-compaction")) return;
 
   // 6. Auto-capture from conversation messages
   if (isStaleLifecycleGeneration(ctx)) return;
@@ -313,6 +321,7 @@ export async function runCapture(
 
         const prepared: CapturePrepared[] = [];
         for (const candidate of toCapture.slice(0, 3)) {
+          if (abortIfSuperseded("auto-capture-prepare")) return;
           let textToStore = candidate.text;
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
           const category: MemoryCategory = ctx.detectCategory(textToStore);
@@ -393,6 +402,7 @@ export async function runCapture(
         }
 
         for (let pi = 0; pi < prepared.length; pi++) {
+          if (abortIfSuperseded("auto-capture-store")) return;
           const { candidate, textToStore, category, extracted, summary, vector, similarFacts } = prepared[pi];
           if (ctx.cfg.store.classifyBeforeWrite) {
             if (similarFacts.length > 0) {
@@ -744,6 +754,7 @@ export async function runCapture(
   // capturing outcomes is low-cost and high-value for the episodic history.
   if (isStaleLifecycleGeneration(ctx)) return;
   {
+    if (abortIfSuperseded("episodic-capture")) return;
     const sessionId = sessionKey;
     const agentId = ctx.currentAgentIdRef.value ?? undefined;
     // Collect all text from the session for scanning
@@ -770,6 +781,7 @@ export async function runCapture(
     }
 
     for (const { text } of sessionTexts) {
+      if (abortIfSuperseded("episodic-capture-loop")) return;
       // Scan for success indicators
       for (const pattern of SUCCESS_PATTERNS) {
         const match = pattern.regex.exec(text);
@@ -857,6 +869,7 @@ export async function runCapture(
     ctx.cfg.verbosity !== "silent" &&
     messages.length > 0
   ) {
+    if (abortIfSuperseded("credential-hint-capture")) return;
     const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
     try {
       const texts: string[] = [];
@@ -909,9 +922,11 @@ export async function runCapture(
   // 8. Tool-call credential auto-capture
   if (isStaleLifecycleGeneration(ctx)) return;
   if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoCapture?.toolCalls && messages.length > 0) {
+    if (abortIfSuperseded("credential-tool-call-capture")) return;
     const logCaptures = ctx.cfg.credentials.autoCapture.logCaptures !== false;
     try {
       for (const msg of messages as unknown[]) {
+        if (abortIfSuperseded("credential-tool-call-loop")) return;
         if (!msg || typeof msg !== "object") continue;
         const msgObj = msg as Record<string, unknown>;
         if (msgObj.role !== "assistant") continue;

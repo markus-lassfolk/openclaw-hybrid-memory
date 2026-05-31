@@ -68,6 +68,9 @@ export function canReuseDatabasesOnReregister(
 ): boolean {
   if (!old) return false;
   if (resolveReregisterPolicy() !== "reuse-databases") return false;
+  // Reuse only after donor bootstrap has fully settled. If bootstrap is still in flight when
+  // generation bumps, supersession can skip one-shot init work (vault/migration checks).
+  if (old.bootstrapSettledRef && old.bootstrapSettledRef.value !== true) return false;
   const nextSqlite = api.resolvePath(cfg.sqlitePath);
   const nextLance = api.resolvePath(cfg.lanceDbPath);
   return old.resolvedSqlitePath === nextSqlite && old.resolvedLancePath === nextLance;
@@ -76,8 +79,13 @@ export function canReuseDatabasesOnReregister(
 /** Snapshot of initializeDatabases() return shape for register-plugin when reusing handles. */
 export function databaseContextFromRuntime(
   old: PluginRuntime,
-  opts?: { newBootstrapPromise?: Promise<void>; health?: { embeddingsOk: boolean; credentialsVaultOk: boolean; lastCheckTime: number } },
+  opts?: {
+    newBootstrapPromise?: Promise<void>;
+    health?: { embeddingsOk: boolean; credentialsVaultOk: boolean; lastCheckTime: number };
+  },
 ) {
+  const health = opts?.health ??
+    old.bootstrapHealth ?? { embeddingsOk: false, credentialsVaultOk: false, lastCheckTime: Date.now() };
   return {
     factsDb: old.factsDb,
     edictStore: old.edictStore,
@@ -104,6 +112,6 @@ export function databaseContextFromRuntime(
     resolvedSqlitePath: old.resolvedSqlitePath,
     apitapStore: old.apitapStore!,
     initialized: opts?.newBootstrapPromise ?? old.bootstrapAsyncInit,
-    health: opts?.health ?? old.health,
+    health,
   };
 }

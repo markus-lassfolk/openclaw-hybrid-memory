@@ -1,11 +1,14 @@
+import { capturePluginError } from "../services/error-reporter.js";
+
 /** Max time to wait for superseded instance bootstrap before permanentClose (embedding verify can take minutes). */
 export const BOOTSTRAP_DRAIN_MS = 3_000;
 
-/** Max time register() blocks waiting for scheduled teardown before opening new DB handles. */
-export const TEARDOWN_WAIT_MS = 6_000;
-
 /** Brief wait for in-flight auto-recall before permanentClose (directives can run 20s+). */
 export const RECALL_DRAIN_MS = 2_000;
+
+/** Max time register() blocks waiting for scheduled teardown before opening new DB handles. */
+const TEARDOWN_MIN_WAIT_MS = BOOTSTRAP_DRAIN_MS + RECALL_DRAIN_MS + 1_000;
+export const TEARDOWN_WAIT_MS = Math.max(6_000, TEARDOWN_MIN_WAIT_MS);
 
 /** Serializes plugin teardown (bootstrap settle → close DBs) across hot reloads (#1550 / reload race). */
 let reloadTeardownChain: Promise<void> = Promise.resolve();
@@ -20,6 +23,12 @@ export function schedulePluginTeardown(teardown: () => Promise<void>): void {
     .then(async () => {
       try {
         await teardown();
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "registration",
+          operation: "reload-teardown",
+          severity: "warning",
+        });
       } finally {
         reloadTeardownQueueDepth = Math.max(0, reloadTeardownQueueDepth - 1);
       }

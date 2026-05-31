@@ -184,7 +184,7 @@ describe("Plugin registration e2e", () => {
     expect(existsSync(sqlitePath)).toBe(true);
   });
 
-  it("cli-metadata register() does not create database files and only registers CLI metadata (issue #1111)", () => {
+  it("cli-metadata register() does not create database files and only registers CLI metadata (issue #1111)", async () => {
     const sqlitePath = join(tmpDir, "facts.db");
     const lancePath = join(tmpDir, "lancedb");
     const pluginConfig = getMinimalConfig({
@@ -203,7 +203,7 @@ describe("Plugin registration e2e", () => {
       registrationMode: "cli-metadata" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    memoryHybridPlugin.register(mockApi as never);
+    await memoryHybridPlugin.register(mockApi as never);
     expect(existsSync(sqlitePath)).toBe(false);
     expect(existsSync(lancePath)).toBe(false);
     expect(registerCli).toHaveBeenCalled();

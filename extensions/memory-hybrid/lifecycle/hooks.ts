@@ -144,6 +144,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
           return inj ?? undefined;
         } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (
+            isStaleLifecycleGeneration(ctx) &&
+            /not open|connection is not open|database is not open/i.test(message)
+          ) {
+            api.logger.debug?.("memory-hybrid: recall skipped (stale lifecycle generation)");
+            return undefined;
+          }
           if (isRecallContextSuperseded(ctx)) {
             api.logger.debug?.("memory-hybrid: recall skipped (registration superseded during reload)");
             return undefined;

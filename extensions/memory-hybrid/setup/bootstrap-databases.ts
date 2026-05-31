@@ -37,7 +37,7 @@ import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { spawn } from "../utils/process-runner.js";
-import { isRegistrationSuperseded } from "../utils/registration-superseded.js";
+import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import {
   OLLAMA_DEFAULT_BASE_URL,
@@ -997,6 +997,15 @@ export function initializeDatabases(
             migrationFlagPath,
             markDone: false, // Flag already created atomically above
           });
+          if (isBootstrapSuperseded()) {
+            // Superseded mid-migration: stale generation should not leave a success marker that
+            // suppresses future retries on the live generation.
+            await clearMigrationFlagForRetry("registration superseded after migration");
+            api.logger.debug?.(
+              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
+            );
+            return;
+          }
           if (result.migrated > 0) {
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
           }
@@ -1004,15 +1013,7 @@ export function initializeDatabases(
             api.logger.warn(
               `memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`,
             );
-          }
-          if (isBootstrapSuperseded()) {
-            if (result.errors.length > 0) {
-              await clearMigrationFlagForRetry("registration superseded after migration with errors");
-            }
-            api.logger.debug?.(
-              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
-            );
-            return;
+            await clearMigrationFlagForRetry("credential migration completed with errors");
           }
         } catch (e) {
           if (isBootstrapSuperseded()) {

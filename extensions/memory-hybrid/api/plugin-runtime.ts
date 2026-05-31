@@ -96,6 +96,14 @@ export interface PluginRuntime {
    * Used to sequence CLI teardown so we do not close DBs while init I/O is still running (Issue #1039).
    */
   bootstrapAsyncInit: Promise<void>;
+  /** Tracks whether bootstrapAsyncInit has settled (used by re-register reuse policy). */
+  bootstrapSettledRef?: { value: boolean };
+  /** Last bootstrap health snapshot from initializeDatabases() for reuse-databases policy. */
+  bootstrapHealth?: {
+    embeddingsOk: boolean;
+    credentialsVaultOk: boolean;
+    lastCheckTime: number;
+  };
   pendingLLMWarnings: PendingLLMWarnings;
 
   // --- Mutable refs (objects so that closures can share mutations) ---
