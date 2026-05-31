@@ -61,11 +61,12 @@ describe("storeCanonicalVectorForFact", () => {
   it("stores a canonical vector with the fact id and records embedding metadata after success", async () => {
     const store = vi.fn().mockResolvedValue("fact-1");
     const setEmbeddingModel = vi.fn();
+    const storeEmbedding = vi.fn();
 
     await expect(
       storeCanonicalVectorForFact({
         vectorDb: { store },
-        factsDb: { setEmbeddingModel },
+        factsDb: { setEmbeddingModel, storeEmbedding },
         factId: "fact-1",
         text: "updated fact",
         why: "because",
@@ -85,17 +86,25 @@ describe("storeCanonicalVectorForFact", () => {
       category: "decision",
     });
     expect(setEmbeddingModel).toHaveBeenCalledWith("fact-1", "text-embedding-test");
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      "fact-1",
+      "text-embedding-test",
+      "canonical",
+      new Float32Array([0.1, 0.2]),
+      2,
+    );
   });
 
   it("does not record embedding metadata when vector storage fails", async () => {
     const storeError = new Error("lance write failed");
     const store = vi.fn().mockRejectedValue(storeError);
     const setEmbeddingModel = vi.fn();
+    const storeEmbedding = vi.fn();
 
     await expect(
       storeCanonicalVectorForFact({
         vectorDb: { store },
-        factsDb: { setEmbeddingModel },
+        factsDb: { setEmbeddingModel, storeEmbedding },
         factId: "fact-2",
         text: "new fact",
         vector: [0.3, 0.4],
@@ -106,16 +115,50 @@ describe("storeCanonicalVectorForFact", () => {
     ).rejects.toThrow("lance write failed");
 
     expect(setEmbeddingModel).not.toHaveBeenCalled();
+    expect(storeEmbedding).not.toHaveBeenCalled();
+  });
+
+  it("does not abort after LanceDB success when SQLite canonical embedding persistence fails", async () => {
+    const store = vi.fn().mockResolvedValue("fact-4");
+    const setEmbeddingModel = vi.fn();
+    const storeEmbedding = vi.fn().mockImplementation(() => {
+      throw new Error("sqlite write failed");
+    });
+
+    await expect(
+      storeCanonicalVectorForFact({
+        vectorDb: { store },
+        factsDb: { setEmbeddingModel, storeEmbedding },
+        factId: "fact-4",
+        text: "canonical fact",
+        vector: [0.2, 0.8],
+        importance: 0.7,
+        category: "fact",
+        embeddingModel: "text-embedding-test",
+      }),
+    ).resolves.toBe("fact-4");
+
+    expect(store).toHaveBeenCalledWith({
+      id: "fact-4",
+      text: "canonical fact",
+      why: undefined,
+      vector: [0.2, 0.8],
+      importance: 0.7,
+      category: "fact",
+    });
+    expect(setEmbeddingModel).toHaveBeenCalledWith("fact-4", "text-embedding-test");
+    expect(storeEmbedding).toHaveBeenCalledOnce();
   });
 
   it("does not record embedding metadata when LanceDB is unavailable", async () => {
     const store = vi.fn().mockResolvedValue("fact-3");
     const setEmbeddingModel = vi.fn();
+    const storeEmbedding = vi.fn();
 
     await expect(
       storeCanonicalVectorForFact({
         vectorDb: { store, isLanceDbAvailable: () => false },
-        factsDb: { setEmbeddingModel },
+        factsDb: { setEmbeddingModel, storeEmbedding },
         factId: "fact-3",
         text: "fallback fact",
         vector: [0.9, 0.1],
@@ -126,5 +169,6 @@ describe("storeCanonicalVectorForFact", () => {
     ).resolves.toBe("fact-3");
 
     expect(setEmbeddingModel).not.toHaveBeenCalled();
+    expect(storeEmbedding).not.toHaveBeenCalled();
   });
 });

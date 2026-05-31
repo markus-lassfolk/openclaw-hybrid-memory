@@ -118,7 +118,7 @@ Add the `graph` section to your plugin config:
 
 ### Person and organization enrichment (entity layer)
 
-When **`graph.enabled`** is `true`, each successful **`memory_store`** also runs (asynchronously) **multilingual NER**: [franc](https://github.com/wooorm/franc) detects the primary text language (ISO 639-3); a small LLM extracts **PERSON** and **ORG** spans with offsets. Results are stored in SQLite (`fact_entity_mentions`, `organizations`, `contacts`, `org_fact_links`). This complements **known-entity** `autoLinkEntities` behavior—it does not remove or replace structured `entity` fields on facts.
+When **`graph.enabled`** is `true`, each successful **`memory_store`** also runs (asynchronously) **multilingual NER**: [franc](https://github.com/wooorm/franc) detects the primary text language (ISO 639-3); a small LLM extracts **PERSON** and **ORG** spans with offsets. Before results are stored in SQLite (`fact_entity_mentions`, `organizations`, `contacts`, `org_fact_links`), mention rows are normalized, deduplicated per fact/label, and filtered for short or generic noise. This complements **known-entity** `autoLinkEntities` behavior—it does not remove or replace structured `entity` fields on facts.
 
 Agents use **`memory_directory`** (`list_contacts`, `org_view`) for **stable** contact lists and org-scoped fact ids—not for ad-hoc ranked search (use **`memory_recall`** for that). Facts stored before this feature, or imports without mentions, can be backfilled with **`openclaw hybrid-mem enrich-entities`**. See [MULTILINGUAL-SUPPORT.md](MULTILINGUAL-SUPPORT.md) and issue [#985–#987](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/985).
 
