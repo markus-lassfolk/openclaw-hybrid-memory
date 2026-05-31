@@ -749,7 +749,7 @@ export async function runRecall(
     recallTiming.phaseCompleted("narrative_block", narrativeStartedAt, { injected: narrativeBlock.length > 0 });
 
     await yieldEventLoop();
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (recallAborted(signal) || isRecallContextSuperseded(ctx)) return completeStage(emptyRecallStage());
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
@@ -1074,6 +1074,10 @@ export async function runRecall(
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
+
+    if (isRecallContextSuperseded(ctx)) {
+      return completeStage(emptyRecallStage());
+    }
 
     const result: RecallResult = {
       candidates,
