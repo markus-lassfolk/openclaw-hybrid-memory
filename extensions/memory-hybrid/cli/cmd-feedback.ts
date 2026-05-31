@@ -946,7 +946,25 @@ export function explainToolEffectivenessNoData(
         return "no workflow traces recorded yet";
       }
 
-      // Has traces but none met scoring criteria (e.g., below minCalls threshold)
+      // Check if there are any parseable rows with non-empty tool sequences
+      const rows = db.prepare("SELECT tool_sequence FROM workflow_traces").all() as { tool_sequence: string }[];
+      let validRowCount = 0;
+      for (const row of rows) {
+        try {
+          const seq = JSON.parse(row.tool_sequence) as string[];
+          if (seq.length > 0) {
+            validRowCount++;
+          }
+        } catch {
+          // Skip unparseable rows
+        }
+      }
+
+      if (validRowCount === 0) {
+        return "workflow traces exist but all have invalid or empty tool sequences";
+      }
+
+      // Has valid traces but none met scoring criteria (e.g., below minCalls threshold)
       return "workflow traces exist but no tools meet minimum call threshold for scoring";
     } finally {
       db.close();
