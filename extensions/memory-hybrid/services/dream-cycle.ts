@@ -104,6 +104,17 @@ export interface DreamCycleResult {
   patternsFound: number;
   /** New rules stored by runReflectionRules(). */
   rulesGenerated: number;
+  /** Reflect-rules diagnostics for zero/partial outcomes. */
+  reflectionRulesDiagnostics?: {
+    modelResponseChars: number;
+    parseSuccess: boolean;
+    parsedCandidates: number;
+    rejectedDuplicates: number;
+    rejectedLowConfidence: number;
+    stored: number;
+    zeroRulesReason?: string;
+    status: "ok" | "partial" | "degraded";
+  };
   /** Log table rows deleted by pruneLogTables() (Issue #573). */
   logRowsPruned: number;
   /** True when VACUUM + checkpoint was executed (Issue #573). */
@@ -939,6 +950,7 @@ export async function runDreamCycle(
 
   // ── Stage 4: Reflect-rules (optional) ─────────────────────────────────────
   let rulesGenerated = 0;
+  let reflectionRulesDiagnostics: DreamCycleResult["reflectionRulesDiagnostics"];
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
   if (enableReflectionRules && patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
     const stageReflectRules = beginStage("reflect-rules", {
@@ -956,21 +968,58 @@ export async function runDreamCycle(
         provenanceService,
       );
       rulesGenerated = rulesResult.rulesStored;
-      logger.info(`memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored`);
+      reflectionRulesDiagnostics = rulesResult.diagnostics;
+      logger.info(
+        `memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored (status=${rulesResult.diagnostics.status}${rulesResult.diagnostics.zeroRulesReason ? `, zero_rules_reason=${rulesResult.diagnostics.zeroRulesReason}` : ""})`,
+      );
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — reflect-rules step failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-reflect-rules",
         subsystem: "reflection",
       });
+      reflectionRulesDiagnostics = {
+        modelResponseChars: 0,
+        parseSuccess: false,
+        parsedCandidates: 0,
+        rejectedDuplicates: 0,
+        rejectedLowConfidence: 0,
+        stored: 0,
+        zeroRulesReason: "reflect_rules_threw",
+        status: "degraded",
+      };
     }
     stageReflectRules.complete(`rulesStored=${rulesGenerated}`);
-  } else if (!enableReflectionRules && v) {
-    logger.info("memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)");
-  } else if (v) {
-    logger.info(
-      `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
-    );
+  } else if (!enableReflectionRules) {
+    reflectionRulesDiagnostics = {
+      modelResponseChars: 0,
+      parseSuccess: false,
+      parsedCandidates: 0,
+      rejectedDuplicates: 0,
+      rejectedLowConfidence: 0,
+      stored: 0,
+      zeroRulesReason: "stage_disabled",
+      status: "ok",
+    };
+    if (v) {
+      logger.info("memory-hybrid: dream-cycle — reflection rules disabled (nightlyCycle.enableReflectionRules=false)");
+    }
+  } else {
+    reflectionRulesDiagnostics = {
+      modelResponseChars: 0,
+      parseSuccess: false,
+      parsedCandidates: 0,
+      rejectedDuplicates: 0,
+      rejectedLowConfidence: 0,
+      stored: 0,
+      zeroRulesReason: "stage_skipped_pattern_gate",
+      status: "ok",
+    };
+    if (v) {
+      logger.info(
+        `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
+      );
+    }
   }
 
   // ── Stage 5: Refresh memory awareness index ───────────────────────────────
@@ -1100,6 +1149,7 @@ export async function runDreamCycle(
     factsCreated,
     patternsFound,
     rulesGenerated,
+    reflectionRulesDiagnostics,
     logRowsPruned,
     vacuumRan,
     decayReclassified,

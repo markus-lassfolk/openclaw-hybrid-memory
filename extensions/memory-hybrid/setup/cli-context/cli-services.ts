@@ -41,11 +41,20 @@ interface CliContextServices {
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{ rulesExtracted: number; rulesStored: number }>;
+  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+    rulesExtracted: number;
+    rulesStored: number;
+    diagnostics?: {
+      modelResponseChars: number;
+      parseSuccess: boolean;
+      parsedCandidates: number;
+      rejectedDuplicates: number;
+      rejectedLowConfidence: number;
+      stored: number;
+      zeroRulesReason?: string;
+      status: "ok" | "partial" | "degraded";
+    };
+  }>;
   runReflectionMeta: (opts: {
     dryRun: boolean;
     model: string;

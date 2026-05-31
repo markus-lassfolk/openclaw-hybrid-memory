@@ -158,6 +158,16 @@ export type StoredFactResult = {
    */
   embeddingStale?: boolean;
   /**
+   * True only when this call inserted a brand-new fact row.
+   * False when the returned entry points to a pre-existing row (skip/boost/merge).
+   */
+  newlyStored?: boolean;
+  /**
+   * Original text for dedupe-merge updates. Callers can use this for reliable rollback
+   * when post-merge embed/vector persistence fails.
+   */
+  preMergeText?: string | null;
+  /**
    * True when the pre-store guard filtered this entry as an internal artifact (#1560, #1561).
    * Callers must skip post-store operations (vector upsert, supersession, logging) when true.
    */
@@ -176,6 +186,10 @@ export type SkippedStoreFactResult = {
   evictedFactId: null;
   /** Skipped results never modify embeddings. */
   embeddingStale: false;
+  /** Skipped results never insert a persisted row. */
+  newlyStored: false;
+  /** Skipped results never mutate an existing row. */
+  preMergeText: null;
   /** Legacy alias for skipped. */
   rejected: true;
 };
@@ -245,6 +259,8 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       rejected: true,
       evictedFactId: null,
       embeddingStale: false,
+      newlyStored: false,
+      preMergeText: null,
       entry: createSkippedStorePlaceholder(entry),
     };
   }
@@ -293,7 +309,8 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       });
     }
     const existing = ctx.getById(dedupe.existingId);
-    if (existing) return { entry: existing, evictedFactId: null };
+    if (existing)
+      return { entry: existing, evictedFactId: null, embeddingStale: false, newlyStored: false, preMergeText: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -308,7 +325,8 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
         .run(dedupe.boostBy, dedupe.existingId);
     });
     const boosted = ctx.getById(dedupe.existingId);
-    if (boosted) return { entry: boosted, evictedFactId: null };
+    if (boosted)
+      return { entry: boosted, evictedFactId: null, embeddingStale: false, newlyStored: false, preMergeText: null };
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
     );
@@ -319,7 +337,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
     if (existing) {
       const alreadyContained = existing.text.includes(entry.text);
       if (alreadyContained) {
-        return { entry: existing, evictedFactId: null, embeddingStale: false };
+        return { entry: existing, evictedFactId: null, embeddingStale: false, newlyStored: false, preMergeText: null };
       }
 
       const rawMergedText = `${existing.text}\n${entry.text}`;
@@ -346,7 +364,13 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
       // Signal callers to re-embed only when the persisted text changed. This handles edge
       // cases where append text is truncated and the final merged text remains unchanged.
       const embeddingStale = mergedText !== existing.text;
-      return { entry: ctx.getById(existing.id) ?? existing, evictedFactId: null, embeddingStale };
+      return {
+        entry: ctx.getById(existing.id) ?? existing,
+        evictedFactId: null,
+        embeddingStale,
+        newlyStored: false,
+        preMergeText: existing.text,
+      };
     }
     throw new Error(
       `memory-hybrid: dedupe existing fact ${dedupe.existingId} not found (may have been deleted concurrently)`,
@@ -537,7 +561,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   if (!loaded) {
     throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
   }
-  return { entry: loaded, evictedFactId };
+  return { entry: loaded, evictedFactId, embeddingStale: false, newlyStored: true, preMergeText: null };
 }
 
 /**

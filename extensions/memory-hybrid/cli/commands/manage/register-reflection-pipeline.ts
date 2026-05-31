@@ -357,6 +357,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
         console.log(
           `Reflection (rules) complete: extracted ${res.rulesExtracted} rules, stored ${res.rulesStored} ${dryRun ? "(dry-run)" : ""}`,
         );
+        if (res.diagnostics) {
+          const zeroReason = res.diagnostics.zeroRulesReason
+            ? ` zero_rules_reason=${res.diagnostics.zeroRulesReason}`
+            : "";
+          console.log(
+            `Reflection (rules) diagnostics: model_response_chars=${res.diagnostics.modelResponseChars} parse_success=${res.diagnostics.parseSuccess} parsed_candidates=${res.diagnostics.parsedCandidates} rejected_duplicates=${res.diagnostics.rejectedDuplicates} rejected_low_confidence=${res.diagnostics.rejectedLowConfidence} stored=${res.diagnostics.stored} status=${res.diagnostics.status}${zeroReason}`,
+          );
+        }
       }),
     );
 
@@ -582,6 +590,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             console.log(`  Events consolidated: ${res.eventsConsolidated} → ${res.factsCreated} facts`);
             console.log(`  Patterns found: ${res.patternsFound}`);
             console.log(`  Rules generated: ${res.rulesGenerated}`);
+            if (res.reflectionRulesDiagnostics) {
+              const zeroReason = res.reflectionRulesDiagnostics.zeroRulesReason
+                ? ` zero_rules_reason=${res.reflectionRulesDiagnostics.zeroRulesReason}`
+                : "";
+              console.log(
+                `  Reflect-rules diagnostics: model_response_chars=${res.reflectionRulesDiagnostics.modelResponseChars} parse_success=${res.reflectionRulesDiagnostics.parseSuccess} parsed_candidates=${res.reflectionRulesDiagnostics.parsedCandidates} rejected_duplicates=${res.reflectionRulesDiagnostics.rejectedDuplicates} rejected_low_confidence=${res.reflectionRulesDiagnostics.rejectedLowConfidence} stored=${res.reflectionRulesDiagnostics.stored} status=${res.reflectionRulesDiagnostics.status}${zeroReason}`,
+              );
+            }
           }
 
           const followUpPlan: string[] = [];
