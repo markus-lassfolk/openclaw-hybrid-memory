@@ -25,6 +25,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.5.310] - 2026-05-31
+
+### Added
+
+- **Entity extraction quality pipeline** ([#1693](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1693), [#1702](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1702)): quality gate, canonicalization, cleanup/backfill tooling, and support for non-PERSON/ORG entity types so the facts graph stays cleaner as extraction volume grows.
+- **Smarter entity enrichment scheduling** ([#1690](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1690), [#1727](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1727)): `enrich-entities` can prioritize by tier, access, and importance, with catch-up modes for backlog recovery.
+- **Autonomous contradiction resolution** ([#1692](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1692), [#1701](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1701)): `resolve-contradictions` can autonomously resolve a large share of ambiguous pairs using safe policies plus LLM adjudication, reducing manual triage queues.
+- **Audit-health diagnostics expansion** ([#1735](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1735), [#1736](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1736), [#1737](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1737), [#1738](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1738), [#1739](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1739)): richer reports for unconfigured categories, implicit-feedback pattern bloat, stop-word-like entity labels, vectorless-ratio SLO breaches, and per-reason blocked-procedure breakdowns.
+- **Parseable storage dry-run semantics** ([#1683](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1683), [#1728](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1728)): `--force` dry-run paths emit machine-readable skip reasons for automation and wrapper jobs.
+- Added detailed release notes at `release-notes/release-notes-2026.5.310.md`.
+
+### Changed
+
+- Bumped plugin package, lockfile, plugin manifest, and installer package versions to **2026.5.310**.
+- **`--force` bypasses internal guard timeouts** ([#1688](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1688), [#1741](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1741)): force now skips per-command idle/guard timeouts—not just idempotency checks—so operators can unblock stuck maintenance without editing cron wrappers.
+- **Monthly consolidation throughput tuning** ([#1733](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1733), [#1747](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1747), [#1761](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1761)): reduced default `enrich-entities` batch from 500 → 25 for live gateways so consolidation completes within realistic cron windows.
+- **Maintenance log analysis scope** ([#1685](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1685), [#1729](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1729)): `analyze-maintenance-logs` ignores manual-qa/auxiliary directories and non-canonical log filenames, reducing false findings from test artifacts.
+- **Similar-sweep memory bounds** ([#1695](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1695), [#1713](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1713)): OpenAI provider similar-sweep map cache is capped to prevent unbounded growth on long-running gateways.
+- **Gateway log noise reduction** ([#1691](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1691), [#1719](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1719)): duplicate gateway provider messages are logged once per process.
+- **Weekly reflection model routing** ([#1720](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1720), [#1723](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1723)): LLM steps preserve the fallback chain when MiniMax is configured as primary.
+- **Persona digest transparency** ([#1742](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1742), [#1756](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1756)): weekly pending digest surfaces a truncation marker when persona proposals are omitted instead of silently hiding them.
+- **Nightly dream-cycle implicit-feedback caps** ([#1706](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1706), [#1711](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1711)): follow-up runtime caps and incremental progress reporting keep long implicit-feedback passes observable and bounded.
+
+### Fixed
+
+- **Maintenance honesty and wrapper exits** ([#1705](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1705), [#1708](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1708), [#1722](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1722), [#1724](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1724), [#1712](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1712), [#1730](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1730)): nightly dream-cycle continuous verification no longer passes when every check is uncertain/with errors; `extract-directives` partial/cursor-not-advanced states no longer exit 0; `hybrid-mem-cli-job` writes the final ledger even when a step fails under `errexit`.
+- **Re-embed vectorless resilience** ([#1731](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1731), [#1748](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1748), [#1771](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1771)): fast-fail via circuit breaker on embedding-provider 500s; maintenance validation surfaces concrete failure reasons instead of opaque skips.
+- **Self-correction model compatibility** ([#1714](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1714), [#1715](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1715), [#1718](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1718), [#1726](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1726), [#1760](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1760), [#1767](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1767)): strips MiniMax M2.7-highspeed thinking tokens; restores fallback chains when a single model was the sole execution path; handles oversized incident prompts more safely.
+- **MiniMax chat abort noise** ([#1694](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1694), [#1725](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1725)): single `chatComplete` aborts are classified/degraded gracefully instead of flooding GlitchTip (HYBRID-MEMORY-441).
+- **Goal registration robustness** ([#1684](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1684), [#1703](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1703)): `goal_register` ignores `_global_dispatch_rate_limit.json` in the goals directory instead of failing the whole registration pass.
+- **Tool-effectiveness workflow DB path** ([#1707](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1707), [#1710](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1710), [#1766](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1766)): follow-up reads `workflow-traces.db` (the actual workflow store) instead of the legacy `*-workflows.db` filename.
+- **Entity mention hygiene** ([#1740](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1740)): enrichment normalizes and deduplicates mentions before writing `fact_entity_mentions`.
+- **Reflect-rules observability** ([#1704](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1704), [#1709](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1709)): successful nightly dream-cycle runs with zero rules now include diagnostics instead of appearing silently healthy.
+- **Hot-reload bootstrap race** ([#1768](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1768)): plugin re-registration no longer opens FactsDB before the connection is ready (“database connection is not open”).
+- **Background SQLite handle lifetime** ([#1721](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1721)): GlitchTip background tasks no longer operate on closed SQLite handles.
+
+### Notes
+
+- This release includes **~45 commits** on `main` since **2026.5.280**, spanning maintenance reliability, entity graph quality, contradiction triage automation, and MiniMax/self-correction hardening.
+- No schema version bump: existing SQLite/LanceDB databases migrate in place. Restart the gateway after upgrading npm packages.
+
+---
+
 ## [2026.5.280] - 2026-05-28
 
 ### Added
