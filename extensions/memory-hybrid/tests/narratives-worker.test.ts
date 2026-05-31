@@ -163,4 +163,40 @@ describe("buildDailyNarrative", () => {
     expect(String(info.mock.calls[0]?.[0])).toMatch(/narrative skipped/i);
     expect(narrativesDb.listRecent(5, "session").length).toBe(0);
   });
+
+  it("skips narrative persistence when the narratives DB closes during the async LLM call", async () => {
+    eventLog.append({
+      sessionId: "s-close",
+      timestamp: "2026-03-22T10:00:00.000Z",
+      eventType: "action_taken",
+      content: { action: "session_start" },
+    });
+    eventLog.append({
+      sessionId: "s-close",
+      timestamp: "2026-03-22T10:05:00.000Z",
+      eventType: "decision_made",
+      content: { decision: "switch strategy" },
+    });
+
+    vi.spyOn(chatModule, "chatCompleteWithRetry").mockImplementation(async () => {
+      narrativesDb.permanentClose();
+      return "**Context** Goal.\n**Chronicle** Step-by-step.\n**Decisions** Next action.";
+    });
+    const captureSpy = vi.spyOn(errorReporter, "capturePluginError");
+    const warn = vi.fn();
+
+    const stored = await buildDailyNarrative({
+      sessionId: "s-close",
+      eventLog,
+      workflowStore,
+      narrativesDb,
+      openai: {} as never,
+      model: "test-model",
+      logger: { warn, info: vi.fn() },
+    });
+
+    expect(stored).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+    expect(captureSpy).not.toHaveBeenCalled();
+  });
 });
