@@ -727,15 +727,23 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           ) {
             try {
               const teOutput = await runFollowUpStage("tool effectiveness", () => runToolEffectiveness({ verbose }));
-              const firstLine = teOutput.split("\n")[0]?.trim() ?? "";
+              const firstLine = (typeof teOutput === "string" ? teOutput : "").split("\n")[0]?.trim() ?? "";
               if (firstLine.startsWith("No tool effectiveness data available")) {
-                const reason = firstLine
-                  .replace(/^No tool effectiveness data available\s*/, "")
-                  .replace(/^\((.*)\)\.?$/, "$1")
-                  .trim();
-                toolEffectivenessSummary = `no-op (${reason || "no workflow traces recorded yet"})`;
+                toolEffectivenessSummary = `no-op (${firstLine})`;
+              } else if (firstLine.startsWith("Tool Effectiveness Report")) {
+                toolEffectivenessSummary = `ran (${firstLine})`;
+              } else if (firstLine.length > 0) {
+                toolEffectivenessSummary = `degraded (unexpected output: ${firstLine})`;
+                followUpFailures.push({
+                  phase: "tool effectiveness",
+                  error: `unexpected output: ${firstLine}`,
+                });
               } else {
-                toolEffectivenessSummary = `ran (${firstLine || "scores computed"})`;
+                toolEffectivenessSummary = "degraded (unexpected empty output)";
+                followUpFailures.push({
+                  phase: "tool effectiveness",
+                  error: "unexpected empty output",
+                });
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {

@@ -867,6 +867,13 @@ export function resolveToolEffectivenessCliDbPaths(sqlitePath: string): {
   };
 }
 
+function resolveLegacyWorkflowDbPath(sqlitePath: string): string {
+  const sqliteBaseName = basename(sqlitePath);
+  const extIndex = sqliteBaseName.lastIndexOf(".");
+  const sqliteStem = extIndex > 0 ? sqliteBaseName.slice(0, extIndex) : sqliteBaseName;
+  return join(dirname(sqlitePath), `${sqliteStem}-workflows.db`);
+}
+
 export function explainToolEffectivenessNoData(
   sqlitePath: string,
   workflowDbPath: string,
@@ -877,7 +884,7 @@ export function explainToolEffectivenessNoData(
   }
 
   if (!existsSync(workflowDbPath)) {
-    const legacyWorkflowDbPath = sqlitePath.replace(/(\.[^.]+)?$/, "-workflows.db");
+    const legacyWorkflowDbPath = resolveLegacyWorkflowDbPath(sqlitePath);
     if (existsSync(legacyWorkflowDbPath)) {
       return `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}, expected ${workflowDbPath}`;
     }
@@ -905,8 +912,9 @@ export async function runToolEffectivenessForCli(
     (ctx.logger?.info ?? console.log)("memory-hybrid: tool-effectiveness — computing scores from workflow traces…");
   }
   // Derive the workflow store DB path from the sqlite path
-  const sqlitePath = ctx.resolvedSqlitePath || cfg.sqlitePath || join(homedir(), ".openclaw", "memory", "memory.db");
-  const { workflowDbPath, effectivenessDbPath } = resolveToolEffectivenessCliDbPaths(sqlitePath);
+  const resolvedSqlitePath =
+    ctx.resolvedSqlitePath ?? cfg.sqlitePath ?? join(homedir(), ".openclaw", "memory", "memory.db");
+  const { workflowDbPath, effectivenessDbPath } = resolveToolEffectivenessCliDbPaths(resolvedSqlitePath);
 
   let effStore: ToolEffectivenessStore;
   try {
@@ -922,7 +930,7 @@ export async function runToolEffectivenessForCli(
     const report = await computeToolEffectiveness(workflowDbPath, effStore, teCfg ?? {}, ctx.logger ?? {});
     if (report.toolsScored === 0) {
       return `No tool effectiveness data available (${explainToolEffectivenessNoData(
-        sqlitePath,
+        resolvedSqlitePath,
         workflowDbPath,
         cfg.workflowTracking?.enabled === true,
       )}).`;
