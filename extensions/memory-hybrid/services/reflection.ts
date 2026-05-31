@@ -837,13 +837,6 @@ export async function runReflection(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
-          try {
-            await vectorDb.delete(entry.id);
-          } catch (vecErr) {
-            logger.warn(
-              `memory-hybrid: reflection — failed to delete Lance vector for pattern fact ${entry.id.slice(0, 8)} during merge rollback: ${vecErr}`,
-            );
-          }
           rollbackMergedFactText(factsDb, logger, {
             context: "reflection",
             factId: entry.id,
@@ -857,6 +850,13 @@ export async function runReflection(
         }
         // For new inserts, clean up the partial state
         if (storeResult.newlyStored !== false) {
+          try {
+            (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
+          } catch (embErr) {
+            logger.warn(
+              `memory-hybrid: reflection — failed to delete canonical embeddings for pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
+            );
+          }
           try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
@@ -1380,13 +1380,6 @@ export async function runReflectionRules(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
-          try {
-            await vectorDb.delete(entry.id);
-          } catch (vecErr) {
-            logger.warn(
-              `memory-hybrid: reflect-rules — failed to delete Lance vector for rule fact ${entry.id.slice(0, 8)} during merge rollback: ${vecErr}`,
-            );
-          }
           rollbackMergedFactText(factsDb, logger, {
             context: "reflect-rules",
             factId: entry.id,
@@ -1400,6 +1393,13 @@ export async function runReflectionRules(
         }
         // For new inserts, clean up the partial state
         if (storeResult.newlyStored !== false) {
+          try {
+            (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
+          } catch (embErr) {
+            logger.warn(
+              `memory-hybrid: reflect-rules — failed to delete canonical embeddings for rule fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
+            );
+          }
           try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
@@ -1873,13 +1873,6 @@ export async function runReflectionMeta(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
-          try {
-            await vectorDb.delete(entry.id);
-          } catch (vecErr) {
-            logger.warn(
-              `memory-hybrid: reflect-meta — failed to delete Lance vector for meta-pattern fact ${entry.id.slice(0, 8)} during merge rollback: ${vecErr}`,
-            );
-          }
           rollbackMergedFactText(factsDb, logger, {
             context: "reflect-meta",
             factId: entry.id,
@@ -1893,6 +1886,13 @@ export async function runReflectionMeta(
         }
         // For new inserts, clean up the partial state
         if (storeResult.newlyStored !== false) {
+          try {
+            (factsDb as FactsDB & { deleteEmbeddings?: (factId: string) => void }).deleteEmbeddings?.(entry.id);
+          } catch (embErr) {
+            logger.warn(
+              `memory-hybrid: reflect-meta — failed to delete canonical embeddings for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
+            );
+          }
           try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
