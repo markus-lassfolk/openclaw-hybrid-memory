@@ -699,7 +699,7 @@ describe("runReflectionRules diagnostics", () => {
     expect(vectorStore).not.toHaveBeenCalled();
   });
 
-  it("deletes merged vector before rolling back text when metadata update fails", async () => {
+  it("rolls back merged text without deleting vector when metadata update fails and no pre-merge vector is known", async () => {
     const ruleText = "Always keep strict TypeScript settings enabled across all projects.";
     const existingRuleText = "Always keep strict TypeScript settings enabled for every project.";
     const mergedRuleText = `${existingRuleText}\n${ruleText}`;
@@ -760,9 +760,8 @@ describe("runReflectionRules diagnostics", () => {
 
     expect(res.rulesStored).toBe(0);
     expect(vectorStore).toHaveBeenCalledTimes(1);
-    expect(vectorDelete).toHaveBeenCalledTimes(1);
+    expect(vectorDelete).not.toHaveBeenCalled();
     expect(restoreMergedFactText).toHaveBeenCalledTimes(1);
-    expect(vectorDelete.mock.invocationCallOrder[0]).toBeLessThan(restoreMergedFactText.mock.invocationCallOrder[0]);
   });
 
   it("restores pre-merge vector after merge metadata rollback when prior vector is known", async () => {
@@ -844,7 +843,7 @@ describe("runReflectionRules diagnostics", () => {
       category: "rule",
       vector: [1, 0],
     });
-    expect(vectorDelete).toHaveBeenCalledTimes(1);
+    expect(vectorDelete).not.toHaveBeenCalled();
     expect(restoreMergedFactText).toHaveBeenCalledWith("rule-existing", existingRuleText);
     expect(setEmbeddingModel).toHaveBeenCalledTimes(2);
   });
