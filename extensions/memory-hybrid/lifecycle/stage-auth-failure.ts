@@ -17,7 +17,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { filterByScope, mergeResults } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
-import { suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
+import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
 export function registerAuthFailureRecall(
@@ -154,6 +154,10 @@ export function registerAuthFailureRecall(
         return { prependContext: `${hint}\n\n` };
       }
     } catch (err) {
+      if (isRecallContextSuperseded(ctx)) {
+        api.logger.debug?.("memory-hybrid: auth failure recall skipped (registration superseded)");
+        return;
+      }
       if (
         suppressStaleLifecycleDbError(
           ctx,

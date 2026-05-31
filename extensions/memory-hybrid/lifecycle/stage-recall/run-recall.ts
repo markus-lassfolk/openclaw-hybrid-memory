@@ -163,6 +163,13 @@ export async function runRecall(
     return emptyRecallStage();
   }
   const shouldAbortRecall = (): boolean => recallAborted(signal) || isRecallContextSuperseded(ctx);
+  const suppressSupersededRecallError = (err: unknown, debugMessage: string): boolean => {
+    if (isRecallContextSuperseded(ctx)) {
+      api.logger.debug?.(debugMessage);
+      return true;
+    }
+    return suppressStaleLifecycleDbError(ctx, err, api.logger, debugMessage);
+  };
 
   ctx.recallInFlightRef.value++;
   const recallStartMs = Date.now();
@@ -620,10 +627,8 @@ export async function runRecall(
               extraResultSets.push(qResults);
             } catch (err) {
               if (
-                !suppressStaleLifecycleDbError(
-                  ctx,
+                !suppressSupersededRecallError(
                   err,
-                  api.logger,
                   `memory-hybrid: ambient query skipped (registration superseded) type=${q.type}`,
                 )
               ) {
@@ -645,12 +650,7 @@ export async function runRecall(
         });
       } catch (err) {
         if (
-          !suppressStaleLifecycleDbError(
-            ctx,
-            err,
-            api.logger,
-            "memory-hybrid: ambient multi-query skipped (registration superseded)",
-          )
+          !suppressSupersededRecallError(err, "memory-hybrid: ambient multi-query skipped (registration superseded)")
         ) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "ambient-multi-query",
@@ -695,10 +695,8 @@ export async function runRecall(
         }
       } catch (err) {
         if (
-          !suppressStaleLifecycleDbError(
-            ctx,
+          !suppressSupersededRecallError(
             err,
-            api.logger,
             "memory-hybrid: ambient issue retrieval skipped (registration superseded)",
           )
         ) {
@@ -731,10 +729,8 @@ export async function runRecall(
         }
       } catch (err) {
         if (
-          !suppressStaleLifecycleDbError(
-            ctx,
+          !suppressSupersededRecallError(
             err,
-            api.logger,
             "memory-hybrid: recent narrative retrieval skipped (registration superseded)",
           )
         ) {
