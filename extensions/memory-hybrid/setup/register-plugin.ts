@@ -22,7 +22,7 @@ import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
 import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
 import { registerHybridMemCliWithApi } from "./cli-context/register-full.js";
 import "./cli-context.js";
-import { closeOldDatabases, initializeDatabases } from "./bootstrap-databases.js";
+import { closeOldDatabases, createReusedDatabaseBootstrap, initializeDatabases } from "./bootstrap-databases.js";
 import "./init-databases.js";
 import { createPluginService } from "./plugin-service.js";
 import {
@@ -291,9 +291,27 @@ async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void
 
   let dbContext: ReturnType<typeof initializeDatabases>;
   try {
-    dbContext = donorRuntime
-      ? databaseContextFromRuntime(donorRuntime)
-      : initializeDatabases(cfg, logApi, { bootRegistrationGeneration: registrationGeneration });
+    if (donorRuntime) {
+      const health = { embeddingsOk: false, credentialsVaultOk: false, lastCheckTime: Date.now() };
+      const newBootstrapPromise = createReusedDatabaseBootstrap(
+        cfg,
+        logApi,
+        {
+          embeddings: donorRuntime.embeddings,
+          wal: donorRuntime.wal,
+          credentialsDb: donorRuntime.credentialsDb,
+          factsDb: donorRuntime.factsDb,
+          vectorDb: donorRuntime.vectorDb,
+          aliasDb: donorRuntime.aliasDb,
+          resolvedSqlitePath: donorRuntime.resolvedSqlitePath,
+          health,
+        },
+        { bootRegistrationGeneration: registrationGeneration },
+      );
+      dbContext = databaseContextFromRuntime(donorRuntime, { newBootstrapPromise, health });
+    } else {
+      dbContext = initializeDatabases(cfg, logApi, { bootRegistrationGeneration: registrationGeneration });
+    }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",

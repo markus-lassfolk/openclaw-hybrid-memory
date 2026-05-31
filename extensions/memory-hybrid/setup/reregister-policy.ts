@@ -74,7 +74,10 @@ export function canReuseDatabasesOnReregister(
 }
 
 /** Snapshot of initializeDatabases() return shape for register-plugin when reusing handles. */
-export function databaseContextFromRuntime(old: PluginRuntime) {
+export function databaseContextFromRuntime(
+  old: PluginRuntime,
+  opts?: { newBootstrapPromise?: Promise<void>; health?: { embeddingsOk: boolean; credentialsVaultOk: boolean; lastCheckTime: number } },
+) {
   return {
     factsDb: old.factsDb,
     edictStore: old.edictStore,
@@ -100,7 +103,7 @@ export function databaseContextFromRuntime(old: PluginRuntime) {
     resolvedLancePath: old.resolvedLancePath,
     resolvedSqlitePath: old.resolvedSqlitePath,
     apitapStore: old.apitapStore!,
-    initialized: old.bootstrapAsyncInit,
-    health: old.health,
+    initialized: opts?.newBootstrapPromise ?? old.bootstrapAsyncInit,
+    health: opts?.health ?? old.health,
   };
 }
