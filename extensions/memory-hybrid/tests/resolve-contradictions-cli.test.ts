@@ -162,6 +162,62 @@ function sampleLwwResult(overrides: Partial<LwwResult> = {}): LwwResult {
   };
 }
 
+describe("enrich-entities CLI options", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    process.exitCode = undefined;
+  });
+
+  it("uses default limit=200 for bounded dry-run", async () => {
+    const runEntityEnrichment = vi
+      .fn()
+      .mockResolvedValue({ pending: 0, pendingTotal: 0, processed: 0, factsEnriched: 0, remainingTotal: 0 });
+    const mem = makeProgram(makeBindings({ runEntityEnrichment }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mem.parseAsync(["enrich-entities", "--dry-run"], { from: "user" });
+
+    expect(runEntityEnrichment).toHaveBeenCalledTimes(1);
+    const opts = runEntityEnrichment.mock.calls[0]?.[0];
+    expect(opts.limit).toBe(200);
+    expect(opts.dryRun).toBe(true);
+    expect(opts.all).toBe(false);
+    expect(typeof opts.onProgress).toBe("function");
+  });
+
+  it("accepts explicit high --limit for catch-up runs", async () => {
+    const runEntityEnrichment = vi
+      .fn()
+      .mockResolvedValue({ pending: 0, pendingTotal: 0, processed: 0, factsEnriched: 0, remainingTotal: 0 });
+    const mem = makeProgram(makeBindings({ runEntityEnrichment }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mem.parseAsync(["enrich-entities", "--dry-run", "--limit", "2000"], { from: "user" });
+
+    expect(runEntityEnrichment).toHaveBeenCalledTimes(1);
+    const opts = runEntityEnrichment.mock.calls[0]?.[0];
+    expect(opts.limit).toBe(2000);
+    expect(opts.dryRun).toBe(true);
+    expect(opts.all).toBe(false);
+  });
+
+  it("enables exhaustive catch-up with --all", async () => {
+    const runEntityEnrichment = vi
+      .fn()
+      .mockResolvedValue({ pending: 0, pendingTotal: 0, processed: 0, factsEnriched: 0, remainingTotal: 0 });
+    const mem = makeProgram(makeBindings({ runEntityEnrichment }));
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    await mem.parseAsync(["enrich-entities", "--dry-run", "--all"], { from: "user" });
+
+    expect(runEntityEnrichment).toHaveBeenCalledTimes(1);
+    const opts = runEntityEnrichment.mock.calls[0]?.[0];
+    expect(opts.limit).toBe(200);
+    expect(opts.dryRun).toBe(true);
+    expect(opts.all).toBe(true);
+  });
+});
+
 describe("resolve-contradictions CLI contract mode", () => {
   let tmpDir: string;
 
@@ -339,5 +395,58 @@ describe("resolve-contradictions CLI contract mode", () => {
     expect(lines.some((l) => l.includes("contradiction-review apply summary applied=1 kept_new=1 kept_old=0"))).toBe(
       true,
     );
+  });
+
+  it("rejects invalid --apply-review files before applying decisions", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "resolve-contradictions-cli-"));
+    const reviewPath = join(tmpDir, "review-invalid.jsonl");
+    const runApplyContradictionReviewDecisions = vi.fn();
+    const mem = makeProgram(makeBindings({ runApplyContradictionReviewDecisions }));
+    writeFileSync(
+      reviewPath,
+      [
+        JSON.stringify({ contradictionId: "c-1", decision: "keep_new", reason: "Latest fact is correct." }),
+        JSON.stringify({ contradictionId: "c-2", decision: "drop_both" }),
+      ].join("\n"),
+      "utf-8",
+    );
+
+    await expect(
+      mem.parseAsync(["resolve-contradictions", "--apply-review", reviewPath], { from: "user" }),
+    ).rejects.toThrow(`Invalid review file ${reviewPath}: line 2: unsupported decision`);
+    expect(runApplyContradictionReviewDecisions).not.toHaveBeenCalled();
+  });
+
+  it("reports rejected --apply-review decisions without hiding partial success", async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "resolve-contradictions-cli-"));
+    const reviewPath = join(tmpDir, "review-partial.jsonl");
+    const runApplyContradictionReviewDecisions = vi.fn().mockResolvedValue({
+      applied: 1,
+      keptNew: 0,
+      keptOld: 1,
+      manualReview: 1,
+      rejected: 2,
+      errors: ["Contradiction c-2: already resolved.", "Contradiction c-3: row not found."],
+    });
+    const mem = makeProgram(makeBindings({ runApplyContradictionReviewDecisions }));
+    writeFileSync(
+      reviewPath,
+      [
+        JSON.stringify({ contradictionId: "c-1", decision: "keep_old", reason: "Old fact is still canonical." }),
+        JSON.stringify({ contradictionId: "c-2", decision: "manual_review", reason: "Need another pass." }),
+        JSON.stringify({ contradictionId: "c-3", decision: "keep_new", reason: "Retry the newer fact." }),
+      ].join("\n"),
+      "utf-8",
+    );
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--apply-review", reviewPath], { from: "user" });
+
+    expect(lines.some((l) => l.includes("applied=1 kept_new=0 kept_old=1 manual_review=1 rejected=2"))).toBe(true);
+    expect(lines).toContain("  - Contradiction c-2: already resolved.");
+    expect(lines).toContain("  - Contradiction c-3: row not found.");
   });
 });
