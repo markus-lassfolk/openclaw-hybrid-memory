@@ -9,7 +9,8 @@ import { getEnv } from "../utils/env-manager.js";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
+import "../config.js";
 import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
@@ -29,6 +30,7 @@ import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
+import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
 import type { LifecycleContext } from "./types.js";
 import { isStaleLifecycleGeneration } from "../utils/lifecycle-generation.js";
 
@@ -142,6 +144,28 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           }
           return inj ?? undefined;
         } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (
+            isStaleLifecycleGeneration(ctx) &&
+            /not open|connection is not open|database is not open/i.test(message)
+          ) {
+            api.logger.debug?.("memory-hybrid: recall skipped (stale lifecycle generation)");
+            return undefined;
+          }
+          if (isRecallContextSuperseded(ctx)) {
+            api.logger.debug?.("memory-hybrid: recall skipped (registration superseded during reload)");
+            return undefined;
+          }
+          if (
+            suppressStaleLifecycleDbError(
+              ctx,
+              err,
+              api.logger,
+              "memory-hybrid: recall skipped (database closed during reload)",
+            )
+          ) {
+            return undefined;
+          }
           if (capturedFirstRecallBegin) {
             recordStartupMemoryCheckpoint({
               logger: api.logger,
@@ -254,7 +278,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
       }
 
-      if (isStaleLifecycleGeneration(ctx)) return;
+      if (isStaleLifecycleGeneration(ctx)) {
+        const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+        sessionState.clearSessionState(sessionId);
+        return;
+      }
       await runCaptureStage(event, rApi, ctx, sessionState);
       if (isStaleLifecycleGeneration(ctx)) return;
       const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";

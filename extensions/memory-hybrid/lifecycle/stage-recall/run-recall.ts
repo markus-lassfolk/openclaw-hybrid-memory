@@ -26,6 +26,7 @@ import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
+import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
@@ -43,8 +44,10 @@ function isLifecycleSqliteShutdownError(err: unknown, ctx: LifecycleContext): bo
   if (!/not open|connection is not open|database is not open/i.test(message)) {
     return false;
   }
+  // Only suppress if the database is closed AND the generation is stale
+  // If the generation is current but the DB is closed, it's a real error that should be reported
   if (typeof ctx.factsDb.isOpen === "function" && !ctx.factsDb.isOpen()) {
-    return true;
+    return isStaleLifecycleGeneration(ctx);
   }
   return isStaleLifecycleGeneration(ctx);
 }
@@ -170,6 +173,18 @@ export async function runRecall(
   }
   const promptText = e.prompt;
 
+  if (isRecallContextSuperseded(ctx)) {
+    return emptyRecallStage();
+  }
+  const shouldAbortRecall = (): boolean => recallAborted(signal) || isRecallContextSuperseded(ctx);
+  const suppressSupersededRecallError = (err: unknown, debugMessage: string): boolean => {
+    if (isRecallContextSuperseded(ctx) || isLifecycleSqliteShutdownError(err, ctx)) {
+      api.logger.debug?.(debugMessage);
+      return true;
+    }
+    return suppressStaleLifecycleDbError(ctx, err, api.logger, debugMessage);
+  };
+
   ctx.recallInFlightRef.value++;
   const recallStartMs = Date.now();
   const recallProbeId = `recall-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -215,7 +230,7 @@ export async function runRecall(
   };
   const recallSpan = recallTiming.span;
   try {
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const { currentAgentIdRef } = ctx;
     const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen } =
@@ -232,7 +247,7 @@ export async function runRecall(
 
     // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
     await yieldEventLoop();
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const fmt = ctx.cfg.autoRecall.injectionFormat;
     const isProgressive = fmt === "progressive" || fmt === "progressive_hybrid";
@@ -286,6 +301,7 @@ export async function runRecall(
       const degradedLimit = ctx.cfg.autoRecall.limit;
       const trimmed = e.prompt.trim();
       await yieldEventLoop();
+      if (shouldAbortRecall()) return completeStage(emptyRecallStage());
       const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
       const totalBudget = interactivePolicy.contextBudgetTokens;
       const {
@@ -470,6 +486,7 @@ export async function runRecall(
     }
     recallTiming.phaseCompleted("procedures_block", proceduresStartedAt, { injected: procedureBlock.length > 0 });
     await yieldEventLoop();
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
     const withProcedures = (s: string) => (procedureBlock ? `${procedureBlock}\n${s}` : s);
 
     // HOT block
@@ -495,7 +512,7 @@ export async function runRecall(
     recallTiming.phaseCompleted("hot_facts_block", hotFactsStartedAt, { injected: hotBlock.length > 0 });
 
     await yieldEventLoop();
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const recallOpts = {
       tierFilter,
@@ -521,6 +538,7 @@ export async function runRecall(
       minScore,
       pendingLLMWarnings: ctx.pendingLLMWarnings,
       logger: api.logger,
+      registrationGeneration: ctx.registrationGeneration,
     };
 
     const ambientCfg = ctx.cfg.ambient;
@@ -541,7 +559,7 @@ export async function runRecall(
     const ambientSeenFacts = ambientSeenFactsMap.get(sessionScopeKey)!;
     const ambientLastEmbedding = ambientLastEmbeddingMap.get(sessionScopeKey) ?? null;
 
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     let promptEmbedding: number[] | null = null;
     setRecallProbePhase("prompt_embedding");
@@ -558,7 +576,9 @@ export async function runRecall(
       }
     }
 
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) {
+      return completeStage(emptyRecallStage());
+    }
 
     setRecallProbePhase("main_pipeline");
     const mainPipelineStartedAt = recallTiming.phaseStarted("main_pipeline");
@@ -573,7 +593,7 @@ export async function runRecall(
     });
     recallTiming.phaseCompleted("main_pipeline", mainPipelineStartedAt, { candidates: candidates.length });
 
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
       setRecallProbePhase("ambient_multi_query");
@@ -598,7 +618,7 @@ export async function runRecall(
         if (extraQueries.length > 0) {
           const extraResultSets: SearchResult[][] = [candidates];
           for (const q of extraQueries) {
-            if (recallAborted(signal)) {
+            if (shouldAbortRecall()) {
               recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
                 status: "aborted",
                 queries_run: ambientQueriesRun,
@@ -620,6 +640,17 @@ export async function runRecall(
               ambientQueriesRun += 1;
               extraResultSets.push(qResults);
             } catch (err) {
+              const suppressed = suppressSupersededRecallError(
+                err,
+                `memory-hybrid: ambient query skipped (registration superseded) type=${q.type}`,
+              );
+              if (suppressed) {
+                recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+                  status: "aborted",
+                  queries_run: ambientQueriesRun,
+                });
+                return completeStage(emptyRecallStage());
+              }
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: `ambient-query-${q.type}`,
                 subsystem: "auto-recall",
@@ -636,6 +667,17 @@ export async function runRecall(
           candidates: candidates.length,
         });
       } catch (err) {
+        const suppressed = suppressSupersededRecallError(
+          err,
+          "memory-hybrid: ambient multi-query skipped (registration superseded)",
+        );
+        if (suppressed) {
+          recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+            status: "aborted",
+            queries_run: ambientQueriesRun,
+          });
+          return completeStage(emptyRecallStage());
+        }
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "ambient-multi-query",
           subsystem: "auto-recall",
@@ -677,10 +719,17 @@ export async function runRecall(
           if (issueLines.length > 0) issueBlock = `${issueLines.join("\n")}\n\n`;
         }
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "ambient-issue-retrieval",
-          subsystem: "auto-recall",
-        });
+        if (
+          !suppressSupersededRecallError(
+            err,
+            "memory-hybrid: ambient issue retrieval skipped (registration superseded)",
+          )
+        ) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "ambient-issue-retrieval",
+            subsystem: "auto-recall",
+          });
+        }
       }
     }
     recallTiming.phaseCompleted("issues_block", issuesStartedAt, { injected: issueBlock.length > 0 });
@@ -704,16 +753,23 @@ export async function runRecall(
           narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
         }
       } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "recent-narrative-retrieval",
-          subsystem: "auto-recall",
-        });
+        if (
+          !suppressSupersededRecallError(
+            err,
+            "memory-hybrid: recent narrative retrieval skipped (registration superseded)",
+          )
+        ) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "recent-narrative-retrieval",
+            subsystem: "auto-recall",
+          });
+        }
       }
     }
     recallTiming.phaseCompleted("narrative_block", narrativeStartedAt, { injected: narrativeBlock.length > 0 });
 
     await yieldEventLoop();
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
@@ -786,18 +842,20 @@ export async function runRecall(
         candidates: candidates.length,
         aborted: true,
       });
-      return completeStage(emptyRecallStage());
+      // Preserve fixed blocks that were already built
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     };
     if (directivesCfg.enabled) {
       try {
-        if (recallAborted(signal)) {
+        if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
           return abortDirectives();
         }
         if (directivesCfg.entityMentioned && entityLookup.enabled) {
           const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
           if (entityLookupNames.length > 0) {
             for (const entity of entityLookupNames) {
-              if (recallAborted(signal)) {
+              if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
                 return abortDirectives();
               }
               if (!promptLower.includes(entity.toLowerCase())) continue;
@@ -819,7 +877,7 @@ export async function runRecall(
         }
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
-            if (recallAborted(signal)) {
+            if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
               return abortDirectives();
             }
             if (!promptLower.includes(keyword.toLowerCase())) continue;
@@ -838,7 +896,7 @@ export async function runRecall(
           }
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
-          if (recallAborted(signal)) {
+          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
@@ -856,7 +914,7 @@ export async function runRecall(
           addDirectiveResults(results, `taskType:${taskType}`);
         }
         if (directivesCfg.sessionStart) {
-          if (recallAborted(signal)) {
+          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
@@ -875,6 +933,20 @@ export async function runRecall(
           }
         }
       } catch (err) {
+        if (
+          suppressStaleLifecycleDbError(
+            ctx,
+            err,
+            api.logger,
+            "memory-hybrid: directive recall skipped (registration superseded)",
+          )
+        ) {
+          return abortDirectives();
+        }
+        if (isRecallContextSuperseded(ctx)) {
+          api.logger.debug?.("memory-hybrid: directive recall skipped (registration superseded)");
+          return abortDirectives();
+        }
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "directive-recall",
           subsystem: "auto-recall",
@@ -1029,11 +1101,20 @@ export async function runRecall(
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
     }
+    if (shouldAbortRecall()) {
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+    }
 
     setRecallProbePhase("finalize");
     const indexCap = Math.min(progressiveIndexMaxTokens ?? maxTokens, maxTokens);
     const groupByCategory = progressiveGroupByCategory === true;
     const pinnedRecallThreshold = progressivePinnedRecallCount ?? 3;
+
+    if (isRecallContextSuperseded(ctx)) {
+      const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
+      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+    }
 
     const result: RecallResult = {
       candidates,
@@ -1060,6 +1141,13 @@ export async function runRecall(
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
+    if (isRecallContextSuperseded(ctx)) {
+      setRecallProbePhase("skip:superseded");
+      api.logger.debug?.(
+        `memory-hybrid: recall-probe id=${recallProbeId} skipped (registration superseded) elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase}`,
+      );
+      return completeStage(emptyRecallStage());
+    }
     if (isLifecycleSqliteShutdownError(err, ctx)) {
       setRecallProbePhase("skip:shutdown");
       return completeStage(emptyRecallStage());

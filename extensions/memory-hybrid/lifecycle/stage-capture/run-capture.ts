@@ -7,8 +7,9 @@
 
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
-import { getCronModelConfig, getDefaultCronModel } from "../../config.js";
+import "../../config.js";
 import { detectCredentialPatterns } from "../../services/auto-capture.js";
 import {
   getAutoCaptureExtractionConfidence,
@@ -31,12 +32,20 @@ import type { MemoryEntry } from "../../types/memory.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
 import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
+import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
+import { isRecallContextSuperseded, shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
 import { extractTags } from "../../utils/tags.js";
 import { truncateForStorage } from "../../utils/text.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
 const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
+
+function suppressCaptureStageError(ctx: LifecycleContext, api: ClawdbotPluginApi, err: unknown): boolean {
+  if (!shouldSuppressStaleLifecycleError(ctx, err)) return false;
+  api.logger.debug?.("memory-hybrid: capture skipped (registration superseded during reload)");
+  return true;
+}
 
 /** Outcome indicator patterns for episodic memory auto-capture (#781). */
 interface OutcomePattern {
@@ -120,6 +129,22 @@ export async function runCapture(
 ): Promise<void> {
   const { resolveSessionKey, clearSessionState, frustrationStateMap } = sessionState;
   const sessionKey = resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
+  const abortIfSuperseded = (phase: string): boolean => {
+    if (!isRecallContextSuperseded(ctx)) return false;
+    api.logger.debug?.(`memory-hybrid: capture skipped (registration superseded during reload) phase=${phase}`);
+    return true;
+  };
+
+  if (abortIfSuperseded("start")) {
+    clearSessionState(sessionKey);
+    return;
+  }
+
   const ev = event as { success?: boolean; messages?: unknown[] };
   const messages = ev?.messages ?? [];
 
@@ -135,11 +160,13 @@ export async function runCapture(
         frustrationStateMap.set(sessionKey, state);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "frustration-assistant-capture",
-        subsystem: "frustration",
-        severity: "info",
-      });
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "frustration-assistant-capture",
+          subsystem: "frustration",
+          severity: "info",
+        });
+      }
     }
   }
 
@@ -178,13 +205,19 @@ export async function runCapture(
         }
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "humanizer-score-capture",
-        subsystem: "humanizer",
-        severity: "info",
-      });
-      api.logger.debug?.(`memory-hybrid: humanizer scoring skipped: ${String(err)}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "humanizer-score-capture",
+          subsystem: "humanizer",
+          severity: "info",
+        });
+        api.logger.debug?.(`memory-hybrid: humanizer scoring skipped: ${String(err)}`);
+      }
     }
+  }
+  if (abortIfSuperseded("post-humanizer")) {
+    clearSessionState(sessionKey);
+    return;
   }
 
   // 3. Event log session_end
@@ -201,11 +234,11 @@ export async function runCapture(
     }
   }
 
-  // 4. Centralized session state cleanup (Issue #463)
-  clearSessionState(sessionKey);
-  api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
-
-  // 5. Compaction on session end
+  // 4. Compaction on session end
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.compactionOnSessionEnd) {
     try {
       const counts = ctx.factsDb.runCompaction({
@@ -225,15 +258,30 @@ export async function runCapture(
         api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "compaction",
-        subsystem: "memory-tiering",
-      });
-      api.logger.warn(`memory-hybrid: compaction failed: ${err}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "compaction",
+          subsystem: "memory-tiering",
+        });
+        api.logger.warn(`memory-hybrid: compaction failed: ${err}`);
+      }
     }
   }
+  if (abortIfSuperseded("post-compaction")) {
+    clearSessionState(sessionKey);
+    return;
+  }
+
+  // 5. Centralized session state cleanup (Issue #463)
+  // Moved here to ensure it only runs after compaction and supersession checks
+  clearSessionState(sessionKey);
+  api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
 
   // 6. Auto-capture from conversation messages
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (ctx.cfg.autoCapture && ev.success && messages.length > 0) {
     try {
       const captureProvenance = resolveCaptureProvenance(event, api, sessionKey);
@@ -294,6 +342,10 @@ export async function runCapture(
 
         const prepared: CapturePrepared[] = [];
         for (const candidate of toCapture.slice(0, 3)) {
+          if (abortIfSuperseded("auto-capture-prepare")) {
+            clearSessionState(sessionKey);
+            return;
+          }
           let textToStore = candidate.text;
           textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
           const category: MemoryCategory = ctx.detectCategory(textToStore);
@@ -320,13 +372,15 @@ export async function runCapture(
               vector = await ctx.embeddings.embed(textToStore);
             } catch (err) {
               const asErr = err instanceof Error ? err : new Error(String(err));
-              if (!isOllamaCircuitBreakerOpen(asErr)) {
+              if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
                 capturePluginError(asErr, {
                   operation: "auto-capture-embedding",
                   subsystem: "auto-capture",
                 });
               }
-              api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+              if (!suppressCaptureStageError(ctx, api, asErr)) {
+                api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+              }
             }
           }
           let similarFacts: MemoryEntry[] = [];
@@ -372,6 +426,10 @@ export async function runCapture(
         }
 
         for (let pi = 0; pi < prepared.length; pi++) {
+          if (abortIfSuperseded("auto-capture-store")) {
+            clearSessionState(sessionKey);
+            return;
+          }
           const { candidate, textToStore, category, extracted, summary, vector, similarFacts } = prepared[pi];
           if (ctx.cfg.store.classifyBeforeWrite) {
             if (similarFacts.length > 0) {
@@ -574,18 +632,20 @@ export async function runCapture(
                   // Validation failed: fall through to default ADD-style store path
                 }
               } catch (err) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "auto-capture-classification",
-                  subsystem: "auto-capture",
-                });
-                ctx.auditStore?.append({
-                  agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-                  action: "auto-capture:classification-error",
-                  outcome: "failed",
-                  error: String(err).slice(0, 200),
-                  sessionId: captureProvenance.sessionId ?? undefined,
-                });
-                api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
+                if (!suppressCaptureStageError(ctx, api, err)) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "auto-capture-classification",
+                    subsystem: "auto-capture",
+                  });
+                  ctx.auditStore?.append({
+                    agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                    action: "auto-capture:classification-error",
+                    outcome: "failed",
+                    error: String(err).slice(0, 200),
+                    sessionId: captureProvenance.sessionId ?? undefined,
+                  });
+                  api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
+                }
               }
             }
           }
@@ -683,15 +743,19 @@ export async function runCapture(
                 );
               }
             } catch (vecErr) {
-              capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
-                operation: storeResult.embeddingStale ? "auto-capture-stale-vector-store" : "auto-capture-vector-store",
-                subsystem: "auto-capture",
-              });
-              api.logger.warn(
-                storeResult.embeddingStale
-                  ? `memory-hybrid: stale vector re-embed failed for merged fact ${storedEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
-                  : `memory-hybrid: vector capture failed: ${vecErr}`,
-              );
+              if (!suppressCaptureStageError(ctx, api, vecErr)) {
+                capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
+                  operation: storeResult.embeddingStale
+                    ? "auto-capture-stale-vector-store"
+                    : "auto-capture-vector-store",
+                  subsystem: "auto-capture",
+                });
+                api.logger.warn(
+                  storeResult.embeddingStale
+                    ? `memory-hybrid: stale vector re-embed failed for merged fact ${storedEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
+                    : `memory-hybrid: vector capture failed: ${vecErr}`,
+                );
+              }
             }
             stored++;
             ctx.auditStore?.append({
@@ -708,18 +772,28 @@ export async function runCapture(
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "auto-capture",
-        subsystem: "auto-capture",
-      });
-      api.logger.warn(`memory-hybrid: capture failed: ${String(err)}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "auto-capture",
+          subsystem: "auto-capture",
+        });
+        api.logger.warn(`memory-hybrid: capture failed: ${String(err)}`);
+      }
     }
   }
 
   // 6b. Episodic memory auto-capture (#781): scan conversation for outcome-indicating phrases
   // and create episode records. This runs regardless of autoCapture config flag, because
   // capturing outcomes is low-cost and high-value for the episodic history.
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   {
+    if (abortIfSuperseded("episodic-capture")) {
+      clearSessionState(sessionKey);
+      return;
+    }
     const sessionId = sessionKey;
     const agentId = ctx.currentAgentIdRef.value ?? undefined;
     // Collect all text from the session for scanning
@@ -746,6 +820,10 @@ export async function runCapture(
     }
 
     for (const { text } of sessionTexts) {
+      if (abortIfSuperseded("episodic-capture-loop")) {
+        clearSessionState(sessionKey);
+        return;
+      }
       // Scan for success indicators
       for (const pattern of SUCCESS_PATTERNS) {
         const match = pattern.regex.exec(text);
@@ -771,11 +849,13 @@ export async function runCapture(
               });
               api.logger.debug?.(`memory-hybrid: auto-captured success episode: ${episode.id}`);
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "episode-auto-capture-success",
-                subsystem: "episodes",
-                severity: "info",
-              });
+              if (!suppressCaptureStageError(ctx, api, err)) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "episode-auto-capture-success",
+                  subsystem: "episodes",
+                  severity: "info",
+                });
+              }
             }
           }
           break; // only one episode per message
@@ -808,11 +888,13 @@ export async function runCapture(
               });
               api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "episode-auto-capture-failure",
-                subsystem: "episodes",
-                severity: "info",
-              });
+              if (!suppressCaptureStageError(ctx, api, err)) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "episode-auto-capture-failure",
+                  subsystem: "episodes",
+                  severity: "info",
+                });
+              }
             }
           }
           break;
@@ -822,12 +904,20 @@ export async function runCapture(
   }
 
   // 7. Credential auto-detect: persist hint for next turn
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (
     ctx.cfg.credentials.enabled &&
     ctx.cfg.credentials.autoDetect &&
     ctx.cfg.verbosity !== "silent" &&
     messages.length > 0
   ) {
+    if (abortIfSuperseded("credential-hint-capture")) {
+      clearSessionState(sessionKey);
+      return;
+    }
     const pendingPath = join(dirname(ctx.resolvedSqlitePath), "credentials-pending.json");
     try {
       const texts: string[] = [];
@@ -867,19 +957,33 @@ export async function runCapture(
         );
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "credential-auto-detect",
-        subsystem: "credentials",
-      });
-      api.logger.warn(`memory-hybrid: credential auto-detect failed: ${err}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "credential-auto-detect",
+          subsystem: "credentials",
+        });
+        api.logger.warn(`memory-hybrid: credential auto-detect failed: ${err}`);
+      }
     }
   }
 
   // 8. Tool-call credential auto-capture
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoCapture?.toolCalls && messages.length > 0) {
+    if (abortIfSuperseded("credential-tool-call-capture")) {
+      clearSessionState(sessionKey);
+      return;
+    }
     const logCaptures = ctx.cfg.credentials.autoCapture.logCaptures !== false;
     try {
       for (const msg of messages as unknown[]) {
+        if (abortIfSuperseded("credential-tool-call-loop")) {
+          clearSessionState(sessionKey);
+          return;
+        }
         if (!msg || typeof msg !== "object") continue;
         const msgObj = msg as Record<string, unknown>;
         if (msgObj.role !== "assistant") continue;
@@ -896,11 +1000,13 @@ export async function runCapture(
           try {
             parsedArgs = JSON.parse(args);
           } catch (err) {
-            capturePluginError(err as Error, {
-              operation: "json-parse-tool-args",
-              severity: "info",
-              subsystem: "lifecycle",
-            });
+            if (!suppressCaptureStageError(ctx, api, err)) {
+              capturePluginError(err as Error, {
+                operation: "json-parse-tool-args",
+                severity: "info",
+                subsystem: "lifecycle",
+              });
+            }
           }
           const argsToScan = Object.values(parsedArgs)
             .filter((v): v is string => typeof v === "string")
@@ -991,7 +1097,7 @@ export async function runCapture(
                     }
                   } catch (err) {
                     const asErr = err instanceof Error ? err : new Error(String(err));
-                    if (!isOllamaCircuitBreakerOpen(asErr)) {
+                    if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
                       capturePluginError(asErr, {
                         operation: storeResult.embeddingStale
                           ? "tool-call-credential-stale-vector-update"
@@ -999,11 +1105,13 @@ export async function runCapture(
                         subsystem: "credentials",
                       });
                     }
-                    api.logger.warn(
-                      storeResult.embeddingStale
-                        ? `memory-hybrid: stale vector re-embed failed for merged credential fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
-                        : `memory-hybrid: vector store for credential fact failed: ${err}`,
-                    );
+                    if (!suppressCaptureStageError(ctx, api, asErr)) {
+                      api.logger.warn(
+                        storeResult.embeddingStale
+                          ? `memory-hybrid: stale vector re-embed failed for merged credential fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
+                          : `memory-hybrid: vector store for credential fact failed: ${err}`,
+                      );
+                    }
                   }
                 }
                 if (logCaptures) {
@@ -1015,12 +1123,14 @@ export async function runCapture(
         }
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "tool-call-credential-auto-capture",
-        subsystem: "credentials",
-      });
-      const errMsg = err instanceof Error ? err.stack || err.message : String(err);
-      api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${errMsg}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "tool-call-credential-auto-capture",
+          subsystem: "credentials",
+        });
+        const errMsg = err instanceof Error ? err.stack || err.message : String(err);
+        api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${errMsg}`);
+      }
     }
   }
 }
