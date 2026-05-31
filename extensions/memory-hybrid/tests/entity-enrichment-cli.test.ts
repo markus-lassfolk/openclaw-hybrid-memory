@@ -1,5 +1,5 @@
 /**
- * CLI entity enrichment: graph gate and limit sanitization (#992 review).
+ * CLI entity enrichment: graph gate, limit sanitization, tier priority, --all mode (#992, #1690 review).
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -43,6 +43,118 @@ describe("runEntityEnrichmentForCli", () => {
       dryRun: false,
     });
     expect(res.skipped).toBe(true);
+    expect(res.pendingTotal).toBeTypeOf("number");
     expect(openai.chat.completions.create).not.toHaveBeenCalled();
+  });
+
+  it("reports backlog/eta for bounded dry-run mode", async () => {
+    for (let i = 0; i < 5; i++) {
+      db.store({
+        text: `Bounded dry-run fact ${i} with enough length for queue planning and enrichment backlog tests.`,
+        entity: null,
+        key: null,
+        value: null,
+        category: "other",
+        importance: 0.5,
+        source: "test",
+      });
+    }
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 2,
+      dryRun: true,
+    });
+
+    expect(res.mode).toBe("bounded");
+    expect(res.pending).toBe(2);
+    expect(res.pendingTotal).toBe(5);
+    expect(res.remainingTotal).toBe(5);
+    expect(res.estimatedRunsRemaining).toBe(3);
+    expect(openai.chat.completions.create).not.toHaveBeenCalled();
+  });
+
+  it("supports --all catch-up mode and processes full backlog even with small limit", async () => {
+    for (let i = 0; i < 3; i++) {
+      db.store({
+        text: `All-mode fact ${i} with sufficient length to force LLM extraction path for enrichment queue checks.`,
+        entity: null,
+        key: null,
+        value: null,
+        category: "other",
+        importance: 0.5,
+        source: "test",
+      });
+    }
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 1,
+      all: true,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+    });
+
+    expect(res.mode).toBe("all");
+    expect(res.effectiveLimit).toBe("all");
+    expect(res.pending).toBe(3);
+    expect(res.pendingTotal).toBe(3);
+    expect(res.processed).toBe(3);
+    expect(res.remainingTotal).toBe(0);
+    expect(res.estimatedRunsRemaining).toBe(0);
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(3);
+  });
+
+  it("listFactIdsNeedingEntityEnrichment returns hot facts before cold facts", () => {
+    const hot = db.store({
+      text: "Hot fact with enough text to exceed the minimum length filter threshold here",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const cold = db.store({
+      text: "Cold fact with enough text to exceed the minimum length filter threshold here",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    db.setTier(cold.id, "cold");
+    db.setTier(hot.id, "hot");
+    const ids = db.listFactIdsNeedingEntityEnrichment(10, 24);
+    const hotIdx = ids.indexOf(hot.id);
+    const coldIdx = ids.indexOf(cold.id);
+    expect(hotIdx).toBeGreaterThanOrEqual(0);
+    expect(coldIdx).toBeGreaterThanOrEqual(0);
+    expect(hotIdx).toBeLessThan(coldIdx);
   });
 });
