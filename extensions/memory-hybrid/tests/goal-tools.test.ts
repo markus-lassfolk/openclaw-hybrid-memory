@@ -128,9 +128,13 @@ describe("goal tools registry primitives", () => {
       },
     });
 
-    const tools = new Map<string, { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>();
+    type RegisteredGoalTool = {
+      name: string;
+      execute: (id: string, params: Record<string, unknown>) => Promise<unknown>;
+    };
+    const tools = new Map<string, { execute: RegisteredGoalTool["execute"] }>();
     const api: Pick<ClawdbotPluginApi, "registerTool"> = {
-      registerTool(toolDefinition) {
+      registerTool(toolDefinition: RegisteredGoalTool) {
         tools.set(toolDefinition.name, { execute: toolDefinition.execute });
       },
     };
