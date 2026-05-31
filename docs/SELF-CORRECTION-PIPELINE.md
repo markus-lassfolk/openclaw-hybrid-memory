@@ -100,7 +100,9 @@ openclaw hybrid-mem self-correction-run --workspace /path/to/project --model gem
 ```
 
 - **Workspace** (for TOOLS.md and `memory/reports/`): `--workspace`, or `OPENCLAW_WORKSPACE`, or `~/.openclaw/workspace`.
-- **Model**: `--model` or `config.distill.defaultModel` or `gpt-4o-mini`.
+- **Model**: `--model` or heavy-tier resolution (`llm.heavy` primary, then built-in heavy default).
+- **Fallbacks**: when `llm.heavy` has one primary model, fallback candidates are merged from `llm.fallbackModel` and `distill.fallbackModels` (de-duplicated) and tried in order.
+- **`--model` override fallback behavior**: keeps configured fallback candidates by prepending the heavy-tier primary model to the same fallback chain.
 - **`--no-apply-tools`**: Do not insert TOOLS rules this run (only suggest in report). Opt-out from default apply.
 - **`--approve`**: Force apply TOOLS rules this run when config has `applyToolsByDefault: false`.
 
