@@ -588,7 +588,9 @@ function processEntityMentionsForFact<
         other !== m &&
         other.label === m.label &&
         other.normalizedSurface.length > m.normalizedSurface.length &&
-        other.normalizedSurface.includes(m.normalizedSurface),
+        other.normalizedSurface.includes(m.normalizedSurface) &&
+        other.sourceRow.start_offset <= m.sourceRow.start_offset &&
+        other.sourceRow.end_offset >= m.sourceRow.end_offset,
     );
     if (isSubstring) {
       substringFilteredCount++;
