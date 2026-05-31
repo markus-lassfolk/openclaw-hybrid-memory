@@ -315,7 +315,8 @@ describe("implicit feedback routing — positive → reinforcement", () => {
       });
       expect(firstRun.partial).toBe(true);
       expect(firstRun.partialReason).toBe("maxWallClock");
-      const firstCount = (rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number }).cnt;
+      const firstCount = (rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number })
+        .cnt;
       expect(firstCount).toBeGreaterThan(0);
 
       vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));

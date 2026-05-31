@@ -732,7 +732,12 @@ export async function runExtractImplicitFeedbackForCli(
               break;
             }
             const alreadyReinforcedForSignal =
-              reinforcementAlreadyRecordedStmt?.get(match.entry.id, context.sessionFile, context.topic, querySnippet) != null;
+              reinforcementAlreadyRecordedStmt?.get(
+                match.entry.id,
+                context.sessionFile ?? null,
+                context.topic ?? null,
+                querySnippet,
+              ) != null;
             if (alreadyReinforcedForSignal) continue;
             factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
               trackContext,
