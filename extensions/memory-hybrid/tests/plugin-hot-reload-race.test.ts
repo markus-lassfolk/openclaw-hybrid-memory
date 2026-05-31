@@ -18,6 +18,7 @@ import {
   drainOldRecall,
   resetReloadTeardownChainForTests,
   schedulePluginTeardown,
+  TEARDOWN_WAIT_MS,
 } from "../setup/hybrid-memory-reload-coordinator.js";
 import { runRecallPipelineQuery } from "../services/recall-pipeline.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
@@ -124,7 +125,7 @@ describe("plugin hot-reload race", () => {
       recallInFlightRef.value = 0;
       closed = true;
     });
-    expect(await awaitReloadTeardownBeforeOpen(0)).toBe(true);
+    expect(await awaitReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS)).toBe(true);
     expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
     expect(closed).toBe(true);
   });

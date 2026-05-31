@@ -29,7 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- **Plugin registration must be synchronous** ([#1768](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1768) follow-up, [#1773](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1773)): restored synchronous `register()` for OpenClaw gateway compatibility. Hot-reload teardown still blocks before reopening database handles via `blockReloadTeardownBeforeOpen()` (queue-depth polling with `Atomics.wait` event-loop ticks).
+- **Plugin registration must be synchronous** ([#1768](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1768) follow-up, [#1773](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1773)): restored synchronous `register()` for OpenClaw gateway compatibility. Hot-reload teardown blocks up to **TEARDOWN_WAIT_MS** (6s) before reopening database handles via `blockReloadTeardownBeforeOpen()`.
+- Reload-coordinator tests use bounded waits only (no infinite `timeoutMs=0` in sync paths — vitest cannot interrupt `Atomics.wait` loops).
 - Bumped plugin package, lockfile, plugin manifest, and installer package versions to **2026.5.311**.
 
 ### Notes
