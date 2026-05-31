@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { assessContinuousVerificationResult, runVerboseFollowUp } from "../cli/commands/manage/dream-cycle-followup.js";
+import {
+  assessContinuousVerificationResult,
+  formatContinuousVerificationAssessmentLine,
+  runVerboseFollowUp,
+} from "../cli/commands/manage/dream-cycle-followup.js";
 
 describe("dream-cycle follow-up heartbeat logging", () => {
   afterEach(() => {
@@ -72,6 +76,7 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     });
 
     expect(assessment.status).toBe("degraded");
+    expect(assessment.reason).toBe("all_uncertain");
     expect(assessment.shouldFailPipeline).toBe(true);
     expect(assessment.summary).toContain("all 12 verification check(s) were uncertain");
   });
@@ -93,7 +98,23 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     });
 
     expect(assessment.status).toBe("degraded");
+    expect(assessment.reason).toBe("errors_present");
     expect(assessment.shouldFailPipeline).toBe(true);
     expect(assessment.summary).toContain("5/5 verification check(s) errored");
+  });
+
+  it("emits machine-readable degraded verification status details", () => {
+    const result = {
+      checked: 5,
+      confirmed: 0,
+      stale: 0,
+      uncertain: 5,
+      errors: 5,
+      errorSummaries: ["fact=abc12345…: provider timeout"],
+    };
+    const assessment = assessContinuousVerificationResult(result);
+    expect(formatContinuousVerificationAssessmentLine(result, assessment)).toBe(
+      "status=degraded reason=errors_present checked=5 confirmed=0 stale=0 uncertain=5 errors=5",
+    );
   });
 });

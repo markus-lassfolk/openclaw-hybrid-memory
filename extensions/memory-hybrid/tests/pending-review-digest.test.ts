@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
@@ -145,6 +146,143 @@ describe("pending review digest (#1197)", () => {
     persona.close();
     tools.close();
     crystal.close();
+    factsDb.close();
+  });
+
+  it("sets truncated=0 and no marker when all pending entries fit in the window and cap", () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const factsDb = new FactsDB(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    persona.create({
+      targetFile: "USER.md",
+      title: "Keep replies concise",
+      observation: "User corrected verbosity.",
+      suggestedChange: "Prefer direct answers.",
+      confidence: 0.77,
+      evidenceSessions: ["session-c"],
+    });
+
+    const report = buildPendingReviewDigestReport({
+      cfg,
+      factsDb,
+      since: "7d",
+      now: new Date("2026-05-07T00:00:00.000Z"),
+    });
+
+    expect(report.personaProposals.pending).toBe(1);
+    expect(report.personaProposals.truncated).toBe(0);
+    expect(report.personaProposals.pendingEntries).toHaveLength(1);
+
+    const md = renderPendingReviewDigestMarkdown(report);
+    expect(md).not.toContain("omitted");
+
+    persona.close();
+    factsDb.close();
+  });
+
+  it("sets truncated and renders a truncation marker when proposals are outside the lookback window (#1742)", () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const factsDb = new FactsDB(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+
+    // Create two proposals within the normal window first, then backdate them
+    const nowEpoch = Math.floor(new Date("2026-05-07T00:00:00.000Z").getTime() / 1000);
+    const oldEpoch = nowEpoch - 8 * 24 * 3600; // 8 days ago — outside 7d window
+
+    const p1 = persona.create({
+      targetFile: "FILE_0.md",
+      title: "Old proposal 0",
+      observation: "Old observation.",
+      suggestedChange: "Old change.",
+      confidence: 0.7,
+      evidenceSessions: [],
+    });
+    const p2 = persona.create({
+      targetFile: "FILE_1.md",
+      title: "Old proposal 1",
+      observation: "Old observation.",
+      suggestedChange: "Old change.",
+      confidence: 0.7,
+      evidenceSessions: [],
+    });
+
+    // One proposal within the window (createdAt stays at current time which is before "now")
+    persona.create({
+      targetFile: "SOUL.md",
+      title: "Recent proposal",
+      observation: "Recent observation.",
+      suggestedChange: "Recent change.",
+      confidence: 0.9,
+      evidenceSessions: [],
+    });
+
+    // Close the store, then use a raw DatabaseSync to backdate the two old proposals
+    persona.close();
+    const rawDb = new DatabaseSync(paths.proposals);
+    const backdate = rawDb.prepare("UPDATE proposals SET created_at = ? WHERE id = ?");
+    backdate.run(oldEpoch, p1.id);
+    backdate.run(oldEpoch, p2.id);
+    rawDb.close();
+
+    const report = buildPendingReviewDigestReport({
+      cfg,
+      factsDb,
+      since: "7d",
+      now: new Date("2026-05-07T00:00:00.000Z"),
+    });
+
+    // 3 pending total; only 1 in the 7d window → 2 truncated
+    expect(report.personaProposals.pending).toBe(3);
+    expect(report.personaProposals.pendingEntries).toHaveLength(1);
+    expect(report.personaProposals.truncated).toBe(2);
+
+    const md = renderPendingReviewDigestMarkdown(report);
+    expect(md).toContain("2 more omitted");
+    expect(md).toContain("openclaw hybrid-mem proposals list --status pending");
+
+    factsDb.close();
+  });
+
+  it("sets truncated and renders a truncation marker when more than 10 recent proposals exist (#1742)", () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const factsDb = new FactsDB(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+
+    // Create 12 proposals — all within the 7d window (default createdAt = now)
+    for (let i = 0; i < 12; i++) {
+      persona.create({
+        targetFile: `FILE_${i}.md`,
+        title: `Proposal ${i}`,
+        observation: "Observation.",
+        suggestedChange: "Change.",
+        confidence: 0.8,
+        evidenceSessions: [],
+      });
+    }
+
+    const report = buildPendingReviewDigestReport({
+      cfg,
+      factsDb,
+      since: "7d",
+      now: new Date("2026-05-07T00:00:00.000Z"),
+    });
+
+    // Cap is 10; 12 pending → 2 truncated
+    expect(report.personaProposals.pending).toBe(12);
+    expect(report.personaProposals.pendingEntries).toHaveLength(10);
+    expect(report.personaProposals.truncated).toBe(2);
+
+    const md = renderPendingReviewDigestMarkdown(report);
+    expect(md).toContain("2 more omitted");
+    expect(md).toContain("openclaw hybrid-mem proposals list --status pending");
+
+    persona.close();
     factsDb.close();
   });
 
