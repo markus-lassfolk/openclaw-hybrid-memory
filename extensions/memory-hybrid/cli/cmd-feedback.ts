@@ -505,6 +505,18 @@ export async function runExtractImplicitFeedbackForCli(
   let lastProcessedFilePath: string | undefined;
 
   const rawDb = factsDb.getRawDb();
+  const reinforcementAlreadyRecordedStmt = rawDb
+    ? rawDb.prepare(
+        `SELECT 1
+         FROM reinforcement_log
+         WHERE fact_id = ?
+           AND signal = 'positive'
+           AND session_file = ?
+           AND topic = ?
+           AND query_snippet = ?
+         LIMIT 1`,
+      )
+    : null;
 
   // Capping limits from config
   const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 50;
@@ -697,22 +709,38 @@ export async function runExtractImplicitFeedbackForCli(
       const positiveSignals = signals.filter((s) => s.polarity === "positive" && s.confidence >= minConf);
       const trackContext = cfg.reinforcement?.trackContext !== false;
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
+      let reinforcementInterruptedByWallClock = false;
       for (const sig of positiveSignals) {
+        if (wallClockLimitReached()) {
+          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+          reinforcementInterruptedByWallClock = true;
+          break;
+        }
         try {
           const searchQuery = sig.context.agentMessage || sig.context.userMessage;
           const matches = factsDb.search(searchQuery, 3);
+          const querySnippet = sig.context.userMessage.slice(0, 200);
           const context: ReinforcementContext = {
-            querySnippet: sig.context.userMessage.slice(0, 200),
+            querySnippet,
             topic: sig.type,
             sessionFile: sig.context.sessionFile,
           };
           for (const match of matches) {
+            if (wallClockLimitReached()) {
+              markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+              reinforcementInterruptedByWallClock = true;
+              break;
+            }
+            const alreadyReinforcedForSignal =
+              reinforcementAlreadyRecordedStmt?.get(match.entry.id, context.sessionFile, context.topic, querySnippet) != null;
+            if (alreadyReinforcedForSignal) continue;
             factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
               trackContext,
               maxEventsPerFact,
               boostAmount: 0.5 * sig.confidence, // weaker than explicit praise
             });
           }
+          if (reinforcementInterruptedByWallClock) break;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
@@ -720,6 +748,9 @@ export async function runExtractImplicitFeedbackForCli(
             subsystem: "implicit-feedback",
           });
         }
+      }
+      if (reinforcementInterruptedByWallClock) {
+        break;
       }
     }
 

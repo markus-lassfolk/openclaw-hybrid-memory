@@ -274,6 +274,77 @@ describe("implicit feedback routing — positive → reinforcement", () => {
     const logRows = rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number };
     expect(logRows.cnt).toBe(0);
   });
+
+  it("does not duplicate reinforcement rows when wall-clock stops mid-session and reruns", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+      const db = makeDb(tmpDir);
+      db.store({
+        text: "exactly what is needed for async TypeScript pattern",
+        category: "technical",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      writePositiveSession(sessionsDir, "2026-01-01-session.jsonl");
+
+      const originalReinforceFact = db.reinforceFact.bind(db);
+      let reinforceCalls = 0;
+      vi.spyOn(db, "reinforceFact").mockImplementation((...args: Parameters<typeof originalReinforceFact>) => {
+        const result = originalReinforceFact(...args);
+        reinforceCalls++;
+        if (reinforceCalls === 1) {
+          vi.setSystemTime(new Date("2026-05-01T00:00:02.000Z"));
+        }
+        return result;
+      });
+
+      const firstCtx = makeCtx(db, sessionsDir, {
+        feedToReinforcement: true,
+        feedToSelfCorrection: false,
+        maxWallClockSeconds: 1,
+      });
+      const firstRun = await runExtractImplicitFeedbackForCli(firstCtx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+      expect(firstRun.partial).toBe(true);
+      expect(firstRun.partialReason).toBe("maxWallClock");
+      const firstCount = (rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number }).cnt;
+      expect(firstCount).toBeGreaterThan(0);
+
+      vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
+      const secondCtx = makeCtx(db, sessionsDir, {
+        feedToReinforcement: true,
+        feedToSelfCorrection: false,
+        maxWallClockSeconds: 300,
+      });
+      const secondRun = await runExtractImplicitFeedbackForCli(secondCtx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+      expect(secondRun.sessionsProcessed).toBe(1);
+
+      const duplicateReinforcementRows = rawDb(db)
+        .prepare(
+          `SELECT fact_id, session_file, topic, query_snippet, COUNT(*) as cnt
+           FROM reinforcement_log
+           GROUP BY fact_id, session_file, topic, query_snippet
+           HAVING COUNT(*) > 1`,
+        )
+        .all() as Array<{ cnt: number }>;
+      expect(duplicateReinforcementRows).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
