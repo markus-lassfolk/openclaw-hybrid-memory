@@ -311,6 +311,7 @@ function appendUniqueFallbackList(chain: string[], candidates: string[] | undefi
 export function resolveReflectionModelAndFallbacks(
   cfg: HybridMemoryConfig,
   tier: CronModelTier,
+  primaryModelOverride?: string,
 ): { defaultModel: string; fallbackModels: string[] | undefined } {
   const cronCfg = getCronModelConfig(cfg);
   const pref = getLLMModelPreference(cronCfg, tier);
@@ -340,8 +341,15 @@ export function resolveReflectionModelAndFallbacks(
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
   }
 
+  const primaryOverride = primaryModelOverride?.trim();
+  const effectivePrimary = primaryOverride || defaultModel;
+  if (primaryOverride) {
+    appendUniqueFallback(chain, defaultModel, effectivePrimary);
+    appendUniqueFallbackList(chain, pref, effectivePrimary);
+  }
+
   if (tier === "maintenance" && maintPolicy === "cheap-only") {
-    chain = filterMaintenanceTierFallbackModels(chain, defaultModel, explicitMaintenanceSet);
+    chain = filterMaintenanceTierFallbackModels(chain, effectivePrimary, explicitMaintenanceSet);
   }
 
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };
