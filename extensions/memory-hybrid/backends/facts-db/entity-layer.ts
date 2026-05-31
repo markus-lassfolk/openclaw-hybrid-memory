@@ -273,6 +273,7 @@ export function replaceFactEntityMentions(
     detectedLang: string | null;
     source: string;
   }>,
+  options: { preserveEnrichmentTimestamp?: boolean } = {},
 ): void {
   const tx = createTransaction(db, () => {
     db.prepare("DELETE FROM fact_entity_mentions WHERE fact_id = ?").run(factId);
@@ -341,7 +342,9 @@ export function replaceFactEntityMentions(
       }
     }
 
-    db.prepare("UPDATE facts SET entity_enrichment_at = ? WHERE id = ?").run(now, factId);
+    if (!options.preserveEnrichmentTimestamp) {
+      db.prepare("UPDATE facts SET entity_enrichment_at = ? WHERE id = ?").run(now, factId);
+    }
   });
   tx();
 }
