@@ -577,8 +577,6 @@ export async function runExtractImplicitFeedbackForCli(
       emitProgress();
       continue;
     }
-    progress.sessionsProcessed++;
-    lastProcessedFilePath = filePath;
 
     /**
      * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
@@ -598,6 +596,12 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
+    // Check if signal cap would be exceeded by this session's signals
+    if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
+      markPartialProgress("maxSignals");
+      break;
+    }
+
     totalSignals += signals.length;
     for (const sig of signals) {
       if (sig.polarity === "positive") positiveCount++;
@@ -609,12 +613,6 @@ export async function runExtractImplicitFeedbackForCli(
     progress.negativeCount = negativeCount;
     progress.trajectoriesBuilt = trajectoriesBuilt;
     emitProgress();
-
-    // Check if signal cap exceeded after accumulating signals from this session
-    if (maxSignalsPerRun > 0 && totalSignals >= maxSignalsPerRun) {
-      markPartialProgress("maxSignals");
-      break;
-    }
 
     if (!opts.dryRun && rawDb) {
       // Store raw signals in implicit_signals table
@@ -736,15 +734,16 @@ export async function runExtractImplicitFeedbackForCli(
     if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
       try {
         const trajectories = buildTrajectories(turns, sessionFile);
-        trajectoriesBuilt += trajectories.length;
-        progress.trajectoriesBuilt = trajectoriesBuilt;
-        emitProgress();
 
-        // Check if trajectory cap exceeded after accumulating trajectories from this session
-        if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt >= maxTrajectoriesPerRun) {
+        // Check if trajectory cap would be exceeded by this session's trajectories
+        if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
           markPartialProgress("maxTrajectories");
           break;
         }
+
+        trajectoriesBuilt += trajectories.length;
+        progress.trajectoriesBuilt = trajectoriesBuilt;
+        emitProgress();
 
         const insertTraj = rawDb.prepare(`
           INSERT OR REPLACE INTO feedback_trajectories
@@ -870,6 +869,10 @@ export async function runExtractImplicitFeedbackForCli(
         });
       }
     }
+
+    // Mark session as processed only after all persistence completes successfully
+    progress.sessionsProcessed++;
+    lastProcessedFilePath = filePath;
   }
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
