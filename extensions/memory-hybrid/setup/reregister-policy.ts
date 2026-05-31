@@ -96,6 +96,9 @@ export function canReuseDatabasesOnReregister(
   if (JSON.stringify(oldLlm?.nano) !== JSON.stringify(newLlm?.nano)) return false;
   if (JSON.stringify(oldLlm?.providers) !== JSON.stringify(newLlm?.providers)) return false;
 
+  // Compare credentials.enabled to detect when vault should be opened or closed
+  if (oldCfg.credentials?.enabled !== cfg.credentials?.enabled) return false;
+
   return true;
 }
 
