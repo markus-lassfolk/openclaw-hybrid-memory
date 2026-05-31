@@ -342,6 +342,207 @@ describe("runCaptureStage", () => {
     expect(ctx.walRemove).toHaveBeenCalledOnce();
   });
 
+  it("falls back to ADD storage when a classified UPDATE target is rejected", async () => {
+    const api = makeApi("chat");
+    const outOfScopeFact = {
+      id: "fact-agent",
+      text: "Remember to answer concisely.",
+      category: "fact",
+      importance: 0.8,
+      source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
+      createdAt: Math.floor(Date.now() / 1000) - 3600,
+      decayClass: "normal",
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 1,
+      tags: null,
+      scope: "agent",
+      scopeTarget: "agent-other",
+    };
+    const addedFact = {
+      ...outOfScopeFact,
+      id: "fact-added",
+      text: "Remember to answer with one sentence.",
+      scope: "global",
+      scopeTarget: null,
+    };
+
+    classifyMemoryOperationsBatchMock.mockResolvedValue([
+      { action: "UPDATE", targetId: outOfScopeFact.id, reason: "replace old wording" },
+    ]);
+
+    const storeWithResult = vi.fn().mockReturnValue({
+      entry: addedFact,
+      evictedFactId: null,
+      skipped: false,
+    });
+    const supersede = vi.fn();
+    const auditAppend = vi.fn();
+
+    const { ctx } = makeContext({
+      factsDb: {
+        store: vi.fn(),
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+        getById: vi.fn((id: string) => (id === outOfScopeFact.id ? outOfScopeFact : null)),
+        findSimilarForClassification: vi.fn().mockReturnValue([outOfScopeFact]),
+        supersede,
+      } as unknown as LifecycleContext["factsDb"],
+      vectorDb: {
+        delete: vi.fn().mockResolvedValue(true),
+      } as unknown as LifecycleContext["vectorDb"],
+      cfg: {
+        autoCapture: true,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: [] },
+        store: { classifyBeforeWrite: true },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: false },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+      auditStore: {
+        append: auditAppend,
+      } as unknown as LifecycleContext["auditStore"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [{ role: "user", content: "Remember to answer with one sentence." }],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      `memory-hybrid: blocked cross-scope auto-capture UPDATE target ${outOfScopeFact.id}`,
+    );
+    expect(storeWithResult).toHaveBeenCalledOnce();
+    expect(storeWithResult.mock.calls[0]?.[0]).not.toHaveProperty("supersedesId");
+    expect(supersede).not.toHaveBeenCalled();
+    expect(auditAppend).toHaveBeenCalledWith(expect.objectContaining({ action: "auto-capture:stored" }));
+    expect(ctx.walWrite).toHaveBeenCalledOnce();
+    expect(ctx.walRemove).toHaveBeenCalledOnce();
+  });
+
+  it("persists canonical embedding for classified UPDATE stale merge even when semantic retrieval is disabled", async () => {
+    const api = makeApi("chat");
+    const existingFact = {
+      id: "fact-existing",
+      text: "Remember to answer concisely.",
+      category: "fact",
+      importance: 0.8,
+      source: "conversation",
+      entity: null,
+      key: null,
+      value: null,
+      createdAt: Math.floor(Date.now() / 1000) - 3600,
+      decayClass: "normal",
+      expiresAt: null,
+      lastConfirmedAt: 0,
+      confidence: 1,
+      tags: null,
+      scope: "global",
+      scopeTarget: null,
+    };
+    const mergedFact = {
+      ...existingFact,
+      text: "Remember to answer concisely and include rationale.",
+    };
+
+    classifyMemoryOperationsBatchMock.mockResolvedValue([
+      { action: "UPDATE", targetId: existingFact.id, reason: "replace old wording" },
+    ]);
+
+    const storeWithResult = vi.fn().mockReturnValue({
+      entry: mergedFact,
+      evictedFactId: null,
+      skipped: false,
+      embeddingStale: true,
+    });
+    const supersede = vi.fn();
+    const setEmbeddingModel = vi.fn();
+    const storeEmbedding = vi.fn();
+    const vectorStore = vi.fn().mockResolvedValue(mergedFact.id);
+    const vectorDelete = vi.fn().mockResolvedValue(true);
+    const vectorHasDuplicate = vi.fn().mockResolvedValue(false);
+    const embed = vi.fn().mockResolvedValue([0.11, 0.22, 0.33]);
+
+    const { ctx } = makeContext({
+      factsDb: {
+        store: vi.fn(),
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+        getById: vi.fn((id: string) => (id === existingFact.id ? existingFact : null)),
+        findSimilarForClassification: vi.fn().mockReturnValue([existingFact]),
+        supersede,
+        setEmbeddingModel,
+        storeEmbedding,
+      } as unknown as LifecycleContext["factsDb"],
+      aliasDb: {
+        deleteByFactId: vi.fn(),
+      } as unknown as LifecycleContext["aliasDb"],
+      vectorDb: {
+        delete: vectorDelete,
+        hasDuplicate: vectorHasDuplicate,
+        store: vectorStore,
+      } as unknown as LifecycleContext["vectorDb"],
+      embeddings: {
+        modelName: "test-model",
+        embed,
+      } as unknown as LifecycleContext["embeddings"],
+      cfg: {
+        autoCapture: true,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: [] },
+        store: { classifyBeforeWrite: true },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: false },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [{ role: "user", content: "Remember to answer concisely." }],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeWithResult).toHaveBeenCalledOnce();
+    expect(embed).toHaveBeenCalledWith(mergedFact.text);
+    expect(setEmbeddingModel).toHaveBeenCalledWith(mergedFact.id, "test-model");
+    expect(vectorStore).toHaveBeenCalledWith({
+      id: mergedFact.id,
+      text: mergedFact.text,
+      vector: [0.11, 0.22, 0.33],
+      importance: existingFact.importance,
+      category: "fact",
+    });
+    expect(storeEmbedding).toHaveBeenCalledWith(
+      mergedFact.id,
+      "test-model",
+      "canonical",
+      new Float32Array([0.11, 0.22, 0.33]),
+      3,
+    );
+    expect(vectorDelete).toHaveBeenCalledWith(existingFact.id);
+    expect(supersede).toHaveBeenCalledWith(existingFact.id, mergedFact.id);
+    expect(ctx.walWrite).toHaveBeenCalledOnce();
+    expect(ctx.walRemove).toHaveBeenCalledOnce();
+  });
+
   // -------------------------------------------------------------------------
   // Credential auto-detect: atomicity of pendingPath write (Issue #1498).
   // -------------------------------------------------------------------------
