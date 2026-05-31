@@ -515,7 +515,7 @@ describe("resolveToolEffectivenessCliDbPaths", () => {
       rmSync(tmpDir, { recursive: true, force: true });
     });
 
-    it("reports legacy path mismatch when current DB has sparse valid traces", () => {
+    it("reports minCalls threshold issue when current DB has sparse valid traces", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "tool-effectiveness-no-data-"));
       const sqlitePath = join(tmpDir, "facts.db");
       const workflowDbPath = join(tmpDir, "workflow-traces.db");
@@ -545,8 +545,8 @@ describe("resolveToolEffectivenessCliDbPaths", () => {
         legacyDb.close();
       }
 
-      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toContain(
-        `workflow path mismatch: found legacy workflow DB at ${legacyWorkflowDbPath}`,
+      expect(explainToolEffectivenessNoData(sqlitePath, workflowDbPath, true)).toBe(
+        "workflow traces exist but no tools meet minimum call threshold for scoring",
       );
 
       rmSync(tmpDir, { recursive: true, force: true });
