@@ -448,18 +448,18 @@ export async function runRecallPipelineQuery(
           vectorStepStatus = isTimeout ? "timeout" : "error";
           if (isTimeout) logger.warn(`memory-hybrid: ${String(err)}, using FTS-only recall`);
           else {
-            if (!shouldSuppressEmbeddingError(err)) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: `${opts?.errorPrefix ?? ""}vector-recall`,
-                subsystem: "auto-recall",
-                backend: "lancedb",
-              });
-            }
             if (isStalePipelineDbError(deps, err)) {
               probeDebug(
                 `memory-hybrid: recall-probe id=${probeId} ${opts?.errorPrefix ?? ""}vector recall skipped (registration superseded)`,
               );
             } else {
+              if (!shouldSuppressEmbeddingError(err)) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: `${opts?.errorPrefix ?? ""}vector-recall`,
+                  subsystem: "auto-recall",
+                  backend: "lancedb",
+                });
+              }
               logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
             }
           }
