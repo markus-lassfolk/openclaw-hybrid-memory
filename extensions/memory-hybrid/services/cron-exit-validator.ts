@@ -139,44 +139,47 @@ export function readExitLedger(exitPath: string): ExitStep[] {
  * when a feature gate is off (no hm_step runs, empty HM_EXIT). Avoids false greens on shell
  * abort before first step — we only match phrases unlikely to appear in generic failures.
  */
+function logContentIndicatesIntentionalFeatureSkip(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (lower.length === 0) return false;
+  if (/\bjob was skipped\b/.test(lower)) return true;
+  if (/\bskip(ped|ping)?\b.*\bhybrid[- ]memory\b.*\bconfig\b/.test(lower)) return true;
+  if (/\bself[- ]correction\b.*\b(disabled|skipped)\b/.test(lower)) return true;
+  if (/\breflection\b.*\b(disabled|skipped|enabled is false)\b/.test(lower)) return true;
+  if (/\bnightly\s*cycle\b.*\b(disabled|skipped|enabled is false)\b/.test(lower)) return true;
+  if (/\bsensor\s*sweep\b.*\b(disabled|skipped|enabled is false)\b/.test(lower)) return true;
+  if (/\bpersona\s*proposals?\b.*\b(disabled|skipped|enabled is false)\b/.test(lower)) return true;
+  if (/\bskip the script\b.*\b(disabled|reply)\b/.test(lower)) return true;
+  return false;
+}
+
 export function logIndicatesIntentionalFeatureSkip(logPath: string): boolean {
   if (!existsSync(logPath)) return false;
   try {
-    const text = readFileSync(logPath, "utf-8").toLowerCase();
-    if (text.length === 0) return false;
-    if (/\bjob was skipped\b/.test(text)) return true;
-    if (/\bskip(ped|ping)?\b.*\bhybrid[- ]memory\b.*\bconfig\b/.test(text)) return true;
-    if (/\bself[- ]correction\b.*\b(disabled|skipped)\b/.test(text)) return true;
-    if (/\breflection\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
-    if (/\bnightly\s*cycle\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
-    if (/\bsensor\s*sweep\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
-    if (/\bpersona\s*proposals?\b.*\b(disabled|skipped|enabled is false)\b/.test(text)) return true;
-    if (/\bskip the script\b.*\b(disabled|reply)\b/.test(text)) return true;
-    return false;
+    return logContentIndicatesIntentionalFeatureSkip(readFileSync(logPath, "utf-8"));
   } catch {
     return false;
   }
+}
+
+function checkUnknownCommandsInContent(content: string): string[] {
+  const unknownCommands: string[] = [];
+  for (const line of content.split("\n")) {
+    // Match patterns like: "error: unknown command 'consolidate-episodes'"
+    const match = line.match(/(?:error|Error):\s*unknown command\s+['"]([^'"]+)['"]/);
+    if (match) {
+      unknownCommands.push(match[1]);
+    }
+  }
+  return unknownCommands;
 }
 
 export function checkForUnknownCommands(logPath: string): string[] {
   if (!existsSync(logPath)) {
     return [];
   }
-
   try {
-    const content = readFileSync(logPath, "utf-8");
-    const lines = content.split("\n");
-    const unknownCommands: string[] = [];
-
-    for (const line of lines) {
-      // Match patterns like: "error: unknown command 'consolidate-episodes'"
-      const match = line.match(/(?:error|Error):\s*unknown command\s+['"]([^'"]+)['"]/);
-      if (match) {
-        unknownCommands.push(match[1]);
-      }
-    }
-
-    return unknownCommands;
+    return checkUnknownCommandsInContent(readFileSync(logPath, "utf-8"));
   } catch {
     return [];
   }
@@ -187,25 +190,18 @@ interface DegradedVerificationStatus {
   machineLine: string;
 }
 
-function detectDegradedContinuousVerificationStatus(logPath: string): DegradedVerificationStatus | null {
-  if (!existsSync(logPath)) return null;
-  try {
-    const content = readFileSync(logPath, "utf-8");
-    const lines = content.split("\n");
-    for (const line of lines) {
-      const marker = line.match(/Machine status:\s*(status=degraded\b.*)$/i);
-      if (!marker) continue;
-      const machineLine = marker[1].trim();
-      const reasonMatch = machineLine.match(/\breason=([a-z_]+)/i);
-      return {
-        reason: reasonMatch?.[1]?.toLowerCase(),
-        machineLine,
-      };
-    }
-    return null;
-  } catch {
-    return null;
+function detectDegradedContinuousVerificationStatus(logContent: string): DegradedVerificationStatus | null {
+  for (const line of logContent.split("\n")) {
+    const marker = line.match(/Machine status:\s*(status=degraded\b.*)$/i);
+    if (!marker) continue;
+    const machineLine = marker[1].trim();
+    const reasonMatch = machineLine.match(/\breason=([a-z_]+)/i);
+    return {
+      reason: reasonMatch?.[1]?.toLowerCase(),
+      machineLine,
+    };
   }
+  return null;
 }
 
 /**
@@ -240,8 +236,11 @@ export function validateMaintenanceExecution(
   // Read exit ledger
   const steps = readExitLedger(exitPath);
 
+  // Read log content once for all log-based checks
+  const logContent = logPath ? safeReadLog(logPath) : "";
+
   // Check for unknown commands in log
-  const unknownCommands = logPath ? checkForUnknownCommands(logPath) : [];
+  const unknownCommands = logPath ? checkUnknownCommandsInContent(logContent) : [];
   if (unknownCommands.length > 0) {
     return {
       maintenanceStatus: "failed",
@@ -284,7 +283,6 @@ export function validateMaintenanceExecution(
   }
 
   if (logPath && failedSteps.some((s) => s.step === "audit-health")) {
-    const logContent = safeReadLog(logPath);
     for (const step of failedSteps) {
       if (step.step !== "audit-health") continue;
       const inferred = inferAuditHealthFailureReason(step.exitCode, logContent);
@@ -294,10 +292,11 @@ export function validateMaintenanceExecution(
   }
 
   if (logPath && requiredSteps.includes("dream-cycle")) {
-    const degradedVerification = detectDegradedContinuousVerificationStatus(logPath);
+    const degradedVerification = detectDegradedContinuousVerificationStatus(logContent);
     if (degradedVerification) {
+      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? new Date().toISOString();
       failedSteps.push({
-        timestamp: "N/A",
+        timestamp: dreamCycleTimestamp,
         step: "continuous-verification",
         exitCode: 2,
         line: degradedVerification.machineLine,
@@ -318,7 +317,7 @@ export function validateMaintenanceExecution(
     // Every required step absent — usually a hard failure (shell died before hm_step).
     // Exception: cron preambles that tell the agent to skip the whole script when a feature
     // is disabled leave an empty ledger; corroborate with HM_LOG text.
-    if (logPath && steps.length === 0 && failedSteps.length === 0 && logIndicatesIntentionalFeatureSkip(logPath)) {
+    if (logPath && steps.length === 0 && failedSteps.length === 0 && logContentIndicatesIntentionalFeatureSkip(logContent)) {
       maintenanceStatus = "skipped";
     } else {
       maintenanceStatus = "failed";
