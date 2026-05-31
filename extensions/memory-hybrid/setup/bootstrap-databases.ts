@@ -762,12 +762,6 @@ export function initializeDatabases(
             migrationFlagPath,
             markDone: false, // Flag already created atomically above
           });
-          if (isBootstrapSuperseded()) {
-            api.logger.debug?.(
-              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
-            );
-            return;
-          }
           if (result.migrated > 0) {
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
           }
@@ -775,6 +769,15 @@ export function initializeDatabases(
             api.logger.warn(
               `memory-hybrid: credential migration had ${result.errors.length} error(s): ${result.errors.join("; ")}`,
             );
+          }
+          if (isBootstrapSuperseded()) {
+            if (result.errors.length > 0) {
+              await clearMigrationFlagForRetry("registration superseded after migration with errors");
+            }
+            api.logger.debug?.(
+              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
+            );
+            return;
           }
         } catch (e) {
           if (isBootstrapSuperseded()) {
