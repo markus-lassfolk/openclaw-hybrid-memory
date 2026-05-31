@@ -781,12 +781,7 @@ export function cleanupEntityMentions(
     }
   };
 
-  if (options.apply) {
-    const tx = createTransaction(db, processLoop);
-    tx();
-  } else {
-    processLoop();
-  }
+  processLoop();
 
   return {
     factsScanned: factIds.length,
