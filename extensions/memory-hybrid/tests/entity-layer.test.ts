@@ -5,9 +5,15 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { escapeLikeLiteralForBackslashEscape, normalizeEntityKey } from "../backends/facts-db/entity-layer.js";
+
 import { FactsDB } from "../backends/facts-db.js";
+import {
+  escapeLikeLiteralForBackslashEscape,
+  normalizeEntityKey,
+  normalizeFactEntityMentionsForPersistence,
+} from "../backends/facts-db/entity-layer.js";
 import {
   detectFactTextLanguage,
   extractEntityMentionsWithLlm,
@@ -23,6 +29,457 @@ describe("normalizeEntityKey", () => {
 describe("escapeLikeLiteralForBackslashEscape", () => {
   it("escapes LIKE wildcards and backslashes for ESCAPE '\\'", () => {
     expect(escapeLikeLiteralForBackslashEscape("a%b_c\\d")).toBe("a\\%b\\_c\\\\d");
+  });
+});
+
+describe("normalizeFactEntityMentionsForPersistence", () => {
+  it("normalizes, filters, and deduplicates noisy mentions before persistence", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "  Hybrid-memory   PR Pipeline  ",
+          normalizedSurface: "Hybrid-memory   PR Pipeline",
+          startOffset: 0,
+          endOffset: 28,
+          confidence: 0.6,
+        },
+        {
+          label: "ORG",
+          surfaceText: "hybrid-memory pr pipeline",
+          normalizedSurface: "hybrid-memory pr pipeline",
+          startOffset: 0,
+          endOffset: 26,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "whatsapp",
+          normalizedSurface: "whatsapp",
+          startOffset: 40,
+          endOffset: 48,
+          confidence: 0.8,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Surgeon",
+          normalizedSurface: "surgeon",
+          startOffset: 60,
+          endOffset: 67,
+          confidence: 0.8,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme",
+          normalizedSurface: "acme",
+          startOffset: 80,
+          endOffset: 84,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme Corporation",
+          normalizedSurface: "acme corporation",
+          startOffset: 80,
+          endOffset: 96,
+          confidence: 0.95,
+        },
+        {
+          label: "ORG",
+          surfaceText: "A",
+          normalizedSurface: "a",
+          startOffset: 100,
+          endOffset: 101,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "hybrid-memory pr pipeline",
+        normalizedSurface: "hybrid-memory pr pipeline",
+        startOffset: 0,
+        endOffset: 26,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Acme Corporation",
+        normalizedSurface: "acme corporation",
+        startOffset: 80,
+        endOffset: 96,
+        confidence: 0.95,
+      },
+    ]);
+  });
+
+  it("preserves extractor-provided canonical normalized surfaces", () => {
+    const result = normalizeFactEntityMentionsForPersistence([
+      {
+        label: "ORG",
+        surfaceText: "OpenAI",
+        normalizedSurface: "OpenAI",
+        startOffset: 0,
+        endOffset: 6,
+        confidence: 0.8,
+      },
+      {
+        label: "ORG",
+        surfaceText: "OpenAI, Inc.",
+        normalizedSurface: "OpenAI",
+        startOffset: 0,
+        endOffset: 12,
+        confidence: 0.9,
+      },
+    ]);
+
+    expect(result).toHaveLength(2);
+    expect(result.map((mention) => mention.normalizedSurface)).toEqual(["openai", "openai"]);
+    expect(result.map((mention) => mention.surfaceText)).toEqual(["OpenAI", "OpenAI, Inc."]);
+  });
+
+  it("keeps valid two-character entity mentions", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "PERSON",
+          surfaceText: "Li",
+          normalizedSurface: "li",
+          startOffset: 0,
+          endOffset: 2,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Xi",
+          normalizedSurface: "xi",
+          startOffset: 3,
+          endOffset: 5,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "HP",
+          normalizedSurface: "hp",
+          startOffset: 6,
+          endOffset: 8,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "3M",
+          normalizedSurface: "3m",
+          startOffset: 9,
+          endOffset: 11,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "小米",
+          normalizedSurface: "小米",
+          startOffset: 12,
+          endOffset: 14,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "腾讯",
+          normalizedSurface: "腾讯",
+          startOffset: 15,
+          endOffset: 17,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "ab",
+          normalizedSurface: "ab",
+          startOffset: 18,
+          endOffset: 20,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "PERSON",
+        surfaceText: "Li",
+        normalizedSurface: "li",
+        startOffset: 0,
+        endOffset: 2,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Xi",
+        normalizedSurface: "xi",
+        startOffset: 3,
+        endOffset: 5,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "HP",
+        normalizedSurface: "hp",
+        startOffset: 6,
+        endOffset: 8,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "3M",
+        normalizedSurface: "3m",
+        startOffset: 9,
+        endOffset: 11,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "小米",
+        normalizedSurface: "小米",
+        startOffset: 12,
+        endOffset: 14,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "腾讯",
+        normalizedSurface: "腾讯",
+        startOffset: 15,
+        endOffset: 17,
+        confidence: 0.9,
+      },
+    ]);
+  });
+
+  it("does not drop non-overlapping mentions that share a token", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "PERSON",
+          surfaceText: "Lee",
+          normalizedSurface: "lee",
+          startOffset: 0,
+          endOffset: 3,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Lee Chang",
+          normalizedSurface: "lee chang",
+          startOffset: 20,
+          endOffset: 29,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "PERSON",
+        surfaceText: "Lee",
+        normalizedSurface: "lee",
+        startOffset: 0,
+        endOffset: 3,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Lee Chang",
+        normalizedSurface: "lee chang",
+        startOffset: 20,
+        endOffset: 29,
+        confidence: 0.9,
+      },
+    ]);
+  });
+
+  it("treats punctuation as a boundary when pruning overlapping contained mentions", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "Acme",
+          normalizedSurface: "acme",
+          startOffset: 0,
+          endOffset: 4,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme, Inc.",
+          normalizedSurface: "acme, inc.",
+          startOffset: 0,
+          endOffset: 10,
+          confidence: 0.95,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "Acme, Inc.",
+        normalizedSurface: "acme, inc.",
+        startOffset: 0,
+        endOffset: 10,
+        confidence: 0.95,
+      },
+    ]);
+  });
+
+  it("keeps offsets aligned with trimmed surface text", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "  OpenAI  ",
+          normalizedSurface: "openai",
+          startOffset: 10,
+          endOffset: 20,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "OpenAI",
+        normalizedSurface: "openai",
+        startOffset: 12,
+        endOffset: 18,
+        confidence: 0.9,
+      },
+    ]);
+  });
+
+  it("preserves distinct entities that are coincidental character-level substrings", () => {
+    expect(
+      normalizeFactEntityMentionsForPersistence([
+        {
+          label: "ORG",
+          surfaceText: "Ford",
+          normalizedSurface: "ford",
+          startOffset: 0,
+          endOffset: 4,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Oxford",
+          normalizedSurface: "oxford",
+          startOffset: 10,
+          endOffset: 16,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Rich",
+          normalizedSurface: "rich",
+          startOffset: 20,
+          endOffset: 24,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Richard",
+          normalizedSurface: "richard",
+          startOffset: 30,
+          endOffset: 37,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Art",
+          normalizedSurface: "art",
+          startOffset: 40,
+          endOffset: 43,
+          confidence: 0.9,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Martin",
+          normalizedSurface: "martin",
+          startOffset: 50,
+          endOffset: 56,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Ace",
+          normalizedSurface: "ace",
+          startOffset: 60,
+          endOffset: 63,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Space",
+          normalizedSurface: "space",
+          startOffset: 70,
+          endOffset: 75,
+          confidence: 0.9,
+        },
+      ]),
+    ).toEqual([
+      {
+        label: "ORG",
+        surfaceText: "Ford",
+        normalizedSurface: "ford",
+        startOffset: 0,
+        endOffset: 4,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Oxford",
+        normalizedSurface: "oxford",
+        startOffset: 10,
+        endOffset: 16,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Rich",
+        normalizedSurface: "rich",
+        startOffset: 20,
+        endOffset: 24,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Richard",
+        normalizedSurface: "richard",
+        startOffset: 30,
+        endOffset: 37,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Art",
+        normalizedSurface: "art",
+        startOffset: 40,
+        endOffset: 43,
+        confidence: 0.9,
+      },
+      {
+        label: "PERSON",
+        surfaceText: "Martin",
+        normalizedSurface: "martin",
+        startOffset: 50,
+        endOffset: 56,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Ace",
+        normalizedSurface: "ace",
+        startOffset: 60,
+        endOffset: 63,
+        confidence: 0.9,
+      },
+      {
+        label: "ORG",
+        surfaceText: "Space",
+        normalizedSurface: "space",
+        startOffset: 70,
+        endOffset: 75,
+        confidence: 0.9,
+      },
+    ]);
   });
 });
 
@@ -80,12 +537,14 @@ describe("extractEntityMentionsWithLlm", () => {
 
 describe("FactsDB entity layer persistence", () => {
   let dir: string;
+  let dbPath: string;
   let db: FactsDB;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "hybrid-entity-"));
     mkdirSync(dir, { recursive: true });
-    db = new FactsDB(join(dir, "facts.db"));
+    dbPath = join(dir, "facts.db");
+    db = new FactsDB(dbPath);
   });
 
   afterEach(() => {
@@ -403,6 +862,112 @@ describe("FactsDB entity layer persistence", () => {
     expect(row.c).toBe(1);
   });
 
+  it("deduplicates persisted mentions after normalization and skips generic noise", () => {
+    const fact = db.store({
+      text: "Hybrid-memory PR Pipeline mentioned Hybrid-memory PR Pipeline while Acme Corporation replaced Acme and Surgeon reviewed whatsapp logs.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    db.applyEntityEnrichment(
+      fact.id,
+      [
+        {
+          label: "ORG",
+          surfaceText: " Hybrid-memory   PR Pipeline ",
+          normalizedSurface: "Hybrid-memory   PR Pipeline",
+          startOffset: 0,
+          endOffset: 28,
+          confidence: 0.7,
+        },
+        {
+          label: "ORG",
+          surfaceText: "hybrid-memory pr pipeline",
+          normalizedSurface: "hybrid-memory pr pipeline",
+          startOffset: 36,
+          endOffset: 62,
+          confidence: 0.92,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme",
+          normalizedSurface: "acme",
+          startOffset: 94,
+          endOffset: 98,
+          confidence: 0.9,
+        },
+        {
+          label: "ORG",
+          surfaceText: "Acme Corporation",
+          normalizedSurface: "Acme   Corporation",
+          startOffset: 77,
+          endOffset: 93,
+          confidence: 0.95,
+        },
+        {
+          label: "PERSON",
+          surfaceText: "Surgeon",
+          normalizedSurface: "surgeon",
+          startOffset: 103,
+          endOffset: 110,
+          confidence: 0.8,
+        },
+        {
+          label: "ORG",
+          surfaceText: "whatsapp",
+          normalizedSurface: "whatsapp",
+          startOffset: 120,
+          endOffset: 128,
+          confidence: 0.8,
+        },
+      ],
+      "eng",
+    );
+
+    const raw = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const mentions = raw
+        .prepare(
+          "SELECT label, surface_text, normalized_surface FROM fact_entity_mentions WHERE fact_id = ? ORDER BY normalized_surface",
+        )
+        .all(fact.id) as Array<{ label: string; surface_text: string; normalized_surface: string }>;
+      expect(mentions).toEqual([
+        {
+          label: "ORG",
+          surface_text: "Acme",
+          normalized_surface: "acme",
+        },
+        {
+          label: "ORG",
+          surface_text: "Acme Corporation",
+          normalized_surface: "acme corporation",
+        },
+        {
+          label: "ORG",
+          surface_text: "hybrid-memory pr pipeline",
+          normalized_surface: "hybrid-memory pr pipeline",
+        },
+      ]);
+
+      const orgNames = raw.prepare("SELECT display_name FROM organizations ORDER BY canonical_key").all() as Array<{
+        display_name: string;
+      }>;
+      expect(orgNames).toEqual([
+        { display_name: "Acme" },
+        { display_name: "Acme Corporation" },
+        { display_name: "hybrid-memory pr pipeline" },
+      ]);
+
+      const contactCount = raw.prepare("SELECT COUNT(*) AS count FROM contacts").get() as { count: number };
+      expect(contactCount.count).toBe(0);
+    } finally {
+      raw.close();
+    }
+  });
+
   it("cleanup removes junk and reclassifies known rows", () => {
     const fact = db.store({
       text: "Gemini 3.1 Pro and API were mentioned by Surgeon.",
@@ -468,6 +1033,32 @@ describe("FactsDB entity layer persistence", () => {
     expect(audit.accepted).toBe(cleanupDryRun.accepted);
     expect(audit.rejected).toBe(cleanupDryRun.rejected);
     expect(audit.rejectReasons.substring).toBe(1);
+  });
+
+  it("counts reclassified mentions after substring filtering using retained rows only", () => {
+    const fact = db.store({
+      text: "Gemini 3.1 Pro supersedes Gemini 3.1 in this mention window.",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const now = Math.floor(Date.now() / 1000);
+    const ins = db.getRawDb().prepare(
+      `INSERT INTO fact_entity_mentions (
+        id, fact_id, label, surface_text, normalized_surface, start_offset, end_offset, confidence, detected_lang, source, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run("j", fact.id, "ORG", "Gemini 3.1", "gemini 3.1", 0, 10, 0.9, "eng", "llm", now);
+    ins.run("k", fact.id, "ORG", "Gemini 3.1 Pro", "gemini 3.1 pro", 0, 14, 0.95, "eng", "llm", now + 1);
+
+    const audit = db.auditEntityMentions(50);
+    const cleanupDryRun = db.cleanupEntityMentions({ limit: 50, apply: false });
+
+    expect(audit.reclassified).toBe(1);
+    expect(cleanupDryRun.reclassified).toBe(1);
   });
 
   it("does not reject substring mentions when offsets do not overlap", () => {
