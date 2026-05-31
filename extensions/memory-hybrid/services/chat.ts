@@ -347,6 +347,17 @@ function is400EmptyBodyGatewayError(err: unknown): boolean {
   return /\b400\b.*\bno body\b/i.test(err.message);
 }
 
+/**
+ * True when the error is a Node.js / browser-fetch ByteString serialization failure.
+ * Thrown by the HTTP layer when a header value contains a character with code point > 255
+ * (e.g. U+2026 HORIZONTAL ELLIPSIS in a copy-pasted API key, model name, or custom header).
+ * These errors are permanent — retrying the same request will always fail (#1776).
+ */
+export function isByteStringSerializationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /cannot convert argument to a bytestring/i.test(err.message);
+}
+
 /** Some Azure/Foundry deployments return 400 when chat params are not supported for the model (#1165). */
 function is400UnsupportedOperationError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
@@ -647,6 +658,11 @@ export async function withLLMRetry<T>(
         pluginLogger.warn(
           "memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling",
         );
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
+      }
+      // Don't retry ByteString serialization errors — a non-ASCII character (e.g. U+2026 ELLIPSIS)
+      // in an HTTP header value (API key, model name, custom header) cannot be fixed by retrying (#1776).
+      if (isByteStringSerializationError(lastError)) {
         throw enrichLlmErrorMessage(lastError, opts?.llmContext);
       }
       const isReasoningSequenceError = isResponsesReasoningSequenceError(lastError);

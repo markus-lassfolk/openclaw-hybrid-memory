@@ -12,6 +12,7 @@ import {
   is404Like,
   is500Like,
   isAbortOrTransientLlmError,
+  isByteStringSerializationError,
   isConnectionErrorLike,
   isContextLengthError,
   isOllamaOOM,
@@ -1322,6 +1323,90 @@ describe("withLLMRetry — OOM does not retry (#387)", () => {
     await vi.runAllTimersAsync();
     await expectation;
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withLLMRetry — ByteString serialization errors are non-retryable (#1776)
+// ---------------------------------------------------------------------------
+
+describe("withLLMRetry — ByteString serialization error does not retry (#1776)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not retry when the SDK throws a ByteString conversion error (single attempt)", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const fn = vi.fn().mockRejectedValue(byteStringErr);
+
+    const promise = withLLMRetry(fn, { maxRetries: 3 });
+    const expectation = expect(promise).rejects.toThrow(/ByteString/i);
+    await vi.runAllTimersAsync();
+    await expectation;
+    // Must NOT retry — called exactly once
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wrap ByteString error in LLMRetryError and does not report to GlitchTip", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const fn = vi.fn().mockRejectedValue(byteStringErr);
+
+    const promise = withLLMRetry(fn, { maxRetries: 2 });
+    const expectation = expect(promise).rejects.not.toBeInstanceOf(LLMRetryError);
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("enriches the ByteString error message with llmContext when provided", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const fn = vi.fn().mockRejectedValue(byteStringErr);
+
+    await expect(
+      withLLMRetry(fn, {
+        maxRetries: 2,
+        llmContext: { model: "text-embedding-3-small", operation: "memory-hybrid: embeddings.create" },
+      }),
+    ).rejects.toThrow(/ByteString.*\[llm model=text-embedding-3-small/i);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isByteStringSerializationError — unit tests (#1776)
+// ---------------------------------------------------------------------------
+
+describe("isByteStringSerializationError (#1776)", () => {
+  it("returns true for the canonical Node.js ByteString header error message", () => {
+    expect(
+      isByteStringSerializationError(
+        new Error(
+          "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(isByteStringSerializationError(new Error("cannot convert argument to a bytestring blah blah"))).toBe(true);
+  });
+
+  it("returns false for unrelated errors", () => {
+    expect(isByteStringSerializationError(new Error("Cannot read properties of undefined"))).toBe(false);
+    expect(isByteStringSerializationError(new Error("400 Bad Request"))).toBe(false);
+    expect(isByteStringSerializationError(null)).toBe(false);
+    expect(isByteStringSerializationError("string error")).toBe(false);
   });
 });
 
