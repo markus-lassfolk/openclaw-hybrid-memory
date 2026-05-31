@@ -106,6 +106,61 @@ export interface ReflectionRulesDiagnostics {
 const VALID_NO_RULES_PATTERN =
   /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s\S]*/i;
 
+function derivePreMergeText(mergedText: string, appendedText: string): string | null {
+  const appendSuffix = `\n${appendedText}`;
+  const maxSuffixLen = Math.min(appendSuffix.length, mergedText.length);
+  for (let suffixLen = maxSuffixLen; suffixLen >= 1; suffixLen--) {
+    if (mergedText.endsWith(appendSuffix.slice(0, suffixLen))) {
+      return mergedText.slice(0, mergedText.length - suffixLen);
+    }
+  }
+  return null;
+}
+
+function rollbackMergedFactText(
+  factsDb: FactsDB,
+  logger: { warn: (msg: string) => void },
+  opts: {
+    context: string;
+    factId: string;
+    mergedText: string;
+    appendedText: string;
+    reason: "merge-reembed-failure" | "vector-store-failure";
+  },
+): void {
+  const previousText = derivePreMergeText(opts.mergedText, opts.appendedText);
+  if (previousText == null) {
+    logger.warn(
+      `memory-hybrid: ${opts.context} — failed to derive pre-merge text for fact ${opts.factId.slice(0, 8)} after ${opts.reason}; leaving merged text in place`,
+    );
+    return;
+  }
+  const restoreMergedFactText = (factsDb as FactsDB & { restoreMergedFactText?: (id: string, text: string) => boolean })
+    .restoreMergedFactText;
+  if (typeof restoreMergedFactText !== "function") {
+    logger.warn(
+      `memory-hybrid: ${opts.context} — factsDb.restoreMergedFactText unavailable for fact ${opts.factId.slice(0, 8)} after ${opts.reason}; leaving merged text in place`,
+    );
+    return;
+  }
+  try {
+    const restored = restoreMergedFactText.call(factsDb, opts.factId, previousText);
+    if (!restored) {
+      logger.warn(
+        `memory-hybrid: ${opts.context} — rollback update did not affect fact ${opts.factId.slice(0, 8)} after ${opts.reason}; leaving merged text in place`,
+      );
+      return;
+    }
+    logger.warn(
+      `memory-hybrid: ${opts.context} — rolled back merged text for fact ${opts.factId.slice(0, 8)} after ${opts.reason} to preserve text/vector consistency`,
+    );
+  } catch (err) {
+    logger.warn(
+      `memory-hybrid: ${opts.context} — failed to roll back merged text for fact ${opts.factId.slice(0, 8)} after ${opts.reason}: ${err}`,
+    );
+  }
+}
+
 interface ReflectionMetaResult {
   metaExtracted: number;
   metaStored: number;
@@ -653,22 +708,6 @@ export async function runReflection(
       logger: logger,
       context: "reflection",
     });
-    if (provenanceService && reflectionRunId) {
-      try {
-        provenanceService.addEdge(entry.id, {
-          edgeType: "DERIVED_FROM",
-          sourceType: "reflection",
-          sourceId: reflectionRunId,
-        });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-provenance-derived",
-          subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
-
     if (opts.verbose) {
       logger.info(
         `memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? "..." : ""}`,
@@ -686,6 +725,15 @@ export async function runReflection(
           operation: "embed-pattern-merge",
           severity: "info",
           subsystem: "reflection",
+        });
+      }
+      if (storeResult.embeddingStale) {
+        rollbackMergedFactText(factsDb, logger, {
+          context: "reflection",
+          factId: entry.id,
+          mergedText: entry.text,
+          appendedText: patternText,
+          reason: "merge-reembed-failure",
         });
       }
       continue;
@@ -717,6 +765,16 @@ export async function runReflection(
         subsystem: "vector",
         factId: entry.id,
       });
+      if (storeResult.embeddingStale) {
+        rollbackMergedFactText(factsDb, logger, {
+          context: "reflection",
+          factId: entry.id,
+          mergedText: entry.text,
+          appendedText: patternText,
+          reason: "vector-store-failure",
+        });
+        continue;
+      }
       if (!storeResult.embeddingStale) {
         try {
           factsDb.delete(entry.id);
@@ -748,6 +806,21 @@ export async function runReflection(
       }
     }
     if (vectorStored) {
+      if (provenanceService && reflectionRunId) {
+        try {
+          provenanceService.addEdge(entry.id, {
+            edgeType: "DERIVED_FROM",
+            sourceType: "reflection",
+            sourceId: reflectionRunId,
+          });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "reflection-provenance-derived",
+            subsystem: "provenance",
+            factId: entry.id,
+          });
+        }
+      }
       existingVectors.push(normalizeVector(vectorToStore));
       stored++;
     }
@@ -950,7 +1023,7 @@ export async function runReflectionRules(
         zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response"
           ? "degraded"
           : zeroRulesReason === "all_candidates_duplicate"
-            ? "ok"
+            ? "partial"
             : "ok",
     };
     logger.info(
@@ -1092,22 +1165,6 @@ export async function runReflectionRules(
       logger: logger,
       context: "reflection",
     });
-    if (provenanceService && reflectionRunId) {
-      try {
-        provenanceService.addEdge(entry.id, {
-          edgeType: "DERIVED_FROM",
-          sourceType: "reflection",
-          sourceId: reflectionRunId,
-        });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-rules-provenance-derived",
-          subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
-
     if (opts.verbose) {
       logger.info(
         `memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? "..." : ""}`,
@@ -1129,6 +1186,13 @@ export async function runReflectionRules(
             subsystem: "reflection",
           });
         }
+        rollbackMergedFactText(factsDb, logger, {
+          context: "reflect-rules",
+          factId: entry.id,
+          mergedText: entry.text,
+          appendedText: ruleText,
+          reason: "merge-reembed-failure",
+        });
         continue;
       }
     } else {
@@ -1162,6 +1226,16 @@ export async function runReflectionRules(
         subsystem: "vector",
         factId: entry.id,
       });
+      if (storeResult.embeddingStale) {
+        rollbackMergedFactText(factsDb, logger, {
+          context: "reflect-rules",
+          factId: entry.id,
+          mergedText: entry.text,
+          appendedText: ruleText,
+          reason: "vector-store-failure",
+        });
+        continue;
+      }
       if (!storeResult.embeddingStale) {
         try {
           factsDb.delete(entry.id);
@@ -1193,6 +1267,21 @@ export async function runReflectionRules(
       }
     }
     if (vectorStored) {
+      if (provenanceService && reflectionRunId) {
+        try {
+          provenanceService.addEdge(entry.id, {
+            edgeType: "DERIVED_FROM",
+            sourceType: "reflection",
+            sourceId: reflectionRunId,
+          });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "reflection-rules-provenance-derived",
+            subsystem: "provenance",
+            factId: entry.id,
+          });
+        }
+      }
       existingVectors.push(normalizeVector(vectorToStore));
       stored++;
     }
@@ -1480,22 +1569,6 @@ export async function runReflectionMeta(
       logger: logger,
       context: "reflection",
     });
-    if (provenanceService && reflectionRunId) {
-      try {
-        provenanceService.addEdge(entry.id, {
-          edgeType: "DERIVED_FROM",
-          sourceType: "reflection",
-          sourceId: reflectionRunId,
-        });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "reflection-meta-provenance-derived",
-          subsystem: "provenance",
-          factId: entry.id,
-        });
-      }
-    }
-
     if (opts.verbose) {
       logger.info(
         `memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? "..." : ""}`,
@@ -1517,6 +1590,13 @@ export async function runReflectionMeta(
             subsystem: "reflection",
           });
         }
+        rollbackMergedFactText(factsDb, logger, {
+          context: "reflect-meta",
+          factId: entry.id,
+          mergedText: entry.text,
+          appendedText: metaText,
+          reason: "merge-reembed-failure",
+        });
         continue;
       }
     } else {
@@ -1550,6 +1630,16 @@ export async function runReflectionMeta(
         subsystem: "vector",
         factId: entry.id,
       });
+      if (storeResult.embeddingStale) {
+        rollbackMergedFactText(factsDb, logger, {
+          context: "reflect-meta",
+          factId: entry.id,
+          mergedText: entry.text,
+          appendedText: metaText,
+          reason: "vector-store-failure",
+        });
+        continue;
+      }
       if (!storeResult.embeddingStale) {
         try {
           factsDb.delete(entry.id);
@@ -1581,6 +1671,21 @@ export async function runReflectionMeta(
       }
     }
     if (vectorStored) {
+      if (provenanceService && reflectionRunId) {
+        try {
+          provenanceService.addEdge(entry.id, {
+            edgeType: "DERIVED_FROM",
+            sourceType: "reflection",
+            sourceId: reflectionRunId,
+          });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "reflection-meta-provenance-derived",
+            subsystem: "provenance",
+            factId: entry.id,
+          });
+        }
+      }
       existingVectors.push(normalizeVector(vectorToStore));
       stored++;
     }

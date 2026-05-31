@@ -8,6 +8,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { StoreConfig } from "../../config.js";
 import type { MemoryEntry, MemoryScope, MemoryTier, ScopeFilter, SearchResult } from "../../types/memory.js";
+import { normalizedHash } from "../../utils/tags.js";
 import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
@@ -333,6 +334,17 @@ export class FactsDBLayer1 extends BaseSqliteStore {
   /** Record which embedding model generated the stored vector for a fact (Issue #153). */
   setEmbeddingModel(id: string, model: string | null): void {
     this.liveDb.prepare("UPDATE facts SET embedding_model = ? WHERE id = ?").run(model, id);
+  }
+
+  /**
+   * Restore fact text after a failed dedupe-merge follow-up step (re-embed/vector store),
+   * preserving the original row instead of deleting it.
+   */
+  restoreMergedFactText(id: string, text: string): boolean {
+    const res = this.liveDb
+      .prepare("UPDATE facts SET text = ?, normalized_hash = ? WHERE id = ?")
+      .run(text, normalizedHash(text), id);
+    return Number(res.changes ?? 0) > 0;
   }
 
   /** Get HOT-tier facts for session context, capped by token budget. */

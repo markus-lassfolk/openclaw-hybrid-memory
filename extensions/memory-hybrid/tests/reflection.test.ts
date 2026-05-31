@@ -4,7 +4,7 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
 import { getCurrentCostFeature } from "../services/cost-context.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
@@ -400,6 +400,182 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.rulesStored).toBe(0);
     expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_embedding_failed");
     expect(res.diagnostics.status).toBe("degraded");
+  });
+
+  it("rolls back merged rule text when merge re-embed fails", async () => {
+    const ruleText = "Always keep strict TypeScript settings enabled across all projects.";
+    const existingRuleText = "Always keep strict TypeScript settings enabled for every project.";
+    const storeWithResult = vi.fn(() => ({
+      skipped: false as const,
+      evictedFactId: null,
+      embeddingStale: true,
+      entry: makeEntry({
+        id: "rule-existing",
+        category: "rule",
+        text: `${existingRuleText}\n${ruleText}`,
+      }),
+    }));
+    const restoreMergedFactText = vi.fn(() => true);
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      storeWithResult,
+      restoreMergedFactText,
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorStore = vi.fn(async () => undefined);
+    const vectorDb = {
+      store: vectorStore,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = {
+      modelName: "test-model",
+      embed: vi.fn(async (text: string) => {
+        if (text === ruleText) return [1, 0];
+        throw new Error("merge embedding failed");
+      }),
+    };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: `RULE: ${ruleText}` } }] }),
+        },
+      },
+    };
+
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_embedding_failed");
+    expect(restoreMergedFactText).toHaveBeenCalledTimes(1);
+    expect(restoreMergedFactText).toHaveBeenCalledWith("rule-existing", existingRuleText);
+    expect(vectorStore).not.toHaveBeenCalled();
+  });
+});
+
+describe("reflection merge rollback", () => {
+  it("rolls back merged pattern text when merge re-embed fails", async () => {
+    const patternText = "User consistently works in small iterative commits with explicit verification checkpoints";
+    const existingPatternText = "User prefers incremental delivery with explicit checkpoints";
+    const restoreMergedFactText = vi.fn(() => true);
+    const factsDb = {
+      sqlitePath: join(tmpdir(), "reflect-merge-rollback.db"),
+      getRecentFacts: () => [makeEntry({ category: "preference", text: "User likes explicit verification steps" })],
+      getByCategory: () => [],
+      storeWithResult: vi.fn(() => ({
+        skipped: false as const,
+        evictedFactId: null,
+        embeddingStale: true,
+        entry: makeEntry({
+          id: "pattern-existing",
+          category: "pattern",
+          text: `${existingPatternText}\n${patternText}`,
+        }),
+      })),
+      restoreMergedFactText,
+      setEmbeddingModel: () => undefined,
+      getMaintenanceState: () => null,
+      setMaintenanceState: () => undefined,
+    };
+    const vectorStore = vi.fn(async () => undefined);
+    const vectorDb = {
+      store: vectorStore,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = {
+      modelName: "test-model",
+      embed: vi.fn(async (text: string) => {
+        if (text === patternText) return [1, 0];
+        throw new Error("merge embedding failed");
+      }),
+    };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: `PATTERN: ${patternText}` } }] }),
+        },
+      },
+    };
+
+    const res = await runReflection(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { defaultWindow: 14, minObservations: 1, enabled: true },
+      { window: 7, dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.patternsStored).toBe(0);
+    expect(restoreMergedFactText).toHaveBeenCalledWith("pattern-existing", existingPatternText);
+    expect(vectorStore).not.toHaveBeenCalled();
+  });
+
+  it("rolls back merged meta text when merge re-embed fails", async () => {
+    const patternA = makeEntry({ id: "p1", category: "pattern", text: "Pattern one with enough detail to be valid" });
+    const patternB = makeEntry({ id: "p2", category: "pattern", text: "Pattern two with enough detail to be valid" });
+    const patternC = makeEntry({ id: "p3", category: "pattern", text: "Pattern three with enough detail to be valid" });
+    const metaText = "A stable meta-pattern is that the user prefers explicit iterative validation loops";
+    const existingMetaText = "The user repeatedly prefers explicit checkpoints in workflows";
+    const restoreMergedFactText = vi.fn(() => true);
+    const factsDb = {
+      getByCategory: () => [patternA, patternB, patternC],
+      storeWithResult: vi.fn(() => ({
+        skipped: false as const,
+        evictedFactId: null,
+        embeddingStale: true,
+        entry: makeEntry({
+          id: "meta-existing",
+          category: "pattern",
+          text: `${existingMetaText}\n${metaText}`,
+          tags: ["reflection", "pattern", "meta"],
+        }),
+      })),
+      restoreMergedFactText,
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorStore = vi.fn(async () => undefined);
+    const vectorDb = {
+      store: vectorStore,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = {
+      modelName: "test-model",
+      embed: vi.fn(async (text: string) => {
+        if (text === metaText) return [1, 0];
+        throw new Error("merge embedding failed");
+      }),
+    };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: `META: ${metaText}` } }] }),
+        },
+      },
+    };
+
+    const res = await runReflectionMeta(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.metaStored).toBe(0);
+    expect(restoreMergedFactText).toHaveBeenCalledWith("meta-existing", existingMetaText);
+    expect(vectorStore).not.toHaveBeenCalled();
   });
 });
 
