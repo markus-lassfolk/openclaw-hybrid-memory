@@ -634,7 +634,7 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
   for (const fact of factIds) {
     const rows = db
       .prepare(
-        `SELECT id, label, surface_text, normalized_surface, confidence
+        `SELECT id, label, surface_text, normalized_surface, start_offset, end_offset, confidence
          FROM fact_entity_mentions
          WHERE fact_id = ?`,
       )
@@ -643,6 +643,8 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
       label: string;
       surface_text: string;
       normalized_surface: string;
+      start_offset: number;
+      end_offset: number;
       confidence: number;
     }>;
     const result = processEntityMentionsForFact(rows);
