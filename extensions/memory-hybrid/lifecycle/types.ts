@@ -77,8 +77,9 @@ export interface LifecycleContext {
   recallInFlightRef: { value: number };
   /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
   lastAutoRecallPromptRef: { value: string | null };
-  /** Plugin registration generation for this hook instance (hot-reload guard). */
+  /** Registration generation that owns this lifecycle context; used to detect stale in-flight hooks. */
   registrationGeneration?: number;
+  /** Shared current generation ref; differs from registrationGeneration after plugin re-registration. */
   currentRegistrationGenerationRef?: { value: number };
 }
 
