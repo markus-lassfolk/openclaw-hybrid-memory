@@ -259,10 +259,11 @@ export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<v
   }
 
   if (old && !reuseDatabases) {
+    // Wait for teardown to complete before opening new DB handles (#802).
     const teardownSettled = await awaitReloadTeardownBeforeOpen();
     if (!teardownSettled) {
       logApi.logger.debug?.(
-        "memory-hybrid: reload teardown still in progress after wait; DB handles opened (superseded bootstrap/recall guarded)",
+        "memory-hybrid: reload teardown still in progress after wait; opening new DB handles (superseded bootstrap/recall guarded)",
       );
     }
   }

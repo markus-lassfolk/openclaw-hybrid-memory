@@ -37,7 +37,7 @@ import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
 import { setKeywordsPath } from "../utils/language-keywords.js";
 import { spawn } from "../utils/process-runner.js";
-import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
+import { isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import { isHeavyModel, isLightModel, isNanoModel } from "../utils/model-tier.js";
 import {
   OLLAMA_DEFAULT_BASE_URL,
@@ -780,11 +780,7 @@ export function initializeDatabases(
         } catch (e) {
           if (isBootstrapSuperseded()) {
             await clearMigrationFlagForRetry("registration superseded during migration");
-            if (isDbClosedError(e)) {
-              api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
-              return;
-            }
-            api.logger.debug?.("memory-hybrid: credential migration failed after supersession; suppressing stale logs");
+            api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
             return;
           }
           capturePluginError(e instanceof Error ? e : new Error(String(e)), {
