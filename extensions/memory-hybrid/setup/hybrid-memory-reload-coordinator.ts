@@ -51,11 +51,15 @@ export async function drainOldRecall(recallInFlightRef: { value: number } | unde
  */
 export async function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): Promise<boolean> {
   if (reloadTeardownQueueDepth === 0) return true;
-  const deadline = Date.now() + timeoutMs;
-  while (reloadTeardownQueueDepth > 0 && Date.now() < deadline) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 50));
-  }
-  return reloadTeardownQueueDepth === 0;
+  if (timeoutMs <= 0) return false;
+  const pendingTeardown = reloadTeardownChain.catch(() => {
+    /* teardown errors are non-fatal for waiting; queue depth still governs readiness */
+  });
+  const settled = await Promise.race([
+    pendingTeardown.then(() => true),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ]);
+  return settled && reloadTeardownQueueDepth === 0;
 }
 
 /** Reset chain for unit tests only. */

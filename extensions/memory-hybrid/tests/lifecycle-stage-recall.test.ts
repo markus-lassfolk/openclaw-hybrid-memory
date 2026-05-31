@@ -111,6 +111,21 @@ describe("runRecallStage", () => {
     expect(ctx.recallInFlightRef.value).toBe(0);
   });
 
+  it("returns empty instead of throwing when FactsDB closes during teardown", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockRejectedValue(
+      new Error("The database connection is not open"),
+    );
+    factsDb.permanentClose();
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+
+    const result = await runRecallStage({ prompt: "find credentials for github api" }, api as never, ctx, sessionState);
+
+    expect(result).toEqual({ kind: "empty", prependContext: undefined });
+    expect(ctx.recallInFlightRef.value).toBe(0);
+  });
+
   it("returns null when stage wall-clock timeout fires", async () => {
     vi.useFakeTimers();
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);

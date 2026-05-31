@@ -29,6 +29,7 @@ import { yieldEventLoop } from "../../utils/event-loop-yield.js";
 import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
+import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
 
 function emptyRecallStage(): RecallStageResult {
   return { kind: "empty", prependContext: undefined };
@@ -36,6 +37,17 @@ function emptyRecallStage(): RecallStageResult {
 
 function recallAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
+}
+
+function isLifecycleSqliteShutdownError(err: unknown, ctx: LifecycleContext): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  if (!/not open|connection is not open|database is not open/i.test(message)) {
+    return false;
+  }
+  if (typeof ctx.factsDb.isOpen === "function" && !ctx.factsDb.isOpen()) {
+    return true;
+  }
+  return isStaleLifecycleGeneration(ctx);
 }
 
 function clipNarrativeText(text: string, maxChars = 360): string {
@@ -626,17 +638,21 @@ export async function runRecall(
               ambientQueriesRun += 1;
               extraResultSets.push(qResults);
             } catch (err) {
-              if (
-                !suppressSupersededRecallError(
-                  err,
-                  `memory-hybrid: ambient query skipped (registration superseded) type=${q.type}`,
-                )
-              ) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: `ambient-query-${q.type}`,
-                  subsystem: "auto-recall",
+              const suppressed = suppressSupersededRecallError(
+                err,
+                `memory-hybrid: ambient query skipped (registration superseded) type=${q.type}`,
+              );
+              if (suppressed) {
+                recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+                  status: "aborted",
+                  queries_run: ambientQueriesRun,
                 });
+                return completeStage(emptyRecallStage());
               }
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                operation: `ambient-query-${q.type}`,
+                subsystem: "auto-recall",
+              });
             }
           }
           const merged = deduplicateResultsById(extraResultSets, (r) => r.entry.id);
@@ -649,15 +665,22 @@ export async function runRecall(
           candidates: candidates.length,
         });
       } catch (err) {
-        if (
-          !suppressSupersededRecallError(err, "memory-hybrid: ambient multi-query skipped (registration superseded)")
-        ) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "ambient-multi-query",
-            subsystem: "auto-recall",
+        const suppressed = suppressSupersededRecallError(
+          err,
+          "memory-hybrid: ambient multi-query skipped (registration superseded)",
+        );
+        if (suppressed) {
+          recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+            status: "aborted",
+            queries_run: ambientQueriesRun,
           });
-          api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+          return completeStage(emptyRecallStage());
         }
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "ambient-multi-query",
+          subsystem: "auto-recall",
+        });
+        api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
         recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
           status: "error",
           queries_run: ambientQueriesRun,
@@ -1111,9 +1134,14 @@ export async function runRecall(
     return completeStage({ kind: "full", result });
   } catch (err) {
     if (isRecallContextSuperseded(ctx)) {
+      setRecallProbePhase("skip:superseded");
       api.logger.debug?.(
         `memory-hybrid: recall-probe id=${recallProbeId} skipped (registration superseded) elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase}`,
       );
+      return completeStage(emptyRecallStage());
+    }
+    if (isLifecycleSqliteShutdownError(err, ctx)) {
+      setRecallProbePhase("skip:shutdown");
       return completeStage(emptyRecallStage());
     }
     if (!recallStageCompleted) {
