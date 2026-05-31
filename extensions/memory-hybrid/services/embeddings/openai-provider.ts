@@ -40,6 +40,7 @@ function vectorFromEmbeddingResponse(
 export class Embeddings implements EmbeddingProvider {
   private readonly providerName = "openai-compatible";
   private client: OpenAI;
+  /** Per-instance LRU cache bounded by EMBEDDING_CACHE_MAX in embed/embedBatch writes. */
   private cache = new Map<string, number[]>();
   private readonly endpoint: string;
   /** Ordered list: try first model, on failure try next (all must produce same vector dimension). */
