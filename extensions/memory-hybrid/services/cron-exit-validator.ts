@@ -182,6 +182,32 @@ export function checkForUnknownCommands(logPath: string): string[] {
   }
 }
 
+interface DegradedVerificationStatus {
+  reason?: string;
+  machineLine: string;
+}
+
+function detectDegradedContinuousVerificationStatus(logPath: string): DegradedVerificationStatus | null {
+  if (!existsSync(logPath)) return null;
+  try {
+    const content = readFileSync(logPath, "utf-8");
+    const lines = content.split("\n");
+    for (const line of lines) {
+      const marker = line.match(/Machine status:\s*(status=degraded\b.*)$/i);
+      if (!marker) continue;
+      const machineLine = marker[1].trim();
+      const reasonMatch = machineLine.match(/\breason=([a-z_]+)/i);
+      return {
+        reason: reasonMatch?.[1]?.toLowerCase(),
+        machineLine,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Validate that all required maintenance steps completed successfully.
  *
@@ -264,6 +290,19 @@ export function validateMaintenanceExecution(
       const inferred = inferAuditHealthFailureReason(step.exitCode, logContent);
       step.failureReason = inferred.failureReason;
       step.strictFailureReason = inferred.strictFailureReason;
+    }
+  }
+
+  if (logPath && requiredSteps.includes("dream-cycle")) {
+    const degradedVerification = detectDegradedContinuousVerificationStatus(logPath);
+    if (degradedVerification) {
+      failedSteps.push({
+        timestamp: "",
+        step: "continuous-verification",
+        exitCode: 2,
+        line: degradedVerification.machineLine,
+        failureReason: degradedVerification.reason ?? "degraded",
+      });
     }
   }
 

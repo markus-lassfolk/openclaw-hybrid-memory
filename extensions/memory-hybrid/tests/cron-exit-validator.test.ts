@@ -389,5 +389,33 @@ error: unknown command 'bar'
       expect(result.missingSteps).toEqual(["dream-cycle"]);
       expect(result.error).toContain("Missing steps");
     });
+
+    it("fails dream-cycle validation when continuous verification reports degraded machine status", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "2024-05-08T02:15:30Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "Continuous verification complete:",
+          "  Checked: 12",
+          "  Confirmed: 0",
+          "  Stale: 0",
+          "  Uncertain: 12",
+          "  Errors: 12",
+          "  Machine status: status=degraded reason=errors_present checked=12 confirmed=0 stale=0 uncertain=12 errors=12",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps).toHaveLength(1);
+      expect(result.failedSteps[0].step).toBe("continuous-verification");
+      expect(result.failedSteps[0].failureReason).toBe("errors_present");
+      expect(result.error).toContain("continuous-verification (exit=2 errors_present)");
+    });
   });
 });
