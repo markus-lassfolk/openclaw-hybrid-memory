@@ -66,8 +66,8 @@ const memoryHybridPlugin = {
   configSchema: hybridConfigSchema,
   versionInfo,
 
-  async register(api: ClawdbotPluginApi) {
-    await runMemoryHybridRegister(api);
+  register(api: ClawdbotPluginApi) {
+    runMemoryHybridRegister(api);
   },
 };
 

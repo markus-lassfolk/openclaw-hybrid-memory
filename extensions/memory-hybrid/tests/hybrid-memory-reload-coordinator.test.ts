@@ -3,6 +3,7 @@ import {
   BOOTSTRAP_DRAIN_MS,
   RECALL_DRAIN_MS,
   awaitReloadTeardownBeforeOpen,
+  blockReloadTeardownBeforeOpen,
   drainOldBootstrap,
   drainOldRecall,
   resetReloadTeardownChainForTests,
@@ -32,6 +33,20 @@ describe("hybrid-memory-reload-coordinator", () => {
     const drain = drainOldBootstrap(bootstrap);
     await vi.advanceTimersByTimeAsync(BOOTSTRAP_DRAIN_MS);
     await drain;
+  });
+
+  it("blockReloadTeardownBeforeOpen returns true when teardown chain is idle", () => {
+    expect(blockReloadTeardownBeforeOpen()).toBe(true);
+  });
+
+  it("blockReloadTeardownBeforeOpen waits for scheduled teardown synchronously", () => {
+    let ran = false;
+    schedulePluginTeardown(async () => {
+      await Promise.resolve();
+      ran = true;
+    });
+    expect(blockReloadTeardownBeforeOpen(0)).toBe(true);
+    expect(ran).toBe(true);
   });
 
   it("awaitReloadTeardownBeforeOpen returns true when teardown chain is idle", async () => {

@@ -25,6 +25,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.5.311] - 2026-05-31
+
+### Fixed
+
+- **Plugin registration must be synchronous** ([#1768](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1768) follow-up): restored synchronous `register()` for OpenClaw gateway compatibility. Hot-reload teardown still blocks before reopening database handles via `blockReloadTeardownBeforeOpen()` (Atomics.wait pumps the event loop while register waits).
+- Bumped plugin package, lockfile, plugin manifest, and installer package versions to **2026.5.311**.
+
+### Notes
+
+- **2026.5.310** could fail gateway startup with `Error: plugin register must be synchronous` because register briefly returned a Promise. Upgrade to **2026.5.311** immediately if you hit that error.
+
+---
+
 ## [2026.5.310] - 2026-05-31
 
 ### Added

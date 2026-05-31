@@ -147,6 +147,22 @@ describe("Plugin registration e2e", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("register() is synchronous (OpenClaw rejects Promise-returning register)", () => {
+    const pluginConfig = getMinimalConfig({
+      sqlitePath: join(tmpDir, "facts-sync.db"),
+      lanceDbPath: join(tmpDir, "lancedb-sync"),
+    });
+    const mockApi = {
+      ...api,
+      pluginConfig,
+      registrationMode: "cli-metadata" as const,
+      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+    };
+    const result = memoryHybridPlugin.register(mockApi as never);
+    expect(result).toBeUndefined();
+    expect(result).not.toBeInstanceOf(Promise);
+  });
+
   it("register() does not throw and core memory tools are registered", async () => {
     const pluginConfig = getMinimalConfig({
       sqlitePath: join(tmpDir, "facts.db"),

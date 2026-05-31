@@ -39,7 +39,7 @@ import {
 } from "./provider-router.js";
 import { getHybridMemoryRegistrationState } from "./hybrid-memory-generation-state.js";
 import {
-  awaitReloadTeardownBeforeOpen,
+  blockReloadTeardownBeforeOpen,
   drainOldBootstrap,
   drainOldRecall,
   schedulePluginTeardown,
@@ -79,7 +79,11 @@ const runtimeRef: { value: PluginRuntime | null } = { value: null };
 const registrationGenerationRef = getHybridMemoryRegistrationState().registrationGenerationRef;
 
 /** Guard to prevent concurrent registrations from interleaving (Issue #802 re-entrancy). */
-let registrationInProgress: Promise<void> | null = null;
+let registrationInProgress = false;
+
+/** Shared buffer for registration gate wait/notify (separate from reload coordinator buffer). */
+const registrationGateWaitBuffer = new SharedArrayBuffer(4);
+const registrationGateWaitArray = new Int32Array(registrationGateWaitBuffer);
 
 /** Release DBs and timers after a `hybrid-mem` CLI command so the Node process can exit (Issue #1039). */
 async function performHybridMemCliTeardown(): Promise<void> {
@@ -153,7 +157,7 @@ async function performHybridMemCliTeardown(): Promise<void> {
   }
 }
 
-export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<void> {
+export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
   // OpenClaw `loadOpenClawPluginCliRegistry` — metadata only; no DBs or native deps (issue #1111).
   // Check this FIRST, before any logger init or config parsing, so an incomplete config
   // cannot block lightweight metadata registration.
@@ -175,28 +179,21 @@ export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<v
     return;
   }
 
-  // Issue #802 re-entrancy: If another registration is already in flight, wait for it to complete
-  // before starting a new one. Install our own gate before awaiting prior work to avoid
-  // TOCTOU races when multiple callers enter concurrently.
-  const previousRegistration = registrationInProgress ?? Promise.resolve();
-  let releaseRegistrationGate = (): void => {};
-  const registrationPromise = new Promise<void>((resolve) => {
-    releaseRegistrationGate = resolve;
-  });
-  registrationInProgress = registrationPromise;
-
+  // Issue #802 re-entrancy: serialize concurrent register() calls. OpenClaw requires register()
+  // to be synchronous (no Promise return), so we block with Atomics.wait instead of async/await.
+  while (registrationInProgress) {
+    Atomics.wait(registrationGateWaitArray, 0, 0, 50);
+  }
+  registrationInProgress = true;
   try {
-    await previousRegistration;
-    await runMemoryHybridRegisterImpl(api);
+    runMemoryHybridRegisterImpl(api);
   } finally {
-    releaseRegistrationGate();
-    if (registrationInProgress === registrationPromise) {
-      registrationInProgress = null;
-    }
+    registrationInProgress = false;
+    Atomics.notify(registrationGateWaitArray, 0, 1);
   }
 }
 
-async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void> {
+function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   // Issue #1230 / #1234: JSON CLI must not write plugin telemetry to stdout (cron harnesses, jq).
   // Wrap api.logger to stderr before bootstrap; keep pluginLogger on that same logger delegate.
   const logApi = wrapApiLoggerStderrForJsonCli(api);
@@ -292,7 +289,7 @@ async function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): Promise<void
   if (old && !reuseDatabases) {
     // Wait for teardown to complete before opening new DB handles (#802).
     // Do NOT timeout — proceed only after prior generation fully closes to prevent double-opens.
-    const drained = await awaitReloadTeardownBeforeOpen(0);
+    const drained = blockReloadTeardownBeforeOpen(0);
     if (!drained) {
       throw new Error("memory-hybrid: reload teardown did not drain before opening new databases");
     }
