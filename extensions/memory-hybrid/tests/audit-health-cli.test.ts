@@ -282,8 +282,42 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     const db = new FactsDB(":memory:");
     const a = recordStorageGrowthSample(db as never, 4096);
     expect(a.inserted).toBe(true);
+    expect(a.status).toBe("recorded");
     const b = recordStorageGrowthSample(db as never, 8192);
     expect(b.inserted).toBe(false);
+    expect(b.status).toBe("skipped");
+    expect(b.reason).toBe("already_sampled_today");
+    db.close();
+  });
+
+  it("recordStorageGrowthSample supports force for same-day QA reruns", () => {
+    const db = new FactsDB(":memory:");
+    recordStorageGrowthSample(db as never, 4096);
+    const forced = recordStorageGrowthSample(db as never, 8192, { force: true });
+    const rows = db.getRawDb()?.prepare("SELECT COUNT(*) AS c FROM storage_growth_history").get() as { c: number };
+    expect(forced.inserted).toBe(true);
+    expect(forced.status).toBe("recorded");
+    expect(rows.c).toBe(2);
+    db.close();
+  });
+
+  it("recordStorageGrowthSample supports dry-run without writing", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "Storage dry-run fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const dryRun = recordStorageGrowthSample(db as never, 4096, { dryRun: true });
+    const rows = db.getRawDb()?.prepare("SELECT COUNT(*) AS c FROM storage_growth_history").get() as { c: number };
+    expect(dryRun.inserted).toBe(false);
+    expect(dryRun.status).toBe("dry_run");
+    expect(dryRun.sample.factCount).toBe(1);
+    expect(rows.c).toBe(0);
     db.close();
   });
 
