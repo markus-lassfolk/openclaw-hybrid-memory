@@ -45,6 +45,7 @@ import {
   buildMultiProviderOpenAI,
   clearOllamaHealthCacheEntry,
   extractGatewayConfig,
+  gatewayLogInfoOnce,
   getGatewayModelsProviders,
   mergeGatewayProviderCredentialsIntoLlmProvidersMap,
   patchEmbeddingEndpointFromGatewayProviders,
@@ -500,8 +501,10 @@ export function initializeDatabases(
     if (appended) {
       (cfg.llm as Record<string, unknown>).default = defaultList;
       (cfg.llm as Record<string, unknown>).heavy = heavyList;
-      api.logger.info?.(
+      gatewayLogInfoOnce(
+        "appended-gateway-models",
         "memory-hybrid: appended gateway provider models to llm.default/heavy so they are tested and used as fallbacks.",
+        api,
       );
     }
   }
@@ -782,7 +785,16 @@ export function initializeDatabases(
         } catch (e) {
           if (isBootstrapSuperseded()) {
             await clearMigrationFlagForRetry("registration superseded during migration");
-            api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
+            const isDbClosed = isDbClosedError(e);
+            if (!isDbClosed) {
+              // Non-DB-closed error during superseded bootstrap: flag was set but bootstrap
+              // was superseded before or during migration. Clear flag so retry can run fresh.
+              api.logger.debug?.(
+                "memory-hybrid: credential migration error during superseded bootstrap cleared for retry",
+              );
+            } else {
+              api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
+            }
             return;
           }
           capturePluginError(e instanceof Error ? e : new Error(String(e)), {
