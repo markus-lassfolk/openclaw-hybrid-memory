@@ -88,4 +88,29 @@ describe("maintenance job harness fixture", () => {
     expect(run.validation.guardUpdated).toBe(false);
     expect(run.guardWritten).toBe(false);
   });
+
+  it("models monthly-consolidation stopping before enrich-entities after reembed-vectorless provider failure", () => {
+    const run = runHarness({
+      requiredSteps: ["consolidate", "build-languages", "backfill-decay", "reembed-vectorless", "enrich-entities"],
+      jobName: "monthly-consolidation-20260529T162810Z-10883",
+      exitRows: [
+        hmExitStepLine({ step: "consolidate", exitCode: 0 }),
+        hmExitStepLine({ step: "build-languages", exitCode: 0 }),
+        hmExitStepLine({ step: "backfill-decay", exitCode: 0 }),
+        hmExitStepLine({ step: "reembed-vectorless", exitCode: 1, reason: "failed_embedding_provider_5xx" }),
+      ],
+      logLines: ['{"maintenanceStatus":"failed","guardUpdated":false}'],
+    });
+
+    expect(run.validation.maintenanceStatus).toBe("failed");
+    expect(run.validation.missingSteps).toEqual(["enrich-entities"]);
+    expect(run.validation.failedSteps).toHaveLength(1);
+    expect(run.validation.failedSteps[0]?.step).toBe("reembed-vectorless");
+    expect(run.validation.failedSteps[0]?.exitCode).toBe(1);
+    expect(run.validation.failedSteps[0]?.failureReason).toBe("failed_embedding_provider_5xx");
+    expect(run.validation.error).toContain("Missing steps: enrich-entities");
+    expect(run.validation.error).toContain("Failed steps: reembed-vectorless (exit=1 failed_embedding_provider_5xx)");
+    expect(run.validation.guardUpdated).toBe(false);
+    expect(run.guardWritten).toBe(false);
+  });
 });
