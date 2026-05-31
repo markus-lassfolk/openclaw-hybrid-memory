@@ -390,7 +390,7 @@ export async function runExtractImplicitFeedbackForCli(
       if (mtime < cursor.lastSessionTs) return false;
       // If same mtime, use filename to determine if we've processed this file
       if (mtime === cursor.lastSessionTs && cursor.lastSessionFile) {
-        return fname > cursor.lastSessionFile;
+        return fname.localeCompare(cursor.lastSessionFile) > 0;
       }
       return true;
     });
@@ -730,6 +730,12 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
+    // Mark session as processed after Phase 1 (signal extraction) completes
+    // This ensures that even if we break early due to trajectory cap in Phase 2,
+    // the session won't be reprocessed and duplicate signals won't be extracted
+    progress.sessionsProcessed++;
+    lastProcessedFilePath = filePath;
+
     // Phase 2: Build trajectories
     if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
       try {
@@ -869,10 +875,6 @@ export async function runExtractImplicitFeedbackForCli(
         });
       }
     }
-
-    // Mark session as processed only after all persistence completes successfully
-    progress.sessionsProcessed++;
-    lastProcessedFilePath = filePath;
   }
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
