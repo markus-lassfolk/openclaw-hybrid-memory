@@ -127,14 +127,18 @@ export async function runCapture(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<void> {
-  if (isStaleLifecycleGeneration(ctx)) return;
+  const { resolveSessionKey, clearSessionState, frustrationStateMap } = sessionState;
+  const sessionKey = resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+
+  if (isStaleLifecycleGeneration(ctx)) {
+    clearSessionState(sessionKey);
+    return;
+  }
   const abortIfSuperseded = (phase: string): boolean => {
     if (!isRecallContextSuperseded(ctx)) return false;
     api.logger.debug?.(`memory-hybrid: capture skipped (registration superseded during reload) phase=${phase}`);
     return true;
   };
-  const { resolveSessionKey, clearSessionState, frustrationStateMap } = sessionState;
-  const sessionKey = resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
 
   if (abortIfSuperseded("start")) {
     clearSessionState(sessionKey);

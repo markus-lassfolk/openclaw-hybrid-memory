@@ -278,7 +278,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
       }
 
-      if (isStaleLifecycleGeneration(ctx)) return;
+      if (isStaleLifecycleGeneration(ctx)) {
+        const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+        sessionState.clearSessionState(sessionId);
+        return;
+      }
       await runCaptureStage(event, rApi, ctx, sessionState);
       if (isStaleLifecycleGeneration(ctx)) return;
       const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
