@@ -73,6 +73,25 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     expect(target?.delivery).toMatchObject({ mode: "none" });
   });
 
+  it("publishes monthly consolidation with a bounded enrich-entities default limit", () => {
+    const openclawDir = newOpenclawDir();
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+
+    const jobs = readJobs(openclawDir);
+    const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:monthly-consolidation");
+    expect(target).toBeTruthy();
+    const payload =
+      target && typeof target.payload === "object" && target.payload !== null
+        ? (target.payload as Record<string, unknown>)
+        : {};
+    const message = String(
+      (payload as { message?: unknown }).message ?? (target as { message?: unknown }).message ?? "",
+    );
+    expect(message).toContain(
+      'openclaw hybrid-mem enrich-entities --limit "${HYBRID_MEM_CLI_JOB_ENRICH_LIMIT:-25}" --verbose',
+    );
+  });
+
   it("adds hybrid-mem maintenance jobs without top-level sessionKey", () => {
     const openclawDir = newOpenclawDir();
     ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
