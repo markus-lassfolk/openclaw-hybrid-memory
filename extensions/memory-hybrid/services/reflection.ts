@@ -100,9 +100,9 @@ export interface ReflectionRulesDiagnostics {
 // Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
 // Anchored to start-of-string but allows leading whitespace so phrases like
 // "No actionable rules detected from ..." are correctly classified.
-// Uses .*$ to allow trailing text on the same line while preventing multiline false positives.
+// Uses [\s\S]* to allow trailing text including newlines for multiline responses.
 const VALID_NO_RULES_PATTERN =
-  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules).*$/i;
+  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[\s\S]*/i;
 
 interface ReflectionMetaResult {
   metaExtracted: number;
@@ -701,6 +701,7 @@ export async function runReflection(
       }
       continue;
     }
+    let vectorStored = false;
     try {
       await vectorDb.store({
         text: textToEmbed,
@@ -709,6 +710,7 @@ export async function runReflection(
         category: "pattern",
         id: entry.id,
       });
+      vectorStored = true;
       persistCanonicalFactEmbedding(
         factsDb,
         entry.id,
@@ -741,8 +743,10 @@ export async function runReflection(
         continue;
       }
     }
-    existingVectors.push(normalizeVector(vectorToStore));
-    stored++;
+    if (vectorStored) {
+      existingVectors.push(normalizeVector(vectorToStore));
+      stored++;
+    }
 
     // Progress logging during per-candidate dedupe (every 3 candidates or at the end)
     // This is especially helpful when checking against a large existing corpus
@@ -1176,6 +1180,18 @@ export async function runReflectionRules(
         }
         continue;
       }
+      // For non-merge path, also delete the fact to prevent orphan SQLite row
+      try {
+        factsDb.delete(entry.id);
+        logger.warn(
+          `memory-hybrid: reflect-rules — deleted rule fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
+        );
+      } catch (deleteErr) {
+        logger.warn(
+          `memory-hybrid: reflect-rules — failed to delete rule fact ${entry.id.slice(0, 8)} after vector store failure: ${deleteErr}`,
+        );
+      }
+      continue;
     }
     if (vectorStored) {
       existingVectors.push(normalizeVector(vectorToStore));
@@ -1196,22 +1212,21 @@ export async function runReflectionRules(
   if (stored <= 0) {
     const allCandidatesBlocked =
       newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates + vectorStoreFailures === uniqueRules.length;
-    if (allCandidatesBlocked && newRuleEmbedFailures > 0 && embeddingBasedDuplicates > 0) {
-      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
-    } else if (allCandidatesBlocked && newRuleEmbedFailures > 0 && storeLevelDuplicates > 0) {
-      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
-    } else if (allCandidatesBlocked && newRuleEmbedFailures > 0 && vectorStoreFailures > 0) {
-      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
-    } else if (allCandidatesBlocked && embeddingBasedDuplicates > 0 && storeLevelDuplicates > 0) {
-      zeroRulesReason = "all_candidates_duplicate";
-    } else if (allCandidatesBlocked && embeddingBasedDuplicates > 0 && vectorStoreFailures > 0) {
-      zeroRulesReason = "all_candidates_duplicate";
-    } else if (allCandidatesBlocked && storeLevelDuplicates > 0 && vectorStoreFailures > 0) {
-      zeroRulesReason = "all_candidates_duplicate";
+    if (vectorStoreFailures === uniqueRules.length) {
+      // All candidates failed only at vector store
+      zeroRulesReason = "vector_store_failed";
     } else if (newRuleEmbedFailures === uniqueRules.length) {
+      // All candidates failed at embedding
       zeroRulesReason = "all_candidates_embedding_failed";
     } else if (embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length) {
+      // All candidates are duplicates (no failures)
       zeroRulesReason = "all_candidates_duplicate";
+    } else if (allCandidatesBlocked && newRuleEmbedFailures > 0) {
+      // Mixed: some embedding failures and other blocks
+      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
+    } else if (allCandidatesBlocked && vectorStoreFailures > 0 && (embeddingBasedDuplicates > 0 || storeLevelDuplicates > 0)) {
+      // Mixed: some vector store failures and some duplicates
+      zeroRulesReason = "candidates_duplicate_or_vector_store_failed";
     } else {
       zeroRulesReason = "no_storable_candidates";
     }
@@ -1234,8 +1249,12 @@ export async function runReflectionRules(
             : zeroRulesReason === "candidates_duplicate_or_embedding_failed"
               ? "degraded"
               : zeroRulesReason === "all_candidates_duplicate"
-                ? "ok"
-                : "partial",
+                ? "partial"
+                : zeroRulesReason === "candidates_duplicate_or_vector_store_failed"
+                  ? "partial"
+                  : zeroRulesReason === "vector_store_failed"
+                    ? "partial"
+                    : "partial",
   };
   logger.info(
     "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1511,6 +1530,7 @@ export async function runReflectionMeta(
       textToEmbed = metaText;
       vectorToStore = vec;
     }
+    let vectorStored = false;
     try {
       await vectorDb.store({
         text: textToEmbed,
@@ -1519,6 +1539,7 @@ export async function runReflectionMeta(
         category: "pattern",
         id: entry.id,
       });
+      vectorStored = true;
       persistCanonicalFactEmbedding(
         factsDb,
         entry.id,
@@ -1551,8 +1572,10 @@ export async function runReflectionMeta(
         continue;
       }
     }
-    existingVectors.push(normalizeVector(vectorToStore));
-    stored++;
+    if (vectorStored) {
+      existingVectors.push(normalizeVector(vectorToStore));
+      stored++;
+    }
   }
 
   logger.info(
