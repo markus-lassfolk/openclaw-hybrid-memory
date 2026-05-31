@@ -284,15 +284,17 @@ export async function runStoreForCli(
                     log.warn,
                   );
                 } else {
+                  const canonicalText = newEntry.text;
+                  const canonicalVector = canonicalText === text ? vector : await embeddings.embed(canonicalText);
                   factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
-                  if (!(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({ text, vector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
+                  if (!(await vectorDb.hasDuplicate(canonicalVector))) {
+                    await vectorDb.store({ text: canonicalText, vector: canonicalVector, importance: CLI_STORE_IMPORTANCE, category, id: newEntry.id });
                   }
                   persistCanonicalFactEmbedding(
                     factsDb,
                     newEntry.id,
                     embeddings.modelName,
-                    vector,
+                    canonicalVector,
                     "runStoreForCli:update-fact-embeddings",
                     "cli",
                     log.warn,
@@ -388,12 +390,14 @@ export async function runStoreForCli(
           log.warn,
         );
       } else {
+        const canonicalText = entry.text;
         const vector = await embeddings.embed(text);
+        const canonicalVector = canonicalText === text ? vector : await embeddings.embed(canonicalText);
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-        if (!(await vectorDb.hasDuplicate(vector))) {
+        if (!(await vectorDb.hasDuplicate(canonicalVector))) {
           await vectorDb.store({
-            text,
-            vector,
+            text: canonicalText,
+            vector: canonicalVector,
             importance: CLI_STORE_IMPORTANCE,
             category: opts.category ?? "other",
             id: entry.id,
@@ -403,7 +407,7 @@ export async function runStoreForCli(
           factsDb,
           entry.id,
           embeddings.modelName,
-          vector,
+          canonicalVector,
           "runStoreForCli:final-fact-embeddings",
           "cli",
           log.warn,

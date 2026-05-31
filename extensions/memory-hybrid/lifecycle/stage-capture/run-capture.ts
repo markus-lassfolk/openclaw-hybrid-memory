@@ -683,11 +683,13 @@ export async function runCapture(
                   api.logger.warn?.bind(api.logger),
                 );
               } else if (vector) {
+                const canonicalText = storedEntry.text;
+                const canonicalVector = canonicalText === textToStore ? vector : await ctx.embeddings.embed(canonicalText);
                 ctx.factsDb.setEmbeddingModel(storedEntry.id, ctx.embeddings.modelName);
-                if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                if (!(await ctx.vectorDb.hasDuplicate(canonicalVector))) {
                   await ctx.vectorDb.store({
-                    text: textToStore,
-                    vector,
+                    text: canonicalText,
+                    vector: canonicalVector,
                     importance: CLI_STORE_IMPORTANCE,
                     category,
                     id: storedEntry.id,
@@ -697,7 +699,7 @@ export async function runCapture(
                   ctx.factsDb,
                   storedEntry.id,
                   ctx.embeddings.modelName,
-                  vector,
+                  canonicalVector,
                   "auto-capture-fact-embeddings",
                   "auto-capture",
                   api.logger.warn?.bind(api.logger),

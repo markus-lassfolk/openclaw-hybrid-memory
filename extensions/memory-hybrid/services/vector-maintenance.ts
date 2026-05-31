@@ -123,9 +123,11 @@ export async function storeCanonicalVectorForFact(options: {
         new Float32Array(options.vector),
         options.vector.length,
       );
-    } catch {
-      // Swallow SQLite persistence errors after successful Lance store.
+    } catch (err) {
+      // Log SQLite persistence errors after successful Lance store.
       // Callers may optionally retry via persistCanonicalFactEmbedding utility.
+      const error = err instanceof Error ? err : new Error(String(err));
+      throw new Error(`SQLite fact_embeddings persist failed: ${error.message}`, { cause: err });
     }
   }
   return storedId;
