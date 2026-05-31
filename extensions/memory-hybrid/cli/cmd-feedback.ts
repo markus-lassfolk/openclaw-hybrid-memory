@@ -630,6 +630,13 @@ export async function runExtractImplicitFeedbackForCli(
       break;
     }
 
+    // Check wall clock limit before tallying extracted signals to avoid overcounting
+    // signals that are extracted but never stored or routed.
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
+    }
+
     totalSignals += signals.length;
     for (const sig of signals) {
       if (sig.polarity === "positive") positiveCount++;
@@ -641,12 +648,6 @@ export async function runExtractImplicitFeedbackForCli(
     progress.negativeCount = negativeCount;
     progress.trajectoriesBuilt = trajectoriesBuilt;
     emitProgress();
-
-    // Check wall clock limit after signal extraction
-    if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-      break;
-    }
 
     if (!opts.dryRun && rawDb) {
       // Store raw signals in implicit_signals table
@@ -683,6 +684,13 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
+    // Check wall clock limit before reinforcement to prevent partial reinforcement
+    // that would be replayed on the next run, causing duplicate reinforcement entries.
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
+    }
+
     // Route positive signals to reinforcement pipeline
     if (!opts.dryRun && implicitCfg.feedToReinforcement !== false && signals.length > 0) {
       const minConf = implicitCfg.minConfidence ?? 0.5;
@@ -690,10 +698,6 @@ export async function runExtractImplicitFeedbackForCli(
       const trackContext = cfg.reinforcement?.trackContext !== false;
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const sig of positiveSignals) {
-        if (wallClockLimitReached()) {
-          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-          break;
-        }
         try {
           const searchQuery = sig.context.agentMessage || sig.context.userMessage;
           const matches = factsDb.search(searchQuery, 3);
@@ -716,10 +720,6 @@ export async function runExtractImplicitFeedbackForCli(
             subsystem: "implicit-feedback",
           });
         }
-      }
-      // If wall clock limit was reached during positive reinforcement, exit session loop
-      if (partial && partialReason === "maxWallClock") {
-        break;
       }
     }
 
