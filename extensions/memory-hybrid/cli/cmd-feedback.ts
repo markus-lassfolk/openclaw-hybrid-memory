@@ -318,11 +318,13 @@ export function cleanupImplicitFeedbackDuplicates(
   if (supersededAny) {
     factsDb.invalidateSupersededTextsCache();
   }
-  const lastRow = rows[rows.length - 1];
+  // When interrupted, return the actual scanned count and the last row actually processed,
+  // not the full batch size and last row in the batch.
+  const lastProcessedRow = interrupted && scanned > 0 ? rows[scanned - 1] : rows[rows.length - 1];
   return {
-    scanned: rows.length,
+    scanned,
     collapsed,
-    resumeAfterRowid: lastRow ? lastRow.rowid : null,
+    resumeAfterRowid: lastProcessedRow ? lastProcessedRow.rowid : null,
     carryCanonical: canonical.slice(-CANONICAL_WINDOW_SIZE).map((c) => ({ id: c.id, text: c.text })),
     interrupted,
   };
@@ -954,8 +956,16 @@ export async function runExtractImplicitFeedbackForCli(
                     feature: CostFeature.trajectoryAnalyze,
                   });
                 };
-                const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
-                if (wallClockLimitReached()) {
+                // Calculate remaining wall clock budget and abort if LLM call exceeds it
+                const remainingMs = maxWallClockSeconds * 1000 - (Date.now() - startTimeMs);
+                const timeoutPromise = new Promise<null>((resolve) => {
+                  setTimeout(() => resolve(null), Math.max(0, remainingMs));
+                });
+                const llmAnalysis = await Promise.race([
+                  analyzeTrajectoriesWithLLM(traj, prompt, chatFn),
+                  timeoutPromise,
+                ]);
+                if (wallClockLimitReached() || llmAnalysis === null) {
                   markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
                   break;
                 }
