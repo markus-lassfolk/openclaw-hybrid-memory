@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { _testing } from "../index.js";
+import { resetPluginRegistrationStateForTests, runtimeRef } from "../setup/register-plugin.js";
 import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
   E2E_EMBEDDING_DIM,
@@ -46,6 +47,8 @@ describe("Comprehensive e2e — full plugin register()", () => {
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "comprehensive-e2e-"));
     api = makeFullStackApi(tmpDir);
+    process.env.OPENCLAW_HYBRID_MEM_REREGISTER_POLICY = "reuse-databases";
+    resetPluginRegistrationStateForTests();
   });
 
   afterEach(async () => {
@@ -56,6 +59,8 @@ describe("Comprehensive e2e — full plugin register()", () => {
     }
     rmSync(tmpDir, { recursive: true, force: true });
     vi.clearAllMocks();
+    resetPluginRegistrationStateForTests();
+    delete process.env.OPENCLAW_HYBRID_MEM_REREGISTER_POLICY;
   });
 
   function register(overrides: Record<string, unknown> = {}): void {
@@ -80,6 +85,8 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
     it("survives hot reload (second register closes prior runtime)", async () => {
       register();
+      const bootstrap = runtimeRef.value?.bootstrapAsyncInit;
+      if (bootstrap) await bootstrap.catch(() => {});
       const store = api.getTool("memory_store")!;
       const stored = (await store.execute("c1", {
         text: "Survives plugin hot reload",

@@ -8,6 +8,7 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import memoryHybridPlugin from "../index.js";
+import { resetPluginRegistrationStateForTests } from "../setup/register-plugin.js";
 
 describe("CLI registration with service markers (Issue #1209 regression)", () => {
   const originalEnv = { ...process.env };
@@ -15,6 +16,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
   beforeEach(() => {
     // Restore original environment before each test
     process.env = { ...originalEnv };
+    resetPluginRegistrationStateForTests();
   });
 
   it("should register CLI metadata even when OPENCLAW_SERVICE_KIND is present", async () => {
