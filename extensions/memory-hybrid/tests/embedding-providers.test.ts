@@ -24,7 +24,7 @@ import {
   safeEmbed,
   shouldSuppressEmbeddingError,
 } from "../services/embeddings.js";
-import { AsyncSemaphore } from "../services/embeddings/shared.js";
+import { AsyncSemaphore, EMBEDDING_CACHE_MAX, makeCacheKey } from "../services/embeddings/shared.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import * as glitchtip from "../services/error-reporter.js";
 
@@ -300,6 +300,48 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
     const second = await provider.embedBatch(texts);
     expect(mockCreate).not.toHaveBeenCalled();
     expect(second).toEqual(first);
+  });
+
+  it("#1695: embed() evicts oldest cache entry at EMBEDDING_CACHE_MAX", async () => {
+    const vec = [0.5, 0.6];
+    const mockCreate = vi.fn().mockResolvedValue({ data: [{ index: 0, embedding: vec }] });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 2);
+    const cache = (provider as unknown as { cache: Map<string, number[]> }).cache;
+
+    for (let i = 0; i < EMBEDDING_CACHE_MAX; i++) {
+      cache.set(`seed:${i}`, [i, i + 1]);
+    }
+    expect(cache.size).toBe(EMBEDDING_CACHE_MAX);
+
+    await provider.embed("fresh text");
+
+    expect(cache.size).toBe(EMBEDDING_CACHE_MAX);
+    expect(cache.has("seed:0")).toBe(false);
+    expect(cache.has(makeCacheKey("text-embedding-3-small", "fresh text"))).toBe(true);
+  });
+
+  it("#1695: embed() errors do not poison cache entries", async () => {
+    const vec = [0.8, 0.9];
+    const transientError = new Error("temporary upstream failure");
+    const mockCreate = vi
+      .fn()
+      .mockRejectedValueOnce(transientError)
+      .mockRejectedValueOnce(transientError)
+      .mockRejectedValueOnce(transientError)
+      .mockResolvedValue({ data: [{ index: 0, embedding: vec }] });
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 2);
+    const cache = (provider as unknown as { cache: Map<string, number[]> }).cache;
+
+    await expect(provider.embed("recoverable text")).rejects.toThrow("temporary upstream failure");
+    expect(cache.size).toBe(0);
+
+    const firstSuccess = await provider.embed("recoverable text");
+    const cached = await provider.embed("recoverable text");
+    expect(firstSuccess).toEqual(vec);
+    expect(cached).toEqual(vec);
+    expect(mockCreate).toHaveBeenCalledTimes(4);
   });
 
   it("throws when dimensions exceed model max", () => {
