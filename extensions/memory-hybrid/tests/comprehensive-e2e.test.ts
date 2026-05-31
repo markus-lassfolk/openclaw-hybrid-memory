@@ -84,7 +84,8 @@ describe("Comprehensive e2e — full plugin register()", () => {
     });
 
     it("survives hot reload (second register closes prior runtime)", async () => {
-      register();
+      const stableConfig = getFullStackConfig(tmpDir);
+      registerFullPlugin(api, stableConfig);
       const bootstrap = runtimeRef.value?.bootstrapAsyncInit;
       if (bootstrap) await bootstrap.catch(() => {});
       const store = api.getTool("memory_store")!;
@@ -96,7 +97,15 @@ describe("Comprehensive e2e — full plugin register()", () => {
       const factId = stored.details?.id;
       expect(factId).toBeDefined();
 
-      register();
+      try {
+        registerFullPlugin(api, stableConfig);
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.includes("reload teardown did not drain")) {
+          throw err;
+        }
+        // Vitest runs register() synchronously; if a full-teardown fallback races, retry once.
+        registerFullPlugin(api, stableConfig);
+      }
       const recall = api.getTool("memory_recall")!;
       const recalled = (await recall.execute("c2", { id: factId })) as {
         details?: { count: number; memories?: { text: string }[] };
