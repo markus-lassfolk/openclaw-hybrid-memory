@@ -30,6 +30,7 @@ import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
 import type { LifecycleContext } from "./types.js";
+import { isStaleLifecycleGeneration } from "../utils/lifecycle-generation.js";
 
 export type { LifecycleContext } from "./types.js";
 
@@ -69,6 +70,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
         try {
           const recallStageResult = await runRecallStage(event, rApi, ctx, sessionState);
+          if (isStaleLifecycleGeneration(ctx)) {
+            if (capturedFirstRecallBegin) {
+              firstRecallCheckpointCaptured = false;
+            }
+            return undefined;
+          }
           if (!recallStageResult) {
             if (capturedFirstRecallBegin) {
               recordStartupMemoryCheckpoint({
@@ -115,6 +122,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return recallStageResult.prependContext ? { prependContext: recallStageResult.prependContext } : undefined;
           }
           const inj = await runInjectionStage(recallStageResult.result, rApi, ctx, event);
+          if (isStaleLifecycleGeneration(ctx)) {
+            if (capturedFirstRecallBegin) {
+              firstRecallCheckpointCaptured = false;
+            }
+            return undefined;
+          }
           if (capturedFirstRecallBegin) {
             recordStartupMemoryCheckpoint({
               logger: api.logger,
@@ -185,6 +198,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       const rApi = withHookResolutionApi(api, hookCtx);
       const ev = event as { messages?: unknown[]; success?: boolean };
 
+      if (isStaleLifecycleGeneration(ctx)) return;
+
       // Issue #742: extract tool names from messages and record via WorkflowTracker
       // so crystallization can detect patterns from the traces table.
       if (ctx.workflowTracker && ctx.cfg.workflowTracking?.enabled) {
@@ -239,8 +254,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         }
       }
 
+      if (isStaleLifecycleGeneration(ctx)) return;
       await runCaptureStage(event, rApi, ctx, sessionState);
+      if (isStaleLifecycleGeneration(ctx)) return;
       const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+      if (isStaleLifecycleGeneration(ctx)) return;
       if (ctx.cfg.goalStewardship?.enabled) {
         try {
           const { listActiveGoals, resolveGoalsDir } = await import("../services/goal-stewardship.js");
@@ -273,6 +291,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.debug?.(`memory-hybrid: goal session summary failed (non-fatal): ${String(err)}`);
         }
       }
+      if (isStaleLifecycleGeneration(ctx)) return;
 
       try {
         await buildDailyNarrative({
@@ -284,6 +303,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           model: getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano"),
           logger: api.logger,
           fallbackModels: [],
+          registrationGeneration: ctx.registrationGeneration,
+          currentRegistrationGenerationRef: ctx.currentRegistrationGenerationRef,
         });
       } catch (err) {
         const transient = isAbortOrTransientLlmError(err);
@@ -301,6 +322,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
         }
       }
+      if (isStaleLifecycleGeneration(ctx)) return;
 
       if (ev?.success !== false) {
         try {
