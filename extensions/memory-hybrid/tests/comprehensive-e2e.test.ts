@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { _testing } from "../index.js";
 import { resetPluginRegistrationStateForTests, runtimeRef } from "../setup/register-plugin.js";
+import { awaitReloadTeardownBeforeOpen } from "../setup/hybrid-memory-reload-coordinator.js";
 import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
   E2E_EMBEDDING_DIM,
@@ -109,6 +110,8 @@ describe("Comprehensive e2e — full plugin register()", () => {
           throw err;
         }
         // Vitest runs register() synchronously; if a full-teardown fallback races, retry once.
+        // Wait for the scheduled reload teardown to complete before retrying (issue #1775).
+        await awaitReloadTeardownBeforeOpen();
         registerFullPlugin(api, stableConfig);
       }
       const recall = api.getTool("memory_recall")!;
