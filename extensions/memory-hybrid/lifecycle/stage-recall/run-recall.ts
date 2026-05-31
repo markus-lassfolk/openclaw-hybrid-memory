@@ -26,6 +26,7 @@ import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
+import { isRecallContextSuperseded, shouldSuppressStaleRecallError } from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 
@@ -157,6 +158,10 @@ export async function runRecall(
     return { kind: "empty", prependContext: undefined };
   }
   const promptText = e.prompt;
+
+  if (isRecallContextSuperseded(ctx)) {
+    return emptyRecallStage();
+  }
 
   ctx.recallInFlightRef.value++;
   const recallStartMs = Date.now();
@@ -509,6 +514,7 @@ export async function runRecall(
       minScore,
       pendingLLMWarnings: ctx.pendingLLMWarnings,
       logger: api.logger,
+      registrationGeneration: ctx.registrationGeneration,
     };
 
     const ambientCfg = ctx.cfg.ambient;
@@ -546,7 +552,9 @@ export async function runRecall(
       }
     }
 
-    if (recallAborted(signal)) return completeStage(emptyRecallStage());
+    if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+      return completeStage(emptyRecallStage());
+    }
 
     setRecallProbePhase("main_pipeline");
     const mainPipelineStartedAt = recallTiming.phaseStarted("main_pipeline");
@@ -778,14 +786,14 @@ export async function runRecall(
     };
     if (directivesCfg.enabled) {
       try {
-        if (recallAborted(signal)) {
+        if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
           return abortDirectives();
         }
         if (directivesCfg.entityMentioned && entityLookup.enabled) {
           const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
           if (entityLookupNames.length > 0) {
             for (const entity of entityLookupNames) {
-              if (recallAborted(signal)) {
+              if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
                 return abortDirectives();
               }
               if (!promptLower.includes(entity.toLowerCase())) continue;
@@ -807,7 +815,7 @@ export async function runRecall(
         }
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
-            if (recallAborted(signal)) {
+            if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
               return abortDirectives();
             }
             if (!promptLower.includes(keyword.toLowerCase())) continue;
@@ -826,7 +834,7 @@ export async function runRecall(
           }
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
-          if (recallAborted(signal)) {
+          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
@@ -844,7 +852,7 @@ export async function runRecall(
           addDirectiveResults(results, `taskType:${taskType}`);
         }
         if (directivesCfg.sessionStart) {
-          if (recallAborted(signal)) {
+          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
           if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
@@ -863,6 +871,10 @@ export async function runRecall(
           }
         }
       } catch (err) {
+        if (shouldSuppressStaleRecallError(ctx, err)) {
+          api.logger.debug?.("memory-hybrid: directive recall skipped (registration superseded)");
+          return abortDirectives();
+        }
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "directive-recall",
           subsystem: "auto-recall",
@@ -1048,6 +1060,12 @@ export async function runRecall(
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
+    if (shouldSuppressStaleRecallError(ctx, err)) {
+      api.logger.debug?.(
+        `memory-hybrid: recall-probe id=${recallProbeId} skipped (registration superseded) elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase}`,
+      );
+      return completeStage(emptyRecallStage());
+    }
     if (!recallStageCompleted) {
       recallTiming.phaseCompleted("recall_stage_run", recallStageStartedAt, {
         ...(recallStageFields ?? {}),

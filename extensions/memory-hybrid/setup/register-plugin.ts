@@ -33,6 +33,7 @@ import { getHybridMemoryRegistrationState } from "./hybrid-memory-generation-sta
 import {
   awaitReloadTeardownBeforeOpen,
   drainOldBootstrap,
+  drainOldRecall,
   schedulePluginTeardown,
 } from "./hybrid-memory-reload-coordinator.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
@@ -210,6 +211,7 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     // Let in-flight bootstrap (vault check, embedding verify) finish before permanentClose (#1550 reload race).
     schedulePluginTeardown(async () => {
       await drainOldBootstrap(oldRuntime.bootstrapAsyncInit);
+      await drainOldRecall(oldRuntime.recallInFlightRef);
       closeOldDatabases({
         factsDb: oldRuntime.factsDb,
         edictStore: oldRuntime.edictStore,

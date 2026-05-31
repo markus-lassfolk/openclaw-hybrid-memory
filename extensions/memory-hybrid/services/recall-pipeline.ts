@@ -26,6 +26,13 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { createRecallSpan, createRecallTimingLogger } from "./recall-timing.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
+
+function isStalePipelineDbError(deps: RecallPipelineDeps, err: unknown): boolean {
+  const gen = deps.registrationGeneration;
+  if (gen === undefined || gen < 0) return false;
+  return isRegistrationSuperseded(gen) && isDbClosedError(err);
+}
 
 async function embedWithAbortRace(
   embedPromise: Promise<number[]>,
@@ -87,6 +94,8 @@ export interface RecallPipelineDeps {
   minScore: number;
   pendingLLMWarnings: PendingLLMWarnings;
   logger: RecallLogger;
+  /** Hook generation for suppressing errors after hot reload closed DB handles. */
+  registrationGeneration?: number;
 }
 
 /**
@@ -446,7 +455,13 @@ export async function runRecallPipelineQuery(
                 backend: "lancedb",
               });
             }
-            logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+            if (isStalePipelineDbError(deps, err)) {
+              probeDebug(
+                `memory-hybrid: recall-probe id=${probeId} ${opts?.errorPrefix ?? ""}vector recall skipped (registration superseded)`,
+              );
+            } else {
+              logger.warn(`memory-hybrid: ${opts?.errorPrefix ?? ""}vector recall failed: ${err}`);
+            }
           }
           return [] as SearchResult[];
         })
@@ -476,7 +491,16 @@ export async function runRecallPipelineQuery(
     probeStage = "merge_results";
     const mergeStartedAt = recallTiming.phaseStarted("merge_results");
     const mergeT0 = Date.now();
-    let results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);
+    let results: SearchResult[];
+    try {
+      results = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);
+    } catch (err) {
+      if (isStalePipelineDbError(deps, err)) {
+        probeDebug(`memory-hybrid: recall-probe id=${probeId} merge_results skipped (registration superseded)`);
+        return [];
+      }
+      throw err;
+    }
     stageMs.merge = Date.now() - mergeT0;
     recallTiming.phaseCompleted("merge_results", mergeStartedAt, {
       sqlite_rows: sqliteResults.length,
@@ -526,6 +550,12 @@ export async function runRecallPipelineQuery(
 
     return results;
   } catch (err) {
+    if (isStalePipelineDbError(deps, err)) {
+      probeDebug(
+        `memory-hybrid: recall-probe id=${probeId} pipeline skipped (registration superseded) elapsedMs=${Date.now() - pipelineWallT0} stage=${probeStage}`,
+      );
+      return [];
+    }
     probeWarn(
       `memory-hybrid: recall-probe id=${probeId} pipeline-error elapsedMs=${Date.now() - pipelineWallT0} stage=${probeStage} semantic=${useSemantic} error=${err instanceof Error ? err.message : String(err)}`,
     );
