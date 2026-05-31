@@ -142,6 +142,22 @@ error: unknown command 'bar'
       expect(result.failedSteps[0].exitCode).toBe(1);
     });
 
+    it("should surface HM_EXIT failure reasons for non-zero steps", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(
+        exitPath,
+        "2024-05-08T02:01:00Z step=reembed-vectorless exit=1 status=failed reason=failed_embedding_provider_5xx duration_ms=420000\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, undefined, ["reembed-vectorless"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.failedSteps).toHaveLength(1);
+      expect(result.failedSteps[0].failureReason).toBe("failed_embedding_provider_5xx");
+      expect(result.error).toContain("failed_embedding_provider_5xx");
+    });
+
     it("should annotate audit-health strict failures with a machine-readable reason", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
