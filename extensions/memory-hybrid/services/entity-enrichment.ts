@@ -266,6 +266,7 @@ ${body}`;
         continue;
       }
       duplicates++;
+      rejectedMentions.push({ label: m.label, surfaceText: m.surfaceText, reason: "duplicate" });
       countReason(rejectReasons, "duplicate");
       if (m.confidence > existing.confidence) {
         deduped.set(key, m);

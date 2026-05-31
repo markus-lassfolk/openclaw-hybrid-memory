@@ -147,7 +147,7 @@ function shouldFilterEntityMention(mention: {
     return NON_ORG_SERVICE_TERMS.has(stopWordKey) || NON_ENTITY_ORG_TERMS.has(stopWordKey);
   }
 
-  if (mention.label !== "ORG" && !mention.normalizedSurface.includes(" ") && PERSON_ROLE_TITLES.has(stopWordKey)) {
+  if (!mention.normalizedSurface.includes(" ") && PERSON_ROLE_TITLES.has(stopWordKey)) {
     return true;
   }
 

@@ -533,6 +533,42 @@ describe("extractEntityMentionsWithLlm", () => {
       normalizedSurface: "home assistant",
     });
   });
+
+  it("counts duplicate removals as rejected mentions in quality stats", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [
+              {
+                message: {
+                  content:
+                    '{"mentions":[{"label":"ORG","text":"Acme Corporation","start":0,"end":16,"normalized":"acme corporation","confidence":0.99},{"label":"ORG","text":"Acme Corporation","start":0,"end":16,"normalized":"acme corporation","confidence":0.98}]}',
+                },
+              },
+            ],
+          }),
+        },
+      },
+    };
+
+    const result = await extractEntityMentionsWithLlm(
+      "Acme Corporation announced a product update for enterprise customers.",
+      openai as never,
+      "gpt-5-mini",
+    );
+
+    expect(result.mentions).toHaveLength(1);
+    expect(result.quality.accepted).toBe(1);
+    expect(result.quality.duplicates).toBe(1);
+    expect(result.quality.rejected).toBe(1);
+    expect(result.quality.rejectReasons.duplicate).toBe(1);
+    expect(result.rejectedMentions).toContainEqual({
+      label: "ORG",
+      surfaceText: "Acme Corporation",
+      reason: "duplicate",
+    });
+  });
 });
 
 describe("FactsDB entity layer persistence", () => {
