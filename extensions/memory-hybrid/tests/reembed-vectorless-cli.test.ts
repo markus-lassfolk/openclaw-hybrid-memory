@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerManageStorageAndStats } from "../cli/commands/manage/register-storage-and-stats.js";
+import { EMBED_CALL_MAX_ATTEMPTS } from "../utils/embed-call.js";
 
 describe("reembed-vectorless CLI partial success reporting", () => {
   const origArgv = process.argv.slice();
@@ -162,6 +163,6 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(payload.embedded).toBe(0);
     expect(payload.embedFailures).toBe(0);
     expect(embeddings.embed).not.toHaveBeenCalled();
-    expect(embeddings.embedBatch).toHaveBeenCalledTimes(1);
+    expect(embeddings.embedBatch).toHaveBeenCalledTimes(EMBED_CALL_MAX_ATTEMPTS);
   });
 });

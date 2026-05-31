@@ -17,6 +17,7 @@ import {
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import { is500OrWrapped } from "../../../services/chat.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -718,7 +719,10 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                     const batch = candidates.slice(offset, offset + batchSize);
                     let vectors: (number[] | null)[];
                     try {
-                      vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
+                      vectors = await embedCallWithTimeoutAndRetry(
+                        () => embeddings.embedBatch(batch.map((fact) => fact.text)),
+                        `reembed-vectorless:batch-${batchNumber}`,
+                      );
                       consecutiveEmbedFailures = 0;
                     } catch (batchErr) {
                       if (isEmbeddingProviderServerError(batchErr)) {
@@ -733,7 +737,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       vectors = [];
                       for (const fact of batch) {
                         try {
-                          vectors.push(await embeddings.embed(fact.text));
+                          vectors.push(
+                            await embedCallWithTimeoutAndRetry(
+                              () => embeddings.embed(fact.text),
+                              `reembed-vectorless:fact-${fact.id}`,
+                            ),
+                          );
                           consecutiveEmbedFailures = 0;
                         } catch (singleErr) {
                           errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
