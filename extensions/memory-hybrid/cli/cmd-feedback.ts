@@ -544,8 +544,8 @@ export async function runExtractImplicitFeedbackForCli(
       markPartialProgress("maxWallClock");
       break;
     }
-    // Check against sessionsProcessed to ensure cursor advances only when work completes
-    if (maxSessionsPerRun > 0 && progress.sessionsProcessed >= maxSessionsPerRun) {
+    // BUG FIX #2: Check against sessionsVisited to ensure session cap includes skipped sessions
+    if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
       markPartialProgress("maxSessions");
       break;
     }
@@ -573,7 +573,6 @@ export async function runExtractImplicitFeedbackForCli(
         subsystem: "implicit-feedback",
       });
       emitProgress();
-      // BUG FIX #1: Update lastProcessedFilePath for skipped sessions so incremental cursor advances
       lastProcessedFilePath = filePath;
       continue;
     }
@@ -582,7 +581,6 @@ export async function runExtractImplicitFeedbackForCli(
     if (turns.length < 3) {
       progress.sessionsTooShort++;
       emitProgress();
-      // BUG FIX #1: Update lastProcessedFilePath for skipped sessions so incremental cursor advances
       lastProcessedFilePath = filePath;
       continue;
     }
@@ -594,17 +592,8 @@ export async function runExtractImplicitFeedbackForCli(
      */
     let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
 
-    // BUG FIX #2: Build trajectories early to check cap BEFORE phase one work (signal storage/reinforcement)
-    // This prevents duplicate phase-one side effects when trajectory cap is hit.
     const trajectories =
       opts.includeTrajectories !== false && !opts.dryRun && rawDb ? buildTrajectories(turns, sessionFile) : [];
-
-    // Check if trajectory cap would be exceeded by this session's trajectories BEFORE phase one work
-    if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
-      // Don't update lastProcessedFilePath - this session was not processed and must be retried
-      markPartialProgress("maxTrajectories", filePaths.length - progress.sessionsVisited);
-      break;
-    }
 
     // Phase 1: Extract implicit signals
     const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
@@ -617,10 +606,16 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    // Check if signal cap would be exceeded by this session's signals
+    // BUG FIX #1: Check if signal or trajectory cap would be exceeded by this session.
+    // If so, update cursor so this session can be skipped in the next run.
     if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
-      // Don't update lastProcessedFilePath - this session was not processed and must be retried
+      lastProcessedFilePath = filePath;
       markPartialProgress("maxSignals", filePaths.length - progress.sessionsVisited);
+      break;
+    }
+    if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
+      lastProcessedFilePath = filePath;
+      markPartialProgress("maxTrajectories", filePaths.length - progress.sessionsVisited);
       break;
     }
 
@@ -767,10 +762,6 @@ export async function runExtractImplicitFeedbackForCli(
     // Phase 2: Process trajectories (already built earlier for cap check)
     if (trajectories.length > 0 && opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
       try {
-        trajectoriesBuilt += trajectories.length;
-        progress.trajectoriesBuilt = trajectoriesBuilt;
-        emitProgress();
-
         const insertTraj = rawDb.prepare(`
           INSERT OR REPLACE INTO feedback_trajectories
             (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
@@ -838,6 +829,10 @@ export async function runExtractImplicitFeedbackForCli(
               row.tools_used,
               row.turn_count,
             );
+            // BUG FIX #3: Increment trajectoriesBuilt only after successful persistence
+            trajectoriesBuilt++;
+            progress.trajectoriesBuilt = trajectoriesBuilt;
+            emitProgress();
             // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
             const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
             const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
