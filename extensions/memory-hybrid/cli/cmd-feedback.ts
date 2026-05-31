@@ -199,21 +199,36 @@ export function cleanupImplicitFeedbackDuplicates(
     onProgress?: (progress: { scanned: number; total: number; collapsed: number }) => void;
     /** Callback cadence in scanned rows. */
     reportEvery?: number;
+    /** Optional wall-clock budget check to stop processing early. Returns true if budget exceeded. */
+    wallClockCheck?: () => boolean;
   } = {},
 ): {
   scanned: number;
   collapsed: number;
   resumeAfterRowid: number | null;
   carryCanonical: Array<{ id: string; text: string }>;
+  interrupted: boolean;
 } {
   const rawDb = factsDb.getRawDb();
   if (!rawDb) {
-    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+    return {
+      scanned: 0,
+      collapsed: 0,
+      resumeAfterRowid: null,
+      carryCanonical: [...(opts.seedCanonical ?? [])],
+      interrupted: false,
+    };
   }
   const threshold = opts.threshold ?? 0.7;
   const limit = opts.limit ?? 1000;
   if (limit <= 0) {
-    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+    return {
+      scanned: 0,
+      collapsed: 0,
+      resumeAfterRowid: null,
+      carryCanonical: [...(opts.seedCanonical ?? [])],
+      interrupted: false,
+    };
   }
   const afterRowid = opts.afterRowid ?? 0;
   const dryRun = opts.dryRun === true;
@@ -250,9 +265,15 @@ export function cleanupImplicitFeedbackDuplicates(
     "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
   );
   let supersededAny = false;
+  let interrupted = false;
   const scanRows = () => {
     for (const row of rows) {
       scanned++;
+      // Check wall-clock budget periodically
+      if (opts.wallClockCheck?.()) {
+        interrupted = true;
+        break;
+      }
       const match = canonical.find(
         (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
       );
@@ -302,6 +323,7 @@ export function cleanupImplicitFeedbackDuplicates(
     collapsed,
     resumeAfterRowid: lastRow ? lastRow.rowid : null,
     carryCanonical: canonical.slice(-CANONICAL_WINDOW_SIZE).map((c) => ({ id: c.id, text: c.text })),
+    interrupted,
   };
 }
 
@@ -1000,6 +1022,7 @@ export async function runExtractImplicitFeedbackForCli(
             limit: cleanupLimit,
             afterRowid,
             seedCanonical: carryCanonical,
+            wallClockCheck: wallClockLimitReached,
           });
           totalCollapsed += cleanup.collapsed;
           totalScanned += cleanup.scanned;
@@ -1009,6 +1032,10 @@ export async function runExtractImplicitFeedbackForCli(
           progress.cleanupScanned = totalScanned;
           progress.cleanupBatches = batches;
           emitProgress();
+          if (cleanup.interrupted) {
+            if (!partial) markPartialProgress("maxWallClock");
+            break;
+          }
           if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
           afterRowid = cleanup.resumeAfterRowid;
         }
@@ -1036,7 +1063,10 @@ export async function runExtractImplicitFeedbackForCli(
         emitProgress();
         const clCfg = cfg.closedLoop ?? { enabled: true };
         if (clCfg.enabled !== false) {
-          const report = runClosedLoopAnalysis(factsDb, clCfg);
+          const report = runClosedLoopAnalysis(factsDb, clCfg, { wallClockCheck: wallClockLimitReached });
+          if (report.interrupted) {
+            if (!partial) markPartialProgress("maxWallClock");
+          }
           if (report.rulesAnalyzed > 0) {
             if (opts.verbose) {
               closedLoopReport = getEffectivenessReport(factsDb);
