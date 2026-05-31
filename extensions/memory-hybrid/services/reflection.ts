@@ -673,7 +673,20 @@ export async function runReflection(
     }
     // If embeddingStale=true (merge path), re-embed the updated merged text
     const textToEmbed = storeResult.embeddingStale ? entry.text : patternText;
-    const vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
+    let vectorToStore: number[];
+    try {
+      vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
+    } catch (err) {
+      newPatternEmbedFailures++;
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "embed-pattern-merge",
+          severity: "info",
+          subsystem: "reflection",
+        });
+      }
+      continue;
+    }
     try {
       await vectorDb.store({
         text: textToEmbed,
@@ -1058,7 +1071,20 @@ export async function runReflectionRules(
     }
     // If embeddingStale=true (merge path), re-embed the updated merged text
     const textToEmbed = storeResult.embeddingStale ? entry.text : ruleText;
-    const vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
+    let vectorToStore: number[];
+    try {
+      vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
+    } catch (err) {
+      newRuleEmbedFailures++;
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "embed-rule-merge",
+          severity: "info",
+          subsystem: "reflection",
+        });
+      }
+      continue;
+    }
     try {
       await vectorDb.store({
         text: textToEmbed,
@@ -1377,7 +1403,20 @@ export async function runReflectionMeta(
     }
     // If embeddingStale=true (merge path), re-embed the updated merged text
     const textToEmbed = storeResult.embeddingStale ? entry.text : metaText;
-    const vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
+    let vectorToStore: number[];
+    try {
+      vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
+    } catch (err) {
+      newMetaEmbedFailures++;
+      if (!shouldSuppressEmbeddingError(err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "embed-meta-merge",
+          severity: "info",
+          subsystem: "reflection",
+        });
+      }
+      continue;
+    }
     try {
       await vectorDb.store({
         text: textToEmbed,
