@@ -938,14 +938,9 @@ export function cleanupEntityMentions(
       changedFacts++;
       removedRows += Math.max(0, rows.length - nextRows.length);
       if (options.apply) {
+        replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
         if (nextRows.length === 0) {
-          const tx = createTransaction(db, () => {
-            replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
-            db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
-          });
-          tx();
-        } else {
-          replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
+          db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
         }
       }
     }
