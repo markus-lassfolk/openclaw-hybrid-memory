@@ -6,6 +6,7 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { AllEmbeddingProvidersFailed } from "../../../services/embeddings.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
@@ -14,6 +15,7 @@ import {
   collectVectorBackendObservability,
 } from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
+import { is500OrWrapped } from "../../../services/chat.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
@@ -90,6 +92,15 @@ function hasGetBatch(db: object): db is object & FactsDbWithBatch {
 
 function hasGetRawDb(db: object): db is object & FactsDbWithRawDb {
   return "getRawDb" in db && typeof (db as { getRawDb?: unknown }).getRawDb === "function";
+}
+
+function isEmbeddingProviderServerError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (is500OrWrapped(err)) return true;
+  if (err instanceof AllEmbeddingProvidersFailed) {
+    return err.causes.some((cause) => is500OrWrapped(cause));
+  }
+  return false;
 }
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
@@ -641,6 +652,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--source <s>", "Only process facts from this source")
     .option("--apply", "Actually embed and write LanceDB/fact_embeddings rows; default is dry-run")
     .option("--batch-size <n>", "Embedding batch size", "40")
+    .option(
+      "--max-embed-failures <n>",
+      "Circuit-break after this many consecutive embed failures and exit 1; prevents indefinite stall on provider outage (default: 5)",
+      "5",
+    )
     .option("-v, --verbose", "Emit periodic progress heartbeat for long runs")
     .option("--json", "Emit JSON")
     .action(
@@ -651,6 +667,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             source?: string;
             apply?: boolean;
             batchSize?: string;
+            maxEmbedFailures?: string;
             verbose?: boolean;
             json?: boolean;
           },
@@ -658,6 +675,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         ) => {
           const limit = Number.parseInt(opts?.limit ?? "100", 10);
           const batchSize = Number.parseInt(opts?.batchSize ?? "40", 10);
+          const maxEmbedFailures = Number.parseInt(opts?.maxEmbedFailures ?? "5", 10);
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           if (!Number.isFinite(limit) || limit < 1) {
             console.error("error: --limit must be a positive integer");
@@ -666,6 +684,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
           if (!Number.isFinite(batchSize) || batchSize < 1) {
             console.error("error: --batch-size must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          if (!Number.isFinite(maxEmbedFailures) || maxEmbedFailures < 1) {
+            console.error("error: --max-embed-failures must be a positive integer");
             process.exitCode = 1;
             return;
           }
@@ -679,6 +702,10 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           const totalBatches = batchSize > 0 ? Math.ceil(candidates.length / batchSize) : 0;
           let processed = 0;
           let batchNumber = 0;
+          let providerCircuitBreak = false;
+          let providerCircuitBreakCause: string = "max_failures";
+          let consecutiveEmbedFailures = 0;
+          let aborted = false;
           if (opts?.apply) {
             await runMaintenanceHeartbeat(
               "reembed-vectorless",
@@ -686,24 +713,50 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               async () => {
                 await vectorDb.runWithAutoOptimizePaused(async () => {
                   for (let offset = 0; offset < candidates.length; offset += batchSize) {
+                    if (providerCircuitBreak) break;
                     batchNumber = Math.floor(offset / batchSize) + 1;
                     const batch = candidates.slice(offset, offset + batchSize);
                     let vectors: (number[] | null)[];
                     try {
                       vectors = await embeddings.embedBatch(batch.map((fact) => fact.text));
-                    } catch (_err) {
+                      consecutiveEmbedFailures = 0;
+                    } catch (batchErr) {
+                      if (isEmbeddingProviderServerError(batchErr)) {
+                        providerCircuitBreak = true;
+                        providerCircuitBreakCause = "provider_5xx";
+                        aborted = true;
+                        errors.push(
+                          `batch ${batchNumber}: embed failed with provider 5xx; fast-failing to avoid per-fact fallback stall — ${String(batchErr)}`,
+                        );
+                        break;
+                      }
                       vectors = [];
                       for (const fact of batch) {
                         try {
                           vectors.push(await embeddings.embed(fact.text));
+                          consecutiveEmbedFailures = 0;
                         } catch (singleErr) {
                           errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
                           embedFailures++;
                           vectors.push(null);
+                          if (isEmbeddingProviderServerError(singleErr)) {
+                            providerCircuitBreak = true;
+                            providerCircuitBreakCause = "provider_5xx";
+                            aborted = true;
+                            break;
+                          }
+                          consecutiveEmbedFailures++;
+                          if (consecutiveEmbedFailures >= maxEmbedFailures) {
+                            providerCircuitBreak = true;
+                            providerCircuitBreakCause = "max_failures";
+                            aborted = true;
+                            break;
+                          }
                         }
                       }
                     }
                     for (let i = 0; i < batch.length; i++) {
+                      if (providerCircuitBreak && i >= vectors.length) break;
                       const fact = batch[i];
                       const vec = vectors[i];
                       if (!vec || vec.length === 0) {
@@ -752,7 +805,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             );
           }
           const after = opts?.apply ? factsDb.countVectorlessActiveFacts(opts?.source) : before;
-          const report = {
+          const report: Record<string, unknown> = {
             apply: opts?.apply === true,
             source: opts?.source ?? null,
             before,
@@ -763,8 +816,16 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             storeFailures,
             errors,
             after,
+            processed,
+            aborted,
           };
-          if (opts?.apply && storeFailures > 0) {
+          if (providerCircuitBreak) {
+            report.failedReason =
+              providerCircuitBreakCause === "provider_5xx"
+                ? "failed_embedding_provider_5xx"
+                : "failed_embedding_provider";
+            process.exitCode = 1;
+          } else if (opts?.apply && storeFailures > 0) {
             process.exitCode = 2;
           }
           if (opts?.json) {
@@ -785,7 +846,17 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             console.warn(`Errors: ${errors.length}`);
             for (const err of errors.slice(0, 10)) console.warn(`  - ${err}`);
           }
-          if (opts?.apply && storeFailures > 0) {
+          if (providerCircuitBreak) {
+            if (providerCircuitBreakCause === "provider_5xx") {
+              console.error(
+                `Provider fast-fail: embedding provider returned 5xx; aborted reembed-vectorless immediately to avoid per-fact fallback stall. Processed ${processed}/${candidates.length} fact(s); embedded ${embedded} (exit=1).`,
+              );
+            } else {
+              console.error(
+                `Provider circuit-break: ${maxEmbedFailures} consecutive embed failure(s) exceeded --max-embed-failures ${maxEmbedFailures}; processed ${processed}/${candidates.length} fact(s) before aborting; partial embeddings stored: ${embedded}. Re-run after provider recovery (exit=1).`,
+              );
+            }
+          } else if (opts?.apply && storeFailures > 0) {
             console.warn(
               `Partial success: ${storeFailures} write failure(s) occurred during vector re-embedding; retryable LanceDB conflicts were retried where applicable (exit=2).`,
             );
