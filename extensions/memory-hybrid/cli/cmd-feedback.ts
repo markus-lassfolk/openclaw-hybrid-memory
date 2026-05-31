@@ -619,18 +619,17 @@ export async function runExtractImplicitFeedbackForCli(
     return Math.max(0, maxWallClockSeconds * 1000 - (Date.now() - startTimeMs));
   };
   const alreadyRecordedPositiveReinforcement = (factId: string, context: ReinforcementContext): boolean => {
-    const strictMatch =
+    if (cfg.reinforcement?.trackContext === false) {
+      return reinforcementAlreadyRecordedBySessionStmt?.get(factId, context.sessionFile ?? null) != null;
+    }
+    return (
       reinforcementAlreadyRecordedStmt?.get(
         factId,
         context.sessionFile ?? null,
         context.topic ?? null,
         context.querySnippet ?? null,
-      ) != null;
-    if (strictMatch) return true;
-    if (cfg.reinforcement?.trackContext === false) {
-      return reinforcementAlreadyRecordedBySessionStmt?.get(factId, context.sessionFile ?? null) != null;
-    }
-    return false;
+      ) != null
+    );
   };
 
   const deferredIncludingCurrentSession = (): number => Math.max(0, filePaths.length - progress.sessionsVisited + 1);
@@ -1158,6 +1157,7 @@ export async function runExtractImplicitFeedbackForCli(
           severity: "info",
           subsystem: "implicit-feedback",
         });
+        markPartialProgress("maxSessions", deferredIncludingCurrentSession());
         break;
       }
     }
