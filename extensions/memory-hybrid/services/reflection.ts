@@ -965,7 +965,6 @@ export async function runReflection(
             logger.warn(
               `memory-hybrid: reflection — metadata rollback skipped for pattern fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
             );
-            stored++;
             continue;
           }
           try {
@@ -974,6 +973,15 @@ export async function runReflection(
             logger.warn(
               `memory-hybrid: reflection — failed to delete canonical embeddings for pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
             );
+          }
+          if (preMergeVector && preMergeVector.length > 0) {
+            try {
+              await vectorDb.delete(entry.id);
+            } catch (vecErr) {
+              logger.warn(
+                `memory-hybrid: reflection — failed to delete merged vector for pattern fact ${entry.id.slice(0, 8)} before rollback: ${vecErr}`,
+              );
+            }
           }
           const rolledBack = rollbackMergedFactText(factsDb, logger, {
             context: "reflection",
@@ -1587,7 +1595,6 @@ export async function runReflectionRules(
             logger.warn(
               `memory-hybrid: reflect-rules — metadata rollback skipped for rule fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
             );
-            stored++;
             continue;
           }
           try {
@@ -1596,6 +1603,15 @@ export async function runReflectionRules(
             logger.warn(
               `memory-hybrid: reflect-rules — failed to delete canonical embeddings for rule fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
             );
+          }
+          if (preMergeVector && preMergeVector.length > 0) {
+            try {
+              await vectorDb.delete(entry.id);
+            } catch (vecErr) {
+              logger.warn(
+                `memory-hybrid: reflect-rules — failed to delete merged vector for rule fact ${entry.id.slice(0, 8)} before rollback: ${vecErr}`,
+              );
+            }
           }
           const rolledBack = rollbackMergedFactText(factsDb, logger, {
             context: "reflect-rules",
@@ -2158,7 +2174,6 @@ export async function runReflectionMeta(
             logger.warn(
               `memory-hybrid: reflect-meta — metadata rollback skipped for meta-pattern fact ${entry.id.slice(0, 8)} because pre-merge vector state is unavailable; keeping merged text to avoid SQLite/LanceDB mismatch`,
             );
-            stored++;
             continue;
           }
           try {
@@ -2167,6 +2182,15 @@ export async function runReflectionMeta(
             logger.warn(
               `memory-hybrid: reflect-meta — failed to delete canonical embeddings for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${embErr}`,
             );
+          }
+          if (preMergeVector && preMergeVector.length > 0) {
+            try {
+              await vectorDb.delete(entry.id);
+            } catch (vecErr) {
+              logger.warn(
+                `memory-hybrid: reflect-meta — failed to delete merged vector for meta-pattern fact ${entry.id.slice(0, 8)} before rollback: ${vecErr}`,
+              );
+            }
           }
           const rolledBack = rollbackMergedFactText(factsDb, logger, {
             context: "reflect-meta",

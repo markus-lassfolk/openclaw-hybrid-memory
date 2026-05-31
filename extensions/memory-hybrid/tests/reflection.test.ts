@@ -843,7 +843,7 @@ describe("runReflectionRules diagnostics", () => {
       category: "rule",
       vector: [1, 0],
     });
-    expect(vectorDelete).not.toHaveBeenCalled();
+    expect(vectorDelete).toHaveBeenCalledWith("rule-existing");
     expect(restoreMergedFactText).toHaveBeenCalledWith("rule-existing", existingRuleText);
     expect(setEmbeddingModel).toHaveBeenCalledTimes(2);
   });
