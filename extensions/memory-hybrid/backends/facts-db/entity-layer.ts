@@ -777,7 +777,7 @@ export function cleanupEntityMentions(
         removedRows += Math.max(0, rows.length - nextRows.length);
         if (options.apply) {
           if (nextRows.length === 0) {
-            replaceFactEntityMentions(db, fact.fact_id, nextRows);
+            replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
             db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
           } else {
             replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });

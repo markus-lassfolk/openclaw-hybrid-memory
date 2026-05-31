@@ -78,9 +78,7 @@ const ACRONYM_ALLOWLIST = new Map<string, EntityMentionLabel>([
   ["CI", "TOOL"],
 ]);
 
-function minConfidenceForLabel(label: EntityMentionLabel): number {
-  return 0.75;
-}
+const MIN_CONFIDENCE_THRESHOLD = 0.75;
 
 function normalizeSurfaceText(value: string): string {
   return value.trim();
@@ -186,7 +184,7 @@ export function canonicalizeEntityMention(
   const confidence = Number.isFinite(candidate.confidence)
     ? Math.max(0, Math.min(Number(candidate.confidence), 1))
     : 0.75;
-  if (confidence < minConfidenceForLabel(label)) return { accepted: false, reason: "low_confidence" };
+  if (confidence < MIN_CONFIDENCE_THRESHOLD) return { accepted: false, reason: "low_confidence" };
 
   return {
     accepted: true,
