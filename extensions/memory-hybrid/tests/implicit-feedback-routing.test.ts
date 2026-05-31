@@ -427,6 +427,127 @@ describe("implicit feedback routing — positive → reinforcement", () => {
       vi.useRealTimers();
     }
   });
+
+  it("uses session-level dedupe fallback when trackContext=false rows are missing topic/query columns", async () => {
+    const db = makeDb(tmpDir);
+    const fact = db.store({
+      text: "exactly what is needed for async TypeScript pattern",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    writePositiveSession(sessionsDir, "2026-01-01-session.jsonl");
+
+    const ctx = makeCtx(db, sessionsDir, {
+      feedToReinforcement: true,
+      feedToSelfCorrection: false,
+    });
+    ctx.cfg.reinforcement = {
+      ...(ctx.cfg.reinforcement ?? {}),
+      enabled: true,
+      trackContext: false,
+      maxEventsPerFact: 50,
+    } as HybridMemoryConfig["reinforcement"];
+
+    const firstRun = await runExtractImplicitFeedbackForCli(ctx, {
+      days: 365,
+      dryRun: false,
+      includeTrajectories: false,
+      includeClosedLoop: false,
+    });
+    expect(firstRun.sessionsProcessed).toBe(1);
+
+    rawDb(db).prepare("UPDATE reinforcement_log SET topic = NULL, query_snippet = NULL WHERE fact_id = ?").run(fact.id);
+
+    const secondRun = await runExtractImplicitFeedbackForCli(ctx, {
+      days: 365,
+      full: true,
+      dryRun: false,
+      includeTrajectories: false,
+      includeClosedLoop: false,
+    });
+    expect(secondRun.sessionsProcessed).toBe(1);
+
+    const duplicateRows = rawDb(db)
+      .prepare(
+        `SELECT fact_id, session_file, COUNT(*) as cnt
+         FROM reinforcement_log
+         GROUP BY fact_id, session_file
+         HAVING COUNT(*) > 1`,
+      )
+      .all() as Array<{ cnt: number }>;
+    expect(duplicateRows).toEqual([]);
+  });
+
+  it("does not duplicate persisted trajectories when wall-clock expires during reinforcement and run is retried", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+      const db = makeDb(tmpDir);
+      db.store({
+        text: "webpack configuration entry output",
+        category: "technical",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      writeTrajectorySession(sessionsDir, "2026-01-01-session.jsonl");
+
+      const originalReinforceFact = db.reinforceFact.bind(db);
+      let reinforceCalls = 0;
+      vi.spyOn(db, "reinforceFact").mockImplementation((...args: Parameters<typeof originalReinforceFact>) => {
+        const result = originalReinforceFact(...args);
+        reinforceCalls++;
+        if (reinforceCalls === 1) {
+          vi.setSystemTime(new Date("2026-05-01T00:00:02.000Z"));
+        }
+        return result;
+      });
+
+      const firstCtx = makeCtx(db, sessionsDir, {
+        feedToReinforcement: true,
+        feedToSelfCorrection: false,
+        maxWallClockSeconds: 1,
+      });
+      const firstRun = await runExtractImplicitFeedbackForCli(firstCtx, {
+        days: 365,
+        dryRun: false,
+        includeClosedLoop: false,
+      });
+      expect(firstRun.partial).toBe(true);
+      expect(firstRun.partialReason).toBe("maxWallClock");
+
+      vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
+      const secondCtx = makeCtx(db, sessionsDir, {
+        feedToReinforcement: true,
+        feedToSelfCorrection: false,
+        maxWallClockSeconds: 300,
+      });
+      const secondRun = await runExtractImplicitFeedbackForCli(secondCtx, {
+        days: 365,
+        dryRun: false,
+        includeClosedLoop: false,
+      });
+      expect(secondRun.sessionsProcessed).toBe(1);
+
+      const duplicateTrajectories = rawDb(db)
+        .prepare(
+          `SELECT session_file, turns_json, COUNT(*) as cnt
+           FROM feedback_trajectories
+           GROUP BY session_file, turns_json
+           HAVING COUNT(*) > 1`,
+        )
+        .all() as Array<{ cnt: number }>;
+      expect(duplicateTrajectories).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -550,6 +671,62 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
       .all(first.id, duplicate.id) as Array<{ id: string; supersededBy: string | null; supersededAt: number | null }>;
     expect(rows.every((row) => row.supersededAt == null)).toBe(true);
     expect(rows.every((row) => row.supersededBy == null)).toBe(true);
+  });
+
+  it("returns actual scanned progress and cursor row when cleanup is interrupted by wall-clock", () => {
+    const db = makeDb(tmpDir);
+    db.store({
+      text: "A trajectory lesson about concrete next steps",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    db.store({
+      text: "Another trajectory lesson about concise examples",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    db.store({
+      text: "A third trajectory lesson about explaining tradeoffs",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+
+    const orderedRowIds = rawDb(db)
+      .prepare(
+        `SELECT rowid as rowid
+         FROM facts
+         WHERE source = 'implicit-feedback'
+         ORDER BY rowid ASC`,
+      )
+      .all() as Array<{ rowid: number }>;
+    let checks = 0;
+    const result = cleanupImplicitFeedbackDuplicates(db, {
+      threshold: 0.7,
+      limit: 100,
+      wallClockCheck: () => {
+        checks++;
+        return checks > 1;
+      },
+    });
+
+    expect(result.interrupted).toBe(true);
+    expect(result.scanned).toBe(1);
+    expect(result.resumeAfterRowid).toBe(orderedRowIds[0]?.rowid ?? null);
   });
 
   it("collapses legacy pattern-shaped trajectory rows into canonical implicit-feedback signals", () => {
