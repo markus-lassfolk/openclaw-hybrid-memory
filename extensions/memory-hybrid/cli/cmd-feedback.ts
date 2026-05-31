@@ -33,6 +33,7 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -333,6 +334,12 @@ export function cleanupImplicitFeedbackDuplicates(
 
 export type ExtractImplicitFeedbackStopReason = "maxWallClock" | "maxSessions" | "maxSignals" | "maxTrajectories";
 
+class ImplicitFeedbackWallClockExceededError extends Error {
+  constructor() {
+    super("implicit-feedback wall-clock budget exceeded");
+  }
+}
+
 export interface ExtractImplicitFeedbackProgressSnapshot {
   stage: "scan-sessions" | "cleanup-duplicates" | "closed-loop" | "done";
   sessionsDiscovered: number;
@@ -607,6 +614,44 @@ export async function runExtractImplicitFeedbackForCli(
 
   const deferredIncludingCurrentSession = (): number => Math.max(0, filePaths.length - progress.sessionsVisited + 1);
 
+  const applyPendingPositiveReinforcement = rawDb
+    ? createTransaction(
+        rawDb,
+        (
+          pending: Array<{
+            factId: string;
+            quoteSnippet: string;
+            context: ReinforcementContext;
+            boostAmount: number;
+          }>,
+        ) => {
+          const trackContext = cfg.reinforcement?.trackContext !== false;
+          const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
+          for (const item of pending) {
+            if (wallClockLimitReached()) {
+              throw new ImplicitFeedbackWallClockExceededError();
+            }
+            const alreadyReinforcedForSignal =
+              reinforcementAlreadyRecordedStmt?.get(
+                item.factId,
+                item.context.sessionFile ?? null,
+                item.context.topic ?? null,
+                item.context.querySnippet ?? null,
+              ) != null;
+            if (alreadyReinforcedForSignal) continue;
+            factsDb.reinforceFact(item.factId, item.quoteSnippet, item.context, {
+              trackContext,
+              maxEventsPerFact,
+              boostAmount: item.boostAmount,
+            });
+            if (wallClockLimitReached()) {
+              throw new ImplicitFeedbackWallClockExceededError();
+            }
+          }
+        },
+      )
+    : null;
+
   for (const filePath of filePaths) {
     // Check if we've hit any caps
     if (wallClockLimitReached()) {
@@ -663,6 +708,13 @@ export async function runExtractImplicitFeedbackForCli(
 
     const trajectories =
       opts.includeTrajectories !== false && !opts.dryRun && rawDb ? buildTrajectories(turns, sessionFile) : [];
+    const pendingPositiveReinforcement: Array<{
+      factId: string;
+      quoteSnippet: string;
+      context: ReinforcementContext;
+      boostAmount: number;
+    }> = [];
+    const pendingPositiveReinforcementKeys = new Set<string>();
 
     // Phase 1: Extract implicit signals
     const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
@@ -753,17 +805,16 @@ export async function runExtractImplicitFeedbackForCli(
       break;
     }
 
-    // Route positive signals to reinforcement pipeline
+    // Queue positive signals for reinforcement and apply them only after the whole
+    // session finishes. This keeps retries idempotent when a wall-clock cap interrupts
+    // later phases and lets us roll back the whole reinforcement batch if the budget
+    // expires mid-batch.
     if (!opts.dryRun && implicitCfg.feedToReinforcement !== false && signals.length > 0) {
       const minConf = implicitCfg.minConfidence ?? 0.5;
       const positiveSignals = signals.filter((s) => s.polarity === "positive" && s.confidence >= minConf);
-      const trackContext = cfg.reinforcement?.trackContext !== false;
-      const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
-      let reinforcementInterruptedByWallClock = false;
       for (const sig of positiveSignals) {
         if (wallClockLimitReached()) {
           markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-          reinforcementInterruptedByWallClock = true;
           break;
         }
         try {
@@ -778,9 +829,10 @@ export async function runExtractImplicitFeedbackForCli(
           for (const match of matches) {
             if (wallClockLimitReached()) {
               markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-              reinforcementInterruptedByWallClock = true;
               break;
             }
+            const dedupeKey = `${match.entry.id}\u0000${context.sessionFile ?? ""}\u0000${context.topic ?? ""}\u0000${querySnippet}`;
+            if (pendingPositiveReinforcementKeys.has(dedupeKey)) continue;
             const alreadyReinforcedForSignal =
               reinforcementAlreadyRecordedStmt?.get(
                 match.entry.id,
@@ -789,22 +841,24 @@ export async function runExtractImplicitFeedbackForCli(
                 querySnippet,
               ) != null;
             if (alreadyReinforcedForSignal) continue;
-            factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
-              trackContext,
-              maxEventsPerFact,
-              boostAmount: 0.5 * sig.confidence, // weaker than explicit praise
+            pendingPositiveReinforcement.push({
+              factId: match.entry.id,
+              quoteSnippet: sig.context.userMessage,
+              context,
+              boostAmount: 0.5 * sig.confidence,
             });
+            pendingPositiveReinforcementKeys.add(dedupeKey);
           }
-          if (reinforcementInterruptedByWallClock) break;
+          if (partial && partialReason === "maxWallClock") break;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
+            operation: "runExtractImplicitFeedbackForCli:queue-reinforcement",
             severity: "info",
             subsystem: "implicit-feedback",
           });
         }
       }
-      if (reinforcementInterruptedByWallClock) {
+      if (partial && partialReason === "maxWallClock") {
         break;
       }
     }
@@ -1024,6 +1078,22 @@ export async function runExtractImplicitFeedbackForCli(
     // Check if wall clock limit was hit during trajectory processing
     if (partial && partialReason === "maxWallClock") {
       break;
+    }
+
+    if (pendingPositiveReinforcement.length > 0) {
+      try {
+        applyPendingPositiveReinforcement?.(pendingPositiveReinforcement);
+      } catch (err) {
+        if (err instanceof ImplicitFeedbackWallClockExceededError) {
+          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+          break;
+        }
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
+          severity: "info",
+          subsystem: "implicit-feedback",
+        });
+      }
     }
 
     // Mark session as processed after both Phase 1 (signal extraction) and Phase 2 (trajectories) complete.

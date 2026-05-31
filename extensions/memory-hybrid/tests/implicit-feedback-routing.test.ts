@@ -275,7 +275,7 @@ describe("implicit feedback routing — positive → reinforcement", () => {
     expect(logRows.cnt).toBe(0);
   });
 
-  it("does not duplicate reinforcement rows when wall-clock stops mid-session and reruns", async () => {
+  it("rolls back interrupted reinforcement work when wall-clock stops mid-session and reruns", async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
@@ -317,7 +317,7 @@ describe("implicit feedback routing — positive → reinforcement", () => {
       expect(firstRun.partialReason).toBe("maxWallClock");
       const firstCount = (rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number })
         .cnt;
-      expect(firstCount).toBeGreaterThan(0);
+      expect(firstCount).toBe(0);
 
       vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
       const secondCtx = makeCtx(db, sessionsDir, {
@@ -342,6 +342,87 @@ describe("implicit feedback routing — positive → reinforcement", () => {
         )
         .all() as Array<{ cnt: number }>;
       expect(duplicateReinforcementRows).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("avoids replaying positive reinforcement after a wall-clock partial even when trackContext=false", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-05-01T00:00:00.000Z"));
+      const db = makeDb(tmpDir);
+      const factId = db.store({
+        text: "exactly what is needed for async TypeScript pattern",
+        category: "technical",
+        importance: 0.7,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      writePositiveSession(sessionsDir, "2026-01-01-session.jsonl");
+
+      const originalReinforceFact = db.reinforceFact.bind(db);
+      let reinforceCalls = 0;
+      vi.spyOn(db, "reinforceFact").mockImplementation((...args: Parameters<typeof originalReinforceFact>) => {
+        const result = originalReinforceFact(...args);
+        reinforceCalls++;
+        if (reinforceCalls === 1) {
+          vi.setSystemTime(new Date("2026-05-01T00:00:02.000Z"));
+        }
+        return result;
+      });
+
+      const firstCtx = makeCtx(db, sessionsDir, {
+        feedToReinforcement: true,
+        feedToSelfCorrection: false,
+        maxWallClockSeconds: 1,
+      });
+      firstCtx.cfg.reinforcement = {
+        ...(firstCtx.cfg.reinforcement ?? {}),
+        enabled: true,
+        trackContext: false,
+        maxEventsPerFact: 50,
+      } as HybridMemoryConfig["reinforcement"];
+      const firstRun = await runExtractImplicitFeedbackForCli(firstCtx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+
+      expect(firstRun.partial).toBe(true);
+      expect(firstRun.partialReason).toBe("maxWallClock");
+      const afterFirstRun = rawDb(db).prepare("SELECT reinforced_count FROM facts WHERE id = ?").get(factId.id) as {
+        reinforced_count: number;
+      };
+      expect(afterFirstRun.reinforced_count).toBe(0);
+
+      vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
+      const secondCtx = makeCtx(db, sessionsDir, {
+        feedToReinforcement: true,
+        feedToSelfCorrection: false,
+        maxWallClockSeconds: 300,
+      });
+      secondCtx.cfg.reinforcement = {
+        ...(secondCtx.cfg.reinforcement ?? {}),
+        enabled: true,
+        trackContext: false,
+        maxEventsPerFact: 50,
+      } as HybridMemoryConfig["reinforcement"];
+      const secondRun = await runExtractImplicitFeedbackForCli(secondCtx, {
+        days: 365,
+        dryRun: false,
+        includeTrajectories: false,
+        includeClosedLoop: false,
+      });
+
+      expect(secondRun.sessionsProcessed).toBe(1);
+      const afterSecondRun = rawDb(db).prepare("SELECT reinforced_count FROM facts WHERE id = ?").get(factId.id) as {
+        reinforced_count: number;
+      };
+      expect(afterSecondRun.reinforced_count).toBeGreaterThan(0);
     } finally {
       vi.useRealTimers();
     }
