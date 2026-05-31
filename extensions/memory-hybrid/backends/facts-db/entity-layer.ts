@@ -508,6 +508,118 @@ export function getEntityEnrichmentBacklogSummary(
   };
 }
 
+type ProcessedEntityMention<T = void> = {
+  label: EntityMentionLabel;
+  surfaceText: string;
+  normalizedSurface: string;
+  confidence: number;
+  sourceRow: T;
+};
+
+type EntityMentionProcessingResult<T = void> = {
+  accepted: Array<ProcessedEntityMention<T>>;
+  counters: {
+    rowsScanned: number;
+    accepted: number;
+    rejected: number;
+    duplicates: number;
+    reclassified: number;
+    rejectReasons: Record<string, number>;
+  };
+};
+
+function processEntityMentionsForFact<
+  T extends { label: string; surface_text: string; normalized_surface: string; confidence: number },
+>(rows: T[]): EntityMentionProcessingResult<T> {
+  const acceptedByKey = new Map<string, ProcessedEntityMention<T>>();
+  let rowsScanned = 0;
+  let accepted = 0;
+  let rejected = 0;
+  let duplicates = 0;
+  let reclassified = 0;
+  const rejectReasons: Record<string, number> = {};
+
+  for (const row of rows) {
+    rowsScanned++;
+    const canonical = canonicalizeEntityMention({
+      label: row.label,
+      surfaceText: row.surface_text,
+      normalizedSurface: row.normalized_surface,
+      confidence: row.confidence,
+    });
+    if (!canonical.accepted) {
+      rejected++;
+      countReason(rejectReasons, canonical.reason);
+      continue;
+    }
+    const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
+    const existing = acceptedByKey.get(key);
+    if (existing) {
+      duplicates++;
+      if (canonical.confidence > existing.confidence) {
+        acceptedByKey.set(key, {
+          label: canonical.label,
+          surfaceText: canonical.surfaceText,
+          normalizedSurface: canonical.normalizedSurface,
+          confidence: canonical.confidence,
+          sourceRow: row,
+        });
+      }
+    } else {
+      acceptedByKey.set(key, {
+        label: canonical.label,
+        surfaceText: canonical.surfaceText,
+        normalizedSurface: canonical.normalizedSurface,
+        confidence: canonical.confidence,
+        sourceRow: row,
+      });
+      accepted++;
+    }
+    if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
+      reclassified++;
+    }
+  }
+
+  const allAccepted = [...acceptedByKey.values()];
+  const substringFilteredCount = allAccepted.filter((m) =>
+    allAccepted.some(
+      (other) =>
+        other !== m &&
+        other.label === m.label &&
+        other.normalizedSurface.length > m.normalizedSurface.length &&
+        other.normalizedSurface.includes(m.normalizedSurface),
+    ),
+  ).length;
+  if (substringFilteredCount > 0) {
+    accepted -= substringFilteredCount;
+    rejected += substringFilteredCount;
+    rejectReasons.substring = (rejectReasons.substring ?? 0) + substringFilteredCount;
+  }
+
+  const filteredAccepted = allAccepted.filter(
+    (m) =>
+      !allAccepted.some(
+        (other) =>
+          other !== m &&
+          other.label === m.label &&
+          other.normalizedSurface.length > m.normalizedSurface.length &&
+          other.normalizedSurface.includes(m.normalizedSurface),
+      ),
+  );
+
+  return {
+    accepted: filteredAccepted,
+    counters: {
+      rowsScanned,
+      accepted,
+      rejected,
+      duplicates,
+      reclassified,
+      rejectReasons,
+    },
+  };
+}
+
 export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMentionsAuditSummary {
   const factIds = db
     .prepare(
@@ -537,67 +649,14 @@ export function auditEntityMentions(db: DatabaseSync, limit: number): EntityMent
       normalized_surface: string;
       confidence: number;
     }>;
-    const acceptedByKey = new Map<
-      string,
-      {
-        label: EntityMentionLabel;
-        surfaceText: string;
-        normalizedSurface: string;
-        confidence: number;
-      }
-    >();
-    for (const row of rows) {
-      rowsScanned++;
-      const canonical = canonicalizeEntityMention({
-        label: row.label,
-        surfaceText: row.surface_text,
-        normalizedSurface: row.normalized_surface,
-        confidence: row.confidence,
-      });
-      if (!canonical.accepted) {
-        rejected++;
-        countReason(rejectReasons, canonical.reason);
-        continue;
-      }
-      const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
-      const existing = acceptedByKey.get(key);
-      if (existing) {
-        duplicates++;
-        if (canonical.confidence > existing.confidence) {
-          acceptedByKey.set(key, {
-            label: canonical.label,
-            surfaceText: canonical.surfaceText,
-            normalizedSurface: canonical.normalizedSurface,
-            confidence: canonical.confidence,
-          });
-        }
-      } else {
-        acceptedByKey.set(key, {
-          label: canonical.label,
-          surfaceText: canonical.surfaceText,
-          normalizedSurface: canonical.normalizedSurface,
-          confidence: canonical.confidence,
-        });
-        accepted++;
-      }
-      if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
-        reclassified++;
-      }
-    }
-    const allAccepted = [...acceptedByKey.values()];
-    const substringFilteredCount = allAccepted.filter((m) =>
-      allAccepted.some(
-        (other) =>
-          other !== m &&
-          other.label === m.label &&
-          other.normalizedSurface.length > m.normalizedSurface.length &&
-          other.normalizedSurface.includes(m.normalizedSurface),
-      ),
-    ).length;
-    if (substringFilteredCount > 0) {
-      accepted -= substringFilteredCount;
-      rejected += substringFilteredCount;
-      rejectReasons.substring = (rejectReasons.substring ?? 0) + substringFilteredCount;
+    const result = processEntityMentionsForFact(rows);
+    rowsScanned += result.counters.rowsScanned;
+    accepted += result.counters.accepted;
+    rejected += result.counters.rejected;
+    duplicates += result.counters.duplicates;
+    reclassified += result.counters.reclassified;
+    for (const [reason, count] of Object.entries(result.counters.rejectReasons)) {
+      rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
     }
   }
   return {
