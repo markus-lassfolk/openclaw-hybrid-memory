@@ -228,6 +228,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     });
     throw err;
   }
+  const parsedCfgSnapshot = structuredClone(cfg);
 
   const registrationGeneration = registrationGenerationRef.value + 1;
   registrationGenerationRef.value = registrationGeneration;
@@ -449,6 +450,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
 
   const newRuntime: PluginRuntime = {
     cfg,
+    parsedCfgSnapshot,
     resolvedLancePath,
     resolvedSqlitePath,
     factsDb: dbContext.factsDb,

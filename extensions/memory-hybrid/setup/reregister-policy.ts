@@ -75,8 +75,8 @@ export function canReuseDatabasesOnReregister(
   const nextLance = api.resolvePath(cfg.lanceDbPath);
   if (old.resolvedSqlitePath !== nextSqlite || old.resolvedLancePath !== nextLance) return false;
 
-  // Compare embedding config to detect provider/model/endpoint changes that require rebuilding clients
-  const oldCfg = old.cfg;
+  // Compare parse-time config, not bootstrap-mutated runtime cfg (initializeDatabases may inject llm tiers).
+  const oldCfg = old.parsedCfgSnapshot ?? old.cfg;
   if (!oldCfg?.embedding || !cfg.embedding) return false;
   if (
     oldCfg.embedding.provider !== cfg.embedding.provider ||

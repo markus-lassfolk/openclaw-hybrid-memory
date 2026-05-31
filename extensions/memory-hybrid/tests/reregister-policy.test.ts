@@ -34,6 +34,7 @@ function minimalCfg(sqlite = "memory/facts.db", lance = "memory/lancedb"): Hybri
 function mockOldRuntime(paths: { sqlite: string; lance: string }, cfg: HybridMemoryConfig): PluginRuntime {
   return {
     cfg,
+    parsedCfgSnapshot: cfg,
     resolvedSqlitePath: paths.sqlite,
     resolvedLancePath: paths.lance,
     bootstrapSettledRef: { value: true },
@@ -70,6 +71,27 @@ describe("reregister-policy", () => {
     );
     expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(true);
     expect(shouldFullTeardownOnReregister()).toBe(false);
+  });
+
+  it("reuse-databases compares parse-time snapshot not bootstrap-mutated llm", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const parsedCfg = minimalCfg();
+    delete (parsedCfg as { llm?: unknown }).llm;
+    const bootstrapMutatedCfg = {
+      ...parsedCfg,
+      llm: { providers: {}, default: [], heavy: [], nano: [] },
+    } as HybridMemoryConfig;
+    const old = {
+      cfg: bootstrapMutatedCfg,
+      parsedCfgSnapshot: parsedCfg,
+      resolvedSqlitePath: api.resolvePath(parsedCfg.sqlitePath),
+      resolvedLancePath: api.resolvePath(parsedCfg.lanceDbPath),
+      bootstrapSettledRef: { value: true },
+    } as PluginRuntime;
+    expect(canReuseDatabasesOnReregister(old, parsedCfg, api)).toBe(true);
   });
 
   it("reuse-databases declines when sqlite path changes", () => {
