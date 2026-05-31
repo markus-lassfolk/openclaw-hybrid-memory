@@ -580,22 +580,22 @@ export async function runCapture(
                             : `memory-hybrid: vector capture failed: ${vecErr}`,
                         );
                       }
-                      ctx.auditStore?.append({
-                        agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-                        action: "auto-capture:updated",
-                        target: newEntry.id,
-                        outcome: "success",
-                        sessionId: captureProvenance.sessionId ?? undefined,
-                        context: { supersededId: classification.targetId, category, entity: extracted.entity },
-                      });
-                      api.logger.info?.(
-                        `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
-                      );
-                      stored++;
-                    } // close if (!storeResult.skipped) guard (#1560, #1561)
-                    await ctx.walRemove(walEntryId, api.logger);
-                    continue;
-                  }
+                    }
+                    ctx.auditStore?.append({
+                      agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                      action: "auto-capture:updated",
+                      target: newEntry.id,
+                      outcome: "success",
+                      sessionId: captureProvenance.sessionId ?? undefined,
+                      context: { supersededId: classification.targetId, category, entity: extracted.entity },
+                    });
+                    api.logger.info?.(
+                      `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
+                    );
+                    stored++;
+                  } // close if (oldFact) guard
+                  await ctx.walRemove(walEntryId, api.logger);
+                  continue;
                 }
               } catch (err) {
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
