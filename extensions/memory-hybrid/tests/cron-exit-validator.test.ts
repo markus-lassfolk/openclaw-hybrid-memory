@@ -419,11 +419,43 @@ error: unknown command 'bar'
       expect(result.error).toContain("continuous-verification (exit=2 errors_present)");
     });
 
-    it("fails dream-cycle validation when continuous verification reports degraded all-uncertain status", () => {
+    it.each([
+      ["errors_present", 12],
+      ["all_uncertain", 0],
+    ])("fails dream-cycle validation when continuous verification reports degraded %s machine status", (reason, errors) => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
       const logPath = join(tmpDir, "test.log");
       writeFileSync(exitPath, "2024-05-08T03:00:00Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "Continuous verification complete:",
+          "  Checked: 12",
+          "  Confirmed: 0",
+          "  Stale: 0",
+          "  Uncertain: 12",
+          `  Errors: ${errors}`,
+          `  Machine status: status=degraded reason=${reason} checked=12 confirmed=0 stale=0 uncertain=12 errors=${errors}`,
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps).toHaveLength(1);
+      expect(result.failedSteps[0].step).toBe("continuous-verification");
+      expect(result.failedSteps[0].timestamp).toBe("2024-05-08T03:00:00Z");
+      expect(result.failedSteps[0].failureReason).toBe(reason);
+      expect(result.error).toContain(`continuous-verification (exit=2 ${reason})`);
+    });
+
+    it("uses an ISO-compatible timestamp for synthetic degraded verification failures without a dream-cycle ledger step", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "");
       writeFileSync(
         logPath,
         [
@@ -440,12 +472,10 @@ error: unknown command 'bar'
       const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
 
       expect(result.maintenanceStatus).toBe("failed");
-      expect(result.guardUpdated).toBe(false);
       expect(result.failedSteps).toHaveLength(1);
-      expect(result.failedSteps[0].step).toBe("continuous-verification");
-      expect(result.failedSteps[0].timestamp).toBe("2024-05-08T03:00:00Z");
+      expect(result.failedSteps[0].timestamp).toBe("1970-01-01T00:00:00Z");
+      expect(Number.isNaN(Date.parse(result.failedSteps[0].timestamp))).toBe(false);
       expect(result.failedSteps[0].failureReason).toBe("all_uncertain");
-      expect(result.error).toContain("continuous-verification (exit=2 all_uncertain)");
     });
   });
 });

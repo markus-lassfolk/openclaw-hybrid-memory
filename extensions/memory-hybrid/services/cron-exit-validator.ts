@@ -41,6 +41,7 @@ import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 
 const SKIP_REASON_COOLDOWN = "skipped_cooldown";
 const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
+const SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP = "1970-01-01T00:00:00Z";
 
 export interface ExitStep {
   timestamp: string;
@@ -294,7 +295,7 @@ export function validateMaintenanceExecution(
   if (logPath && requiredSteps.includes("dream-cycle")) {
     const degradedVerification = detectDegradedContinuousVerificationStatus(logContent);
     if (degradedVerification) {
-      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? "unknown";
+      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
       failedSteps.push({
         timestamp: dreamCycleTimestamp,
         step: "continuous-verification",
