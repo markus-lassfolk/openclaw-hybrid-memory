@@ -1161,6 +1161,13 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
+    // If budget expires after trajectory/reinforcement work but before finalizing
+    // this session, defer it so the cursor does not advance past partially-finished work.
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
+    }
+
     // Mark session as processed after both Phase 1 (signal extraction) and Phase 2 (trajectories) complete.
     // This ensures the cursor only advances past sessions that have been fully processed.
     progress.sessionsProcessed++;
