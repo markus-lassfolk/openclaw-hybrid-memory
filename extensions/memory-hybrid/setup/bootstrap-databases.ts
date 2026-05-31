@@ -759,6 +759,12 @@ export function initializeDatabases(
           }
         } catch (e) {
           if (isBootstrapSuperseded() && isDbClosedError(e)) {
+            const { unlinkSync } = await import("node:fs");
+            try {
+              unlinkSync(migrationFlagPath);
+            } catch {
+              /* ignore cleanup errors */
+            }
             api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded or DB closed)");
             return;
           }
