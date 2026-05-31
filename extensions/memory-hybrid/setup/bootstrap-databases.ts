@@ -758,14 +758,14 @@ export function initializeDatabases(
             );
           }
         } catch (e) {
-          if (isBootstrapSuperseded() && isDbClosedError(e)) {
+          if (isBootstrapSuperseded()) {
             const { unlinkSync } = await import("node:fs");
             try {
               unlinkSync(migrationFlagPath);
             } catch {
               /* ignore cleanup errors */
             }
-            api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded or DB closed)");
+            api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
             return;
           }
           capturePluginError(e instanceof Error ? e : new Error(String(e)), {
