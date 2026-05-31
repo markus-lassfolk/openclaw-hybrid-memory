@@ -644,38 +644,8 @@ export async function runExtractImplicitFeedbackForCli(
 
     // Check wall clock limit after signal extraction
     if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock");
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
       break;
-    }
-
-    // Build set of signals that already existed (for idempotency check to prevent duplicate reinforcement)
-    const preexistingSignalKeys = new Set<string>();
-    if (!opts.dryRun && rawDb) {
-      try {
-        const checkExisting = rawDb.prepare(`
-          SELECT 1 FROM implicit_signals
-          WHERE session_file = ? AND signal_type = ? AND user_message = ? AND polarity = ?
-          LIMIT 1
-        `);
-        for (const sig of signals) {
-          const row = checkExisting.get(
-            sig.context.sessionFile,
-            sig.type,
-            sig.context.userMessage.slice(0, 500),
-            sig.polarity,
-          );
-          if (row) {
-            const key = `${sig.context.sessionFile}|${sig.type}|${sig.context.userMessage.slice(0, 500)}|${sig.polarity}`;
-            preexistingSignalKeys.add(key);
-          }
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "runExtractImplicitFeedbackForCli:check-existing-signals",
-          severity: "info",
-          subsystem: "implicit-feedback",
-        });
-      }
     }
 
     if (!opts.dryRun && rawDb) {
@@ -721,13 +691,8 @@ export async function runExtractImplicitFeedbackForCli(
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const sig of positiveSignals) {
         if (wallClockLimitReached()) {
-          markPartialProgress("maxWallClock");
+          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
           break;
-        }
-        // Skip reinforcement for signals that already existed (idempotency guard for partial runs)
-        const sigKey = `${sig.context.sessionFile}|${sig.type}|${sig.context.userMessage.slice(0, 500)}|${sig.polarity}`;
-        if (preexistingSignalKeys.has(sigKey)) {
-          continue;
         }
         try {
           const searchQuery = sig.context.agentMessage || sig.context.userMessage;
@@ -766,13 +731,8 @@ export async function runExtractImplicitFeedbackForCli(
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
         if (wallClockLimitReached()) {
-          markPartialProgress("maxWallClock");
+          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
           break;
-        }
-        // Skip processing for signals that already existed (idempotency guard for partial runs)
-        const sigKey = `${sig.context.sessionFile}|${sig.type}|${sig.context.userMessage.slice(0, 500)}|${sig.polarity}`;
-        if (preexistingSignalKeys.has(sigKey)) {
-          continue;
         }
         try {
           lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
@@ -822,7 +782,7 @@ export async function runExtractImplicitFeedbackForCli(
 
     // Check wall clock limit after signal storage and reinforcement
     if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock");
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
       break;
     }
 
@@ -838,7 +798,7 @@ export async function runExtractImplicitFeedbackForCli(
           try {
             // Check wall clock limit before processing each trajectory (especially before LLM analysis)
             if (wallClockLimitReached()) {
-              markPartialProgress("maxWallClock");
+              markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
               break;
             }
 
@@ -865,7 +825,7 @@ export async function runExtractImplicitFeedbackForCli(
                 };
                 const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
                 if (wallClockLimitReached()) {
-                  markPartialProgress("maxWallClock");
+                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
                   break;
                 }
                 if (llmAnalysis) {
