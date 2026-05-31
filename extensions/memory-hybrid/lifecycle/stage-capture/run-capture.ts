@@ -593,8 +593,8 @@ export async function runCapture(
                       `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                     );
                     stored++;
+                    await ctx.walRemove(walEntryId, api.logger);
                   } // close if (oldFact) guard
-                  await ctx.walRemove(walEntryId, api.logger);
                   continue;
                 }
               } catch (err) {
