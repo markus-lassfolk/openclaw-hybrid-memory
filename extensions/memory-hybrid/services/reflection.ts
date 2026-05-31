@@ -791,7 +791,7 @@ export async function runReflectionRules(
     const diagnostics: ReflectionRulesDiagnostics = {
       ...baseDiagnostics,
       zeroRulesReason: "insufficient_patterns",
-      status: "degraded",
+      status: "ok",
     };
     logger.info(
       "memory-hybrid: reflect-rules — diagnostics: " +
@@ -1085,8 +1085,6 @@ export async function runReflectionRules(
           subsystem: "reflection",
         });
       }
-      // Increment stored counter even on re-embed failure to reflect SQLite merge
-      stored++;
       continue;
     }
     try {
@@ -1155,7 +1153,7 @@ export async function runReflectionRules(
     stored,
     zeroRulesReason,
     status:
-      stored > 0 && stored === uniqueRules.length
+      stored > 0 && stored === uniqueRules.length && newRuleEmbedFailures === 0
         ? "ok"
         : stored > 0
           ? "partial"
