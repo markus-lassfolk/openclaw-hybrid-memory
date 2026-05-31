@@ -8,6 +8,7 @@ import {
   drainOldRecall,
   resetReloadTeardownChainForTests,
   schedulePluginTeardown,
+  TEARDOWN_WAIT_MS,
 } from "../setup/hybrid-memory-reload-coordinator.js";
 
 describe("hybrid-memory-reload-coordinator", () => {
@@ -39,30 +40,32 @@ describe("hybrid-memory-reload-coordinator", () => {
     expect(blockReloadTeardownBeforeOpen()).toBe(true);
   });
 
-  it("blockReloadTeardownBeforeOpen waits for scheduled teardown synchronously", () => {
+  it("blockReloadTeardownBeforeOpen returns true once async teardown has drained", async () => {
     let ran = false;
     schedulePluginTeardown(async () => {
       await Promise.resolve();
       ran = true;
     });
-    expect(blockReloadTeardownBeforeOpen(0)).toBe(true);
+    // Use async wait to cover pending-teardown semantics. Do not call blockReload while
+    // teardown is pending: sync Atomics.wait loops are not interruptible by vitest timeouts.
+    expect(await awaitReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS)).toBe(true);
     expect(ran).toBe(true);
+    expect(blockReloadTeardownBeforeOpen()).toBe(true);
   });
 
   it("awaitReloadTeardownBeforeOpen returns true when teardown chain is idle", async () => {
     expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
   });
 
-  it("awaitReloadTeardownBeforeOpen returns false while scheduled teardown is pending, then true after completion", async () => {
+  it("awaitReloadTeardownBeforeOpen waits for scheduled teardown within TEARDOWN_WAIT_MS", async () => {
     let ran = false;
     schedulePluginTeardown(async () => {
       await Promise.resolve();
       ran = true;
     });
-    expect(await awaitReloadTeardownBeforeOpen(0)).toBe(true);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
+    expect(await awaitReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS)).toBe(true);
     expect(ran).toBe(true);
+    expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
   });
 
   it("drainOldRecall is a no-op when recallInFlightRef is zero", async () => {
