@@ -176,20 +176,20 @@ export async function runMemoryHybridRegister(api: ClawdbotPluginApi): Promise<v
   }
 
   // Issue #802 re-entrancy: If another registration is already in flight, wait for it to complete
-  // before starting a new one. This prevents interleaving of generation bumps, teardown scheduling,
-  // and database initialization across concurrent register() calls.
-  if (registrationInProgress) {
-    await registrationInProgress;
-  }
-
-  const registrationPromise = (async () => {
-    await runMemoryHybridRegisterImpl(api);
-  })();
+  // before starting a new one. Install our own gate before awaiting prior work to avoid
+  // TOCTOU races when multiple callers enter concurrently.
+  const previousRegistration = registrationInProgress ?? Promise.resolve();
+  let releaseRegistrationGate = (): void => {};
+  const registrationPromise = new Promise<void>((resolve) => {
+    releaseRegistrationGate = resolve;
+  });
   registrationInProgress = registrationPromise;
 
   try {
-    await registrationPromise;
+    await previousRegistration;
+    await runMemoryHybridRegisterImpl(api);
   } finally {
+    releaseRegistrationGate();
     if (registrationInProgress === registrationPromise) {
       registrationInProgress = null;
     }

@@ -60,23 +60,31 @@ export async function drainOldRecall(recallInFlightRef: { value: number } | unde
  * Returns a promise that resolves to false if teardown is still in flight after timeout.
  */
 export async function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): Promise<boolean> {
-  if (reloadTeardownQueueDepth === 0) return true;
-  if (timeoutMs === 0) {
-    // Wait indefinitely for teardown to complete (no timeout).
-    await reloadTeardownChain.catch(() => {
-      /* teardown error already logged */
-    });
-    return reloadTeardownQueueDepth === 0;
-  }
   if (timeoutMs < 0) return false;
-  const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
-  await Promise.race([
-    reloadTeardownChain.catch(() => {
-      /* teardown error already logged */
-    }),
-    timeoutPromise,
-  ]);
+  const deadline = timeoutMs === 0 ? Number.POSITIVE_INFINITY : Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const chainSnapshot = reloadTeardownChain;
+    const remainingMs = Number.isFinite(deadline) ? Math.max(0, deadline - Date.now()) : 0;
+    if (Number.isFinite(deadline)) {
+      await Promise.race([
+        chainSnapshot.catch(() => {
+          /* teardown error already logged */
+        }),
+        new Promise<void>((resolve) => setTimeout(resolve, remainingMs)),
+      ]);
+    } else {
+      await chainSnapshot.catch(() => {
+        /* teardown error already logged */
+      });
+    }
 
+    // Consider teardown drained only when both queue depth and chain identity are stable.
+    if (reloadTeardownQueueDepth === 0 && chainSnapshot === reloadTeardownChain) {
+      return true;
+    }
+    if (!Number.isFinite(deadline)) continue;
+    if (Date.now() >= deadline) break;
+  }
   return reloadTeardownQueueDepth === 0;
 }
 

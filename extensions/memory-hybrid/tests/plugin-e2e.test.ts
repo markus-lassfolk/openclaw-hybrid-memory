@@ -147,7 +147,7 @@ describe("Plugin registration e2e", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("register() does not throw and core memory tools are registered", () => {
+  it("register() does not throw and core memory tools are registered", async () => {
     const pluginConfig = getMinimalConfig({
       sqlitePath: join(tmpDir, "facts.db"),
       lanceDbPath: join(tmpDir, "lancedb"),
@@ -158,7 +158,7 @@ describe("Plugin registration e2e", () => {
       registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    expect(() => memoryHybridPlugin.register(mockApi as never)).not.toThrow();
+    await expect(memoryHybridPlugin.register(mockApi as never)).resolves.toBeUndefined();
 
     expect(mockApi.getTool("memory_store")).toBeDefined();
     expect(mockApi.getTool("memory_recall")).toBeDefined();
