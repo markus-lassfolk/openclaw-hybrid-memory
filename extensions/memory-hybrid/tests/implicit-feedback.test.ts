@@ -35,6 +35,10 @@ const DEFAULT_CONFIG: ImplicitFeedbackConfig = {
   lessonDedupeJaccard: 0.8,
   autoCleanup: true,
   cleanupLimit: 1000,
+  maxSessionsPerRun: 50,
+  maxSignalsPerRun: 100,
+  maxTrajectoriesPerRun: 50,
+  maxWallClockSeconds: 300,
 };
 
 // ---------------------------------------------------------------------------

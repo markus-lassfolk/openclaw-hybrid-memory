@@ -669,6 +669,22 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
       typeof raw?.cleanupLimit === "number" && raw.cleanupLimit >= 0
         ? Math.min(10000, Math.floor(raw.cleanupLimit))
         : 1000,
+    maxSessionsPerRun:
+      typeof raw?.maxSessionsPerRun === "number" && raw.maxSessionsPerRun >= 0
+        ? Math.min(10000, Math.floor(raw.maxSessionsPerRun))
+        : 50,
+    maxSignalsPerRun:
+      typeof raw?.maxSignalsPerRun === "number" && raw.maxSignalsPerRun >= 0
+        ? Math.min(100000, Math.floor(raw.maxSignalsPerRun))
+        : 100,
+    maxTrajectoriesPerRun:
+      typeof raw?.maxTrajectoriesPerRun === "number" && raw.maxTrajectoriesPerRun >= 0
+        ? Math.min(10000, Math.floor(raw.maxTrajectoriesPerRun))
+        : 50,
+    maxWallClockSeconds:
+      typeof raw?.maxWallClockSeconds === "number" && raw.maxWallClockSeconds >= 0
+        ? Math.min(86400, Math.floor(raw.maxWallClockSeconds))
+        : 300,
     trajectoryLLMAnalysis:
       topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
   };

@@ -155,6 +155,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
       )
       .option("--days <n>", "Days to look back (default 3)", "3")
       .option("--dry-run", "Show what would be stored without storing")
+      .option("--full", "Ignore incremental scan cursor and rescan matching sessions")
       .option("-v, --verbose", "Show detailed signal output per session")
       .option("--no-trajectories", "Skip trajectory building")
       .option("--no-closed-loop", "Skip closed-loop analysis")
@@ -164,6 +165,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             opts?: {
               days?: string;
               dryRun?: boolean;
+              full?: boolean;
               verbose?: boolean;
               trajectories?: boolean;
               closedLoop?: boolean;
@@ -172,12 +174,20 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           ) => {
             const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
             const dryRun = !!opts?.dryRun;
+            const full = !!opts?.full;
             const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             const includeTrajectories = opts?.trajectories !== false;
             const includeClosedLoop = opts?.closedLoop !== false;
             let res;
             try {
-              res = await runExtractImplicitFeedback({ days, dryRun, verbose, includeTrajectories, includeClosedLoop });
+              res = await runExtractImplicitFeedback({
+                days,
+                dryRun,
+                full,
+                verbose,
+                includeTrajectories,
+                includeClosedLoop,
+              });
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
@@ -188,9 +198,21 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             console.log(
               `Extract-implicit complete: ${res.signalsExtracted} signals from ${res.sessionsScanned} sessions ${dryRun ? "(dry-run)" : ""}`,
             );
+            console.log(`  Sessions visited: ${res.sessionsVisited}`);
+            console.log(`  Sessions processed: ${res.sessionsProcessed}`);
+            console.log(`  Sessions skipped: ${res.sessionsSkipped}`);
+            if (res.sessionsDeferred > 0) {
+              console.log(`  Sessions deferred: ${res.sessionsDeferred}`);
+              console.log(
+                `  Backlog estimate: ${res.backlogSignalsEstimate} signals, ${res.backlogTrajectoriesEstimate} trajectories`,
+              );
+            }
             console.log(`  Positive signals: ${res.positiveCount}`);
             console.log(`  Negative signals: ${res.negativeCount}`);
             console.log(`  Trajectories built: ${res.trajectoriesBuilt}`);
+            if (res.partial) {
+              console.log(`  Partial run: yes (${res.partialReason ?? "capped"})`);
+            }
             if (res.closedLoopReport) {
               console.log(`\n${res.closedLoopReport}`);
             }

@@ -8,7 +8,7 @@
  *   - cost-report               — show LLM cost breakdown by feature or model
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -33,6 +33,7 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -199,21 +200,36 @@ export function cleanupImplicitFeedbackDuplicates(
     onProgress?: (progress: { scanned: number; total: number; collapsed: number }) => void;
     /** Callback cadence in scanned rows. */
     reportEvery?: number;
+    /** Optional wall-clock budget check to stop processing early. Returns true if budget exceeded. */
+    wallClockCheck?: () => boolean;
   } = {},
 ): {
   scanned: number;
   collapsed: number;
   resumeAfterRowid: number | null;
   carryCanonical: Array<{ id: string; text: string }>;
+  interrupted: boolean;
 } {
   const rawDb = factsDb.getRawDb();
   if (!rawDb) {
-    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+    return {
+      scanned: 0,
+      collapsed: 0,
+      resumeAfterRowid: null,
+      carryCanonical: [...(opts.seedCanonical ?? [])],
+      interrupted: false,
+    };
   }
   const threshold = opts.threshold ?? 0.7;
   const limit = opts.limit ?? 1000;
   if (limit <= 0) {
-    return { scanned: 0, collapsed: 0, resumeAfterRowid: null, carryCanonical: [...(opts.seedCanonical ?? [])] };
+    return {
+      scanned: 0,
+      collapsed: 0,
+      resumeAfterRowid: null,
+      carryCanonical: [...(opts.seedCanonical ?? [])],
+      interrupted: false,
+    };
   }
   const afterRowid = opts.afterRowid ?? 0;
   const dryRun = opts.dryRun === true;
@@ -250,8 +266,14 @@ export function cleanupImplicitFeedbackDuplicates(
     "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
   );
   let supersededAny = false;
+  let interrupted = false;
   const scanRows = () => {
     for (const row of rows) {
+      // Check wall-clock budget periodically
+      if (opts.wallClockCheck?.()) {
+        interrupted = true;
+        break;
+      }
       scanned++;
       const match = canonical.find(
         (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
@@ -296,18 +318,34 @@ export function cleanupImplicitFeedbackDuplicates(
   if (supersededAny) {
     factsDb.invalidateSupersededTextsCache();
   }
-  const lastRow = rows[rows.length - 1];
+  // When interrupted, return the actual scanned count and the last row actually processed,
+  // not the full batch size and last row in the batch.
+  const lastProcessedRow = interrupted && scanned > 0 ? rows[scanned - 1] : rows[rows.length - 1];
   return {
-    scanned: rows.length,
+    scanned,
     collapsed,
-    resumeAfterRowid: lastRow ? lastRow.rowid : null,
+    resumeAfterRowid: lastProcessedRow ? lastProcessedRow.rowid : null,
     carryCanonical: canonical.slice(-CANONICAL_WINDOW_SIZE).map((c) => ({ id: c.id, text: c.text })),
+    interrupted,
   };
 }
 
 // ---------------------------------------------------------------------------
 // extract-implicit-feedback
 // ---------------------------------------------------------------------------
+
+export type ExtractImplicitFeedbackStopReason =
+  | "maxWallClock"
+  | "maxSessions"
+  | "maxSignals"
+  | "maxTrajectories"
+  | "reinforcementError";
+
+class ImplicitFeedbackWallClockExceededError extends Error {
+  constructor() {
+    super("implicit-feedback wall-clock budget exceeded");
+  }
+}
 
 export interface ExtractImplicitFeedbackProgressSnapshot {
   stage: "scan-sessions" | "cleanup-duplicates" | "closed-loop" | "done";
@@ -324,6 +362,12 @@ export interface ExtractImplicitFeedbackProgressSnapshot {
   cleanupCollapsed: number;
   cleanupScanned: number;
   cleanupBatches: number;
+  partial?: boolean;
+  partialReason?: ExtractImplicitFeedbackStopReason;
+  sessionsDeferred?: number;
+  backlogSessionsEstimate?: number;
+  backlogSignalsEstimate?: number;
+  backlogTrajectoriesEstimate?: number;
 }
 
 /**
@@ -338,6 +382,7 @@ export async function runExtractImplicitFeedbackForCli(
     days?: number;
     verbose?: boolean;
     dryRun?: boolean;
+    full?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
     onProgress?: (snapshot: ExtractImplicitFeedbackProgressSnapshot) => void;
@@ -348,12 +393,99 @@ export async function runExtractImplicitFeedbackForCli(
   negativeCount: number;
   trajectoriesBuilt: number;
   sessionsScanned: number;
+  sessionsVisited: number;
+  sessionsProcessed: number;
+  sessionsSkipped: number;
+  sessionsDeferred: number;
+  backlogSessionsEstimate: number;
+  backlogSignalsEstimate: number;
+  backlogTrajectoriesEstimate: number;
+  partial: boolean;
+  partialReason?: ExtractImplicitFeedbackStopReason;
   closedLoopReport?: string;
+  skipped?: boolean;
 }> {
   const { factsDb, vectorDb, cfg, logger, openai } = ctx;
+  const SCAN_TYPE = "extract-implicit-feedback";
   const days = opts.days ?? 3;
   const sessionDir = cfg.procedures.sessionsDir;
-  const filePaths = getSessionFilePathsSince(sessionDir, days);
+
+  // Get scan cursor for incremental mode
+  const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
+
+  // Determine which files to scan based on full flag and cursor
+  let filePaths: string[];
+  if (!opts.full && cursor && cursor.lastSessionTs > 0) {
+    // Incremental mode: resume from the stored cursor, not the moving day window.
+    // A capped backlog may take longer than `days` to drain; using the day window
+    // first would permanently strand old-but-unprocessed sessions after the cursor.
+    const cursorFloor = Math.max(0, cursor.lastSessionTs - 1);
+    const allFiles = getSessionFilePathsSince(sessionDir, 0, cursorFloor);
+    const incrementalCandidates: Array<{ path: string; mtime: number; fname: string }> = [];
+    for (const path of allFiles) {
+      try {
+        const stat = statSync(path);
+        incrementalCandidates.push({ path, mtime: stat.mtimeMs, fname: basename(path) });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:incremental-stat",
+          severity: "info",
+          subsystem: "implicit-feedback",
+        });
+      }
+    }
+    filePaths = incrementalCandidates
+      .filter(({ mtime, fname }) => {
+        // Skip files before the cursor watermark
+        if (mtime < cursor.lastSessionTs) return false;
+        // If same mtime, use filename to determine if we've processed this file
+        if (mtime === cursor.lastSessionTs) {
+          if (cursor.lastSessionFile) {
+            return fname.localeCompare(cursor.lastSessionFile) > 0;
+          }
+          // Legacy cursors without a filename cannot safely order peers in the same
+          // mtime tier. Treat that tier as already covered to avoid re-routing
+          // signals/reinforcement for files that may already have been processed.
+          return false;
+        }
+        return true;
+      })
+      // Sort by mtime ascending, then by filename to ensure deterministic processing order
+      .sort((a, b) => {
+        const mtimeDiff = a.mtime - b.mtime;
+        if (mtimeDiff !== 0) return mtimeDiff;
+        return a.fname.localeCompare(b.fname);
+      })
+      .map((entry) => entry.path);
+    if (opts.verbose && cursor.lastSessionFile) {
+      logger?.info?.(
+        `memory-hybrid: ${SCAN_TYPE} incremental — resuming after ${cursor.lastSessionFile} (${filePaths.length} files to process)`,
+      );
+    }
+  } else {
+    // Full mode: process all files in the date range
+    filePaths = getSessionFilePathsSince(sessionDir, days);
+    // Sort by mtime ascending, then by filename to ensure deterministic processing order
+    filePaths.sort((a, b) => {
+      let statA, statB;
+      try {
+        statA = statSync(a);
+      } catch {
+        return 1;
+      }
+      try {
+        statB = statSync(b);
+      } catch {
+        return -1;
+      }
+      const mtimeDiff = statA.mtimeMs - statB.mtimeMs;
+      if (mtimeDiff !== 0) return mtimeDiff;
+      return basename(a).localeCompare(basename(b));
+    });
+    if (opts.verbose && !opts.full) {
+      logger?.info?.(`memory-hybrid: ${SCAN_TYPE} full scan — ${filePaths.length} files to process`);
+    }
+  }
 
   const progress: ExtractImplicitFeedbackProgressSnapshot = {
     stage: "scan-sessions",
@@ -401,17 +533,167 @@ export async function runExtractImplicitFeedbackForCli(
   if (implicitCfg.enabled === false) {
     progress.stage = "done";
     emitProgress();
-    return { signalsExtracted: 0, positiveCount: 0, negativeCount: 0, trajectoriesBuilt: 0, sessionsScanned: 0 };
+    return {
+      signalsExtracted: 0,
+      positiveCount: 0,
+      negativeCount: 0,
+      trajectoriesBuilt: 0,
+      sessionsScanned: 0,
+      sessionsVisited: 0,
+      sessionsProcessed: 0,
+      sessionsSkipped: 0,
+      sessionsDeferred: 0,
+      backlogSessionsEstimate: 0,
+      backlogSignalsEstimate: 0,
+      backlogTrajectoriesEstimate: 0,
+      partial: false,
+    };
   }
 
   let totalSignals = 0;
   let positiveCount = 0;
   let negativeCount = 0;
   let trajectoriesBuilt = 0;
+  let partial = false;
+  let partialReason: ExtractImplicitFeedbackStopReason | undefined;
+  let sessionsDeferred = 0;
+  let lastProcessedFilePath: string | undefined;
 
   const rawDb = factsDb.getRawDb();
+  const reinforcementAlreadyRecordedStmt = rawDb
+    ? rawDb.prepare(
+        `SELECT 1
+         FROM reinforcement_log
+         WHERE fact_id = ?
+           AND signal = 'positive'
+           AND session_file IS ?
+           AND topic IS ?
+           AND query_snippet IS ?
+         LIMIT 1`,
+      )
+    : null;
+  const reinforcementAlreadyRecordedBySessionStmt = rawDb
+    ? rawDb.prepare(
+        `SELECT 1
+         FROM reinforcement_log
+         WHERE fact_id = ?
+           AND signal = 'positive'
+           AND session_file IS ?
+         LIMIT 1`,
+      )
+    : null;
+
+  // Capping limits from config
+  const maxSessionsPerRun = implicitCfg.maxSessionsPerRun ?? 50;
+  const maxSignalsPerRun = implicitCfg.maxSignalsPerRun ?? 100;
+  const maxTrajectoriesPerRun = implicitCfg.maxTrajectoriesPerRun ?? 50;
+  const maxWallClockSeconds = implicitCfg.maxWallClockSeconds ?? 300;
+  const startTimeMs = Date.now();
+
+  const computeBacklogEstimates = (deferredSessions: number) => ({
+    backlogSessionsEstimate: deferredSessions,
+    backlogSignalsEstimate:
+      deferredSessions > 0 ? Math.ceil((totalSignals / Math.max(1, progress.sessionsProcessed)) * deferredSessions) : 0,
+    backlogTrajectoriesEstimate:
+      deferredSessions > 0
+        ? Math.ceil((trajectoriesBuilt / Math.max(1, progress.sessionsProcessed)) * deferredSessions)
+        : 0,
+  });
+
+  const markPartialProgress = (
+    reason: ExtractImplicitFeedbackStopReason,
+    deferredSessions = filePaths.length - progress.sessionsVisited,
+  ): void => {
+    partial = true;
+    partialReason = reason;
+    sessionsDeferred = deferredSessions;
+    const backlog = computeBacklogEstimates(deferredSessions);
+    progress.partial = true;
+    progress.partialReason = reason;
+    progress.sessionsDeferred = deferredSessions;
+    progress.backlogSessionsEstimate = backlog.backlogSessionsEstimate;
+    progress.backlogSignalsEstimate = backlog.backlogSignalsEstimate;
+    progress.backlogTrajectoriesEstimate = backlog.backlogTrajectoriesEstimate;
+    emitProgress();
+  };
+
+  const wallClockLimitReached = (): boolean =>
+    maxWallClockSeconds > 0 && (Date.now() - startTimeMs) / 1000 >= maxWallClockSeconds;
+  const remainingWallClockMs = (): number => {
+    if (maxWallClockSeconds <= 0) return Number.POSITIVE_INFINITY;
+    return Math.max(0, maxWallClockSeconds * 1000 - (Date.now() - startTimeMs));
+  };
+  const alreadyRecordedPositiveReinforcement = (factId: string, context: ReinforcementContext): boolean => {
+    if (cfg.reinforcement?.trackContext === false) {
+      return reinforcementAlreadyRecordedBySessionStmt?.get(factId, context.sessionFile ?? null) != null;
+    }
+    return (
+      reinforcementAlreadyRecordedStmt?.get(
+        factId,
+        context.sessionFile ?? null,
+        context.topic ?? null,
+        context.querySnippet ?? null,
+      ) != null
+    );
+  };
+
+  const deferredIncludingCurrentSession = (): number => Math.max(0, filePaths.length - progress.sessionsVisited + 1);
+
+  const applyPendingPositiveReinforcement = rawDb
+    ? createTransaction(
+        rawDb,
+        (
+          pending: Array<{
+            factId: string;
+            quoteSnippet: string;
+            context: ReinforcementContext;
+            boostAmount: number;
+          }>,
+        ) => {
+          const trackContext = cfg.reinforcement?.trackContext !== false;
+          const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
+          // Snapshot dedupe against pre-existing reinforcement rows only.
+          // We intentionally avoid re-checking after each insert so trackContext=false
+          // batches can apply multiple distinct boosts for the same fact/session.
+          const skipByExisting = pending.map((item) => alreadyRecordedPositiveReinforcement(item.factId, item.context));
+          for (const [index, item] of pending.entries()) {
+            if (wallClockLimitReached()) {
+              throw new ImplicitFeedbackWallClockExceededError();
+            }
+            if (skipByExisting[index]) continue;
+            factsDb.reinforceFact(item.factId, item.quoteSnippet, item.context, {
+              trackContext,
+              maxEventsPerFact,
+              boostAmount: item.boostAmount,
+            });
+            if (wallClockLimitReached()) {
+              throw new ImplicitFeedbackWallClockExceededError();
+            }
+          }
+        },
+      )
+    : null;
 
   for (const filePath of filePaths) {
+    // Check if we've hit any caps
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock");
+      break;
+    }
+    // BUG FIX #2: Check against sessionsVisited to ensure session cap includes skipped sessions
+    if (maxSessionsPerRun > 0 && progress.sessionsVisited >= maxSessionsPerRun) {
+      markPartialProgress("maxSessions");
+      break;
+    }
+    if (maxSignalsPerRun > 0 && totalSignals >= maxSignalsPerRun) {
+      markPartialProgress("maxSignals");
+      break;
+    }
+    if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt >= maxTrajectoriesPerRun) {
+      markPartialProgress("maxTrajectories");
+      break;
+    }
+
     progress.sessionsVisited++;
     const sessionFile = basename(filePath);
     progress.currentSession = sessionFile;
@@ -427,6 +709,7 @@ export async function runExtractImplicitFeedbackForCli(
         subsystem: "implicit-feedback",
       });
       emitProgress();
+      lastProcessedFilePath = filePath;
       continue;
     }
 
@@ -434,9 +717,9 @@ export async function runExtractImplicitFeedbackForCli(
     if (turns.length < 3) {
       progress.sessionsTooShort++;
       emitProgress();
+      lastProcessedFilePath = filePath;
       continue;
     }
-    progress.sessionsProcessed++;
 
     /**
      * Shared daily quota for negative signals + trajectory lessons. Seeded from DB once per session
@@ -444,6 +727,16 @@ export async function runExtractImplicitFeedbackForCli(
      * so counts stay accurate after earlier phases in the same file.
      */
     let lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : 0;
+
+    const trajectories =
+      opts.includeTrajectories !== false && !opts.dryRun && rawDb ? buildTrajectories(turns, sessionFile) : [];
+    const pendingPositiveReinforcement: Array<{
+      factId: string;
+      quoteSnippet: string;
+      context: ReinforcementContext;
+      boostAmount: number;
+    }> = [];
+    const pendingPositiveReinforcementKeys = new Set<string>();
 
     // Phase 1: Extract implicit signals
     const signals = extractImplicitSignals(turns, implicitCfg, sessionFile);
@@ -454,6 +747,30 @@ export async function runExtractImplicitFeedbackForCli(
           `[${sessionFile}] ${sig.type} (${sig.polarity}, conf ${sig.confidence.toFixed(2)}): ${sig.context.userMessage.slice(0, 60)}`,
         );
       }
+    }
+
+    // If adding this session would exceed a per-run cap after prior work, defer the
+    // current session without advancing the cursor past it. If this single session
+    // alone exceeds the cap, process it anyway so one oversized transcript cannot
+    // stall the incremental cursor forever.
+    if (maxSignalsPerRun > 0 && totalSignals > 0 && totalSignals + signals.length > maxSignalsPerRun) {
+      markPartialProgress("maxSignals", deferredIncludingCurrentSession());
+      break;
+    }
+    if (
+      maxTrajectoriesPerRun > 0 &&
+      trajectoriesBuilt > 0 &&
+      trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun
+    ) {
+      markPartialProgress("maxTrajectories", deferredIncludingCurrentSession());
+      break;
+    }
+
+    // Check wall clock limit before tallying extracted signals to avoid overcounting
+    // signals that are extracted but never stored or routed.
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
     }
 
     totalSignals += signals.length;
@@ -503,35 +820,62 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    // Route positive signals to reinforcement pipeline
+    // Check wall clock limit before reinforcement to prevent partial reinforcement
+    // that would be replayed on the next run, causing duplicate reinforcement entries.
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
+    }
+
+    // Queue positive signals for reinforcement and apply them only after the whole
+    // session finishes. This keeps retries idempotent when a wall-clock cap interrupts
+    // later phases and lets us roll back the whole reinforcement batch if the budget
+    // expires mid-batch.
     if (!opts.dryRun && implicitCfg.feedToReinforcement !== false && signals.length > 0) {
       const minConf = implicitCfg.minConfidence ?? 0.5;
       const positiveSignals = signals.filter((s) => s.polarity === "positive" && s.confidence >= minConf);
-      const trackContext = cfg.reinforcement?.trackContext !== false;
-      const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const sig of positiveSignals) {
+        if (wallClockLimitReached()) {
+          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+          break;
+        }
         try {
           const searchQuery = sig.context.agentMessage || sig.context.userMessage;
           const matches = factsDb.search(searchQuery, 3);
+          const querySnippet = sig.context.userMessage.slice(0, 200);
           const context: ReinforcementContext = {
-            querySnippet: sig.context.userMessage.slice(0, 200),
+            querySnippet,
             topic: sig.type,
             sessionFile: sig.context.sessionFile,
           };
           for (const match of matches) {
-            factsDb.reinforceFact(match.entry.id, sig.context.userMessage, context, {
-              trackContext,
-              maxEventsPerFact,
-              boostAmount: 0.5 * sig.confidence, // weaker than explicit praise
+            if (wallClockLimitReached()) {
+              markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+              break;
+            }
+            const dedupeKey = `${match.entry.id}\u0000${context.sessionFile ?? ""}\u0000${context.topic ?? ""}\u0000${querySnippet}`;
+            if (pendingPositiveReinforcementKeys.has(dedupeKey)) continue;
+            const alreadyReinforcedForSignal = alreadyRecordedPositiveReinforcement(match.entry.id, context);
+            if (alreadyReinforcedForSignal) continue;
+            pendingPositiveReinforcement.push({
+              factId: match.entry.id,
+              quoteSnippet: sig.context.userMessage,
+              context,
+              boostAmount: 0.5 * sig.confidence,
             });
+            pendingPositiveReinforcementKeys.add(dedupeKey);
           }
+          if (partial && partialReason === "maxWallClock") break;
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
+            operation: "runExtractImplicitFeedbackForCli:queue-reinforcement",
             severity: "info",
             subsystem: "implicit-feedback",
           });
         }
+      }
+      if (partial && partialReason === "maxWallClock") {
+        break;
       }
     }
 
@@ -542,6 +886,10 @@ export async function runExtractImplicitFeedbackForCli(
       const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
+        if (wallClockLimitReached()) {
+          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+          break;
+        }
         try {
           lessonsStoredTodaySession = rawDb ? getImplicitFeedbackLessonsStoredToday(rawDb) : lessonsStoredTodaySession;
           const text = `[Implicit ${sig.type}] "${sig.context.userMessage.slice(0, 200)}"`;
@@ -582,23 +930,41 @@ export async function runExtractImplicitFeedbackForCli(
           });
         }
       }
+      // If wall clock limit was reached during negative signal processing, exit session loop
+      if (partial && partialReason === "maxWallClock") {
+        break;
+      }
     }
 
-    // Phase 2: Build trajectories
-    if (opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
-      try {
-        const trajectories = buildTrajectories(turns, sessionFile);
-        trajectoriesBuilt += trajectories.length;
-        progress.trajectoriesBuilt = trajectoriesBuilt;
-        emitProgress();
+    // Check wall clock limit after signal storage and reinforcement
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
+    }
 
+    // Phase 2: Process trajectories (already built earlier for cap check)
+    if (trajectories.length > 0 && opts.includeTrajectories !== false && !opts.dryRun && rawDb) {
+      try {
         const insertTraj = rawDb.prepare(`
           INSERT OR REPLACE INTO feedback_trajectories
             (id, session_file, turns_json, outcome, outcome_signal, key_pivot, lessons_json, topic, tools_used, turn_count)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
+        const findTrajectoryBySessionAndTurns = rawDb.prepare(
+          `SELECT id
+           FROM feedback_trajectories
+           WHERE session_file = ? AND turns_json = ?
+           LIMIT 1`,
+        );
+        const TRAJECTORY_LLM_MIN_BUDGET_MS = 1000;
         for (const traj of trajectories) {
           try {
+            // Check wall clock limit before processing each trajectory (especially before LLM analysis)
+            if (wallClockLimitReached()) {
+              markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+              break;
+            }
+
             // If LLM analysis is enabled, use it to enhance lessons
             if (implicitCfg.trajectoryLLMAnalysis) {
               try {
@@ -606,6 +972,17 @@ export async function runExtractImplicitFeedbackForCli(
                 const nanoPref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
                 const model = nanoPref[0] ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
                 const fallbackModels = nanoPref.length > 1 ? nanoPref.slice(1) : (cfg.distill?.fallbackModels ?? []);
+                const remainingMs = remainingWallClockMs();
+                if (remainingMs < TRAJECTORY_LLM_MIN_BUDGET_MS) {
+                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+                  break;
+                }
+                const llmBudgetMs = Math.max(1, Math.floor(remainingMs));
+                const llmAbort = new AbortController();
+                const llmTimeout = setTimeout(
+                  () => llmAbort.abort(new Error("implicit-feedback trajectory LLM budget exceeded")),
+                  llmBudgetMs,
+                );
                 const chatFn = async (opts: { model?: string; messages: Array<{ role: string; content: string }> }) => {
                   const userMessage = opts.messages.find((m) => m.role === "user");
                   if (!userMessage) throw new Error("No user message found");
@@ -618,9 +995,20 @@ export async function runExtractImplicitFeedbackForCli(
                     fallbackModels,
                     label: "memory-hybrid: trajectory-analyze",
                     feature: CostFeature.trajectoryAnalyze,
+                    timeoutMs: llmBudgetMs,
+                    signal: llmAbort.signal,
                   });
                 };
-                const llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+                let llmAnalysis: Awaited<ReturnType<typeof analyzeTrajectoriesWithLLM>> | null = null;
+                try {
+                  llmAnalysis = await analyzeTrajectoriesWithLLM(traj, prompt, chatFn);
+                } finally {
+                  clearTimeout(llmTimeout);
+                }
+                if (llmAbort.signal.aborted || wallClockLimitReached()) {
+                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+                  break;
+                }
                 if (llmAnalysis) {
                   // Replace heuristic lessons with LLM-produced lesson and patterns
                   traj.lessonsExtracted = [llmAnalysis.keyLesson, ...llmAnalysis.patterns];
@@ -632,6 +1020,10 @@ export async function runExtractImplicitFeedbackForCli(
                   }
                 }
               } catch (err) {
+                if (wallClockLimitReached()) {
+                  markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+                  break;
+                }
                 capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                   operation: "runExtractImplicitFeedbackForCli:llm-trajectory-analysis",
                   severity: "info",
@@ -641,64 +1033,102 @@ export async function runExtractImplicitFeedbackForCli(
             }
 
             const row = serializeTrajectory(traj);
-            insertTraj.run(
-              row.id,
-              row.session_file,
-              row.turns_json,
-              row.outcome,
-              row.outcome_signal,
-              row.key_pivot,
-              row.lessons_json,
-              row.topic,
-              row.tools_used,
-              row.turn_count,
-            );
-            // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
-            const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
-            const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
-            for (const lesson of traj.lessonsExtracted) {
-              lessonsStoredTodaySession = rawDb
-                ? getImplicitFeedbackLessonsStoredToday(rawDb)
-                : lessonsStoredTodaySession;
-              const trimmedLesson = lesson.trim();
-              if (!trimmedLesson) continue;
-              const similarId =
-                rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard) : null;
-              if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
-                if (similarId && rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
-                continue;
+            const existingTrajectory = findTrajectoryBySessionAndTurns.get(row.session_file, row.turns_json) as
+              | { id: string }
+              | undefined;
+            const trajectoryId = existingTrajectory?.id ?? row.id;
+            const evictedFactIds: string[] = [];
+
+            rawDb.prepare("BEGIN").run();
+            try {
+              if (wallClockLimitReached()) {
+                throw new ImplicitFeedbackWallClockExceededError();
               }
-              if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
-              try {
-                const storeResult = factsDb.storeWithResult({
-                  text: trimmedLesson,
-                  category: "technical",
-                  importance: 0.5,
-                  entity: null,
-                  key: "implicit_feedback_signal",
-                  value: trimmedLesson.slice(0, 200),
-                  source: "implicit-feedback",
-                  tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
-                  decayClass: "normal",
-                });
-                if (storeResult.skipped) {
+              insertTraj.run(
+                trajectoryId,
+                row.session_file,
+                row.turns_json,
+                row.outcome,
+                row.outcome_signal,
+                row.key_pivot,
+                row.lessons_json,
+                row.topic,
+                row.tools_used,
+                row.turn_count,
+              );
+              // Store trajectory lessons as implicit-feedback signals, not reflection patterns.
+              const maxLessonsPerDay = implicitCfg.maxLessonsPerDay ?? 50;
+              const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
+              for (const lesson of traj.lessonsExtracted) {
+                if (wallClockLimitReached()) {
+                  throw new ImplicitFeedbackWallClockExceededError();
+                }
+                lessonsStoredTodaySession = rawDb
+                  ? getImplicitFeedbackLessonsStoredToday(rawDb)
+                  : lessonsStoredTodaySession;
+                const trimmedLesson = lesson.trim();
+                if (!trimmedLesson) continue;
+                const similarId =
+                  rawDb != null ? findSimilarImplicitFeedbackLesson(rawDb, trimmedLesson, lessonDedupeJaccard) : null;
+                if (similarId || factsDb.hasDuplicate(trimmedLesson, "implicit-feedback")) {
+                  if (similarId && rawDb) markImplicitFeedbackLessonRecalled(rawDb, similarId);
                   continue;
                 }
-                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                await cleanupEvictedVector({
-                  vectorDb: vectorDb,
-                  evictedFactId: storeResult.evictedFactId,
-                  logger: logger,
-                  context: "implicit-feedback",
-                });
-                lessonsStoredTodaySession++;
-              } catch (err) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "runExtractImplicitFeedbackForCli:store-lesson",
-                  severity: "info",
-                  subsystem: "implicit-feedback",
-                });
+                if (lessonsStoredTodaySession >= maxLessonsPerDay) continue;
+                try {
+                  const storeResult = factsDb.storeWithResult({
+                    text: trimmedLesson,
+                    category: "technical",
+                    importance: 0.5,
+                    entity: null,
+                    key: "implicit_feedback_signal",
+                    value: trimmedLesson.slice(0, 200),
+                    source: "implicit-feedback",
+                    tags: IMPLICIT_FEEDBACK_LESSON_TAGS,
+                    decayClass: "normal",
+                  });
+                  if (storeResult.skipped) {
+                    continue;
+                  }
+                  if (storeResult.evictedFactId) {
+                    evictedFactIds.push(storeResult.evictedFactId);
+                  }
+                  lessonsStoredTodaySession++;
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "runExtractImplicitFeedbackForCli:store-lesson",
+                    severity: "info",
+                    subsystem: "implicit-feedback",
+                  });
+                }
               }
+              if (wallClockLimitReached()) {
+                throw new ImplicitFeedbackWallClockExceededError();
+              }
+              rawDb.prepare("COMMIT").run();
+            } catch (err) {
+              rawDb.prepare("ROLLBACK").run();
+              if (err instanceof ImplicitFeedbackWallClockExceededError) {
+                markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+                break;
+              }
+              throw err;
+            }
+
+            trajectoriesBuilt++;
+            progress.trajectoriesBuilt = trajectoriesBuilt;
+            emitProgress();
+
+            // Keep vector maintenance outside the SQL transaction.
+            // Note: We don't check wall clock here because evicted vector cleanup must complete
+            // after a successful commit to avoid orphaned vectors. Cleanup is typically fast.
+            for (const evictedFactId of new Set(evictedFactIds)) {
+              await cleanupEvictedVector({
+                vectorDb: vectorDb,
+                evictedFactId,
+                logger: logger,
+                context: "implicit-feedback",
+              });
             }
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -716,84 +1146,178 @@ export async function runExtractImplicitFeedbackForCli(
         });
       }
     }
+
+    // Check if wall clock limit was hit during trajectory processing
+    if (partial && partialReason === "maxWallClock") {
+      break;
+    }
+
+    if (pendingPositiveReinforcement.length > 0) {
+      try {
+        applyPendingPositiveReinforcement?.(pendingPositiveReinforcement);
+      } catch (err) {
+        if (err instanceof ImplicitFeedbackWallClockExceededError) {
+          markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+          break;
+        }
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
+          severity: "warning",
+          subsystem: "implicit-feedback",
+        });
+        markPartialProgress("reinforcementError", deferredIncludingCurrentSession());
+        break;
+      }
+    }
+
+    // If budget expires after trajectory/reinforcement work but before finalizing
+    // this session, defer it so the cursor does not advance past partially-finished work.
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
+    }
+
+    // Mark session as processed after both Phase 1 (signal extraction) and Phase 2 (trajectories) complete.
+    // This ensures the cursor only advances past sessions that have been fully processed.
+    progress.sessionsProcessed++;
+    lastProcessedFilePath = filePath;
+    emitProgress();
+
+    if (wallClockLimitReached()) {
+      const remainingDeferred = filePaths.length - progress.sessionsVisited;
+      if (remainingDeferred > 0) {
+        markPartialProgress("maxWallClock", remainingDeferred);
+      }
+      break;
+    }
   }
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
-    try {
-      progress.stage = "cleanup-duplicates";
-      emitProgress();
-      const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
-      const threshold = implicitCfg.lessonDedupeJaccard ?? 0.7;
-      let afterRowid = 0;
-      let totalCollapsed = 0;
-      let totalScanned = 0;
-      let batches = 0;
-      let carryCanonical: Array<{ id: string; text: string }> | undefined;
-      for (;;) {
-        const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
-          threshold,
-          limit: cleanupLimit,
-          afterRowid,
-          seedCanonical: carryCanonical,
-        });
-        totalCollapsed += cleanup.collapsed;
-        totalScanned += cleanup.scanned;
-        batches++;
-        carryCanonical = cleanup.carryCanonical;
-        progress.cleanupCollapsed = totalCollapsed;
-        progress.cleanupScanned = totalScanned;
-        progress.cleanupBatches = batches;
+    if (wallClockLimitReached()) {
+      if (!partial) markPartialProgress("maxWallClock");
+    } else {
+      try {
+        progress.stage = "cleanup-duplicates";
         emitProgress();
-        if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
-        afterRowid = cleanup.resumeAfterRowid;
+        const cleanupLimit = implicitCfg.cleanupLimit ?? 1000;
+        const threshold = implicitCfg.lessonDedupeJaccard ?? 0.7;
+        let afterRowid = 0;
+        let totalCollapsed = 0;
+        let totalScanned = 0;
+        let batches = 0;
+        let carryCanonical: Array<{ id: string; text: string }> | undefined;
+        for (;;) {
+          if (wallClockLimitReached()) {
+            if (!partial) markPartialProgress("maxWallClock");
+            break;
+          }
+          const cleanup = cleanupImplicitFeedbackDuplicates(factsDb, {
+            threshold,
+            limit: cleanupLimit,
+            afterRowid,
+            seedCanonical: carryCanonical,
+            wallClockCheck: wallClockLimitReached,
+          });
+          totalCollapsed += cleanup.collapsed;
+          totalScanned += cleanup.scanned;
+          batches++;
+          carryCanonical = cleanup.carryCanonical;
+          progress.cleanupCollapsed = totalCollapsed;
+          progress.cleanupScanned = totalScanned;
+          progress.cleanupBatches = batches;
+          emitProgress();
+          if (wallClockLimitReached()) {
+            if (!partial) markPartialProgress("maxWallClock");
+            break;
+          }
+          if (cleanup.interrupted) {
+            if (!partial) markPartialProgress("maxWallClock");
+            break;
+          }
+          if (cleanup.scanned < cleanupLimit || cleanup.resumeAfterRowid == null) break;
+          afterRowid = cleanup.resumeAfterRowid;
+        }
+        if (opts.verbose && totalCollapsed > 0) {
+          logger?.info?.(`Implicit-feedback cleanup: collapsed ${totalCollapsed} near-duplicate signal fact(s)`);
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:cleanup-duplicates",
+          severity: "warning",
+          subsystem: "implicit-feedback",
+        });
       }
-      if (opts.verbose && totalCollapsed > 0) {
-        logger?.info?.(`Implicit-feedback cleanup: collapsed ${totalCollapsed} near-duplicate signal fact(s)`);
-      }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "runExtractImplicitFeedbackForCli:cleanup-duplicates",
-        severity: "warning",
-        subsystem: "implicit-feedback",
-      });
     }
   }
 
   // Phase 3: Closed-loop analysis
   let closedLoopReport: string | undefined;
   if (opts.includeClosedLoop !== false && !opts.dryRun) {
-    try {
-      progress.stage = "closed-loop";
-      emitProgress();
-      const clCfg = cfg.closedLoop ?? { enabled: true };
-      if (clCfg.enabled !== false) {
-        const report = runClosedLoopAnalysis(factsDb, clCfg);
-        if (report.rulesAnalyzed > 0) {
-          if (opts.verbose) {
-            closedLoopReport = getEffectivenessReport(factsDb);
+    if (wallClockLimitReached()) {
+      if (!partial) markPartialProgress("maxWallClock");
+    } else {
+      try {
+        progress.stage = "closed-loop";
+        emitProgress();
+        const clCfg = cfg.closedLoop ?? { enabled: true };
+        if (clCfg.enabled !== false) {
+          const report = runClosedLoopAnalysis(factsDb, clCfg, { wallClockCheck: wallClockLimitReached });
+          if (report.interrupted) {
+            if (!partial) markPartialProgress("maxWallClock");
           }
-          logger?.info?.(
-            `Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`,
-          );
+          if (wallClockLimitReached()) {
+            if (!partial) markPartialProgress("maxWallClock");
+          }
+          if (report.rulesAnalyzed > 0) {
+            if (opts.verbose) {
+              closedLoopReport = getEffectivenessReport(factsDb);
+            }
+            logger?.info?.(
+              `Closed-loop: analyzed ${report.rulesAnalyzed} rules, deprecated ${report.deprecated}, boosted ${report.boosted}`,
+            );
+          }
         }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:closed-loop",
+          severity: "warning",
+          subsystem: "implicit-feedback",
+        });
       }
-    } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "runExtractImplicitFeedbackForCli:closed-loop",
-        severity: "warning",
-        subsystem: "implicit-feedback",
-      });
     }
   }
 
   progress.stage = "done";
   emitProgress();
+
+  // Update scan cursor with the last processed session
+  if (!opts.dryRun && lastProcessedFilePath) {
+    const stat = statSync(lastProcessedFilePath);
+    const lastSessionTs = stat.mtimeMs;
+    const lastSessionFile = basename(lastProcessedFilePath);
+    // BUG FIX: Use sessionsVisited instead of sessionsProcessed for cursor advancement
+    // so that skipped sessions (read errors, too short) also advance the watermark
+    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
+  }
+
+  // Calculate backlog estimates
+  const backlog = computeBacklogEstimates(sessionsDeferred);
+
   return {
     signalsExtracted: totalSignals,
     positiveCount,
     negativeCount,
     trajectoriesBuilt,
     sessionsScanned: filePaths.length,
+    sessionsVisited: progress.sessionsVisited,
+    sessionsProcessed: progress.sessionsProcessed,
+    sessionsSkipped: progress.sessionsReadErrors + progress.sessionsTooShort,
+    sessionsDeferred,
+    backlogSessionsEstimate: partial ? backlog.backlogSessionsEstimate : 0,
+    backlogSignalsEstimate: partial ? backlog.backlogSignalsEstimate : 0,
+    backlogTrajectoriesEstimate: partial ? backlog.backlogTrajectoriesEstimate : 0,
+    partial,
+    partialReason,
     closedLoopReport,
   };
 }

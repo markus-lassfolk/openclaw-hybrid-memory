@@ -734,8 +734,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   progressSupplier: () => formatExtractImplicitFeedbackProgress(latestProgress),
                 },
               );
+              const partialSuffix = implRes.partial
+                ? ` Partial: ${implRes.partialReason ?? "capped"}; deferred=${implRes.sessionsDeferred}; backlog≈${implRes.backlogSignalsEstimate} signals/${implRes.backlogTrajectoriesEstimate} trajectories.`
+                : "";
               console.log(
-                `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsScanned} sessions.`,
+                `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsProcessed}/${implRes.sessionsScanned} sessions.${partialSuffix}`,
               );
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {

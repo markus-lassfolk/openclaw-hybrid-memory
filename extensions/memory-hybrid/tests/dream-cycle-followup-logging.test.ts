@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assessContinuousVerificationResult,
   formatContinuousVerificationAssessmentLine,
+  formatExtractImplicitFeedbackProgress,
   runVerboseFollowUp,
 } from "../cli/commands/manage/dream-cycle-followup.js";
 
@@ -63,6 +64,35 @@ describe("dream-cycle follow-up heartbeat logging", () => {
 
     expect(logs.some((l) => l.includes("stage 2/6 extract implicit feedback — start"))).toBe(true);
     expect(logs.some((l) => l.includes("stage 2/6 extract implicit feedback — complete in"))).toBe(true);
+  });
+
+  it("formats partial extract-implicit progress with deferred backlog details", () => {
+    expect(
+      formatExtractImplicitFeedbackProgress({
+        stage: "scan-sessions",
+        sessionsDiscovered: 4,
+        sessionsVisited: 2,
+        sessionsProcessed: 2,
+        sessionsReadErrors: 0,
+        sessionsTooShort: 0,
+        sessionsDeferred: 2,
+        currentSession: undefined,
+        signalsExtracted: 5,
+        positiveCount: 2,
+        negativeCount: 3,
+        trajectoriesBuilt: 1,
+        cleanupCollapsed: 0,
+        cleanupScanned: 0,
+        cleanupBatches: 0,
+        backlogSessionsEstimate: 2,
+        backlogSignalsEstimate: 7,
+        backlogTrajectoriesEstimate: 3,
+        partial: true,
+        partialReason: "maxSignals",
+      }),
+    ).toBe(
+      "stage=scan-sessions; sessions=2/4; signals=5 (2+/3-); traj=1; partial=maxSignals; deferred=2; backlog≈7s/3t",
+    );
   });
 
   it("treats all-uncertain verification results as degraded", () => {
