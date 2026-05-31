@@ -1071,20 +1071,25 @@ export async function runReflectionRules(
       );
     }
     // If embeddingStale=true (merge path), re-embed the updated merged text
-    const textToEmbed = storeResult.embeddingStale ? entry.text : ruleText;
+    let textToEmbed = ruleText;
     let vectorToStore: number[];
-    try {
-      vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
-    } catch (err) {
-      newRuleEmbedFailures++;
-      if (!shouldSuppressEmbeddingError(err)) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "embed-rule-merge",
-          severity: "info",
-          subsystem: "reflection",
-        });
+    if (storeResult.embeddingStale) {
+      try {
+        textToEmbed = entry.text;
+        vectorToStore = await embeddings.embed(textToEmbed);
+      } catch (err) {
+        if (!shouldSuppressEmbeddingError(err)) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "embed-rule-merge",
+            severity: "info",
+            subsystem: "reflection",
+          });
+        }
+        // On re-embed failure after merge, fall back to original text and vector to maintain consistency
+        textToEmbed = ruleText;
+        vectorToStore = vec;
       }
-      // On re-embed failure after merge, fall back to original vector to maintain SQLite-Lance consistency
+    } else {
       vectorToStore = vec;
     }
     try {
