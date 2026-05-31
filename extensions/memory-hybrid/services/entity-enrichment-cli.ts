@@ -35,6 +35,7 @@ export type EntityEnrichmentProgress = {
   accepted: number;
   rejected: number;
   duplicates: number;
+  rejectReasons: Record<string, number>;
 };
 
 export async function runEntityEnrichmentForCli(
@@ -142,6 +143,7 @@ export async function runEntityEnrichmentForCli(
     accepted: 0,
     rejected: 0,
     duplicates: 0,
+    rejectReasons: {},
   });
   for (const id of ids) {
     processed++;
@@ -186,6 +188,7 @@ export async function runEntityEnrichmentForCli(
       accepted,
       rejected,
       duplicates,
+      rejectReasons: { ...rejectReasons },
     });
   }
   const finalBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
