@@ -115,11 +115,15 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
   let tmpDir: string;
   let proposalsDb: ProposalsDB;
   let originalWorkspace: string | undefined;
+  let originalGitCeilingDirectories: string | undefined;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "proposals-apply-"));
     originalWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    originalGitCeilingDirectories = getEnv("GIT_CEILING_DIRECTORIES");
     setEnv("OPENCLAW_WORKSPACE", tmpDir);
+    // Ensure git does not walk above this temp workspace when detecting repo roots.
+    setEnv("GIT_CEILING_DIRECTORIES", tmpDir);
 
     const targetFile = join(tmpDir, "SOUL.md");
     writeFileSync(targetFile, "# SOUL\nInitial content.\n", "utf-8");
@@ -145,6 +149,11 @@ describe("applyApprovedProposal (non-git workspace — issue #90)", () => {
       setEnv("OPENCLAW_WORKSPACE", originalWorkspace);
     } else {
       setEnv("OPENCLAW_WORKSPACE", undefined);
+    }
+    if (originalGitCeilingDirectories !== undefined) {
+      setEnv("GIT_CEILING_DIRECTORIES", originalGitCeilingDirectories);
+    } else {
+      setEnv("GIT_CEILING_DIRECTORIES", undefined);
     }
     rmSync(tmpDir, { recursive: true, force: true });
   });
