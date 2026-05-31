@@ -1,5 +1,3 @@
-import { receiveMessageOnPort, MessageChannel } from "node:worker_threads";
-
 /** Max time to wait for superseded instance bootstrap before permanentClose (embedding verify can take minutes). */
 export const BOOTSTRAP_DRAIN_MS = 3_000;
 
@@ -11,9 +9,21 @@ export const RECALL_DRAIN_MS = 2_000;
 
 /** Serializes plugin teardown (bootstrap settle → close DBs) across hot reloads (#1550 / reload race). */
 let reloadTeardownChain: Promise<void> = Promise.resolve();
+let reloadTeardownQueueDepth = 0;
 
 export function schedulePluginTeardown(teardown: () => Promise<void>): void {
-  reloadTeardownChain = reloadTeardownChain.then(teardown, teardown);
+  reloadTeardownQueueDepth += 1;
+  reloadTeardownChain = reloadTeardownChain
+    .catch(() => {
+      /* keep chain alive; next teardown still must run */
+    })
+    .then(async () => {
+      try {
+        await teardown();
+      } finally {
+        reloadTeardownQueueDepth = Math.max(0, reloadTeardownQueueDepth - 1);
+      }
+    });
 }
 
 /** Wait for superseded bootstrap work with a short cap; then close old handles regardless. */
@@ -40,54 +50,12 @@ export async function drainOldRecall(recallInFlightRef: { value: number } | unde
  * Returns false if teardown is still in flight (caller may proceed; generation guards apply).
  */
 export function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boolean {
-  try {
-    awaitPromiseOnEventLoop(reloadTeardownChain, timeoutMs);
-    return true;
-  } catch {
-    return false;
-  }
+  void timeoutMs;
+  return reloadTeardownQueueDepth === 0;
 }
 
 /** Reset chain for unit tests only. */
 export function resetReloadTeardownChainForTests(): void {
   reloadTeardownChain = Promise.resolve();
-}
-
-function awaitPromiseOnEventLoop(promise: Promise<void>, timeoutMs: number): void {
-  let settled = false;
-  let error: unknown;
-  void promise.then(
-    () => {
-      settled = true;
-    },
-    (e) => {
-      error = e;
-      settled = true;
-    },
-  );
-
-  const { port1, port2 } = new MessageChannel();
-  const deadline = Date.now() + timeoutMs;
-  try {
-    while (!settled && Date.now() < deadline) {
-      setImmediate(() => {
-        try {
-          port2.postMessage(null);
-        } catch {
-          /* port may be closed */
-        }
-      });
-      receiveMessageOnPort(port1, { timeout: 100 });
-    }
-  } finally {
-    port1.close();
-    port2.close();
-  }
-
-  if (!settled) {
-    throw new Error(`memory-hybrid: plugin reload teardown timed out after ${timeoutMs}ms`);
-  }
-  if (error) {
-    throw error instanceof Error ? error : new Error(String(error));
-  }
+  reloadTeardownQueueDepth = 0;
 }

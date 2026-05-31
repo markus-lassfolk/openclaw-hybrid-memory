@@ -1,5 +1,5 @@
 import { constants, existsSync, readFileSync } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, unlink } from "node:fs/promises";
 /** @module bootstrap-databases — Database bootstrap, optional stores, and lifecycle teardown. */
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
@@ -576,8 +576,8 @@ export function initializeDatabases(
     const previousEmbeddingMeta = factsDb.getEmbeddingMeta();
     embeddingConfigChanged = Boolean(
       previousEmbeddingMeta &&
-      (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
-        previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
+        (previousEmbeddingMeta.provider !== currentEmbeddingMeta.provider ||
+          previousEmbeddingMeta.model !== currentEmbeddingMeta.model),
     );
     // When autoMigrate is enabled, still record the initial baseline on first run so future
     // changes can be detected. For subsequent runs with a config change, let runEmbeddingMaintenance
@@ -607,7 +607,7 @@ export function initializeDatabases(
         await wal.init();
       } catch (e) {
         if (isBootstrapSuperseded()) {
-          api.logger.debug?.("memory-hybrid: WAL init skipped (registration superseded)");
+          api.logger.debug?.("memory-hybrid: WAL initialization skipped (registration superseded)");
           return;
         }
         capturePluginError(e instanceof Error ? e : new Error(String(e)), {
@@ -700,6 +700,23 @@ export function initializeDatabases(
       if (isBootstrapSuperseded()) return;
       // When vault is enabled: once per install, move existing credential facts into vault and redact from memory
       const migrationFlagPath = join(dirname(resolvedSqlitePath), CREDENTIAL_REDACTION_MIGRATION_FLAG);
+      const clearMigrationFlagForRetry = async (reason: string): Promise<void> => {
+        try {
+          await unlink(migrationFlagPath);
+          api.logger.debug?.(`memory-hybrid: cleared credential migration flag (${reason})`);
+        } catch (err: unknown) {
+          const errCode =
+            typeof err === "object" && err !== null && "code" in err ? (err as { code?: unknown }).code : undefined;
+          if (errCode === "ENOENT") return;
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "credentials",
+            operation: "migration-flag-clear",
+            phase: "initialization",
+            backend: "sqlite",
+          });
+          api.logger.warn(`memory-hybrid: failed to clear migration flag for retry: ${err}`);
+        }
+      };
       // Atomic flag creation to prevent race condition with multiple processes
       let shouldMigrate = false;
       try {
@@ -712,9 +729,11 @@ export function initializeDatabases(
             /* ignore close errors */
           });
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errCode =
+          typeof err === "object" && err !== null && "code" in err ? (err as { code?: unknown }).code : undefined;
         if (isBootstrapSuperseded()) return;
-        if (err.code === "EEXIST") {
+        if (errCode === "EEXIST") {
           // Another process already created the flag - skip migration
           shouldMigrate = false;
         } else {
@@ -729,16 +748,11 @@ export function initializeDatabases(
         }
       }
       if (shouldMigrate) {
+        if (isBootstrapSuperseded()) {
+          await clearMigrationFlagForRetry("registration superseded before migration");
+          return;
+        }
         try {
-          if (isBootstrapSuperseded()) {
-            const { unlinkSync } = await import("node:fs");
-            try {
-              unlinkSync(migrationFlagPath);
-            } catch {
-              /* ignore cleanup errors */
-            }
-            return;
-          }
           const result = await migrateCredentialsToVault({
             factsDb,
             vectorDb,
@@ -748,7 +762,12 @@ export function initializeDatabases(
             migrationFlagPath,
             markDone: false, // Flag already created atomically above
           });
-          if (isBootstrapSuperseded()) return;
+          if (isBootstrapSuperseded()) {
+            api.logger.debug?.(
+              "memory-hybrid: credential migration finished after supersession; suppressing stale logs",
+            );
+            return;
+          }
           if (result.migrated > 0) {
             api.logger.info(`memory-hybrid: migrated ${result.migrated} credential(s) from memory into vault`);
           }
@@ -759,12 +778,7 @@ export function initializeDatabases(
           }
         } catch (e) {
           if (isBootstrapSuperseded()) {
-            const { unlinkSync } = await import("node:fs");
-            try {
-              unlinkSync(migrationFlagPath);
-            } catch {
-              /* ignore cleanup errors */
-            }
+            await clearMigrationFlagForRetry("registration superseded during migration");
             api.logger.debug?.("memory-hybrid: credential migration skipped (registration superseded)");
             return;
           }

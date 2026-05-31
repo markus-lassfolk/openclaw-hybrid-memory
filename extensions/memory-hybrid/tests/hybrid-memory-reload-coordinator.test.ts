@@ -38,12 +38,14 @@ describe("hybrid-memory-reload-coordinator", () => {
     expect(awaitReloadTeardownBeforeOpen()).toBe(true);
   });
 
-  it("awaitReloadTeardownBeforeOpen returns true after scheduled teardown completes", async () => {
+  it("awaitReloadTeardownBeforeOpen returns false while scheduled teardown is pending, then true after completion", async () => {
     let ran = false;
     schedulePluginTeardown(async () => {
       await Promise.resolve();
       ran = true;
     });
+    expect(awaitReloadTeardownBeforeOpen()).toBe(false);
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(awaitReloadTeardownBeforeOpen()).toBe(true);
     expect(ran).toBe(true);
   });
