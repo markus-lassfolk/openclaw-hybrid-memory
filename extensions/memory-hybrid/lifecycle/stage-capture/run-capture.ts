@@ -680,7 +680,9 @@ export async function runCapture(
                   id: storedEntry.id,
                 });
                 const canPersistCanonical =
-                  typeof ctx.vectorDb.isLanceDbAvailable === "function" ? ctx.vectorDb.isLanceDbAvailable() : true;
+                  typeof ctx.vectorDb.isLanceDbAvailable === "function"
+                    ? ctx.vectorDb.isLanceDbAvailable()
+                    : true;
                 if (canPersistCanonical) {
                   persistCanonicalFactEmbedding(
                     ctx.factsDb,
