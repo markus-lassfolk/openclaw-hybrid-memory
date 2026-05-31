@@ -97,9 +97,12 @@ export function canReuseDatabasesOnReregister(
   if (JSON.stringify(oldLlm?.providers) !== JSON.stringify(newLlm?.providers)) return false;
 
   // Compare credentials.enabled to detect when vault should be opened or closed.
-  // encryptionKey is non-enumerable on parsed config; treat missing as empty (structuredClone drops it).
   if (oldCfg.credentials?.enabled !== cfg.credentials?.enabled) return false;
-  const oldEncKey = oldCfg.credentials?.encryptionKey ?? "";
+  // encryptionKey is non-enumerable on parsed config. A cloned snapshot can lose the key,
+  // so fall back to the donor runtime cfg before treating missing as empty. Otherwise a
+  // hot reload from a valid key to a missing/empty key could incorrectly reuse the old
+  // CredentialsDB and keep decrypted credentials accessible until process restart.
+  const oldEncKey = oldCfg.credentials?.encryptionKey ?? old.cfg.credentials?.encryptionKey ?? "";
   const newEncKey = cfg.credentials?.encryptionKey ?? "";
   if (oldEncKey !== newEncKey) return false;
 
