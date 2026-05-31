@@ -34,8 +34,8 @@ describe("hybrid-memory-reload-coordinator", () => {
     await drain;
   });
 
-  it("awaitReloadTeardownBeforeOpen returns true when teardown chain is idle", () => {
-    expect(awaitReloadTeardownBeforeOpen()).toBe(true);
+  it("awaitReloadTeardownBeforeOpen returns true when teardown chain is idle", async () => {
+    expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
   });
 
   it("awaitReloadTeardownBeforeOpen returns false while scheduled teardown is pending, then true after completion", async () => {
@@ -44,9 +44,9 @@ describe("hybrid-memory-reload-coordinator", () => {
       await Promise.resolve();
       ran = true;
     });
-    expect(awaitReloadTeardownBeforeOpen()).toBe(false);
+    expect(await awaitReloadTeardownBeforeOpen(0)).toBe(false);
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(awaitReloadTeardownBeforeOpen()).toBe(true);
+    expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
     expect(ran).toBe(true);
   });
 

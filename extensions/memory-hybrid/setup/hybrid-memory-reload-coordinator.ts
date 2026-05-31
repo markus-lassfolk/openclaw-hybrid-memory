@@ -49,8 +49,12 @@ export async function drainOldRecall(recallInFlightRef: { value: number } | unde
  * Block until scheduled teardowns finish before opening new DB handles (issue #802).
  * Returns false if teardown is still in flight (caller may proceed; generation guards apply).
  */
-export function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): boolean {
-  void timeoutMs;
+export async function awaitReloadTeardownBeforeOpen(timeoutMs = TEARDOWN_WAIT_MS): Promise<boolean> {
+  if (reloadTeardownQueueDepth === 0) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (reloadTeardownQueueDepth > 0 && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  }
   return reloadTeardownQueueDepth === 0;
 }
 

@@ -30,7 +30,7 @@ import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
-import { isRecallContextSuperseded } from "../utils/registration-superseded.js";
+import { isRecallContextSuperseded, shouldSuppressStaleLifecycleError } from "../utils/registration-superseded.js";
 import type { LifecycleContext } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
@@ -133,6 +133,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         } catch (err) {
           if (isRecallContextSuperseded(ctx)) {
             api.logger.debug?.("memory-hybrid: recall skipped (registration superseded during reload)");
+            return undefined;
+          }
+          if (shouldSuppressStaleLifecycleError(ctx, err)) {
+            api.logger.debug?.("memory-hybrid: recall skipped (database closed during reload)");
             return undefined;
           }
           if (capturedFirstRecallBegin) {

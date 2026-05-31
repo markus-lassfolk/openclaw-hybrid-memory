@@ -124,10 +124,10 @@ describe("plugin hot-reload race", () => {
       recallInFlightRef.value = 0;
       closed = true;
     });
-    expect(awaitReloadTeardownBeforeOpen()).toBe(false);
+    expect(await awaitReloadTeardownBeforeOpen(0)).toBe(false);
     recallInFlightRef.value = 0;
     await new Promise<void>((resolve) => setTimeout(resolve, 75));
-    expect(awaitReloadTeardownBeforeOpen()).toBe(true);
+    expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
     expect(closed).toBe(true);
   });
 });
