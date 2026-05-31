@@ -8,7 +8,8 @@
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { MemoryCategory } from "../../config.js";
-import { getCronModelConfig, getDefaultCronModel } from "../../config.js";
+import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
+import "../../config.js";
 import { detectCredentialPatterns } from "../../services/auto-capture.js";
 import {
   getAutoCaptureExtractionConfidence,
