@@ -325,6 +325,60 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.rejectedDuplicates).toBeGreaterThan(0);
   });
 
+  it("treats reused exact-text store results as duplicates without deleting existing facts", async () => {
+    const ruleText = "Always keep strict TypeScript settings enabled across all projects.";
+    const deleteFact = vi.fn(() => undefined);
+    const storeWithResult = vi.fn(() => ({
+      skipped: false as const,
+      evictedFactId: null,
+      embeddingStale: false,
+      newlyStored: false,
+      preMergeText: null,
+      entry: makeEntry({
+        id: "rule-existing",
+        category: "rule",
+        text: ruleText,
+      }),
+    }));
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      storeWithResult,
+      delete: deleteFact,
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorStore = vi.fn(async () => undefined);
+    const vectorDb = {
+      store: vectorStore,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({
+            choices: [{ message: { content: `RULE: ${ruleText}` } }],
+          }),
+        },
+      },
+    };
+
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(res.diagnostics.status).toBe("partial");
+    expect(res.diagnostics.zeroRulesReason).toBe("all_candidates_duplicate");
+    expect(vectorStore).not.toHaveBeenCalled();
+    expect(deleteFact).not.toHaveBeenCalled();
+  });
+
   it("reports valid no-op zero-rules reason when model explicitly returns no actionable rules", async () => {
     const { factsDb, vectorDb, embeddings, openai } = makeDeps(
       "No actionable rules detected from the supplied patterns.",
@@ -457,6 +511,130 @@ describe("runReflectionRules diagnostics", () => {
     expect(restoreMergedFactText).toHaveBeenCalledTimes(1);
     expect(restoreMergedFactText).toHaveBeenCalledWith("rule-existing", existingRuleText);
     expect(vectorStore).not.toHaveBeenCalled();
+  });
+
+  it("uses preMergeText for rollback when merged text cannot be reverse-derived", async () => {
+    const ruleText = "Always keep strict TypeScript settings enabled across all projects.";
+    const existingRuleText = "Always keep strict TypeScript settings enabled for every project.";
+    const storeWithResult = vi.fn(() => ({
+      skipped: false as const,
+      evictedFactId: null,
+      embeddingStale: true,
+      newlyStored: false,
+      preMergeText: existingRuleText,
+      entry: makeEntry({
+        id: "rule-existing",
+        category: "rule",
+        text: `${existingRuleText}\nUNRELATED-MERGE-SUFFIX`,
+      }),
+    }));
+    const restoreMergedFactText = vi.fn(() => true);
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      storeWithResult,
+      restoreMergedFactText,
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorStore = vi.fn(async () => undefined);
+    const vectorDb = {
+      store: vectorStore,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = {
+      modelName: "test-model",
+      embed: vi.fn(async (text: string) => {
+        if (text === ruleText) return [1, 0];
+        throw new Error("merge embedding failed");
+      }),
+    };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: `RULE: ${ruleText}` } }] }),
+        },
+      },
+    };
+
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(restoreMergedFactText).toHaveBeenCalledTimes(1);
+    expect(restoreMergedFactText).toHaveBeenCalledWith("rule-existing", existingRuleText);
+    expect(vectorStore).not.toHaveBeenCalled();
+  });
+
+  it("deletes merged vector before rolling back text when metadata update fails", async () => {
+    const ruleText = "Always keep strict TypeScript settings enabled across all projects.";
+    const existingRuleText = "Always keep strict TypeScript settings enabled for every project.";
+    const mergedRuleText = `${existingRuleText}\n${ruleText}`;
+    const storeWithResult = vi.fn(() => ({
+      skipped: false as const,
+      evictedFactId: null,
+      embeddingStale: true,
+      newlyStored: false,
+      preMergeText: existingRuleText,
+      entry: makeEntry({
+        id: "rule-existing",
+        category: "rule",
+        text: mergedRuleText,
+      }),
+    }));
+    const restoreMergedFactText = vi.fn(() => true);
+    const setEmbeddingModel = vi.fn(() => {
+      throw new Error("metadata write failed");
+    });
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      storeWithResult,
+      restoreMergedFactText,
+      setEmbeddingModel,
+    };
+    const vectorStore = vi.fn(async () => undefined);
+    const vectorDelete = vi.fn(async () => true);
+    const vectorDb = {
+      store: vectorStore,
+      delete: vectorDelete,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = {
+      modelName: "test-model",
+      embed: vi.fn(async (text: string) => {
+        if (text === ruleText) return [1, 0];
+        if (text === mergedRuleText) return [0, 1];
+        throw new Error(`unexpected embed text: ${text}`);
+      }),
+    };
+    const openai = {
+      chat: {
+        completions: {
+          create: async () => ({ choices: [{ message: { content: `RULE: ${ruleText}` } }] }),
+        },
+      },
+    };
+
+    const res = await runReflectionRules(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(res.rulesStored).toBe(0);
+    expect(vectorStore).toHaveBeenCalledTimes(1);
+    expect(vectorDelete).toHaveBeenCalledTimes(1);
+    expect(restoreMergedFactText).toHaveBeenCalledTimes(1);
+    expect(vectorDelete.mock.invocationCallOrder[0]).toBeLessThan(restoreMergedFactText.mock.invocationCallOrder[0]);
   });
 });
 

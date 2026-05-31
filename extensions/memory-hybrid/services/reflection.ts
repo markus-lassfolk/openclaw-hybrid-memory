@@ -125,15 +125,16 @@ function rollbackMergedFactText(
     factId: string;
     mergedText: string;
     appendedText: string;
+    preMergeText?: string | null;
     reason: "merge-reembed-failure" | "vector-store-failure";
   },
-): void {
-  const previousText = derivePreMergeText(opts.mergedText, opts.appendedText);
+): boolean {
+  const previousText = opts.preMergeText ?? derivePreMergeText(opts.mergedText, opts.appendedText);
   if (previousText == null) {
     logger.warn(
       `memory-hybrid: ${opts.context} — failed to derive pre-merge text for fact ${opts.factId.slice(0, 8)} after ${opts.reason}; leaving merged text in place`,
     );
-    return;
+    return false;
   }
   const restoreMergedFactText = (factsDb as FactsDB & { restoreMergedFactText?: (id: string, text: string) => boolean })
     .restoreMergedFactText;
@@ -141,7 +142,7 @@ function rollbackMergedFactText(
     logger.warn(
       `memory-hybrid: ${opts.context} — factsDb.restoreMergedFactText unavailable for fact ${opts.factId.slice(0, 8)} after ${opts.reason}; leaving merged text in place`,
     );
-    return;
+    return false;
   }
   try {
     const restored = restoreMergedFactText.call(factsDb, opts.factId, previousText);
@@ -149,16 +150,30 @@ function rollbackMergedFactText(
       logger.warn(
         `memory-hybrid: ${opts.context} — rollback update did not affect fact ${opts.factId.slice(0, 8)} after ${opts.reason}; leaving merged text in place`,
       );
-      return;
+      return false;
     }
     logger.warn(
       `memory-hybrid: ${opts.context} — rolled back merged text for fact ${opts.factId.slice(0, 8)} after ${opts.reason} to preserve text/vector consistency`,
     );
+    return true;
   } catch (err) {
     logger.warn(
       `memory-hybrid: ${opts.context} — failed to roll back merged text for fact ${opts.factId.slice(0, 8)} after ${opts.reason}: ${err}`,
     );
+    return false;
   }
+}
+
+function reusedExistingStoreEntry(
+  storeResult: {
+    entry: MemoryEntry;
+    embeddingStale?: boolean;
+    newlyStored?: boolean;
+  },
+  candidateText: string,
+): boolean {
+  if (storeResult.newlyStored === false) return true;
+  return storeResult.embeddingStale !== true && storeResult.entry.text !== candidateText;
 }
 
 interface ReflectionMetaResult {
@@ -692,9 +707,8 @@ export async function runReflection(
       continue;
     }
     const entry = storeResult.entry;
-    // Check if store returned an existing fact due to dedupe (text won't match our candidate)
-    // UNLESS it's a merge that updated the text (embeddingStale=true), in which case we must re-embed
-    if (entry.text !== patternText && !storeResult.embeddingStale) {
+    // Skip reused existing facts unless this was a merge update that requires re-embed.
+    if (reusedExistingStoreEntry(storeResult, patternText) && !storeResult.embeddingStale) {
       duplicatesSkipped++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflection — skipped store-level duplicate: ${patternText.slice(0, 60)}...`);
@@ -733,6 +747,7 @@ export async function runReflection(
           factId: entry.id,
           mergedText: entry.text,
           appendedText: patternText,
+          preMergeText: storeResult.preMergeText,
           reason: "merge-reembed-failure",
         });
       }
@@ -761,8 +776,15 @@ export async function runReflection(
           factId: entry.id,
           mergedText: entry.text,
           appendedText: patternText,
+          preMergeText: storeResult.preMergeText,
           reason: "vector-store-failure",
         });
+        continue;
+      }
+      if (storeResult.newlyStored === false) {
+        logger.warn(
+          `memory-hybrid: reflection — preserving existing pattern fact ${entry.id.slice(0, 8)} after vector store failure on reused entry`,
+        );
         continue;
       }
       if (!storeResult.embeddingStale) {
@@ -815,13 +837,6 @@ export async function runReflection(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
-          rollbackMergedFactText(factsDb, logger, {
-            context: "reflection",
-            factId: entry.id,
-            mergedText: entry.text,
-            appendedText: patternText,
-            reason: "vector-store-failure",
-          });
           try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
@@ -829,6 +844,14 @@ export async function runReflection(
               `memory-hybrid: reflection — failed to delete Lance vector for pattern fact ${entry.id.slice(0, 8)} during merge rollback: ${vecErr}`,
             );
           }
+          rollbackMergedFactText(factsDb, logger, {
+            context: "reflection",
+            factId: entry.id,
+            mergedText: entry.text,
+            appendedText: patternText,
+            preMergeText: storeResult.preMergeText,
+            reason: "vector-store-failure",
+          });
           vectorStored = false;
           continue;
         }
@@ -1186,9 +1209,8 @@ export async function runReflectionRules(
       continue;
     }
     const entry = storeResult.entry;
-    // Check if store returned an existing fact due to dedupe (text won't match our candidate)
-    // UNLESS it's a merge that updated the text (embeddingStale=true), in which case we must re-embed
-    if (entry.text !== ruleText && !storeResult.embeddingStale) {
+    // Skip reused existing facts unless this was a merge update that requires re-embed.
+    if (reusedExistingStoreEntry(storeResult, ruleText) && !storeResult.embeddingStale) {
       storeLevelDuplicates++;
       rulesDuplicatesSkipped++;
       if (opts.verbose) {
@@ -1229,6 +1251,7 @@ export async function runReflectionRules(
           factId: entry.id,
           mergedText: entry.text,
           appendedText: ruleText,
+          preMergeText: storeResult.preMergeText,
           reason: "merge-reembed-failure",
         });
         continue;
@@ -1260,8 +1283,15 @@ export async function runReflectionRules(
           factId: entry.id,
           mergedText: entry.text,
           appendedText: ruleText,
+          preMergeText: storeResult.preMergeText,
           reason: "vector-store-failure",
         });
+        continue;
+      }
+      if (storeResult.newlyStored === false) {
+        logger.warn(
+          `memory-hybrid: reflect-rules — preserving existing rule fact ${entry.id.slice(0, 8)} after vector store failure on reused entry`,
+        );
         continue;
       }
       if (!storeResult.embeddingStale) {
@@ -1315,13 +1345,6 @@ export async function runReflectionRules(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
-          rollbackMergedFactText(factsDb, logger, {
-            context: "reflect-rules",
-            factId: entry.id,
-            mergedText: entry.text,
-            appendedText: ruleText,
-            reason: "vector-store-failure",
-          });
           try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
@@ -1329,6 +1352,14 @@ export async function runReflectionRules(
               `memory-hybrid: reflect-rules — failed to delete Lance vector for rule fact ${entry.id.slice(0, 8)} during merge rollback: ${vecErr}`,
             );
           }
+          rollbackMergedFactText(factsDb, logger, {
+            context: "reflect-rules",
+            factId: entry.id,
+            mergedText: entry.text,
+            appendedText: ruleText,
+            preMergeText: storeResult.preMergeText,
+            reason: "vector-store-failure",
+          });
           vectorStored = false;
           continue;
         }
@@ -1630,9 +1661,8 @@ export async function runReflectionMeta(
       continue;
     }
     const entry = storeResult.entry;
-    // Check if store returned an existing fact due to dedupe (text won't match our candidate)
-    // UNLESS it's a merge that updated the text (embeddingStale=true), in which case we must re-embed
-    if (entry.text !== metaText && !storeResult.embeddingStale) {
+    // Skip reused existing facts unless this was a merge update that requires re-embed.
+    if (reusedExistingStoreEntry(storeResult, metaText) && !storeResult.embeddingStale) {
       metaDuplicatesSkipped++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-meta — skipped store-level duplicate: ${metaText.slice(0, 50)}...`);
@@ -1672,6 +1702,7 @@ export async function runReflectionMeta(
           factId: entry.id,
           mergedText: entry.text,
           appendedText: metaText,
+          preMergeText: storeResult.preMergeText,
           reason: "merge-reembed-failure",
         });
         continue;
@@ -1703,8 +1734,15 @@ export async function runReflectionMeta(
           factId: entry.id,
           mergedText: entry.text,
           appendedText: metaText,
+          preMergeText: storeResult.preMergeText,
           reason: "vector-store-failure",
         });
+        continue;
+      }
+      if (storeResult.newlyStored === false) {
+        logger.warn(
+          `memory-hybrid: reflect-meta — preserving existing meta-pattern fact ${entry.id.slice(0, 8)} after vector store failure on reused entry`,
+        );
         continue;
       }
       if (!storeResult.embeddingStale) {
@@ -1757,13 +1795,6 @@ export async function runReflectionMeta(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
-          rollbackMergedFactText(factsDb, logger, {
-            context: "reflect-meta",
-            factId: entry.id,
-            mergedText: entry.text,
-            appendedText: metaText,
-            reason: "vector-store-failure",
-          });
           try {
             await vectorDb.delete(entry.id);
           } catch (vecErr) {
@@ -1771,6 +1802,14 @@ export async function runReflectionMeta(
               `memory-hybrid: reflect-meta — failed to delete Lance vector for meta-pattern fact ${entry.id.slice(0, 8)} during merge rollback: ${vecErr}`,
             );
           }
+          rollbackMergedFactText(factsDb, logger, {
+            context: "reflect-meta",
+            factId: entry.id,
+            mergedText: entry.text,
+            appendedText: metaText,
+            preMergeText: storeResult.preMergeText,
+            reason: "vector-store-failure",
+          });
           vectorStored = false;
           continue;
         }
