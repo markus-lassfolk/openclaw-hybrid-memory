@@ -71,7 +71,6 @@ const CANONICAL_LABEL_MAP: Array<{ match: RegExp; label: EntityMentionLabel; can
     canonicalNormalized: "openclaw-hybrid-memory",
   },
   { match: /^(forge|scholar|maeve|ralph)$/i, label: "AGENT", canonicalNormalized: "" },
-  { match: /^(surgeon|council)$/i, label: "ROLE", canonicalNormalized: "" },
 ];
 
 const ACRONYM_ALLOWLIST = new Map<string, EntityMentionLabel>([

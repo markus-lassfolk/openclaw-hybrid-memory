@@ -94,6 +94,7 @@ const MIN_ENTITY_MENTION_LENGTH = 3;
 const NON_ORG_SERVICE_TERMS = new Set(["signal", "telegram", "whatsapp"]);
 const NON_ENTITY_ORG_TERMS = new Set(["hybrid memory plugin", "the agent", "the system"]);
 const PERSON_ROLE_TITLES = new Set(["architect", "developer", "director", "engineer", "manager", "surgeon"]);
+const KNOWN_TWO_CHAR_MENTIONS = new Set(["gh", "jq", "ha"]);
 
 function normalizeMentionSurfaceText(surfaceText: string): string {
   return surfaceText.trim();
@@ -103,6 +104,10 @@ function isValidTwoCharacterMention(mention: { label: EntityMentionLabel; surfac
   const surface = mention.surfaceText.trim();
   if (surface.length !== 2) {
     return false;
+  }
+
+  if (KNOWN_TWO_CHAR_MENTIONS.has(surface.toLowerCase())) {
+    return true;
   }
 
   if (mention.label === "PERSON") {
@@ -142,7 +147,11 @@ function shouldFilterEntityMention(mention: {
     return NON_ORG_SERVICE_TERMS.has(stopWordKey) || NON_ENTITY_ORG_TERMS.has(stopWordKey);
   }
 
-  return !mention.normalizedSurface.includes(" ") && PERSON_ROLE_TITLES.has(stopWordKey);
+  if (mention.label !== "ORG" && !mention.normalizedSurface.includes(" ") && PERSON_ROLE_TITLES.has(stopWordKey)) {
+    return true;
+  }
+
+  return false;
 }
 
 function isContainedByLongerMention(
