@@ -141,12 +141,19 @@ export type ManageContext = {
     limit: number;
     dryRun: boolean;
     model?: string;
+    all?: boolean;
     verbose?: boolean;
     onProgress?: (progress: import("../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
   }) => Promise<{
     pending: number;
+    pendingTotal?: number;
+    pendingByTier?: { hot: number; warm: number; structural: number; cold: number; unknown: number };
     processed: number;
     factsEnriched: number;
+    mode?: "bounded" | "all";
+    effectiveLimit?: number | "all";
+    remainingTotal?: number;
+    estimatedRunsRemaining?: number;
     skipped?: boolean;
     pendingFactIds?: string[];
     enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
