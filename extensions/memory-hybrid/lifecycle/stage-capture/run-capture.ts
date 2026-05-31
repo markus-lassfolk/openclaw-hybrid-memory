@@ -223,11 +223,7 @@ export async function runCapture(
     }
   }
 
-  // 4. Centralized session state cleanup (Issue #463)
-  clearSessionState(sessionKey);
-  api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
-
-  // 5. Compaction on session end
+  // 4. Compaction on session end
   if (isStaleLifecycleGeneration(ctx)) return;
   if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.compactionOnSessionEnd) {
     try {
@@ -258,6 +254,11 @@ export async function runCapture(
     }
   }
   if (abortIfSuperseded("post-compaction")) return;
+
+  // 5. Centralized session state cleanup (Issue #463)
+  // Moved here to ensure it only runs after compaction and supersession checks
+  clearSessionState(sessionKey);
+  api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
 
   // 6. Auto-capture from conversation messages
   if (isStaleLifecycleGeneration(ctx)) return;

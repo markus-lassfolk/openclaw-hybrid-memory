@@ -73,7 +73,28 @@ export function canReuseDatabasesOnReregister(
   if (!old.bootstrapSettledRef || old.bootstrapSettledRef.value !== true) return false;
   const nextSqlite = api.resolvePath(cfg.sqlitePath);
   const nextLance = api.resolvePath(cfg.lanceDbPath);
-  return old.resolvedSqlitePath === nextSqlite && old.resolvedLancePath === nextLance;
+  if (old.resolvedSqlitePath !== nextSqlite || old.resolvedLancePath !== nextLance) return false;
+  
+  // Compare embedding config to detect provider/model/endpoint changes that require rebuilding clients
+  const oldCfg = old.cfg;
+  if (
+    oldCfg.embedding.provider !== cfg.embedding.provider ||
+    oldCfg.embedding.model !== cfg.embedding.model ||
+    oldCfg.embedding.endpoint !== cfg.embedding.endpoint ||
+    oldCfg.embedding.apiKey !== cfg.embedding.apiKey
+  ) {
+    return false;
+  }
+  
+  // Compare LLM config to detect model/provider changes that require rebuilding openai client
+  const oldLlm = oldCfg.llm;
+  const newLlm = cfg.llm;
+  if (JSON.stringify(oldLlm?.default) !== JSON.stringify(newLlm?.default)) return false;
+  if (JSON.stringify(oldLlm?.heavy) !== JSON.stringify(newLlm?.heavy)) return false;
+  if (JSON.stringify(oldLlm?.nano) !== JSON.stringify(newLlm?.nano)) return false;
+  if (JSON.stringify(oldLlm?.providers) !== JSON.stringify(newLlm?.providers)) return false;
+  
+  return true;
 }
 
 /** Snapshot of initializeDatabases() return shape for register-plugin when reusing handles. */
