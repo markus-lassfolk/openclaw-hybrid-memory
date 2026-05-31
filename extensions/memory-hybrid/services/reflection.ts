@@ -855,6 +855,37 @@ export async function runReflection(
           vectorStored = false;
           continue;
         }
+        // For new inserts, clean up the partial state
+        if (storeResult.newlyStored !== false) {
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflection — failed to delete Lance vector for pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+            );
+          }
+          try {
+            factsDb.delete(entry.id);
+          } catch (deleteErr) {
+            logger.warn(
+              `memory-hybrid: reflection — failed to delete pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${deleteErr}`,
+            );
+          }
+          if (provenanceService) {
+            try {
+              provenanceService.deleteEdgesByFactId(entry.id);
+            } catch (provErr) {
+              logger.warn(
+                `memory-hybrid: reflection — failed to clean up provenance for pattern fact ${entry.id.slice(0, 8)}: ${provErr}`,
+              );
+            }
+          }
+          logger.warn(
+            `memory-hybrid: reflection — deleted pattern fact ${entry.id.slice(0, 8)} after metadata failure to prevent partial store`,
+          );
+        }
+        vectorStored = false;
+        continue;
       }
     }
     if (vectorStored) {
@@ -879,6 +910,9 @@ export async function runReflection(
         const existingIndex = existingPatternFacts.findIndex((f) => f.id === entry.id);
         if (existingIndex >= 0 && existingIndex < existingVectors.length) {
           existingVectors[existingIndex] = normalizeVector(vectorToStore);
+        } else {
+          // Fact was inserted earlier in this loop, not in pre-run snapshot
+          existingVectors.push(normalizeVector(vectorToStore));
         }
       } else {
         existingVectors.push(normalizeVector(vectorToStore));
@@ -1364,6 +1398,37 @@ export async function runReflectionRules(
           vectorStored = false;
           continue;
         }
+        // For new inserts, clean up the partial state
+        if (storeResult.newlyStored !== false) {
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflect-rules — failed to delete Lance vector for rule fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+            );
+          }
+          try {
+            factsDb.delete(entry.id);
+          } catch (deleteErr) {
+            logger.warn(
+              `memory-hybrid: reflect-rules — failed to delete rule fact ${entry.id.slice(0, 8)} after metadata failure: ${deleteErr}`,
+            );
+          }
+          if (provenanceService) {
+            try {
+              provenanceService.deleteEdgesByFactId(entry.id);
+            } catch (provErr) {
+              logger.warn(
+                `memory-hybrid: reflect-rules — failed to clean up provenance for rule fact ${entry.id.slice(0, 8)}: ${provErr}`,
+              );
+            }
+          }
+          logger.warn(
+            `memory-hybrid: reflect-rules — deleted rule fact ${entry.id.slice(0, 8)} after metadata failure to prevent partial store`,
+          );
+        }
+        vectorStored = false;
+        continue;
       }
     }
     if (vectorStored) {
@@ -1388,6 +1453,9 @@ export async function runReflectionRules(
         const existingIndex = existingRuleFacts.findIndex((f) => f.id === entry.id);
         if (existingIndex >= 0 && existingIndex < existingVectors.length) {
           existingVectors[existingIndex] = normalizeVector(vectorToStore);
+        } else {
+          // Fact was inserted earlier in this loop, not in pre-run snapshot
+          existingVectors.push(normalizeVector(vectorToStore));
         }
       } else {
         existingVectors.push(normalizeVector(vectorToStore));
@@ -1823,6 +1891,37 @@ export async function runReflectionMeta(
           vectorStored = false;
           continue;
         }
+        // For new inserts, clean up the partial state
+        if (storeResult.newlyStored !== false) {
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflect-meta — failed to delete Lance vector for meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+            );
+          }
+          try {
+            factsDb.delete(entry.id);
+          } catch (deleteErr) {
+            logger.warn(
+              `memory-hybrid: reflect-meta — failed to delete meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${deleteErr}`,
+            );
+          }
+          if (provenanceService) {
+            try {
+              provenanceService.deleteEdgesByFactId(entry.id);
+            } catch (provErr) {
+              logger.warn(
+                `memory-hybrid: reflect-meta — failed to clean up provenance for meta-pattern fact ${entry.id.slice(0, 8)}: ${provErr}`,
+              );
+            }
+          }
+          logger.warn(
+            `memory-hybrid: reflect-meta — deleted meta-pattern fact ${entry.id.slice(0, 8)} after metadata failure to prevent partial store`,
+          );
+        }
+        vectorStored = false;
+        continue;
       }
     }
     if (vectorStored) {
@@ -1847,6 +1946,9 @@ export async function runReflectionMeta(
         const existingIndex = existingMetaFacts.findIndex((f) => f.id === entry.id);
         if (existingIndex >= 0 && existingIndex < existingVectors.length) {
           existingVectors[existingIndex] = normalizeVector(vectorToStore);
+        } else {
+          // Fact was inserted earlier in this loop, not in pre-run snapshot
+          existingVectors.push(normalizeVector(vectorToStore));
         }
       } else {
         existingVectors.push(normalizeVector(vectorToStore));
