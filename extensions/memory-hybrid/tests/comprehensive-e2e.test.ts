@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { _testing } from "../index.js";
-import { resetPluginRegistrationStateForTests } from "../setup/register-plugin.js";
+import { resetPluginRegistrationStateForTests, runtimeRef } from "../setup/register-plugin.js";
 import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
   E2E_EMBEDDING_DIM,
@@ -85,6 +85,8 @@ describe("Comprehensive e2e — full plugin register()", () => {
 
     it("survives hot reload (second register closes prior runtime)", async () => {
       register();
+      const bootstrap = runtimeRef.value?.bootstrapAsyncInit;
+      if (bootstrap) await bootstrap.catch(() => {});
       const store = api.getTool("memory_store")!;
       const stored = (await store.execute("c1", {
         text: "Survives plugin hot reload",

@@ -38,7 +38,10 @@ import {
   applyGatewayEmbeddingInheritanceBeforeParse,
   shallowClonePluginConfigForGatewayMerge,
 } from "./provider-router.js";
-import { getHybridMemoryRegistrationState, resetHybridMemoryRegistrationStateForTests } from "./hybrid-memory-generation-state.js";
+import {
+  getHybridMemoryRegistrationState,
+  resetHybridMemoryRegistrationStateForTests,
+} from "./hybrid-memory-generation-state.js";
 import {
   blockReloadTeardownBeforeOpen,
   drainOldBootstrap,
