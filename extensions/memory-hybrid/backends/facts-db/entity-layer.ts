@@ -561,6 +561,7 @@ function processEntityMentionsForFact<
     }
     const key = makeEntityMentionKey(canonical.label, canonical.normalizedSurface);
     const existing = acceptedByKey.get(key);
+    const wasReclassified = canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface;
     if (existing) {
       duplicates++;
       if (canonical.confidence > existing.confidence) {
@@ -571,6 +572,9 @@ function processEntityMentionsForFact<
           confidence: canonical.confidence,
           sourceRow: row,
         });
+        if (wasReclassified) {
+          reclassified++;
+        }
       }
     } else {
       acceptedByKey.set(key, {
@@ -581,9 +585,9 @@ function processEntityMentionsForFact<
         sourceRow: row,
       });
       accepted++;
-    }
-    if (canonical.label !== row.label || canonical.normalizedSurface !== row.normalized_surface) {
-      reclassified++;
+      if (wasReclassified) {
+        reclassified++;
+      }
     }
   }
 
@@ -778,8 +782,11 @@ export function cleanupEntityMentions(
         removedRows += Math.max(0, rows.length - nextRows.length);
         if (options.apply) {
           if (nextRows.length === 0) {
-            replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
-            db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
+            const tx = createTransaction(db, () => {
+              replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
+              db.prepare("UPDATE facts SET entity_enrichment_at = NULL WHERE id = ?").run(fact.fact_id);
+            });
+            tx();
           } else {
             replaceFactEntityMentions(db, fact.fact_id, nextRows, { preserveEnrichmentTimestamp: true });
           }
