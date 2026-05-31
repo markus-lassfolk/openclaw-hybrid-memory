@@ -365,6 +365,7 @@ export function listFactIdsForOrg(db: DatabaseSync, orgId: string, limit: number
 function buildEntityEnrichmentPendingBaseSql(): string {
   return `SELECT f.id FROM facts f
       WHERE f.superseded_at IS NULL
+        AND (f.expires_at IS NULL OR f.expires_at > ?)
         AND length(f.text) >= ?
         AND f.entity_enrichment_at IS NULL
       ORDER BY
@@ -388,10 +389,11 @@ export function listFactsNeedingEnrichment(
   minTextLen: number,
   options?: ListFactsNeedingEnrichmentOptions,
 ): string[] {
+  const nowSec = Math.floor(Date.now() / 1000);
   const sql = options?.all
     ? buildEntityEnrichmentPendingBaseSql()
     : `${buildEntityEnrichmentPendingBaseSql()}\n      LIMIT ?`;
-  const rows = (options?.all ? db.prepare(sql).all(minTextLen) : db.prepare(sql).all(minTextLen, limit)) as Array<{
+  const rows = (options?.all ? db.prepare(sql).all(nowSec, minTextLen) : db.prepare(sql).all(nowSec, minTextLen, limit)) as Array<{
     id: string;
   }>;
   return rows.map((r) => r.id);
@@ -401,6 +403,7 @@ export function getEntityEnrichmentBacklogSummary(
   db: DatabaseSync,
   minTextLen: number,
 ): EntityEnrichmentBacklogSummary {
+  const nowSec = Math.floor(Date.now() / 1000);
   const row = db
     .prepare(
       `SELECT
@@ -412,10 +415,11 @@ export function getEntityEnrichmentBacklogSummary(
          SUM(CASE WHEN COALESCE(f.tier, 'warm') NOT IN ('hot', 'warm', 'structural', 'cold') THEN 1 ELSE 0 END) AS unknown
        FROM facts f
        WHERE f.superseded_at IS NULL
+         AND (f.expires_at IS NULL OR f.expires_at > ?)
          AND length(f.text) >= ?
          AND f.entity_enrichment_at IS NULL`,
     )
-    .get(minTextLen) as
+    .get(nowSec, minTextLen) as
     | {
         total: number | null;
         hot: number | null;
