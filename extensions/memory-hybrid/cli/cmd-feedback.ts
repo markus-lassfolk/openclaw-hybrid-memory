@@ -334,7 +334,12 @@ export function cleanupImplicitFeedbackDuplicates(
 // extract-implicit-feedback
 // ---------------------------------------------------------------------------
 
-export type ExtractImplicitFeedbackStopReason = "maxWallClock" | "maxSessions" | "maxSignals" | "maxTrajectories";
+export type ExtractImplicitFeedbackStopReason =
+  | "maxWallClock"
+  | "maxSessions"
+  | "maxSignals"
+  | "maxTrajectories"
+  | "reinforcementError";
 
 class ImplicitFeedbackWallClockExceededError extends Error {
   constructor() {
@@ -647,12 +652,15 @@ export async function runExtractImplicitFeedbackForCli(
         ) => {
           const trackContext = cfg.reinforcement?.trackContext !== false;
           const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
-          for (const item of pending) {
+          // Snapshot dedupe against pre-existing reinforcement rows only.
+          // We intentionally avoid re-checking after each insert so trackContext=false
+          // batches can apply multiple distinct boosts for the same fact/session.
+          const skipByExisting = pending.map((item) => alreadyRecordedPositiveReinforcement(item.factId, item.context));
+          for (const [index, item] of pending.entries()) {
             if (wallClockLimitReached()) {
               throw new ImplicitFeedbackWallClockExceededError();
             }
-            const alreadyReinforcedForSignal = alreadyRecordedPositiveReinforcement(item.factId, item.context);
-            if (alreadyReinforcedForSignal) continue;
+            if (skipByExisting[index]) continue;
             factsDb.reinforceFact(item.factId, item.quoteSnippet, item.context, {
               trackContext,
               maxEventsPerFact,
@@ -1154,10 +1162,10 @@ export async function runExtractImplicitFeedbackForCli(
         }
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "runExtractImplicitFeedbackForCli:feed-reinforcement",
-          severity: "info",
+          severity: "warning",
           subsystem: "implicit-feedback",
         });
-        markPartialProgress("maxSessions", deferredIncludingCurrentSession());
+        markPartialProgress("reinforcementError", deferredIncludingCurrentSession());
         break;
       }
     }

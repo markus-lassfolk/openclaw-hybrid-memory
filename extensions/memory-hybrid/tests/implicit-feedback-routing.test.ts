@@ -149,6 +149,52 @@ function writeNegativeSession(sessionsDir: string, filename: string) {
   writeFileSync(join(sessionsDir, filename), lines.join("\n"), "utf-8");
 }
 
+/** Write a session with two distinct grateful closes in one file. */
+function writeDoublePositiveSession(sessionsDir: string, filename: string) {
+  const lines = [
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "Can you explain async await TypeScript patterns for API retries?" }],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Use an async await TypeScript pattern with retry and backoff for API calls.",
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "Perfect, that retry pattern helped. Thanks!" }] },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Great. The async await TypeScript pattern also works for sequential API workflows.",
+          },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: { role: "user", content: [{ type: "text", text: "Awesome, thanks again for the async walkthrough!" }] },
+    }),
+  ];
+  writeFileSync(join(sessionsDir, filename), lines.join("\n"), "utf-8");
+}
+
 /** Write a session long enough to produce a trajectory. */
 function writeTrajectorySession(sessionsDir: string, filename: string) {
   const lines = [
@@ -273,6 +319,46 @@ describe("implicit feedback routing — positive → reinforcement", () => {
     // No reinforcement_log entries should have been created.
     const logRows = rawDb(db).prepare("SELECT COUNT(*) as cnt FROM reinforcement_log").get() as { cnt: number };
     expect(logRows.cnt).toBe(0);
+  });
+
+  it("applies multiple distinct positive boosts for the same fact/session when trackContext=false", async () => {
+    const db = makeDb(tmpDir);
+    const fact = db.store({
+      text: "async await TypeScript pattern for api retry and sequential workflows",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    writeDoublePositiveSession(sessionsDir, "2026-01-01-session.jsonl");
+
+    const ctx = makeCtx(db, sessionsDir, {
+      minConfidence: 0.0,
+      signalTypes: ["grateful_close"],
+      feedToReinforcement: true,
+      feedToSelfCorrection: false,
+    });
+    ctx.cfg.reinforcement = {
+      ...(ctx.cfg.reinforcement ?? {}),
+      enabled: true,
+      trackContext: false,
+      maxEventsPerFact: 50,
+    } as HybridMemoryConfig["reinforcement"];
+
+    const result = await runExtractImplicitFeedbackForCli(ctx, {
+      days: 365,
+      dryRun: false,
+      includeTrajectories: false,
+      includeClosedLoop: false,
+    });
+
+    expect(result.positiveCount).toBe(2);
+    const eventCount = rawDb(db)
+      .prepare("SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ? AND session_file = ?")
+      .get(fact.id, "2026-01-01-session.jsonl") as { cnt: number };
+    expect(eventCount.cnt).toBe(2);
   });
 
   it("rolls back interrupted reinforcement work when wall-clock stops mid-session and reruns", async () => {
@@ -547,6 +633,45 @@ describe("implicit feedback routing — positive → reinforcement", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("marks reinforcement failures as partial without advancing session accounting after trajectories persist", async () => {
+    const db = makeDb(tmpDir);
+    db.store({
+      text: "set entry to src/index.js and output to dist in webpack configuration",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    writeTrajectorySession(sessionsDir, "2026-01-01-session.jsonl");
+
+    vi.spyOn(db, "reinforceFact").mockImplementation(() => {
+      throw new Error("reinforcement apply failed");
+    });
+
+    const ctx = makeCtx(db, sessionsDir, {
+      feedToReinforcement: true,
+      feedToSelfCorrection: false,
+    });
+    const result = await runExtractImplicitFeedbackForCli(ctx, {
+      days: 365,
+      dryRun: false,
+      includeClosedLoop: false,
+    });
+
+    expect(result.partial).toBe(true);
+    expect(result.partialReason).toBe("reinforcementError");
+    expect(result.sessionsProcessed).toBe(0);
+    expect(result.sessionsDeferred).toBe(1);
+    expect(result.trajectoriesBuilt).toBe(1);
+    const trajectoryRows = rawDb(db).prepare("SELECT COUNT(*) as cnt FROM feedback_trajectories").get() as {
+      cnt: number;
+    };
+    expect(trajectoryRows.cnt).toBe(1);
+    expect(db.getScanCursor("extract-implicit-feedback")).toBeNull();
   });
 });
 
