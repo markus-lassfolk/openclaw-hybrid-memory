@@ -601,7 +601,10 @@ export async function runExtractImplicitFeedbackForCli(
 
     // Check if trajectory cap would be exceeded by this session's trajectories BEFORE phase one work
     if (maxTrajectoriesPerRun > 0 && trajectoriesBuilt + trajectories.length > maxTrajectoriesPerRun) {
-      markPartialProgress("maxTrajectories");
+      // BUG FIX #1: Set lastProcessedFilePath so cursor advances past this session, preventing infinite stall
+      lastProcessedFilePath = filePath;
+      // BUG FIX #2: Account for the currently visited but unprocessed session in deferred count
+      markPartialProgress("maxTrajectories", filePaths.length - progress.sessionsVisited + 1);
       break;
     }
 
@@ -618,7 +621,10 @@ export async function runExtractImplicitFeedbackForCli(
 
     // Check if signal cap would be exceeded by this session's signals
     if (maxSignalsPerRun > 0 && totalSignals + signals.length > maxSignalsPerRun) {
-      markPartialProgress("maxSignals");
+      // BUG FIX #1: Set lastProcessedFilePath so cursor advances past this session, preventing infinite stall
+      lastProcessedFilePath = filePath;
+      // BUG FIX #2: Account for the currently visited but unprocessed session in deferred count
+      markPartialProgress("maxSignals", filePaths.length - progress.sessionsVisited + 1);
       break;
     }
 
