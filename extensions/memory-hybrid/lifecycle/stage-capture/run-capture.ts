@@ -41,11 +41,7 @@ import type { LifecycleContext, SessionState } from "../types.js";
 const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
 function suppressCaptureStageError(ctx: LifecycleContext, api: ClawdbotPluginApi, err: unknown): boolean {
-  if (!isRecallContextSuperseded(ctx)) return false;
-  if (!shouldSuppressStaleLifecycleError(ctx, err)) {
-    api.logger.debug?.("memory-hybrid: capture skipped (registration superseded during reload)");
-    return true;
-  }
+  if (!shouldSuppressStaleLifecycleError(ctx, err)) return false;
   api.logger.debug?.("memory-hybrid: capture skipped (registration superseded during reload)");
   return true;
 }
