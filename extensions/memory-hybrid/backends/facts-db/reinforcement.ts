@@ -71,31 +71,29 @@ export function reinforceFact(
       "UPDATE facts SET reinforced_count = reinforced_count + ?, last_reinforced_at = ?, reinforced_quotes = ? WHERE id = ?",
     ).run(boostAmount, nowSec, quotesJson, id);
 
-    if (trackContext) {
-      const eventId = randomUUID();
-      db.prepare(
-        `INSERT INTO reinforcement_log (id, fact_id, signal, query_snippet, topic, tool_sequence, session_file, occurred_at)
-         VALUES (?, ?, 'positive', ?, ?, ?, ?, ?)`,
-      ).run(
-        eventId,
-        id,
-        context?.querySnippet ?? null,
-        context?.topic ?? null,
-        context?.toolSequence ? JSON.stringify(context.toolSequence) : null,
-        context?.sessionFile ?? null,
-        nowSec,
-      );
+    const eventId = randomUUID();
+    db.prepare(
+      `INSERT INTO reinforcement_log (id, fact_id, signal, query_snippet, topic, tool_sequence, session_file, occurred_at)
+       VALUES (?, ?, 'positive', ?, ?, ?, ?, ?)`,
+    ).run(
+      eventId,
+      id,
+      context?.querySnippet ?? null,
+      context?.topic ?? null,
+      trackContext && context?.toolSequence ? JSON.stringify(context.toolSequence) : null,
+      context?.sessionFile ?? null,
+      nowSec,
+    );
 
-      const countRow = db.prepare("SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ?").get(id) as {
-        cnt: number;
-      };
-      if (countRow.cnt > maxEventsPerFact) {
-        db.prepare(
-          `DELETE FROM reinforcement_log WHERE fact_id = ? AND id NOT IN (
-             SELECT id FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC, rowid DESC LIMIT ?
-           )`,
-        ).run(id, id, maxEventsPerFact);
-      }
+    const countRow = db.prepare("SELECT COUNT(*) as cnt FROM reinforcement_log WHERE fact_id = ?").get(id) as {
+      cnt: number;
+    };
+    if (countRow.cnt > maxEventsPerFact) {
+      db.prepare(
+        `DELETE FROM reinforcement_log WHERE fact_id = ? AND id NOT IN (
+           SELECT id FROM reinforcement_log WHERE fact_id = ? ORDER BY occurred_at DESC, rowid DESC LIMIT ?
+         )`,
+      ).run(id, id, maxEventsPerFact);
     }
 
     return true;
