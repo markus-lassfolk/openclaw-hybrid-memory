@@ -393,7 +393,9 @@ export function listFactsNeedingEnrichment(
   const sql = options?.all
     ? buildEntityEnrichmentPendingBaseSql()
     : `${buildEntityEnrichmentPendingBaseSql()}\n      LIMIT ?`;
-  const rows = (options?.all ? db.prepare(sql).all(nowSec, minTextLen) : db.prepare(sql).all(nowSec, minTextLen, limit)) as Array<{
+  const rows = (
+    options?.all ? db.prepare(sql).all(nowSec, minTextLen) : db.prepare(sql).all(nowSec, minTextLen, limit)
+  ) as Array<{
     id: string;
   }>;
   return rows.map((r) => r.id);
