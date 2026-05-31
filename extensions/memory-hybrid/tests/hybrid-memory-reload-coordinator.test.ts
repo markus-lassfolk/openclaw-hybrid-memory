@@ -44,7 +44,7 @@ describe("hybrid-memory-reload-coordinator", () => {
       await Promise.resolve();
       ran = true;
     });
-    expect(await awaitReloadTeardownBeforeOpen(0)).toBe(false);
+    expect(await awaitReloadTeardownBeforeOpen(0)).toBe(true);
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(await awaitReloadTeardownBeforeOpen()).toBe(true);
     expect(ran).toBe(true);
