@@ -132,14 +132,14 @@ export async function runEntityEnrichmentForCli(
         }
       }
     }
-    const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
+    const remainingTotal = pendingTotal - processed;
     opts.onProgress?.({
       processed,
       total: ids.length,
       factsEnriched,
       pendingTotal,
-      remainingTotal: currentBacklog.total,
-      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(currentBacklog.total / Math.max(1, limit)),
+      remainingTotal,
+      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)),
       mode,
     });
   }
