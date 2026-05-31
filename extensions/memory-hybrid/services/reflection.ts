@@ -635,7 +635,8 @@ export async function runReflection(
     }
     const entry = storeResult.entry;
     // Check if store returned an existing fact due to dedupe (text won't match our candidate)
-    if (entry.text !== patternText) {
+    // UNLESS it's a merge that updated the text (embeddingStale=true), in which case we must re-embed
+    if (entry.text !== patternText && !storeResult.embeddingStale) {
       duplicatesSkipped++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflection — skipped store-level duplicate: ${patternText.slice(0, 60)}...`);
@@ -670,10 +671,13 @@ export async function runReflection(
         `memory-hybrid: reflection — stored pattern (importance ${REFLECTION_IMPORTANCE}): ${patternText.slice(0, 80)}${patternText.length > 80 ? "..." : ""}`,
       );
     }
+    // If embeddingStale=true (merge path), re-embed the updated merged text
+    const textToEmbed = storeResult.embeddingStale ? entry.text : patternText;
+    const vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
     try {
       await vectorDb.store({
-        text: patternText,
-        vector: vec,
+        text: textToEmbed,
+        vector: vectorToStore,
         importance: REFLECTION_IMPORTANCE,
         category: "pattern",
         id: entry.id,
@@ -682,7 +686,7 @@ export async function runReflection(
         factsDb,
         entry.id,
         embeddings.modelName,
-        vec,
+        vectorToStore,
         "reflection-fact-embeddings",
         "reflection",
         logger.warn?.bind(logger),
@@ -696,7 +700,7 @@ export async function runReflection(
         factId: entry.id,
       });
     }
-    existingVectors.push(normVec);
+    existingVectors.push(normalizeVector(vectorToStore));
     stored++;
 
     // Progress logging during per-candidate dedupe (every 3 candidates or at the end)
@@ -875,14 +879,14 @@ export async function runReflectionRules(
     const zeroRulesReason =
       trimmedResponse.length === 0
         ? "empty_model_response"
-        : looksLikeValidNoRules
-          ? "valid_no_actionable_rules"
-          : parseableLines > 0 && rejectedDuplicates > 0 && rejectedLowConfidence === 0 && rejectedLength === 0
-            ? "all_candidates_duplicate"
-            : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
-              ? "all_candidates_rejected_length"
-              : parseableLines > 0
-                ? "all_candidates_rejected"
+        : parseableLines > 0 && rejectedDuplicates > 0 && rejectedLowConfidence === 0 && rejectedLength === 0
+          ? "all_candidates_duplicate"
+          : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
+            ? "all_candidates_rejected_length"
+            : parseableLines > 0
+              ? "all_candidates_rejected"
+              : looksLikeValidNoRules
+                ? "valid_no_actionable_rules"
                 : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
@@ -1015,7 +1019,8 @@ export async function runReflectionRules(
     }
     const entry = storeResult.entry;
     // Check if store returned an existing fact due to dedupe (text won't match our candidate)
-    if (entry.text !== ruleText) {
+    // UNLESS it's a merge that updated the text (embeddingStale=true), in which case we must re-embed
+    if (entry.text !== ruleText && !storeResult.embeddingStale) {
       storeLevelDuplicates++;
       rulesDuplicatesSkipped++;
       if (opts.verbose) {
@@ -1051,10 +1056,13 @@ export async function runReflectionRules(
         `memory-hybrid: reflect-rules — stored rule: ${ruleText.slice(0, 100)}${ruleText.length > 100 ? "..." : ""}`,
       );
     }
+    // If embeddingStale=true (merge path), re-embed the updated merged text
+    const textToEmbed = storeResult.embeddingStale ? entry.text : ruleText;
+    const vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
     try {
       await vectorDb.store({
-        text: ruleText,
-        vector: vec,
+        text: textToEmbed,
+        vector: vectorToStore,
         importance: REFLECTION_IMPORTANCE,
         category: "rule",
         id: entry.id,
@@ -1063,7 +1071,7 @@ export async function runReflectionRules(
         factsDb,
         entry.id,
         embeddings.modelName,
-        vec,
+        vectorToStore,
         "reflection-fact-embeddings",
         "reflection",
         logger.warn?.bind(logger),
@@ -1077,7 +1085,7 @@ export async function runReflectionRules(
         factId: entry.id,
       });
     }
-    existingVectors.push(normVec);
+    existingVectors.push(normalizeVector(vectorToStore));
     stored++;
   }
 
@@ -1331,7 +1339,8 @@ export async function runReflectionMeta(
     }
     const entry = storeResult.entry;
     // Check if store returned an existing fact due to dedupe (text won't match our candidate)
-    if (entry.text !== metaText) {
+    // UNLESS it's a merge that updated the text (embeddingStale=true), in which case we must re-embed
+    if (entry.text !== metaText && !storeResult.embeddingStale) {
       metaDuplicatesSkipped++;
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-meta — skipped store-level duplicate: ${metaText.slice(0, 50)}...`);
@@ -1366,10 +1375,13 @@ export async function runReflectionMeta(
         `memory-hybrid: reflect-meta — stored meta-pattern: ${metaText.slice(0, 100)}${metaText.length > 100 ? "..." : ""}`,
       );
     }
+    // If embeddingStale=true (merge path), re-embed the updated merged text
+    const textToEmbed = storeResult.embeddingStale ? entry.text : metaText;
+    const vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
     try {
       await vectorDb.store({
-        text: metaText,
-        vector: vec,
+        text: textToEmbed,
+        vector: vectorToStore,
         importance: REFLECTION_IMPORTANCE,
         category: "pattern",
         id: entry.id,
@@ -1378,7 +1390,7 @@ export async function runReflectionMeta(
         factsDb,
         entry.id,
         embeddings.modelName,
-        vec,
+        vectorToStore,
         "reflection-fact-embeddings",
         "reflection",
         logger.warn?.bind(logger),
@@ -1392,7 +1404,7 @@ export async function runReflectionMeta(
         factId: entry.id,
       });
     }
-    existingVectors.push(normVec);
+    existingVectors.push(normalizeVector(vectorToStore));
     stored++;
   }
 
