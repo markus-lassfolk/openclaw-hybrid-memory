@@ -562,8 +562,8 @@ export async function runExtractImplicitFeedbackForCli(
          WHERE fact_id = ?
            AND signal = 'positive'
            AND session_file IS ?
-           AND (topic IS ? OR topic IS NULL)
-           AND (query_snippet IS ? OR query_snippet IS NULL)
+           AND topic IS ?
+           AND query_snippet IS ?
          LIMIT 1`,
       )
     : null;
@@ -1161,16 +1161,16 @@ export async function runExtractImplicitFeedbackForCli(
       }
     }
 
-    if (wallClockLimitReached()) {
-      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-      break;
-    }
-
     // Mark session as processed after both Phase 1 (signal extraction) and Phase 2 (trajectories) complete.
     // This ensures the cursor only advances past sessions that have been fully processed.
     progress.sessionsProcessed++;
     lastProcessedFilePath = filePath;
     emitProgress();
+
+    if (wallClockLimitReached()) {
+      markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
+      break;
+    }
   }
 
   if (!opts.dryRun && implicitCfg.autoCleanup !== false && rawDb) {
