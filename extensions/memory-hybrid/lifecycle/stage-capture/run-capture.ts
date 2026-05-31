@@ -37,6 +37,7 @@ import { extractTags } from "../../utils/tags.js";
 import { truncateForStorage } from "../../utils/text.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
+import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
 
 const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
 
@@ -126,6 +127,8 @@ export async function runCapture(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<void> {
+  if (isStaleLifecycleGeneration(ctx)) return;
+
   const { resolveSessionKey, clearSessionState, frustrationStateMap } = sessionState;
   const sessionKey = resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
   const ev = event as { success?: boolean; messages?: unknown[] };
@@ -218,6 +221,7 @@ export async function runCapture(
   api.logger.debug?.(`memory-hybrid: cleared all session state for ${sessionKey}`);
 
   // 5. Compaction on session end
+  if (isStaleLifecycleGeneration(ctx)) return;
   if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.compactionOnSessionEnd) {
     try {
       const counts = ctx.factsDb.runCompaction({
@@ -248,6 +252,7 @@ export async function runCapture(
   }
 
   // 6. Auto-capture from conversation messages
+  if (isStaleLifecycleGeneration(ctx)) return;
   if (ctx.cfg.autoCapture && ev.success && messages.length > 0) {
     try {
       const captureProvenance = resolveCaptureProvenance(event, api, sessionKey);
@@ -737,6 +742,7 @@ export async function runCapture(
   // 6b. Episodic memory auto-capture (#781): scan conversation for outcome-indicating phrases
   // and create episode records. This runs regardless of autoCapture config flag, because
   // capturing outcomes is low-cost and high-value for the episodic history.
+  if (isStaleLifecycleGeneration(ctx)) return;
   {
     const sessionId = sessionKey;
     const agentId = ctx.currentAgentIdRef.value ?? undefined;
@@ -844,6 +850,7 @@ export async function runCapture(
   }
 
   // 7. Credential auto-detect: persist hint for next turn
+  if (isStaleLifecycleGeneration(ctx)) return;
   if (
     ctx.cfg.credentials.enabled &&
     ctx.cfg.credentials.autoDetect &&
@@ -900,6 +907,7 @@ export async function runCapture(
   }
 
   // 8. Tool-call credential auto-capture
+  if (isStaleLifecycleGeneration(ctx)) return;
   if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoCapture?.toolCalls && messages.length > 0) {
     const logCaptures = ctx.cfg.credentials.autoCapture.logCaptures !== false;
     try {
