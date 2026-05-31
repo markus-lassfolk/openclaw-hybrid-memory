@@ -685,9 +685,8 @@ export async function runReflection(
           subsystem: "reflection",
         });
       }
-      // Increment stored counter even on re-embed failure to reflect SQLite merge
-      stored++;
-      continue;
+      // On re-embed failure after merge, fall back to original vector to maintain SQLite-Lance consistency
+      vectorToStore = vec;
     }
     try {
       await vectorDb.store({
@@ -1085,7 +1084,8 @@ export async function runReflectionRules(
           subsystem: "reflection",
         });
       }
-      continue;
+      // On re-embed failure after merge, fall back to original vector to maintain SQLite-Lance consistency
+      vectorToStore = vec;
     }
     try {
       await vectorDb.store({
@@ -1417,9 +1417,8 @@ export async function runReflectionMeta(
           subsystem: "reflection",
         });
       }
-      // Increment stored counter even on re-embed failure to reflect SQLite merge
-      stored++;
-      continue;
+      // On re-embed failure after merge, fall back to original vector to maintain SQLite-Lance consistency
+      vectorToStore = vec;
     }
     try {
       await vectorDb.store({
