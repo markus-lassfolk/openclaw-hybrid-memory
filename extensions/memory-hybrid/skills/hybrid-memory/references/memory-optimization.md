@@ -95,7 +95,7 @@ If the user prefers **explicit** steps or `run-all` is too heavy, use this **can
 19. `openclaw hybrid-mem consolidate --threshold 0.92`
 20. `openclaw hybrid-mem build-languages`
 21. `openclaw hybrid-mem backfill-decay`
-22. `openclaw hybrid-mem enrich-entities --limit 500` (larger backfill pass; optional if nightly already ran)
+22. `openclaw hybrid-mem enrich-entities --limit 25` (safe per-run cap; re-run on later cycles to process more; set `HYBRID_MEM_CLI_JOB_ENRICH_LIMIT` env var to override the cron default)
 
 ### H. Workspace corpus (optional but high value for recall of docs)
 
