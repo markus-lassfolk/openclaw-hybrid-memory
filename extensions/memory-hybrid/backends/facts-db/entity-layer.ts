@@ -52,7 +52,7 @@ const NON_ENTITY_ORG_TERMS = new Set(["hybrid memory plugin", "the agent", "the 
 const PERSON_ROLE_TITLES = new Set(["architect", "developer", "director", "engineer", "manager", "surgeon"]);
 
 function normalizeMentionSurfaceText(surfaceText: string): string {
-  return surfaceText.replace(/\s+/g, " ").trim();
+  return surfaceText.trim();
 }
 
 function shouldFilterEntityMention(mention: {
@@ -148,12 +148,14 @@ export function normalizeFactEntityMentionsForPersistence<
     .map((mention) => {
       const surfaceText = normalizeMentionSurfaceText(mention.surfaceText);
       const normalizedSurface = normalizeEntityKey(surfaceText);
-      // Adjust endOffset for trimmed trailing whitespace so stored offsets match the trimmed surfaceText in the original fact text
+      // Adjust offsets for trimmed whitespace so stored offsets match the trimmed surfaceText in the original fact text
+      const leadingTrim = mention.surfaceText.length - mention.surfaceText.trimStart().length;
       const trailingTrim = mention.surfaceText.length - mention.surfaceText.trimEnd().length;
       return {
         ...mention,
         surfaceText,
         normalizedSurface,
+        startOffset: mention.startOffset + leadingTrim,
         endOffset: mention.endOffset - trailingTrim,
       };
     })
