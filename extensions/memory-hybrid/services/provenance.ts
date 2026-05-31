@@ -200,6 +200,15 @@ export class ProvenanceService extends BaseSqliteStore {
   }
 
   // -------------------------------------------------------------------------
+  // deleteEdgesByFactId — remove all edges for a specific fact (rollback)
+  // -------------------------------------------------------------------------
+
+  deleteEdgesByFactId(factId: string): number {
+    const result = this.liveDb.prepare("DELETE FROM provenance_edges WHERE fact_id = ?").run(factId);
+    return Number(result.changes);
+  }
+
+  // -------------------------------------------------------------------------
   // prune — remove old provenance edges, keep recent ones
   // -------------------------------------------------------------------------
 

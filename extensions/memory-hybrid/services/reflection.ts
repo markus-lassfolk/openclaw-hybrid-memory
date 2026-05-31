@@ -48,9 +48,11 @@ import {
   REFLECTION_RULE_MAX_CHARS,
   REFLECTION_RULE_MIN_CHARS,
 } from "./reflection/shared.js";
+
 export { dotProductSimilarity, normalizeVector, parsePatternsFromReflectionResponse } from "./reflection/shared.js";
-import { cleanupEvictedVector } from "./vector-maintenance.js";
+
 import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 /** Non-superseded, non-expired pattern facts (same filter as reflection dedupe corpus). */
 export function countActivePatternFactsForMaintenance(factsDb: FactsDB): number {
@@ -675,29 +677,16 @@ export async function runReflection(
     // If embeddingStale=true (merge path), re-embed the updated merged text
     const textToEmbed = storeResult.embeddingStale ? entry.text : patternText;
     let vectorToStore: number[];
-    let reEmbedFailed = false;
     try {
       vectorToStore = storeResult.embeddingStale ? await embeddings.embed(textToEmbed) : vec;
     } catch (err) {
       newPatternEmbedFailures++;
-      reEmbedFailed = true;
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "embed-pattern-merge",
           severity: "info",
           subsystem: "reflection",
         });
-      }
-      // On re-embed failure after merge, we must delete the SQLite fact to prevent split state
-      try {
-        factsDb.delete(entry.id);
-        logger.warn(
-          `memory-hybrid: reflection — deleted merged pattern fact ${entry.id.slice(0, 8)} after re-embed failure to prevent SQLite/LanceDB split`,
-        );
-      } catch (deleteErr) {
-        logger.warn(
-          `memory-hybrid: reflection — failed to delete pattern fact ${entry.id.slice(0, 8)} after merge re-embed failure: ${deleteErr}`,
-        );
       }
       continue;
     }
@@ -728,16 +717,31 @@ export async function runReflection(
         subsystem: "vector",
         factId: entry.id,
       });
-      // If this was a merge and vector store failed, delete the fact to prevent split
-      if (storeResult.embeddingStale) {
+      if (!storeResult.embeddingStale) {
         try {
           factsDb.delete(entry.id);
+          if (provenanceService) {
+            try {
+              provenanceService.deleteEdgesByFactId(entry.id);
+            } catch (provErr) {
+              logger.warn(
+                `memory-hybrid: reflection — failed to clean up provenance for pattern fact ${entry.id.slice(0, 8)}: ${provErr}`,
+              );
+            }
+          }
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflection — failed to clean up vector for pattern fact ${entry.id.slice(0, 8)}: ${vecErr}`,
+            );
+          }
           logger.warn(
-            `memory-hybrid: reflection — deleted merged pattern fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
+            `memory-hybrid: reflection — deleted pattern fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
           );
         } catch (deleteErr) {
           logger.warn(
-            `memory-hybrid: reflection — failed to delete pattern fact ${entry.id.slice(0, 8)} after merge vector store failure: ${deleteErr}`,
+            `memory-hybrid: reflection — failed to delete pattern fact ${entry.id.slice(0, 8)} after vector store failure: ${deleteErr}`,
           );
         }
         continue;
@@ -889,7 +893,7 @@ export async function runReflectionRules(
     return { rulesExtracted: 0, rulesStored: 0, diagnostics };
   }
   const rules: string[] = [];
-  let rejectedLowConfidence = 0;
+  const rejectedLowConfidence = 0;
   let rejectedLength = 0;
   let parseableLines = 0;
   for (const line of rawResponse.split(/\n/)) {
@@ -915,8 +919,9 @@ export async function runReflectionRules(
     seenInBatch.add(key);
     uniqueRules.push(r);
   }
-  const trimmedResponse = stripThinkingWrapperBlocks(rawResponse.trim());
+  const trimmedResponse = rawResponse.trim();
   const looksLikeValidNoRules = VALID_NO_RULES_PATTERN.test(trimmedResponse);
+  const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
   const parseSuccess = parseableLines > 0 || looksLikeValidNoRules;
   const modelResponseChars = rawResponse.length;
   if (uniqueRules.length === 0) {
@@ -930,7 +935,7 @@ export async function runReflectionRules(
             ? "all_candidates_rejected"
             : looksLikeValidNoRules
               ? "valid_no_actionable_rules"
-              : trimmedResponse.length === 0
+              : strippedResponse.length === 0
                 ? "empty_model_response"
                 : "invalid_response_format";
     const diagnostics: ReflectionRulesDiagnostics = {
@@ -999,11 +1004,12 @@ export async function runReflectionRules(
 
   let stored = 0;
   let rulesDuplicatesSkipped = 0;
-  let batchDuplicatesSkipped = rejectedDuplicates;
+  const batchDuplicatesSkipped = rejectedDuplicates;
   let embeddingBasedDuplicates = 0;
   let storeLevelDuplicates = 0;
   let newRuleEmbedFailures = 0;
   let vectorStoreFailures = 0;
+  let storeSkipped = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
   for (const ruleText of uniqueRules) {
@@ -1065,6 +1071,7 @@ export async function runReflectionRules(
       },
     );
     if (storeResult.skipped) {
+      storeSkipped++;
       continue;
     }
     const entry = storeResult.entry;
@@ -1122,17 +1129,6 @@ export async function runReflectionRules(
             subsystem: "reflection",
           });
         }
-        // On re-embed failure after merge, delete the SQLite fact to prevent split state
-        try {
-          factsDb.delete(entry.id);
-          logger.warn(
-            `memory-hybrid: reflect-rules — deleted merged rule fact ${entry.id.slice(0, 8)} after re-embed failure to prevent SQLite/LanceDB split`,
-          );
-        } catch (deleteErr) {
-          logger.warn(
-            `memory-hybrid: reflect-rules — failed to delete rule fact ${entry.id.slice(0, 8)} after merge re-embed failure: ${deleteErr}`,
-          );
-        }
         continue;
       }
     } else {
@@ -1166,32 +1162,35 @@ export async function runReflectionRules(
         subsystem: "vector",
         factId: entry.id,
       });
-      // If this was a merge and vector store failed, delete the fact to prevent split
-      if (storeResult.embeddingStale) {
+      if (!storeResult.embeddingStale) {
         try {
           factsDb.delete(entry.id);
+          if (provenanceService) {
+            try {
+              provenanceService.deleteEdgesByFactId(entry.id);
+            } catch (provErr) {
+              logger.warn(
+                `memory-hybrid: reflect-rules — failed to clean up provenance for rule fact ${entry.id.slice(0, 8)}: ${provErr}`,
+              );
+            }
+          }
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflect-rules — failed to clean up vector for rule fact ${entry.id.slice(0, 8)}: ${vecErr}`,
+            );
+          }
           logger.warn(
-            `memory-hybrid: reflect-rules — deleted merged rule fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
+            `memory-hybrid: reflect-rules — deleted rule fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
           );
         } catch (deleteErr) {
           logger.warn(
-            `memory-hybrid: reflect-rules — failed to delete rule fact ${entry.id.slice(0, 8)} after merge vector store failure: ${deleteErr}`,
+            `memory-hybrid: reflect-rules — failed to delete rule fact ${entry.id.slice(0, 8)} after vector store failure: ${deleteErr}`,
           );
         }
         continue;
       }
-      // For non-merge path, also delete the fact to prevent orphan SQLite row
-      try {
-        factsDb.delete(entry.id);
-        logger.warn(
-          `memory-hybrid: reflect-rules — deleted rule fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
-        );
-      } catch (deleteErr) {
-        logger.warn(
-          `memory-hybrid: reflect-rules — failed to delete rule fact ${entry.id.slice(0, 8)} after vector store failure: ${deleteErr}`,
-        );
-      }
-      continue;
     }
     if (vectorStored) {
       existingVectors.push(normalizeVector(vectorToStore));
@@ -1211,7 +1210,7 @@ export async function runReflectionRules(
   let zeroRulesReason: ReflectionRulesDiagnostics["zeroRulesReason"];
   if (stored <= 0) {
     const allCandidatesBlocked =
-      newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates + vectorStoreFailures ===
+      newRuleEmbedFailures + embeddingBasedDuplicates + storeLevelDuplicates + vectorStoreFailures + storeSkipped ===
       uniqueRules.length;
     if (vectorStoreFailures === uniqueRules.length) {
       // All candidates failed only at vector store
@@ -1222,9 +1221,6 @@ export async function runReflectionRules(
     } else if (embeddingBasedDuplicates + storeLevelDuplicates === uniqueRules.length) {
       // All candidates are duplicates (no failures)
       zeroRulesReason = "all_candidates_duplicate";
-    } else if (allCandidatesBlocked && newRuleEmbedFailures > 0) {
-      // Mixed: some embedding failures and other blocks
-      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
     } else if (
       allCandidatesBlocked &&
       vectorStoreFailures > 0 &&
@@ -1232,6 +1228,9 @@ export async function runReflectionRules(
     ) {
       // Mixed: some vector store failures and some duplicates
       zeroRulesReason = "candidates_duplicate_or_vector_store_failed";
+    } else if (allCandidatesBlocked && newRuleEmbedFailures > 0) {
+      // Mixed: some embedding failures and other blocks
+      zeroRulesReason = "candidates_duplicate_or_embedding_failed";
     } else {
       zeroRulesReason = "no_storable_candidates";
     }
@@ -1518,17 +1517,6 @@ export async function runReflectionMeta(
             subsystem: "reflection",
           });
         }
-        // On re-embed failure after merge, delete the SQLite fact to prevent split state
-        try {
-          factsDb.delete(entry.id);
-          logger.warn(
-            `memory-hybrid: reflect-meta — deleted merged meta-pattern fact ${entry.id.slice(0, 8)} after re-embed failure to prevent SQLite/LanceDB split`,
-          );
-        } catch (deleteErr) {
-          logger.warn(
-            `memory-hybrid: reflect-meta — failed to delete meta-pattern fact ${entry.id.slice(0, 8)} after merge re-embed failure: ${deleteErr}`,
-          );
-        }
         continue;
       }
     } else {
@@ -1562,16 +1550,31 @@ export async function runReflectionMeta(
         subsystem: "vector",
         factId: entry.id,
       });
-      // If this was a merge and vector store failed, delete the fact to prevent split
-      if (storeResult.embeddingStale) {
+      if (!storeResult.embeddingStale) {
         try {
           factsDb.delete(entry.id);
+          if (provenanceService) {
+            try {
+              provenanceService.deleteEdgesByFactId(entry.id);
+            } catch (provErr) {
+              logger.warn(
+                `memory-hybrid: reflect-meta — failed to clean up provenance for meta-pattern fact ${entry.id.slice(0, 8)}: ${provErr}`,
+              );
+            }
+          }
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflect-meta — failed to clean up vector for meta-pattern fact ${entry.id.slice(0, 8)}: ${vecErr}`,
+            );
+          }
           logger.warn(
-            `memory-hybrid: reflect-meta — deleted merged meta-pattern fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
+            `memory-hybrid: reflect-meta — deleted meta-pattern fact ${entry.id.slice(0, 8)} after vector store failure to prevent SQLite/LanceDB split`,
           );
         } catch (deleteErr) {
           logger.warn(
-            `memory-hybrid: reflect-meta — failed to delete meta-pattern fact ${entry.id.slice(0, 8)} after merge vector store failure: ${deleteErr}`,
+            `memory-hybrid: reflect-meta — failed to delete meta-pattern fact ${entry.id.slice(0, 8)} after vector store failure: ${deleteErr}`,
           );
         }
         continue;
