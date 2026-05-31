@@ -355,8 +355,10 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
   // #1742: when entries were omitted (time-window or cap), surface an explicit marker so
   // operators know the list is incomplete and how to see the full backlog.
   if (report.personaProposals.truncated > 0) {
+    const shown = report.personaProposals.pendingEntries.length;
+    const total = report.personaProposals.pending;
     lines.push(
-      `_(${report.personaProposals.truncated} more omitted — run \`openclaw hybrid-mem proposals list --status pending\` to see all)_`,
+      `_(Showing ${shown} of ${total} pending persona proposals; ${report.personaProposals.truncated} omitted — run \`openclaw hybrid-mem proposals list --status pending\` to list all.)_`,
     );
   }
   lines.push(
