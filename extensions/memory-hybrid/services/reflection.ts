@@ -1217,11 +1217,14 @@ export async function runReflectionRules(
     );
     return { rulesExtracted: 0, rulesStored: 0, diagnostics };
   }
+  const trimmedResponse = rawResponse.trim();
+  const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
+  const responseForParsing = strippedResponse.length > 0 ? strippedResponse : trimmedResponse;
   const rules: string[] = [];
   const rejectedLowConfidence = 0;
   let rejectedLength = 0;
   let parseableLines = 0;
-  for (const line of rawResponse.split(/\n/)) {
+  for (const line of responseForParsing.split(/\n/)) {
     const m = line.match(/^\s*RULE:\s*(.+)/);
     if (!m) continue;
     parseableLines++;
@@ -1244,8 +1247,6 @@ export async function runReflectionRules(
     seenInBatch.add(key);
     uniqueRules.push(r);
   }
-  const trimmedResponse = rawResponse.trim();
-  const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
   const wrapperTagStrippedResponse = stripThinkingWrapperTagsKeepContent(trimmedResponse);
   const wrapperContents = extractThinkingWrapperContents(trimmedResponse);
   const noRulesClassificationResponse = strippedResponse.length > 0 ? strippedResponse : wrapperTagStrippedResponse;
