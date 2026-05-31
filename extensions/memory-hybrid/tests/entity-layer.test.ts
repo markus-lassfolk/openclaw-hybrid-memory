@@ -113,6 +113,190 @@ describe("FactsDB entity layer persistence", () => {
     expect(db.listFactIdsNeedingEntityEnrichment(50, 10)).not.toContain(fact.id);
   });
 
+  it("prioritizes pending enrichment by tier, access, recall/access count, importance, and created_at", () => {
+    const hotHighAccess = db.store({
+      text: "hot fact with higher access score and enough length for enrichment ordering checks",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.2,
+      source: "test",
+    });
+    const hotHighImportance = db.store({
+      text: "hot fact with lower access score but higher importance and enough length for ordering checks",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.9,
+      source: "test",
+    });
+    const hotOlderAccess = db.store({
+      text: "hot fact with older last_accessed should sort after newer hot facts in enrichment queue",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.95,
+      source: "test",
+    });
+    const warmRecent = db.store({
+      text: "warm fact with very recent access should still trail all hot facts for tier priority",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.8,
+      source: "test",
+    });
+    const structuralRecent = db.store({
+      text: "structural fact for ordering checks with recent access metadata and enough body length",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.7,
+      source: "test",
+    });
+    const coldRecent = db.store({
+      text: "cold fact used to verify tier priority remains below structural regardless of recency",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.99,
+      source: "test",
+    });
+    const unknownTier = db.store({
+      text: "custom tier fact should fall into unknown bucket and sort after known tiers",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+
+    db.setTier(hotHighAccess.id, "hot");
+    db.setTier(hotHighImportance.id, "hot");
+    db.setTier(hotOlderAccess.id, "hot");
+    db.setTier(warmRecent.id, "warm");
+    db.setTier(structuralRecent.id, "structural");
+    db.setTier(coldRecent.id, "cold");
+
+    const raw = db.getRawDb();
+    raw
+      .prepare(
+        "UPDATE facts SET last_accessed = ?, recall_count = ?, access_count = ?, importance = ?, created_at = ? WHERE id = ?",
+      )
+      .run(1_000, 9, 9, 0.2, 100, hotHighAccess.id);
+    raw
+      .prepare(
+        "UPDATE facts SET last_accessed = ?, recall_count = ?, access_count = ?, importance = ?, created_at = ? WHERE id = ?",
+      )
+      .run(1_000, 3, 3, 0.9, 200, hotHighImportance.id);
+    raw
+      .prepare(
+        "UPDATE facts SET last_accessed = ?, recall_count = ?, access_count = ?, importance = ?, created_at = ? WHERE id = ?",
+      )
+      .run(900, 50, 50, 0.95, 300, hotOlderAccess.id);
+    raw
+      .prepare(
+        "UPDATE facts SET last_accessed = ?, recall_count = ?, access_count = ?, importance = ?, created_at = ? WHERE id = ?",
+      )
+      .run(5_000, 1, 1, 0.8, 400, warmRecent.id);
+    raw
+      .prepare(
+        "UPDATE facts SET last_accessed = ?, recall_count = ?, access_count = ?, importance = ?, created_at = ? WHERE id = ?",
+      )
+      .run(6_000, 1, 1, 0.7, 500, structuralRecent.id);
+    raw
+      .prepare(
+        "UPDATE facts SET last_accessed = ?, recall_count = ?, access_count = ?, importance = ?, created_at = ? WHERE id = ?",
+      )
+      .run(7_000, 1, 1, 0.99, 600, coldRecent.id);
+    raw
+      .prepare(
+        "UPDATE facts SET tier = ?, last_accessed = ?, recall_count = ?, access_count = ?, created_at = ? WHERE id = ?",
+      )
+      .run("experimental", 8_000, 999, 999, 700, unknownTier.id);
+
+    expect(db.listFactIdsNeedingEntityEnrichment(50, 10)).toEqual([
+      hotHighAccess.id,
+      hotHighImportance.id,
+      hotOlderAccess.id,
+      warmRecent.id,
+      structuralRecent.id,
+      coldRecent.id,
+      unknownTier.id,
+    ]);
+  });
+
+  it("reports pending backlog totals by tier for enrichment progress", () => {
+    const hot = db.store({
+      text: "hot backlog fact with enough length for enrichment backlog accounting",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const warm = db.store({
+      text: "warm backlog fact with enough length for enrichment backlog accounting",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const structural = db.store({
+      text: "structural backlog fact with enough length for enrichment backlog accounting",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const cold = db.store({
+      text: "cold backlog fact with enough length for enrichment backlog accounting",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+    const unknown = db.store({
+      text: "unknown backlog fact with enough length for enrichment backlog accounting",
+      entity: null,
+      key: null,
+      value: null,
+      category: "other",
+      importance: 0.5,
+      source: "test",
+    });
+
+    db.setTier(hot.id, "hot");
+    db.setTier(warm.id, "warm");
+    db.setTier(structural.id, "structural");
+    db.setTier(cold.id, "cold");
+    db.getRawDb().prepare("UPDATE facts SET tier = ? WHERE id = ?").run("mystery", unknown.id);
+
+    const summary = db.getEntityEnrichmentBacklogSummary(10);
+    expect(summary.total).toBe(5);
+    expect(summary.byTier).toEqual({
+      hot: 1,
+      warm: 1,
+      structural: 1,
+      cold: 1,
+      unknown: 1,
+    });
+  });
+
   it("listContactsByNamePrefix treats % in prefix as literal when ESCAPE is used", () => {
     const fact = db.store({
       text: "Contact note about 100% Pure brand and nothing else matters here for length.",

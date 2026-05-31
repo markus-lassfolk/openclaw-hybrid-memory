@@ -75,12 +75,19 @@ interface CliContextServices {
     limit: number;
     dryRun: boolean;
     model?: string;
+    all?: boolean;
     verbose?: boolean;
     onProgress?: (progress: import("../../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
   }) => Promise<{
     pending: number;
+    pendingTotal?: number;
+    pendingByTier?: { hot: number; warm: number; structural: number; cold: number; unknown: number };
     processed: number;
     factsEnriched: number;
+    mode?: "bounded" | "all";
+    effectiveLimit?: number | "all";
+    remainingTotal?: number;
+    estimatedRunsRemaining?: number;
     skipped?: boolean;
     pendingFactIds?: string[];
     enrichedFacts?: import("../../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
@@ -178,8 +185,9 @@ export function buildCliContextServices(
       return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
     },
     runReflection: async (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
-      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const requestedModel = opts.model ?? cfg.reflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
+      const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
         : cfg.reflection.model?.trim()
@@ -218,8 +226,9 @@ export function buildCliContextServices(
       return result;
     },
     runReflectionRules: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
-      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const requestedModel = opts.model ?? cfg.reflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
+      const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
         : cfg.reflection.model?.trim()
@@ -242,8 +251,9 @@ export function buildCliContextServices(
       );
     },
     runReflectionMeta: (opts) => {
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
-      const effectiveModel = opts.model ?? cfg.reflection.model ?? defaultModel;
+      const requestedModel = opts.model ?? cfg.reflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
+      const effectiveModel = requestedModel ?? defaultModel;
       const modelSource = opts.model
         ? "--model"
         : cfg.reflection.model?.trim()
