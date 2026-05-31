@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
+import { resolveToolEffectivenessCliDbPaths } from "../cli/cmd-feedback.js";
 import {
   ToolEffectivenessStore,
   type ToolMetrics,
@@ -338,6 +339,17 @@ describe("computeToolEffectiveness (DB path handling)", () => {
       /* ignore */
     }
     rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+describe("resolveToolEffectivenessCliDbPaths", () => {
+  it("uses workflow-traces.db beside the configured sqlite DB", () => {
+    const sqlitePath = join(tmpdir(), "tool-effectiveness-cli-paths", "facts.db");
+
+    expect(resolveToolEffectivenessCliDbPaths(sqlitePath)).toEqual({
+      workflowDbPath: join(tmpdir(), "tool-effectiveness-cli-paths", "workflow-traces.db"),
+      effectivenessDbPath: join(tmpdir(), "tool-effectiveness-cli-paths", "facts-tool-effectiveness.db"),
+    });
   });
 });
 
