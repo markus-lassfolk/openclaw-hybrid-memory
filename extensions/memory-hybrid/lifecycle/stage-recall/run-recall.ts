@@ -26,10 +26,7 @@ import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
-import {
-  isRecallContextSuperseded,
-  suppressStaleLifecycleDbError,
-} from "../../utils/registration-superseded.js";
+import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 
