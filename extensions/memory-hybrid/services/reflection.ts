@@ -724,6 +724,7 @@ export async function runReflection(
   const reflectionRunId = provenanceService ? randomUUID() : null;
   const candidateStartMs = Date.now();
   let candidateIndex = 0;
+  const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
 
   for (const patternText of uniqueNewPatterns) {
     candidateIndex++;
@@ -792,12 +793,15 @@ export async function runReflection(
     const mergeExistingIndex = storeResult.embeddingStale
       ? existingPatternFacts.findIndex((f) => f.id === entry.id)
       : -1;
+    const inRunMerge = storeResult.embeddingStale && mergeExistingIndex < 0 ? inRunFactVectors.get(entry.id) : null;
     const preMergeVector =
       mergeExistingIndex >= 0 && mergeExistingIndex < existingVectors.length
         ? existingVectors[mergeExistingIndex]
-        : null;
+        : (inRunMerge?.vector ?? null);
     const preMergeEmbeddingModel =
-      mergeExistingIndex >= 0 ? (existingPatternFacts[mergeExistingIndex]?.embeddingModel ?? null) : null;
+      mergeExistingIndex >= 0
+        ? (existingPatternFacts[mergeExistingIndex]?.embeddingModel ?? null)
+        : (inRunMerge?.embeddingModel ?? null);
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, patternText) && !storeResult.embeddingStale) {
       duplicatesSkipped++;
@@ -966,7 +970,7 @@ export async function runReflection(
               `memory-hybrid: reflection — failed to delete merged vector for pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
             );
           }
-          rollbackMergedFactText(factsDb, logger, {
+          const rolledBack = rollbackMergedFactText(factsDb, logger, {
             context: "reflection",
             factId: entry.id,
             mergedText: entry.text,
@@ -974,18 +978,20 @@ export async function runReflection(
             preMergeText: storeResult.preMergeText,
             reason: "metadata-update-failure",
           });
-          await restoreMergedFactVectorState({
-            context: "reflection",
-            factId: entry.id,
-            category: "pattern",
-            preMergeText,
-            preMergeVector,
-            preMergeEmbeddingModel,
-            fallbackEmbeddingModel: embeddings.modelName,
-            vectorDb,
-            factsDb,
-            logger,
-          });
+          if (rolledBack) {
+            await restoreMergedFactVectorState({
+              context: "reflection",
+              factId: entry.id,
+              category: "pattern",
+              preMergeText,
+              preMergeVector,
+              preMergeEmbeddingModel,
+              fallbackEmbeddingModel: embeddings.modelName,
+              vectorDb,
+              factsDb,
+              logger,
+            });
+          }
           vectorStored = false;
           continue;
         }
@@ -1055,8 +1061,10 @@ export async function runReflection(
           // Fact was inserted earlier in this loop, not in pre-run snapshot
           existingVectors.push(normalizeVector(vectorToStore));
         }
+        inRunFactVectors.set(entry.id, { vector: vectorToStore, embeddingModel: embeddings.modelName });
       } else {
         existingVectors.push(normalizeVector(vectorToStore));
+        inRunFactVectors.set(entry.id, { vector: vectorToStore, embeddingModel: embeddings.modelName });
       }
       stored++;
     }
@@ -1327,6 +1335,7 @@ export async function runReflectionRules(
   let storeSkipped = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
   for (const ruleText of uniqueRules) {
     let vec: number[];
     try {
@@ -1391,12 +1400,15 @@ export async function runReflectionRules(
     }
     const entry = storeResult.entry;
     const mergeExistingIndex = storeResult.embeddingStale ? existingRuleFacts.findIndex((f) => f.id === entry.id) : -1;
+    const inRunMerge = storeResult.embeddingStale && mergeExistingIndex < 0 ? inRunFactVectors.get(entry.id) : null;
     const preMergeVector =
       mergeExistingIndex >= 0 && mergeExistingIndex < existingVectors.length
         ? existingVectors[mergeExistingIndex]
-        : null;
+        : (inRunMerge?.vector ?? null);
     const preMergeEmbeddingModel =
-      mergeExistingIndex >= 0 ? (existingRuleFacts[mergeExistingIndex]?.embeddingModel ?? null) : null;
+      mergeExistingIndex >= 0
+        ? (existingRuleFacts[mergeExistingIndex]?.embeddingModel ?? null)
+        : (inRunMerge?.embeddingModel ?? null);
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, ruleText) && !storeResult.embeddingStale) {
       storeLevelDuplicates++;
@@ -1664,8 +1676,10 @@ export async function runReflectionRules(
           // Fact was inserted earlier in this loop, not in pre-run snapshot
           existingVectors.push(normalizeVector(vectorToStore));
         }
+        inRunFactVectors.set(entry.id, { vector: vectorToStore, embeddingModel: embeddings.modelName });
       } else {
         existingVectors.push(normalizeVector(vectorToStore));
+        inRunFactVectors.set(entry.id, { vector: vectorToStore, embeddingModel: embeddings.modelName });
       }
       stored++;
     }
@@ -1890,6 +1904,7 @@ export async function runReflectionMeta(
   let newMetaEmbedFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const reflectionRunId = provenanceService ? randomUUID() : null;
+  const inRunFactVectors = new Map<string, { vector: number[]; embeddingModel: string }>();
   for (const metaText of uniqueMetas) {
     let vec: number[];
     try {
@@ -1952,12 +1967,15 @@ export async function runReflectionMeta(
     }
     const entry = storeResult.entry;
     const mergeExistingIndex = storeResult.embeddingStale ? existingMetaFacts.findIndex((f) => f.id === entry.id) : -1;
+    const inRunMerge = storeResult.embeddingStale && mergeExistingIndex < 0 ? inRunFactVectors.get(entry.id) : null;
     const preMergeVector =
       mergeExistingIndex >= 0 && mergeExistingIndex < existingVectors.length
         ? existingVectors[mergeExistingIndex]
-        : null;
+        : (inRunMerge?.vector ?? null);
     const preMergeEmbeddingModel =
-      mergeExistingIndex >= 0 ? (existingMetaFacts[mergeExistingIndex]?.embeddingModel ?? null) : null;
+      mergeExistingIndex >= 0
+        ? (existingMetaFacts[mergeExistingIndex]?.embeddingModel ?? null)
+        : (inRunMerge?.embeddingModel ?? null);
     // Skip reused existing facts unless this was a merge update that requires re-embed.
     if (reusedExistingStoreEntry(storeResult, metaText) && !storeResult.embeddingStale) {
       metaDuplicatesSkipped++;
@@ -2221,8 +2239,10 @@ export async function runReflectionMeta(
           // Fact was inserted earlier in this loop, not in pre-run snapshot
           existingVectors.push(normalizeVector(vectorToStore));
         }
+        inRunFactVectors.set(entry.id, { vector: vectorToStore, embeddingModel: embeddings.modelName });
       } else {
         existingVectors.push(normalizeVector(vectorToStore));
+        inRunFactVectors.set(entry.id, { vector: vectorToStore, embeddingModel: embeddings.modelName });
       }
       stored++;
     }
