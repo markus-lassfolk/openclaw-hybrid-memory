@@ -78,8 +78,8 @@ export function reinforceFact(
     ).run(
       eventId,
       id,
-      context?.querySnippet ?? null,
-      context?.topic ?? null,
+      trackContext ? (context?.querySnippet ?? null) : null,
+      trackContext ? (context?.topic ?? null) : null,
       trackContext && context?.toolSequence ? JSON.stringify(context.toolSequence) : null,
       context?.sessionFile ?? null,
       nowSec,

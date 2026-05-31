@@ -1113,20 +1113,15 @@ export async function runExtractImplicitFeedbackForCli(
             emitProgress();
 
             // Keep vector maintenance outside the SQL transaction.
+            // Note: We don't check wall clock here because evicted vector cleanup must complete
+            // after a successful commit to avoid orphaned vectors. Cleanup is typically fast.
             for (const evictedFactId of new Set(evictedFactIds)) {
-              if (wallClockLimitReached()) {
-                markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
-                break;
-              }
               await cleanupEvictedVector({
                 vectorDb: vectorDb,
                 evictedFactId,
                 logger: logger,
                 context: "implicit-feedback",
               });
-            }
-            if (partial && partialReason === "maxWallClock") {
-              break;
             }
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
