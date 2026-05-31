@@ -1,0 +1,69 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { PluginRuntime } from "../api/plugin-runtime.js";
+import type { HybridMemoryConfig } from "../config.js";
+import {
+  canReuseDatabasesOnReregister,
+  recordReregisterDatabaseReuse,
+  recordReregisterFullTeardown,
+  resetReregisterPolicyForTests,
+  resolveReregisterPolicy,
+  reregisterMetrics,
+  shouldFullTeardownOnReregister,
+} from "../setup/reregister-policy.js";
+
+function minimalCfg(sqlite = "memory/facts.db", lance = "memory/lancedb"): HybridMemoryConfig {
+  return {
+    sqlitePath: sqlite,
+    lanceDbPath: lance,
+  } as HybridMemoryConfig;
+}
+
+function mockOldRuntime(paths: { sqlite: string; lance: string }): PluginRuntime {
+  return {
+    resolvedSqlitePath: paths.sqlite,
+    resolvedLancePath: paths.lance,
+  } as PluginRuntime;
+}
+
+describe("reregister-policy", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetReregisterPolicyForTests();
+  });
+
+  it("defaults to full teardown behavior", () => {
+    expect(resolveReregisterPolicy()).toBe("default");
+    expect(shouldFullTeardownOnReregister()).toBe(true);
+  });
+
+  it("reuse-databases skips teardown when paths match", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = {
+      resolvePath: (p: string) => `/home/markus/.openclaw/${p}`,
+    };
+    const cfg = minimalCfg();
+    const old = mockOldRuntime({
+      sqlite: api.resolvePath(cfg.sqlitePath),
+      lance: api.resolvePath(cfg.lanceDbPath),
+    });
+    expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(true);
+    expect(shouldFullTeardownOnReregister()).toBe(false);
+  });
+
+  it("reuse-databases declines when sqlite path changes", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "reuse-databases");
+    const api = { resolvePath: (p: string) => `/data/${p}` };
+    const cfg = minimalCfg("memory/other.db");
+    const old = mockOldRuntime({ sqlite: "/data/memory/facts.db", lance: "/data/memory/lancedb" });
+    expect(canReuseDatabasesOnReregister(old, cfg, api)).toBe(false);
+  });
+
+  it("records metrics counters", () => {
+    vi.stubEnv("OPENCLAW_HYBRID_MEM_REREGISTER_POLICY", "full");
+    expect(resolveReregisterPolicy()).toBe("full");
+    recordReregisterFullTeardown();
+    recordReregisterDatabaseReuse();
+    expect(reregisterMetrics.fullTeardowns).toBe(1);
+    expect(reregisterMetrics.databaseReuses).toBe(1);
+  });
+});

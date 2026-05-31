@@ -24,6 +24,7 @@ import { validateScopedClassificationTarget } from "../../services/classificatio
 import { extractCredentialsFromToolCalls } from "../../services/credential-scanner.js";
 import { isOllamaCircuitBreakerOpen } from "../../services/embeddings.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
@@ -37,6 +38,12 @@ import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
 const _CAPTURE_STAGE_TIMEOUT_MS = 60_000;
+
+function suppressCaptureStageError(ctx: LifecycleContext, api: ClawdbotPluginApi, err: unknown): boolean {
+  if (!shouldSuppressStaleLifecycleError(ctx, err)) return false;
+  api.logger.debug?.("memory-hybrid: capture skipped (registration superseded during reload)");
+  return true;
+}
 
 /** Outcome indicator patterns for episodic memory auto-capture (#781). */
 interface OutcomePattern {
@@ -135,11 +142,13 @@ export async function runCapture(
         frustrationStateMap.set(sessionKey, state);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "frustration-assistant-capture",
         subsystem: "frustration",
         severity: "info",
       });
+      }
     }
   }
 
@@ -178,12 +187,14 @@ export async function runCapture(
         }
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "humanizer-score-capture",
-        subsystem: "humanizer",
-        severity: "info",
-      });
-      api.logger.debug?.(`memory-hybrid: humanizer scoring skipped: ${String(err)}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "humanizer-score-capture",
+          subsystem: "humanizer",
+          severity: "info",
+        });
+        api.logger.debug?.(`memory-hybrid: humanizer scoring skipped: ${String(err)}`);
+      }
     }
   }
 
@@ -225,11 +236,13 @@ export async function runCapture(
         api.logger.info?.(`memory-hybrid: tier compaction — hot=${counts.hot} warm=${counts.warm} cold=${counts.cold}`);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "compaction",
-        subsystem: "memory-tiering",
-      });
-      api.logger.warn(`memory-hybrid: compaction failed: ${err}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "compaction",
+          subsystem: "memory-tiering",
+        });
+        api.logger.warn(`memory-hybrid: compaction failed: ${err}`);
+      }
     }
   }
 
@@ -320,13 +333,15 @@ export async function runCapture(
               vector = await ctx.embeddings.embed(textToStore);
             } catch (err) {
               const asErr = err instanceof Error ? err : new Error(String(err));
-              if (!isOllamaCircuitBreakerOpen(asErr)) {
+              if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
                 capturePluginError(asErr, {
                   operation: "auto-capture-embedding",
                   subsystem: "auto-capture",
                 });
               }
-              api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+              if (!suppressCaptureStageError(ctx, api, asErr)) {
+                api.logger.warn(`memory-hybrid: auto-capture embedding failed: ${err}`);
+              }
             }
           }
           let similarFacts: MemoryEntry[] = [];
@@ -568,17 +583,19 @@ export async function runCapture(
                           }
                         }
                       } catch (vecErr) {
-                        capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
-                          operation: storeResult.embeddingStale
-                            ? "auto-capture-stale-vector-update"
-                            : "auto-capture-vector-update",
-                          subsystem: "auto-capture",
-                        });
-                        api.logger.warn(
-                          storeResult.embeddingStale
-                            ? `memory-hybrid: stale vector re-embed failed for merged fact ${newEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
-                            : `memory-hybrid: vector capture failed: ${vecErr}`,
-                        );
+                        if (!suppressCaptureStageError(ctx, api, vecErr)) {
+                          capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
+                            operation: storeResult.embeddingStale
+                              ? "auto-capture-stale-vector-update"
+                              : "auto-capture-vector-update",
+                            subsystem: "auto-capture",
+                          });
+                          api.logger.warn(
+                            storeResult.embeddingStale
+                              ? `memory-hybrid: stale vector re-embed failed for merged fact ${newEntry.id.slice(0, 8)} — LanceDB vector encodes pre-merge text; nightly re-index will repair: ${vecErr}`
+                              : `memory-hybrid: vector capture failed: ${vecErr}`,
+                          );
+                        }
                       }
                       ctx.auditStore?.append({
                         agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
@@ -598,18 +615,20 @@ export async function runCapture(
                   }
                 }
               } catch (err) {
-                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                  operation: "auto-capture-classification",
-                  subsystem: "auto-capture",
-                });
-                ctx.auditStore?.append({
-                  agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-                  action: "auto-capture:classification-error",
-                  outcome: "failed",
-                  error: String(err).slice(0, 200),
-                  sessionId: captureProvenance.sessionId ?? undefined,
-                });
-                api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
+                if (!suppressCaptureStageError(ctx, api, err)) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "auto-capture-classification",
+                    subsystem: "auto-capture",
+                  });
+                  ctx.auditStore?.append({
+                    agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+                    action: "auto-capture:classification-error",
+                    outcome: "failed",
+                    error: String(err).slice(0, 200),
+                    sessionId: captureProvenance.sessionId ?? undefined,
+                  });
+                  api.logger.warn(`memory-hybrid: auto-capture classification failed: ${err}`);
+                }
               }
             }
           }
@@ -681,11 +700,13 @@ export async function runCapture(
                 }
               }
             } catch (vecErr) {
-              capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
-                operation: "auto-capture-vector-store",
-                subsystem: "auto-capture",
-              });
-              api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
+              if (!suppressCaptureStageError(ctx, api, vecErr)) {
+                capturePluginError(vecErr instanceof Error ? vecErr : new Error(String(vecErr)), {
+                  operation: "auto-capture-vector-store",
+                  subsystem: "auto-capture",
+                });
+                api.logger.warn(`memory-hybrid: vector capture failed: ${vecErr}`);
+              }
             }
             stored++;
             ctx.auditStore?.append({
@@ -702,11 +723,13 @@ export async function runCapture(
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "auto-capture",
-        subsystem: "auto-capture",
-      });
-      api.logger.warn(`memory-hybrid: capture failed: ${String(err)}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "auto-capture",
+          subsystem: "auto-capture",
+        });
+        api.logger.warn(`memory-hybrid: capture failed: ${String(err)}`);
+      }
     }
   }
 
@@ -765,11 +788,13 @@ export async function runCapture(
               });
               api.logger.debug?.(`memory-hybrid: auto-captured success episode: ${episode.id}`);
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "episode-auto-capture-success",
-                subsystem: "episodes",
-                severity: "info",
-              });
+              if (!suppressCaptureStageError(ctx, api, err)) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "episode-auto-capture-success",
+                  subsystem: "episodes",
+                  severity: "info",
+                });
+              }
             }
           }
           break; // only one episode per message
@@ -802,11 +827,13 @@ export async function runCapture(
               });
               api.logger.debug?.(`memory-hybrid: auto-captured failure episode: ${episode.id}`);
             } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                operation: "episode-auto-capture-failure",
-                subsystem: "episodes",
-                severity: "info",
-              });
+              if (!suppressCaptureStageError(ctx, api, err)) {
+                capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                  operation: "episode-auto-capture-failure",
+                  subsystem: "episodes",
+                  severity: "info",
+                });
+              }
             }
           }
           break;
@@ -861,11 +888,13 @@ export async function runCapture(
         );
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "credential-auto-detect",
-        subsystem: "credentials",
-      });
-      api.logger.warn(`memory-hybrid: credential auto-detect failed: ${err}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "credential-auto-detect",
+          subsystem: "credentials",
+        });
+        api.logger.warn(`memory-hybrid: credential auto-detect failed: ${err}`);
+      }
     }
   }
 
@@ -890,11 +919,13 @@ export async function runCapture(
           try {
             parsedArgs = JSON.parse(args);
           } catch (err) {
-            capturePluginError(err as Error, {
-              operation: "json-parse-tool-args",
-              severity: "info",
-              subsystem: "lifecycle",
-            });
+            if (!suppressCaptureStageError(ctx, api, err)) {
+              capturePluginError(err as Error, {
+                operation: "json-parse-tool-args",
+                severity: "info",
+                subsystem: "lifecycle",
+              });
+            }
           }
           const argsToScan = Object.values(parsedArgs)
             .filter((v): v is string => typeof v === "string")
@@ -985,7 +1016,7 @@ export async function runCapture(
                     }
                   } catch (err) {
                     const asErr = err instanceof Error ? err : new Error(String(err));
-                    if (!isOllamaCircuitBreakerOpen(asErr)) {
+                    if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
                       capturePluginError(asErr, {
                         operation: storeResult.embeddingStale
                           ? "tool-call-credential-stale-vector-update"
@@ -993,11 +1024,13 @@ export async function runCapture(
                         subsystem: "credentials",
                       });
                     }
-                    api.logger.warn(
-                      storeResult.embeddingStale
-                        ? `memory-hybrid: stale vector re-embed failed for merged credential fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
-                        : `memory-hybrid: vector store for credential fact failed: ${err}`,
-                    );
+                    if (!suppressCaptureStageError(ctx, api, asErr)) {
+                      api.logger.warn(
+                        storeResult.embeddingStale
+                          ? `memory-hybrid: stale vector re-embed failed for merged credential fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
+                          : `memory-hybrid: vector store for credential fact failed: ${err}`,
+                      );
+                    }
                   }
                 }
                 if (logCaptures) {
@@ -1009,12 +1042,14 @@ export async function runCapture(
         }
       }
     } catch (err) {
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "tool-call-credential-auto-capture",
-        subsystem: "credentials",
-      });
-      const errMsg = err instanceof Error ? err.stack || err.message : String(err);
-      api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${errMsg}`);
+      if (!suppressCaptureStageError(ctx, api, err)) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "tool-call-credential-auto-capture",
+          subsystem: "credentials",
+        });
+        const errMsg = err instanceof Error ? err.stack || err.message : String(err);
+        api.logger.warn(`memory-hybrid: tool-call credential auto-capture failed: ${errMsg}`);
+      }
     }
   }
 }

@@ -29,7 +29,7 @@ import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
 import { TASK_LEDGER_CATEGORY } from "../services/task-ledger-facts.js";
-import { suppressStaleLifecycleDbError, shouldSuppressStaleLifecycleError } from "../utils/registration-superseded.js";
+import { shouldSuppressStaleLifecycleError } from "../utils/registration-superseded.js";
 import type { LifecycleContext } from "./types.js";
 
 export type { LifecycleContext } from "./types.js";
@@ -235,21 +235,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             api.logger.debug?.(`memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId}`);
           }
         } catch (err) {
-          if (
-            !suppressStaleLifecycleDbError(
-              ctx,
-              err,
-              api.logger,
-              "memory-hybrid: workflow tracking skipped (registration superseded)",
-            )
-          ) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "workflow-tracking",
-              operation: "agent-end-track-workflow",
-              sessionId: sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default",
-            });
-            api.logger.warn(`memory-hybrid: workflow tracking failed: ${String(err)}`);
-          }
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "workflow-tracking",
+            operation: "agent-end-track-workflow",
+            sessionId: sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default",
+          });
+          api.logger.warn(`memory-hybrid: workflow tracking failed: ${String(err)}`);
         }
       }
 
@@ -300,14 +291,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           fallbackModels: [],
         });
       } catch (err) {
-        const staleNarrative = suppressStaleLifecycleDbError(
-          ctx,
-          err,
-          api.logger,
-          "memory-hybrid: session narrative skipped (registration superseded)",
-        );
-        const transient = !staleNarrative && isAbortOrTransientLlmError(err);
-        if (!staleNarrative && !transient) {
+        const transient = isAbortOrTransientLlmError(err);
+        if (!transient) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
             subsystem: "narratives",
             operation: "agent-end-build-narrative",
@@ -315,9 +300,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
           });
         }
         const detail = err instanceof Error ? err.message : String(err);
-        if (staleNarrative) {
-          /* debug already logged */
-        } else if (transient) {
+        if (transient) {
           api.logger.info?.(`memory-hybrid: session narrative skipped (LLM unavailable or aborted): ${detail}`);
         } else {
           api.logger.warn(`memory-hybrid: session narrative build failed: ${String(err)}`);
