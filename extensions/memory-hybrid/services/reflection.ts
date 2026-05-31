@@ -837,13 +837,21 @@ export async function runReflection(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
+          // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflection — failed to delete merged vector for pattern fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+            );
+          }
           rollbackMergedFactText(factsDb, logger, {
             context: "reflection",
             factId: entry.id,
             mergedText: entry.text,
             appendedText: patternText,
             preMergeText: storeResult.preMergeText,
-            reason: "vector-store-failure",
+            reason: "metadata-update-failure",
           });
           vectorStored = false;
           continue;
@@ -1380,13 +1388,21 @@ export async function runReflectionRules(
           factId: entry.id,
         });
         if (storeResult.embeddingStale) {
+          // Delete the merged vector before rolling back the text so LanceDB and SQLite stay consistent.
+          try {
+            await vectorDb.delete(entry.id);
+          } catch (vecErr) {
+            logger.warn(
+              `memory-hybrid: reflect-rules — failed to delete merged vector for rule fact ${entry.id.slice(0, 8)} after metadata failure: ${vecErr}`,
+            );
+          }
           rollbackMergedFactText(factsDb, logger, {
             context: "reflect-rules",
             factId: entry.id,
             mergedText: entry.text,
             appendedText: ruleText,
             preMergeText: storeResult.preMergeText,
-            reason: "vector-store-failure",
+            reason: "metadata-update-failure",
           });
           vectorStored = false;
           continue;
