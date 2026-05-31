@@ -317,7 +317,12 @@ export function validateMaintenanceExecution(
     // Every required step absent — usually a hard failure (shell died before hm_step).
     // Exception: cron preambles that tell the agent to skip the whole script when a feature
     // is disabled leave an empty ledger; corroborate with HM_LOG text.
-    if (logPath && steps.length === 0 && failedSteps.length === 0 && logContentIndicatesIntentionalFeatureSkip(logContent)) {
+    if (
+      logPath &&
+      steps.length === 0 &&
+      failedSteps.length === 0 &&
+      logContentIndicatesIntentionalFeatureSkip(logContent)
+    ) {
       maintenanceStatus = "skipped";
     } else {
       maintenanceStatus = "failed";
