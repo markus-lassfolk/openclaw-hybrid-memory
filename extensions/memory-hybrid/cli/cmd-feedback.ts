@@ -952,11 +952,9 @@ export function explainToolEffectivenessNoData(
       db.close();
     }
   } catch (err) {
-    // If we can't read the DB, fall back to check if tracking is disabled
-    if (!workflowTrackingEnabled) {
-      return "workflow tracking is disabled (workflowTracking.enabled=false)";
-    }
-    return "no workflow traces recorded yet";
+    // Database exists but cannot be read - report the error
+    const errMsg = err instanceof Error ? err.message : String(err);
+    return `failed to read workflow traces DB: ${errMsg}`;
   }
 }
 
