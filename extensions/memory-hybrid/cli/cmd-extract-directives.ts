@@ -183,6 +183,7 @@ export async function runExtractDirectivesForCli(
               const sourceScopeTarget = null;
               const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
               if (!getVectorSearchFailReason(vectorDb)) {
+                const nowSec = Math.floor(Date.now() / 1000);
                 vectorCandidates = neighbors
                   .map((candidate) => ({
                     id: candidate.entry.id,
@@ -197,6 +198,7 @@ export async function runExtractDirectivesForCli(
                     return (
                       fact != null &&
                       fact.supersededAt == null &&
+                      (fact.expiresAt === null || fact.expiresAt > nowSec) &&
                       fact.source.startsWith("directive:") &&
                       (fact.scope ?? "global") === sourceScope &&
                       (fact.scope === "global" ? null : (fact.scopeTarget ?? null)) === sourceScopeTarget
