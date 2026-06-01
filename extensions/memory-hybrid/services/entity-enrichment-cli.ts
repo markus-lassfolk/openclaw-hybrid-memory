@@ -77,6 +77,7 @@ const ADAPTIVE_MIN_BATCH_SIZE = 5;
 const ADAPTIVE_MAX_BATCH_SIZE = 100;
 const ADAPTIVE_MIN_DELAY_MS = 0;
 const ADAPTIVE_MAX_DELAY_MS = 5_000;
+const ADAPTIVE_BACKOFF_MIN_DELAY_MS = 50;
 const ADAPTIVE_SUCCESS_STREAK_FOR_RAMP_UP = 2;
 const ADAPTIVE_BATCH_SIZE_STEP = 5;
 const ADAPTIVE_DELAY_STEP_MS = 25;
@@ -274,13 +275,16 @@ export async function runEntityEnrichmentForCli(
       });
     }
     if (adaptiveCatchUp) {
-      const hadPressure = batchPressureSignals > 0 || batchTransientFailures > 1;
+      const hadPressure = batchPressureSignals > 0;
       const previousBatchSize = effectiveBatchSize;
       const previousDelayMs = effectiveDelayMs;
       if (hadPressure) {
         successStreak = 0;
         effectiveBatchSize = Math.max(ADAPTIVE_MIN_BATCH_SIZE, Math.floor(effectiveBatchSize / 2));
-        effectiveDelayMs = Math.min(ADAPTIVE_MAX_DELAY_MS, Math.max(50, Math.ceil(effectiveDelayMs * 1.5)));
+        effectiveDelayMs = Math.min(
+          ADAPTIVE_MAX_DELAY_MS,
+          Math.max(ADAPTIVE_BACKOFF_MIN_DELAY_MS, Math.ceil(effectiveDelayMs * 1.5)),
+        );
       } else {
         successStreak++;
         if (successStreak >= ADAPTIVE_SUCCESS_STREAK_FOR_RAMP_UP) {

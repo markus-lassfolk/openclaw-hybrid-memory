@@ -1336,8 +1336,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             rejected: 0,
             duplicates: 0,
             rejectReasons: {},
-            effectiveBatchSize: adaptiveCatchUp ? Number.parseInt(opts?.batchSize ?? "20", 10) : undefined,
-            effectiveDelayMs: adaptiveCatchUp ? Number.parseInt(opts?.batchDelayMs ?? "150", 10) : undefined,
+            effectiveBatchSize: adaptiveCatchUp ? batchSize : undefined,
+            effectiveDelayMs: adaptiveCatchUp ? batchDelayMs : undefined,
           };
           if (adaptiveCatchUp) {
             console.log(

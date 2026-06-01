@@ -16,10 +16,16 @@ import {
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
-import { withLLMRetry } from "./chat.js";
+import {
+  is403QuotaOrRateLimitLike,
+  is429OrWrapped,
+  is500OrWrapped,
+  isConnectionErrorLike,
+  parseRetryAfterMs,
+  withLLMRetry,
+} from "./chat.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
-import { is403QuotaOrRateLimitLike, is429OrWrapped, is500OrWrapped, isConnectionErrorLike, parseRetryAfterMs } from "./chat.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 
 const MIN_CHARS = 24;
