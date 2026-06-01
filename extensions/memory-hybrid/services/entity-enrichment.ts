@@ -317,8 +317,8 @@ ${body}`;
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     const rateLimited = is429OrWrapped(error) || is403QuotaOrRateLimitLike(error);
-    const transientFailure = rateLimited || is500OrWrapped(error) || isConnectionErrorLike(error);
-    const timeoutFailure = transientFailure && errorIndicatesLlmTimeout(error);
+    const timeoutFailure = errorIndicatesLlmTimeout(error);
+    const transientFailure = rateLimited || timeoutFailure || is500OrWrapped(error) || isConnectionErrorLike(error);
     const retryAfterMs = parseRetryAfterMs(error) ?? undefined;
     capturePluginError(error, {
       operation: "entity-enrichment-llm",
