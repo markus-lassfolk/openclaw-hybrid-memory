@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -119,6 +119,46 @@ exit 2
     expect(readFileSync(marker, "utf-8")).toContain("called");
     expect(result.stdout + result.stderr).toContain("validate-cron-exit");
     expect(result.stdout + result.stderr).toContain("PARTIAL: nightly-memory-sweep");
+  });
+
+  it("writes parseable validation ledger status values", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then echo "pruned"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}'; exit 1; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody(
+      "nightly-memory-sweep",
+      [{ name: "prune", cmd: "openclaw hybrid-mem prune --verbose" }],
+      ["prune", "distill"],
+    );
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.status).toBe(1);
+    const exitDir = join(home, "logs", "cron-hybrid-mem");
+    const exitPath = readdirSync(exitDir)
+      .filter((name) => name.endsWith(".exit.txt"))
+      .map((name) => join(exitDir, name))[0];
+    expect(exitPath).toBeDefined();
+    const exitContents = readFileSync(exitPath, "utf-8");
+    expect(exitContents).toContain("validate-cron-exit exit=1 status=failed reason=maintenance_partial");
+    expect(exitContents).not.toContain("status=partial");
   });
 
   it("runs validate-cron-exit automatically and keeps successful cron steps at exit zero", () => {
