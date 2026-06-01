@@ -9,7 +9,7 @@
 
 /** Minimal commander chain surface needed to append shared maintenance flags. */
 export type CommandOptionChain = {
-  option(flags: string, desc?: string, defaultValue?: unknown): CommandOptionChain;
+  option(flags: string, desc?: string, defaultValue?: unknown): unknown;
 };
 
 /** Parsed override flags from Commander (both flags are accepted during migration). */
@@ -41,7 +41,9 @@ export function resolveScanMaintenanceOverrides(
 }
 
 /** Register consistent --force / --full options on scan-style maintenance commands. */
-export function registerScanMaintenanceOverrideOptions(cmd: CommandOptionChain): CommandOptionChain {
+export function registerScanMaintenanceOverrideOptions<
+  T extends { option(flags: string, desc?: string, defaultValue?: unknown): T },
+>(cmd: T): T {
   return cmd
     .option(
       "--force",
