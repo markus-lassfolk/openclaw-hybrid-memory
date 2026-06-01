@@ -339,6 +339,9 @@ export function resolveReflectionModelAndFallbacks(
   } else if (cfg.llm && chain.length === 0 && !skipGlobalFallbackAppend) {
     appendUniqueFallback(chain, cfg.llm.fallbackModel, defaultModel);
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
+    if (tier === "maintenance" && explicitMaintList.length === 1 && chain.length === 0) {
+      appendUniqueFallbackList(chain, getLLMModelPreference(cronCfg, "default"), defaultModel);
+    }
   }
 
   const primaryOverride = primaryModelOverride?.trim();

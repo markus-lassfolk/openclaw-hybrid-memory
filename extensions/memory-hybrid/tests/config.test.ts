@@ -1501,6 +1501,20 @@ describe("hybridConfigSchema.parse", () => {
       expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
     });
 
+    it("#1801: single-model llm.maintenance inherits default-tier fallback candidates", () => {
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          maintenance: ["minimax/MiniMax-M2.7-highspeed"],
+          default: ["openai/gpt-5.4", "openai/gpt-4.1-mini"],
+          heavy: ["openai/gpt-5.4"],
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("minimax/MiniMax-M2.7-highspeed");
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
+    });
+
     it("keeps maintenance fallback order when reflection primary is overridden", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,
