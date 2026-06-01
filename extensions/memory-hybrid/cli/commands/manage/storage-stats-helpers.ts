@@ -81,6 +81,17 @@ export function parseBoundedFloatOption(raw: unknown, fallback: number, min: num
   return Math.max(min, Math.min(max, value));
 }
 
+function formatRatioPercent(value: number): string {
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+function formatVectorLifecycleSloBreach(breach: AuditHealthReport["vectorLifecycleSlo"]["breaches"][number]): string {
+  if (breach.key === "vectorless_ratio") {
+    return `${breach.key} actual=${breach.actual} (${formatRatioPercent(breach.actual)}) target=${breach.target} (${formatRatioPercent(breach.target)})`;
+  }
+  return `${breach.key} actual=${breach.actual} target=${breach.target}`;
+}
+
 type SyncBundleFile = {
   path: string;
   contentBase64: string;
@@ -786,7 +797,7 @@ export function buildAuditHealthReport(
     );
   if (vectorLifecycleSloBreaches.length > 0)
     warnings.push(
-      `Vector lifecycle SLO breach(es): ${vectorLifecycleSloBreaches.map((b) => `${b.key} actual=${b.actual} target=${b.target}`).join("; ")}`,
+      `Vector lifecycle SLO breach(es): ${vectorLifecycleSloBreaches.map(formatVectorLifecycleSloBreach).join("; ")}`,
     );
   if (procedureTriage.summary.total > 0) {
     const reasonBreakdown = Object.entries(procedureTriage.summary.byReason)
@@ -941,7 +952,7 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
   }
   if (report.vectorLifecycleSlo.breaches.length > 0) {
     console.log(
-      `Vector lifecycle SLO breaches: ${report.vectorLifecycleSlo.breaches.map((b) => `${b.key} actual=${b.actual} target=${b.target}`).join(", ")}`,
+      `Vector lifecycle SLO breaches: ${report.vectorLifecycleSlo.breaches.map(formatVectorLifecycleSloBreach).join(", ")}`,
     );
   }
   if (report.vectorlessBySource.length > 0) {

@@ -163,7 +163,11 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
 
     expect(report.vectorLifecycleSlo.breaches.some((b) => b.key === "vectorless_ratio")).toBe(true);
-    expect(report.warnings.some((w) => w.includes("Vector lifecycle SLO breach(es)"))).toBe(true);
+    const warning = report.warnings.find((w) => w.includes("Vector lifecycle SLO breach(es)"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("vectorless_ratio");
+    expect(warning).toContain("(100.00%)");
+    expect(warning).toContain("(2.00%)");
     db.close();
   });
 
