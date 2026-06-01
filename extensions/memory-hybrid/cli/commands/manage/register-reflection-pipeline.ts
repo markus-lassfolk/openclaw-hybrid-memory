@@ -1369,6 +1369,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     )
     .option("--target-duration-sec <n>", "Alias for --time-budget-sec")
     .option("--max-concurrency <n>", "Max parallel LLM extractions per batch when adaptive (default 3)", "3")
+    .option(
+      "--provider-pressure-budget <n>",
+      "Stop after this many cumulative rate-limit/timeout pressure events (adaptive catch-up)",
+    )
+    .option("--json", "Emit structured JSON report (includes issue #1791 telemetry when adaptive)")
     .option("--dry-run", "Only report how many facts need enrichment")
     .option("-v, --verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
     .action(
@@ -1386,6 +1391,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             timeBudgetSec?: string;
             targetDurationSec?: string;
             maxConcurrency?: string;
+            providerPressureBudget?: string;
+            json?: boolean;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -1411,6 +1418,18 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           if (!Number.isFinite(maxConcurrency) || maxConcurrency < 1) {
             throw new Error("--max-concurrency must be a positive integer (>= 1).");
           }
+          const providerPressureBudgetRaw = opts?.providerPressureBudget;
+          const providerPressureBudget =
+            providerPressureBudgetRaw != null && providerPressureBudgetRaw !== ""
+              ? Number.parseInt(providerPressureBudgetRaw, 10)
+              : undefined;
+          if (
+            providerPressureBudget != null &&
+            (!Number.isFinite(providerPressureBudget) || providerPressureBudget < 1)
+          ) {
+            throw new Error("--provider-pressure-budget must be a positive integer (>= 1).");
+          }
+          const jsonMode = !!opts?.json;
           let enrichProgress: import("../../../services/entity-enrichment-cli.js").EntityEnrichmentProgress = {
             processed: 0,
             total: 0,
@@ -1449,6 +1468,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   batchDelayMs,
                   timeBudgetSec,
                   maxConcurrency,
+                  providerPressureBudget,
                   onProgress: (next) => {
                     enrichProgress = next;
                     heartbeat.heartbeat();
@@ -1479,6 +1499,29 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const estimatedRunsRemaining =
             res.estimatedRunsRemaining ?? (mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)));
           const limitLabel = mode === "all" ? "all" : String(res.effectiveLimit ?? limit);
+          const jsonReport = {
+            dryRun,
+            mode,
+            limit: limitLabel,
+            pendingBefore: pendingTotal,
+            pendingBatch: res.pending,
+            processed: res.processed,
+            enriched: res.factsEnriched,
+            remaining: remainingTotal,
+            estimatedRunsRemaining,
+            stopReason: res.stopReason ?? "completed",
+            llmFailures: res.llmFailures ?? 0,
+            adaptiveSummary: res.adaptiveSummary,
+            telemetry: res.telemetry,
+            rejectReasons: res.rejectReasons,
+          };
+          if (jsonMode) {
+            console.log(JSON.stringify(jsonReport, null, 2));
+            if (res.llmFailures && res.llmFailures > 0) {
+              process.exitCode = 2;
+            }
+            return;
+          }
           if (res.pendingByTier) {
             console.log(
               `Entity enrichment backlog by tier: hot=${res.pendingByTier.hot}, warm=${res.pendingByTier.warm}, structural=${res.pendingByTier.structural}, cold=${res.pendingByTier.cold}, unknown=${res.pendingByTier.unknown}`,
@@ -1539,8 +1582,15 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 `Entity enrichment stopped: time budget reached (processed=${res.processed}, remaining=${remainingTotal}).`,
               );
             }
-            if (res.adaptiveSummary) {
+            if (res.telemetry) {
+              console.log(`Entity enrichment adaptive telemetry: ${JSON.stringify(res.telemetry)}`);
+            } else if (res.adaptiveSummary) {
               console.log(`Entity enrichment adaptive summary: ${JSON.stringify(res.adaptiveSummary)}`);
+            }
+            if (res.stopReason === "provider_budget") {
+              console.log(
+                `Entity enrichment stopped: provider pressure budget reached (rate limits/timeouts; processed=${res.processed}, remaining=${remainingTotal}).`,
+              );
             }
             if (res.llmFailures && res.llmFailures > 0) {
               process.exitCode = 2;

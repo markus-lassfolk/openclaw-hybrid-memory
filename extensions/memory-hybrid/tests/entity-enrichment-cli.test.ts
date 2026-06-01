@@ -510,4 +510,126 @@ describe("runEntityEnrichmentForCli", () => {
     expect(maxInFlight).toBeGreaterThan(1);
     expect(maxInFlight).toBeLessThanOrEqual(3);
   });
+
+  it("persists progress and emits actionable telemetry on timeout/stall pressure", async () => {
+    seedFacts(4, "Timeout stall fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    let call = 0;
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockImplementation(async () => {
+      call++;
+      if (call === 1) {
+        return {
+          mentions: [
+            {
+              label: "PERSON",
+              surfaceText: "Ada",
+              normalizedSurface: "ada",
+              startOffset: 0,
+              endOffset: 3,
+              confidence: 0.9,
+            },
+          ],
+          detectedLang: "eng",
+          quality: { mentions: 1, accepted: 1, rejected: 0, duplicates: 0, rejectReasons: {} },
+          rejectedMentions: [],
+          pressureSignals: {
+            failed: false,
+            transientFailure: false,
+            rateLimited: false,
+            timeoutFailure: false,
+          },
+        };
+      }
+      return {
+        mentions: [],
+        detectedLang: "eng",
+        quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+        rejectedMentions: [],
+        pressureSignals: {
+          failed: true,
+          transientFailure: true,
+          rateLimited: false,
+          timeoutFailure: true,
+        },
+      };
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 4,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 4,
+      batchDelayMs: 0,
+      providerPressureBudget: 2,
+      maxConcurrency: 1,
+    });
+
+    expect(res.processed).toBeGreaterThanOrEqual(2);
+    expect(res.factsEnriched).toBe(1);
+    expect(res.llmFailures).toBeGreaterThanOrEqual(1);
+    expect(res.stopReason).toBe("provider_budget");
+    expect(res.telemetry?.timeouts).toBeGreaterThanOrEqual(1);
+    expect(res.telemetry?.nextRecommendedTimeoutSec).toBeGreaterThan(0);
+    expect(res.remainingTotal).toBeLessThan(4);
+  });
+
+  it("reports accurate backlog ETA in adaptive summary", async () => {
+    seedFacts(9, "Backlog ETA fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockResolvedValue({
+      mentions: [],
+      detectedLang: "eng",
+      quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+      rejectedMentions: [],
+      pressureSignals: {
+        failed: false,
+        transientFailure: false,
+        rateLimited: false,
+        timeoutFailure: false,
+      },
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 3,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 3,
+      batchDelayMs: 0,
+      maxConcurrency: 1,
+    });
+
+    expect(res.processed).toBe(3);
+    expect(res.remainingTotal).toBe(6);
+    expect(res.estimatedRunsRemaining).toBe(2);
+    expect(res.adaptiveSummary?.estimatedRunsRemaining).toBe(2);
+    expect(res.telemetry?.estimatedRunsRemaining).toBe(2);
+    expect(res.telemetry?.remaining).toBe(6);
+  });
 });

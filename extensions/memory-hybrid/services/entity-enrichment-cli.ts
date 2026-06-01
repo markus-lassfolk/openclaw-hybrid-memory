@@ -12,9 +12,12 @@ import { AsyncSemaphore } from "./embeddings/shared.js";
 import { extractEntityMentionsWithLlm } from "./entity-enrichment.js";
 import {
   buildEntityEnrichmentAdaptiveSummary,
+  buildIssue1791AdaptiveTelemetry,
   type EntityEnrichmentAdaptiveSummary,
   type EntityEnrichmentStopReason,
+  type Issue1791AdaptiveTelemetry,
   sanitizeMaxConcurrency,
+  sanitizeProviderPressureBudget,
   sanitizeTimeBudgetSec,
 } from "./entity-enrichment-adaptive.js";
 
@@ -131,6 +134,7 @@ export async function runEntityEnrichmentForCli(
     timeBudgetSec?: number;
     targetDurationSec?: number;
     maxConcurrency?: number;
+    providerPressureBudget?: number;
     onProgress?: (progress: EntityEnrichmentProgress) => void;
     onAdaptivePacing?: (state: EntityEnrichmentAdaptivePacing) => void;
   },
@@ -155,6 +159,7 @@ export async function runEntityEnrichmentForCli(
   llmFailures?: number;
   stopReason?: EntityEnrichmentStopReason;
   adaptiveSummary?: EntityEnrichmentAdaptiveSummary;
+  telemetry?: Issue1791AdaptiveTelemetry;
 }> {
   const limit = sanitizeEnrichmentLimit(opts.limit);
   const mode: "bounded" | "all" = opts.all ? "all" : "bounded";
@@ -210,6 +215,7 @@ export async function runEntityEnrichmentForCli(
   const model = opts.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
   const adaptiveCatchUp = !!opts.adaptiveCatchUp;
   const timeBudgetSec = sanitizeTimeBudgetSec(opts.timeBudgetSec ?? opts.targetDurationSec);
+  const providerPressureBudget = sanitizeProviderPressureBudget(opts.providerPressureBudget);
   const startedAtMs = Date.now();
   const deadlineMs = timeBudgetSec != null ? startedAtMs + timeBudgetSec * 1000 : undefined;
   const isPastDeadline = (): boolean => deadlineMs != null && Date.now() >= deadlineMs;
@@ -236,6 +242,8 @@ export async function runEntityEnrichmentForCli(
   let rateLimitCount = 0;
   let transientFailureCount = 0;
   let timeoutFailureCount = 0;
+  const isPastProviderBudget = (): boolean =>
+    providerPressureBudget != null && rateLimitCount + timeoutFailureCount >= providerPressureBudget;
   const rejectReasons: Record<string, number> = {};
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
 
@@ -271,6 +279,10 @@ export async function runEntityEnrichmentForCli(
       stopReason = "time_budget";
       break;
     }
+    if (isPastProviderBudget()) {
+      stopReason = "provider_budget";
+      break;
+    }
 
     const batch = adaptiveCatchUp ? ids.slice(index, index + effectiveBatchSize) : [ids[index]];
     const batchStats: BatchFactStats = {
@@ -290,7 +302,7 @@ export async function runEntityEnrichmentForCli(
     };
 
     const processFact = async (id: string): Promise<void> => {
-      if (isPastDeadline()) return;
+      if (isPastDeadline() || isPastProviderBudget()) return;
       processed++;
       const f = factsDb.getById(id);
       if (!f?.text) return;
@@ -326,6 +338,10 @@ export async function runEntityEnrichmentForCli(
         batchStats.llmFailuresDelta++;
       } else {
         factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+      }
+
+      if (isPastProviderBudget()) {
+        stopReason = "provider_budget";
       }
 
       mentions += extraction.quality.mentions;
@@ -369,12 +385,18 @@ export async function runEntityEnrichmentForCli(
           stopReason = "time_budget";
           break;
         }
+        if (isPastProviderBudget()) {
+          stopReason = "provider_budget";
+          break;
+        }
         await processFact(id);
       }
     }
 
     if (isPastDeadline()) {
       stopReason = "time_budget";
+    } else if (isPastProviderBudget()) {
+      stopReason = "provider_budget";
     }
 
     const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
@@ -426,13 +448,13 @@ export async function runEntityEnrichmentForCli(
     }
 
     index += batch.length;
-    if (stopReason === "time_budget") break;
+    if (stopReason === "time_budget" || stopReason === "provider_budget") break;
     if (adaptiveCatchUp && index < ids.length) {
       await delay(effectiveDelayMs);
     }
   }
 
-  if (stopReason !== "time_budget") {
+  if (stopReason !== "time_budget" && stopReason !== "provider_budget") {
     stopReason = processed >= ids.length ? "completed" : "exhausted";
   }
 
@@ -458,6 +480,8 @@ export async function runEntityEnrichmentForCli(
         timeBudgetSec,
       })
     : undefined;
+  const telemetry =
+    adaptiveSummary != null ? buildIssue1791AdaptiveTelemetry(adaptiveSummary, factsEnriched) : undefined;
 
   return {
     pending,
@@ -478,5 +502,6 @@ export async function runEntityEnrichmentForCli(
     llmFailures: llmFailures > 0 ? llmFailures : undefined,
     stopReason,
     adaptiveSummary,
+    telemetry,
   };
 }

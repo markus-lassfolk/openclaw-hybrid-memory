@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildEntityEnrichmentAdaptiveSummary,
+  buildIssue1791AdaptiveTelemetry,
   buildVectorlessSloRepairRecommendation,
   VECTORLESS_SLO_TARGET_RATIO,
 } from "../services/entity-enrichment-adaptive.js";
@@ -36,6 +37,14 @@ describe("buildEntityEnrichmentAdaptiveSummary", () => {
     expect(summary.etaSecondsAtCurrentLimit).toBe(270);
     expect(summary.stopReason).toBe("time_budget");
     expect(summary.timeBudgetSec).toBe(30);
+
+    const telemetry = buildIssue1791AdaptiveTelemetry(summary, 8);
+    expect(telemetry.mode).toBe("adaptive-catchup");
+    expect(telemetry.provider429s).toBe(1);
+    expect(telemetry.timeouts).toBe(0);
+    expect(telemetry.avgSecPerFact).toBe(3);
+    expect(telemetry.batchSizeStart).toBe(20);
+    expect(telemetry.nextRecommendedLimit).toBeGreaterThanOrEqual(25);
   });
 });
 
@@ -47,6 +56,7 @@ describe("buildVectorlessSloRepairRecommendation", () => {
       vectorlessAfter: 1150,
       embeddedThisRun: 50,
       runLimit: 100,
+      effectiveBatchSize: 40,
     });
 
     expect(slo.targetVectorlessRatio).toBe(VECTORLESS_SLO_TARGET_RATIO);
@@ -54,6 +64,7 @@ describe("buildVectorlessSloRepairRecommendation", () => {
     expect(slo.vectorlessToClearForSlo).toBe(950);
     expect(slo.estimatedRunsToReachSlo).toBe(19);
     expect(slo.recommendedLimitNextRun).toBe(100);
+    expect(slo.recommendedBatchSizeNextRun).toBe(40);
     expect(slo.sloMetAfterRun).toBe(false);
   });
 

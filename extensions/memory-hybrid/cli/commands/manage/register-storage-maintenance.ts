@@ -1030,6 +1030,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             vectorlessAfter: after,
             embeddedThisRun: embedded,
             runLimit: limit,
+            effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : batchSize,
           });
           if (providerCircuitBreak) {
             report.failedReason =
@@ -1054,7 +1055,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
           const slo = report.vectorSloRepair as ReturnType<typeof buildVectorlessSloRepairRecommendation>;
           console.log(
-            `Vectorless SLO repair: ratio ${(slo.vectorlessRatioAfter * 100).toFixed(2)}% (target ${(slo.targetVectorlessRatio * 100).toFixed(0)}%), clear ${slo.vectorlessToClearForSlo} more, ~${slo.estimatedRunsToReachSlo} run(s) at ${slo.embeddedThisRun || slo.recommendedLimitNextRun}/run`,
+            `Vectorless SLO repair: ratio ${(slo.vectorlessRatioAfter * 100).toFixed(2)}% (target ${(slo.targetVectorlessRatio * 100).toFixed(0)}%), clear ${slo.vectorlessToClearForSlo} more, ~${slo.estimatedRunsToReachSlo} run(s) at limit ${slo.recommendedLimitNextRun} batch ${slo.recommendedBatchSizeNextRun}`,
           );
           if (candidates.length > 0 && !opts?.apply) {
             console.log("Examples:");

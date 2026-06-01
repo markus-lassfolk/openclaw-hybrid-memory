@@ -2,7 +2,30 @@
 
 export const VECTORLESS_SLO_TARGET_RATIO = 0.02;
 
-export type EntityEnrichmentStopReason = "completed" | "time_budget" | "exhausted";
+export type EntityEnrichmentStopReason = "completed" | "time_budget" | "provider_budget" | "exhausted";
+
+/** Issue #1791 suggested telemetry field names. */
+export type Issue1791AdaptiveTelemetry = {
+  mode: "adaptive-catchup";
+  processed: number;
+  enriched: number;
+  remaining: number;
+  durationSec: number;
+  avgSecPerFact: number;
+  provider429s: number;
+  timeouts: number;
+  batchSizeStart: number;
+  batchSizeEnd: number;
+  delayMsStart: number;
+  delayMsEnd: number;
+  concurrencyStart: number;
+  concurrencyEnd: number;
+  stopReason: EntityEnrichmentStopReason;
+  nextRecommendedLimit: number;
+  nextRecommendedTimeoutSec?: number;
+  estimatedRunsRemaining: number;
+  etaSeconds?: number;
+};
 
 export type EntityEnrichmentAdaptiveSummary = {
   enabled: true;
@@ -39,6 +62,7 @@ export type VectorlessSloRepairRecommendation = {
   vectorlessToClearForSlo: number;
   embeddedThisRun: number;
   recommendedLimitNextRun: number;
+  recommendedBatchSizeNextRun: number;
   estimatedRunsToReachSlo: number;
   sloMetAfterRun: boolean;
 };
@@ -122,12 +146,40 @@ export function buildEntityEnrichmentAdaptiveSummary(input: {
   };
 }
 
+export function buildIssue1791AdaptiveTelemetry(
+  summary: EntityEnrichmentAdaptiveSummary,
+  factsEnriched: number,
+): Issue1791AdaptiveTelemetry {
+  return {
+    mode: "adaptive-catchup",
+    processed: summary.processed,
+    enriched: factsEnriched,
+    remaining: summary.remainingTotal,
+    durationSec: Number((summary.durationMs / 1000).toFixed(1)),
+    avgSecPerFact: summary.avgSecondsPerFact,
+    provider429s: summary.rateLimitCount,
+    timeouts: summary.timeoutFailureCount,
+    batchSizeStart: summary.startBatchSize,
+    batchSizeEnd: summary.endBatchSize,
+    delayMsStart: summary.startDelayMs,
+    delayMsEnd: summary.endDelayMs,
+    concurrencyStart: summary.startConcurrency,
+    concurrencyEnd: summary.endConcurrency,
+    stopReason: summary.stopReason,
+    nextRecommendedLimit: summary.nextRecommendedLimit,
+    nextRecommendedTimeoutSec: summary.nextRecommendedTimeoutSec,
+    estimatedRunsRemaining: summary.estimatedRunsRemaining,
+    etaSeconds: summary.etaSecondsAtCurrentLimit,
+  };
+}
+
 export function buildVectorlessSloRepairRecommendation(input: {
   activeFacts: number;
   vectorlessBefore: number;
   vectorlessAfter: number;
   embeddedThisRun: number;
   runLimit: number;
+  effectiveBatchSize?: number;
 }): VectorlessSloRepairRecommendation {
   const activeFacts = Math.max(0, input.activeFacts);
   const vectorlessBefore = Math.max(0, input.vectorlessBefore);
@@ -138,6 +190,7 @@ export function buildVectorlessSloRepairRecommendation(input: {
   const vectorlessToClearForSlo = Math.max(0, vectorlessAfter - maxVectorlessAtTarget);
   const embeddedPerRun = Math.max(1, input.embeddedThisRun);
   const recommendedLimitNextRun = Math.max(input.runLimit, embeddedPerRun);
+  const recommendedBatchSizeNextRun = Math.max(1, input.effectiveBatchSize ?? embeddedPerRun);
   const estimatedRunsToReachSlo = Math.ceil(vectorlessToClearForSlo / embeddedPerRun);
 
   return {
@@ -151,7 +204,15 @@ export function buildVectorlessSloRepairRecommendation(input: {
     vectorlessToClearForSlo,
     embeddedThisRun: input.embeddedThisRun,
     recommendedLimitNextRun,
+    recommendedBatchSizeNextRun,
     estimatedRunsToReachSlo,
     sloMetAfterRun: vectorlessRatioAfter <= VECTORLESS_SLO_TARGET_RATIO,
   };
+}
+
+export function sanitizeProviderPressureBudget(n: number | undefined): number | undefined {
+  if (n === undefined) return undefined;
+  const x = Math.floor(Number(n));
+  if (!Number.isFinite(x) || x < 1) return undefined;
+  return Math.min(10_000, x);
 }
