@@ -84,9 +84,11 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const ctx = makeCtx(db, proposalsDb, { requireScopeFilter: false });
     const warnSpy = vi.spyOn(ctx.logger, "warn");
 
-    // insights.length = 1 (one pattern) → passes scopeFilter check, hits LLM (openai=null) → may throw
-    // We only care that the warn was called before any LLM call
-    await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f }).catch(() => {});
+    // insights.length = 1 (one pattern) → passes scopeFilter check, hits LLM (openai=null) → throws.
+    // We only care that the warn was called before any LLM call.
+    await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f }).catch((err: Error) => {
+      expect(err.message).not.toContain("autoRecall.scopeFilter is not set");
+    });
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("autoRecall.scopeFilter is not set"),
@@ -113,9 +115,11 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const ctx = makeCtx(db, proposalsDb, { requireScopeFilter: true });
     // No non-global scoped facts → no contamination risk → no scope-filter throw.
     // insights block has content; openai=null → will throw on LLM call, but that's after the scopeFilter check.
-    await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f }).catch((err: Error) => {
-      expect(err.message).not.toContain("autoRecall.scopeFilter is not set");
-    });
+    try {
+      await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+    } catch (err: unknown) {
+      expect((err as Error).message).not.toContain("autoRecall.scopeFilter is not set");
+    }
   });
 
   it("does not throw scopeFilter error when requireScopeFilter=true and scopeFilter is set", async () => {
@@ -130,9 +134,11 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     // scopeFilter is set → hasScopeFilter=true → no scope-filter check fires.
     // The fact matches the agentId filter so insights are non-empty; LLM (openai=null) throws,
     // but that error must not be the scopeFilter contamination error.
-    await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f }).catch((err: Error) => {
-      expect(err.message).not.toContain("autoRecall.scopeFilter is not set");
-    });
+    try {
+      await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+    } catch (err: unknown) {
+      expect((err as Error).message).not.toContain("autoRecall.scopeFilter is not set");
+    }
   });
 });
 
