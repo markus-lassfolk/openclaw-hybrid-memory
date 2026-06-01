@@ -193,6 +193,13 @@ export function is429OrWrapped(err: Error): boolean {
   return false;
 }
 
+/** Returns true when the error is a ByteString serialization failure — direct or wrapped in LLMRetryError. */
+export function isByteStringOrWrapped(err: Error): boolean {
+  if (isByteStringSerializationError(err)) return true;
+  if (err instanceof LLMRetryError && isByteStringSerializationError(err.cause)) return true;
+  return false;
+}
+
 /**
  * Unified 5xx / internal server error detection helper.
  * Checks HTTP status code property first, then uses conservative message patterns.
@@ -345,6 +352,17 @@ function isNonRetryableClient400(err: unknown): boolean {
 function is400EmptyBodyGatewayError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return /\b400\b.*\bno body\b/i.test(err.message);
+}
+
+/**
+ * True when the error is a Node.js / browser-fetch ByteString serialization failure.
+ * Thrown by the HTTP layer when a header value contains a character with code point > 255
+ * (e.g. U+2026 HORIZONTAL ELLIPSIS in a copy-pasted API key, model name, or custom header).
+ * These errors are permanent — retrying the same request will always fail (#1776).
+ */
+export function isByteStringSerializationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return /cannot convert argument to a bytestring/i.test(err.message);
 }
 
 /** Some Azure/Foundry deployments return 400 when chat params are not supported for the model (#1165). */
@@ -537,7 +555,8 @@ export async function chatComplete(opts: {
       is404Like(err) || // #303: model not found = wrong model name in config, not a bug
       is403Like(err) || // #394: country/region restriction = operator config issue, not a bug
       is401Like(err) || // #475: invalid API key = operator config issue, not a bug
-      isContextLengthError(err); // #488: input too long for model context window = wrong model choice, not a bug
+      isContextLengthError(err) || // #488: input too long for model context window = wrong model choice, not a bug
+      isByteStringSerializationError(err); // #1776: non-ASCII in HTTP header = config issue, not a bug
     if (!isTransient && !isConfigError) {
       capturePluginError(error, {
         subsystem: "chat",
@@ -647,6 +666,11 @@ export async function withLLMRetry<T>(
         pluginLogger.warn(
           "memory-hybrid: Input exceeds model context length — retrying will not help; truncate input before calling",
         );
+        throw enrichLlmErrorMessage(lastError, opts?.llmContext);
+      }
+      // Don't retry ByteString serialization errors — a non-ASCII character (e.g. U+2026 ELLIPSIS)
+      // in an HTTP header value (API key, model name, custom header) cannot be fixed by retrying (#1776).
+      if (isByteStringOrWrapped(lastError)) {
         throw enrichLlmErrorMessage(lastError, opts?.llmContext);
       }
       const isReasoningSequenceError = isResponsesReasoningSequenceError(lastError);
@@ -941,6 +965,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
+  const finalIsByteString = isByteStringOrWrapped(finalError); // #1776: non-ASCII in HTTP header = config issue
   const finalIsReasoningSequence = isResponsesReasoningSequenceError(finalError); // #1034
   /** Unwraps LLMRetryError so "Request was aborted" in the cause is detected (#935, #936). */
   const finalIsTransientLlm = isAbortOrTransientLlmError(finalError);
@@ -968,6 +993,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
       !finalIs500 &&
       !finalIsOOM &&
       !finalIsContextLength && // #488: context window exceeded = config issue, not a bug
+      !finalIsByteString && // #1776: non-ASCII in HTTP header = config issue, not a bug
       !finalIsUnconfigured &&
       !finalIsTransientLlm &&
       !finalIs403 &&
@@ -994,6 +1020,13 @@ export async function chatCompleteWithRetryDetailed(opts: {
     pendingWarnings?.add(
       "⚠️ Memory plugin: LLM input exceeds model context window. " +
         "Consider using a model with a larger context window or reducing input size. " +
+        "Run: openclaw hybrid-mem verify --test-llm",
+    );
+  } else if (finalIsByteString) {
+    // #1776: ByteString serialization error (non-ASCII in HTTP header) — config issue, not a code bug
+    pendingWarnings?.add(
+      "⚠️ Memory plugin: LLM request contains non-ASCII characters in HTTP headers (API key, model name, or custom header). " +
+        "Check your provider configuration for invalid characters (e.g. copy-pasted ellipsis U+2026). " +
         "Run: openclaw hybrid-mem verify --test-llm",
     );
   } else if (finalIs500) {
