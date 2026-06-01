@@ -165,4 +165,101 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(embeddings.embed).not.toHaveBeenCalled();
     expect(embeddings.embedBatch).toHaveBeenCalledTimes(EMBED_CALL_MAX_ATTEMPTS);
   });
+
+  it("backs off adaptively on rate-limit pressure and reports pacing adjustments", async () => {
+    process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+    const mem = new Command("hybrid-mem");
+
+    const facts = Array.from({ length: 6 }, (_, i) => ({
+      id: `fact-id-${i.toString().padStart(2, "0")}`,
+      text: `fact text ${i}`,
+      category: "fact",
+      source: "manual",
+    }));
+
+    const rateLimitError = Object.assign(new Error("429 rate limit"), { status: 429 });
+
+    const factsDb = {
+      countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
+      listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
+      storeEmbedding: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+      delete: vi.fn().mockResolvedValue(false),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      modelName: "test-embedding-model",
+      embedBatch: vi
+        .fn()
+        .mockResolvedValueOnce([
+          [0.1, 0.2, 0.3],
+          [0.2, 0.3, 0.4],
+        ])
+        .mockResolvedValueOnce([
+          [0.3, 0.4, 0.5],
+          [0.4, 0.5, 0.6],
+        ])
+        .mockRejectedValue(rateLimitError),
+      embed: vi.fn().mockResolvedValue([0.6, 0.7, 0.8]),
+    };
+
+    registerManageStorageAndStats(mem, {
+      factsDb,
+      vectorDb,
+      aliasDb: {},
+      versionInfo: { version: "test" },
+      embeddings,
+      mergeResults: vi.fn(),
+      getMemoryCategories: () => ["fact"],
+      cfg: { memory: { categories: ["fact"] } },
+      runCompaction: vi.fn(),
+      tieringEnabled: false,
+      ctx: { resolvedSqlitePath: null },
+      listCommands: () => [],
+      auditStore: null,
+      merge: vi.fn(),
+      BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    } as any);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(
+      [
+        "reembed-vectorless",
+        "--apply",
+        "--limit",
+        "6",
+        "--batch-size",
+        "2",
+        "--adaptive-catch-up",
+        "--batch-delay-ms",
+        "0",
+        "--json",
+      ],
+      { from: "user" },
+    );
+
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      failedReason?: string;
+      embedded?: number;
+      adaptive?: {
+        baselineBatchSize: number;
+        effectiveBatchSize: number;
+        adjustments?: Array<{ reason?: string; batchRateLimited?: number }>;
+      };
+    };
+    expect(payload.failedReason).toBeUndefined();
+    expect(payload.embedded).toBe(6);
+    expect(payload.adaptive?.baselineBatchSize).toBe(2);
+    expect(payload.adaptive?.adjustments?.some((a) => a.reason === "ramp-up")).toBe(true);
+    expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && (a.batchRateLimited ?? 0) > 0)).toBe(
+      true,
+    );
+  });
 });

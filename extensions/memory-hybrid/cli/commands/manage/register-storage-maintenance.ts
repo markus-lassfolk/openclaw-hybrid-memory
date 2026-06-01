@@ -15,7 +15,13 @@ import {
   collectVectorBackendObservability,
 } from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { is500OrWrapped } from "../../../services/chat.js";
+import {
+  is403QuotaOrRateLimitLike,
+  is429OrWrapped,
+  is500OrWrapped,
+  isConnectionErrorLike,
+  parseRetryAfterMs,
+} from "../../../services/chat.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
@@ -102,6 +108,53 @@ function isEmbeddingProviderServerError(err: unknown): boolean {
     return err.causes.some((cause) => is500OrWrapped(cause));
   }
   return false;
+}
+
+function isEmbeddingProviderRateLimitError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (is429OrWrapped(err) || is403QuotaOrRateLimitLike(err)) return true;
+  if (err instanceof AllEmbeddingProvidersFailed) {
+    return err.causes.some(
+      (cause) => cause instanceof Error && (is429OrWrapped(cause) || is403QuotaOrRateLimitLike(cause)),
+    );
+  }
+  return false;
+}
+
+function isEmbeddingProviderTransientError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (isEmbeddingProviderRateLimitError(err) || is500OrWrapped(err) || isConnectionErrorLike(err)) return true;
+  if (err instanceof AllEmbeddingProvidersFailed) {
+    return err.causes.some(
+      (cause) =>
+        cause instanceof Error &&
+        (is429OrWrapped(cause) ||
+          is403QuotaOrRateLimitLike(cause) ||
+          is500OrWrapped(cause) ||
+          isConnectionErrorLike(cause)),
+    );
+  }
+  return false;
+}
+
+function parseEmbeddingRetryAfterMs(err: unknown): number | undefined {
+  if (err instanceof Error) {
+    const fromTop = parseRetryAfterMs(err);
+    if (fromTop !== null) return fromTop;
+  }
+  if (err instanceof AllEmbeddingProvidersFailed) {
+    for (const cause of err.causes) {
+      if (!(cause instanceof Error)) continue;
+      const retryAfterMs = parseRetryAfterMs(cause);
+      if (retryAfterMs !== null) return retryAfterMs;
+    }
+  }
+  return undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
@@ -653,6 +706,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--source <s>", "Only process facts from this source")
     .option("--apply", "Actually embed and write LanceDB/fact_embeddings rows; default is dry-run")
     .option("--batch-size <n>", "Embedding batch size", "40")
+    .option("--batch-delay-ms <n>", "Delay between adaptive batches in ms (default 150)", "150")
+    .option(
+      "--adaptive-catch-up",
+      "Enable adaptive pacing (ramps up on healthy batches; backs off on provider/rate-limit/store pressure)",
+    )
     .option(
       "--max-embed-failures <n>",
       "Circuit-break after this many consecutive embed failures and exit 1; prevents indefinite stall on provider outage (default: 5)",
@@ -668,6 +726,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             source?: string;
             apply?: boolean;
             batchSize?: string;
+            batchDelayMs?: string;
+            adaptiveCatchUp?: boolean;
             maxEmbedFailures?: string;
             verbose?: boolean;
             json?: boolean;
@@ -676,8 +736,18 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         ) => {
           const limit = Number.parseInt(opts?.limit ?? "100", 10);
           const batchSize = Number.parseInt(opts?.batchSize ?? "40", 10);
+          const batchDelayMs = Number.parseInt(opts?.batchDelayMs ?? "150", 10);
+          const adaptiveCatchUp = opts?.adaptiveCatchUp === true;
           const maxEmbedFailures = Number.parseInt(opts?.maxEmbedFailures ?? "5", 10);
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          const adaptiveMinBatchSize = 1;
+          const adaptiveMaxBatchSize = 200;
+          const adaptiveMinDelayMs = 0;
+          const adaptiveMaxDelayMs = 5_000;
+          const adaptiveBackoffMinDelayMs = 50;
+          const adaptiveBatchSizeStep = 5;
+          const adaptiveDelayStepMs = 25;
+          const adaptiveSuccessStreakForRampUp = 2;
           if (!Number.isFinite(limit) || limit < 1) {
             console.error("error: --limit must be a positive integer");
             process.exitCode = 1;
@@ -685,6 +755,11 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
           if (!Number.isFinite(batchSize) || batchSize < 1) {
             console.error("error: --batch-size must be a positive integer");
+            process.exitCode = 1;
+            return;
+          }
+          if (!Number.isFinite(batchDelayMs) || batchDelayMs < 0) {
+            console.error("error: --batch-delay-ms must be a non-negative integer");
             process.exitCode = 1;
             return;
           }
@@ -700,7 +775,30 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           let skipped = 0;
           let storeFailures = 0;
           let embedFailures = 0;
-          const totalBatches = batchSize > 0 ? Math.ceil(candidates.length / batchSize) : 0;
+          const startedAtMs = Date.now();
+          const baselineBatchSize = batchSize;
+          const baselineDelayMs = batchDelayMs;
+          let effectiveBatchSize = batchSize;
+          let effectiveDelayMs = batchDelayMs;
+          if (adaptiveCatchUp) {
+            effectiveBatchSize = Math.max(adaptiveMinBatchSize, Math.min(adaptiveMaxBatchSize, batchSize));
+            effectiveDelayMs = Math.max(adaptiveMinDelayMs, Math.min(adaptiveMaxDelayMs, batchDelayMs));
+          }
+          const adaptiveAdjustments: Array<{
+            reason: "pressure" | "ramp-up";
+            previousBatchSize: number;
+            previousDelayMs: number;
+            batchSize: number;
+            delayMs: number;
+            batchPressureSignals: number;
+            batchRateLimited: number;
+            batchTransientFailures: number;
+            batchStoreFailures: number;
+            batchEmbedFailures: number;
+            retryAfterMs?: number;
+            batchNumber: number;
+          }> = [];
+          let successStreak = 0;
           let processed = 0;
           let batchNumber = 0;
           let providerCircuitBreak = false;
@@ -713,11 +811,18 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               verbose,
               async () => {
                 await vectorDb.runWithAutoOptimizePaused(async () => {
-                  for (let offset = 0; offset < candidates.length; offset += batchSize) {
+                  let offset = 0;
+                  while (offset < candidates.length) {
                     if (providerCircuitBreak) break;
-                    batchNumber = Math.floor(offset / batchSize) + 1;
-                    const batch = candidates.slice(offset, offset + batchSize);
+                    batchNumber++;
+                    const batch = candidates.slice(offset, offset + effectiveBatchSize);
                     let vectors: (number[] | null)[];
+                    let batchPressureSignals = 0;
+                    let batchRateLimited = 0;
+                    let batchTransientFailures = 0;
+                    let batchStoreFailures = 0;
+                    let batchEmbedFailures = 0;
+                    let batchRetryAfterMs: number | undefined;
                     try {
                       vectors = await embedCallWithTimeoutAndRetry(
                         () => embeddings.embedBatch(batch.map((fact) => fact.text)),
@@ -725,6 +830,18 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       );
                       consecutiveEmbedFailures = 0;
                     } catch (batchErr) {
+                      if (isEmbeddingProviderRateLimitError(batchErr)) {
+                        batchPressureSignals++;
+                        batchRateLimited++;
+                      }
+                      if (isEmbeddingProviderTransientError(batchErr)) {
+                        batchPressureSignals++;
+                        batchTransientFailures++;
+                      }
+                      batchRetryAfterMs = parseEmbeddingRetryAfterMs(batchErr);
+                      if (batchRetryAfterMs !== undefined) {
+                        batchPressureSignals++;
+                      }
                       if (isEmbeddingProviderServerError(batchErr)) {
                         providerCircuitBreak = true;
                         providerCircuitBreakCause = "provider_5xx";
@@ -747,7 +864,23 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                         } catch (singleErr) {
                           errors.push(`fact ${fact.id}: embed failed — ${String(singleErr)}`);
                           embedFailures++;
+                          batchEmbedFailures++;
                           vectors.push(null);
+                          const rateLimited = isEmbeddingProviderRateLimitError(singleErr);
+                          const transient = isEmbeddingProviderTransientError(singleErr);
+                          const retryAfterMs = parseEmbeddingRetryAfterMs(singleErr);
+                          if (rateLimited) {
+                            batchPressureSignals++;
+                            batchRateLimited++;
+                          }
+                          if (transient) {
+                            batchPressureSignals++;
+                            batchTransientFailures++;
+                          }
+                          if (retryAfterMs !== undefined) {
+                            batchPressureSignals++;
+                            batchRetryAfterMs = Math.max(batchRetryAfterMs ?? 0, retryAfterMs);
+                          }
                           if (isEmbeddingProviderServerError(singleErr)) {
                             providerCircuitBreak = true;
                             providerCircuitBreakCause = "provider_5xx";
@@ -798,26 +931,74 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       } catch (err) {
                         errors.push(`fact ${fact.id}: store failed — ${String(err)}`);
                         storeFailures++;
+                        batchStoreFailures++;
                         skipped++;
                       } finally {
                         processed++;
                       }
+                    }
+                    if (adaptiveCatchUp) {
+                      const hadPressure = batchPressureSignals > 0 || batchStoreFailures > 0;
+                      const previousBatchSize = effectiveBatchSize;
+                      const previousDelayMs = effectiveDelayMs;
+                      if (hadPressure) {
+                        successStreak = 0;
+                        effectiveBatchSize = Math.max(adaptiveMinBatchSize, Math.floor(effectiveBatchSize / 2));
+                        const retryAfterDelay = Math.max(batchRetryAfterMs ?? 0, effectiveDelayMs);
+                        const scaledDelay = Math.ceil(retryAfterDelay * 1.5);
+                        effectiveDelayMs = Math.min(
+                          adaptiveMaxDelayMs,
+                          Math.max(adaptiveBackoffMinDelayMs, scaledDelay, batchRetryAfterMs ?? 0),
+                        );
+                      } else {
+                        successStreak++;
+                        if (successStreak >= adaptiveSuccessStreakForRampUp) {
+                          successStreak = 0;
+                          effectiveBatchSize = Math.min(
+                            adaptiveMaxBatchSize,
+                            effectiveBatchSize + adaptiveBatchSizeStep,
+                          );
+                          effectiveDelayMs = Math.max(adaptiveMinDelayMs, effectiveDelayMs - adaptiveDelayStepMs);
+                        }
+                      }
+                      if (previousBatchSize !== effectiveBatchSize || previousDelayMs !== effectiveDelayMs) {
+                        adaptiveAdjustments.push({
+                          reason: hadPressure ? "pressure" : "ramp-up",
+                          previousBatchSize,
+                          previousDelayMs,
+                          batchSize: effectiveBatchSize,
+                          delayMs: effectiveDelayMs,
+                          batchPressureSignals,
+                          batchRateLimited,
+                          batchTransientFailures,
+                          batchStoreFailures,
+                          batchEmbedFailures,
+                          retryAfterMs: batchRetryAfterMs,
+                          batchNumber,
+                        });
+                      }
+                    }
+                    offset += batch.length;
+                    if (adaptiveCatchUp && offset < candidates.length && !providerCircuitBreak) {
+                      await sleep(effectiveDelayMs);
                     }
                   }
                 });
               },
               {
                 progressSupplier: () =>
-                  `stage=embed-and-store; processed=${processed}/${candidates.length}; embedded=${embedded}; skipped=${skipped}; embedFailures=${embedFailures}; storeFailures=${storeFailures}; batch=${batchNumber}/${totalBatches}`,
+                  `stage=embed-and-store; processed=${processed}/${candidates.length}; remaining=${Math.max(0, candidates.length - processed)}; embedded=${embedded}; skipped=${skipped}; embedFailures=${embedFailures}; storeFailures=${storeFailures}; batch=${batchNumber}; batchSize=${effectiveBatchSize}; delayMs=${effectiveDelayMs}`,
                 jsonMode: opts?.json === true,
               },
             );
           }
           const after = opts?.apply ? factsDb.countVectorlessActiveFacts(opts?.source) : before;
+          const durationMs = Date.now() - startedAtMs;
           const report: Record<string, unknown> = {
             apply: opts?.apply === true,
             source: opts?.source ?? null,
             before,
+            candidates: candidates.length,
             considered: candidates.length,
             embedded,
             skipped,
@@ -826,8 +1007,20 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             errors,
             after,
             processed,
+            remaining: after,
+            durationMs,
             aborted,
           };
+          if (adaptiveCatchUp) {
+            report.adaptive = {
+              enabled: true,
+              baselineBatchSize,
+              baselineDelayMs,
+              effectiveBatchSize,
+              effectiveDelayMs,
+              adjustments: adaptiveAdjustments,
+            };
+          }
           if (providerCircuitBreak) {
             report.failedReason =
               providerCircuitBreakCause === "provider_5xx"
@@ -842,8 +1035,13 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             return;
           }
           console.log(
-            `Reembed vectorless ${report.apply ? "applied" : "dry-run"}: before ${before}, candidates ${candidates.length}, embedded ${embedded}, skipped ${skipped}, storeFailures ${storeFailures}, after ${after}`,
+            `Reembed vectorless ${report.apply ? "applied" : "dry-run"}: before ${before}, candidates ${candidates.length}, embedded ${embedded}, skipped ${skipped}, storeFailures ${storeFailures}, after ${after}, remaining ${after}, durationMs ${durationMs}`,
           );
+          if (adaptiveCatchUp) {
+            console.log(
+              `Adaptive pacing: batchSize ${baselineBatchSize}->${effectiveBatchSize}, delayMs ${baselineDelayMs}->${effectiveDelayMs}, adjustments ${adaptiveAdjustments.length}`,
+            );
+          }
           if (candidates.length > 0 && !opts?.apply) {
             console.log("Examples:");
             for (const fact of candidates.slice(0, 10)) {
