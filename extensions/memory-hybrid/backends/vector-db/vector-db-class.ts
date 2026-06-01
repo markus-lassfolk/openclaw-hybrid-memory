@@ -1092,6 +1092,10 @@ export class VectorDB {
         if (oldest) this.shadowTableCache.delete(oldest);
       }
       this.shadowTableCache.set(tableName, table);
+    } else {
+      // Promote to end of Map iteration order for true LRU eviction
+      this.shadowTableCache.delete(tableName);
+      this.shadowTableCache.set(tableName, table);
     }
 
     const row = {
