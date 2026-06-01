@@ -216,7 +216,7 @@ describe("runExtractDirectivesForCli", () => {
         "directive:*": {
           vectorThreshold: 0.85,
           lexicalJaccard: 1,
-          onDuplicate: "skip",
+          onDuplicate: "skip" as const,
         },
       },
     };

@@ -82,9 +82,11 @@ describe("maintenance log analyzer", () => {
     const finding = findingFromStep(
       {
         occurredAt: Date.now() / 1000,
+        iso: new Date().toISOString(),
         job: "nightly-memory-sweep",
         step: "self-correction-analysis",
         exitCode: 1,
+        exitPath: "/tmp/nightly.exit.txt",
         line: "self-correction-analysis exit=1",
         logPath: "/tmp/nightly.log",
         logContent: [
@@ -109,9 +111,11 @@ describe("maintenance log analyzer", () => {
     const finding = findingFromStep(
       {
         occurredAt: Date.now() / 1000,
+        iso: new Date().toISOString(),
         job: "nightly-memory-sweep",
         step: "self-correction-analysis",
         exitCode: 1,
+        exitPath: "/tmp/nightly.exit.txt",
         line: "self-correction-analysis exit=1",
         logPath: "/tmp/nightly.log",
         logContent: [
