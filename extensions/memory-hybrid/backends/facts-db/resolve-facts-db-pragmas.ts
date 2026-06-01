@@ -1,4 +1,5 @@
 import { statSync } from "node:fs";
+import { getEnv } from "../../utils/env-manager.js";
 
 const DEFAULT_CACHE_SIZE_KB = 64_000;
 const DEFAULT_MMAP_SIZE_BYTES = 268_435_456;
@@ -24,8 +25,8 @@ function parsePositiveInt(raw: string | undefined): number | null {
  * RSS on gateway restart (maevevm RCA: 512MB cache + huge mmap on ~414MB DB).
  */
 export function resolveFactsDbPragmas(dbPath: string): FactsDbPragmas {
-  let cacheSizeKb = parsePositiveInt(process.env.OPENCLAW_FACTS_CACHE_SIZE_KB) ?? DEFAULT_CACHE_SIZE_KB;
-  let mmapSizeBytes = parsePositiveInt(process.env.OPENCLAW_FACTS_MMAP_SIZE) ?? DEFAULT_MMAP_SIZE_BYTES;
+  let cacheSizeKb = parsePositiveInt(getEnv("OPENCLAW_FACTS_CACHE_SIZE_KB")) ?? DEFAULT_CACHE_SIZE_KB;
+  let mmapSizeBytes = parsePositiveInt(getEnv("OPENCLAW_FACTS_MMAP_SIZE")) ?? DEFAULT_MMAP_SIZE_BYTES;
 
   let dbBytes = 0;
   try {

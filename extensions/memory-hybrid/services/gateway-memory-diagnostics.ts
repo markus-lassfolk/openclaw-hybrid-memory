@@ -107,7 +107,8 @@ function readActiveFacts(factsDb: FactsDB): number | null {
       .prepare(
         `SELECT COUNT(*) AS cnt FROM facts
          WHERE (valid_until IS NULL OR valid_until > ?)
-           AND (expires_at IS NULL OR expires_at > ?)`,
+           AND (expires_at IS NULL OR expires_at > ?)
+           AND superseded_at IS NULL`,
       )
       .get(nowSec, nowSec) as { cnt: number };
     return row.cnt;

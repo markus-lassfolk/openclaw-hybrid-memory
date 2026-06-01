@@ -343,7 +343,7 @@ function selectPublicApiRoutesContext({
     resolvedSqlitePath,
     resolvedLancePath: typeof vectorDb.getPath === "function" ? vectorDb.getPath() : undefined,
     recallInFlightRef,
-    variantQueuePending: variantQueue?.queueLength,
+    variantQueue,
   };
 }
 

@@ -48,7 +48,7 @@ export interface PublicApiRoutesContext {
   resolvedSqlitePath?: string;
   resolvedLancePath?: string;
   recallInFlightRef?: { value: number };
-  variantQueuePending?: number;
+  variantQueue?: { queueLength: number } | null;
 }
 
 export const PUBLIC_API_PREFIX = "/plugins/memory-public";
@@ -449,7 +449,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       resolvedLancePath: ctx.resolvedLancePath,
       recallInFlightRef: ctx.recallInFlightRef,
-      variantQueuePending: ctx.variantQueuePending,
+      variantQueuePending: ctx.variantQueue?.queueLength ?? null,
     });
     return toJson(200, diag);
   });
