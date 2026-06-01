@@ -528,8 +528,10 @@ describe("runExtractDirectivesForCli", () => {
             tierFilter: "all",
           })
           .at(0)?.entry;
-        return [...invalidPrefix, ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.94 }] : [])]
-          .slice(0, limit);
+        return [
+          ...invalidPrefix,
+          ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.94 }] : []),
+        ].slice(0, limit);
       }),
     };
 
