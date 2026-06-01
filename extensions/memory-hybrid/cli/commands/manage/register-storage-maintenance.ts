@@ -140,13 +140,13 @@ function isEmbeddingProviderTransientError(err: unknown): boolean {
 function parseEmbeddingRetryAfterMs(err: unknown): number | undefined {
   if (err instanceof Error) {
     const fromTop = parseRetryAfterMs(err);
-    if (fromTop !== null) return fromTop;
+    if (fromTop !== undefined) return fromTop;
   }
   if (err instanceof AllEmbeddingProvidersFailed) {
     for (const cause of err.causes) {
       if (!(cause instanceof Error)) continue;
       const retryAfterMs = parseRetryAfterMs(cause);
-      if (retryAfterMs !== null) return retryAfterMs;
+      if (retryAfterMs !== undefined) return retryAfterMs;
     }
   }
   return undefined;

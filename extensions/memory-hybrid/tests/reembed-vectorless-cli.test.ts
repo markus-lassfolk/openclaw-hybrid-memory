@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerManageStorageAndStats } from "../cli/commands/manage/register-storage-and-stats.js";
+import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import { EMBED_CALL_MAX_ATTEMPTS } from "../utils/embed-call.js";
 
 describe("reembed-vectorless CLI partial success reporting", () => {
@@ -164,6 +165,98 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(payload.embedFailures).toBe(0);
     expect(embeddings.embed).not.toHaveBeenCalled();
     expect(embeddings.embedBatch).toHaveBeenCalledTimes(EMBED_CALL_MAX_ATTEMPTS);
+  });
+
+  it("preserves Retry-After from AllEmbeddingProvidersFailed causes during adaptive backoff", async () => {
+    process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+    const mem = new Command("hybrid-mem");
+
+    const facts = Array.from({ length: 4 }, (_, i) => ({
+      id: `retry-after-fact-${i.toString().padStart(2, "0")}`,
+      text: `retry-after fact text ${i}`,
+      category: "fact",
+      source: "manual",
+    }));
+
+    const nestedRateLimitError = Object.assign(new Error("provider rate limited"), {
+      status: 429,
+      headers: { "retry-after": "2" },
+    });
+    const chainError = new AllEmbeddingProvidersFailed([nestedRateLimitError]);
+
+    const factsDb = {
+      countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
+      listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
+      storeEmbedding: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+      delete: vi.fn().mockResolvedValue(false),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      modelName: "test-embedding-model",
+      embedBatch: vi.fn().mockRejectedValue(chainError),
+      embed: vi.fn().mockResolvedValue([0.6, 0.7, 0.8]),
+    };
+
+    registerManageStorageAndStats(mem, {
+      factsDb,
+      vectorDb,
+      aliasDb: {},
+      versionInfo: { version: "test" },
+      embeddings,
+      mergeResults: vi.fn(),
+      getMemoryCategories: () => ["fact"],
+      cfg: { memory: { categories: ["fact"] } },
+      runCompaction: vi.fn(),
+      tieringEnabled: false,
+      ctx: { resolvedSqlitePath: null },
+      listCommands: () => [],
+      auditStore: null,
+      merge: vi.fn(),
+      BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    } as any);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const sleepSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((handler: TimerHandler) => {
+      if (typeof handler === "function") handler();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+
+    await mem.parseAsync(
+      [
+        "reembed-vectorless",
+        "--apply",
+        "--limit",
+        "4",
+        "--batch-size",
+        "3",
+        "--adaptive-catch-up",
+        "--batch-delay-ms",
+        "0",
+        "--json",
+      ],
+      { from: "user" },
+    );
+
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      failedReason?: string;
+      embedded?: number;
+      adaptive?: {
+        adjustments?: Array<{ reason?: string; retryAfterMs?: number; delayMs?: number }>;
+      };
+    };
+    expect(payload.failedReason).toBeUndefined();
+    expect(payload.embedded).toBe(4);
+    expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && a.retryAfterMs === 2000)).toBe(
+      true,
+    );
+    expect(sleepSpy.mock.calls.some(([handler, delay]) => typeof handler === "function" && delay === 3000)).toBe(true);
   });
 
   it("backs off adaptively on rate-limit pressure and reports pacing adjustments", async () => {
