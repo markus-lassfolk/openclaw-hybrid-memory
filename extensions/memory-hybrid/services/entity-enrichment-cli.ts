@@ -509,7 +509,7 @@ export async function runEntityEnrichmentForCli(
                 stopReason = "time_budget";
                 return;
               }
-              await Promise.resolve();
+              await new Promise<void>((resolve) => setImmediate(resolve));
             }
             const idx = nextIdx++;
             if (idx >= batch.length) return;
