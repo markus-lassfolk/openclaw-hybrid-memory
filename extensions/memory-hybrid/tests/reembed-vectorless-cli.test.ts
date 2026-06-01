@@ -248,6 +248,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       failedReason?: string;
       embedded?: number;
       vectorSloRepair?: {
+        sloScope?: string;
         vectorlessToClearForSlo?: number;
         estimatedRunsToReachSlo?: number;
         targetVectorlessRatio?: number;
@@ -258,6 +259,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     };
     expect(payload.failedReason).toBeUndefined();
     expect(payload.embedded).toBe(4);
+    expect(payload.vectorSloRepair?.sloScope).toBe("global");
     expect(payload.vectorSloRepair?.targetVectorlessRatio).toBe(0.02);
     expect(payload.vectorSloRepair?.estimatedRunsToReachSlo).toBeGreaterThanOrEqual(0);
     expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && a.retryAfterMs === 2000)).toBe(true);

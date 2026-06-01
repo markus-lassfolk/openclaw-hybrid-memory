@@ -59,6 +59,7 @@ describe("buildVectorlessSloRepairRecommendation", () => {
       effectiveBatchSize: 40,
     });
 
+    expect(slo.sloScope).toBe("global");
     expect(slo.targetVectorlessRatio).toBe(VECTORLESS_SLO_TARGET_RATIO);
     expect(slo.maxVectorlessAtTarget).toBe(200);
     expect(slo.vectorlessToClearForSlo).toBe(950);

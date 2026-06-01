@@ -1023,14 +1023,18 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               adjustments: adaptiveAdjustments,
             };
           }
-          const activeFacts = factsDb.getCount();
+          const globalVectorlessBefore = factsDb.countVectorlessActiveFacts();
+          const globalVectorlessAfter = opts?.apply ? factsDb.countVectorlessActiveFacts() : globalVectorlessBefore;
           report.vectorSloRepair = buildVectorlessSloRepairRecommendation({
-            activeFacts,
-            vectorlessBefore: before,
-            vectorlessAfter: after,
+            activeFacts: factsDb.getCount(),
+            vectorlessBefore: globalVectorlessBefore,
+            vectorlessAfter: globalVectorlessAfter,
             embeddedThisRun: embedded,
             runLimit: limit,
             effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : batchSize,
+            scopedSource: opts?.source,
+            scopedVectorlessBefore: opts?.source ? before : undefined,
+            scopedVectorlessAfter: opts?.source ? after : undefined,
           });
           if (providerCircuitBreak) {
             report.failedReason =

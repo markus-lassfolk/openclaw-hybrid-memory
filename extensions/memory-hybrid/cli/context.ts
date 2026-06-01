@@ -155,28 +155,13 @@ export type ManageContext = {
     adaptiveCatchUp?: boolean;
     batchSize?: number;
     batchDelayMs?: number;
+    timeBudgetSec?: number;
+    targetDurationSec?: number;
+    maxConcurrency?: number;
+    providerPressureBudget?: number;
     onProgress?: (progress: import("../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
     onAdaptivePacing?: (state: import("../services/entity-enrichment-cli.js").EntityEnrichmentAdaptivePacing) => void;
-  }) => Promise<{
-    pending: number;
-    pendingTotal?: number;
-    pendingByTier?: { hot: number; warm: number; structural: number; cold: number; unknown: number };
-    processed: number;
-    factsEnriched: number;
-    mode?: "bounded" | "all";
-    effectiveLimit?: number | "all";
-    remainingTotal?: number;
-    estimatedRunsRemaining?: number;
-    mentions: number;
-    accepted: number;
-    rejected: number;
-    duplicates: number;
-    rejectReasons: Record<string, number>;
-    skipped?: boolean;
-    pendingFactIds?: string[];
-    llmFailures?: number;
-    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
-  }>;
+  }) => Promise<import("../services/entity-enrichment-cli.js").EntityEnrichmentCliResult>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;

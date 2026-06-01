@@ -17,7 +17,7 @@ import { PLUGIN_ID } from "../utils/constants.js";
 import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
 import { registerStatusCommands } from "./cmd-status.js";
-import { type UserFriendlyContext, registerUserFriendlyCommands } from "./cmd-user-friendly.js";
+import { registerUserFriendlyCommands, type UserFriendlyContext } from "./cmd-user-friendly.js";
 import { type DistillContext, registerDistillCommands } from "./distill.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
@@ -52,37 +52,37 @@ import type {
   VerifyCliSink,
 } from "./types.js";
 import { registerVerifiedCommands } from "./verified.js";
-import { type VerifyContext, registerVerifyCommands } from "./verify.js";
+import { registerVerifyCommands, type VerifyContext } from "./verify.js";
 
 export type {
-  FindDuplicatesResult,
-  StoreCliOpts,
-  StoreCliResult,
-  InstallCliResult,
-  VerifyCliSink,
+  ActiveTaskContext,
+  AnalyzeFeedbackPhrasesResult,
+  BackfillCliResult,
+  BackfillCliSink,
+  ConfigCliResult,
+  CredentialsAuditResult,
+  CredentialsPruneResult,
+  DistillCliResult,
+  DistillCliSink,
   DistillWindowResult,
-  RecordDistillResult,
   ExtractDailyResult,
   ExtractDailySink,
   ExtractProceduresResult,
+  FindDuplicatesResult,
   GenerateAutoSkillsResult,
-  BackfillCliResult,
-  BackfillCliSink,
   IngestFilesResult,
   IngestFilesSink,
-  DistillCliResult,
-  DistillCliSink,
+  InstallCliResult,
+  MigrateToVaultResult,
+  RecordDistillResult,
   SelfCorrectionExtractResult,
   SelfCorrectionRunResult,
-  AnalyzeFeedbackPhrasesResult,
-  MigrateToVaultResult,
-  CredentialsAuditResult,
-  CredentialsPruneResult,
-  UpgradeCliResult,
+  StoreCliOpts,
+  StoreCliResult,
   UninstallCliResult,
-  ConfigCliResult,
+  UpgradeCliResult,
+  VerifyCliSink,
 };
-export type { ActiveTaskContext };
 
 export type HybridMemCliContext = {
   factsDb: FactsDB;
@@ -293,27 +293,16 @@ export type HybridMemCliContext = {
     model?: string;
     verbose?: boolean;
     all?: boolean;
+    adaptiveCatchUp?: boolean;
+    batchSize?: number;
+    batchDelayMs?: number;
+    timeBudgetSec?: number;
+    targetDurationSec?: number;
+    maxConcurrency?: number;
+    providerPressureBudget?: number;
     onProgress?: (progress: import("../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
-  }) => Promise<{
-    pending: number;
-    pendingTotal?: number;
-    pendingByTier?: { hot: number; warm: number; structural: number; cold: number; unknown: number };
-    processed: number;
-    factsEnriched: number;
-    mode?: "bounded" | "all";
-    effectiveLimit?: number | "all";
-    remainingTotal?: number;
-    estimatedRunsRemaining?: number;
-    mentions: number;
-    accepted: number;
-    rejected: number;
-    duplicates: number;
-    rejectReasons: Record<string, number>;
-    skipped?: boolean;
-    pendingFactIds?: string[];
-    llmFailures?: number;
-    enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
-  }>;
+    onAdaptivePacing?: (state: import("../services/entity-enrichment-cli.js").EntityEnrichmentAdaptivePacing) => void;
+  }) => Promise<import("../services/entity-enrichment-cli.js").EntityEnrichmentCliResult>;
   runSelfCorrectionExtract: (opts: {
     days?: number;
     outputPath?: string;

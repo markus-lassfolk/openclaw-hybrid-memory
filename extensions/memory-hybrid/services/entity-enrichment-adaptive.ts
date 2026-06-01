@@ -52,10 +52,16 @@ export type EntityEnrichmentAdaptiveSummary = {
 };
 
 export type VectorlessSloRepairRecommendation = {
+  /** SLO ratio uses global vectorless counts (audit-health target is store-wide). */
+  sloScope: "global";
   targetVectorlessRatio: number;
   activeFacts: number;
   vectorlessBefore: number;
   vectorlessAfter: number;
+  /** When a run used --source, these reflect that filter only (not used for sloMetAfterRun). */
+  scopedSource?: string;
+  scopedVectorlessBefore?: number;
+  scopedVectorlessAfter?: number;
   vectorlessRatioBefore: number;
   vectorlessRatioAfter: number;
   maxVectorlessAtTarget: number;
@@ -180,6 +186,9 @@ export function buildVectorlessSloRepairRecommendation(input: {
   embeddedThisRun: number;
   runLimit: number;
   effectiveBatchSize?: number;
+  scopedSource?: string;
+  scopedVectorlessBefore?: number;
+  scopedVectorlessAfter?: number;
 }): VectorlessSloRepairRecommendation {
   const activeFacts = Math.max(0, input.activeFacts);
   const vectorlessBefore = Math.max(0, input.vectorlessBefore);
@@ -194,6 +203,7 @@ export function buildVectorlessSloRepairRecommendation(input: {
   const estimatedRunsToReachSlo = Math.ceil(vectorlessToClearForSlo / embeddedPerRun);
 
   return {
+    sloScope: "global",
     targetVectorlessRatio: VECTORLESS_SLO_TARGET_RATIO,
     activeFacts,
     vectorlessBefore,
@@ -207,6 +217,9 @@ export function buildVectorlessSloRepairRecommendation(input: {
     recommendedBatchSizeNextRun,
     estimatedRunsToReachSlo,
     sloMetAfterRun: vectorlessRatioAfter <= VECTORLESS_SLO_TARGET_RATIO,
+    scopedSource: input.scopedSource,
+    scopedVectorlessBefore: input.scopedVectorlessBefore,
+    scopedVectorlessAfter: input.scopedVectorlessAfter,
   };
 }
 
