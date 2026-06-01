@@ -253,9 +253,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     };
     expect(payload.failedReason).toBeUndefined();
     expect(payload.embedded).toBe(4);
-    expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && a.retryAfterMs === 2000)).toBe(
-      true,
-    );
+    expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && a.retryAfterMs === 2000)).toBe(true);
     expect(sleepSpy.mock.calls.some(([handler, delay]) => typeof handler === "function" && delay === 3000)).toBe(true);
   });
 
