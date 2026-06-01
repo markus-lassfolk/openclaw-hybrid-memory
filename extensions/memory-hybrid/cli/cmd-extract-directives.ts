@@ -143,7 +143,7 @@ export async function runExtractDirectivesForCli(
           let vectorCandidates: Array<{ id: string; score: number }> | undefined;
           try {
             vector = await embeddings.embed(incident.extractedRule);
-            if (shouldCountVectorFallback) {
+            if (cfg.store?.fuzzyDedupe ?? true) {
               const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
               vectorCandidates = neighbors
                 .map((candidate) => ({
@@ -187,16 +187,17 @@ export async function runExtractDirectivesForCli(
               suppressVectorFallbackWarning: true,
             },
           );
-          if (storeResult.skipped || !storeResult.newlyStored) {
-            continue;
-          }
+          const usedVectorCandidates = Boolean(vectorCandidates && vectorCandidates.length > 0);
           if (usedLexicalOnlyFallback) {
             storeDedupeVectorFallbackSuppressed++;
             lexicalOnlyDedupeStores++;
-          } else if (vectorCandidates && vectorCandidates.length > 0) {
+          } else if (usedVectorCandidates) {
             vectorDedupeStores++;
           } else {
             lexicalOnlyDedupeStores++;
+          }
+          if (storeResult.skipped || !storeResult.newlyStored) {
+            continue;
           }
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
