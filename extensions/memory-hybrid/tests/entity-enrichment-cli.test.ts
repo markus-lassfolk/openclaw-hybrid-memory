@@ -489,7 +489,10 @@ describe("runEntityEnrichmentForCli", () => {
 
     const sleepMs: number[] = [];
     vi.spyOn(globalThis, "setTimeout").mockImplementation((handler: TimerHandler, delay?: number) => {
-      if (typeof delay === "number" && delay > 0) sleepMs.push(delay);
+      if (typeof delay === "number" && delay > 0) {
+        sleepMs.push(delay);
+        nowMs += delay;
+      }
       if (typeof handler === "function") handler();
       return 0 as unknown as ReturnType<typeof setTimeout>;
     });

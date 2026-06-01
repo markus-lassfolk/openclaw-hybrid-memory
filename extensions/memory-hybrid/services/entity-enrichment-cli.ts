@@ -480,6 +480,12 @@ export async function runEntityEnrichmentForCli(
     if (adaptiveCatchUp && effectiveConcurrency > 1) {
       const results: Array<FactProcessResult | null | undefined> = new Array(batch.length);
       let nextIdx = 0;
+      const canStartAnotherLlm = (): boolean => {
+        if (providerPressureBudget == null) return true;
+        const observed = observedProviderPressureInBatch();
+        if (observed >= providerPressureBudget) return false;
+        return mergeCounters.pendingLlmCalls.value < providerPressureBudget - observed;
+      };
       const hasObservedProviderBudgetPressure = (): boolean =>
         providerPressureBudget != null && observedProviderPressureInBatch() >= providerPressureBudget;
       const workerCount = Math.min(effectiveConcurrency, batch.length);
@@ -493,6 +499,17 @@ export async function runEntityEnrichmentForCli(
             if (hasObservedProviderBudgetPressure()) {
               stopReason = "provider_budget";
               return;
+            }
+            while (!canStartAnotherLlm()) {
+              if (hasObservedProviderBudgetPressure()) {
+                stopReason = "provider_budget";
+                return;
+              }
+              if (isPastDeadline()) {
+                stopReason = "time_budget";
+                return;
+              }
+              await Promise.resolve();
             }
             const idx = nextIdx++;
             if (idx >= batch.length) return;
