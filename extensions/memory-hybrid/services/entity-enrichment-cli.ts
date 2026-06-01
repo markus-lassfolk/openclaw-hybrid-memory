@@ -209,6 +209,7 @@ export async function runEntityEnrichmentForCli(
     let batchPressureSignals = 0;
     let batchTransientFailures = 0;
     let batchRateLimited = 0;
+    let batchRetryAfterMs: number | undefined;
     for (const id of batch) {
       processed++;
       const f = factsDb.getById(id);
@@ -233,7 +234,12 @@ export async function runEntityEnrichmentForCli(
         ) {
           batchPressureSignals++;
         }
-        factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+        if (adaptiveCatchUp && extraction.pressureSignals.retryAfterMs !== undefined) {
+          batchRetryAfterMs = Math.max(batchRetryAfterMs ?? 0, extraction.pressureSignals.retryAfterMs);
+        }
+        if (!extraction.pressureSignals.failed) {
+          factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+        }
         mentions += extraction.quality.mentions;
         accepted += extraction.quality.accepted;
         rejected += extraction.quality.rejected;
@@ -281,9 +287,11 @@ export async function runEntityEnrichmentForCli(
       if (hadPressure) {
         successStreak = 0;
         effectiveBatchSize = Math.max(ADAPTIVE_MIN_BATCH_SIZE, Math.floor(effectiveBatchSize / 2));
+        const retryAfterDelay = Math.max(batchRetryAfterMs ?? 0, effectiveDelayMs);
+        const scaledDelay = Math.ceil(retryAfterDelay * 1.5);
         effectiveDelayMs = Math.min(
           ADAPTIVE_MAX_DELAY_MS,
-          Math.max(ADAPTIVE_BACKOFF_MIN_DELAY_MS, Math.ceil(effectiveDelayMs * 1.5)),
+          Math.max(ADAPTIVE_BACKOFF_MIN_DELAY_MS, scaledDelay, batchRetryAfterMs ?? 0),
         );
       } else {
         successStreak++;
