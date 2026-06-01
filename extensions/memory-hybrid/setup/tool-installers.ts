@@ -326,8 +326,25 @@ function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPl
   registerDashboardHttpRoutes({ cfg }, api);
 }
 
-function selectPublicApiRoutesContext({ cfg, factsDb, narrativesDb }: ToolsContext): PublicApiRoutesContext {
-  return { cfg, factsDb, narrativesDb };
+function selectPublicApiRoutesContext({
+  cfg,
+  factsDb,
+  narrativesDb,
+  vectorDb,
+  resolvedSqlitePath,
+  recallInFlightRef,
+  variantQueue,
+}: ToolsContext): PublicApiRoutesContext {
+  return {
+    cfg,
+    factsDb,
+    narrativesDb,
+    vectorDb,
+    resolvedSqlitePath,
+    resolvedLancePath: typeof vectorDb.getPath === "function" ? vectorDb.getPath() : undefined,
+    recallInFlightRef,
+    variantQueuePending: variantQueue?.queueLength,
+  };
 }
 
 function installPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {

@@ -21,7 +21,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-- Nothing yet.
+### Added
+
+- **Gateway memory diagnostics HTTP routes**: `GET /plugins/memory-public/process-memory` and `GET /plugins/memory-public/memory-diagnostics` (RSS/heap/native breakdown, reregister metrics, leak hints for monitoring).
+- **`docs/MEMORY-LEAK-OPERATIONS.md`**: production RCA summary and operational checklist.
+
+### Fixed
+
+- **SQLite facts.db pragmas**: clamp `OPENCLAW_FACTS_CACHE_SIZE_KB` / `OPENCLAW_FACTS_MMAP_SIZE` to on-disk DB size to prevent multi-hundred-MB anonymous over-reservation.
+- **Lance shadow table cache**: cap at 4 entries during bulk re-index to avoid unbounded native handle growth.
 
 ---
 
