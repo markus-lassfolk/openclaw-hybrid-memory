@@ -834,15 +834,17 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       consecutiveEmbedFailures = 0;
                     } catch (batchErr) {
                       if (isEmbeddingProviderRateLimitError(batchErr)) {
-                        batchPressureSignals++;
                         batchRateLimited++;
                       }
                       if (isEmbeddingProviderTransientError(batchErr)) {
-                        batchPressureSignals++;
                         batchTransientFailures++;
                       }
                       batchRetryAfterMs = parseEmbeddingRetryAfterMs(batchErr);
-                      if (batchRetryAfterMs !== undefined) {
+                      if (
+                        isEmbeddingProviderRateLimitError(batchErr) ||
+                        isEmbeddingProviderTransientError(batchErr) ||
+                        batchRetryAfterMs !== undefined
+                      ) {
                         batchPressureSignals++;
                       }
                       if (isEmbeddingProviderServerError(batchErr)) {
@@ -873,15 +875,15 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                           const transient = isEmbeddingProviderTransientError(singleErr);
                           const retryAfterMs = parseEmbeddingRetryAfterMs(singleErr);
                           if (rateLimited) {
-                            batchPressureSignals++;
                             batchRateLimited++;
                           }
                           if (transient) {
-                            batchPressureSignals++;
                             batchTransientFailures++;
                           }
-                          if (retryAfterMs !== undefined) {
+                          if (rateLimited || transient || retryAfterMs !== undefined) {
                             batchPressureSignals++;
+                          }
+                          if (retryAfterMs !== undefined) {
                             batchRetryAfterMs = Math.max(batchRetryAfterMs ?? 0, retryAfterMs);
                           }
                           if (isEmbeddingProviderServerError(singleErr)) {
