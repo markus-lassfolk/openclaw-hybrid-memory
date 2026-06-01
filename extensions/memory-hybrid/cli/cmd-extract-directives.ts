@@ -268,27 +268,30 @@ export async function runExtractDirectivesForCli(
           if (!storeResult.newlyStored) {
             continue;
           }
-          if (vector) {
-            try {
-              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-              if (!(await vectorDb.hasDuplicate(vector))) {
-                await vectorDb.store({
-                  text: incident.extractedRule,
-                  vector,
-                  importance: 0.8,
-                  category: category as MemoryCategory,
-                  id: entry.id,
-                });
-              }
-            } catch (err) {
-              logger.warn?.(`memory-hybrid: extract-directives vector store failed: ${err}`);
-              capturePluginError(err as Error, {
-                subsystem: "cli",
-                operation: "runExtractDirectivesForCli:vector-store",
+          if (!vector) {
+            factsDb.delete(entry.id);
+            continue;
+          }
+          try {
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            if (!(await vectorDb.hasDuplicate(vector))) {
+              await vectorDb.store({
+                text: incident.extractedRule,
+                vector,
+                importance: 0.8,
+                category: category as MemoryCategory,
+                id: entry.id,
               });
             }
+            stored++;
+          } catch (err) {
+            logger.warn?.(`memory-hybrid: extract-directives vector store failed: ${err}`);
+            capturePluginError(err as Error, {
+              subsystem: "cli",
+              operation: "runExtractDirectivesForCli:vector-store",
+            });
+            factsDb.delete(entry.id);
           }
-          stored++;
         } catch (err) {
           const isRetryable = isRetryableStoreError(err);
           if (isRetryable) {
