@@ -50,7 +50,7 @@
     "openclaw": ">=2026.5.0 <2027"
   },
   "dependencies": {
-    "@lancedb/lancedb": "^0.29.0",
+    "@lancedb/lancedb": "^0.30.0",
     "@types/node": "^25.2.3",
     "commander": "^13.1.0",
     "franc": "^6.2.0",
