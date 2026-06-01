@@ -248,7 +248,7 @@ export async function runExtractDirectivesForCli(
             try {
               const mergedVector = await embeddings.embed(entry.text);
               factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-              await vectorDb.delete(entry.id);
+              // Avoid pre-delete so transient store failures do not leave merged facts without any vector.
               await vectorDb.store({
                 text: entry.text,
                 vector: mergedVector,
