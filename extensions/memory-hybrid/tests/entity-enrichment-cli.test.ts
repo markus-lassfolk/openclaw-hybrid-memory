@@ -258,6 +258,50 @@ describe("runEntityEnrichmentForCli", () => {
     );
   });
 
+  it("honors Retry-After above adaptive max delay during pressure backoff", async () => {
+    seedFacts(10, "Adaptive retry-after fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockResolvedValue({
+      mentions: [],
+      detectedLang: "eng",
+      quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+      rejectedMentions: [],
+      pressureSignals: {
+        failed: true,
+        transientFailure: true,
+        rateLimited: true,
+        retryAfterMs: 17_000,
+      },
+    });
+    const pacingEvents: Array<{ reason: string; delayMs: number }> = [];
+
+    await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 10,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 5,
+      batchDelayMs: 150,
+      onAdaptivePacing: (state) => {
+        pacingEvents.push({ reason: state.reason, delayMs: state.delayMs });
+      },
+    });
+
+    const pressureBackoff = pacingEvents.find((event) => event.reason === "pressure");
+    expect(pressureBackoff?.delayMs).toBe(25_500);
+  });
+
   it("keeps adaptive pacing inside min/max bounds", async () => {
     seedFacts(1, "Adaptive bounds fact");
 

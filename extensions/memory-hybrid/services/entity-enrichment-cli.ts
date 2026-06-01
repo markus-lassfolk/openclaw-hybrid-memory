@@ -7,6 +7,7 @@ import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
+import { computeAdaptivePressureDelayMs } from "./adaptive-catch-up-pacing.js";
 import { extractEntityMentionsWithLlm } from "./entity-enrichment.js";
 
 function sanitizeEnrichmentLimit(n: number): number {
@@ -295,12 +296,12 @@ export async function runEntityEnrichmentForCli(
       if (hadPressure) {
         successStreak = 0;
         effectiveBatchSize = Math.max(ADAPTIVE_MIN_BATCH_SIZE, Math.floor(effectiveBatchSize / 2));
-        const retryAfterDelay = Math.max(batchRetryAfterMs ?? 0, effectiveDelayMs);
-        const scaledDelay = Math.ceil(retryAfterDelay * 1.5);
-        effectiveDelayMs = Math.min(
-          ADAPTIVE_MAX_DELAY_MS,
-          Math.max(ADAPTIVE_BACKOFF_MIN_DELAY_MS, scaledDelay, batchRetryAfterMs ?? 0),
-        );
+        effectiveDelayMs = computeAdaptivePressureDelayMs({
+          currentDelayMs: effectiveDelayMs,
+          batchRetryAfterMs,
+          maxAdaptiveDelayMs: ADAPTIVE_MAX_DELAY_MS,
+          backoffMinDelayMs: ADAPTIVE_BACKOFF_MIN_DELAY_MS,
+        });
       } else {
         successStreak++;
         if (successStreak >= ADAPTIVE_SUCCESS_STREAK_FOR_RAMP_UP) {

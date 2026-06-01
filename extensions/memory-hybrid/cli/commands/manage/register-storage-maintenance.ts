@@ -4,17 +4,8 @@
  */
 
 import { existsSync, unlinkSync } from "node:fs";
-import { migrateEmbeddings } from "../../../services/embedding-migration.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
-import { AllEmbeddingProvidersFailed } from "../../../services/embeddings.js";
-import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
-import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
-import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
-import {
-  type VectorBackendObservability,
-  collectVectorBackendObservability,
-} from "../../../services/vector-backend-observability.js";
-import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
+import { isPreStoreGuardBlocked } from "../../../backends/facts-db/crud.js";
+import { computeAdaptivePressureDelayMs } from "../../../services/adaptive-catch-up-pacing.js";
 import {
   is403QuotaOrRateLimitLike,
   is429OrWrapped,
@@ -22,13 +13,24 @@ import {
   isConnectionErrorLike,
   parseRetryAfterMs,
 } from "../../../services/chat.js";
-import { getEnv } from "../../../utils/env-manager.js";
-import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
-import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, approxIntervalMs, withExit } from "../../shared.js";
-import type { ManageBindings } from "./bindings.js";
+import { migrateEmbeddings } from "../../../services/embedding-migration.js";
+import { AllEmbeddingProvidersFailed } from "../../../services/embeddings.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
+import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
+import {
+  collectVectorBackendObservability,
+  type VectorBackendObservability,
+} from "../../../services/vector-backend-observability.js";
+import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
+import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { MemoryEntry } from "../../../types/memory.js";
-import { isPreStoreGuardBlocked } from "../../../backends/facts-db/crud.js";
+import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
+import { getEnv } from "../../../utils/env-manager.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
+import type { ManageBindings } from "./bindings.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 import {
   countImplicitFeedbackTrajectorySignals,
   defaultReindexCheckpointPath,
@@ -38,7 +40,6 @@ import {
   recordStorageGrowthSample,
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
-import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 type FactsDbWithBatch = {
   getBatch: (
@@ -944,12 +945,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       if (hadPressure) {
                         successStreak = 0;
                         effectiveBatchSize = Math.max(adaptiveMinBatchSize, Math.floor(effectiveBatchSize / 2));
-                        const retryAfterDelay = Math.max(batchRetryAfterMs ?? 0, effectiveDelayMs);
-                        const scaledDelay = Math.ceil(retryAfterDelay * 1.5);
-                        effectiveDelayMs = Math.min(
-                          adaptiveMaxDelayMs,
-                          Math.max(adaptiveBackoffMinDelayMs, scaledDelay, batchRetryAfterMs ?? 0),
-                        );
+                        effectiveDelayMs = computeAdaptivePressureDelayMs({
+                          currentDelayMs: effectiveDelayMs,
+                          batchRetryAfterMs,
+                          maxAdaptiveDelayMs: adaptiveMaxDelayMs,
+                          backoffMinDelayMs: adaptiveBackoffMinDelayMs,
+                        });
                       } else {
                         successStreak++;
                         if (successStreak >= adaptiveSuccessStreakForRampUp) {
