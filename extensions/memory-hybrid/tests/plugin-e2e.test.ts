@@ -144,8 +144,8 @@ describe("Plugin registration e2e", () => {
     resetPluginRegistrationStateForTests();
   });
 
-  afterEach(() => {
-    api._stopRegisteredService?.();
+  afterEach(async () => {
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
     resetPluginRegistrationStateForTests();
   });
@@ -256,10 +256,10 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     api = makeMockApi();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vectorDb.close();
     factsDb.close();
-    api._stopRegisteredService?.();
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -449,8 +449,8 @@ describe("Init-databases e2e", () => {
     api = makeMockApi();
   });
 
-  afterEach(() => {
-    api._stopRegisteredService?.();
+  afterEach(async () => {
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -524,10 +524,10 @@ describe("Core and common flows e2e", () => {
     api = makeMockApi();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vectorDb.close();
     factsDb.close();
-    api._stopRegisteredService?.();
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -750,10 +750,10 @@ describe("Advanced features e2e", () => {
     api = makeMockApi();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vectorDb.close();
     factsDb.close();
-    api._stopRegisteredService?.();
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
