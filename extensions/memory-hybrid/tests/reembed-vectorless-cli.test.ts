@@ -614,7 +614,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       { from: "user" },
     );
 
-    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+    const jsonPayload = logSpy.mock.calls.map(([arg]) => String(arg)).find((line) => line.trim().startsWith("{"));
+    const payload = JSON.parse(jsonPayload ?? "{}") as {
       embedded?: number;
       embedFailures?: number;
       adaptive?: {
