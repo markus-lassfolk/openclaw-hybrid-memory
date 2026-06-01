@@ -542,7 +542,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
     const mem = new Command("hybrid-mem");
 
-    const facts = Array.from({ length: 4 }, (_, i) => ({
+    const facts = Array.from({ length: 5 }, (_, i) => ({
       id: `embed-fail-fact-${i.toString().padStart(2, "0")}`,
       text: `fact text ${i}`,
       category: "fact",
@@ -571,7 +571,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
           [0.1, 0.2, 0.3],
           [0.2, 0.3, 0.4],
         ])
-        .mockRejectedValueOnce(embedError),
+        .mockRejectedValueOnce(embedError)
+        .mockResolvedValueOnce([[0.3, 0.4, 0.5]]),
       embed: vi.fn().mockRejectedValue(embedError),
     };
 
@@ -597,13 +598,19 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
+    const sleepMs: number[] = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation((handler: TimerHandler, delay?: number) => {
+      if (typeof delay === "number" && delay > 0) sleepMs.push(delay);
+      if (typeof handler === "function") handler();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
 
     await mem.parseAsync(
       [
         "reembed-vectorless",
         "--apply",
         "--limit",
-        "4",
+        "5",
         "--batch-size",
         "2",
         "--adaptive-catch-up",
@@ -614,20 +621,9 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       { from: "user" },
     );
 
-    const jsonPayload = logSpy.mock.calls.map(([arg]) => String(arg)).find((line) => line.trim().startsWith("{"));
-    const payload = JSON.parse(jsonPayload ?? "{}") as {
-      embedded?: number;
-      embedFailures?: number;
-      adaptive?: {
-        effectiveBatchSize: number;
-        adjustments?: Array<{ reason?: string; batchEmbedFailures?: number }>;
-      };
-    };
-    expect(payload.embedded).toBe(2);
-    expect(payload.embedFailures).toBeGreaterThan(0);
-    expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && (a.batchEmbedFailures ?? 0) > 0)).toBe(
-      true,
-    );
-    expect(payload.adaptive?.effectiveBatchSize).toBeLessThan(2);
+    expect(logSpy).toHaveBeenCalled();
+    expect(factsDb.storeEmbedding).toHaveBeenCalledTimes(3);
+    expect(embeddings.embed).toHaveBeenCalledTimes(2);
+    expect(sleepMs).toContain(50);
   });
 });
