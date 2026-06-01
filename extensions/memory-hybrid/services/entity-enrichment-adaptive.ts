@@ -91,6 +91,20 @@ export function isLlmTimeoutLike(message: string): boolean {
   return /timed out|llm request timeout|request was aborted/.test(msg);
 }
 
+/** Walk LLMRetryError `.cause` chains so wrapped timeouts still count toward pressure budgets. */
+export function errorIndicatesLlmTimeout(err: unknown): boolean {
+  let e: unknown = err;
+  while (e instanceof Error) {
+    if (isLlmTimeoutLike(e.message)) return true;
+    if (e.name === "LLMRetryError" && "cause" in e) {
+      e = (e as { cause: unknown }).cause;
+      continue;
+    }
+    break;
+  }
+  return false;
+}
+
 export function buildEntityEnrichmentAdaptiveSummary(input: {
   startedAtMs: number;
   processed: number;

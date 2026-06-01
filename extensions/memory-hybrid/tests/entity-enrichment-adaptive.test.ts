@@ -4,8 +4,20 @@ import {
   buildEntityEnrichmentAdaptiveSummary,
   buildIssue1791AdaptiveTelemetry,
   buildVectorlessSloRepairRecommendation,
+  errorIndicatesLlmTimeout,
   VECTORLESS_SLO_TARGET_RATIO,
 } from "../services/entity-enrichment-adaptive.js";
+
+describe("errorIndicatesLlmTimeout", () => {
+  it("detects timeouts on wrapped LLMRetryError causes", () => {
+    const cause = new Error("LLM request timeout after 120000ms");
+    const wrapped = Object.assign(new Error("Failed after 3 attempts"), {
+      name: "LLMRetryError",
+      cause,
+    });
+    expect(errorIndicatesLlmTimeout(wrapped)).toBe(true);
+  });
+});
 
 describe("buildEntityEnrichmentAdaptiveSummary", () => {
   it("computes next-run recommendation from throughput", () => {

@@ -581,9 +581,14 @@ describe("runEntityEnrichmentForCli", () => {
     });
 
     let llmCalls = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
     vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockImplementation(async () => {
       llmCalls++;
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 20));
+      inFlight--;
       return {
         mentions: [],
         detectedLang: "eng",
@@ -615,6 +620,7 @@ describe("runEntityEnrichmentForCli", () => {
 
     expect(res.stopReason).toBe("provider_budget");
     expect(llmCalls).toBe(1);
+    expect(maxInFlight).toBe(1);
     expect(res.processed).toBe(1);
   });
 
