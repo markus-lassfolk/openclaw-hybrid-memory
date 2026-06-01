@@ -461,8 +461,9 @@ export async function runEntityEnrichmentForCli(
       processed: { value: processed },
     };
 
+    let attemptedThisBatch = 0;
     if (adaptiveCatchUp && effectiveConcurrency > 1) {
-      const results: Array<FactProcessResult | null> = new Array(batch.length).fill(null);
+      const results: Array<FactProcessResult | null | undefined> = new Array(batch.length);
       let nextIdx = 0;
       const workerCount = Math.min(effectiveConcurrency, batch.length);
       await Promise.all(
@@ -483,6 +484,8 @@ export async function runEntityEnrichmentForCli(
         }),
       );
       for (const result of results) {
+        if (result === undefined) continue;
+        attemptedThisBatch++;
         if (result == null) continue;
         applyFactProcessResult(result, mergeCounters);
       }
@@ -509,6 +512,7 @@ export async function runEntityEnrichmentForCli(
         }
         const result = await processFact(id);
         if (result == null) continue;
+        attemptedThisBatch++;
         applyFactProcessResult(result, mergeCounters);
         if (isPastProviderBudget()) stopReason = "provider_budget";
       }
@@ -578,7 +582,10 @@ export async function runEntityEnrichmentForCli(
       }
     }
 
-    index += processed - processedBeforeBatch;
+    if (attemptedThisBatch === 0) {
+      attemptedThisBatch = Math.max(0, processed - processedBeforeBatch);
+    }
+    index += attemptedThisBatch;
     if (stopReason === "time_budget" || stopReason === "provider_budget") break;
     if (adaptiveCatchUp && index < ids.length) {
       await delay(effectiveDelayMs);
