@@ -285,6 +285,10 @@ describe("runEntityEnrichmentForCli", () => {
       },
     });
     const pacingEvents: Array<{ reason: string; delayMs: number }> = [];
+    const sleepSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((handler: TimerHandler, delay) => {
+      if (typeof handler === "function") handler();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
 
     await runEntityEnrichmentForCli(db, openai as never, cfg, {
       limit: 10,
@@ -300,6 +304,9 @@ describe("runEntityEnrichmentForCli", () => {
 
     const pressureBackoff = pacingEvents.find((event) => event.reason === "pressure");
     expect(pressureBackoff?.delayMs).toBe(25_500);
+    expect(sleepSpy.mock.calls.some(([handler, delay]) => typeof handler === "function" && delay === 25_500)).toBe(
+      true,
+    );
   });
 
   it("keeps adaptive pacing inside min/max bounds", async () => {
