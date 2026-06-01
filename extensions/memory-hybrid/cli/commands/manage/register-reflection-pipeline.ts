@@ -1507,6 +1507,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 console.log(`  ${reason}: ${count}`);
               }
             }
+            if (res.llmFailures && res.llmFailures > 0) {
+              process.exitCode = 2;
+            }
           }
         },
       ),

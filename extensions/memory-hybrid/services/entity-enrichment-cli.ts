@@ -118,6 +118,7 @@ export async function runEntityEnrichmentForCli(
   skipped?: boolean;
   pendingFactIds?: string[];
   enrichedFacts?: EntityEnrichmentVerboseFact[];
+  llmFailures?: number;
 }> {
   const limit = sanitizeEnrichmentLimit(opts.limit);
   const mode: "bounded" | "all" = opts.all ? "all" : "bounded";
@@ -184,6 +185,7 @@ export async function runEntityEnrichmentForCli(
   let accepted = 0;
   let rejected = 0;
   let duplicates = 0;
+  let llmFailures = 0;
   const rejectReasons: Record<string, number> = {};
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
   opts.onProgress?.({
@@ -239,6 +241,8 @@ export async function runEntityEnrichmentForCli(
         }
         if (!extraction.pressureSignals.failed) {
           factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+        } else {
+          llmFailures++;
         }
         mentions += extraction.quality.mentions;
         accepted += extraction.quality.accepted;
@@ -262,7 +266,8 @@ export async function runEntityEnrichmentForCli(
           });
         }
       }
-      const remainingTotal = pendingTotal - processed;
+      const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
+      const remainingTotal = currentBacklog.total;
       opts.onProgress?.({
         processed,
         total: ids.length,
@@ -337,5 +342,6 @@ export async function runEntityEnrichmentForCli(
     duplicates,
     rejectReasons,
     enrichedFacts: verbose && enrichedFacts.length > 0 ? enrichedFacts : undefined,
+    llmFailures: llmFailures > 0 ? llmFailures : undefined,
   };
 }
