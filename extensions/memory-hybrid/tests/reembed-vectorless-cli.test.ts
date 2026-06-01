@@ -13,6 +13,75 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     vi.restoreAllMocks();
   });
 
+  it("captures global vectorless SLO baseline before apply repairs (#1738)", async () => {
+    process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+    const mem = new Command("hybrid-mem");
+
+    const fact = {
+      id: "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      text: "fact text",
+      category: "fact",
+      source: "manual",
+    };
+
+    let globalVectorlessReads = 0;
+    const factsDb = {
+      getCount: vi.fn().mockReturnValue(100),
+      countVectorlessActiveFacts: vi.fn((source?: string) => {
+        if (source !== undefined) return 1;
+        globalVectorlessReads++;
+        return globalVectorlessReads === 1 ? 3 : 0;
+      }),
+      listVectorlessActiveFacts: vi.fn().mockReturnValue([fact]),
+      storeEmbedding: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+      delete: vi.fn().mockResolvedValue(false),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      modelName: "test-embedding-model",
+      embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
+      embed: vi.fn(),
+    };
+
+    registerManageStorageAndStats(mem, {
+      factsDb,
+      vectorDb,
+      aliasDb: {},
+      versionInfo: { version: "test" },
+      embeddings,
+      mergeResults: vi.fn(),
+      getMemoryCategories: () => ["fact"],
+      cfg: { memory: { categories: ["fact"] } },
+      runCompaction: vi.fn(),
+      tieringEnabled: false,
+      ctx: { resolvedSqlitePath: null },
+      listCommands: () => [],
+      auditStore: null,
+      merge: vi.fn(),
+      BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    } as any);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+
+    await mem.parseAsync(["reembed-vectorless", "--apply", "--limit", "1", "--batch-size", "1", "--json"], {
+      from: "user",
+    });
+
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      embedded?: number;
+      vectorSloRepair?: { vectorlessBefore?: number; vectorlessAfter?: number };
+    };
+    expect(payload.embedded).toBe(1);
+    expect(payload.vectorSloRepair?.vectorlessBefore).toBe(3);
+    expect(payload.vectorSloRepair?.vectorlessAfter).toBe(0);
+    expect(payload.vectorSloRepair?.vectorlessBefore).toBeGreaterThan(payload.vectorSloRepair?.vectorlessAfter ?? 0);
+  });
+
   it("reports storeFailures and exits with code 2 when vector writes fail", async () => {
     process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
     const mem = new Command("hybrid-mem");
