@@ -39,6 +39,9 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 143; exit $?' TERM INT");
     expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 129; exit $?' HUP");
     expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 131; exit $?' QUIT");
+    expect(bash).toContain("trap 'signal_during_validate=143' TERM INT");
+    expect(bash).toContain("trap 'signal_during_validate=129' HUP");
+    expect(bash).toContain("trap 'signal_during_validate=131' QUIT");
   });
 
   it("buildHybridMemCronTaskMessage wraps bash and execution rules", () => {
