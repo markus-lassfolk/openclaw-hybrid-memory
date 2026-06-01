@@ -463,6 +463,13 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
               const status = result.annotationStatus;
               if (status) {
                 console.log(`Annotation status: ${status}`);
+                if (result.annotationDiagnostic) {
+                  const diagnostic = result.annotationDiagnostic;
+                  console.log(`Annotation diagnostic: ${diagnostic.kind} — ${diagnostic.summary}`);
+                  for (const action of diagnostic.recommendedActions) {
+                    console.log(`  next: ${action}`);
+                  }
+                }
                 if (status === "failed_annotation" || status === "degraded_model_or_parser") {
                   process.exitCode = 1;
                 }

@@ -16,6 +16,7 @@ import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   type AnnotationReasons,
+  type ReinforcementAnnotationDiagnostic,
   type ReinforcementAnnotationStatus,
   type ReinforcementExtractResult,
   runReinforcementExtract,
@@ -456,6 +457,7 @@ export async function runExtractReinforcementForCli(
 
     // Derive annotation status for the incidentsFound > 0 && annotated == 0 case
     let annotationStatus: ReinforcementAnnotationStatus | undefined;
+    let annotationDiagnostic: ReinforcementAnnotationDiagnostic | undefined;
     if (!opts.dryRun && result.incidents.length > 0 && annotated === 0) {
       if (llmAnalysisFailed && annotationReasons.noRecalledIds === result.incidents.length) {
         annotationStatus = "degraded_model_or_parser";
@@ -474,10 +476,69 @@ export async function runExtractReinforcementForCli(
       // Do not override a successful annotation with a failure status — leave undefined.
     }
 
+    if (!opts.dryRun && result.incidents.length > 0 && annotated === 0 && annotationStatus) {
+      const noIdsAfterRecall = result.incidents.filter(
+        (incident) =>
+          incident.recalledMemoryIds.length === 0 &&
+          incident.toolCallSequence.some((tool) => tool.toLowerCase() === "memory_recall"),
+      ).length;
+      if (annotationStatus === "partial_no_matches") {
+        if (noIdsAfterRecall > 0) {
+          annotationDiagnostic = {
+            kind: "missing_recall_metadata",
+            summary: `${noIdsAfterRecall}/${result.incidents.length} incident(s) invoked memory_recall but yielded no parseable memory IDs.`,
+            recommendedActions: [
+              "Inspect memory_recall tool_result payload format and ensure IDs remain visible in session logs.",
+              "Run a targeted replay to confirm retrieval output includes canonical UUID IDs.",
+            ],
+          };
+        } else {
+          annotationDiagnostic = {
+            kind: "expected_sparse_data",
+            summary:
+              "No incidents included recalled memory IDs; this is expected for sessions without explicit memory recall usage.",
+            recommendedActions: [
+              "Treat as informational unless recall-heavy sessions also show partial_no_matches.",
+              "If recall should have happened, inspect retrieval prompting and memory_recall tool usage in those sessions.",
+            ],
+          };
+        }
+      } else if (annotationStatus === "degraded_model_or_parser") {
+        annotationDiagnostic = {
+          kind: "model_or_parser_degraded",
+          summary:
+            "LLM analysis failed or returned unparseable output while incidents lacked reinforceable recalled IDs.",
+          recommendedActions: [
+            "Retry extract-reinforcement after confirming LLM/provider health and parser logs.",
+            "If this persists, run with --verbose and inspect reinforcement analysis prompt/response shape.",
+          ],
+        };
+      } else if (annotationReasons.errors > 0) {
+        annotationDiagnostic = {
+          kind: "annotation_errors",
+          summary: `${annotationReasons.errors} incident(s) hit runtime annotation errors.`,
+          recommendedActions: [
+            "Inspect captured plugin errors for runExtractReinforcementForCli.",
+            "Address procedure/fact reinforce exceptions before rerunning extract-reinforcement.",
+          ],
+        };
+      } else if (annotationReasons.recalledIdsNoMatch === result.incidents.length) {
+        annotationDiagnostic = {
+          kind: "stale_recalled_ids",
+          summary: "All recalled memory IDs failed to match active reinforceable facts.",
+          recommendedActions: [
+            "Audit stale/superseded IDs referenced by memory_recall outputs.",
+            "Re-run retrieval against current fact IDs and repair stale recall references.",
+          ],
+        };
+      }
+    }
+
     // Attach annotation results to the returned value
     result.annotated = annotated;
     result.annotationReasons = annotationReasons;
     if (annotationStatus !== undefined) result.annotationStatus = annotationStatus;
+    if (annotationDiagnostic) result.annotationDiagnostic = annotationDiagnostic;
 
     if (!opts.dryRun) {
       const lastSessionTs = getMaxMtime(filePaths);

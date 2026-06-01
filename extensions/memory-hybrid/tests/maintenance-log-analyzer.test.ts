@@ -23,6 +23,7 @@ import {
   classifyMaintenanceFailure,
   collectMaintenanceSteps,
   countPersistedSqliteBusySince,
+  findingFromStep,
   isCanonicalMaintenanceLog,
   isUnderAuxiliaryDir,
   maintenanceRules,
@@ -75,6 +76,33 @@ describe("maintenance log analyzer", () => {
     for (const [logContent, expected] of cases) {
       expect(classifyMaintenanceFailure({ step: "step", exitCode: 1, logContent }).classification).toBe(expected);
     }
+  });
+
+  it("ignores benign zero-error strings in excerpts while keeping real failure signals", () => {
+    const finding = findingFromStep(
+      {
+        occurredAt: Date.now() / 1000,
+        job: "nightly-memory-sweep",
+        step: "self-correction-analysis",
+        exitCode: 1,
+        line: "self-correction-analysis exit=1",
+        logPath: "/tmp/nightly.log",
+        logContent: [
+          "self-correction-analysis summary: errorCount=0 warningCount=0",
+          "No errors detected in dry section",
+          "Unhandled exception: parser timeout",
+        ].join("\n"),
+      },
+      classifyMaintenanceFailure({
+        step: "self-correction-analysis",
+        exitCode: 1,
+        logContent: "Unhandled exception: parser timeout",
+      }),
+    );
+
+    expect(finding.logExcerpt).toContain("Unhandled exception: parser timeout");
+    expect(finding.logExcerpt).not.toContain("errorCount=0");
+    expect(finding.logExcerpt).not.toContain("No errors detected");
   });
 
   it("classifies cron wrapper PATH failure (openclaw binary not in PATH) as env-misconfig", () => {

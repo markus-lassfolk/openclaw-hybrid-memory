@@ -167,6 +167,37 @@ function writeSessionWithoutMemoryRecall(path: string): void {
   );
 }
 
+/** Write a session where memory_recall is called but tool_result has no parseable UUID IDs. */
+function writeSessionWithMemoryRecallButNoIds(path: string): void {
+  writeFileSync(
+    path,
+    [
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "tool_use", name: "memory_recall", id: "tool1" },
+            { type: "tool_result", tool_use_id: "tool1", content: "No matching memories found for this query." },
+            {
+              type: "text",
+              text: "I used recall but found no relevant memory IDs, so I derived a complete fix with clear implementation steps.",
+            },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "Perfect! Exactly what I needed." }],
+        },
+      }),
+    ].join("\n"),
+    "utf-8",
+  );
+}
+
 /**
  * Write a session JSONL with no memory recall IDs, but with a tool call sequence
  * so procedure reinforcement runs.
@@ -270,6 +301,7 @@ describe("no-match benign (partial_no_matches) (#1639)", () => {
     expect(result.incidents.length).toBeGreaterThan(0);
     expect(result.annotated).toBe(0);
     expect(result.annotationStatus).toBe("partial_no_matches");
+    expect(result.annotationDiagnostic?.kind).toBe("expected_sparse_data");
     expect(result.annotationReasons?.noRecalledIds).toBe(result.incidents.length);
     expect(result.annotationReasons?.reinforced).toBe(0);
     expect(result.annotationReasons?.recalledIdsNoMatch).toBe(0);
@@ -288,8 +320,22 @@ describe("no-match benign (partial_no_matches) (#1639)", () => {
     expect(result.incidents.length).toBeGreaterThan(0);
     expect(result.annotated).toBe(0);
     expect(result.annotationStatus).toBe("partial_no_matches");
+    expect(result.annotationDiagnostic?.kind).toBe("expected_sparse_data");
     // All incidents should be counted as noRecalledIds
     expect(result.annotationReasons?.noRecalledIds).toBe(result.incidents.length);
+  });
+
+  it("classifies partial_no_matches as missing_recall_metadata when memory_recall ran but IDs were absent", async () => {
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeSessionWithMemoryRecallButNoIds(sessionFile);
+
+    const openai = makeOpenAIMock("[]");
+    const ctx = makeCtx(openai);
+    const result = await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    expect(result.annotationStatus).toBe("partial_no_matches");
+    expect(result.annotationDiagnostic?.kind).toBe("missing_recall_metadata");
+    expect(result.annotationDiagnostic?.summary).toContain("memory_recall");
   });
 });
 
@@ -479,6 +525,7 @@ describe("maintenance validation semantics (#1639)", () => {
     expect(result.incidents.length).toBeGreaterThan(0);
     expect(result.annotated).toBe(0);
     expect(result.annotationStatus).toBe("failed_annotation");
+    expect(result.annotationDiagnostic?.kind).toBe("stale_recalled_ids");
     expect(result.annotationReasons?.noRecalledIds).toBe(0);
     expect(result.annotationReasons?.reinforced).toBe(0);
     expect(result.annotationReasons?.recalledIdsNoMatch).toBe(result.incidents.length);

@@ -443,9 +443,26 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   `stage=scan; batches=${batches}; scanned=${scanned}; collapsed=${collapsed}; includeLegacy=${opts?.includeLegacy === true ? "yes" : "no"}`,
               },
             );
+            const collapseStatus =
+              scanned === 0
+                ? "no_candidates"
+                : collapsed === 0
+                  ? "no_changes"
+                  : collapsed < scanned
+                    ? "partial"
+                    : "collapsed";
             console.log(
-              `Implicit-feedback collapse complete: scanned ${scanned}, collapsed ${collapsed} ${dryRun ? "(dry-run)" : ""}`,
+              `Implicit-feedback collapse summary: scanned ${scanned}, collapsed ${collapsed}, status=${collapseStatus} ${dryRun ? "(dry-run)" : ""}`,
             );
+            if (!dryRun && collapseStatus === "no_candidates") {
+              console.log(
+                "No implicit-feedback rows matched the collapse scan window. Verify source='implicit-feedback' rows exist and rerun with a wider scan limit.",
+              );
+            } else if (!dryRun && collapseStatus === "no_changes") {
+              console.log(
+                "No near-duplicate rows met the current threshold. Consider `--include-legacy` and/or a lower `--threshold`, then rerun audit health to verify bloat reduction.",
+              );
+            }
             return;
           }
           let res;

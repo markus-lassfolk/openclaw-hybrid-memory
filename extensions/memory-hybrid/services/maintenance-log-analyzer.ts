@@ -629,13 +629,13 @@ function extractPluginVersion(logContent: string): string | null {
 }
 
 function excerptFor(logContent: string, line: string): string {
+  const failureSignal =
+    /\berror\b|\bfail(?:ed|ure)?\b|exception|unauthorized|429|busy|timeout|killed|cannot find module|guard|stopped early|ENOSPC|SQLITE_BUSY|still running after|validate-cron-exit|orchestration anomaly|empty exit ledger/i;
+  const benignSignal =
+    /\b(no|without|zero)\s+(errors?|failures?)\b|\berrors?\s*[:=]\s*0\b|\bfailures?\s*[:=]\s*0\b|\b0\s+errors?\b|\b0\s+failures?\b|\berrorcount\s*[:=]\s*0\b/i;
   const interesting = logContent
     .split("\n")
-    .filter((l) =>
-      /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module|guard|stopped early|ENOSPC|SQLITE_BUSY|still running after|validate-cron-exit|orchestration anomaly|empty exit ledger/i.test(
-        l,
-      ),
-    )
+    .filter((l) => failureSignal.test(l) && !benignSignal.test(l))
     .slice(-8)
     .join("\n");
   return (interesting || line || logContent.slice(0, 1000)).slice(0, 1800);
