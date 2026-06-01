@@ -519,4 +519,155 @@ describe("resolve-contradictions CLI contract mode", () => {
       ),
     ).toBe(true);
   });
+
+  it("prints bucket-specific remediation steps for unresolved ambiguity classes", async () => {
+    const runResolveContradictions = vi.fn().mockResolvedValue({
+      autoResolved: [],
+      ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
+    });
+    const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+      total: 4,
+      deterministic: 2,
+      llm: 0,
+      merged: 0,
+      manualReview: 4,
+      applied: false,
+      decisionsApplied: 0,
+      targetRate: 0.8,
+      achievedRate: 0.5,
+      targetMet: false,
+      reviewItems: [
+        {
+          contradictionId: "c-2",
+          factIdNew: "new-2",
+          factIdOld: "old-2",
+          entity: "proj",
+          key: "status",
+          scope: null,
+          scopeTarget: null,
+          newFactDate: 101,
+          oldFactDate: 100,
+          newSource: "conversation",
+          oldSource: "conversation",
+          newConf: 0.9,
+          oldConf: 0.8,
+          newValueExcerpt: "done",
+          oldValueExcerpt: "blocked",
+          newTextExcerpt: "done",
+          oldTextExcerpt: "blocked",
+          possibleOverloadedEntity: true,
+          suggestedDecision: "manual_review",
+          suggestedStrategy: "manual-review",
+          suggestedConfidence: 0,
+          suggestedReason: "Possible entity reuse detected; leaving for manual review.",
+        },
+        {
+          contradictionId: "c-3",
+          factIdNew: "new-3",
+          factIdOld: "old-3",
+          entity: "proj",
+          key: "status",
+          scope: null,
+          scopeTarget: null,
+          newFactDate: 102,
+          oldFactDate: 100,
+          newSource: "conversation",
+          oldSource: "conversation",
+          newConf: 0.9,
+          oldConf: 0.8,
+          newValueExcerpt: "done",
+          oldValueExcerpt: "blocked",
+          newTextExcerpt: "done",
+          oldTextExcerpt: "blocked",
+          possibleOverloadedEntity: false,
+          suggestedDecision: "manual_review",
+          suggestedStrategy: "manual-review",
+          suggestedConfidence: 0,
+          suggestedReason: "Older fact is verified; leaving for manual review.",
+        },
+        {
+          contradictionId: "c-4",
+          factIdNew: "new-4",
+          factIdOld: "old-4",
+          entity: "proj",
+          key: "status",
+          scope: null,
+          scopeTarget: null,
+          newFactDate: 103,
+          oldFactDate: 100,
+          newSource: "conversation",
+          oldSource: "conversation",
+          newConf: 0.9,
+          oldConf: 0.8,
+          newValueExcerpt: "done",
+          oldValueExcerpt: "blocked",
+          newTextExcerpt: "done",
+          oldTextExcerpt: "blocked",
+          possibleOverloadedEntity: false,
+          suggestedDecision: "manual_review",
+          suggestedStrategy: "manual-review",
+          suggestedConfidence: 0,
+          suggestedReason: "No safe deterministic resolution matched.",
+        },
+        {
+          contradictionId: "c-5",
+          factIdNew: "new-5",
+          factIdOld: "old-5",
+          entity: "proj",
+          key: "status",
+          scope: null,
+          scopeTarget: null,
+          newFactDate: 104,
+          oldFactDate: 100,
+          newSource: "conversation",
+          oldSource: "conversation",
+          newConf: 0.9,
+          oldConf: 0.8,
+          newValueExcerpt: "done",
+          oldValueExcerpt: "blocked",
+          newTextExcerpt: "done",
+          oldTextExcerpt: "blocked",
+          possibleOverloadedEntity: false,
+          suggestedDecision: "manual_review",
+          suggestedStrategy: "manual-review",
+          suggestedConfidence: 0,
+          suggestedReason: "Needs human review.",
+        },
+      ],
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictions, runResolveContradictionsAuto }));
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions"], { from: "user" });
+
+    expect(
+      lines.some((l) =>
+        l.includes("Review possible entity-reuse bucket (1): inspect entity naming/scope before superseding facts."),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "Review verified-older bucket (1): verify whether stale verification should be retained or replaced.",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "Review human-required bucket (1): export and adjudicate with openclaw hybrid-mem resolve-contradictions --auto --dry-run --export-review <path>.",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      lines.some((l) =>
+        l.includes(
+          "Review other-manual bucket (1): inspect details output and handle pair-specific blockers before rerun.",
+        ),
+      ),
+    ).toBe(true);
+  });
 });

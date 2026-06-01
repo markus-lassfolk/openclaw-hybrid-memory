@@ -18,6 +18,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     const mem = new Command("hybrid-mem");
 
     const factsDb = {
+      getCount: vi.fn().mockReturnValue(10),
       countVectorlessActiveFacts: vi.fn().mockReturnValue(1),
       listVectorlessActiveFacts: vi.fn().mockReturnValue([
         {
@@ -110,6 +111,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     }));
 
     const factsDb = {
+      getCount: vi.fn().mockReturnValue(100),
       countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
@@ -185,6 +187,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     const chainError = new AllEmbeddingProvidersFailed([nestedRateLimitError]);
 
     const factsDb = {
+      getCount: vi.fn().mockReturnValue(100),
       countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
@@ -284,6 +287,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     const chainError = new AllEmbeddingProvidersFailed([nestedRateLimitError]);
 
     const factsDb = {
+      getCount: vi.fn().mockReturnValue(100),
       countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
@@ -372,6 +376,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     const rateLimitError = Object.assign(new Error("429 rate limit"), { status: 429 });
 
     const factsDb = {
+      getCount: vi.fn().mockReturnValue(100),
       countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),

@@ -15,11 +15,75 @@ import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 
 import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
+
+const VECTOR_CANDIDATE_LIMIT = 10;
+const VECTOR_CANDIDATE_OVERFETCH_LIMIT = 50;
+const VECTOR_CANDIDATE_MIN_SCORE = 0;
+
+/**
+ * Identifies transient/retryable store errors (SQLite busy, network issues) vs permanent errors.
+ * Permanent errors (TypeError, schema bugs, etc.) should not block cursor advancement.
+ */
+function isRetryableStoreError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const code =
+    typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
+
+  // SQLite busy/lock errors are retryable
+  if (/SQLITE_BUSY|database is locked/i.test(message) || /SQLITE_BUSY/i.test(code)) {
+    return true;
+  }
+
+  // Transient network errors are retryable
+  if (
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|socket hang up|fetch failed|network timeout|connect\s+ETIMEDOUT/i.test(
+      message,
+    ) ||
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH/i.test(code)
+  ) {
+    return true;
+  }
+
+  // All other errors (TypeError, schema bugs, programming errors) are permanent
+  return false;
+}
+
+function getVectorSearchFailReason(vectorDb: unknown): string | null {
+  const getter = (vectorDb as { getLastSearchFailReason?: unknown }).getLastSearchFailReason;
+  if (typeof getter !== "function") return null;
+  try {
+    const reason = getter.call(vectorDb);
+    return typeof reason === "string" && reason.length > 0 ? reason : null;
+  } catch {
+    return null;
+  }
+}
+
+function isLiveFact(candidate: { supersededAt?: number | null; expiresAt?: number | null }): boolean {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return candidate.supersededAt == null && (candidate.expiresAt == null || candidate.expiresAt > nowSec);
+}
+
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
-): Promise<DirectiveExtractResult & { stored?: number; partial?: boolean; dedupeDegraded?: boolean }> {
-  const { factsDb, vectorDb, cfg, logger } = ctx;
+): Promise<
+  DirectiveExtractResult & {
+    stored?: number;
+    partial?: boolean;
+    dedupeDegraded?: boolean;
+    directiveDedupeMode?: "vector" | "lexical-only" | "mixed";
+    directiveRejected?: {
+      permanent: number;
+      retryable: number;
+      parserOrModelFailure: number;
+      boundedPartialRetry: number;
+    };
+    cursorAdvanced?: boolean;
+    cursorBlockedReason?: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry";
+  }
+> {
+  const { factsDb, vectorDb, embeddings, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-directives";
   logger.info?.("memory-hybrid: extract-directives — regex extraction (no LLM model selection)");
   const sessionDir = cfg.procedures.sessionsDir;
@@ -87,6 +151,11 @@ export async function runExtractDirectivesForCli(
     // Store directives as facts if not dry-run
     let stored = 0;
     let storeDedupeVectorFallbackSuppressed = 0;
+    let vectorDedupeStores = 0;
+    let lexicalOnlyDedupeStores = 0;
+    let retryableRejected = 0;
+    let parserOrModelRejected = 0;
+    let boundedPartialRetryRejected = 0;
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
@@ -111,10 +180,59 @@ export async function runExtractDirectivesForCli(
                             ? "fact"
                             : "other";
           const source = `directive:${incident.sessionFile}`;
-          const shouldCountVectorFallback = shouldReportVectorDedupeFallback({
+          let vector: number[] | undefined;
+          let vectorCandidates: Array<{ id: string; score: number }> | undefined;
+          try {
+            vector = await embeddings.embed(incident.extractedRule);
+            if (cfg.store?.fuzzyDedupe ?? true) {
+              const sourceScope = "global";
+              const sourceScopeTarget = null;
+              const embeddingModelName =
+                typeof embeddings.modelName === "string" && embeddings.modelName.trim().length > 0
+                  ? embeddings.modelName
+                  : null;
+              const neighbors = await vectorDb.search(
+                vector,
+                VECTOR_CANDIDATE_OVERFETCH_LIMIT,
+                VECTOR_CANDIDATE_MIN_SCORE,
+              );
+              if (!getVectorSearchFailReason(vectorDb)) {
+                vectorCandidates = neighbors
+                  .map((candidate) => ({
+                    id: candidate.entry.id,
+                    score: candidate.score,
+                  }))
+                  .filter(
+                    (candidate) =>
+                      typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
+                  )
+                  .filter((candidate) => {
+                    const fact = factsDb.getById(candidate.id);
+                    return (
+                      fact != null &&
+                      isLiveFact(fact) &&
+                      fact.source.startsWith("directive:") &&
+                      (fact.scope ?? "global") === sourceScope &&
+                      (fact.scope === "global" ? null : (fact.scopeTarget ?? null)) === sourceScopeTarget &&
+                      (embeddingModelName == null ||
+                        fact.embeddingModel == null ||
+                        fact.embeddingModel === embeddingModelName)
+                    );
+                  })
+                  .slice(0, VECTOR_CANDIDATE_LIMIT);
+              }
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "runExtractDirectivesForCli:vector-candidates",
+            });
+          }
+          const usedLexicalOnlyFallback = shouldReportVectorDedupeFallback({
             source,
             fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
             storeConfig: cfg.store,
+            vectorCandidates,
           });
           const storeResult = factsDb.storeWithResult(
             {
@@ -131,13 +249,24 @@ export async function runExtractDirectivesForCli(
               tags: ["directive-extract", ...incident.categories.map((c) => `directive:${c}`)],
             },
             {
+              vectorCandidates,
               warnContext: "extract-directives",
               suppressVectorFallbackWarning: true,
             },
           );
+          const usedVectorCandidates = Boolean(vectorCandidates && vectorCandidates.length > 0);
+          if (usedLexicalOnlyFallback) {
+            storeDedupeVectorFallbackSuppressed++;
+            lexicalOnlyDedupeStores++;
+          } else if (usedVectorCandidates) {
+            vectorDedupeStores++;
+          } else {
+            lexicalOnlyDedupeStores++;
+          }
           if (storeResult.skipped) {
             continue;
           }
+          const entry = storeResult.entry;
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
             vectorDb,
@@ -145,9 +274,57 @@ export async function runExtractDirectivesForCli(
             logger: logger,
             context: "extract-directives",
           });
-          if (shouldCountVectorFallback) storeDedupeVectorFallbackSuppressed++;
-          stored++;
+          if (storeResult.embeddingStale) {
+            try {
+              const mergedVector = await embeddings.embed(entry.text);
+              // Avoid pre-delete so transient store failures do not leave merged facts without any vector.
+              await vectorDb.store({
+                text: entry.text,
+                vector: mergedVector,
+                importance: entry.importance,
+                category: entry.category as MemoryCategory,
+                id: entry.id,
+              });
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            } catch (err) {
+              logger.warn?.(`memory-hybrid: extract-directives merged vector refresh failed: ${err}`);
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "runExtractDirectivesForCli:merged-vector-refresh",
+              });
+            }
+            continue;
+          }
+          if (!storeResult.newlyStored) {
+            continue;
+          }
+          if (!vector) {
+            stored++;
+            continue;
+          }
+          try {
+            await vectorDb.store({
+              text: incident.extractedRule,
+              vector,
+              importance: 0.8,
+              category: category as MemoryCategory,
+              id: entry.id,
+            });
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            stored++;
+          } catch (err) {
+            logger.warn?.(`memory-hybrid: extract-directives vector store failed: ${err}`);
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "runExtractDirectivesForCli:vector-store",
+            });
+            stored++;
+          }
         } catch (err) {
+          const isRetryable = isRetryableStoreError(err);
+          if (isRetryable) {
+            retryableRejected++;
+          }
           capturePluginError(err as Error, {
             subsystem: "cli",
             operation: "runExtractDirectivesForCli:store",
@@ -158,19 +335,56 @@ export async function runExtractDirectivesForCli(
 
     if (storeDedupeVectorFallbackSuppressed > 0) {
       logger.warn?.(
-        `memory-hybrid: extract-directives DEGRADED — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectorCandidates not wired for this CLI path yet)`,
+        `memory-hybrid: extract-directives DEGRADED — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (embedding or vector search failed)`,
       );
     }
-    const partial = (result.rejected ?? 0) > 0;
+    const directiveRejected = {
+      permanent: result.rejected ?? 0,
+      retryable: retryableRejected,
+      parserOrModelFailure: parserOrModelRejected,
+      boundedPartialRetry: boundedPartialRetryRejected,
+    };
+    const blockedRejections =
+      directiveRejected.retryable + directiveRejected.parserOrModelFailure + directiveRejected.boundedPartialRetry;
+    const partial = blockedRejections > 0;
     const dedupeDegraded = storeDedupeVectorFallbackSuppressed > 0;
-    const returnVal = { ...result, stored, partial, dedupeDegraded };
-    if (!opts.dryRun && !partial) {
+    const totalDedupeStores = vectorDedupeStores + lexicalOnlyDedupeStores;
+    let directiveDedupeMode: "vector" | "lexical-only" | "mixed" | undefined;
+    if (vectorDedupeStores === totalDedupeStores && totalDedupeStores > 0) {
+      directiveDedupeMode = "vector";
+    } else if (lexicalOnlyDedupeStores === totalDedupeStores && totalDedupeStores > 0) {
+      directiveDedupeMode = "lexical-only";
+    } else if (totalDedupeStores > 0) {
+      directiveDedupeMode = "mixed";
+    }
+    let cursorAdvanced: boolean | undefined;
+    let cursorBlockedReason: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry" | undefined;
+    if (directiveRejected.parserOrModelFailure > 0) {
+      cursorBlockedReason = "parser_or_model_failure";
+    } else if (directiveRejected.boundedPartialRetry > 0) {
+      cursorBlockedReason = "bounded_partial_retry";
+    } else if (directiveRejected.retryable > 0) {
+      cursorBlockedReason = "retryable_rejections";
+    }
+    const returnVal = {
+      ...result,
+      stored,
+      partial,
+      dedupeDegraded,
+      directiveDedupeMode,
+      directiveRejected,
+      cursorAdvanced,
+      cursorBlockedReason,
+    };
+    if (!opts.dryRun && !cursorBlockedReason) {
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
+      returnVal.cursorAdvanced = true;
     }
-    if (!opts.dryRun && partial) {
+    if (!opts.dryRun && cursorBlockedReason) {
+      returnVal.cursorAdvanced = false;
       logger.info?.(
-        `memory-hybrid: extract-directives — ${result.rejected ?? 0} directive candidate(s) rejected, cursor not advanced`,
+        `memory-hybrid: extract-directives — cursor blocked (${cursorBlockedReason}); rejected={permanent:${directiveRejected.permanent},retryable:${directiveRejected.retryable},parserOrModelFailure:${directiveRejected.parserOrModelFailure},boundedPartialRetry:${directiveRejected.boundedPartialRetry}}`,
       );
     }
     return returnVal;
