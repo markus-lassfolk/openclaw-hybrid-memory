@@ -500,6 +500,15 @@ describe("parseGoDurationToMs / parseRetryAfterMs (OpenAI x-ratelimit-reset-* #9
   it("parses plain retry-after seconds only when the value is all digits", () => {
     expect(parseRetryAfterMs({ headers: { "retry-after": "1282" } })).toBe(1_282_000);
   });
+
+  it("unwraps LLMRetryError and preserves Retry-After parsing", () => {
+    const inner = Object.assign(new Error("429"), {
+      status: 429,
+      headers: { "retry-after": "17" } as Record<string, string>,
+    });
+    const wrapped = new LLMRetryError("Failed after 3 attempts", inner, 3);
+    expect(parseRetryAfterMs(wrapped)).toBe(17_000);
+  });
 });
 
 describe("formatProviderRateLimitHeaderSummary / inferRateLimitBucket", () => {
