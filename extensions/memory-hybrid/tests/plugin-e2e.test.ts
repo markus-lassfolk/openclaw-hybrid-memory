@@ -42,7 +42,11 @@ function makeMockApi() {
     registerService: vi.fn((svc) => {
       registeredService = svc;
     }),
-    _stopRegisteredService: () => registeredService?.stop?.(),
+    _stopRegisteredService: async () => {
+      const serviceToStop = registeredService;
+      registeredService = null;
+      await serviceToStop?.stop?.();
+    },
     registerCli: vi.fn(),
     registerLifecycleHook: vi.fn(),
     registerHttpRoute: vi.fn(),
