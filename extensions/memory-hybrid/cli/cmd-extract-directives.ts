@@ -15,11 +15,21 @@ import type { HandlerContext } from "./handlers.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 
 import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
+
+const VECTOR_CANDIDATE_LIMIT = 10;
+const VECTOR_CANDIDATE_MIN_SCORE = 0;
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
-): Promise<DirectiveExtractResult & { stored?: number; partial?: boolean; dedupeDegraded?: boolean }> {
-  const { factsDb, vectorDb, cfg, logger } = ctx;
+): Promise<
+  DirectiveExtractResult & {
+    stored?: number;
+    partial?: boolean;
+    dedupeDegraded?: boolean;
+    directiveDedupeMode?: "vector" | "lexical-only" | "mixed";
+  }
+> {
+  const { factsDb, vectorDb, embeddings, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-directives";
   logger.info?.("memory-hybrid: extract-directives — regex extraction (no LLM model selection)");
   const sessionDir = cfg.procedures.sessionsDir;
@@ -87,6 +97,8 @@ export async function runExtractDirectivesForCli(
     // Store directives as facts if not dry-run
     let stored = 0;
     let storeDedupeVectorFallbackSuppressed = 0;
+    let vectorDedupeStores = 0;
+    let lexicalOnlyDedupeStores = 0;
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
@@ -116,6 +128,35 @@ export async function runExtractDirectivesForCli(
             fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
             storeConfig: cfg.store,
           });
+          let vectorCandidates: Array<{ id: string; score: number }> | undefined;
+          if (shouldCountVectorFallback) {
+            try {
+              const vector = await embeddings.embed(incident.extractedRule);
+              const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
+              vectorCandidates = neighbors
+                .map((candidate) => ({
+                  id: candidate.entry.id,
+                  score: candidate.score,
+                }))
+                .filter(
+                  (candidate) =>
+                    typeof candidate.id === "string" &&
+                    candidate.id.length > 0 &&
+                    Number.isFinite(candidate.score),
+                );
+            } catch (err) {
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractDirectivesForCli:vector-candidates",
+              });
+            }
+          }
+          const usedLexicalOnlyFallback = shouldReportVectorDedupeFallback({
+            source,
+            fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
+            storeConfig: cfg.store,
+            vectorCandidates,
+          });
           const storeResult = factsDb.storeWithResult(
             {
               text: incident.extractedRule,
@@ -131,6 +172,7 @@ export async function runExtractDirectivesForCli(
               tags: ["directive-extract", ...incident.categories.map((c) => `directive:${c}`)],
             },
             {
+              vectorCandidates,
               warnContext: "extract-directives",
               suppressVectorFallbackWarning: true,
             },
@@ -145,7 +187,11 @@ export async function runExtractDirectivesForCli(
             logger: logger,
             context: "extract-directives",
           });
-          if (shouldCountVectorFallback) storeDedupeVectorFallbackSuppressed++;
+          if (usedLexicalOnlyFallback) {
+            storeDedupeVectorFallbackSuppressed++;
+            lexicalOnlyDedupeStores++;
+          }
+          if (vectorCandidates) vectorDedupeStores++;
           stored++;
         } catch (err) {
           capturePluginError(err as Error, {
@@ -163,7 +209,16 @@ export async function runExtractDirectivesForCli(
     }
     const partial = (result.rejected ?? 0) > 0;
     const dedupeDegraded = storeDedupeVectorFallbackSuppressed > 0;
-    const returnVal = { ...result, stored, partial, dedupeDegraded };
+    const totalDedupeStores = vectorDedupeStores + lexicalOnlyDedupeStores;
+    let directiveDedupeMode: "vector" | "lexical-only" | "mixed" | undefined;
+    if (vectorDedupeStores === totalDedupeStores && totalDedupeStores > 0) {
+      directiveDedupeMode = "vector";
+    } else if (lexicalOnlyDedupeStores === totalDedupeStores && totalDedupeStores > 0) {
+      directiveDedupeMode = "lexical-only";
+    } else if (totalDedupeStores > 0) {
+      directiveDedupeMode = "mixed";
+    }
+    const returnVal = { ...result, stored, partial, dedupeDegraded, directiveDedupeMode };
     if (!opts.dryRun && !partial) {
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);

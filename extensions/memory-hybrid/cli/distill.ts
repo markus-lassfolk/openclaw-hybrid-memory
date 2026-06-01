@@ -68,6 +68,7 @@ export type DistillContext = {
     rejected?: number;
     partial?: boolean;
     dedupeDegraded?: boolean;
+    directiveDedupeMode?: "vector" | "lexical-only" | "mixed";
     skipped?: boolean;
   }>;
   runExtractReinforcement: (opts: {
@@ -391,6 +392,9 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             }
             if (result.dedupeDegraded) {
               console.log("Status: degraded dedupe (lexical-only fallback used).");
+            }
+            if (result.directiveDedupeMode) {
+              console.log(`Status: directiveDedupeMode=${result.directiveDedupeMode}`);
             }
           }
         },
