@@ -16,6 +16,7 @@ import {
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
+import { isLlmTimeoutLike } from "./entity-enrichment-adaptive.js";
 import {
   is403QuotaOrRateLimitLike,
   is429OrWrapped,
@@ -317,7 +318,7 @@ ${body}`;
     const error = err instanceof Error ? err : new Error(String(err));
     const rateLimited = is429OrWrapped(error) || is403QuotaOrRateLimitLike(error);
     const transientFailure = rateLimited || is500OrWrapped(error) || isConnectionErrorLike(error);
-    const timeoutFailure = transientFailure && /timed out|llm request timeout|request was aborted/i.test(error.message);
+    const timeoutFailure = transientFailure && isLlmTimeoutLike(error.message);
     const retryAfterMs = parseRetryAfterMs(error) ?? undefined;
     capturePluginError(error, {
       operation: "entity-enrichment-llm",
