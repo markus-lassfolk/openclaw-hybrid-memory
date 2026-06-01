@@ -12,6 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { implicitFeedbackCollapseStatus } from "../cli/cmd-feedback.js";
 import {
   cleanupImplicitFeedbackDuplicates,
   type HandlerContext,
@@ -1549,5 +1550,14 @@ describe("ImplicitFeedbackConfig — trajectoryLLMAnalysis", () => {
     expect(result.maxSignalsPerRun).toBe(1234);
     expect(result.maxTrajectoriesPerRun).toBe(7);
     expect(result.maxWallClockSeconds).toBe(42);
+  });
+});
+
+describe("implicitFeedbackCollapseStatus (#1736)", () => {
+  it("classifies operator-facing collapse outcomes", () => {
+    expect(implicitFeedbackCollapseStatus(0, 0)).toBe("no_candidates");
+    expect(implicitFeedbackCollapseStatus(10, 0)).toBe("no_changes");
+    expect(implicitFeedbackCollapseStatus(10, 4)).toBe("partial");
+    expect(implicitFeedbackCollapseStatus(5, 5)).toBe("collapsed");
   });
 });

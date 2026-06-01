@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
 import { runExtractDirectivesForCli } from "../cli/cmd-extract-directives.js";
+import type { HandlerContext } from "../cli/handlers.js";
 
 function writeSession(tmpDir: string, fileName: string, messages: string[]): void {
   const lines = messages.map((text, i) =>
@@ -30,7 +31,7 @@ describe("runExtractDirectivesForCli", () => {
     dir = null;
   });
 
-  it("stores durable directives with extraction metadata and marks partial when rejecting metadata envelopes", async () => {
+  it("stores durable directives and advances cursor when only permanent rejections are present", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     db = new FactsDB(join(dir, "facts.db"));
     writeSession(dir, "2026-05-27-directives.jsonl", [
@@ -44,7 +45,11 @@ describe("runExtractDirectivesForCli", () => {
     const result = await runExtractDirectivesForCli(
       {
         factsDb: db,
-        vectorDb: { delete: vi.fn().mockResolvedValue(false) },
+        vectorDb: {
+          delete: vi.fn().mockResolvedValue(false),
+          search: vi.fn().mockResolvedValue([]),
+        },
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]) },
         cfg: {
           procedures: { sessionsDir: dir },
           store: { fuzzyDedupe: true },
@@ -58,8 +63,16 @@ describe("runExtractDirectivesForCli", () => {
 
     expect(result.stored).toBe(1);
     expect(result.rejected).toBe(1);
-    expect(result.partial).toBe(true);
-    expect(db.getScanCursor("extract-directives")).toBeNull();
+    expect(result.partial).toBe(false);
+    expect(result.directiveRejected).toEqual({
+      permanent: 1,
+      retryable: 0,
+      parserOrModelFailure: 0,
+      boundedPartialRetry: 0,
+    });
+    expect(result.cursorAdvanced).toBe(true);
+    expect(result.cursorBlockedReason).toBeUndefined();
+    expect(db.getScanCursor("extract-directives")).not.toBeNull();
 
     const matches = db.search("verify backups", 5, { includeSuperseded: true, tierFilter: "all" });
     const stored = matches.find((item) => item.entry.source.startsWith("directive:"))?.entry;
@@ -69,6 +82,97 @@ describe("runExtractDirectivesForCli", () => {
     expect(stored?.extractionConfidence).toBeGreaterThan(0);
     expect(stored?.confidence).toBeGreaterThan(0);
     expect(stored?.tags).toContain("directive-extract");
+    expect(result.directiveDedupeMode).toBe("lexical-only");
+  });
+
+  it("keeps cursor blocked when retryable store failures occur", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    writeSession(dir, "2026-05-27-directives-store-fail.jsonl", [
+      "From now on, always verify checksums before release.",
+      "Will do.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb: {
+          delete: vi.fn().mockResolvedValue(false),
+          search: vi.fn().mockResolvedValue([]),
+        },
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]) },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as any,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(0);
+    expect(result.rejected).toBe(0);
+    expect(result.partial).toBe(true);
+    expect(result.directiveRejected).toEqual({
+      permanent: 0,
+      retryable: 1,
+      parserOrModelFailure: 0,
+      boundedPartialRetry: 0,
+    });
+    expect(result.cursorAdvanced).toBe(false);
+    expect(result.cursorBlockedReason).toBe("retryable_rejections");
+    expect(db.getScanCursor("extract-directives")).toBeNull();
+  });
+
+  it("advances cursor when permanent store failures occur", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    writeSession(dir, "2026-05-27-directives-permanent-fail.jsonl", [
+      "From now on, always validate schemas before deployment.",
+      "Understood.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => {
+      throw new TypeError("Cannot read property 'id' of undefined");
+    });
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb: {
+          delete: vi.fn().mockResolvedValue(false),
+          search: vi.fn().mockResolvedValue([]),
+        },
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]) },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as any,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(0);
+    expect(result.rejected).toBe(0);
+    expect(result.partial).toBe(false);
+    expect(result.directiveRejected).toEqual({
+      permanent: 0,
+      retryable: 0,
+      parserOrModelFailure: 0,
+      boundedPartialRetry: 0,
+    });
+    expect(result.cursorAdvanced).toBe(true);
+    expect(result.cursorBlockedReason).toBeUndefined();
+    expect(db.getScanCursor("extract-directives")).not.toBeNull();
   });
 
   it("reports degraded dedupe when lexical-only fallback is used", async () => {
@@ -80,7 +184,11 @@ describe("runExtractDirectivesForCli", () => {
     const result = await runExtractDirectivesForCli(
       {
         factsDb: db,
-        vectorDb: { delete: vi.fn().mockResolvedValue(false) },
+        vectorDb: {
+          delete: vi.fn().mockResolvedValue(false),
+          search: vi.fn().mockResolvedValue([]),
+        },
+        embeddings: { embed: vi.fn().mockRejectedValue(new Error("embedding unavailable")) },
         cfg: {
           procedures: { sessionsDir: dir },
           store: { fuzzyDedupe: true },
@@ -96,28 +204,431 @@ describe("runExtractDirectivesForCli", () => {
     expect(result.rejected).toBe(0);
     expect(result.partial).toBe(false);
     expect(result.dedupeDegraded).toBe(true);
+    expect(result.directiveDedupeMode).toBe("lexical-only");
     expect(db.getScanCursor("extract-directives")).not.toBeNull();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
   });
 
-  it("dedupes near-duplicate directives on the CLI extraction path", async () => {
+  it("reports degraded dedupe when vector search returns empty due to backend failure", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
-    db = new FactsDB(join(dir, "facts.db"), { fuzzyDedupe: true });
-    writeSession(dir, "2026-05-27-directives-dupe.jsonl", [
-      "From now on, always run lint before build and before deployment locally.",
-      "Noted.",
-      "From now on, always run lint before build and before deployment locally nightly.",
-      "Understood.",
+    db = new FactsDB(join(dir, "facts.db"));
+    writeSession(dir, "2026-05-27-directives-vector-search-fail.jsonl", [
+      "From now on, always run schema checks before extracting directives.",
+      "Got it.",
     ]);
     const logger = { info: vi.fn(), warn: vi.fn() };
+    const storeSpy = vi.spyOn(db, "storeWithResult");
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue("schema_invalid"),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
 
     const result = await runExtractDirectivesForCli(
       {
         factsDb: db,
-        vectorDb: { delete: vi.fn().mockResolvedValue(false) },
+        vectorDb,
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]), modelName: "test-embedding" },
         cfg: {
           procedures: { sessionsDir: dir },
           store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(1);
+    expect(result.dedupeDegraded).toBe(true);
+    expect(result.directiveDedupeMode).toBe("lexical-only");
+    expect(vectorDb.search).toHaveBeenCalled();
+    expect(vectorDb.getLastSearchFailReason).toHaveBeenCalled();
+    expect(storeSpy).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        suppressVectorFallbackWarning: true,
+        vectorCandidates: undefined,
+        warnContext: "extract-directives",
+      }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
+  });
+
+  it("refreshes the vector when directive dedupe merges into an existing fact", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const existing = db.store({
+      text: "From now on, always run schema checks before directive extraction.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "seed",
+    });
+    const mergedText = `${existing.text}\nFrom now on, always run schema checks before extracting directives.`;
+    writeSession(dir, "2026-05-27-directives-vector-merge.jsonl", [
+      "From now on, always run schema checks before extracting directives.",
+      "Got it.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => ({
+      embeddingStale: true,
+      entry: { ...existing, text: mergedText },
+      evictedFactId: null,
+      newlyStored: false,
+      preMergeText: existing.text,
+      skipped: false,
+    }));
+    const embeddings = {
+      embed: vi.fn(async (text: string) => (text === mergedText ? [0.9] : [0.1])),
+      modelName: "test-embedding",
+    };
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(0);
+    expect(embeddings.embed).toHaveBeenCalledWith(mergedText);
+    expect(vectorDb.delete).not.toHaveBeenCalled();
+    expect(vectorDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: existing.id,
+        text: mergedText,
+        vector: [0.9],
+      }),
+    );
+    expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
+    expect(db.getById(existing.id)?.embeddingModel).toBe("test-embedding");
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
+  });
+
+  it("stores a vector for each newly stored directive even when semantic duplicate checks would match", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const directive = "From now on, always snapshot branch state before risky refactors.";
+    writeSession(dir, "2026-05-27-directives-vector-store.jsonl", [directive, "Understood."]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+      hasDuplicate: vi.fn().mockResolvedValue(true),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      embed: vi.fn().mockResolvedValue([0.7]),
+      modelName: "test-embedding",
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    const storedDirective = db
+      .search("snapshot branch state", 1, { includeSuperseded: true, tierFilter: "all" })
+      .at(0)?.entry;
+    expect(storedDirective).toBeDefined();
+    expect(result.stored).toBe(1);
+    expect(vectorDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: storedDirective?.id,
+        text: directive,
+        vector: [0.7],
+      }),
+    );
+    expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
+    expect(db.getById(storedDirective!.id)?.embeddingModel).toBe("test-embedding");
+  });
+
+  it("does not mark a merged directive embedded when vector refresh fails", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const existing = db.store({
+      text: "From now on, always run schema checks before directive extraction.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "seed",
+    });
+    const mergedText = `${existing.text}\nFrom now on, always run schema checks before extracting directives.`;
+    writeSession(dir, "2026-05-27-directives-vector-merge-fail.jsonl", [
+      "From now on, always run schema checks before extracting directives.",
+      "Got it.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => ({
+      embeddingStale: true,
+      entry: { ...existing, text: mergedText },
+      evictedFactId: null,
+      newlyStored: false,
+      preMergeText: existing.text,
+      skipped: false,
+    }));
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockRejectedValue(new Error("lance write failed")),
+    };
+
+    await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings: { embed: vi.fn().mockResolvedValue([0.9]), modelName: "test-embedding" },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    expect(db.getById(existing.id)?.embeddingModel).toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
+  });
+
+  it("overfetches then filters vector candidates so rank-11 directive duplicates still dedupe", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    const storeConfig = {
+      fuzzyDedupe: true,
+      defaultProfile: { onDuplicate: "store" as const },
+      sourceProfiles: {
+        "directive:*": {
+          vectorThreshold: 0.85,
+          lexicalJaccard: 1,
+          onDuplicate: "skip" as const,
+        },
+      },
+    };
+    db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig,
+    });
+    const conversationFact = db.store({
+      text: "Conversation memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const scopedDirective = db.store({
+      text: "Scoped directive memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:old-session.jsonl",
+      scope: "session",
+      scopeTarget: "session-1",
+    });
+    const staleDirective = db.store({
+      text: "Stale directive memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:stale-session.jsonl",
+    });
+    db.supersede(staleDirective.id, null);
+    const expiredDirective = db.store({
+      text: "Expired directive memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:expired-session.jsonl",
+      expiresAt: Math.floor(Date.now() / 1000) - 60,
+    });
+
+    const firstDirective = "From now on, always run lint before build and deployment globally.";
+    const secondDirective = "From now on, always run lint before build and deployment globally nightly.";
+    writeSession(dir, "2026-05-27-directives-filter-vector-candidates.jsonl", [
+      firstDirective,
+      "Noted.",
+      secondDirective,
+      "Understood.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const FIRST_DIRECTIVE_EMBEDDING = [1];
+    const SECOND_DIRECTIVE_EMBEDDING = [2];
+    const embeddings = {
+      embed: vi.fn(async (text: string) =>
+        text === secondDirective ? SECOND_DIRECTIVE_EMBEDDING : FIRST_DIRECTIVE_EMBEDDING,
+      ),
+    };
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn(async (vector: number[], limit: number) => {
+        const invalidPrefix = [
+          { entry: { id: conversationFact.id }, score: 0.99 },
+          { entry: { id: scopedDirective.id }, score: 0.98 },
+          { entry: { id: staleDirective.id }, score: 0.97 },
+          { entry: { id: expiredDirective.id }, score: 0.96 },
+          ...Array.from({ length: 6 }, (_, i) => ({
+            entry: { id: `missing-directive-neighbor-${i + 1}` },
+            score: 0.95 - i * 0.001,
+          })),
+        ];
+        if (vector[0] !== SECOND_DIRECTIVE_EMBEDDING[0]) {
+          return invalidPrefix.slice(0, limit);
+        }
+        const existingDirective = db!
+          .search(firstDirective, 1, {
+            includeSuperseded: true,
+            tierFilter: "all",
+          })
+          .at(0)?.entry;
+        return [
+          ...invalidPrefix,
+          ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.94 }] : []),
+        ].slice(0, limit);
+      }),
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: storeConfig,
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as any,
+      { days: 30 },
+    );
+
+    expect(result.incidents.length).toBe(2);
+    expect(result.stored).toBe(1);
+    expect(result.rejected).toBe(0);
+    expect(db.directivesCount()).toBe(3);
+    const storedDirectives = db.search("run lint before build and deployment globally", 5, {
+      includeSuperseded: true,
+      tierFilter: "all",
+    });
+    expect(storedDirectives.some((item) => item.entry.text === firstDirective)).toBe(true);
+    expect(storedDirectives.some((item) => item.entry.text === secondDirective)).toBe(false);
+    const scopedDirectiveAfter = db.getById(scopedDirective.id);
+    expect(scopedDirectiveAfter?.scope).toBe("session");
+    expect(scopedDirectiveAfter?.text).toBe(scopedDirective.text);
+    const staleDirectiveAfter = db.getById(staleDirective.id);
+    expect(staleDirectiveAfter?.supersededAt).not.toBeNull();
+    expect(staleDirectiveAfter?.text).toBe(staleDirective.text);
+    const expiredDirectiveAfter = db.getById(expiredDirective.id);
+    expect(expiredDirectiveAfter?.expiresAt).toBeLessThan(Math.floor(Date.now() / 1000));
+    expect(expiredDirectiveAfter?.text).toBe(expiredDirective.text);
+    expect(result.dedupeDegraded).toBe(false);
+    expect(result.directiveDedupeMode).toBe("mixed");
+    expect(vectorDb.search).toHaveBeenCalled();
+    const searchLimits = vectorDb.search.mock.calls.map(([, limit]) => Number(limit));
+    expect(searchLimits.some((limit) => Number.isFinite(limit) && limit > 10)).toBe(true);
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
+  });
+
+  it("dedupes near-duplicate directives on the CLI extraction path using vector candidates", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    const storeConfig = {
+      fuzzyDedupe: true,
+      sourceProfiles: {
+        "directive:*": {
+          vectorThreshold: 0.85,
+          lexicalJaccard: 1,
+          onDuplicate: "skip" as const,
+        },
+      },
+    };
+    db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig,
+    });
+    const firstDirective = "From now on, always run lint before build and before deployment locally.";
+    const secondDirective = "From now on, always run lint before build and before deployment locally nightly.";
+    writeSession(dir, "2026-05-27-directives-dupe.jsonl", [firstDirective, "Noted.", secondDirective, "Understood."]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const FIRST_DIRECTIVE_EMBEDDING = [1];
+    const SECOND_DIRECTIVE_EMBEDDING = [2];
+    const SECOND_DIRECTIVE_EMBEDDING_FIRST_ELEMENT = SECOND_DIRECTIVE_EMBEDDING[0];
+    const embeddings = {
+      embed: vi.fn(async (text: string) =>
+        text === secondDirective ? SECOND_DIRECTIVE_EMBEDDING : FIRST_DIRECTIVE_EMBEDDING,
+      ),
+    };
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      search: vi.fn(async (vector: number[]) => {
+        if (vector[0] !== SECOND_DIRECTIVE_EMBEDDING_FIRST_ELEMENT) return [];
+        const existing = db!
+          .search(firstDirective, 1, {
+            includeSuperseded: true,
+            tierFilter: "all",
+          })
+          .at(0)?.entry;
+        if (!existing) return [];
+        return [{ entry: { id: existing.id }, score: 0.95 }];
+      }),
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: storeConfig,
           extraction: { preFilter: { enabled: false } },
           llm: { providers: { ollama: {} } },
         },
@@ -130,5 +641,9 @@ describe("runExtractDirectivesForCli", () => {
     expect(result.stored).toBe(1);
     expect(result.rejected).toBe(0);
     expect(db.directivesCount()).toBe(1);
+    expect(result.dedupeDegraded).toBe(false);
+    expect(result.directiveDedupeMode).toBe("mixed");
+    expect(vectorDb.search).toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
   });
 });

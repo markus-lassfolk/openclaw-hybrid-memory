@@ -2,25 +2,29 @@
  * reflection & dream-cycle commands — split from register-corrections-and-pipeline.ts.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
-import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
-import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
-import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, withExit } from "../../shared.js";
-import type { ManageBindings } from "./bindings.js";
-import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 import type {
   ContradictionReviewDecision,
   ContradictionReviewItem,
 } from "../../../backends/facts-db/contradictions.js";
+import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
+import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import {
+  cleanupImplicitFeedbackDuplicates,
+  type ExtractImplicitFeedbackProgressSnapshot,
+  implicitFeedbackCollapseStatus,
+} from "../../cmd-feedback.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import { type Chainable, withExit } from "../../shared.js";
+import type { ManageBindings } from "./bindings.js";
 
 import {
   assessContinuousVerificationResult,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
-  runVerboseFollowUp,
   type RunVerboseFollowUpOptions,
+  runVerboseFollowUp,
 } from "./dream-cycle-followup.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
@@ -443,9 +447,19 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   `stage=scan; batches=${batches}; scanned=${scanned}; collapsed=${collapsed}; includeLegacy=${opts?.includeLegacy === true ? "yes" : "no"}`,
               },
             );
+            const collapseStatus = implicitFeedbackCollapseStatus(scanned, collapsed);
             console.log(
-              `Implicit-feedback collapse complete: scanned ${scanned}, collapsed ${collapsed} ${dryRun ? "(dry-run)" : ""}`,
+              `Implicit-feedback collapse summary: scanned ${scanned}, collapsed ${collapsed}, status=${collapseStatus} ${dryRun ? "(dry-run)" : ""}`,
             );
+            if (!dryRun && collapseStatus === "no_candidates") {
+              console.log(
+                "No implicit-feedback rows matched the collapse scan window. Verify source='implicit-feedback' rows exist and rerun with a wider scan limit.",
+              );
+            } else if (!dryRun && collapseStatus === "no_changes") {
+              console.log(
+                "No near-duplicate rows met the current threshold. Consider `--include-legacy` and/or a lower `--threshold`, then rerun audit health to verify bloat reduction.",
+              );
+            }
             return;
           }
           let res;
@@ -1260,6 +1274,30 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               );
               nextStepNumber++;
             }
+            if (unresolvedBuckets?.possibleEntityReuse && unresolvedBuckets.possibleEntityReuse > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review possible entity-reuse bucket (${unresolvedBuckets.possibleEntityReuse}): inspect entity naming/scope before superseding facts.`,
+              );
+              nextStepNumber++;
+            }
+            if (unresolvedBuckets?.olderVerified && unresolvedBuckets.olderVerified > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review verified-older bucket (${unresolvedBuckets.olderVerified}): verify whether stale verification should be retained or replaced.`,
+              );
+              nextStepNumber++;
+            }
+            if (unresolvedBuckets?.humanRequired && unresolvedBuckets.humanRequired > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review human-required bucket (${unresolvedBuckets.humanRequired}): export and adjudicate with openclaw hybrid-mem resolve-contradictions --auto --dry-run --export-review <path>.`,
+              );
+              nextStepNumber++;
+            }
+            if (unresolvedBuckets?.otherManual && unresolvedBuckets.otherManual > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review other-manual bucket (${unresolvedBuckets.otherManual}): inspect details output and handle pair-specific blockers before rerun.`,
+              );
+              nextStepNumber++;
+            }
             const hasProjectStatePairs = res.ambiguous.some((a) => {
               const newF = factsDb.getById(a.factIdNew);
               const oldF = factsDb.getById(a.factIdOld);
@@ -1272,6 +1310,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               console.log(
                 `  ${nextStepNumber}. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run`,
               );
+              nextStepNumber++;
             }
           }
         },

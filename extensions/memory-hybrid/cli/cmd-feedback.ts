@@ -11,8 +11,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-
-import type { ReinforcementContext } from "../backends/facts-db.js";
+import type { FactsDB, ReinforcementContext } from "../backends/facts-db.js";
 import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity } from "../config.js";
 import { chatCompleteWithRetry } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
@@ -22,18 +21,17 @@ import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedb
 import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
 import {
-  ToolEffectivenessStore,
   computeToolEffectiveness,
   formatToolEffectivenessReport,
   generateMonthlyReport,
+  ToolEffectivenessStore,
 } from "../services/tool-effectiveness.js";
 import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } from "../services/trajectory-tracker.js";
-import type { FactsDB } from "../backends/facts-db.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
-import { cleanupEvictedVector } from "../services/vector-maintenance.js";
-import { createTransaction } from "../utils/sqlite-transaction.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -182,6 +180,16 @@ function buildImplicitFeedbackCleanupFilter(includeLegacy: boolean): string {
     return `(${SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER} OR ${SQL_IMPLICIT_LEGACY_PATTERN_ROWS})`;
   }
   return SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER;
+}
+
+export type ImplicitFeedbackCollapseStatus = "no_candidates" | "no_changes" | "partial" | "collapsed";
+
+/** Operator-facing collapse outcome for `reflect-meta --collapse-implicit-feedback` (#1736). */
+export function implicitFeedbackCollapseStatus(scanned: number, collapsed: number): ImplicitFeedbackCollapseStatus {
+  if (scanned === 0) return "no_candidates";
+  if (collapsed === 0) return "no_changes";
+  if (collapsed < scanned) return "partial";
+  return "collapsed";
 }
 
 export function cleanupImplicitFeedbackDuplicates(
@@ -1418,9 +1426,7 @@ function hasValidWorkflowTraces(dbPath: string): boolean {
             (tool): tool is string => typeof tool === "string" && tool.trim().length > 0,
           );
           if (nonEmptyTools.length > 0) return true;
-        } catch {
-          continue;
-        }
+        } catch {}
       }
       return false;
     } finally {

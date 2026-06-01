@@ -48,6 +48,20 @@ export type AnnotationReasons = {
  */
 export type ReinforcementAnnotationStatus = "partial_no_matches" | "failed_annotation" | "degraded_model_or_parser";
 
+export type ReinforcementAnnotationDiagnosticKind =
+  | "expected_sparse_data"
+  | "missing_recall_metadata"
+  | "stale_recalled_ids"
+  | "annotation_errors"
+  | "model_or_parser_degraded"
+  | "mixed_failure";
+
+export type ReinforcementAnnotationDiagnostic = {
+  kind: ReinforcementAnnotationDiagnosticKind;
+  summary: string;
+  recommendedActions: string[];
+};
+
 export type ReinforcementExtractResult = {
   incidents: ReinforcementIncident[];
   sessionsScanned: number;
@@ -60,6 +74,11 @@ export type ReinforcementExtractResult = {
    * Undefined when annotated > 0 or incidentsFound == 0.
    */
   annotationStatus?: ReinforcementAnnotationStatus;
+  /**
+   * Operator-actionable diagnostics for zero-annotation outcomes.
+   * Undefined when incidentsFound == 0, annotated > 0, or dry-run.
+   */
+  annotationDiagnostic?: ReinforcementAnnotationDiagnostic;
 };
 
 /** Hard cap on bytes read per file per run to avoid unbounded JSONL reads (matches passive observer). */
