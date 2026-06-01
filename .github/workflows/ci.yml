@@ -19,8 +19,6 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # TEMP(pr-1792): fast iteration — set to 'false' before merge to restore full CI
-  CI_FAST_ITERATION: 'true'
 
 # Least-privilege default for the GITHUB_TOKEN (explicit jobs may override).
 # actions:write — required for actions/cache and actions/upload-artifact when permissions are explicit.
@@ -35,6 +33,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
+      # TEMP(pr-1792): fast iteration — set enabled=false before merge to restore full CI
+      fast_iteration: ${{ steps.fast.outputs.enabled }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v4
@@ -48,13 +48,16 @@ jobs:
               - 'extensions/memory-hybrid/tsconfig*.json'
               - '.github/workflows/ci.yml'
               - '.nvmrc'
+      - id: fast
+        name: CI fast iteration toggle (TEMP)
+        run: echo "enabled=true" >> "$GITHUB_OUTPUT"
 
   typecheck:
     name: Type Check (Node ${{ matrix.job-name-suffix }})
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ env.CI_FAST_ITERATION == 'true' && 10 || 360 }}
+    timeout-minutes: ${{ needs.changes.outputs.fast_iteration == 'true' && 10 || 360 }}
     strategy:
       matrix:
         include:
@@ -83,7 +86,7 @@ jobs:
   lint:
     name: Lint (Node ${{ matrix.job-name-suffix }})
     needs: changes
-    if: env.CI_FAST_ITERATION != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -114,7 +117,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ env.CI_FAST_ITERATION == 'true' && 15 || 360 }}
+    timeout-minutes: ${{ needs.changes.outputs.fast_iteration == 'true' && 15 || 360 }}
     strategy:
       matrix:
         include:
@@ -139,7 +142,7 @@ jobs:
       - name: Run tests
         run: |
           cd extensions/memory-hybrid
-          if [ "${CI_FAST_ITERATION:-false}" = "true" ]; then
+          if [ "${{ needs.changes.outputs.fast_iteration }}" = "true" ]; then
             npm run test -- reembed-vectorless-cli.test.ts entity-enrichment-cli.test.ts
           else
             npm run test
@@ -150,7 +153,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ env.CI_FAST_ITERATION == 'true' && 15 || 360 }}
+    timeout-minutes: ${{ needs.changes.outputs.fast_iteration == 'true' && 15 || 360 }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -168,7 +171,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           cd extensions/memory-hybrid
-          if [ "${CI_FAST_ITERATION:-false}" = "true" ]; then
+          if [ "${{ needs.changes.outputs.fast_iteration }}" = "true" ]; then
             npm run test:coverage -- reembed-vectorless-cli.test.ts entity-enrichment-cli.test.ts
           else
             npm run test:coverage
@@ -185,7 +188,7 @@ jobs:
   dead-code:
     name: Dead Code Analysis (knip)
     needs: changes
-    if: env.CI_FAST_ITERATION != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -208,7 +211,7 @@ jobs:
   format-check:
     name: Format Check (Biome)
     needs: changes
-    if: env.CI_FAST_ITERATION != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -227,7 +230,7 @@ jobs:
   publish-invariants:
     name: Publish manifest (npm files[])
     needs: changes
-    if: env.CI_FAST_ITERATION != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -249,7 +252,7 @@ jobs:
   strict-typecheck:
     name: Strict TypeScript Check
     needs: changes
-    if: env.CI_FAST_ITERATION != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -276,7 +279,7 @@ jobs:
     # Issue #1171: also asserts the published tarball contains `dist/index.js`.
     name: Install Smoke Test (Node ${{ matrix.job-name-suffix }})
     needs: changes
-    if: env.CI_FAST_ITERATION != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -358,7 +361,7 @@ jobs:
   lint-arch:
     name: Architectural Lint
     needs: changes
-    if: env.CI_FAST_ITERATION != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
