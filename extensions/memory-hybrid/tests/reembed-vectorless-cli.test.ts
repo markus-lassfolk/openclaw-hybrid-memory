@@ -571,8 +571,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
           [0.1, 0.2, 0.3],
           [0.2, 0.3, 0.4],
         ])
-        .mockRejectedValueOnce(embedError)
-        .mockResolvedValueOnce([[0.3, 0.4, 0.5]]),
+        .mockRejectedValue(embedError),
       embed: vi.fn().mockRejectedValue(embedError),
     };
 
@@ -621,8 +620,19 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       { from: "user" },
     );
 
-    expect(factsDb.storeEmbedding).toHaveBeenCalledTimes(3);
-    expect(embeddings.embed).toHaveBeenCalledTimes(2);
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      embedded?: number;
+      adaptive?: {
+        adjustments?: Array<{ reason?: string; batchEmbedFailures?: number; delayMs?: number }>;
+      };
+    };
+    expect(payload.embedded).toBe(2);
+    expect(
+      payload.adaptive?.adjustments?.some(
+        (a) => a.reason === "pressure" && (a.batchEmbedFailures ?? 0) > 0 && (a.delayMs ?? 0) >= 50,
+      ),
+    ).toBe(true);
+    expect(embeddings.embed).toHaveBeenCalled();
     expect(sleepMs).toContain(50);
   });
 });
