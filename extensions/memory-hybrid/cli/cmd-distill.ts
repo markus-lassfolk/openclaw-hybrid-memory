@@ -196,7 +196,8 @@ export async function runDistillForCli(
 
   // Startup guard + concurrency lock (skip when --all/--since or scan overrides disable watermark)
   const useWatermark = !bypassWatermark && !opts.all && !opts.since;
-  if (!bypassScanCooldown && !opts.dryRun) {
+  const shouldAcquireLock = !bypassScanCooldown && !opts.all && !opts.since;
+  if (shouldAcquireLock && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip)
       return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: false, skipped: true };
@@ -219,7 +220,7 @@ export async function runDistillForCli(
     let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
     if (filesToProcess.length === 0) {
       sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
-      if (!bypassScanCooldown && !opts.dryRun) {
+      if (shouldAcquireLock && !opts.dryRun) {
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
       }
@@ -780,6 +781,6 @@ export async function runDistillForCli(
       dryRun: false,
     };
   } finally {
-    if (!bypassScanCooldown && !opts.dryRun) clearScanLock(SCAN_TYPE);
+    if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }
