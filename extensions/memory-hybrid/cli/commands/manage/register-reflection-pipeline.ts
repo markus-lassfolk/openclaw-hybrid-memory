@@ -1399,12 +1399,40 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     .option("--limit <n>", "Max facts to process (default 200)", "200")
     .option("--all", "Process the full pending backlog in one catch-up run (ignores --limit cap)")
     .option("--model <m>", "LLM model (default: cron nano tier)")
+    .option("--adaptive-catch-up", "Enable adaptive enrich-entities pacing (throughput ramp-up + pressure backoff)")
+    .option("--batch-size <n>", "Adaptive catch-up baseline batch size (default 20)", "20")
+    .option("--batch-delay-ms <n>", "Adaptive catch-up baseline delay between batches in ms (default 150)", "150")
+    .option(
+      "--time-budget-sec <n>",
+      "Stop cleanly after this many seconds (adaptive catch-up; checked between facts/batches)",
+    )
+    .option("--target-duration-sec <n>", "Alias for --time-budget-sec")
+    .option("--max-concurrency <n>", "Max parallel LLM extractions per batch when adaptive (default 3)", "3")
+    .option(
+      "--provider-pressure-budget <n>",
+      "Stop after this many cumulative rate-limit/timeout pressure events (adaptive catch-up)",
+    )
+    .option("--json", "Emit structured JSON report (includes issue #1791 telemetry when adaptive)")
     .option("--dry-run", "Only report how many facts need enrichment")
     .option("-v, --verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
     .action(
       withExit(
         async (
-          opts?: { limit?: string; model?: string; all?: boolean; dryRun?: boolean; verbose?: boolean },
+          opts?: {
+            limit?: string;
+            model?: string;
+            all?: boolean;
+            dryRun?: boolean;
+            verbose?: boolean;
+            adaptiveCatchUp?: boolean;
+            batchSize?: string;
+            batchDelayMs?: string;
+            timeBudgetSec?: string;
+            targetDurationSec?: string;
+            maxConcurrency?: string;
+            providerPressureBudget?: string;
+            json?: boolean;
+          },
           cmd?: CommanderOptsParent,
         ) => {
           const all = !!opts?.all;
@@ -1416,7 +1444,32 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const dryRun = !!opts?.dryRun;
           const model = opts?.model;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-          let enrichProgress = {
+          const adaptiveCatchUp = !!opts?.adaptiveCatchUp;
+          const batchSize = Number.parseInt(opts?.batchSize ?? "20", 10);
+          const batchDelayMs = Number.parseInt(opts?.batchDelayMs ?? "150", 10);
+          const timeBudgetRaw = opts?.timeBudgetSec ?? opts?.targetDurationSec;
+          const timeBudgetSec =
+            timeBudgetRaw != null && timeBudgetRaw !== "" ? Number.parseInt(timeBudgetRaw, 10) : undefined;
+          const maxConcurrency = Number.parseInt(opts?.maxConcurrency ?? "3", 10);
+          if (timeBudgetSec != null && (!Number.isFinite(timeBudgetSec) || timeBudgetSec < 1)) {
+            throw new Error("--time-budget-sec / --target-duration-sec must be a positive integer (>= 1).");
+          }
+          if (!Number.isFinite(maxConcurrency) || maxConcurrency < 1) {
+            throw new Error("--max-concurrency must be a positive integer (>= 1).");
+          }
+          const providerPressureBudgetRaw = opts?.providerPressureBudget;
+          const providerPressureBudget =
+            providerPressureBudgetRaw != null && providerPressureBudgetRaw !== ""
+              ? Number.parseInt(providerPressureBudgetRaw, 10)
+              : undefined;
+          if (
+            providerPressureBudget != null &&
+            (!Number.isFinite(providerPressureBudget) || providerPressureBudget < 1)
+          ) {
+            throw new Error("--provider-pressure-budget must be a positive integer (>= 1).");
+          }
+          const jsonMode = !!opts?.json;
+          let enrichProgress: import("../../../services/entity-enrichment-cli.js").EntityEnrichmentProgress = {
             processed: 0,
             total: 0,
             factsEnriched: 0,
@@ -1429,7 +1482,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             rejected: 0,
             duplicates: 0,
             rejectReasons: {},
+            effectiveBatchSize: adaptiveCatchUp ? batchSize : undefined,
+            effectiveDelayMs: adaptiveCatchUp ? batchDelayMs : undefined,
           };
+          if (adaptiveCatchUp && !jsonMode) {
+            console.log(
+              `Entity enrichment adaptive catch-up enabled: baseline batch=${batchSize}, delayMs=${batchDelayMs}.`,
+            );
+          }
           let res;
           try {
             res = await runMaintenanceHeartbeat(
@@ -1442,14 +1502,28 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   dryRun,
                   model,
                   verbose,
+                  adaptiveCatchUp,
+                  batchSize,
+                  batchDelayMs,
+                  timeBudgetSec,
+                  maxConcurrency,
+                  providerPressureBudget,
                   onProgress: (next) => {
                     enrichProgress = next;
                     heartbeat.heartbeat();
                   },
+                  onAdaptivePacing: (next) => {
+                    if (verbose) {
+                      console.debug(
+                        `entity-enrichment-cli: adaptive pacing ${next.reason}; batch ${next.previousBatchSize}→${next.batchSize}, delay ${next.previousDelayMs}ms→${next.delayMs}ms, pressure=${next.batchPressureSignals}, transient=${next.batchTransientFailures}, rateLimited=${next.batchRateLimited}`,
+                      );
+                    }
+                  },
                 }),
               {
                 progressSupplier: () =>
-                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; dryRun=${dryRun ? "yes" : "no"}`,
+                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; llmFailures=${enrichProgress.llmFailures ?? 0}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; batch=${enrichProgress.effectiveBatchSize ?? "static"}; delay_ms=${enrichProgress.effectiveDelayMs ?? "static"}; concurrency=${enrichProgress.effectiveConcurrency ?? "static"}; stop=${enrichProgress.stopReason ?? "running"}; dryRun=${dryRun ? "yes" : "no"}`,
+                jsonMode: jsonMode === true,
               },
             );
           } catch (err) {
@@ -1465,6 +1539,34 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const estimatedRunsRemaining =
             res.estimatedRunsRemaining ?? (mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)));
           const limitLabel = mode === "all" ? "all" : String(res.effectiveLimit ?? limit);
+          const hasPartialFailure = res.llmFailures && res.llmFailures > 0;
+          const exitCode = hasPartialFailure ? 2 : 0;
+          const exitReason = hasPartialFailure ? "partial_llm_failures" : "success";
+          const jsonReport = {
+            dryRun,
+            mode,
+            limit: limitLabel,
+            pendingBefore: pendingTotal,
+            pendingBatch: res.pending,
+            processed: res.processed,
+            enriched: res.factsEnriched,
+            remaining: remainingTotal,
+            estimatedRunsRemaining,
+            stopReason: res.stopReason ?? "completed",
+            llmFailures: res.llmFailures ?? 0,
+            adaptiveSummary: res.adaptiveSummary,
+            telemetry: res.telemetry,
+            rejectReasons: res.rejectReasons,
+            exitCode,
+            exitReason,
+          };
+          if (jsonMode) {
+            console.log(JSON.stringify(jsonReport, null, 2));
+            if (hasPartialFailure) {
+              process.exitCode = 2;
+            }
+            return;
+          }
           if (res.pendingByTier) {
             console.log(
               `Entity enrichment backlog by tier: hot=${res.pendingByTier.hot}, warm=${res.pendingByTier.warm}, structural=${res.pendingByTier.structural}, cold=${res.pendingByTier.cold}, unknown=${res.pendingByTier.unknown}`,
@@ -1488,9 +1590,15 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               for (const id of res.pendingFactIds) console.log(`  ${id}`);
             }
           } else {
+            const llmFailuresSuffix = res.llmFailures ? ` llmFailures=${res.llmFailures}` : "";
             console.log(
-              `Entity enrichment: processed=${res.processed} enriched=${res.factsEnriched} mentions=${res.mentions} accepted=${res.accepted} rejected=${res.rejected} duplicates=${res.duplicates}, batch=${res.pending}, pending-before-run=${pendingTotal}, remaining=${remainingTotal}, mode=${mode}, limit=${limitLabel}.`,
+              `Entity enrichment: processed=${res.processed} enriched=${res.factsEnriched} mentions=${res.mentions} accepted=${res.accepted} rejected=${res.rejected} duplicates=${res.duplicates}${llmFailuresSuffix}, batch=${res.pending}, pending-before-run=${pendingTotal}, remaining=${remainingTotal}, mode=${mode}, limit=${limitLabel}.`,
             );
+            if (res.llmFailures && res.llmFailures > 0) {
+              console.warn(
+                `Warning: ${res.llmFailures} fact${res.llmFailures === 1 ? "" : "s"} skipped due to LLM extraction failures (exit code 2).`,
+              );
+            }
             if (mode !== "all") {
               console.log(`Estimated runs remaining at current limit: ${estimatedRunsRemaining}`);
             }
@@ -1513,6 +1621,24 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               for (const [reason, count] of Object.entries(res.rejectReasons)) {
                 console.log(`  ${reason}: ${count}`);
               }
+            }
+            if (res.stopReason === "time_budget") {
+              console.log(
+                `Entity enrichment stopped: time budget reached (processed=${res.processed}, remaining=${remainingTotal}).`,
+              );
+            }
+            if (res.telemetry) {
+              console.log(`Entity enrichment adaptive telemetry: ${JSON.stringify(res.telemetry)}`);
+            } else if (res.adaptiveSummary) {
+              console.log(`Entity enrichment adaptive summary: ${JSON.stringify(res.adaptiveSummary)}`);
+            }
+            if (res.stopReason === "provider_budget") {
+              console.log(
+                `Entity enrichment stopped: provider pressure budget reached (rate limits/timeouts; processed=${res.processed}, remaining=${remainingTotal}).`,
+              );
+            }
+            if (res.llmFailures && res.llmFailures > 0) {
+              process.exitCode = 2;
             }
           }
         },

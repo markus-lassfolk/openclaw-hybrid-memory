@@ -95,10 +95,7 @@ function delayMsUntilUnixEpoch(value: string): number | undefined {
  * Exported for unit tests.
  */
 export function parseRetryAfterMs(err: unknown): number | undefined {
-  if (!err || typeof err !== "object") return undefined;
-  const headers =
-    (err as { response?: { headers?: HeaderBag }; headers?: HeaderBag }).response?.headers ??
-    (err as { headers?: HeaderBag }).headers;
+  const headers = getHeaderBagFromUnknownError(err);
   if (!headers) return undefined;
 
   const retryAfter = getHeaderCaseInsensitive(headers, "retry-after");

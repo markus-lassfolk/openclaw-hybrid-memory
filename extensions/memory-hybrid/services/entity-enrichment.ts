@@ -16,7 +16,15 @@ import {
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
 import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
-import { withLLMRetry } from "./chat.js";
+import { errorIndicatesLlmTimeout } from "./entity-enrichment-adaptive.js";
+import {
+  is403QuotaOrRateLimitLike,
+  is429OrWrapped,
+  is500OrWrapped,
+  isConnectionErrorLike,
+  parseRetryAfterMs,
+  withLLMRetry,
+} from "./chat.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
@@ -66,6 +74,14 @@ export type EntityExtractionQualityStats = {
   rejected: number;
   duplicates: number;
   rejectReasons: Record<string, number>;
+};
+
+export type EntityExtractionPressureSignals = {
+  failed: boolean;
+  transientFailure: boolean;
+  rateLimited: boolean;
+  timeoutFailure: boolean;
+  retryAfterMs?: number;
 };
 
 function parseMentionJson(content: string): LlmMention[] {
@@ -147,6 +163,7 @@ export async function extractEntityMentionsWithLlm(
   detectedLang: string;
   quality: EntityExtractionQualityStats;
   rejectedMentions: EntityMentionRejection[];
+  pressureSignals: EntityExtractionPressureSignals;
 }> {
   const detectedLang = detectFactTextLanguage(text);
   const trimmed = text.trim();
@@ -156,6 +173,12 @@ export async function extractEntityMentionsWithLlm(
       detectedLang,
       quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
       rejectedMentions: [],
+      pressureSignals: {
+        failed: false,
+        transientFailure: false,
+        rateLimited: false,
+        timeoutFailure: false,
+      },
     };
   }
   const body = trimmed.length > MAX_CHARS ? `${trimmed.slice(0, MAX_CHARS)}\n…` : trimmed;
@@ -284,9 +307,20 @@ ${body}`;
         rejectReasons,
       },
       rejectedMentions,
+      pressureSignals: {
+        failed: false,
+        transientFailure: false,
+        rateLimited: false,
+        timeoutFailure: false,
+      },
     };
   } catch (err) {
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+    const error = err instanceof Error ? err : new Error(String(err));
+    const rateLimited = is429OrWrapped(error) || is403QuotaOrRateLimitLike(error);
+    const timeoutFailure = errorIndicatesLlmTimeout(error);
+    const transientFailure = rateLimited || timeoutFailure || is500OrWrapped(error) || isConnectionErrorLike(error);
+    const retryAfterMs = parseRetryAfterMs(error) ?? undefined;
+    capturePluginError(error, {
       operation: "entity-enrichment-llm",
       subsystem: "openai",
       model,
@@ -296,6 +330,13 @@ ${body}`;
       detectedLang,
       quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
       rejectedMentions: [],
+      pressureSignals: {
+        failed: true,
+        transientFailure,
+        rateLimited,
+        timeoutFailure,
+        retryAfterMs,
+      },
     };
   }
 }

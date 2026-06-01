@@ -146,6 +146,58 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     db.close();
   });
 
+  it("flags vector lifecycle SLO breach when vectorless ratio is above target", () => {
+    const db = new FactsDB(":memory:");
+    for (let i = 0; i < 5; i++) {
+      db.store({
+        text: `Vectorless fact ${i}`,
+        category: "technical",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+    }
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    expect(report.vectorLifecycleSlo.breaches.some((b) => b.key === "vectorless_ratio")).toBe(true);
+    const warning = report.warnings.find((w) => w.includes("Vector lifecycle SLO breach(es)"));
+    expect(warning).toBeDefined();
+    expect(warning).toContain("vectorless_ratio");
+    expect(warning).toContain("(100.00%)");
+    expect(warning).toContain("(2.00%)");
+    db.close();
+  });
+
+  it("keeps vector lifecycle SLO clear when vectorless ratio is below target", () => {
+    const db = new FactsDB(":memory:");
+    const ids: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const row = db.store({
+        text: `Embedded fact ${i}`,
+        category: "technical",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+      ids.push(row.id);
+    }
+    for (const id of ids) {
+      db.storeEmbedding(id, "test-model", "canonical", new Float32Array([0.1, 0.2, 0.3, 0.4]), 4);
+      db.setEmbeddingModel(id, "test-model");
+    }
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    expect(report.vectorLifecycleSlo.breaches.some((b) => b.key === "vectorless_ratio")).toBe(false);
+    expect(report.warnings.some((w) => w.includes("Vector lifecycle SLO breach(es)"))).toBe(false);
+    db.close();
+  });
+
   it("does not warn for legacy category aliases when their configured remap targets exist", () => {
     const db = new FactsDB(":memory:");
     db.store({
