@@ -382,12 +382,20 @@ export async function runEntityEnrichmentForCli(
       factsEnriched: { value: factsEnriched },
       enrichedFacts,
       processed: { value: processed },
+      pendingLlmCalls: { value: 0 },
     };
-    const isPastProviderBudgetInBatch = (): boolean =>
-      isPastProviderBudget(mergeCounters.rateLimitCount.value, mergeCounters.timeoutFailureCount.value);
+    const isPastProviderBudgetInBatch = (): boolean => {
+      if (providerPressureBudget == null) return false;
+      return (
+        mergeCounters.rateLimitCount.value +
+          mergeCounters.timeoutFailureCount.value +
+          mergeCounters.pendingLlmCalls.value >=
+        providerPressureBudget
+      );
+    };
 
     const processFact = async (id: string): Promise<FactProcessResult | null> => {
-      if (isPastDeadline() || isPastProviderBudgetInBatch()) return null;
+      if (isPastDeadline()) return null;
       const f = factsDb.getById(id);
       if (!f?.text) {
         return {
@@ -399,67 +407,74 @@ export async function runEntityEnrichmentForCli(
         };
       }
 
-      const extraction = await extractEntityMentionsWithLlm(f.text, openai, model, {
-        stopWords: cfg.entityExtraction.stopWords,
-      });
+      if (isPastProviderBudgetInBatch()) return null;
 
-      const stats = emptyBatchStats();
-      let factRateLimit = 0;
-      let factTransient = 0;
-      let factTimeout = 0;
-
-      if (adaptiveCatchUp) {
-        if (extraction.pressureSignals.failed) stats.batchFailures++;
-        if (extraction.pressureSignals.transientFailure) stats.batchTransientFailures++;
-        if (extraction.pressureSignals.rateLimited) stats.batchRateLimited++;
-        if (
-          extraction.pressureSignals.rateLimited ||
-          extraction.pressureSignals.transientFailure ||
-          extraction.pressureSignals.retryAfterMs !== undefined
-        ) {
-          stats.batchPressureSignals++;
-        }
-        if (extraction.pressureSignals.retryAfterMs !== undefined) {
-          stats.batchRetryAfterMs = extraction.pressureSignals.retryAfterMs;
-        }
-      }
-
-      if (extraction.pressureSignals.rateLimited) factRateLimit = 1;
-      if (extraction.pressureSignals.transientFailure) factTransient = 1;
-      if (extraction.pressureSignals.failed) {
-        if (extraction.pressureSignals.timeoutFailure) factTimeout = 1;
-        stats.llmFailuresDelta++;
-      } else {
-        factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
-      }
-
-      stats.mentionsDelta = extraction.quality.mentions;
-      stats.acceptedDelta = extraction.quality.accepted;
-      stats.rejectedDelta = extraction.quality.rejected;
-      stats.duplicatesDelta = extraction.quality.duplicates;
-      stats.rejectReasonsDelta = { ...extraction.quality.rejectReasons };
-      if (extraction.mentions.length > 0) {
-        stats.factsEnrichedDelta = 1;
-      }
-      if (verbose && (extraction.mentions.length > 0 || extraction.rejectedMentions.length > 0)) {
-        stats.enrichedFactsDelta.push({
-          factId: id,
-          mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
-          rejected: extraction.rejectedMentions.map((m) => ({
-            label: m.label,
-            surfaceText: m.surfaceText,
-            reason: m.reason,
-          })),
+      mergeCounters.pendingLlmCalls.value++;
+      try {
+        const extraction = await extractEntityMentionsWithLlm(f.text, openai, model, {
+          stopWords: cfg.entityExtraction.stopWords,
         });
-      }
 
-      return {
-        processed: 1,
-        stats,
-        rateLimitCount: factRateLimit,
-        transientFailureCount: factTransient,
-        timeoutFailureCount: factTimeout,
-      };
+        const stats = emptyBatchStats();
+        let factRateLimit = 0;
+        let factTransient = 0;
+        let factTimeout = 0;
+
+        if (adaptiveCatchUp) {
+          if (extraction.pressureSignals.failed) stats.batchFailures++;
+          if (extraction.pressureSignals.transientFailure) stats.batchTransientFailures++;
+          if (extraction.pressureSignals.rateLimited) stats.batchRateLimited++;
+          if (
+            extraction.pressureSignals.rateLimited ||
+            extraction.pressureSignals.transientFailure ||
+            extraction.pressureSignals.retryAfterMs !== undefined
+          ) {
+            stats.batchPressureSignals++;
+          }
+          if (extraction.pressureSignals.retryAfterMs !== undefined) {
+            stats.batchRetryAfterMs = extraction.pressureSignals.retryAfterMs;
+          }
+        }
+
+        if (extraction.pressureSignals.rateLimited) factRateLimit = 1;
+        if (extraction.pressureSignals.transientFailure) factTransient = 1;
+        if (extraction.pressureSignals.failed) {
+          if (extraction.pressureSignals.timeoutFailure) factTimeout = 1;
+          stats.llmFailuresDelta++;
+        } else {
+          factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+        }
+
+        stats.mentionsDelta = extraction.quality.mentions;
+        stats.acceptedDelta = extraction.quality.accepted;
+        stats.rejectedDelta = extraction.quality.rejected;
+        stats.duplicatesDelta = extraction.quality.duplicates;
+        stats.rejectReasonsDelta = { ...extraction.quality.rejectReasons };
+        if (extraction.mentions.length > 0) {
+          stats.factsEnrichedDelta = 1;
+        }
+        if (verbose && (extraction.mentions.length > 0 || extraction.rejectedMentions.length > 0)) {
+          stats.enrichedFactsDelta.push({
+            factId: id,
+            mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
+            rejected: extraction.rejectedMentions.map((m) => ({
+              label: m.label,
+              surfaceText: m.surfaceText,
+              reason: m.reason,
+            })),
+          });
+        }
+
+        return {
+          processed: 1,
+          stats,
+          rateLimitCount: factRateLimit,
+          transientFailureCount: factTransient,
+          timeoutFailureCount: factTimeout,
+        };
+      } finally {
+        mergeCounters.pendingLlmCalls.value--;
+      }
     };
 
     let attemptedThisBatch = 0;
