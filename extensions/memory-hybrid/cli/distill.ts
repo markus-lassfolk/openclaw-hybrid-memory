@@ -69,6 +69,14 @@ export type DistillContext = {
     partial?: boolean;
     dedupeDegraded?: boolean;
     directiveDedupeMode?: "vector" | "lexical-only" | "mixed";
+    directiveRejected?: {
+      permanent: number;
+      retryable: number;
+      parserOrModelFailure: number;
+      boundedPartialRetry: number;
+    };
+    cursorAdvanced?: boolean;
+    cursorBlockedReason?: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry";
     skipped?: boolean;
   }>;
   runExtractReinforcement: (opts: {
@@ -387,14 +395,25 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             if ((result.rejected ?? 0) > 0) {
               console.log(`Rejected ${result.rejected} non-durable/untrusted directive candidate(s).`);
             }
+            if (result.directiveRejected) {
+              console.log(
+                `Status: directiveRejected=permanent:${result.directiveRejected.permanent},retryable:${result.directiveRejected.retryable},parserOrModelFailure:${result.directiveRejected.parserOrModelFailure},boundedPartialRetry:${result.directiveRejected.boundedPartialRetry}`,
+              );
+            }
             if (result.partial) {
-              console.log("Status: partial (rejections detected; cursor not advanced).");
+              console.log("Status: partial (retryable rejections detected; cursor not advanced).");
             }
             if (result.dedupeDegraded) {
               console.log("Status: degraded dedupe (lexical-only fallback used).");
             }
             if (result.directiveDedupeMode) {
               console.log(`Status: directiveDedupeMode=${result.directiveDedupeMode}`);
+            }
+            if (typeof result.cursorAdvanced === "boolean") {
+              console.log(`Status: cursorAdvanced=${result.cursorAdvanced}`);
+            }
+            if (result.cursorBlockedReason) {
+              console.log(`Status: cursorBlockedReason=${result.cursorBlockedReason}`);
             }
           }
         },

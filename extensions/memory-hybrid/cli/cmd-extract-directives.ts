@@ -27,6 +27,14 @@ export async function runExtractDirectivesForCli(
     partial?: boolean;
     dedupeDegraded?: boolean;
     directiveDedupeMode?: "vector" | "lexical-only" | "mixed";
+    directiveRejected?: {
+      permanent: number;
+      retryable: number;
+      parserOrModelFailure: number;
+      boundedPartialRetry: number;
+    };
+    cursorAdvanced?: boolean;
+    cursorBlockedReason?: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry";
   }
 > {
   const { factsDb, vectorDb, embeddings, cfg, logger } = ctx;
@@ -99,6 +107,9 @@ export async function runExtractDirectivesForCli(
     let storeDedupeVectorFallbackSuppressed = 0;
     let vectorDedupeStores = 0;
     let lexicalOnlyDedupeStores = 0;
+    let retryableRejected = 0;
+    const parserOrModelRejected = 0;
+    const boundedPartialRetryRejected = 0;
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
@@ -192,6 +203,7 @@ export async function runExtractDirectivesForCli(
           if (vectorCandidates) vectorDedupeStores++;
           stored++;
         } catch (err) {
+          retryableRejected++;
           capturePluginError(err as Error, {
             subsystem: "cli",
             operation: "runExtractDirectivesForCli:store",
@@ -202,10 +214,18 @@ export async function runExtractDirectivesForCli(
 
     if (storeDedupeVectorFallbackSuppressed > 0) {
       logger.warn?.(
-        `memory-hybrid: extract-directives DEGRADED — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectorCandidates not wired for this CLI path yet)`,
+        `memory-hybrid: extract-directives DEGRADED — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vector candidates unavailable)`,
       );
     }
-    const partial = (result.rejected ?? 0) > 0;
+    const directiveRejected = {
+      permanent: result.rejected ?? 0,
+      retryable: retryableRejected,
+      parserOrModelFailure: parserOrModelRejected,
+      boundedPartialRetry: boundedPartialRetryRejected,
+    };
+    const blockedRejections =
+      directiveRejected.retryable + directiveRejected.parserOrModelFailure + directiveRejected.boundedPartialRetry;
+    const partial = blockedRejections > 0;
     const dedupeDegraded = storeDedupeVectorFallbackSuppressed > 0;
     const totalDedupeStores = vectorDedupeStores + lexicalOnlyDedupeStores;
     let directiveDedupeMode: "vector" | "lexical-only" | "mixed" | undefined;
@@ -216,14 +236,34 @@ export async function runExtractDirectivesForCli(
     } else if (totalDedupeStores > 0) {
       directiveDedupeMode = "mixed";
     }
-    const returnVal = { ...result, stored, partial, dedupeDegraded, directiveDedupeMode };
-    if (!opts.dryRun && !partial) {
+    let cursorAdvanced: boolean | undefined;
+    let cursorBlockedReason: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry" | undefined;
+    if (directiveRejected.parserOrModelFailure > 0) {
+      cursorBlockedReason = "parser_or_model_failure";
+    } else if (directiveRejected.boundedPartialRetry > 0) {
+      cursorBlockedReason = "bounded_partial_retry";
+    } else if (directiveRejected.retryable > 0) {
+      cursorBlockedReason = "retryable_rejections";
+    }
+    const returnVal = {
+      ...result,
+      stored,
+      partial,
+      dedupeDegraded,
+      directiveDedupeMode,
+      directiveRejected,
+      cursorAdvanced,
+      cursorBlockedReason,
+    };
+    if (!opts.dryRun && !cursorBlockedReason) {
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
+      returnVal.cursorAdvanced = true;
     }
-    if (!opts.dryRun && partial) {
+    if (!opts.dryRun && cursorBlockedReason) {
+      returnVal.cursorAdvanced = false;
       logger.info?.(
-        `memory-hybrid: extract-directives — ${result.rejected ?? 0} directive candidate(s) rejected, cursor not advanced`,
+        `memory-hybrid: extract-directives — cursor blocked (${cursorBlockedReason}); rejected={permanent:${directiveRejected.permanent},retryable:${directiveRejected.retryable},parserOrModelFailure:${directiveRejected.parserOrModelFailure},boundedPartialRetry:${directiveRejected.boundedPartialRetry}}`,
       );
     }
     return returnVal;

@@ -30,7 +30,7 @@ describe("runExtractDirectivesForCli", () => {
     dir = null;
   });
 
-  it("stores durable directives with extraction metadata and marks partial when rejecting metadata envelopes", async () => {
+  it("stores durable directives and advances cursor when only permanent rejections are present", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     db = new FactsDB(join(dir, "facts.db"));
     writeSession(dir, "2026-05-27-directives.jsonl", [
@@ -62,8 +62,16 @@ describe("runExtractDirectivesForCli", () => {
 
     expect(result.stored).toBe(1);
     expect(result.rejected).toBe(1);
-    expect(result.partial).toBe(true);
-    expect(db.getScanCursor("extract-directives")).toBeNull();
+    expect(result.partial).toBe(false);
+    expect(result.directiveRejected).toEqual({
+      permanent: 1,
+      retryable: 0,
+      parserOrModelFailure: 0,
+      boundedPartialRetry: 0,
+    });
+    expect(result.cursorAdvanced).toBe(true);
+    expect(result.cursorBlockedReason).toBeUndefined();
+    expect(db.getScanCursor("extract-directives")).not.toBeNull();
 
     const matches = db.search("verify backups", 5, { includeSuperseded: true, tierFilter: "all" });
     const stored = matches.find((item) => item.entry.source.startsWith("directive:"))?.entry;
@@ -74,6 +82,48 @@ describe("runExtractDirectivesForCli", () => {
     expect(stored?.confidence).toBeGreaterThan(0);
     expect(stored?.tags).toContain("directive-extract");
     expect(result.directiveDedupeMode).toBe("vector");
+  });
+
+  it("keeps cursor blocked when retryable store failures occur", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    writeSession(dir, "2026-05-27-directives-store-fail.jsonl", ["From now on, always verify checksums before release.", "Will do."]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb: {
+          delete: vi.fn().mockResolvedValue(false),
+          search: vi.fn().mockResolvedValue([]),
+        },
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]) },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as any,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(0);
+    expect(result.rejected).toBe(0);
+    expect(result.partial).toBe(true);
+    expect(result.directiveRejected).toEqual({
+      permanent: 0,
+      retryable: 1,
+      parserOrModelFailure: 0,
+      boundedPartialRetry: 0,
+    });
+    expect(result.cursorAdvanced).toBe(false);
+    expect(result.cursorBlockedReason).toBe("retryable_rejections");
+    expect(db.getScanCursor("extract-directives")).toBeNull();
   });
 
   it("reports degraded dedupe when lexical-only fallback is used", async () => {
