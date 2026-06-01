@@ -355,7 +355,8 @@ export async function runEntityEnrichmentForCli(
   emitProgress(pendingTotal);
 
   let successStreak = 0;
-  for (let index = 0; index < ids.length; ) {
+  let index = 0;
+  for (; index < ids.length; ) {
     if (isPastDeadline()) {
       stopReason = "time_budget";
       break;
@@ -642,10 +643,7 @@ export async function runEntityEnrichmentForCli(
   if (stopReason !== "time_budget" && stopReason !== "provider_budget") {
     const allIdsAttempted = index >= ids.length;
     const hasRunPressure =
-      llmFailures > 0 ||
-      rateLimitCount > 0 ||
-      timeoutFailureCount > 0 ||
-      transientFailureCount > 0;
+      llmFailures > 0 || rateLimitCount > 0 || timeoutFailureCount > 0 || transientFailureCount > 0;
     stopReason = allIdsAttempted && !hasRunPressure ? "completed" : "exhausted";
   }
 
