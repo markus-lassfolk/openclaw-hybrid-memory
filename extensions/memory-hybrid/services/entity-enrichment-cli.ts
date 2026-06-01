@@ -489,6 +489,18 @@ export async function runEntityEnrichmentForCli(
       };
       const hasObservedProviderBudgetPressure = (): boolean =>
         providerPressureBudget != null && observedProviderPressureInBatch() >= providerPressureBudget;
+      const slotWaiters: Array<() => void> = [];
+      const waitForProviderSlot = async (): Promise<void> => {
+        await new Promise<void>((resolve) => {
+          slotWaiters.push(resolve);
+        });
+      };
+      const notifyNextProviderSlotWaiter = () => {
+        slotWaiters.shift()?.();
+      };
+      const notifyAllProviderSlotWaiters = () => {
+        while (slotWaiters.length > 0) notifyNextProviderSlotWaiter();
+      };
       const workerCount = Math.min(effectiveConcurrency, batch.length);
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
@@ -510,15 +522,23 @@ export async function runEntityEnrichmentForCli(
                 stopReason = "time_budget";
                 return;
               }
-              await new Promise<void>((resolve) => setImmediate(resolve));
+              await waitForProviderSlot();
             }
             const idx = nextIdx++;
             if (idx >= batch.length) return;
             const result = await processFact(batch[idx]!);
             results[idx] = result;
-            if (result == null) continue;
+            if (result == null) {
+              notifyNextProviderSlotWaiter();
+              continue;
+            }
             applyFactProcessResult(result, mergeCounters);
-            if (hasObservedProviderBudgetPressure()) stopReason = "provider_budget";
+            if (hasObservedProviderBudgetPressure()) {
+              stopReason = "provider_budget";
+              notifyAllProviderSlotWaiters();
+            } else {
+              notifyNextProviderSlotWaiter();
+            }
           }
         }),
       );

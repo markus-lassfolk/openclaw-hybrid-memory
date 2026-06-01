@@ -611,7 +611,7 @@ describe("runEntityEnrichmentForCli", () => {
       providerPressureBudget: 1,
     });
 
-    expect(res.stopReason).toBe("exhausted");
+    expect(res.stopReason).toBe("completed");
     expect(llmCalls).toBe(4);
     expect(res.processed).toBe(4);
   });

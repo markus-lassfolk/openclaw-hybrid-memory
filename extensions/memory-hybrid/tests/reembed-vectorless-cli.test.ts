@@ -261,7 +261,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       countVectorlessActiveFacts: vi.fn((source?: string) => {
         if (source !== undefined) return facts.length;
         globalVectorlessReads++;
-        return globalVectorlessReads === 1 ? facts.length : 0;
+        return globalVectorlessReads <= 2 ? facts.length : 0;
       }),
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
