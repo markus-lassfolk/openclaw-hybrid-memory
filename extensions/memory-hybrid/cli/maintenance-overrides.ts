@@ -7,11 +7,6 @@
  * {@link resolveScanMaintenanceOverrides}.
  */
 
-/** Minimal commander chain surface needed to append shared maintenance flags. */
-export type CommandOptionChain = {
-  option(flags: string, desc?: string, defaultValue?: unknown): unknown;
-};
-
 /** Parsed override flags from Commander (both flags are accepted during migration). */
 export type ScanMaintenanceOverrideInput = {
   force?: boolean;
