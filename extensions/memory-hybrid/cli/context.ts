@@ -152,7 +152,13 @@ export type ManageContext = {
     model?: string;
     all?: boolean;
     verbose?: boolean;
+    adaptiveCatchUp?: boolean;
+    batchSize?: number;
+    batchDelayMs?: number;
     onProgress?: (progress: import("../services/entity-enrichment-cli.js").EntityEnrichmentProgress) => void;
+    onAdaptivePacing?: (
+      state: import("../services/entity-enrichment-cli.js").EntityEnrichmentAdaptivePacing,
+    ) => void;
   }) => Promise<{
     pending: number;
     pendingTotal?: number;

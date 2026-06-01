@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
 import { hybridConfigSchema } from "../config.js";
+import * as entityEnrichmentService from "../services/entity-enrichment.js";
 import { runEntityEnrichmentForCli } from "../services/entity-enrichment-cli.js";
 
 describe("runEntityEnrichmentForCli", () => {
@@ -22,9 +23,24 @@ describe("runEntityEnrichmentForCli", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
+
+  function seedFacts(total: number, prefix: string): void {
+    for (let i = 0; i < total; i++) {
+      db.store({
+        text: `${prefix} ${i} with enough length to force enrichment batching and adaptive pacing checks in CLI mode.`,
+        entity: null,
+        key: null,
+        value: null,
+        category: "other",
+        importance: 0.5,
+        source: "test",
+      });
+    }
+  }
 
   it("returns skipped and does not call the LLM when graph.enabled is false", async () => {
     const openai = {
@@ -156,5 +172,173 @@ describe("runEntityEnrichmentForCli", () => {
     expect(hotIdx).toBeGreaterThanOrEqual(0);
     expect(coldIdx).toBeGreaterThanOrEqual(0);
     expect(hotIdx).toBeLessThan(coldIdx);
+  });
+
+  it("ramps up adaptive throughput after consecutive successful batches", async () => {
+    seedFacts(25, "Adaptive success fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+    const pacingEvents: Array<{ reason: string; batchSize: number; delayMs: number }> = [];
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 25,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 5,
+      batchDelayMs: 0,
+      onAdaptivePacing: (state) => {
+        pacingEvents.push({ reason: state.reason, batchSize: state.batchSize, delayMs: state.delayMs });
+      },
+    });
+
+    expect(res.processed).toBe(25);
+    expect(pacingEvents.some((event) => event.reason === "ramp-up" && event.batchSize > 5)).toBe(true);
+  });
+
+  it("backs off adaptive throughput on pressure/rate-limit signals", async () => {
+    seedFacts(5, "Adaptive pressure fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockResolvedValue({
+      mentions: [],
+      detectedLang: "eng",
+      quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+      rejectedMentions: [],
+      pressureSignals: {
+        failed: true,
+        transientFailure: true,
+        rateLimited: true,
+        retryAfterMs: 250,
+      },
+    });
+    const pacingEvents: Array<{ reason: string; previousBatchSize: number; batchSize: number }> = [];
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 5,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 20,
+      batchDelayMs: 150,
+      onAdaptivePacing: (state) => {
+        pacingEvents.push({
+          reason: state.reason,
+          previousBatchSize: state.previousBatchSize,
+          batchSize: state.batchSize,
+        });
+      },
+    });
+
+    expect(res.processed).toBe(5);
+    expect(pacingEvents.some((event) => event.reason === "pressure" && event.batchSize < event.previousBatchSize)).toBe(
+      true,
+    );
+  });
+
+  it("keeps adaptive pacing inside min/max bounds", async () => {
+    seedFacts(1, "Adaptive bounds fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+    const progressSnapshots: Array<{ batchSize?: number; delayMs?: number }> = [];
+
+    await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 1,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 500,
+      batchDelayMs: 9999,
+      onProgress: (progress) => {
+        progressSnapshots.push({
+          batchSize: progress.effectiveBatchSize,
+          delayMs: progress.effectiveDelayMs,
+        });
+      },
+    });
+
+    expect(progressSnapshots.length).toBeGreaterThan(0);
+    for (const snapshot of progressSnapshots) {
+      expect(snapshot.batchSize).toBeGreaterThanOrEqual(5);
+      expect(snapshot.batchSize).toBeLessThanOrEqual(100);
+      expect(snapshot.delayMs).toBeGreaterThanOrEqual(0);
+      expect(snapshot.delayMs).toBeLessThanOrEqual(5000);
+    }
+  });
+
+  it("preserves non-adaptive behavior when adaptive mode is disabled", async () => {
+    seedFacts(3, "Static mode fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+    const onAdaptivePacing = vi.fn();
+    const progressSnapshots: Array<{ batchSize?: number; delayMs?: number }> = [];
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 3,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: false,
+      batchSize: 30,
+      batchDelayMs: 300,
+      onAdaptivePacing,
+      onProgress: (progress) => {
+        progressSnapshots.push({
+          batchSize: progress.effectiveBatchSize,
+          delayMs: progress.effectiveDelayMs,
+        });
+      },
+    });
+
+    expect(res.processed).toBe(3);
+    expect(onAdaptivePacing).not.toHaveBeenCalled();
+    expect(progressSnapshots.every((snapshot) => snapshot.batchSize === undefined && snapshot.delayMs === undefined)).toBe(
+      true,
+    );
   });
 });

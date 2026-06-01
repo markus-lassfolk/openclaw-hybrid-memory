@@ -189,7 +189,7 @@ Example to disable auto-build and run only manually:
 | Command | Description |
 |--------|-------------|
 | `openclaw hybrid-mem build-languages [--dry-run] [--model <model>]` | Detect top 3 languages from fact samples, generate intent-based keywords for those languages, and write `.language-keywords.json` next to the SQLite DB. Default model: `gpt-4o-mini` (or your autoClassify model). `--dry-run`: detect and generate but do not write the file. |
-| `openclaw hybrid-mem enrich-entities [--limit N] [--all] [--dry-run] [--model M]` | Backfill PERSON/ORG mentions for facts missing enrichment rows (uses **franc** + LLM; same pipeline as store-time when `graph.enabled`). Pending queue is prioritized by tier/access/importance; use `--all` for exhaustive one-shot catch-up. |
+| `openclaw hybrid-mem enrich-entities [--limit N] [--all] [--dry-run] [--model M] [--adaptive-catch-up] [--batch-size N] [--batch-delay-ms N]` | Backfill PERSON/ORG mentions for facts missing enrichment rows (uses **franc** + LLM; same pipeline as store-time when `graph.enabled`). Pending queue is prioritized by tier/access/importance; use `--all` for exhaustive one-shot catch-up. `--adaptive-catch-up` ramps throughput after successful batches and backs off quickly on rate-limit/transient pressure, using `--batch-size`/`--batch-delay-ms` as the starting baseline. |
 
 See [CLI-REFERENCE.md](CLI-REFERENCE.md) for the full command list.
 

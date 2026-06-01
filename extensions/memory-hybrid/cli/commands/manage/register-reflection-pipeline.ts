@@ -1291,12 +1291,24 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     .option("--limit <n>", "Max facts to process (default 200)", "200")
     .option("--all", "Process the full pending backlog in one catch-up run (ignores --limit cap)")
     .option("--model <m>", "LLM model (default: cron nano tier)")
+    .option("--adaptive-catch-up", "Enable adaptive enrich-entities pacing (throughput ramp-up + pressure backoff)")
+    .option("--batch-size <n>", "Adaptive catch-up baseline batch size (default 20)", "20")
+    .option("--batch-delay-ms <n>", "Adaptive catch-up baseline delay between batches in ms (default 150)", "150")
     .option("--dry-run", "Only report how many facts need enrichment")
     .option("-v, --verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
     .action(
       withExit(
         async (
-          opts?: { limit?: string; model?: string; all?: boolean; dryRun?: boolean; verbose?: boolean },
+          opts?: {
+            limit?: string;
+            model?: string;
+            all?: boolean;
+            dryRun?: boolean;
+            verbose?: boolean;
+            adaptiveCatchUp?: boolean;
+            batchSize?: string;
+            batchDelayMs?: string;
+          },
           cmd?: CommanderOptsParent,
         ) => {
           const all = !!opts?.all;
@@ -1308,6 +1320,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const dryRun = !!opts?.dryRun;
           const model = opts?.model;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          const adaptiveCatchUp = !!opts?.adaptiveCatchUp;
+          const batchSize = Number.parseInt(opts?.batchSize ?? "20", 10);
+          const batchDelayMs = Number.parseInt(opts?.batchDelayMs ?? "150", 10);
           let enrichProgress = {
             processed: 0,
             total: 0,
@@ -1321,7 +1336,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             rejected: 0,
             duplicates: 0,
             rejectReasons: {},
+            effectiveBatchSize: adaptiveCatchUp ? Number.parseInt(opts?.batchSize ?? "20", 10) : undefined,
+            effectiveDelayMs: adaptiveCatchUp ? Number.parseInt(opts?.batchDelayMs ?? "150", 10) : undefined,
           };
+          if (adaptiveCatchUp) {
+            console.log(
+              `Entity enrichment adaptive catch-up enabled: baseline batch=${batchSize}, delayMs=${batchDelayMs}.`,
+            );
+          }
           let res;
           try {
             res = await runMaintenanceHeartbeat(
@@ -1334,14 +1356,24 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   dryRun,
                   model,
                   verbose,
+                  adaptiveCatchUp,
+                  batchSize,
+                  batchDelayMs,
                   onProgress: (next) => {
                     enrichProgress = next;
                     heartbeat.heartbeat();
                   },
+                  onAdaptivePacing: (next) => {
+                    if (plugin.logger?.debug) {
+                      plugin.logger.debug(
+                        `entity-enrichment-cli: adaptive pacing ${next.reason}; batch ${next.previousBatchSize}→${next.batchSize}, delay ${next.previousDelayMs}ms→${next.delayMs}ms, pressure=${next.batchPressureSignals}, transient=${next.batchTransientFailures}, rateLimited=${next.batchRateLimited}`,
+                      );
+                    }
+                  },
                 }),
               {
                 progressSupplier: () =>
-                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; dryRun=${dryRun ? "yes" : "no"}`,
+                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; batch=${enrichProgress.effectiveBatchSize ?? "static"}; delay_ms=${enrichProgress.effectiveDelayMs ?? "static"}; dryRun=${dryRun ? "yes" : "no"}`,
               },
             );
           } catch (err) {
