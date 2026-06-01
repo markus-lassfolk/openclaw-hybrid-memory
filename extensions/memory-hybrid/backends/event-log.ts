@@ -254,15 +254,17 @@ export class EventLog extends BaseSqliteStore {
     return rows.map((r) => this.rowToEntry(r));
   }
 
-  /** Mark a set of events as consolidated into the given fact id. */
-  markConsolidated(eventIds: string[], factId: string): void {
+  /** Mark a set of events as consolidated into the given fact id. Returns rows updated. */
+  markConsolidated(eventIds: string[], factId: string): number {
     const stmt = this.liveDb.prepare("UPDATE event_log SET consolidated_into = ? WHERE id = ?");
     const updateAll = createTransaction(this.liveDb, (ids: string[]) => {
+      let updated = 0;
       for (const id of ids) {
-        stmt.run(factId, id);
+        updated += stmt.run(factId, id).changes;
       }
+      return updated;
     });
-    updateAll(eventIds);
+    return updateAll(eventIds);
   }
 
   /**
