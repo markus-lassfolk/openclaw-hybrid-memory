@@ -440,6 +440,33 @@ describe("Embeddings (OpenAI) implements EmbeddingProvider interface", () => {
       vi.useRealTimers();
     }
   });
+
+  // #1776: ByteString serialization errors should not be retried
+  it("#1776: embed() does not retry when SDK throws a ByteString header serialization error", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const mockCreate = vi.fn().mockRejectedValue(byteStringErr);
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 1536);
+
+    await expect(provider.embed("text with \u2026 ellipsis at position 13")).rejects.toThrow(/ByteString/i);
+    // Must NOT retry — called exactly once regardless of maxRetries
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("#1776: embed() does not report ByteString error to GlitchTip (not a plugin bug)", async () => {
+    vi.mocked(capturePluginError).mockClear();
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const mockCreate = vi.fn().mockRejectedValue(byteStringErr);
+    const client = { embeddings: { create: mockCreate } } as unknown as import("openai").default;
+    const provider = new Embeddings(client, "text-embedding-3-small", 1536);
+
+    await expect(provider.embed("test \u2026")).rejects.toThrow();
+    expect(vi.mocked(capturePluginError)).not.toHaveBeenCalled();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1758,6 +1785,21 @@ describe("#486: shouldSuppressEmbeddingError — suppression helper", () => {
   it("does NOT suppress AllEmbeddingProvidersFailed with empty causes (unknown state)", () => {
     const err = new AllEmbeddingProvidersFailed([]);
     expect(shouldSuppressEmbeddingError(err)).toBe(false);
+  });
+
+  it("#1776: suppresses ByteString serialization errors (non-ASCII header value)", () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    expect(shouldSuppressEmbeddingError(byteStringErr)).toBe(true);
+  });
+
+  it("#1776: suppresses AllEmbeddingProvidersFailed when all causes are ByteString errors", () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const err = new AllEmbeddingProvidersFailed([byteStringErr]);
+    expect(shouldSuppressEmbeddingError(err)).toBe(true);
   });
 });
 

@@ -43,10 +43,12 @@ import {
   resetHybridMemoryRegistrationStateForTests,
 } from "./hybrid-memory-generation-state.js";
 import {
+  blockReloadTeardownBeforeOpen,
   drainOldBootstrap,
   drainOldRecall,
   resetReloadTeardownChainForTests,
   schedulePluginTeardown,
+  TEARDOWN_WAIT_MS,
 } from "./hybrid-memory-reload-coordinator.js";
 import { registerContextEngineBestEffort } from "./register-context-engine.js";
 import { registerLifecycleHooks } from "./register-hooks.js";
@@ -292,6 +294,15 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       });
     }
     runtimeRef.value = null;
+  }
+
+  if (old && !reuseDatabases) {
+    // Wait for teardown to complete before opening new DB handles (#802).
+    // Bounded wait: drains (3s + 2s) + buffer fit within TEARDOWN_WAIT_MS.
+    const drained = blockReloadTeardownBeforeOpen(TEARDOWN_WAIT_MS);
+    if (!drained) {
+      throw new Error("memory-hybrid: reload teardown did not drain before opening new databases");
+    }
   }
 
   let dbContext: ReturnType<typeof initializeDatabases>;
