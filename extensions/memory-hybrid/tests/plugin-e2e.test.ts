@@ -42,7 +42,11 @@ function makeMockApi() {
     registerService: vi.fn((svc) => {
       registeredService = svc;
     }),
-    _stopRegisteredService: () => registeredService?.stop?.(),
+    _stopRegisteredService: async () => {
+      const serviceToStop = registeredService;
+      registeredService = null;
+      await serviceToStop?.stop?.();
+    },
     registerCli: vi.fn(),
     registerLifecycleHook: vi.fn(),
     registerHttpRoute: vi.fn(),
@@ -144,8 +148,8 @@ describe("Plugin registration e2e", () => {
     resetPluginRegistrationStateForTests();
   });
 
-  afterEach(() => {
-    api._stopRegisteredService?.();
+  afterEach(async () => {
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
     resetPluginRegistrationStateForTests();
   });
@@ -166,7 +170,7 @@ describe("Plugin registration e2e", () => {
     expect(result).not.toBeInstanceOf(Promise);
   });
 
-  it("register() does not throw and core memory tools are registered", async () => {
+  it("register() does not throw and core memory tools are registered", () => {
     const pluginConfig = getMinimalConfig({
       sqlitePath: join(tmpDir, "facts.db"),
       lanceDbPath: join(tmpDir, "lancedb"),
@@ -177,7 +181,7 @@ describe("Plugin registration e2e", () => {
       registrationMode: "full" as const,
       resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
     };
-    memoryHybridPlugin.register(mockApi as never);
+    expect(memoryHybridPlugin.register(mockApi as never)).toBeUndefined();
 
     expect(mockApi.getTool("memory_store")).toBeDefined();
     expect(mockApi.getTool("memory_recall")).toBeDefined();
@@ -256,10 +260,10 @@ describe("Store and recall e2e (real FactsDB + VectorDB, mock embeddings)", () =
     api = makeMockApi();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vectorDb.close();
     factsDb.close();
-    api._stopRegisteredService?.();
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -449,8 +453,8 @@ describe("Init-databases e2e", () => {
     api = makeMockApi();
   });
 
-  afterEach(() => {
-    api._stopRegisteredService?.();
+  afterEach(async () => {
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -524,10 +528,10 @@ describe("Core and common flows e2e", () => {
     api = makeMockApi();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vectorDb.close();
     factsDb.close();
-    api._stopRegisteredService?.();
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -750,10 +754,10 @@ describe("Advanced features e2e", () => {
     api = makeMockApi();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vectorDb.close();
     factsDb.close();
-    api._stopRegisteredService?.();
+    await api._stopRegisteredService?.();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
