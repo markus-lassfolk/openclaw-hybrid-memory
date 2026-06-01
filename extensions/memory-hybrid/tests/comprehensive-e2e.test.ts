@@ -41,7 +41,8 @@ const { VectorDB } = _testing;
 const SESSION = "agent:main:telegram:e2e-comprehensive";
 const HOOK_CTX = { sessionKey: SESSION, sessionId: SESSION, agentId: "main" };
 const RELOAD_TEARDOWN_ERROR_FRAGMENT = "reload teardown did not drain";
-const HOT_RELOAD_TEST_TIMEOUT_MS = TEARDOWN_WAIT_MS * 3;
+const HOT_RELOAD_TEST_TIMEOUT_MS = TEARDOWN_WAIT_MS * 4;
+const HOT_RELOAD_RETRY_WAIT_MS = TEARDOWN_WAIT_MS * 2;
 
 describe("Comprehensive e2e — full plugin register()", () => {
   let tmpDir: string;
@@ -113,8 +114,9 @@ describe("Comprehensive e2e — full plugin register()", () => {
             throw err;
           }
           // Vitest runs register() synchronously; if a full-teardown fallback races, retry once.
-          // Wait for the scheduled reload teardown to complete before retrying (issue #1775).
-          await awaitReloadTeardownBeforeOpen();
+          // Give the retry more headroom than the production register() block: this e2e
+          // may also be waiting for mocked/test harness teardown work to settle (#1775).
+          expect(await awaitReloadTeardownBeforeOpen(HOT_RELOAD_RETRY_WAIT_MS)).toBe(true);
           registerFullPlugin(api, stableConfig);
         }
         const recall = api.getTool("memory_recall")!;

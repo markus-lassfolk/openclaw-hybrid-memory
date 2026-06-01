@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { createLifecycleHooks } from "../lifecycle/hooks.js";
+import { buildDailyNarrative } from "../src/worker/narratives.js";
 import { buildGuardTestLifecycleContext, makeMockHookApi } from "./helpers/lifecycle-hook-harness.js";
 
 vi.mock("../lifecycle/stage-capture.js", () => ({
@@ -36,6 +37,9 @@ describe("lifecycle agent_end workflow tracking", () => {
   it("flushes workflow trace when assistant messages include tool_calls", async () => {
     const ctx = buildGuardTestLifecycleContext(tmpDir, factsDb);
     ctx.cfg.workflowTracking = { enabled: true, maxTracesPerDay: 100, retentionDays: 90 };
+    ctx.cfg.llm = { default: ["openai/gpt-4.1-mini"], heavy: [], nano: ["openai/gpt-4.1-nano"] };
+    const narrativeMock = vi.mocked(buildDailyNarrative);
+    narrativeMock.mockClear();
     const push = vi.fn();
     const flush = vi.fn().mockReturnValue("trace-42");
     ctx.workflowTracker = { push, flush } as unknown as typeof ctx.workflowTracker;
@@ -61,6 +65,7 @@ describe("lifecycle agent_end workflow tracking", () => {
     expect(push).toHaveBeenCalledWith("agent:main:telegram:wf-1", "bash", undefined);
     expect(push).toHaveBeenCalledWith("agent:main:telegram:wf-1", "read", undefined);
     expect(flush).toHaveBeenCalledWith("agent:main:telegram:wf-1", "deploy the service", "success");
+    expect(narrativeMock).toHaveBeenCalledWith(expect.objectContaining({ model: "openai/gpt-4.1-nano" }));
     expect(api.logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("session narrative build failed"));
     expect(api.logger.debug).toHaveBeenCalledWith(expect.stringContaining("trace-42"));
   });
