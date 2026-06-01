@@ -53,7 +53,8 @@ export type ReinforcementAnnotationDiagnosticKind =
   | "missing_recall_metadata"
   | "stale_recalled_ids"
   | "annotation_errors"
-  | "model_or_parser_degraded";
+  | "model_or_parser_degraded"
+  | "mixed_failure";
 
 export type ReinforcementAnnotationDiagnostic = {
   kind: ReinforcementAnnotationDiagnosticKind;

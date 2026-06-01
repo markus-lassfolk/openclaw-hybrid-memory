@@ -531,6 +531,16 @@ export async function runExtractReinforcementForCli(
             "Re-run retrieval against current fact IDs and repair stale recall references.",
           ],
         };
+      } else if (annotationStatus === "failed_annotation") {
+        annotationDiagnostic = {
+          kind: "mixed_failure",
+          summary: `Mixed failure: ${annotationReasons.noRecalledIds} incident(s) had no recalled IDs, ${annotationReasons.recalledIdsNoMatch} had stale IDs.`,
+          recommendedActions: [
+            "Address both missing recall metadata and stale ID issues.",
+            "Inspect sessions without recalled IDs for memory_recall usage gaps.",
+            "Audit stale/superseded IDs in the remaining sessions.",
+          ],
+        };
       }
     }
 
