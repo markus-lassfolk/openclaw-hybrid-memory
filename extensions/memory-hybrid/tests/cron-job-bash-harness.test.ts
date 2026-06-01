@@ -339,7 +339,7 @@ exit 2
     expect(result.status).toBe(0);
   });
 
-  it("adds --full to guarded extraction commands when forced rerun env is enabled", () => {
+  it("adds --force to guarded extraction commands when forced rerun env is enabled", () => {
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
@@ -376,7 +376,7 @@ exit 2
     });
 
     expect(result.status).toBe(0);
-    expect(readFileSync(marker, "utf-8")).toContain("extract-procedures --days 7 --verbose --full");
+    expect(readFileSync(marker, "utf-8")).toContain("extract-procedures --days 7 --verbose --force");
   });
 
   it("does not add --force to reflection commands when forced rerun env is enabled", () => {

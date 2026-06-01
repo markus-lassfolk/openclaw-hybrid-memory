@@ -46,3 +46,12 @@ export function registerScanMaintenanceOverrideOptions(cmd: Chainable): Chainabl
     )
     .option("--full", "Alias for --force on scan commands (legacy; prefer --force)");
 }
+
+/** Pass-through for runners that still accept `full` / `force` boolean opts. */
+export function scanMaintenanceOverridePayload(opts?: ScanMaintenanceOverrideInput | null): {
+  force: boolean;
+  full: boolean;
+} {
+  const forced = opts?.force === true || opts?.full === true;
+  return { force: forced, full: forced };
+}

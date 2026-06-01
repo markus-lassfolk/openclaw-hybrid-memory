@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   resolveScanMaintenanceOverrides,
   registerScanMaintenanceOverrideOptions,
+  scanMaintenanceOverridePayload,
 } from "../cli/maintenance-overrides.js";
 
 describe("maintenance-overrides", () => {
@@ -24,6 +25,11 @@ describe("maintenance-overrides", () => {
       bypassScanCooldown: true,
       bypassWatermark: true,
     });
+  });
+
+  it("scanMaintenanceOverridePayload mirrors resolveScanMaintenanceOverrides", () => {
+    expect(scanMaintenanceOverridePayload({ force: true })).toEqual({ force: true, full: true });
+    expect(scanMaintenanceOverridePayload({})).toEqual({ force: false, full: false });
   });
 
   it("registerScanMaintenanceOverrideOptions chains on a mock commander", () => {

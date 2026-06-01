@@ -3,6 +3,10 @@
  */
 
 import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
+import {
+  registerScanMaintenanceOverrideOptions,
+  scanMaintenanceOverridePayload,
+} from "./maintenance-overrides.js";
 import { type Chainable, withExit } from "./shared.js";
 import type { ReinforcementExtractResult } from "../services/reinforcement-extract.js";
 import type {
@@ -20,7 +24,7 @@ export type DistillContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (
-    opts: { days: number; dryRun: boolean; verbose?: boolean },
+    opts: { days: number; dryRun: boolean; verbose?: boolean; force?: boolean; full?: boolean },
     sink: ExtractDailySink,
   ) => Promise<ExtractDailyResult>;
   runExtractProcedures: (opts: {
@@ -29,6 +33,7 @@ export type DistillContext = {
     dryRun: boolean;
     verbose?: boolean;
     full?: boolean;
+    force?: boolean;
   }) => Promise<ExtractProceduresResult>;
   runGenerateAutoSkills: (opts: {
     dryRun: boolean;
@@ -50,10 +55,17 @@ export type DistillContext = {
       maxSessions?: number;
       maxSessionTokens?: number;
       full?: boolean;
+      force?: boolean;
     },
     sink: DistillCliSink,
   ) => Promise<DistillCliResult>;
-  runExtractDirectives: (opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean }) => Promise<{
+  runExtractDirectives: (opts: {
+    days?: number;
+    verbose?: boolean;
+    dryRun?: boolean;
+    full?: boolean;
+    force?: boolean;
+  }) => Promise<{
     incidents: Array<{
       userMessage: string;
       categories: string[];
@@ -84,6 +96,7 @@ export type DistillContext = {
     verbose?: boolean;
     dryRun?: boolean;
     full?: boolean;
+    force?: boolean;
   }) => Promise<ReinforcementExtractResult>;
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
@@ -101,28 +114,28 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     runGenerateProposals,
   } = ctx;
 
-  mem
-    .command("distill")
-    .description(
-      "Index session JSONL into memory (extract facts via LLM, dedup, store). Use distill-window for date range info.",
-    )
-    .option("--dry-run", "Show what would be processed without storing")
-    .option("--all", "Process all sessions (last 90 days)")
-    .option("--days <n>", "Process sessions from last N days (default: 3)", "3")
-    .option("--since <date>", "Process sessions since date (YYYY-MM-DD)")
-    .option(
-      "--model <model>",
-      "LLM for extraction (recommended: gemini-3.1-pro-preview for 1M context). Default: config.distill.defaultModel or gemini-3.1-pro-preview",
-    )
-    .option("-v, --verbose", "Log each fact as it is stored")
-    .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
-    .option(
-      "--max-session-tokens <n>",
-      "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)",
-      "0",
-    )
-    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("distill")
+      .description(
+        "Index session JSONL into memory (extract facts via LLM, dedup, store). Use distill-window for date range info.",
+      )
+      .option("--dry-run", "Show what would be processed without storing")
+      .option("--all", "Process all sessions (last 90 days)")
+      .option("--days <n>", "Process sessions from last N days (default: 3)", "3")
+      .option("--since <date>", "Process sessions since date (YYYY-MM-DD)")
+      .option(
+        "--model <model>",
+        "LLM for extraction (recommended: gemini-3.1-pro-preview for 1M context). Default: config.distill.defaultModel or gemini-3.1-pro-preview",
+      )
+      .option("-v, --verbose", "Log each fact as it is stored")
+      .option("--max-sessions <n>", "Limit sessions to process (for cost control)", "0")
+      .option(
+        "--max-session-tokens <n>",
+        "Max tokens per session chunk; oversized sessions are split into overlapping chunks (default: batch limit)",
+        "0",
+      ),
+  ).action(
       withExit(
         async (
           opts: {
@@ -135,6 +148,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             maxSessions?: string;
             maxSessionTokens?: string;
             full?: boolean;
+            force?: boolean;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -145,6 +159,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0", 10) || 0);
           const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0", 10) || 0);
           const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
+          const overrides = scanMaintenanceOverridePayload(opts);
           const result = await runDistill(
             {
               dryRun: !!opts.dryRun,
@@ -155,7 +170,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
               verbose: !!opts.verbose || readHybridMemVerbose(cmd),
               maxSessions: maxSessions > 0 ? maxSessions : undefined,
               maxSessionTokens: maxSessionTokens > 0 ? maxSessionTokens : undefined,
-              full: !!opts.full,
+              ...overrides,
             },
             sink,
           );
@@ -204,20 +219,26 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       }),
     );
 
-  mem
-    .command("extract-daily")
-    .description("Extract structured facts from daily memory files")
-    .option("--days <n>", "How many days back to scan", "7")
-    .option("--dry-run", "Show extractions without storing")
-    .option("-v, --verbose", "Log each extracted fact as it is stored")
-    .action(
-      withExit(async (opts: { days: string; dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("extract-daily")
+      .description("Extract structured facts from daily memory files")
+      .option("--days <n>", "How many days back to scan", "7")
+      .option("--dry-run", "Show extractions without storing")
+      .option("-v, --verbose", "Log each extracted fact as it is stored"),
+  ).action(
+      withExit(
+        async (
+          opts: { days: string; dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
         const daysBack = Number.parseInt(opts.days, 10);
         const result = await runExtractDaily(
           {
             days: daysBack,
             dryRun: !!opts.dryRun,
             verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            ...scanMaintenanceOverridePayload(opts),
           },
           { log: (s) => console.log(s), warn: (s) => console.warn(s) },
         );
@@ -233,19 +254,15 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       }),
     );
 
-  mem
-    .command("extract-procedures")
-    .description("Procedural memory: extract tool-call sequences from session JSONL and store as procedures")
-    .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
-    .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
-    .option("--dry-run", "Show what would be stored without writing")
-    .option("-v, --verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)")
-    .option(
-      "--force",
-      "Bypass maintenance guards for this run (23h scan cooldown and incremental watermark)",
-    )
-    .option("--full", "Alias for --force on scan commands (legacy; prefer --force)")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("extract-procedures")
+      .description("Procedural memory: extract tool-call sequences from session JSONL and store as procedures")
+      .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
+      .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
+      .option("--dry-run", "Show what would be stored without writing")
+      .option("-v, --verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)"),
+  ).action(
       withExit(
         async (
           opts: {
@@ -264,8 +281,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             days: Number.isFinite(days) ? days : undefined,
             dryRun: !!opts.dryRun,
             verbose: !!opts.verbose || readHybridMemVerbose(cmd),
-            full: !!opts.full,
-            force: !!opts.force,
+            ...scanMaintenanceOverridePayload(opts),
           });
           if (result.dryRun) {
             console.log(
@@ -364,14 +380,14 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       }),
     );
 
-  mem
-    .command("extract-directives")
-    .description("Extract directive incidents from session JSONL (10 categories)")
-    .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
-    .option("-v, --verbose", "Log each directive as it is detected")
-    .option("--dry-run", "Show what would be extracted without storing")
-    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("extract-directives")
+      .description("Extract directive incidents from session JSONL (10 categories)")
+      .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
+      .option("-v, --verbose", "Log each directive as it is detected")
+      .option("--dry-run", "Show what would be extracted without storing"),
+  ).action(
       withExit(
         async (
           opts: {
@@ -379,6 +395,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             verbose?: boolean;
             dryRun?: boolean;
             full?: boolean;
+            force?: boolean;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -387,7 +404,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             days,
             verbose: !!opts.verbose || readHybridMemVerbose(cmd),
             dryRun: opts.dryRun,
-            full: opts.full,
+            ...scanMaintenanceOverridePayload(opts),
           });
           console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
           if (opts.dryRun) {
@@ -426,14 +443,14 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       ),
     );
 
-  mem
-    .command("extract-reinforcement")
-    .description("Extract reinforcement incidents from session JSONL and annotate facts/procedures")
-    .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
-    .option("-v, --verbose", "Log each reinforcement as it is detected")
-    .option("--dry-run", "Show what would be annotated without storing")
-    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("extract-reinforcement")
+      .description("Extract reinforcement incidents from session JSONL and annotate facts/procedures")
+      .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
+      .option("-v, --verbose", "Log each reinforcement as it is detected")
+      .option("--dry-run", "Show what would be annotated without storing"),
+  ).action(
       withExit(
         async (
           opts: {
@@ -441,6 +458,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             verbose?: boolean;
             dryRun?: boolean;
             full?: boolean;
+            force?: boolean;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -449,7 +467,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             days,
             verbose: !!opts.verbose || readHybridMemVerbose(cmd),
             dryRun: opts.dryRun,
-            full: opts.full,
+            ...scanMaintenanceOverridePayload(opts),
           });
           console.log(
             `\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`,
