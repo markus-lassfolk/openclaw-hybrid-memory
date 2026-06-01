@@ -15,6 +15,7 @@ import {
 } from "../../../services/chat.js";
 import { migrateEmbeddings } from "../../../services/embedding-migration.js";
 import { AllEmbeddingProvidersFailed } from "../../../services/embeddings.js";
+import { buildVectorlessSloRepairRecommendation } from "../../../services/entity-enrichment-adaptive.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { recordMaintenanceTimestamp } from "../../../services/maintenance-timestamp.js";
 import { countPendingReviewBacklogs } from "../../../services/pending-review-digest.js";
@@ -1022,6 +1023,14 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               adjustments: adaptiveAdjustments,
             };
           }
+          const activeFacts = factsDb.getCount();
+          report.vectorSloRepair = buildVectorlessSloRepairRecommendation({
+            activeFacts,
+            vectorlessBefore: before,
+            vectorlessAfter: after,
+            embeddedThisRun: embedded,
+            runLimit: limit,
+          });
           if (providerCircuitBreak) {
             report.failedReason =
               providerCircuitBreakCause === "provider_5xx"
@@ -1043,6 +1052,10 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               `Adaptive pacing: batchSize ${baselineBatchSize}->${effectiveBatchSize}, delayMs ${baselineDelayMs}->${effectiveDelayMs}, adjustments ${adaptiveAdjustments.length}`,
             );
           }
+          const slo = report.vectorSloRepair as ReturnType<typeof buildVectorlessSloRepairRecommendation>;
+          console.log(
+            `Vectorless SLO repair: ratio ${(slo.vectorlessRatioAfter * 100).toFixed(2)}% (target ${(slo.targetVectorlessRatio * 100).toFixed(0)}%), clear ${slo.vectorlessToClearForSlo} more, ~${slo.estimatedRunsToReachSlo} run(s) at ${slo.embeddedThisRun || slo.recommendedLimitNextRun}/run`,
+          );
           if (candidates.length > 0 && !opts?.apply) {
             console.log("Examples:");
             for (const fact of candidates.slice(0, 10)) {

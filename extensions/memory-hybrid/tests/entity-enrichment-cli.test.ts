@@ -231,6 +231,7 @@ describe("runEntityEnrichmentForCli", () => {
         failed: true,
         transientFailure: true,
         rateLimited: true,
+        timeoutFailure: false,
         retryAfterMs: 250,
       },
     });
@@ -281,6 +282,7 @@ describe("runEntityEnrichmentForCli", () => {
         failed: true,
         transientFailure: true,
         rateLimited: true,
+        timeoutFailure: false,
         retryAfterMs: 17_000,
       },
     });
@@ -391,5 +393,121 @@ describe("runEntityEnrichmentForCli", () => {
     expect(
       progressSnapshots.every((snapshot) => snapshot.batchSize === undefined && snapshot.delayMs === undefined),
     ).toBe(true);
+  });
+
+  it("stops at time budget with preserved progress and adaptive summary", async () => {
+    seedFacts(8, "Time budget fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    const startMs = 1_700_000_000_000;
+    let nowMs = startMs;
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockImplementation(async () => {
+      nowMs += 400;
+      return {
+        mentions: [],
+        detectedLang: "eng",
+        quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+        rejectedMentions: [],
+        pressureSignals: {
+          failed: false,
+          transientFailure: false,
+          rateLimited: false,
+          timeoutFailure: false,
+        },
+      };
+    });
+
+    const sleepSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((handler: TimerHandler) => {
+      if (typeof handler === "function") handler();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 8,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 4,
+      batchDelayMs: 0,
+      timeBudgetSec: 1,
+      maxConcurrency: 1,
+    });
+
+    expect(res.stopReason).toBe("time_budget");
+    expect(res.processed).toBeGreaterThan(0);
+    expect(res.processed).toBeLessThan(8);
+    expect(res.adaptiveSummary?.stopReason).toBe("time_budget");
+    expect(res.adaptiveSummary?.nextRecommendedLimit).toBeGreaterThanOrEqual(8);
+    expect(sleepSpy).toHaveBeenCalled();
+  });
+
+  it("runs bounded concurrent LLM extractions when adaptive and maxConcurrency > 1", async () => {
+    seedFacts(6, "Concurrency fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      inFlight--;
+      return {
+        mentions: [],
+        detectedLang: "eng",
+        quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+        rejectedMentions: [],
+        pressureSignals: {
+          failed: false,
+          transientFailure: false,
+          rateLimited: false,
+          timeoutFailure: false,
+        },
+      };
+    });
+
+    vi.useFakeTimers();
+    const runPromise = runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 6,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 6,
+      batchDelayMs: 0,
+      maxConcurrency: 3,
+    });
+    await vi.runAllTimersAsync();
+    const res = await runPromise;
+    vi.useRealTimers();
+
+    expect(res.processed).toBe(6);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(3);
   });
 });

@@ -247,12 +247,19 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
       failedReason?: string;
       embedded?: number;
+      vectorSloRepair?: {
+        vectorlessToClearForSlo?: number;
+        estimatedRunsToReachSlo?: number;
+        targetVectorlessRatio?: number;
+      };
       adaptive?: {
         adjustments?: Array<{ reason?: string; retryAfterMs?: number; delayMs?: number }>;
       };
     };
     expect(payload.failedReason).toBeUndefined();
     expect(payload.embedded).toBe(4);
+    expect(payload.vectorSloRepair?.targetVectorlessRatio).toBe(0.02);
+    expect(payload.vectorSloRepair?.estimatedRunsToReachSlo).toBeGreaterThanOrEqual(0);
     expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && a.retryAfterMs === 2000)).toBe(true);
     expect(sleepSpy.mock.calls.some(([handler, delay]) => typeof handler === "function" && delay === 3000)).toBe(true);
   });

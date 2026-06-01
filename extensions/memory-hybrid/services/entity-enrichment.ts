@@ -79,6 +79,7 @@ export type EntityExtractionPressureSignals = {
   failed: boolean;
   transientFailure: boolean;
   rateLimited: boolean;
+  timeoutFailure: boolean;
   retryAfterMs?: number;
 };
 
@@ -175,6 +176,7 @@ export async function extractEntityMentionsWithLlm(
         failed: false,
         transientFailure: false,
         rateLimited: false,
+        timeoutFailure: false,
       },
     };
   }
@@ -308,12 +310,14 @@ ${body}`;
         failed: false,
         transientFailure: false,
         rateLimited: false,
+        timeoutFailure: false,
       },
     };
   } catch (err) {
     const error = err instanceof Error ? err : new Error(String(err));
     const rateLimited = is429OrWrapped(error) || is403QuotaOrRateLimitLike(error);
     const transientFailure = rateLimited || is500OrWrapped(error) || isConnectionErrorLike(error);
+    const timeoutFailure = transientFailure && /timed out|llm request timeout|request was aborted/i.test(error.message);
     const retryAfterMs = parseRetryAfterMs(error) ?? undefined;
     capturePluginError(error, {
       operation: "entity-enrichment-llm",
@@ -329,6 +333,7 @@ ${body}`;
         failed: true,
         transientFailure,
         rateLimited,
+        timeoutFailure,
         retryAfterMs,
       },
     };

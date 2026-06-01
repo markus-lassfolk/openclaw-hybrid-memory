@@ -2,25 +2,25 @@
  * reflection & dream-cycle commands — split from register-corrections-and-pipeline.ts.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
-import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
-import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
-import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, withExit } from "../../shared.js";
-import type { ManageBindings } from "./bindings.js";
-import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 import type {
   ContradictionReviewDecision,
   ContradictionReviewItem,
 } from "../../../backends/facts-db/contradictions.js";
+import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
+import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import { type Chainable, withExit } from "../../shared.js";
+import type { ManageBindings } from "./bindings.js";
 
 import {
   assessContinuousVerificationResult,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
-  runVerboseFollowUp,
   type RunVerboseFollowUpOptions,
+  runVerboseFollowUp,
 } from "./dream-cycle-followup.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
@@ -1363,6 +1363,12 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     .option("--adaptive-catch-up", "Enable adaptive enrich-entities pacing (throughput ramp-up + pressure backoff)")
     .option("--batch-size <n>", "Adaptive catch-up baseline batch size (default 20)", "20")
     .option("--batch-delay-ms <n>", "Adaptive catch-up baseline delay between batches in ms (default 150)", "150")
+    .option(
+      "--time-budget-sec <n>",
+      "Stop cleanly after this many seconds (adaptive catch-up; checked between facts/batches)",
+    )
+    .option("--target-duration-sec <n>", "Alias for --time-budget-sec")
+    .option("--max-concurrency <n>", "Max parallel LLM extractions per batch when adaptive (default 3)", "3")
     .option("--dry-run", "Only report how many facts need enrichment")
     .option("-v, --verbose", "List candidate fact ids (dry-run) or enriched fact ids and mentions (after run)")
     .action(
@@ -1377,6 +1383,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             adaptiveCatchUp?: boolean;
             batchSize?: string;
             batchDelayMs?: string;
+            timeBudgetSec?: string;
+            targetDurationSec?: string;
+            maxConcurrency?: string;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -1392,6 +1401,16 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const adaptiveCatchUp = !!opts?.adaptiveCatchUp;
           const batchSize = Number.parseInt(opts?.batchSize ?? "20", 10);
           const batchDelayMs = Number.parseInt(opts?.batchDelayMs ?? "150", 10);
+          const timeBudgetRaw = opts?.timeBudgetSec ?? opts?.targetDurationSec;
+          const timeBudgetSec =
+            timeBudgetRaw != null && timeBudgetRaw !== "" ? Number.parseInt(timeBudgetRaw, 10) : undefined;
+          const maxConcurrency = Number.parseInt(opts?.maxConcurrency ?? "3", 10);
+          if (timeBudgetSec != null && (!Number.isFinite(timeBudgetSec) || timeBudgetSec < 1)) {
+            throw new Error("--time-budget-sec / --target-duration-sec must be a positive integer (>= 1).");
+          }
+          if (!Number.isFinite(maxConcurrency) || maxConcurrency < 1) {
+            throw new Error("--max-concurrency must be a positive integer (>= 1).");
+          }
           let enrichProgress: import("../../../services/entity-enrichment-cli.js").EntityEnrichmentProgress = {
             processed: 0,
             total: 0,
@@ -1428,6 +1447,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   adaptiveCatchUp,
                   batchSize,
                   batchDelayMs,
+                  timeBudgetSec,
+                  maxConcurrency,
                   onProgress: (next) => {
                     enrichProgress = next;
                     heartbeat.heartbeat();
@@ -1442,7 +1463,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 }),
               {
                 progressSupplier: () =>
-                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; llmFailures=${enrichProgress.llmFailures ?? 0}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; batch=${enrichProgress.effectiveBatchSize ?? "static"}; delay_ms=${enrichProgress.effectiveDelayMs ?? "static"}; dryRun=${dryRun ? "yes" : "no"}`,
+                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; llmFailures=${enrichProgress.llmFailures ?? 0}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; batch=${enrichProgress.effectiveBatchSize ?? "static"}; delay_ms=${enrichProgress.effectiveDelayMs ?? "static"}; concurrency=${enrichProgress.effectiveConcurrency ?? "static"}; stop=${enrichProgress.stopReason ?? "running"}; dryRun=${dryRun ? "yes" : "no"}`,
               },
             );
           } catch (err) {
@@ -1512,6 +1533,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               for (const [reason, count] of Object.entries(res.rejectReasons)) {
                 console.log(`  ${reason}: ${count}`);
               }
+            }
+            if (res.stopReason === "time_budget") {
+              console.log(
+                `Entity enrichment stopped: time budget reached (processed=${res.processed}, remaining=${remainingTotal}).`,
+              );
+            }
+            if (res.adaptiveSummary) {
+              console.log(`Entity enrichment adaptive summary: ${JSON.stringify(res.adaptiveSummary)}`);
             }
             if (res.llmFailures && res.llmFailures > 0) {
               process.exitCode = 2;

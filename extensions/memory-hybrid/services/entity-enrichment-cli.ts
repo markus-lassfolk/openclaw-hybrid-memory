@@ -8,7 +8,15 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { computeAdaptivePressureDelayMs } from "./adaptive-catch-up-pacing.js";
+import { AsyncSemaphore } from "./embeddings/shared.js";
 import { extractEntityMentionsWithLlm } from "./entity-enrichment.js";
+import {
+  buildEntityEnrichmentAdaptiveSummary,
+  type EntityEnrichmentAdaptiveSummary,
+  type EntityEnrichmentStopReason,
+  sanitizeMaxConcurrency,
+  sanitizeTimeBudgetSec,
+} from "./entity-enrichment-adaptive.js";
 
 function sanitizeEnrichmentLimit(n: number): number {
   const x = Math.floor(Number(n));
@@ -61,14 +69,18 @@ export type EntityEnrichmentProgress = {
   llmFailures?: number;
   effectiveBatchSize?: number;
   effectiveDelayMs?: number;
+  effectiveConcurrency?: number;
+  stopReason?: EntityEnrichmentStopReason;
 };
 
 export type EntityEnrichmentAdaptivePacing = {
   reason: "pressure" | "ramp-up";
   batchSize: number;
   delayMs: number;
+  concurrency: number;
   previousBatchSize: number;
   previousDelayMs: number;
+  previousConcurrency: number;
   batchPressureSignals: number;
   batchFailures: number;
   batchTransientFailures: number;
@@ -83,6 +95,25 @@ const ADAPTIVE_BACKOFF_MIN_DELAY_MS = 50;
 const ADAPTIVE_SUCCESS_STREAK_FOR_RAMP_UP = 2;
 const ADAPTIVE_BATCH_SIZE_STEP = 5;
 const ADAPTIVE_DELAY_STEP_MS = 25;
+const ADAPTIVE_MIN_CONCURRENCY = 1;
+const ADAPTIVE_MAX_CONCURRENCY = 8;
+
+type BatchFactStats = {
+  batchFailures: number;
+  batchPressureSignals: number;
+  batchTransientFailures: number;
+  batchRateLimited: number;
+  batchTimeoutFailures: number;
+  batchRetryAfterMs?: number;
+  factsEnrichedDelta: number;
+  mentionsDelta: number;
+  acceptedDelta: number;
+  rejectedDelta: number;
+  duplicatesDelta: number;
+  rejectReasonsDelta: Record<string, number>;
+  llmFailuresDelta: number;
+  enrichedFactsDelta: EntityEnrichmentVerboseFact[];
+};
 
 export async function runEntityEnrichmentForCli(
   factsDb: FactsDB,
@@ -97,13 +128,14 @@ export async function runEntityEnrichmentForCli(
     adaptiveCatchUp?: boolean;
     batchSize?: number;
     batchDelayMs?: number;
+    timeBudgetSec?: number;
+    targetDurationSec?: number;
+    maxConcurrency?: number;
     onProgress?: (progress: EntityEnrichmentProgress) => void;
     onAdaptivePacing?: (state: EntityEnrichmentAdaptivePacing) => void;
   },
 ): Promise<{
-  /** Candidate count in the selected batch. */
   pending: number;
-  /** Full pending backlog count (across all tiers). */
   pendingTotal: number;
   pendingByTier: { hot: number; warm: number; structural: number; cold: number; unknown: number };
   processed: number;
@@ -121,6 +153,8 @@ export async function runEntityEnrichmentForCli(
   pendingFactIds?: string[];
   enrichedFacts?: EntityEnrichmentVerboseFact[];
   llmFailures?: number;
+  stopReason?: EntityEnrichmentStopReason;
+  adaptiveSummary?: EntityEnrichmentAdaptiveSummary;
 }> {
   const limit = sanitizeEnrichmentLimit(opts.limit);
   const mode: "bounded" | "all" = opts.all ? "all" : "bounded";
@@ -175,12 +209,23 @@ export async function runEntityEnrichmentForCli(
   const pending = ids.length;
   const model = opts.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
   const adaptiveCatchUp = !!opts.adaptiveCatchUp;
+  const timeBudgetSec = sanitizeTimeBudgetSec(opts.timeBudgetSec ?? opts.targetDurationSec);
+  const startedAtMs = Date.now();
+  const deadlineMs = timeBudgetSec != null ? startedAtMs + timeBudgetSec * 1000 : undefined;
+  const isPastDeadline = (): boolean => deadlineMs != null && Date.now() >= deadlineMs;
+
   let effectiveBatchSize = sanitizeBatchSize(opts.batchSize ?? 20);
   let effectiveDelayMs = sanitizeBatchDelayMs(opts.batchDelayMs ?? 150);
+  let effectiveConcurrency = sanitizeMaxConcurrency(opts.maxConcurrency, adaptiveCatchUp);
+  const startBatchSize = effectiveBatchSize;
+  const startDelayMs = effectiveDelayMs;
+  const startConcurrency = effectiveConcurrency;
   if (adaptiveCatchUp) {
     effectiveBatchSize = Math.max(ADAPTIVE_MIN_BATCH_SIZE, Math.min(ADAPTIVE_MAX_BATCH_SIZE, effectiveBatchSize));
     effectiveDelayMs = Math.max(ADAPTIVE_MIN_DELAY_MS, Math.min(ADAPTIVE_MAX_DELAY_MS, effectiveDelayMs));
+    effectiveConcurrency = Math.max(ADAPTIVE_MIN_CONCURRENCY, Math.min(ADAPTIVE_MAX_CONCURRENCY, effectiveConcurrency));
   }
+
   let factsEnriched = 0;
   let processed = 0;
   let mentions = 0;
@@ -188,90 +233,15 @@ export async function runEntityEnrichmentForCli(
   let rejected = 0;
   let duplicates = 0;
   let llmFailures = 0;
+  let rateLimitCount = 0;
+  let transientFailureCount = 0;
+  let timeoutFailureCount = 0;
   const rejectReasons: Record<string, number> = {};
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
-  opts.onProgress?.({
-    processed: 0,
-    total: ids.length,
-    factsEnriched: 0,
-    pendingTotal,
-    remainingTotal: pendingTotal,
-    estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(pendingTotal / Math.max(1, limit)),
-    mode,
-    mentions: 0,
-    accepted: 0,
-    rejected: 0,
-    duplicates: 0,
-    rejectReasons: {},
-    llmFailures: 0,
-    effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : undefined,
-    effectiveDelayMs: adaptiveCatchUp ? effectiveDelayMs : undefined,
-  });
-  let successStreak = 0;
-  for (let index = 0; index < ids.length; ) {
-    const batch = adaptiveCatchUp ? ids.slice(index, index + effectiveBatchSize) : [ids[index]];
-    let batchFailures = 0;
-    let batchPressureSignals = 0;
-    let batchTransientFailures = 0;
-    let batchRateLimited = 0;
-    let batchRetryAfterMs: number | undefined;
-    for (const id of batch) {
-      processed++;
-      const f = factsDb.getById(id);
-      if (f?.text) {
-        const extraction = await extractEntityMentionsWithLlm(f.text, openai, model, {
-          stopWords: cfg.entityExtraction.stopWords,
-        });
-        if (adaptiveCatchUp && extraction.pressureSignals.failed) {
-          batchFailures++;
-        }
-        if (adaptiveCatchUp && extraction.pressureSignals.transientFailure) {
-          batchTransientFailures++;
-        }
-        if (adaptiveCatchUp && extraction.pressureSignals.rateLimited) {
-          batchRateLimited++;
-        }
-        if (
-          adaptiveCatchUp &&
-          (extraction.pressureSignals.rateLimited ||
-            extraction.pressureSignals.transientFailure ||
-            extraction.pressureSignals.retryAfterMs !== undefined)
-        ) {
-          batchPressureSignals++;
-        }
-        if (adaptiveCatchUp && extraction.pressureSignals.retryAfterMs !== undefined) {
-          batchRetryAfterMs = Math.max(batchRetryAfterMs ?? 0, extraction.pressureSignals.retryAfterMs);
-        }
-        if (!extraction.pressureSignals.failed) {
-          factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
-        } else {
-          llmFailures++;
-        }
-        mentions += extraction.quality.mentions;
-        accepted += extraction.quality.accepted;
-        rejected += extraction.quality.rejected;
-        duplicates += extraction.quality.duplicates;
-        for (const [reason, count] of Object.entries(extraction.quality.rejectReasons)) {
-          rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
-        }
-        if (extraction.mentions.length > 0) {
-          factsEnriched++;
-        }
-        if (verbose && (extraction.mentions.length > 0 || extraction.rejectedMentions.length > 0)) {
-          enrichedFacts.push({
-            factId: id,
-            mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
-            rejected: extraction.rejectedMentions.map((m) => ({
-              label: m.label,
-              surfaceText: m.surfaceText,
-              reason: m.reason,
-            })),
-          });
-        }
-      }
-    }
-    const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
-    const remainingTotal = currentBacklog.total;
+
+  let stopReason: EntityEnrichmentStopReason = "exhausted";
+
+  const emitProgress = (remainingTotal: number) => {
     opts.onProgress?.({
       processed,
       total: ids.length,
@@ -288,17 +258,140 @@ export async function runEntityEnrichmentForCli(
       llmFailures,
       effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : undefined,
       effectiveDelayMs: adaptiveCatchUp ? effectiveDelayMs : undefined,
+      effectiveConcurrency: adaptiveCatchUp ? effectiveConcurrency : undefined,
+      stopReason: stopReason === "exhausted" ? undefined : stopReason,
     });
+  };
+
+  emitProgress(pendingTotal);
+
+  let successStreak = 0;
+  for (let index = 0; index < ids.length; ) {
+    if (isPastDeadline()) {
+      stopReason = "time_budget";
+      break;
+    }
+
+    const batch = adaptiveCatchUp ? ids.slice(index, index + effectiveBatchSize) : [ids[index]];
+    const batchStats: BatchFactStats = {
+      batchFailures: 0,
+      batchPressureSignals: 0,
+      batchTransientFailures: 0,
+      batchRateLimited: 0,
+      batchTimeoutFailures: 0,
+      factsEnrichedDelta: 0,
+      mentionsDelta: 0,
+      acceptedDelta: 0,
+      rejectedDelta: 0,
+      duplicatesDelta: 0,
+      rejectReasonsDelta: {},
+      llmFailuresDelta: 0,
+      enrichedFactsDelta: [],
+    };
+
+    const processFact = async (id: string): Promise<void> => {
+      if (isPastDeadline()) return;
+      processed++;
+      const f = factsDb.getById(id);
+      if (!f?.text) return;
+
+      const extraction = await extractEntityMentionsWithLlm(f.text, openai, model, {
+        stopWords: cfg.entityExtraction.stopWords,
+      });
+
+      if (adaptiveCatchUp) {
+        if (extraction.pressureSignals.failed) batchStats.batchFailures++;
+        if (extraction.pressureSignals.transientFailure) batchStats.batchTransientFailures++;
+        if (extraction.pressureSignals.rateLimited) batchStats.batchRateLimited++;
+        if (
+          extraction.pressureSignals.rateLimited ||
+          extraction.pressureSignals.transientFailure ||
+          extraction.pressureSignals.retryAfterMs !== undefined
+        ) {
+          batchStats.batchPressureSignals++;
+        }
+        if (extraction.pressureSignals.retryAfterMs !== undefined) {
+          batchStats.batchRetryAfterMs = Math.max(
+            batchStats.batchRetryAfterMs ?? 0,
+            extraction.pressureSignals.retryAfterMs,
+          );
+        }
+      }
+
+      if (extraction.pressureSignals.rateLimited) rateLimitCount++;
+      if (extraction.pressureSignals.transientFailure) transientFailureCount++;
+      if (extraction.pressureSignals.failed) {
+        if (extraction.pressureSignals.timeoutFailure) timeoutFailureCount++;
+        llmFailures++;
+        batchStats.llmFailuresDelta++;
+      } else {
+        factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
+      }
+
+      mentions += extraction.quality.mentions;
+      accepted += extraction.quality.accepted;
+      rejected += extraction.quality.rejected;
+      duplicates += extraction.quality.duplicates;
+      for (const [reason, count] of Object.entries(extraction.quality.rejectReasons)) {
+        rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
+      }
+      if (extraction.mentions.length > 0) {
+        factsEnriched++;
+      }
+      if (verbose && (extraction.mentions.length > 0 || extraction.rejectedMentions.length > 0)) {
+        enrichedFacts.push({
+          factId: id,
+          mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
+          rejected: extraction.rejectedMentions.map((m) => ({
+            label: m.label,
+            surfaceText: m.surfaceText,
+            reason: m.reason,
+          })),
+        });
+      }
+    };
+
+    if (adaptiveCatchUp && effectiveConcurrency > 1) {
+      const semaphore = new AsyncSemaphore(effectiveConcurrency);
+      await Promise.all(
+        batch.map(async (id) => {
+          await semaphore.acquire();
+          try {
+            await processFact(id);
+          } finally {
+            semaphore.release();
+          }
+        }),
+      );
+    } else {
+      for (const id of batch) {
+        if (isPastDeadline()) {
+          stopReason = "time_budget";
+          break;
+        }
+        await processFact(id);
+      }
+    }
+
+    if (isPastDeadline()) {
+      stopReason = "time_budget";
+    }
+
+    const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
+    emitProgress(currentBacklog.total);
+
     if (adaptiveCatchUp) {
-      const hadPressure = batchPressureSignals > 0;
+      const hadPressure = batchStats.batchPressureSignals > 0 || batchStats.batchFailures > 0;
       const previousBatchSize = effectiveBatchSize;
       const previousDelayMs = effectiveDelayMs;
+      const previousConcurrency = effectiveConcurrency;
       if (hadPressure) {
         successStreak = 0;
         effectiveBatchSize = Math.max(ADAPTIVE_MIN_BATCH_SIZE, Math.floor(effectiveBatchSize / 2));
+        effectiveConcurrency = Math.max(ADAPTIVE_MIN_CONCURRENCY, Math.floor(effectiveConcurrency / 2));
         effectiveDelayMs = computeAdaptivePressureDelayMs({
           currentDelayMs: effectiveDelayMs,
-          batchRetryAfterMs,
+          batchRetryAfterMs: batchStats.batchRetryAfterMs,
           maxAdaptiveDelayMs: ADAPTIVE_MAX_DELAY_MS,
           backoffMinDelayMs: ADAPTIVE_BACKOFF_MIN_DELAY_MS,
         });
@@ -307,29 +400,65 @@ export async function runEntityEnrichmentForCli(
         if (successStreak >= ADAPTIVE_SUCCESS_STREAK_FOR_RAMP_UP) {
           successStreak = 0;
           effectiveBatchSize = Math.min(ADAPTIVE_MAX_BATCH_SIZE, effectiveBatchSize + ADAPTIVE_BATCH_SIZE_STEP);
+          effectiveConcurrency = Math.min(ADAPTIVE_MAX_CONCURRENCY, effectiveConcurrency + 1);
           effectiveDelayMs = Math.max(ADAPTIVE_MIN_DELAY_MS, effectiveDelayMs - ADAPTIVE_DELAY_STEP_MS);
         }
       }
-      if (previousBatchSize !== effectiveBatchSize || previousDelayMs !== effectiveDelayMs) {
+      if (
+        previousBatchSize !== effectiveBatchSize ||
+        previousDelayMs !== effectiveDelayMs ||
+        previousConcurrency !== effectiveConcurrency
+      ) {
         opts.onAdaptivePacing?.({
           reason: hadPressure ? "pressure" : "ramp-up",
           batchSize: effectiveBatchSize,
           delayMs: effectiveDelayMs,
+          concurrency: effectiveConcurrency,
           previousBatchSize,
           previousDelayMs,
-          batchPressureSignals,
-          batchFailures,
-          batchTransientFailures,
-          batchRateLimited,
+          previousConcurrency,
+          batchPressureSignals: batchStats.batchPressureSignals,
+          batchFailures: batchStats.batchFailures,
+          batchTransientFailures: batchStats.batchTransientFailures,
+          batchRateLimited: batchStats.batchRateLimited,
         });
       }
     }
+
     index += batch.length;
+    if (stopReason === "time_budget") break;
     if (adaptiveCatchUp && index < ids.length) {
       await delay(effectiveDelayMs);
     }
   }
+
+  if (stopReason !== "time_budget") {
+    stopReason = processed >= ids.length ? "completed" : "exhausted";
+  }
+
   const finalBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
+  const adaptiveSummary = adaptiveCatchUp
+    ? buildEntityEnrichmentAdaptiveSummary({
+        startedAtMs,
+        processed,
+        remainingTotal: finalBacklog.total,
+        limit,
+        mode,
+        rateLimitCount,
+        transientFailureCount,
+        timeoutFailureCount,
+        llmFailureCount: llmFailures,
+        startBatchSize,
+        endBatchSize: effectiveBatchSize,
+        startDelayMs,
+        endDelayMs: effectiveDelayMs,
+        startConcurrency,
+        endConcurrency: effectiveConcurrency,
+        stopReason,
+        timeBudgetSec,
+      })
+    : undefined;
+
   return {
     pending,
     pendingTotal,
@@ -347,5 +476,7 @@ export async function runEntityEnrichmentForCli(
     rejectReasons,
     enrichedFacts: verbose && enrichedFacts.length > 0 ? enrichedFacts : undefined,
     llmFailures: llmFailures > 0 ? llmFailures : undefined,
+    stopReason,
+    adaptiveSummary,
   };
 }
