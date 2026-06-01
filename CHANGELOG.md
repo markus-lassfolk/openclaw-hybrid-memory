@@ -25,6 +25,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2026.6.10] - 2026-06-01
+
+### Added
+
+- **Adaptive catch-up for entity enrichment and vectorless re-embed** ([#1792](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1792), [#1791](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1791), [#1738](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1738)): pressure-aware batch sizing, pacing, and SLO repair summaries for maintenance catch-up workloads.
+
+### Fixed
+
+- **Extract-directives vector dedupe** and maintenance CLI diagnostics ([#1794](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1794), [#1788](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1788)–[#1790](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1790)).
+- **Weekly persona proposals** no longer mask `generate-proposals` LLM failures as success with zero proposals ([#1793](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1793)).
+- **Nightly dream-cycle** durable exit/validation markers for mid-stage interruptions ([#1783](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1783)).
+- **Resolve-contradictions** actionable unresolved buckets in output ([#1782](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1782), [#1781](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1781)).
+- **Agent-end narrative hook**: restore `getCronModelConfig` ([#1778](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1778), [#1775](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1775)).
+- **Embedding path** no longer retries non-ASCII `ByteString` serialization failures ([#1777](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1777), [#1776](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1776)).
+
+### Changed
+
+- Bumped plugin package, lockfile, plugin manifest, and installer package versions to **2026.6.10**.
+- Added release notes at `release-notes/release-notes-2026.6.10.md`.
+
+---
+
 ## [2026.5.311] - 2026-05-31
 
 ### Fixed
