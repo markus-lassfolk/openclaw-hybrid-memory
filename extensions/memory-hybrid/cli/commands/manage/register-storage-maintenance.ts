@@ -833,18 +833,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       );
                       consecutiveEmbedFailures = 0;
                     } catch (batchErr) {
-                      if (isEmbeddingProviderRateLimitError(batchErr)) {
-                        batchRateLimited++;
-                      }
-                      if (isEmbeddingProviderTransientError(batchErr)) {
-                        batchTransientFailures++;
-                      }
+                      const batchRateLimitedErr = isEmbeddingProviderRateLimitError(batchErr);
+                      const batchTransientErr = isEmbeddingProviderTransientError(batchErr);
                       batchRetryAfterMs = parseEmbeddingRetryAfterMs(batchErr);
-                      if (
-                        isEmbeddingProviderRateLimitError(batchErr) ||
-                        isEmbeddingProviderTransientError(batchErr) ||
-                        batchRetryAfterMs !== undefined
-                      ) {
+                      if (batchRateLimitedErr) batchRateLimited++;
+                      if (batchTransientErr) batchTransientFailures++;
+                      if (batchRateLimitedErr || batchTransientErr || batchRetryAfterMs !== undefined) {
                         batchPressureSignals++;
                       }
                       if (isEmbeddingProviderServerError(batchErr)) {
@@ -874,12 +868,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                           const rateLimited = isEmbeddingProviderRateLimitError(singleErr);
                           const transient = isEmbeddingProviderTransientError(singleErr);
                           const retryAfterMs = parseEmbeddingRetryAfterMs(singleErr);
-                          if (rateLimited) {
-                            batchRateLimited++;
-                          }
-                          if (transient) {
-                            batchTransientFailures++;
-                          }
+                          if (rateLimited) batchRateLimited++;
+                          if (transient) batchTransientFailures++;
                           if (rateLimited || transient || retryAfterMs !== undefined) {
                             batchPressureSignals++;
                           }

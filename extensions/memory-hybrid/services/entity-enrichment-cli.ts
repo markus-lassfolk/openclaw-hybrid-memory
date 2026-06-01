@@ -640,7 +640,13 @@ export async function runEntityEnrichmentForCli(
   }
 
   if (stopReason !== "time_budget" && stopReason !== "provider_budget") {
-    stopReason = processed >= ids.length ? "completed" : "exhausted";
+    const allIdsAttempted = index >= ids.length;
+    const hasRunPressure =
+      llmFailures > 0 ||
+      rateLimitCount > 0 ||
+      timeoutFailureCount > 0 ||
+      transientFailureCount > 0;
+    stopReason = allIdsAttempted && !hasRunPressure ? "completed" : "exhausted";
   }
 
   const finalBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);

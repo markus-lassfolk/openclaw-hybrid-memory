@@ -750,6 +750,49 @@ describe("runEntityEnrichmentForCli", () => {
     expect(res.remainingTotal).toBeLessThan(4);
   });
 
+  it("reports exhausted (not completed) when all facts were attempted but LLM failures remain", async () => {
+    seedFacts(3, "Failed enrichment fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockResolvedValue({
+      mentions: [],
+      detectedLang: "eng",
+      quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+      rejectedMentions: [],
+      pressureSignals: {
+        failed: true,
+        transientFailure: false,
+        rateLimited: false,
+        timeoutFailure: true,
+      },
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 3,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 3,
+      batchDelayMs: 0,
+      maxConcurrency: 1,
+    });
+
+    expect(res.processed).toBe(3);
+    expect(res.llmFailures).toBe(3);
+    expect(res.stopReason).toBe("exhausted");
+  });
+
   it("reports accurate backlog ETA in adaptive summary", async () => {
     seedFacts(9, "Backlog ETA fact");
 
