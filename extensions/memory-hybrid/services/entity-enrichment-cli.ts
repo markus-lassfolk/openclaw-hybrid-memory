@@ -290,7 +290,7 @@ export async function runEntityEnrichmentForCli(
       effectiveDelayMs: adaptiveCatchUp ? effectiveDelayMs : undefined,
     });
     if (adaptiveCatchUp) {
-      const hadPressure = batchPressureSignals > 0 || batchFailures > 0;
+      const hadPressure = batchPressureSignals > 0;
       const previousBatchSize = effectiveBatchSize;
       const previousDelayMs = effectiveDelayMs;
       if (hadPressure) {
