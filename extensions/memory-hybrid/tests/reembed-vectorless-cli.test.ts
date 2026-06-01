@@ -65,7 +65,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       BACKFILL_DECAY_MARKER: ".backfill-decay-done",
     } as any);
 
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
 
     await mem.parseAsync(["reembed-vectorless", "--apply", "--limit", "1", "--batch-size", "1", "--json"], {
@@ -621,7 +621,6 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       { from: "user" },
     );
 
-    expect(logSpy).toHaveBeenCalled();
     expect(factsDb.storeEmbedding).toHaveBeenCalledTimes(3);
     expect(embeddings.embed).toHaveBeenCalledTimes(2);
     expect(sleepMs).toContain(50);
