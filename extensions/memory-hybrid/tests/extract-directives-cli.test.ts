@@ -258,6 +258,73 @@ describe("runExtractDirectivesForCli", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
   });
 
+  it("refreshes the vector when directive dedupe merges into an existing fact", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const existing = db.store({
+      text: "From now on, always run schema checks before directive extraction.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "seed",
+    });
+    const mergedText = `${existing.text}\nFrom now on, always run schema checks before extracting directives.`;
+    writeSession(dir, "2026-05-27-directives-vector-merge.jsonl", [
+      "From now on, always run schema checks before extracting directives.",
+      "Got it.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => ({
+      embeddingStale: true,
+      entry: { ...existing, text: mergedText },
+      evictedFactId: null,
+      newlyStored: false,
+      preMergeText: existing.text,
+      skipped: false,
+    }));
+    const embeddings = {
+      embed: vi.fn(async (text: string) => (text === mergedText ? [0.9] : [0.1])),
+      modelName: "test-embedding",
+    };
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(0);
+    expect(embeddings.embed).toHaveBeenCalledWith(mergedText);
+    expect(vectorDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: existing.id,
+        text: mergedText,
+        vector: [0.9],
+      }),
+    );
+    expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
+  });
+
   it("dedupes near-duplicate directives on the CLI extraction path using vector candidates", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     const storeConfig = {

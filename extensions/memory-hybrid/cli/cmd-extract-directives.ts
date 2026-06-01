@@ -233,9 +233,10 @@ export async function runExtractDirectivesForCli(
           } else {
             lexicalOnlyDedupeStores++;
           }
-          if (storeResult.skipped || !storeResult.newlyStored) {
+          if (storeResult.skipped) {
             continue;
           }
+          const entry = storeResult.entry;
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
             vectorDb,
@@ -243,16 +244,39 @@ export async function runExtractDirectivesForCli(
             logger: logger,
             context: "extract-directives",
           });
+          if (storeResult.embeddingStale) {
+            try {
+              const mergedVector = await embeddings.embed(entry.text);
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+              await vectorDb.store({
+                text: entry.text,
+                vector: mergedVector,
+                importance: entry.importance,
+                category: entry.category as MemoryCategory,
+                id: entry.id,
+              });
+            } catch (err) {
+              logger.warn?.(`memory-hybrid: extract-directives merged vector refresh failed: ${err}`);
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractDirectivesForCli:merged-vector-refresh",
+              });
+            }
+            continue;
+          }
+          if (!storeResult.newlyStored) {
+            continue;
+          }
           if (vector) {
             try {
-              factsDb.setEmbeddingModel(storeResult.entry.id, embeddings.modelName);
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vector))) {
                 await vectorDb.store({
                   text: incident.extractedRule,
                   vector,
                   importance: 0.8,
                   category: category as MemoryCategory,
-                  id: storeResult.entry.id,
+                  id: entry.id,
                 });
               }
             } catch (err) {
