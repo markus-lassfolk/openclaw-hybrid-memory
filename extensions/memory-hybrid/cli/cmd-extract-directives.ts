@@ -186,7 +186,15 @@ export async function runExtractDirectivesForCli(
               suppressVectorFallbackWarning: true,
             },
           );
-          if (storeResult.skipped) {
+          if (usedLexicalOnlyFallback) {
+            storeDedupeVectorFallbackSuppressed++;
+            lexicalOnlyDedupeStores++;
+          } else if (vectorCandidates && vectorCandidates.length > 0) {
+            vectorDedupeStores++;
+          } else {
+            lexicalOnlyDedupeStores++;
+          }
+          if (storeResult.skipped || !storeResult.newlyStored) {
             continue;
           }
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
@@ -196,11 +204,6 @@ export async function runExtractDirectivesForCli(
             logger: logger,
             context: "extract-directives",
           });
-          if (usedLexicalOnlyFallback) {
-            storeDedupeVectorFallbackSuppressed++;
-            lexicalOnlyDedupeStores++;
-          }
-          if (vectorCandidates) vectorDedupeStores++;
           stored++;
         } catch (err) {
           retryableRejected++;
@@ -214,7 +217,7 @@ export async function runExtractDirectivesForCli(
 
     if (storeDedupeVectorFallbackSuppressed > 0) {
       logger.warn?.(
-        `memory-hybrid: extract-directives DEGRADED — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vector candidates unavailable)`,
+        `memory-hybrid: extract-directives DEGRADED — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (embedding or vector search failed)`,
       );
     }
     const directiveRejected = {

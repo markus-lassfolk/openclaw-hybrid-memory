@@ -81,13 +81,16 @@ describe("runExtractDirectivesForCli", () => {
     expect(stored?.extractionConfidence).toBeGreaterThan(0);
     expect(stored?.confidence).toBeGreaterThan(0);
     expect(stored?.tags).toContain("directive-extract");
-    expect(result.directiveDedupeMode).toBe("vector");
+    expect(result.directiveDedupeMode).toBe("lexical-only");
   });
 
   it("keeps cursor blocked when retryable store failures occur", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     db = new FactsDB(join(dir, "facts.db"));
-    writeSession(dir, "2026-05-27-directives-store-fail.jsonl", ["From now on, always verify checksums before release.", "Will do."]);
+    writeSession(dir, "2026-05-27-directives-store-fail.jsonl", [
+      "From now on, always verify checksums before release.",
+      "Will do.",
+    ]);
     const logger = { info: vi.fn(), warn: vi.fn() };
     vi.spyOn(db, "storeWithResult").mockImplementation(() => {
       throw new Error("SQLITE_BUSY");
@@ -162,7 +165,20 @@ describe("runExtractDirectivesForCli", () => {
 
   it("dedupes near-duplicate directives on the CLI extraction path using vector candidates", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
-    db = new FactsDB(join(dir, "facts.db"), { fuzzyDedupe: true });
+    const storeConfig = {
+      fuzzyDedupe: true,
+      sourceProfiles: {
+        "directive:*": {
+          vectorThreshold: 0.85,
+          lexicalJaccard: 1,
+          onDuplicate: "skip",
+        },
+      },
+    };
+    db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig,
+    });
     const firstDirective = "From now on, always run lint before build and before deployment locally.";
     const secondDirective = "From now on, always run lint before build and before deployment locally nightly.";
     writeSession(dir, "2026-05-27-directives-dupe.jsonl", [firstDirective, "Noted.", secondDirective, "Understood."]);
@@ -197,16 +213,7 @@ describe("runExtractDirectivesForCli", () => {
         embeddings,
         cfg: {
           procedures: { sessionsDir: dir },
-          store: {
-            fuzzyDedupe: true,
-            sourceProfiles: {
-              "directive:*": {
-                vectorThreshold: 0.85,
-                lexicalJaccard: 1,
-                onDuplicate: "skip",
-              },
-            },
-          },
+          store: storeConfig,
           extraction: { preFilter: { enabled: false } },
           llm: { providers: { ollama: {} } },
         },
@@ -220,7 +227,7 @@ describe("runExtractDirectivesForCli", () => {
     expect(result.rejected).toBe(0);
     expect(db.directivesCount()).toBe(1);
     expect(result.dedupeDegraded).toBe(false);
-    expect(result.directiveDedupeMode).toBe("vector");
+    expect(result.directiveDedupeMode).toBe("mixed");
     expect(vectorDb.search).toHaveBeenCalled();
     expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
   });
