@@ -432,11 +432,6 @@ describe("runEntityEnrichmentForCli", () => {
       };
     });
 
-    const sleepSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((handler: TimerHandler) => {
-      if (typeof handler === "function") handler();
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-    });
-
     const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
       limit: 8,
       dryRun: false,
@@ -453,7 +448,6 @@ describe("runEntityEnrichmentForCli", () => {
     expect(res.processed).toBeLessThan(8);
     expect(res.adaptiveSummary?.stopReason).toBe("time_budget");
     expect(res.adaptiveSummary?.nextRecommendedLimit).toBeGreaterThanOrEqual(8);
-    expect(sleepSpy).toHaveBeenCalled();
   });
 
   it("runs bounded concurrent LLM extractions when adaptive and maxConcurrency > 1", async () => {

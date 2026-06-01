@@ -123,8 +123,8 @@ export function buildEntityEnrichmentAdaptiveSummary(input: {
       ? Math.ceil((durationMs / 1000 / input.processed) * input.remainingTotal)
       : undefined;
   const nextRecommendedTimeoutSec =
-    input.timeoutFailureCount > 0 && avgSecondsPerFact > 0
-      ? Math.min(600, Math.max(60, Math.ceil(avgSecondsPerFact * 3)))
+    input.timeoutFailureCount > 0
+      ? Math.min(600, Math.max(60, Math.ceil(Math.max(avgSecondsPerFact, 1) * 3)))
       : undefined;
 
   return {
