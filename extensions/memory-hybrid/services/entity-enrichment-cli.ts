@@ -334,7 +334,6 @@ export async function runEntityEnrichmentForCli(
       if (extraction.pressureSignals.transientFailure) transientFailureCount++;
       if (extraction.pressureSignals.failed) {
         if (extraction.pressureSignals.timeoutFailure) timeoutFailureCount++;
-        llmFailures++;
         batchStats.llmFailuresDelta++;
       } else {
         factsDb.applyEntityEnrichment(id, extraction.mentions, extraction.detectedLang);
@@ -344,18 +343,18 @@ export async function runEntityEnrichmentForCli(
         stopReason = "provider_budget";
       }
 
-      mentions += extraction.quality.mentions;
-      accepted += extraction.quality.accepted;
-      rejected += extraction.quality.rejected;
-      duplicates += extraction.quality.duplicates;
+      batchStats.mentionsDelta += extraction.quality.mentions;
+      batchStats.acceptedDelta += extraction.quality.accepted;
+      batchStats.rejectedDelta += extraction.quality.rejected;
+      batchStats.duplicatesDelta += extraction.quality.duplicates;
       for (const [reason, count] of Object.entries(extraction.quality.rejectReasons)) {
-        rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
+        batchStats.rejectReasonsDelta[reason] = (batchStats.rejectReasonsDelta[reason] ?? 0) + count;
       }
       if (extraction.mentions.length > 0) {
-        factsEnriched++;
+        batchStats.factsEnrichedDelta++;
       }
       if (verbose && (extraction.mentions.length > 0 || extraction.rejectedMentions.length > 0)) {
-        enrichedFacts.push({
+        batchStats.enrichedFactsDelta.push({
           factId: id,
           mentions: extraction.mentions.map((m) => ({ label: m.label, surfaceText: m.surfaceText })),
           rejected: extraction.rejectedMentions.map((m) => ({
@@ -379,6 +378,16 @@ export async function runEntityEnrichmentForCli(
           }
         }),
       );
+      llmFailures += batchStats.llmFailuresDelta;
+      mentions += batchStats.mentionsDelta;
+      accepted += batchStats.acceptedDelta;
+      rejected += batchStats.rejectedDelta;
+      duplicates += batchStats.duplicatesDelta;
+      for (const [reason, count] of Object.entries(batchStats.rejectReasonsDelta)) {
+        rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
+      }
+      factsEnriched += batchStats.factsEnrichedDelta;
+      enrichedFacts.push(...batchStats.enrichedFactsDelta);
     } else {
       for (const id of batch) {
         if (isPastDeadline()) {
@@ -391,6 +400,16 @@ export async function runEntityEnrichmentForCli(
         }
         await processFact(id);
       }
+      llmFailures += batchStats.llmFailuresDelta;
+      mentions += batchStats.mentionsDelta;
+      accepted += batchStats.acceptedDelta;
+      rejected += batchStats.rejectedDelta;
+      duplicates += batchStats.duplicatesDelta;
+      for (const [reason, count] of Object.entries(batchStats.rejectReasonsDelta)) {
+        rejectReasons[reason] = (rejectReasons[reason] ?? 0) + count;
+      }
+      factsEnriched += batchStats.factsEnrichedDelta;
+      enrichedFacts.push(...batchStats.enrichedFactsDelta);
     }
 
     if (isPastDeadline()) {
