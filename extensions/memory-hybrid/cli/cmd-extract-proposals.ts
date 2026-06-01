@@ -177,11 +177,10 @@ export async function runGenerateProposalsForCli(
     rawResponse = detail.content;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    const attemptedFallbacks = JSON.stringify(fallbackModels);
-    const failureMessage = `memory-hybrid: generate-proposals failed after model=${model}, fallbacks=${attemptedFallbacks}: ${errMsg}`;
-    console.error(
-      `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${attemptedFallbacks}): ${errMsg}`,
-    );
+    const failureMessage = `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(
+      fallbackModels,
+    )}): ${errMsg}`;
+    console.error(failureMessage);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",
       operation: "runGenerateProposalsForCli:llm",

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerDistillCommands, type DistillContext } from "../cli/distill.js";
 
 function makeDistillContext(
@@ -26,14 +26,19 @@ function makeDistillContext(
 }
 
 describe("generate-proposals CLI status", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
     process.exitCode = undefined;
   });
 
-  it("keeps healthy zero-proposal runs successful", async () => {
+  it("should exit successfully when zero proposals are generated", async () => {
     const mem = new Command("hybrid-mem");
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     registerDistillCommands(
       mem,
@@ -48,9 +53,8 @@ describe("generate-proposals CLI status", () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it("does not report healthy zero-proposal success when generation fails", async () => {
+  it("should throw error when proposal generation fails", async () => {
     const mem = new Command("hybrid-mem");
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
 
     registerDistillCommands(
