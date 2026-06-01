@@ -17,6 +17,7 @@ import { acquireScanSlot, clearScanLock } from "./shared.js";
 import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
 
 const VECTOR_CANDIDATE_LIMIT = 10;
+const VECTOR_CANDIDATE_OVERFETCH_LIMIT = 50;
 const VECTOR_CANDIDATE_MIN_SCORE = 0;
 
 /**
@@ -190,7 +191,11 @@ export async function runExtractDirectivesForCli(
                 typeof embeddings.modelName === "string" && embeddings.modelName.trim().length > 0
                   ? embeddings.modelName
                   : null;
-              const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
+              const neighbors = await vectorDb.search(
+                vector,
+                VECTOR_CANDIDATE_OVERFETCH_LIMIT,
+                VECTOR_CANDIDATE_MIN_SCORE,
+              );
               if (!getVectorSearchFailReason(vectorDb)) {
                 vectorCandidates = neighbors
                   .map((candidate) => ({
@@ -213,7 +218,8 @@ export async function runExtractDirectivesForCli(
                         fact.embeddingModel == null ||
                         fact.embeddingModel === embeddingModelName)
                     );
-                  });
+                  })
+                  .slice(0, VECTOR_CANDIDATE_LIMIT);
               }
             }
           } catch (err) {

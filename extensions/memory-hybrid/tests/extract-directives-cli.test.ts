@@ -431,7 +431,7 @@ describe("runExtractDirectivesForCli", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
   });
 
-  it("filters vector candidates to active global directive facts before store-time dedupe", async () => {
+  it("overfetches then filters vector candidates so rank-11 directive duplicates still dedupe", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     const storeConfig = {
       fuzzyDedupe: true,
@@ -508,14 +508,19 @@ describe("runExtractDirectivesForCli", () => {
     const vectorDb = {
       delete: vi.fn().mockResolvedValue(false),
       hasDuplicate: vi.fn().mockResolvedValue(false),
-      search: vi.fn(async (vector: number[]) => {
+      search: vi.fn(async (vector: number[], limit: number) => {
+        const invalidPrefix = [
+          { entry: { id: conversationFact.id }, score: 0.99 },
+          { entry: { id: scopedDirective.id }, score: 0.98 },
+          { entry: { id: staleDirective.id }, score: 0.97 },
+          { entry: { id: expiredDirective.id }, score: 0.96 },
+          ...Array.from({ length: 6 }, (_, i) => ({
+            entry: { id: `missing-directive-neighbor-${i + 1}` },
+            score: 0.95 - i * 0.001,
+          })),
+        ];
         if (vector[0] !== SECOND_DIRECTIVE_EMBEDDING[0]) {
-          return [
-            { entry: { id: conversationFact.id }, score: 0.99 },
-            { entry: { id: scopedDirective.id }, score: 0.98 },
-            { entry: { id: staleDirective.id }, score: 0.97 },
-            { entry: { id: expiredDirective.id }, score: 0.96 },
-          ];
+          return invalidPrefix.slice(0, limit);
         }
         const existingDirective = db!
           .search(firstDirective, 1, {
@@ -523,13 +528,8 @@ describe("runExtractDirectivesForCli", () => {
             tierFilter: "all",
           })
           .at(0)?.entry;
-        return [
-          { entry: { id: conversationFact.id }, score: 0.99 },
-          { entry: { id: scopedDirective.id }, score: 0.98 },
-          { entry: { id: staleDirective.id }, score: 0.97 },
-          { entry: { id: expiredDirective.id }, score: 0.96 },
-          ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.95 }] : []),
-        ];
+        return [...invalidPrefix, ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.94 }] : [])]
+          .slice(0, limit);
       }),
     };
 
@@ -571,6 +571,8 @@ describe("runExtractDirectivesForCli", () => {
     expect(result.dedupeDegraded).toBe(false);
     expect(result.directiveDedupeMode).toBe("mixed");
     expect(vectorDb.search).toHaveBeenCalled();
+    const searchLimits = vectorDb.search.mock.calls.map(([, limit]) => Number(limit));
+    expect(searchLimits.some((limit) => Number.isFinite(limit) && limit > 10)).toBe(true);
     expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
   });
 
