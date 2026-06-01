@@ -938,7 +938,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                       }
                     }
                     if (adaptiveCatchUp) {
-                      const hadPressure = batchPressureSignals > 0 || batchStoreFailures > 0;
+                      const hadPressure = batchPressureSignals > 0 || batchStoreFailures > 0 || batchEmbedFailures > 0;
                       const previousBatchSize = effectiveBatchSize;
                       const previousDelayMs = effectiveDelayMs;
                       if (hadPressure) {

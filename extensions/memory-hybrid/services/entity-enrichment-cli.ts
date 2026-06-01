@@ -266,27 +266,27 @@ export async function runEntityEnrichmentForCli(
           });
         }
       }
-      const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
-      const remainingTotal = currentBacklog.total;
-      opts.onProgress?.({
-        processed,
-        total: ids.length,
-        factsEnriched,
-        pendingTotal,
-        remainingTotal,
-        estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)),
-        mode,
-        mentions,
-        accepted,
-        rejected,
-        duplicates,
-        rejectReasons: { ...rejectReasons },
-        effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : undefined,
-        effectiveDelayMs: adaptiveCatchUp ? effectiveDelayMs : undefined,
-      });
     }
+    const currentBacklog = factsDb.getEntityEnrichmentBacklogSummary(24);
+    const remainingTotal = currentBacklog.total;
+    opts.onProgress?.({
+      processed,
+      total: ids.length,
+      factsEnriched,
+      pendingTotal,
+      remainingTotal,
+      estimatedRunsRemaining: mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)),
+      mode,
+      mentions,
+      accepted,
+      rejected,
+      duplicates,
+      rejectReasons: { ...rejectReasons },
+      effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : undefined,
+      effectiveDelayMs: adaptiveCatchUp ? effectiveDelayMs : undefined,
+    });
     if (adaptiveCatchUp) {
-      const hadPressure = batchPressureSignals > 0;
+      const hadPressure = batchPressureSignals > 0 || batchFailures > 0;
       const previousBatchSize = effectiveBatchSize;
       const previousDelayMs = effectiveDelayMs;
       if (hadPressure) {
