@@ -134,11 +134,6 @@ export async function runExtractDirectivesForCli(
                             ? "fact"
                             : "other";
           const source = `directive:${incident.sessionFile}`;
-          const shouldCountVectorFallback = shouldReportVectorDedupeFallback({
-            source,
-            fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
-            storeConfig: cfg.store,
-          });
           let vector: number[] | undefined;
           let vectorCandidates: Array<{ id: string; score: number }> | undefined;
           try {
