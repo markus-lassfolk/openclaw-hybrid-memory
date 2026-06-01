@@ -129,6 +129,14 @@ Every run prints a summary with total contradictions, deterministic/LLM/manual c
 
 Default `resolve-contradictions` now also emits an actionable summary line (`auto_resolved`, `ambiguous`, `no_progress`, `degraded`, `threshold`). For cron/automation, use `--json` to get a structured payload with `exitReason` and recommended follow-up commands. When ambiguous backlog is large and no pairs were auto-resolved, the command exits degraded (`exitCode=2`); tune or disable this guard with `--degraded-ambiguous-threshold <n>` (`0` disables).
 
+Summary log format (single line):
+
+```text
+resolve-contradictions summary auto_resolved=<n> ambiguous=<n> no_progress=<0|1> degraded=<0|1> threshold_enabled=<0|1> threshold=<n>
+```
+
+Use `--json` when possible; the text summary is intended as a lightweight fallback for log scrapers.
+
 Review exports include value/text excerpts plus source provenance for each ambiguous pair. Treat the JSONL file as sensitive local memory data and avoid sharing it outside the trusted review path.
 
 ---

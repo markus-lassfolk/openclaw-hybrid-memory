@@ -1172,6 +1172,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const degradedThresholdEnabled = degradedAmbiguousThreshold > 0;
           const degraded =
             degradedThresholdEnabled && noProgress && ambiguousCount >= degradedAmbiguousThreshold;
+          const exitCode = degraded ? 2 : 0;
           const summary = {
             mode: "default",
             autoResolved: autoResolvedCount,
@@ -1179,29 +1180,28 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             totalConsidered,
             resolutionRate: totalConsidered === 0 ? 1 : autoResolvedCount / totalConsidered,
             noProgress,
-            degradedAmbiguousThreshold: degradedThresholdEnabled ? degradedAmbiguousThreshold : null,
+            degradedThresholdEnabled,
+            degradedAmbiguousThreshold,
             degraded,
-            exitCode: degraded ? 2 : 0,
+            exitCode,
             exitReason: degraded ? "ambiguous_backlog_no_progress" : "success",
             suggestions: {
               details: "openclaw hybrid-mem resolve-contradictions --details",
               projectStateLwwDryRun: "openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
             },
           };
+          if (exitCode !== 0) process.exitCode = exitCode;
           if (jsonMode) {
-            console.log(JSON.stringify(summary, null, 2));
-            if (degraded) process.exitCode = 2;
+            console.log(JSON.stringify(summary));
             return;
           }
-          console.log(`Contradictions resolved: ${autoResolvedCount} auto-resolved, ${ambiguousCount} ambiguous.`);
           console.log(
-            `resolve-contradictions summary auto_resolved=${autoResolvedCount} ambiguous=${ambiguousCount} no_progress=${noProgress ? 1 : 0} degraded=${degraded ? 1 : 0} threshold=${degradedThresholdEnabled ? degradedAmbiguousThreshold : "off"}`,
+            `resolve-contradictions summary auto_resolved=${autoResolvedCount} ambiguous=${ambiguousCount} no_progress=${noProgress ? 1 : 0} degraded=${degraded ? 1 : 0} threshold_enabled=${degradedThresholdEnabled ? 1 : 0} threshold=${degradedAmbiguousThreshold}`,
           );
           if (degraded) {
             console.log(
               `Backlog alert: ambiguous=${ambiguousCount} with auto-resolved=0 exceeds degraded threshold ${degradedAmbiguousThreshold} (exit code 2).`,
             );
-            process.exitCode = 2;
           }
           if (verbose && res.autoResolved.length > 0) {
             console.log("Auto-resolved (--verbose):");
@@ -1350,17 +1350,17 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               );
               nextStepNumber++;
             }
-            const projectStatePairCount = res.ambiguous.filter((a) => {
+            const hasProjectStatePairs = res.ambiguous.some((a) => {
               const newF = factsDb.getById(a.factIdNew);
               const oldF = factsDb.getById(a.factIdOld);
               if (!newF || !oldF) return false;
               if (newF.category !== "project" || oldF.category !== "project") return false;
               const keyLower = (newF.key ?? oldF.key ?? "").toLowerCase();
               return PROJECT_STATE_LWW_KEYS.has(keyLower);
-            }).length;
-            if (projectStatePairCount > 0) {
+            });
+            if (hasProjectStatePairs) {
               console.log(
-                `  ${nextStepNumber}. Auto-resolve project-state (${projectStatePairCount}): openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run`,
+                `  ${nextStepNumber}. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run`,
               );
               nextStepNumber++;
             }

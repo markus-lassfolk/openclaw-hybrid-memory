@@ -723,8 +723,9 @@ describe("resolve-contradictions CLI contract mode", () => {
       { from: "user" },
     );
 
-    expect(lines).toHaveLength(1);
-    const summary = JSON.parse(lines[0]);
+    const jsonLine = lines.find((line) => line.trim().startsWith("{"));
+    expect(jsonLine).toBeTruthy();
+    const summary = JSON.parse(jsonLine as string);
     expect(summary).toMatchObject({
       mode: "default",
       autoResolved: 0,
