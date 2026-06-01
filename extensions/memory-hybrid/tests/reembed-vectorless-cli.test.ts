@@ -186,9 +186,14 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     });
     const chainError = new AllEmbeddingProvidersFailed([nestedRateLimitError]);
 
+    let globalVectorlessReads = 0;
     const factsDb = {
       getCount: vi.fn().mockReturnValue(100),
-      countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
+      countVectorlessActiveFacts: vi.fn((source?: string) => {
+        if (source !== undefined) return facts.length;
+        globalVectorlessReads++;
+        return globalVectorlessReads === 1 ? facts.length : 0;
+      }),
       listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
       storeEmbedding: vi.fn(),
       setEmbeddingModel: vi.fn(),
@@ -252,6 +257,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embedded?: number;
       vectorSloRepair?: {
         sloScope?: string;
+        vectorlessBefore?: number;
+        vectorlessAfter?: number;
         vectorlessToClearForSlo?: number;
         estimatedRunsToReachSlo?: number;
         targetVectorlessRatio?: number;
@@ -265,6 +272,8 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(payload.vectorSloRepair?.sloScope).toBe("global");
     expect(payload.vectorSloRepair?.targetVectorlessRatio).toBe(0.02);
     expect(payload.vectorSloRepair?.estimatedRunsToReachSlo).toBeGreaterThanOrEqual(0);
+    expect(payload.vectorSloRepair?.vectorlessBefore).toBe(4);
+    expect(payload.vectorSloRepair?.vectorlessAfter).toBe(0);
     expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && a.retryAfterMs === 2000)).toBe(true);
     expect(sleepSpy.mock.calls.some(([handler, delay]) => typeof handler === "function" && delay === 3000)).toBe(true);
   });

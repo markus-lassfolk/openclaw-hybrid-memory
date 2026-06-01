@@ -771,6 +771,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             return;
           }
           const before = factsDb.countVectorlessActiveFacts(opts?.source);
+          const globalVectorlessBefore = factsDb.countVectorlessActiveFacts();
           const candidates = factsDb.listVectorlessActiveFacts({ limit, source: opts?.source });
           const errors: string[] = [];
           let embedded = 0;
@@ -1023,7 +1024,6 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               adjustments: adaptiveAdjustments,
             };
           }
-          const globalVectorlessBefore = factsDb.countVectorlessActiveFacts();
           const globalVectorlessAfter = opts?.apply ? factsDb.countVectorlessActiveFacts() : globalVectorlessBefore;
           report.vectorSloRepair = buildVectorlessSloRepairRecommendation({
             activeFacts: factsDb.getCount(),

@@ -7,7 +7,7 @@ import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { computeAdaptivePressureDelayMs } from "./adaptive-catch-up-pacing.js";
+import { capDelayMsByDeadline, computeAdaptivePressureDelayMs } from "./adaptive-catch-up-pacing.js";
 import { extractEntityMentionsWithLlm } from "./entity-enrichment.js";
 import {
   buildEntityEnrichmentAdaptiveSummary,
@@ -591,7 +591,18 @@ export async function runEntityEnrichmentForCli(
     index += attemptedThisBatch;
     if (stopReason === "time_budget" || stopReason === "provider_budget") break;
     if (adaptiveCatchUp && index < ids.length) {
-      await delay(effectiveDelayMs);
+      if (deadlineMs != null && Date.now() >= deadlineMs) {
+        stopReason = "time_budget";
+        break;
+      }
+      const sleepMs = capDelayMsByDeadline(effectiveDelayMs, deadlineMs);
+      if (sleepMs > 0) {
+        await delay(sleepMs);
+      }
+      if (deadlineMs != null && Date.now() >= deadlineMs) {
+        stopReason = "time_budget";
+        break;
+      }
     }
   }
 

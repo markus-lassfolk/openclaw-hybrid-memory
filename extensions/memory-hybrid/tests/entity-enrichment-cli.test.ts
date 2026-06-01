@@ -450,6 +450,66 @@ describe("runEntityEnrichmentForCli", () => {
     expect(res.adaptiveSummary?.nextRecommendedLimit).toBeGreaterThanOrEqual(8);
   });
 
+  it("caps inter-batch adaptive sleep by remaining time budget", async () => {
+    seedFacts(8, "Capped sleep fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: '{"mentions":[]}' } }],
+          }),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    const startMs = 1_700_000_000_000;
+    let nowMs = startMs;
+    vi.spyOn(Date, "now").mockImplementation(() => nowMs);
+
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockImplementation(async () => {
+      nowMs += 50;
+      return {
+        mentions: [],
+        detectedLang: "eng",
+        quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+        rejectedMentions: [],
+        pressureSignals: {
+          failed: false,
+          transientFailure: false,
+          rateLimited: false,
+          timeoutFailure: false,
+        },
+      };
+    });
+
+    const sleepMs: number[] = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation((handler: TimerHandler, delay?: number) => {
+      if (typeof delay === "number" && delay > 0) sleepMs.push(delay);
+      if (typeof handler === "function") handler();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 8,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 2,
+      batchDelayMs: 10_000,
+      timeBudgetSec: 1,
+      maxConcurrency: 1,
+    });
+
+    expect(res.stopReason).toBe("time_budget");
+    expect(sleepMs.length).toBeGreaterThan(0);
+    expect(sleepMs.every((ms) => ms <= 1_000)).toBe(true);
+  });
+
   it("runs bounded concurrent LLM extractions when adaptive and maxConcurrency > 1", async () => {
     seedFacts(6, "Concurrency fact");
 

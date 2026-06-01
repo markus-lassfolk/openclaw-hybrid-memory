@@ -17,3 +17,12 @@ export function computeAdaptivePressureDelayMs(opts: {
   }
   return Math.min(opts.maxAdaptiveDelayMs, computed);
 }
+
+/** Cap inter-batch sleep so a configured time budget is not exceeded by pacing delay. */
+export function capDelayMsByDeadline(delayMs: number, deadlineMs: number | undefined, nowMs = Date.now()): number {
+  if (delayMs <= 0) return 0;
+  if (deadlineMs == null) return delayMs;
+  const remainingMs = deadlineMs - nowMs;
+  if (remainingMs <= 0) return 0;
+  return Math.min(delayMs, remainingMs);
+}
