@@ -240,7 +240,11 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
     .option("--dry-run", "Show what would be stored without writing")
     .option("-v, --verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)")
-    .option("--full", "Force full re-scan (ignore watermark, process all sessions in window)")
+    .option(
+      "--force",
+      "Bypass maintenance guards for this run (23h scan cooldown and incremental watermark)",
+    )
+    .option("--full", "Alias for --force on scan commands (legacy; prefer --force)")
     .action(
       withExit(
         async (
@@ -250,6 +254,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             dryRun?: boolean;
             verbose?: boolean;
             full?: boolean;
+            force?: boolean;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -260,6 +265,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             dryRun: !!opts.dryRun,
             verbose: !!opts.verbose || readHybridMemVerbose(cmd),
             full: !!opts.full,
+            force: !!opts.force,
           });
           if (result.dryRun) {
             console.log(

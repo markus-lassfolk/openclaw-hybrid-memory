@@ -3,6 +3,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import type { HandlerContext } from "./handlers.js";
+import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { ExtractProceduresResult, GenerateAutoSkillsResult } from "./types.js";
 
@@ -15,8 +16,10 @@ export async function runExtractProceduresForCli(
     dryRun: boolean;
     verbose?: boolean;
     full?: boolean;
+    force?: boolean;
   },
 ): Promise<ExtractProceduresResult> {
+  const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
   const { factsDb, vectorDb, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-procedures";
   if (cfg.procedures?.enabled === false) {
@@ -31,8 +34,8 @@ export async function runExtractProceduresForCli(
   const sessionDir = opts.sessionDir ?? cfg.procedures.sessionsDir;
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
-  // Startup guard + concurrency lock (skip when not full mode)
-  if (!opts.full && !opts.dryRun) {
+  // Startup guard + concurrency lock (skip when overrides request a forced rerun)
+  if (!bypassScanCooldown && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip)
       return {
@@ -46,7 +49,7 @@ export async function runExtractProceduresForCli(
   }
 
   let filePaths: string[] | undefined;
-  if (!opts.full && cursor) {
+  if (!bypassWatermark && cursor) {
     // Incremental: only sessions modified after the last processed session timestamp
     filePaths = getSessionFilePathsSince(sessionDir, opts.days ?? 7, cursor.lastSessionTs);
     logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
@@ -87,7 +90,7 @@ export async function runExtractProceduresForCli(
     });
     throw err;
   } finally {
-    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
+    if (!bypassScanCooldown && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }
 
