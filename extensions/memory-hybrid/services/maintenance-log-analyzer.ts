@@ -632,7 +632,7 @@ function excerptFor(logContent: string, line: string): string {
   const failureSignal =
     /error|fail|exception|unauthorized|429|busy|timeout|killed|cannot find module|guard|stopped early|ENOSPC|SQLITE_BUSY|still running after|validate-cron-exit|orchestration anomaly|empty exit ledger/i;
   const benignSignal =
-    /\b(no|without|zero)\s+(errors?|failures?)\b|\berrors?\s*[:=]\s*0\b|\bfailures?\s*[:=]\s*0\b|\b0\s+errors?\b|\b0\s+failures?\b|\berrorcount\s*[:=]\s*0\b/i;
+    /\b(no|without|zero)\s+(errors?|failures?)\b|\berrors?\s*[:=]\s*0\b|\bfailures?\s*[:=]\s*0\b|\b0\s+errors?\b|\b0\s+failures?\b|\berrorcount\s*[:=]\s*0\b/gi;
   const hasActionableFailureSignal = (candidate: string): boolean => {
     if (!failureSignal.test(candidate)) return false;
 
