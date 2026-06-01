@@ -140,9 +140,7 @@ export async function runExtractDirectivesForCli(
                 }))
                 .filter(
                   (candidate) =>
-                    typeof candidate.id === "string" &&
-                    candidate.id.length > 0 &&
-                    Number.isFinite(candidate.score),
+                    typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
                 );
             } catch (err) {
               capturePluginError(err as Error, {

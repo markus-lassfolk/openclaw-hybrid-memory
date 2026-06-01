@@ -115,18 +115,15 @@ describe("runExtractDirectivesForCli", () => {
     db = new FactsDB(join(dir, "facts.db"), { fuzzyDedupe: true });
     const firstDirective = "From now on, always run lint before build and before deployment locally.";
     const secondDirective = "From now on, always run lint before build and before deployment locally nightly.";
-    writeSession(dir, "2026-05-27-directives-dupe.jsonl", [
-      firstDirective,
-      "Noted.",
-      secondDirective,
-      "Understood.",
-    ]);
+    writeSession(dir, "2026-05-27-directives-dupe.jsonl", [firstDirective, "Noted.", secondDirective, "Understood."]);
     const logger = { info: vi.fn(), warn: vi.fn() };
     const FIRST_DIRECTIVE_EMBEDDING = [1];
     const SECOND_DIRECTIVE_EMBEDDING = [2];
     const SECOND_DIRECTIVE_EMBEDDING_FIRST_ELEMENT = SECOND_DIRECTIVE_EMBEDDING[0];
     const embeddings = {
-      embed: vi.fn(async (text: string) => (text === secondDirective ? SECOND_DIRECTIVE_EMBEDDING : FIRST_DIRECTIVE_EMBEDDING)),
+      embed: vi.fn(async (text: string) =>
+        text === secondDirective ? SECOND_DIRECTIVE_EMBEDDING : FIRST_DIRECTIVE_EMBEDDING,
+      ),
     };
     const vectorDb = {
       delete: vi.fn().mockResolvedValue(false),
