@@ -129,6 +129,51 @@ describe("runExtractDirectivesForCli", () => {
     expect(db.getScanCursor("extract-directives")).toBeNull();
   });
 
+  it("advances cursor when permanent store failures occur", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    writeSession(dir, "2026-05-27-directives-permanent-fail.jsonl", [
+      "From now on, always validate schemas before deployment.",
+      "Understood.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => {
+      throw new TypeError("Cannot read property 'id' of undefined");
+    });
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb: {
+          delete: vi.fn().mockResolvedValue(false),
+          search: vi.fn().mockResolvedValue([]),
+        },
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]) },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as any,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(0);
+    expect(result.rejected).toBe(0);
+    expect(result.partial).toBe(false);
+    expect(result.directiveRejected).toEqual({
+      permanent: 0,
+      retryable: 0,
+      parserOrModelFailure: 0,
+      boundedPartialRetry: 0,
+    });
+    expect(result.cursorAdvanced).toBe(true);
+    expect(result.cursorBlockedReason).toBeUndefined();
+    expect(db.getScanCursor("extract-directives")).not.toBeNull();
+  });
+
   it("reports degraded dedupe when lexical-only fallback is used", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     db = new FactsDB(join(dir, "facts.db"));

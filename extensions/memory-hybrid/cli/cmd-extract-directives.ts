@@ -18,6 +18,35 @@ import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js
 
 const VECTOR_CANDIDATE_LIMIT = 10;
 const VECTOR_CANDIDATE_MIN_SCORE = 0;
+
+/**
+ * Identifies transient/retryable store errors (SQLite busy, network issues) vs permanent errors.
+ * Permanent errors (TypeError, schema bugs, etc.) should not block cursor advancement.
+ */
+function isRetryableStoreError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  const code =
+    typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
+
+  // SQLite busy/lock errors are retryable
+  if (/SQLITE_BUSY|database is locked/i.test(message) || /SQLITE_BUSY/i.test(code)) {
+    return true;
+  }
+
+  // Transient network errors are retryable
+  if (
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|socket hang up|fetch failed|network timeout|connect\s+ETIMEDOUT/i.test(
+      message,
+    ) ||
+    /ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH/i.test(code)
+  ) {
+    return true;
+  }
+
+  // All other errors (TypeError, schema bugs, programming errors) are permanent
+  return false;
+}
+
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
@@ -223,7 +252,10 @@ export async function runExtractDirectivesForCli(
           }
           stored++;
         } catch (err) {
-          retryableRejected++;
+          const isRetryable = isRetryableStoreError(err);
+          if (isRetryable) {
+            retryableRejected++;
+          }
           capturePluginError(err as Error, {
             subsystem: "cli",
             operation: "runExtractDirectivesForCli:store",
