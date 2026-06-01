@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FactsDB } from "../backends/facts-db.js";
 import { runExtractDirectivesForCli } from "../cli/cmd-extract-directives.js";
+import type { HandlerContext } from "../cli/handlers.js";
 
 function writeSession(tmpDir: string, fileName: string, messages: string[]): void {
   const lines = messages.map((text, i) =>
@@ -205,6 +206,55 @@ describe("runExtractDirectivesForCli", () => {
     expect(result.dedupeDegraded).toBe(true);
     expect(result.directiveDedupeMode).toBe("lexical-only");
     expect(db.getScanCursor("extract-directives")).not.toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
+  });
+
+  it("reports degraded dedupe when vector search returns empty due to backend failure", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    writeSession(dir, "2026-05-27-directives-vector-search-fail.jsonl", [
+      "From now on, always run schema checks before extracting directives.",
+      "Got it.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const storeSpy = vi.spyOn(db, "storeWithResult");
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue("schema_invalid"),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings: { embed: vi.fn().mockResolvedValue([0.1]), modelName: "test-embedding" },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    expect(result.stored).toBe(1);
+    expect(result.dedupeDegraded).toBe(true);
+    expect(result.directiveDedupeMode).toBe("lexical-only");
+    expect(vectorDb.search).toHaveBeenCalled();
+    expect(vectorDb.getLastSearchFailReason).toHaveBeenCalled();
+    expect(storeSpy).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        suppressVectorFallbackWarning: true,
+        vectorCandidates: undefined,
+        warnContext: "extract-directives",
+      }),
+    );
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
   });
 

@@ -47,6 +47,17 @@ function isRetryableStoreError(err: unknown): boolean {
   return false;
 }
 
+function getVectorSearchFailReason(vectorDb: unknown): string | null {
+  const getter = (vectorDb as { getLastSearchFailReason?: unknown }).getLastSearchFailReason;
+  if (typeof getter !== "function") return null;
+  try {
+    const reason = getter.call(vectorDb);
+    return typeof reason === "string" && reason.length > 0 ? reason : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
@@ -169,15 +180,17 @@ export async function runExtractDirectivesForCli(
             vector = await embeddings.embed(incident.extractedRule);
             if (cfg.store?.fuzzyDedupe ?? true) {
               const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
-              vectorCandidates = neighbors
-                .map((candidate) => ({
-                  id: candidate.entry.id,
-                  score: candidate.score,
-                }))
-                .filter(
-                  (candidate) =>
-                    typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
-                );
+              if (!getVectorSearchFailReason(vectorDb)) {
+                vectorCandidates = neighbors
+                  .map((candidate) => ({
+                    id: candidate.entry.id,
+                    score: candidate.score,
+                  }))
+                  .filter(
+                    (candidate) =>
+                      typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
+                  );
+              }
             }
           } catch (err) {
             capturePluginError(err as Error, {
