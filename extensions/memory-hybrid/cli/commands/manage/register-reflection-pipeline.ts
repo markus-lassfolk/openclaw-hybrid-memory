@@ -1277,6 +1277,30 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               );
               nextStepNumber++;
             }
+            if (unresolvedBuckets?.possibleEntityReuse && unresolvedBuckets.possibleEntityReuse > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review possible entity-reuse bucket (${unresolvedBuckets.possibleEntityReuse}): inspect entity naming/scope before superseding facts.`,
+              );
+              nextStepNumber++;
+            }
+            if (unresolvedBuckets?.olderVerified && unresolvedBuckets.olderVerified > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review verified-older bucket (${unresolvedBuckets.olderVerified}): verify whether stale verification should be retained or replaced.`,
+              );
+              nextStepNumber++;
+            }
+            if (unresolvedBuckets?.humanRequired && unresolvedBuckets.humanRequired > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review human-required bucket (${unresolvedBuckets.humanRequired}): export and adjudicate with openclaw hybrid-mem resolve-contradictions --auto --dry-run --export-review <path>.`,
+              );
+              nextStepNumber++;
+            }
+            if (unresolvedBuckets?.otherManual && unresolvedBuckets.otherManual > 0) {
+              console.log(
+                `  ${nextStepNumber}. Review other-manual bucket (${unresolvedBuckets.otherManual}): inspect details output and handle pair-specific blockers before rerun.`,
+              );
+              nextStepNumber++;
+            }
             const hasProjectStatePairs = res.ambiguous.some((a) => {
               const newF = factsDb.getById(a.factIdNew);
               const oldF = factsDb.getById(a.factIdOld);
@@ -1289,6 +1313,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               console.log(
                 `  ${nextStepNumber}. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run`,
               );
+              nextStepNumber++;
             }
           }
         },
