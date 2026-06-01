@@ -12,6 +12,8 @@ import {
   is404Like,
   is500Like,
   isAbortOrTransientLlmError,
+  isByteStringOrWrapped,
+  isByteStringSerializationError,
   isConnectionErrorLike,
   isContextLengthError,
   isOllamaOOM,
@@ -763,6 +765,16 @@ describe("chatComplete — GlitchTip suppression (#302, #303)", () => {
     expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
   });
 
+  it("#1776: does not report ByteString serialization errors to GlitchTip", async () => {
+    vi.mocked(mockOpenai.chat.completions.create).mockRejectedValue(
+      new Error(
+        "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+      ),
+    );
+    await expect(chatComplete({ model: "gpt-4o", content: "test", openai: mockOpenai })).rejects.toThrow(/ByteString/i);
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
   it("#1694: does not report to GlitchTip when AbortError is nested in .cause (e.g. MiniMax wraps abort in outer error)", async () => {
     const abortCause = Object.assign(new Error("Request was aborted"), { name: "AbortError" });
     const wrappedErr = Object.assign(new Error("stream error"), { cause: abortCause });
@@ -1326,6 +1338,115 @@ describe("withLLMRetry — OOM does not retry (#387)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// withLLMRetry — ByteString serialization errors are non-retryable (#1776)
+// ---------------------------------------------------------------------------
+
+describe("withLLMRetry — ByteString serialization error does not retry (#1776)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not retry when the SDK throws a ByteString conversion error (single attempt)", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const fn = vi.fn().mockRejectedValue(byteStringErr);
+
+    const promise = withLLMRetry(fn, { maxRetries: 3 });
+    const expectation = expect(promise).rejects.toThrow(/ByteString/i);
+    await vi.runAllTimersAsync();
+    await expectation;
+    // Must NOT retry — called exactly once
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wrap ByteString error in LLMRetryError and does not report to GlitchTip", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const fn = vi.fn().mockRejectedValue(byteStringErr);
+
+    const promise = withLLMRetry(fn, { maxRetries: 2 });
+    const expectation = expect(promise).rejects.not.toBeInstanceOf(LLMRetryError);
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+  });
+
+  it("enriches the ByteString error message with llmContext when provided", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const fn = vi.fn().mockRejectedValue(byteStringErr);
+
+    await expect(
+      withLLMRetry(fn, {
+        maxRetries: 2,
+        llmContext: { model: "text-embedding-3-small", operation: "memory-hybrid: embeddings.create" },
+      }),
+    ).rejects.toThrow(/ByteString.*\[llm model=text-embedding-3-small/i);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isByteStringSerializationError — unit tests (#1776)
+// ---------------------------------------------------------------------------
+
+describe("isByteStringSerializationError (#1776)", () => {
+  it("returns true for the canonical Node.js ByteString header error message", () => {
+    expect(
+      isByteStringSerializationError(
+        new Error(
+          "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("is case-insensitive", () => {
+    expect(isByteStringSerializationError(new Error("cannot convert argument to a bytestring blah blah"))).toBe(true);
+  });
+
+  it("returns false for unrelated errors", () => {
+    expect(isByteStringSerializationError(new Error("Cannot read properties of undefined"))).toBe(false);
+    expect(isByteStringSerializationError(new Error("400 Bad Request"))).toBe(false);
+    expect(isByteStringSerializationError(null)).toBe(false);
+    expect(isByteStringSerializationError("string error")).toBe(false);
+  });
+});
+
+describe("isByteStringOrWrapped (#1777)", () => {
+  it("returns true for direct ByteString serialization errors", () => {
+    expect(
+      isByteStringOrWrapped(
+        new Error(
+          "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("returns true when LLMRetryError wraps a ByteString serialization error", () => {
+    const cause = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const wrapped = new LLMRetryError(`Failed after 2 attempts: ${cause.message}`, cause, 2);
+    expect(isByteStringOrWrapped(wrapped)).toBe(true);
+  });
+
+  it("returns false for unrelated wrapped errors", () => {
+    const wrapped = new LLMRetryError("Failed after 2 attempts: 400 Bad Request", new Error("400 Bad Request"), 2);
+    expect(isByteStringOrWrapped(wrapped)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // chatCompleteWithRetry — OOM falls through to next model (#387)
 // ---------------------------------------------------------------------------
 
@@ -1841,6 +1962,78 @@ describe("chatCompleteWithRetry — context-length error (#488)", () => {
     const drained = warnings.drain();
     expect(drained).toHaveLength(1);
     expect(drained[0]).toMatch(/context window|input.*long|exceeds/i);
+  });
+});
+
+describe("chatCompleteWithRetry — ByteString serialization error (#1776)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("#1776: does not report to GlitchTip when all models fail with ByteString serialization errors", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(byteStringErr),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["openai/gpt-4o-mini"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow(/ByteString/i);
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/non-ASCII characters in HTTP headers/i);
+  });
+
+  it("#1777: does not report to GlitchTip when fallback-exhausted error wraps ByteString cause", async () => {
+    const byteStringErr = new Error(
+      "Cannot convert argument to a ByteString because the character at index 13 has a value of 8230 which is greater than 255.",
+    );
+    const wrapped = new LLMRetryError(`Failed after 2 attempts: ${byteStringErr.message}`, byteStringErr, 2);
+    const mockOpenai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(wrapped),
+        },
+      },
+    } as unknown as import("openai").default;
+
+    const warnings = createPendingLLMWarnings();
+    const promise = chatCompleteWithRetry({
+      model: "openai/gpt-4o",
+      content: "test",
+      openai: mockOpenai,
+      fallbackModels: ["openai/gpt-4o-mini"],
+      pendingWarnings: warnings,
+    });
+
+    const expectation = expect(promise).rejects.toThrow(/ByteString/i);
+    await vi.runAllTimersAsync();
+    await expectation;
+    expect(errorReporter.capturePluginError).not.toHaveBeenCalled();
+    const drained = warnings.drain();
+    expect(drained).toHaveLength(1);
+    expect(drained[0]).toMatch(/non-ASCII characters in HTTP headers/i);
   });
 });
 

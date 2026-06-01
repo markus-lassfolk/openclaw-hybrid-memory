@@ -10,6 +10,7 @@ import {
   is404Like,
   is429OrWrapped,
   is500OrWrapped,
+  isByteStringSerializationError,
   isContextLengthError,
 } from "../chat.js";
 import { capturePluginError } from "../error-reporter.js";
@@ -195,7 +196,8 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
     is500OrWrapped(err) ||
     isOllamaCircuitBreakerOpen(err) ||
     isOllamaConnectionFailure(err) ||
-    isContextLengthError(err)
+    isContextLengthError(err) ||
+    isByteStringSerializationError(err)
   ) {
     return true;
   }
@@ -209,7 +211,8 @@ export function shouldSuppressEmbeddingError(err: unknown): boolean {
         is500OrWrapped(c) ||
         isOllamaCircuitBreakerOpen(c) ||
         isOllamaConnectionFailure(c) ||
-        isContextLengthError(c),
+        isContextLengthError(c) ||
+        isByteStringSerializationError(c),
     );
   }
   return false;
