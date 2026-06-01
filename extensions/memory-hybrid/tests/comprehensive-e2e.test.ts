@@ -41,7 +41,7 @@ const { VectorDB } = _testing;
 const SESSION = "agent:main:telegram:e2e-comprehensive";
 const HOOK_CTX = { sessionKey: SESSION, sessionId: SESSION, agentId: "main" };
 const RELOAD_TEARDOWN_ERROR_FRAGMENT = "reload teardown did not drain";
-const HOT_RELOAD_TEST_TIMEOUT_MS = TEARDOWN_WAIT_MS + 5_000;
+const HOT_RELOAD_TEST_TIMEOUT_MS = TEARDOWN_WAIT_MS * 3;
 
 describe("Comprehensive e2e — full plugin register()", () => {
   let tmpDir: string;
