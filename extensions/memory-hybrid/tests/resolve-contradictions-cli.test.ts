@@ -449,4 +449,42 @@ describe("resolve-contradictions CLI contract mode", () => {
     expect(lines).toContain("  - Contradiction c-2: already resolved.");
     expect(lines).toContain("  - Contradiction c-3: row not found.");
   });
+
+  it("prints unresolved ambiguity buckets with deterministic actionable count", async () => {
+    const runResolveContradictions = vi.fn().mockResolvedValue({
+      autoResolved: [],
+      ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
+    });
+    const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+      total: 1,
+      deterministic: 1,
+      llm: 0,
+      merged: 0,
+      manualReview: 0,
+      applied: false,
+      decisionsApplied: 0,
+      targetRate: 0.8,
+      achievedRate: 1,
+      targetMet: true,
+      reviewItems: [],
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictions, runResolveContradictionsAuto }));
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions"], { from: "user" });
+
+    expect(lines).toContain("unresolved_by_reason:");
+    expect(lines).toContain("  safe_deterministic_auto=1");
+    expect(lines).toContain("  possible_entity_reuse=0");
+    expect(lines).toContain("  older_verified=0");
+    expect(lines).toContain("  human_required=0");
+    expect(
+      lines.some((l) =>
+        l.includes("Apply deterministic safe bucket (1): openclaw hybrid-mem resolve-contradictions --auto --apply"),
+      ),
+    ).toBe(true);
+  });
 });

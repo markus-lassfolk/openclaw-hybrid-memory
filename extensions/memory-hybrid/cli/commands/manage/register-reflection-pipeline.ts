@@ -24,6 +24,8 @@ import {
 } from "./dream-cycle-followup.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
+const CONTRADICTION_BUCKET_PREVIEW_TARGET_RATE = 0.8;
+
 function writeContradictionReviewFile(outputPath: string, items: ContradictionReviewItem[]): void {
   const content = `${items.map((item) => JSON.stringify(item)).join("\n")}${items.length > 0 ? "\n" : ""}`;
   writeFileSync(outputPath, content, "utf-8");
@@ -1142,6 +1144,58 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             }
           }
           if (res.ambiguous.length > 0) {
+            let unresolvedBuckets:
+              | {
+                  safeDeterministic: number;
+                  possibleEntityReuse: number;
+                  olderVerified: number;
+                  humanRequired: number;
+                  otherManual: number;
+                }
+              | null = null;
+            try {
+              const preview = await ctx.runResolveContradictionsAuto({
+                dryRun: true,
+                targetRate: CONTRADICTION_BUCKET_PREVIEW_TARGET_RATE,
+              });
+              let possibleEntityReuse = 0;
+              let olderVerified = 0;
+              let humanRequired = 0;
+              let otherManual = 0;
+              for (const item of preview.reviewItems) {
+                if (item.possibleOverloadedEntity) {
+                  possibleEntityReuse++;
+                  continue;
+                }
+                const reason = item.suggestedReason.toLowerCase();
+                if (reason.includes("older fact is verified")) {
+                  olderVerified++;
+                  continue;
+                }
+                if (reason.includes("no safe deterministic resolution matched")) {
+                  humanRequired++;
+                  continue;
+                }
+                otherManual++;
+              }
+              unresolvedBuckets = {
+                safeDeterministic: preview.deterministic,
+                possibleEntityReuse,
+                olderVerified,
+                humanRequired,
+                otherManual,
+              };
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "resolve-contradictions-bucket-preview",
+              });
+              const message = err instanceof Error ? err.message : String(err);
+              console.error(
+                `Warning: could not generate unresolved_by_reason bucket preview (${message}). Check database state and rerun if needed.`,
+              );
+            }
+
             const trunc = (s: string | null | undefined, n: number): string => {
               if (s == null || s === "") return "(empty)";
               const t = s.replace(/\s+/g, " ").trim();
@@ -1175,6 +1229,16 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             if (!verbose && !details && res.ambiguous.length > 10) {
               console.log(`  ...and ${res.ambiguous.length - 10} more`);
             }
+            if (unresolvedBuckets) {
+              console.log("unresolved_by_reason:");
+              console.log(`  safe_deterministic_auto=${unresolvedBuckets.safeDeterministic}`);
+              console.log(`  possible_entity_reuse=${unresolvedBuckets.possibleEntityReuse}`);
+              console.log(`  older_verified=${unresolvedBuckets.olderVerified}`);
+              console.log(`  human_required=${unresolvedBuckets.humanRequired}`);
+              if (unresolvedBuckets.otherManual > 0) {
+                console.log(`  other_manual=${unresolvedBuckets.otherManual}`);
+              }
+            }
             console.log("");
             console.log(
               "What this means: each line is two stored facts with the same entity and key but different values. " +
@@ -1191,6 +1255,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             if (!details) {
               console.log("  3. Easier scan: openclaw hybrid-mem resolve-contradictions --details");
             }
+            if (unresolvedBuckets?.safeDeterministic && unresolvedBuckets.safeDeterministic > 0) {
+              console.log(
+                `  4. Apply deterministic safe bucket (${unresolvedBuckets.safeDeterministic}): openclaw hybrid-mem resolve-contradictions --auto --apply`,
+              );
+            }
             const hasProjectStatePairs = res.ambiguous.some((a) => {
               const newF = factsDb.getById(a.factIdNew);
               const oldF = factsDb.getById(a.factIdOld);
@@ -1201,7 +1270,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             });
             if (hasProjectStatePairs) {
               console.log(
-                "  4. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
+                "  5. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
               );
             }
           }
