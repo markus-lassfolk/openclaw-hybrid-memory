@@ -237,15 +237,7 @@ describe("enrich-entities CLI options", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     await mem.parseAsync(
-      [
-        "enrich-entities",
-        "--dry-run",
-        "--adaptive-catch-up",
-        "--batch-size",
-        "30",
-        "--batch-delay-ms",
-        "300",
-      ],
+      ["enrich-entities", "--dry-run", "--adaptive-catch-up", "--batch-size", "30", "--batch-delay-ms", "300"],
       { from: "user" },
     );
 

@@ -337,8 +337,8 @@ describe("runEntityEnrichmentForCli", () => {
 
     expect(res.processed).toBe(3);
     expect(onAdaptivePacing).not.toHaveBeenCalled();
-    expect(progressSnapshots.every((snapshot) => snapshot.batchSize === undefined && snapshot.delayMs === undefined)).toBe(
-      true,
-    );
+    expect(
+      progressSnapshots.every((snapshot) => snapshot.batchSize === undefined && snapshot.delayMs === undefined),
+    ).toBe(true);
   });
 });

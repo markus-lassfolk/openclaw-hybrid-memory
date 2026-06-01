@@ -1323,7 +1323,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const adaptiveCatchUp = !!opts?.adaptiveCatchUp;
           const batchSize = Number.parseInt(opts?.batchSize ?? "20", 10);
           const batchDelayMs = Number.parseInt(opts?.batchDelayMs ?? "150", 10);
-          let enrichProgress = {
+          let enrichProgress: import("../../../services/entity-enrichment-cli.js").EntityEnrichmentProgress = {
             processed: 0,
             total: 0,
             factsEnriched: 0,
@@ -1364,8 +1364,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                     heartbeat.heartbeat();
                   },
                   onAdaptivePacing: (next) => {
-                    if (plugin.logger?.debug) {
-                      plugin.logger.debug(
+                    if (verbose) {
+                      console.debug(
                         `entity-enrichment-cli: adaptive pacing ${next.reason}; batch ${next.previousBatchSize}→${next.batchSize}, delay ${next.previousDelayMs}ms→${next.delayMs}ms, pressure=${next.batchPressureSignals}, transient=${next.batchTransientFailures}, rateLimited=${next.batchRateLimited}`,
                       );
                     }
