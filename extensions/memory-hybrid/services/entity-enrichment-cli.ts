@@ -323,8 +323,8 @@ export async function runEntityEnrichmentForCli(
   let rateLimitCount = 0;
   let transientFailureCount = 0;
   let timeoutFailureCount = 0;
-  const isPastProviderBudget = (): boolean =>
-    providerPressureBudget != null && rateLimitCount + timeoutFailureCount >= providerPressureBudget;
+  const isPastProviderBudget = (rate = rateLimitCount, timeout = timeoutFailureCount): boolean =>
+    providerPressureBudget != null && rate + timeout >= providerPressureBudget;
   const rejectReasons: Record<string, number> = {};
   const enrichedFacts: EntityEnrichmentVerboseFact[] = [];
 
@@ -368,9 +368,26 @@ export async function runEntityEnrichmentForCli(
     const batch = adaptiveCatchUp ? ids.slice(index, index + effectiveBatchSize) : [ids[index]];
     const processedBeforeBatch = processed;
     const batchStats = emptyBatchStats();
+    const mergeCounters = {
+      batchStats,
+      rateLimitCount: { value: rateLimitCount },
+      transientFailureCount: { value: transientFailureCount },
+      timeoutFailureCount: { value: timeoutFailureCount },
+      llmFailures: { value: llmFailures },
+      mentions: { value: mentions },
+      accepted: { value: accepted },
+      rejected: { value: rejected },
+      duplicates: { value: duplicates },
+      rejectReasons,
+      factsEnriched: { value: factsEnriched },
+      enrichedFacts,
+      processed: { value: processed },
+    };
+    const isPastProviderBudgetInBatch = (): boolean =>
+      isPastProviderBudget(mergeCounters.rateLimitCount.value, mergeCounters.timeoutFailureCount.value);
 
     const processFact = async (id: string): Promise<FactProcessResult | null> => {
-      if (isPastDeadline() || isPastProviderBudget()) return null;
+      if (isPastDeadline() || isPastProviderBudgetInBatch()) return null;
       const f = factsDb.getById(id);
       if (!f?.text) {
         return {
@@ -445,22 +462,6 @@ export async function runEntityEnrichmentForCli(
       };
     };
 
-    const mergeCounters = {
-      batchStats,
-      rateLimitCount: { value: rateLimitCount },
-      transientFailureCount: { value: transientFailureCount },
-      timeoutFailureCount: { value: timeoutFailureCount },
-      llmFailures: { value: llmFailures },
-      mentions: { value: mentions },
-      accepted: { value: accepted },
-      rejected: { value: rejected },
-      duplicates: { value: duplicates },
-      rejectReasons,
-      factsEnriched: { value: factsEnriched },
-      enrichedFacts,
-      processed: { value: processed },
-    };
-
     let attemptedThisBatch = 0;
     if (adaptiveCatchUp && effectiveConcurrency > 1) {
       const results: Array<FactProcessResult | null | undefined> = new Array(batch.length);
@@ -473,23 +474,25 @@ export async function runEntityEnrichmentForCli(
               stopReason = "time_budget";
               return;
             }
-            if (isPastProviderBudget()) {
+            if (isPastProviderBudgetInBatch()) {
               stopReason = "provider_budget";
               return;
             }
             const idx = nextIdx++;
             if (idx >= batch.length) return;
-            results[idx] = await processFact(batch[idx]!);
+            const result = await processFact(batch[idx]!);
+            results[idx] = result;
+            if (result == null) continue;
+            applyFactProcessResult(result, mergeCounters);
+            if (isPastProviderBudgetInBatch()) stopReason = "provider_budget";
           }
         }),
       );
       for (const result of results) {
         if (result === undefined) continue;
         attemptedThisBatch++;
-        if (result == null) continue;
-        applyFactProcessResult(result, mergeCounters);
       }
-      if (isPastProviderBudget()) stopReason = "provider_budget";
+      if (isPastProviderBudgetInBatch()) stopReason = "provider_budget";
       rateLimitCount = mergeCounters.rateLimitCount.value;
       transientFailureCount = mergeCounters.transientFailureCount.value;
       timeoutFailureCount = mergeCounters.timeoutFailureCount.value;
@@ -506,7 +509,7 @@ export async function runEntityEnrichmentForCli(
           stopReason = "time_budget";
           break;
         }
-        if (isPastProviderBudget()) {
+        if (isPastProviderBudgetInBatch()) {
           stopReason = "provider_budget";
           break;
         }
@@ -514,7 +517,7 @@ export async function runEntityEnrichmentForCli(
         if (result == null) continue;
         attemptedThisBatch++;
         applyFactProcessResult(result, mergeCounters);
-        if (isPastProviderBudget()) stopReason = "provider_budget";
+        if (isPastProviderBudgetInBatch()) stopReason = "provider_budget";
       }
       rateLimitCount = mergeCounters.rateLimitCount.value;
       transientFailureCount = mergeCounters.transientFailureCount.value;
@@ -530,7 +533,7 @@ export async function runEntityEnrichmentForCli(
 
     if (isPastDeadline()) {
       stopReason = "time_budget";
-    } else if (isPastProviderBudget()) {
+    } else if (isPastProviderBudgetInBatch()) {
       stopReason = "provider_budget";
     }
 

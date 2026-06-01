@@ -505,6 +505,59 @@ describe("runEntityEnrichmentForCli", () => {
     expect(maxInFlight).toBeLessThanOrEqual(3);
   });
 
+  it("stops parallel workers promptly when provider-pressure budget is reached", async () => {
+    seedFacts(6, "Provider budget fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    let llmCalls = 0;
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockImplementation(async () => {
+      llmCalls++;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return {
+        mentions: [],
+        detectedLang: "eng",
+        quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+        rejectedMentions: [],
+        pressureSignals: {
+          failed: true,
+          transientFailure: false,
+          rateLimited: true,
+          timeoutFailure: false,
+        },
+      };
+    });
+
+    vi.useFakeTimers();
+    const runPromise = runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 6,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 6,
+      batchDelayMs: 0,
+      maxConcurrency: 3,
+      providerPressureBudget: 1,
+    });
+    await vi.runAllTimersAsync();
+    const res = await runPromise;
+    vi.useRealTimers();
+
+    expect(res.stopReason).toBe("provider_budget");
+    expect(llmCalls).toBe(1);
+    expect(res.processed).toBe(1);
+  });
+
   it("persists progress and emits actionable telemetry on timeout/stall pressure", async () => {
     seedFacts(4, "Timeout stall fact");
 
