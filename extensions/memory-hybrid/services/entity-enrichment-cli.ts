@@ -384,14 +384,13 @@ export async function runEntityEnrichmentForCli(
       processed: { value: processed },
       pendingLlmCalls: { value: 0 },
     };
+    const observedProviderPressureInBatch = (): number =>
+      mergeCounters.rateLimitCount.value + mergeCounters.timeoutFailureCount.value;
     const isPastProviderBudgetInBatch = (): boolean => {
       if (providerPressureBudget == null) return false;
-      return (
-        mergeCounters.rateLimitCount.value +
-          mergeCounters.timeoutFailureCount.value +
-          mergeCounters.pendingLlmCalls.value >=
-        providerPressureBudget
-      );
+      const observed = observedProviderPressureInBatch();
+      if (observed >= providerPressureBudget) return true;
+      return mergeCounters.pendingLlmCalls.value >= providerPressureBudget - observed;
     };
 
     const processFact = async (id: string): Promise<FactProcessResult | null> => {
@@ -481,16 +480,9 @@ export async function runEntityEnrichmentForCli(
     if (adaptiveCatchUp && effectiveConcurrency > 1) {
       const results: Array<FactProcessResult | null | undefined> = new Array(batch.length);
       let nextIdx = 0;
-      let inflightPressureSlots = 0;
-      const wouldExceedProviderBudget = (): boolean => {
-        if (providerPressureBudget == null) return false;
-        return (
-          mergeCounters.rateLimitCount.value +
-            mergeCounters.timeoutFailureCount.value +
-            inflightPressureSlots >=
-          providerPressureBudget
-        );
-      };
+      const hasObservedProviderBudgetPressure = (): boolean =>
+        providerPressureBudget != null &&
+        observedProviderPressureInBatch() >= providerPressureBudget;
       const workerCount = Math.min(effectiveConcurrency, batch.length);
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
@@ -499,23 +491,17 @@ export async function runEntityEnrichmentForCli(
               stopReason = "time_budget";
               return;
             }
-            if (wouldExceedProviderBudget()) {
+            if (hasObservedProviderBudgetPressure()) {
               stopReason = "provider_budget";
               return;
             }
             const idx = nextIdx++;
             if (idx >= batch.length) return;
-            inflightPressureSlots++;
-            let result: FactProcessResult | null;
-            try {
-              result = await processFact(batch[idx]!);
-            } finally {
-              inflightPressureSlots--;
-            }
+            const result = await processFact(batch[idx]!);
             results[idx] = result;
             if (result == null) continue;
             applyFactProcessResult(result, mergeCounters);
-            if (wouldExceedProviderBudget()) stopReason = "provider_budget";
+            if (hasObservedProviderBudgetPressure()) stopReason = "provider_budget";
           }
         }),
       );

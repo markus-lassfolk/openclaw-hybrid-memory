@@ -565,6 +565,54 @@ describe("runEntityEnrichmentForCli", () => {
     expect(maxInFlight).toBeLessThanOrEqual(3);
   });
 
+  it("does not stop a healthy parallel run solely because provider-budget slots are reserved", async () => {
+    seedFacts(4, "Healthy parallel fact");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const cfg = hybridConfigSchema.parse({
+      embedding: { apiKey: "sk-test-key-long-enough", model: "text-embedding-3-small" },
+      graph: { enabled: true },
+    });
+
+    let llmCalls = 0;
+    vi.spyOn(entityEnrichmentService, "extractEntityMentionsWithLlm").mockImplementation(async () => {
+      llmCalls++;
+      return {
+        mentions: [],
+        detectedLang: "eng",
+        quality: { mentions: 0, accepted: 0, rejected: 0, duplicates: 0, rejectReasons: {} },
+        rejectedMentions: [],
+        pressureSignals: {
+          failed: false,
+          transientFailure: false,
+          rateLimited: false,
+          timeoutFailure: false,
+        },
+      };
+    });
+
+    const res = await runEntityEnrichmentForCli(db, openai as never, cfg, {
+      limit: 4,
+      dryRun: false,
+      model: "openai/gpt-4.1-nano",
+      adaptiveCatchUp: true,
+      batchSize: 4,
+      batchDelayMs: 0,
+      maxConcurrency: 3,
+      providerPressureBudget: 1,
+    });
+
+    expect(res.stopReason).toBe("exhausted");
+    expect(llmCalls).toBe(4);
+    expect(res.processed).toBe(4);
+  });
+
   it("stops parallel workers promptly when provider-pressure budget is reached", async () => {
     seedFacts(6, "Provider budget fact");
 
