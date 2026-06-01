@@ -311,6 +311,7 @@ export type HybridMemCliContext = {
     rejectReasons: Record<string, number>;
     skipped?: boolean;
     pendingFactIds?: string[];
+    llmFailures?: number;
     enrichedFacts?: import("../services/entity-enrichment-cli.js").EntityEnrichmentVerboseFact[];
   }>;
   runSelfCorrectionExtract: (opts: {
