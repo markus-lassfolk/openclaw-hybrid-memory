@@ -10,7 +10,6 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
-import "../config.js";
 import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
