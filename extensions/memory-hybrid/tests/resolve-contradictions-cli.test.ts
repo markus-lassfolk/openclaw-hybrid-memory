@@ -670,4 +670,73 @@ describe("resolve-contradictions CLI contract mode", () => {
       ),
     ).toBe(true);
   });
+
+  it("marks large ambiguous backlog with no progress as degraded", async () => {
+    const runResolveContradictions = vi.fn().mockResolvedValue({
+      autoResolved: [],
+      ambiguous: [
+        { contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" },
+        { contradictionId: "c-2", factIdNew: "new-2", factIdOld: "old-2" },
+      ],
+    });
+    const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+      total: 2,
+      deterministic: 0,
+      llm: 0,
+      merged: 0,
+      manualReview: 2,
+      applied: false,
+      decisionsApplied: 0,
+      targetRate: 0.8,
+      achievedRate: 0,
+      targetMet: false,
+      reviewItems: [],
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictions, runResolveContradictionsAuto }));
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--degraded-ambiguous-threshold", "1"], { from: "user" });
+
+    expect(process.exitCode).toBe(2);
+    expect(lines.some((l) => l.includes("resolve-contradictions summary auto_resolved=0 ambiguous=2"))).toBe(true);
+    expect(lines.some((l) => l.includes("Backlog alert: ambiguous=2 with auto-resolved=0 exceeds degraded threshold 1"))).toBe(
+      true,
+    );
+  });
+
+  it("emits resolve-contradictions JSON summary for cron validation", async () => {
+    const runResolveContradictions = vi.fn().mockResolvedValue({
+      autoResolved: [],
+      ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictions }));
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(
+      ["resolve-contradictions", "--json", "--degraded-ambiguous-threshold", "1"],
+      { from: "user" },
+    );
+
+    expect(lines).toHaveLength(1);
+    const summary = JSON.parse(lines[0]);
+    expect(summary).toMatchObject({
+      mode: "default",
+      autoResolved: 0,
+      ambiguous: 1,
+      noProgress: true,
+      degraded: true,
+      exitCode: 2,
+      exitReason: "ambiguous_backlog_no_progress",
+      suggestions: {
+        details: "openclaw hybrid-mem resolve-contradictions --details",
+        projectStateLwwDryRun: "openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
+      },
+    });
+  });
 });
