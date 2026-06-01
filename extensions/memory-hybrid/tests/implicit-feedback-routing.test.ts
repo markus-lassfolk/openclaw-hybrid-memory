@@ -931,6 +931,68 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
     expect(row.supersededBy).toBe(canonical.id);
   });
 
+  it("keeps enough canonical context across many batches so late-page duplicates still collapse", () => {
+    const db = makeDb(tmpDir);
+    const canonical = db.store({
+      text: "collapse canonical alpha beta gamma delta epsilon",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    for (let i = 0; i < 2200; i++) {
+      db.store({
+        text: `uniquesignal${i}`,
+        category: "technical",
+        importance: 0.7,
+        entity: null,
+        key: "implicit_feedback_signal",
+        value: null,
+        source: "implicit-feedback",
+        tags: ["implicit-feedback", "trajectory", "feedback"],
+      });
+    }
+    const lateDuplicate = db.store({
+      text: "collapse canonical alpha beta gamma delta epsilon zeta",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+
+    const limit = 250;
+    let afterRowid = 0;
+    let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
+    let totalScanned = 0;
+    let totalCollapsed = 0;
+    for (;;) {
+      const batch = cleanupImplicitFeedbackDuplicates(db, {
+        threshold: 0.8,
+        limit,
+        afterRowid,
+        seedCanonical: carryCanonical,
+      });
+      totalScanned += batch.scanned;
+      totalCollapsed += batch.collapsed;
+      carryCanonical = batch.carryCanonical;
+      if (batch.scanned < limit || batch.resumeAfterRowid == null) break;
+      afterRowid = batch.resumeAfterRowid;
+    }
+
+    expect(totalScanned).toBeGreaterThan(2200);
+    expect(totalCollapsed).toBe(1);
+    const row = rawDb(db)
+      .prepare("SELECT superseded_by as supersededBy FROM facts WHERE id = ?")
+      .get(lateDuplicate.id) as { supersededBy: string | null };
+    expect(row.supersededBy).toBe(canonical.id);
+  });
+
   it("does NOT store implicit-feedback signal facts when feedToSelfCorrection=false", async () => {
     const db = makeDb(tmpDir);
     writeNegativeSession(sessionsDir, "2026-01-01-session.jsonl");

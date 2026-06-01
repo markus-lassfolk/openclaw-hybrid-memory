@@ -262,7 +262,7 @@ export function cleanupImplicitFeedbackDuplicates(
   let collapsed = 0;
   let scanned = 0;
   const reportEvery = Math.max(1, opts.reportEvery ?? 250);
-  const CANONICAL_WINDOW_SIZE = Math.min(20_000, Math.max(2000, limit * 8));
+  const CANONICAL_WINDOW_SIZE = Math.min(100_000, Math.max(20_000, limit * 16));
   const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])]
     .slice(-CANONICAL_WINDOW_SIZE)
     .map((c) => ({ id: c.id, text: c.text }));
