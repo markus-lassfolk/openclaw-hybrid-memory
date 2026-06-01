@@ -101,6 +101,13 @@ Contradicted facts naturally rank lower due to reduced confidence, which flows t
    - From an explicit user store (`source = 'conversation'` or `'cli'`)
 3. Returns **ambiguous** pairs for future LLM resolution (#143 Dream Cycle).
 
+When ambiguous pairs remain, the CLI now also prints `unresolved_by_reason` buckets so operators can quickly see:
+
+- how many pairs are in the deterministic safe bucket (`--auto --apply`)
+- likely entity-reuse conflicts
+- verified-older-fact conflicts
+- genuinely human-required conflicts
+
 ### Return value
 
 ```typescript
