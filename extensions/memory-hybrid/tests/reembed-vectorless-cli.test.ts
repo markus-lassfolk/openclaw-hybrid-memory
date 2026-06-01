@@ -537,4 +537,96 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       true,
     );
   });
+
+  it("backs off adaptively when embed failures occur in a batch", async () => {
+    process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+    const mem = new Command("hybrid-mem");
+
+    const facts = Array.from({ length: 4 }, (_, i) => ({
+      id: `embed-fail-fact-${i.toString().padStart(2, "0")}`,
+      text: `fact text ${i}`,
+      category: "fact",
+      source: "manual",
+    }));
+
+    const embedError = new Error("embedding service unavailable");
+
+    const factsDb = {
+      getCount: vi.fn().mockReturnValue(100),
+      countVectorlessActiveFacts: vi.fn().mockReturnValue(facts.length),
+      listVectorlessActiveFacts: vi.fn().mockReturnValue(facts),
+      storeEmbedding: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+      delete: vi.fn().mockResolvedValue(false),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      modelName: "test-embedding-model",
+      embedBatch: vi
+        .fn()
+        .mockResolvedValueOnce([
+          [0.1, 0.2, 0.3],
+          [0.2, 0.3, 0.4],
+        ])
+        .mockRejectedValueOnce(embedError),
+      embed: vi.fn().mockRejectedValue(embedError),
+    };
+
+    registerManageStorageAndStats(mem, {
+      factsDb,
+      vectorDb,
+      aliasDb: {},
+      versionInfo: { version: "test" },
+      embeddings,
+      mergeResults: vi.fn(),
+      getMemoryCategories: () => ["fact"],
+      cfg: { memory: { categories: ["fact"] } },
+      runCompaction: vi.fn(),
+      tieringEnabled: false,
+      ctx: { resolvedSqlitePath: null },
+      listCommands: () => [],
+      auditStore: null,
+      merge: vi.fn(),
+      BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    } as any);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await mem.parseAsync(
+      [
+        "reembed-vectorless",
+        "--apply",
+        "--limit",
+        "4",
+        "--batch-size",
+        "2",
+        "--adaptive-catch-up",
+        "--batch-delay-ms",
+        "0",
+        "--json",
+      ],
+      { from: "user" },
+    );
+
+    const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
+      embedded?: number;
+      embedFailures?: number;
+      adaptive?: {
+        effectiveBatchSize: number;
+        adjustments?: Array<{ reason?: string; batchEmbedFailures?: number }>;
+      };
+    };
+    expect(payload.embedded).toBe(2);
+    expect(payload.embedFailures).toBeGreaterThan(0);
+    expect(payload.adaptive?.adjustments?.some((a) => a.reason === "pressure" && (a.batchEmbedFailures ?? 0) > 0)).toBe(
+      true,
+    );
+    expect(payload.adaptive?.effectiveBatchSize).toBeLessThan(2);
+  });
 });
