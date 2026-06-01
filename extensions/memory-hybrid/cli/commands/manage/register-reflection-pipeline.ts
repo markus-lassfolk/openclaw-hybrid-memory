@@ -1442,7 +1442,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 }),
               {
                 progressSupplier: () =>
-                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; batch=${enrichProgress.effectiveBatchSize ?? "static"}; delay_ms=${enrichProgress.effectiveDelayMs ?? "static"}; dryRun=${dryRun ? "yes" : "no"}`,
+                  `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; llmFailures=${enrichProgress.llmFailures ?? 0}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; batch=${enrichProgress.effectiveBatchSize ?? "static"}; delay_ms=${enrichProgress.effectiveDelayMs ?? "static"}; dryRun=${dryRun ? "yes" : "no"}`,
               },
             );
           } catch (err) {
@@ -1481,9 +1481,15 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               for (const id of res.pendingFactIds) console.log(`  ${id}`);
             }
           } else {
+            const llmFailuresSuffix = res.llmFailures ? ` llmFailures=${res.llmFailures}` : "";
             console.log(
-              `Entity enrichment: processed=${res.processed} enriched=${res.factsEnriched} mentions=${res.mentions} accepted=${res.accepted} rejected=${res.rejected} duplicates=${res.duplicates}, batch=${res.pending}, pending-before-run=${pendingTotal}, remaining=${remainingTotal}, mode=${mode}, limit=${limitLabel}.`,
+              `Entity enrichment: processed=${res.processed} enriched=${res.factsEnriched} mentions=${res.mentions} accepted=${res.accepted} rejected=${res.rejected} duplicates=${res.duplicates}${llmFailuresSuffix}, batch=${res.pending}, pending-before-run=${pendingTotal}, remaining=${remainingTotal}, mode=${mode}, limit=${limitLabel}.`,
             );
+            if (res.llmFailures && res.llmFailures > 0) {
+              console.warn(
+                `Warning: ${res.llmFailures} fact${res.llmFailures === 1 ? "" : "s"} skipped due to LLM extraction failures (exit code 2).`,
+              );
+            }
             if (mode !== "all") {
               console.log(`Estimated runs remaining at current limit: ${estimatedRunsRemaining}`);
             }
