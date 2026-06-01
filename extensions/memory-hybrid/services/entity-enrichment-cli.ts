@@ -57,6 +57,7 @@ export type EntityEnrichmentProgress = {
   rejected: number;
   duplicates: number;
   rejectReasons: Record<string, number>;
+  llmFailures?: number;
   effectiveBatchSize?: number;
   effectiveDelayMs?: number;
 };
@@ -201,6 +202,7 @@ export async function runEntityEnrichmentForCli(
     rejected: 0,
     duplicates: 0,
     rejectReasons: {},
+    llmFailures: 0,
     effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : undefined,
     effectiveDelayMs: adaptiveCatchUp ? effectiveDelayMs : undefined,
   });
@@ -282,6 +284,7 @@ export async function runEntityEnrichmentForCli(
       rejected,
       duplicates,
       rejectReasons: { ...rejectReasons },
+      llmFailures,
       effectiveBatchSize: adaptiveCatchUp ? effectiveBatchSize : undefined,
       effectiveDelayMs: adaptiveCatchUp ? effectiveDelayMs : undefined,
     });
