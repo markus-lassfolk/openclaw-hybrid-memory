@@ -19,7 +19,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
     resetPluginRegistrationStateForTests();
   });
 
-  it("should register CLI metadata even when OPENCLAW_SERVICE_KIND is present", async () => {
+  it("should register CLI metadata even when OPENCLAW_SERVICE_KIND is present", () => {
     // Set service marker that would leak from gateway/service context
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
 
@@ -48,7 +48,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
     };
 
     // Call register with cli-metadata mode
-    await memoryHybridPlugin.register(mockApi as any);
+    expect(memoryHybridPlugin.register(mockApi as any)).toBeUndefined();
 
     // Verify CLI was registered despite service marker being present
     expect(cliRegistered).toBe(true);
@@ -56,7 +56,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
     expect(cliDescriptors[0].name).toBe("hybrid-mem");
   });
 
-  it("should register CLI metadata even when OPENCLAW_SERVICE_MARKER is present", async () => {
+  it("should register CLI metadata even when OPENCLAW_SERVICE_MARKER is present", () => {
     // Set service marker
     process.env.OPENCLAW_SERVICE_MARKER = "1";
 
@@ -80,12 +80,12 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
       context: undefined,
     };
 
-    await memoryHybridPlugin.register(mockApi as any);
+    expect(memoryHybridPlugin.register(mockApi as any)).toBeUndefined();
 
     expect(cliRegistered).toBe(true);
   });
 
-  it("should register CLI metadata when both service markers are present", async () => {
+  it("should register CLI metadata when both service markers are present", () => {
     // Set both markers (worst case scenario from leaked cron environment)
     process.env.OPENCLAW_SERVICE_KIND = "gateway";
     process.env.OPENCLAW_SERVICE_MARKER = "1";
@@ -110,12 +110,12 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
       context: undefined,
     };
 
-    await memoryHybridPlugin.register(mockApi as any);
+    expect(memoryHybridPlugin.register(mockApi as any)).toBeUndefined();
 
     expect(cliRegistered).toBe(true);
   });
 
-  it("should still register CLI metadata when OPENCLAW_SKIP_HYBRID_MEMORY_CLI is present (shouldn't be set in normal cron)", async () => {
+  it("should still register CLI metadata when OPENCLAW_SKIP_HYBRID_MEMORY_CLI is present (shouldn't be set in normal cron)", () => {
     // This env var is specifically for skipping hybrid-mem CLI, but during cli-metadata
     // registration phase, even this should not prevent registration
     process.env.OPENCLAW_SKIP_HYBRID_MEMORY_CLI = "1";
@@ -140,7 +140,7 @@ describe("CLI registration with service markers (Issue #1209 regression)", () =>
       context: undefined,
     };
 
-    await memoryHybridPlugin.register(mockApi as any);
+    expect(memoryHybridPlugin.register(mockApi as any)).toBeUndefined();
 
     // Even with skip flag, CLI metadata should register
     // (the skip flag should only affect full registration, not metadata)
