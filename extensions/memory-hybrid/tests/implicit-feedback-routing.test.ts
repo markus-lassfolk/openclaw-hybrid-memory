@@ -933,6 +933,9 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
 
   it("keeps enough canonical context across many batches so late-page duplicates still collapse", () => {
     const db = makeDb(tmpDir);
+    // Keep these paired values large enough to span many pages and exceed legacy carry windows.
+    const PAGED_SCAN_LIMIT = 250;
+    const INTERLEAVED_UNIQUE_ROWS = 2200;
     const canonical = db.store({
       text: "collapse canonical alpha beta gamma delta epsilon",
       category: "technical",
@@ -943,7 +946,7 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
       source: "implicit-feedback",
       tags: ["implicit-feedback", "trajectory", "feedback"],
     });
-    for (let i = 0; i < 2200; i++) {
+    for (let i = 0; i < INTERLEAVED_UNIQUE_ROWS; i++) {
       db.store({
         text: `uniquesignal${i}`,
         category: "technical",
@@ -955,6 +958,7 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
         tags: ["implicit-feedback", "trajectory", "feedback"],
       });
     }
+    // Keep this similar (not exact) so cleanup exercises Jaccard matching rather than exact-text dedupe.
     const lateDuplicate = db.store({
       text: "collapse canonical alpha beta gamma delta epsilon zeta",
       category: "technical",
@@ -966,7 +970,6 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
       tags: ["implicit-feedback", "trajectory", "feedback"],
     });
 
-    const limit = 250;
     let afterRowid = 0;
     let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
     let totalScanned = 0;
@@ -974,18 +977,18 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
     for (;;) {
       const batch = cleanupImplicitFeedbackDuplicates(db, {
         threshold: 0.8,
-        limit,
+        limit: PAGED_SCAN_LIMIT,
         afterRowid,
         seedCanonical: carryCanonical,
       });
       totalScanned += batch.scanned;
       totalCollapsed += batch.collapsed;
       carryCanonical = batch.carryCanonical;
-      if (batch.scanned < limit || batch.resumeAfterRowid == null) break;
+      if (batch.scanned < PAGED_SCAN_LIMIT || batch.resumeAfterRowid == null) break;
       afterRowid = batch.resumeAfterRowid;
     }
 
-    expect(totalScanned).toBeGreaterThan(2200);
+    expect(totalScanned).toBeGreaterThan(INTERLEAVED_UNIQUE_ROWS);
     expect(totalCollapsed).toBe(1);
     const row = rawDb(db)
       .prepare("SELECT superseded_by as supersededBy FROM facts WHERE id = ?")
