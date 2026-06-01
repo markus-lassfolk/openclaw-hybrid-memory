@@ -128,12 +128,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     // #1809: warn in audit-health when personaProposals is enabled but scopeFilter is not configured.
     if (cfg.personaProposals.enabled && !hasAnyScopeFilter(cfg.autoRecall?.scopeFilter)) {
       preReportWarnings.push(
-        "personaProposals is enabled but autoRecall.scopeFilter is not set; " +
-          "generate-proposals will include facts from all scopes. " +
-          "Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific " +
-          "user/agent and avoid cross-scope contamination. " +
-          "For multi-agent hosts, also consider setting personaProposals.requireScopeFilter: true " +
-          "to hard-fail when scopeFilter is absent.",
+        `personaProposals is enabled but autoRecall.scopeFilter is not set; generate-proposals will include facts from all scopes. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-scope contamination. For multi-agent hosts, also consider setting personaProposals.requireScopeFilter: true to hard-fail when scopeFilter is absent.`,
       );
     }
     const withTimeout = async <T>(promise: Promise<T>, section: string): Promise<T | undefined> => {

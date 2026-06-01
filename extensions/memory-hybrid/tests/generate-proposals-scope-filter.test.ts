@@ -86,9 +86,14 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
 
     // insights.length = 1 (one pattern) → passes scopeFilter check, hits LLM (openai=null) → throws.
     // We only care that the warn was called before any LLM call.
+    let caughtError: Error | null = null;
     await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f }).catch((err: Error) => {
-      expect(err.message).not.toContain("autoRecall.scopeFilter is not set");
+      caughtError = err;
     });
+    // If an error was caught it must be the LLM failure, not the scopeFilter contamination error.
+    if (caughtError !== null) {
+      expect((caughtError as Error).message).not.toContain("autoRecall.scopeFilter is not set");
+    }
 
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining("autoRecall.scopeFilter is not set"),
@@ -115,10 +120,15 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const ctx = makeCtx(db, proposalsDb, { requireScopeFilter: true });
     // No non-global scoped facts → no contamination risk → no scope-filter throw.
     // insights block has content; openai=null → will throw on LLM call, but that's after the scopeFilter check.
+    let thrownError: Error | null = null;
     try {
       await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
     } catch (err: unknown) {
-      expect((err as Error).message).not.toContain("autoRecall.scopeFilter is not set");
+      thrownError = err as Error;
+    }
+    // If an error was thrown (expected: LLM failure), it must not be the scopeFilter contamination error.
+    if (thrownError !== null) {
+      expect(thrownError.message).not.toContain("autoRecall.scopeFilter is not set");
     }
   });
 
@@ -134,10 +144,15 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     // scopeFilter is set → hasScopeFilter=true → no scope-filter check fires.
     // The fact matches the agentId filter so insights are non-empty; LLM (openai=null) throws,
     // but that error must not be the scopeFilter contamination error.
+    let thrownError: Error | null = null;
     try {
       await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
     } catch (err: unknown) {
-      expect((err as Error).message).not.toContain("autoRecall.scopeFilter is not set");
+      thrownError = err as Error;
+    }
+    // If an error was thrown (expected: LLM failure), it must not be the scopeFilter contamination error.
+    if (thrownError !== null) {
+      expect(thrownError.message).not.toContain("autoRecall.scopeFilter is not set");
     }
   });
 });
