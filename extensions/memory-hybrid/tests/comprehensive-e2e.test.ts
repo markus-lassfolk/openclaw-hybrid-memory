@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { _testing } from "../index.js";
 import { resetPluginRegistrationStateForTests, runtimeRef } from "../setup/register-plugin.js";
-import { awaitReloadTeardownBeforeOpen } from "../setup/hybrid-memory-reload-coordinator.js";
+import { awaitReloadTeardownBeforeOpen, TEARDOWN_WAIT_MS } from "../setup/hybrid-memory-reload-coordinator.js";
 import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
   E2E_EMBEDDING_DIM,
@@ -41,6 +41,7 @@ const { VectorDB } = _testing;
 const SESSION = "agent:main:telegram:e2e-comprehensive";
 const HOOK_CTX = { sessionKey: SESSION, sessionId: SESSION, agentId: "main" };
 const RELOAD_TEARDOWN_ERROR_FRAGMENT = "reload teardown did not drain";
+const HOT_RELOAD_TEST_TIMEOUT_MS = TEARDOWN_WAIT_MS + 5_000;
 
 describe("Comprehensive e2e — full plugin register()", () => {
   let tmpDir: string;
@@ -85,42 +86,46 @@ describe("Comprehensive e2e — full plugin register()", () => {
       expect(api.registerLifecycleHook).not.toHaveBeenCalled();
     });
 
-    it("survives hot reload (second register closes prior runtime)", async () => {
-      const stableConfig = getFullStackConfig(tmpDir);
-      registerFullPlugin(api, stableConfig);
-      const bootstrap = runtimeRef.value?.bootstrapAsyncInit;
-      if (bootstrap) {
-        await bootstrap.catch(() => {
-          // Non-fatal in this e2e: hot-reload persistence path still validates via store/recall round-trip below.
-        });
-      }
-      const store = api.getTool("memory_store")!;
-      const stored = (await store.execute("c1", {
-        text: "Survives plugin hot reload",
-        category: "fact",
-        importance: 0.8,
-      })) as { details?: { id: string } };
-      const factId = stored.details?.id;
-      expect(factId).toBeDefined();
-
-      try {
+    it(
+      "survives hot reload (second register closes prior runtime)",
+      async () => {
+        const stableConfig = getFullStackConfig(tmpDir);
         registerFullPlugin(api, stableConfig);
-      } catch (err) {
-        if (!(err instanceof Error) || !err.message.includes(RELOAD_TEARDOWN_ERROR_FRAGMENT)) {
-          throw err;
+        const bootstrap = runtimeRef.value?.bootstrapAsyncInit;
+        if (bootstrap) {
+          await bootstrap.catch(() => {
+            // Non-fatal in this e2e: hot-reload persistence path still validates via store/recall round-trip below.
+          });
         }
-        // Vitest runs register() synchronously; if a full-teardown fallback races, retry once.
-        // Wait for the scheduled reload teardown to complete before retrying (issue #1775).
-        await awaitReloadTeardownBeforeOpen();
-        registerFullPlugin(api, stableConfig);
-      }
-      const recall = api.getTool("memory_recall")!;
-      const recalled = (await recall.execute("c2", { id: factId })) as {
-        details?: { count: number; memories?: { text: string }[] };
-      };
-      expect(recalled.details?.count).toBe(1);
-      expect(recalled.details?.memories?.[0]?.text).toContain("hot reload");
-    });
+        const store = api.getTool("memory_store")!;
+        const stored = (await store.execute("c1", {
+          text: "Survives plugin hot reload",
+          category: "fact",
+          importance: 0.8,
+        })) as { details?: { id: string } };
+        const factId = stored.details?.id;
+        expect(factId).toBeDefined();
+
+        try {
+          registerFullPlugin(api, stableConfig);
+        } catch (err) {
+          if (!(err instanceof Error) || !err.message.includes(RELOAD_TEARDOWN_ERROR_FRAGMENT)) {
+            throw err;
+          }
+          // Vitest runs register() synchronously; if a full-teardown fallback races, retry once.
+          // Wait for the scheduled reload teardown to complete before retrying (issue #1775).
+          await awaitReloadTeardownBeforeOpen();
+          registerFullPlugin(api, stableConfig);
+        }
+        const recall = api.getTool("memory_recall")!;
+        const recalled = (await recall.execute("c2", { id: factId })) as {
+          details?: { count: number; memories?: { text: string }[] };
+        };
+        expect(recalled.details?.count).toBe(1);
+        expect(recalled.details?.memories?.[0]?.text).toContain("hot reload");
+      },
+      HOT_RELOAD_TEST_TIMEOUT_MS,
+    );
 
     it("service start() and stop() complete without throwing", async () => {
       register();
