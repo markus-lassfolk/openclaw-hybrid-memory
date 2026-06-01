@@ -925,7 +925,7 @@ export async function resolveContradictionsAutonomously(
         if (applied) decisionsApplied++;
       }
       continue;
-    } else if (lww.eligible && isFactVerified(db, contradiction.factIdOld)) {
+    } else if (isFactVerified(db, contradiction.factIdOld)) {
       reviewItem.suggestedReason = "Older fact is verified; leaving for manual review.";
     }
 

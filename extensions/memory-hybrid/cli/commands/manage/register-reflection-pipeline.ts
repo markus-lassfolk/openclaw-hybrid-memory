@@ -1144,15 +1144,13 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             }
           }
           if (res.ambiguous.length > 0) {
-            let unresolvedBuckets:
-              | {
-                  safeDeterministic: number;
-                  possibleEntityReuse: number;
-                  olderVerified: number;
-                  humanRequired: number;
-                  otherManual: number;
-                }
-              | null = null;
+            let unresolvedBuckets: {
+              safeDeterministic: number;
+              possibleEntityReuse: number;
+              olderVerified: number;
+              humanRequired: number;
+              otherManual: number;
+            } | null = null;
             try {
               const preview = await ctx.runResolveContradictionsAuto({
                 dryRun: true,
@@ -1255,10 +1253,12 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             if (!details) {
               console.log("  3. Easier scan: openclaw hybrid-mem resolve-contradictions --details");
             }
+            let nextStepNumber = 4;
             if (unresolvedBuckets?.safeDeterministic && unresolvedBuckets.safeDeterministic > 0) {
               console.log(
-                `  4. Apply deterministic safe bucket (${unresolvedBuckets.safeDeterministic}): openclaw hybrid-mem resolve-contradictions --auto --apply`,
+                `  ${nextStepNumber}. Apply deterministic safe bucket (${unresolvedBuckets.safeDeterministic}): openclaw hybrid-mem resolve-contradictions --auto --apply`,
               );
+              nextStepNumber++;
             }
             const hasProjectStatePairs = res.ambiguous.some((a) => {
               const newF = factsDb.getById(a.factIdNew);
@@ -1270,7 +1270,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             });
             if (hasProjectStatePairs) {
               console.log(
-                "  5. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
+                `  ${nextStepNumber}. Auto-resolve project-state: openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run`,
               );
             }
           }
