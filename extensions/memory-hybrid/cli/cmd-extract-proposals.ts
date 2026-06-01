@@ -177,16 +177,15 @@ export async function runGenerateProposalsForCli(
     rawResponse = detail.content;
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    console.error(
-      `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(
-        fallbackModels,
-      )}): ${errMsg}`,
-    );
+    const failureMessage = `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(
+      fallbackModels,
+    )}): ${errMsg}`;
+    console.error(failureMessage);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",
       operation: "runGenerateProposalsForCli:llm",
     });
-    return { created: 0 };
+    throw new Error(failureMessage);
   }
   let items: Array<{
     targetFile: string;
