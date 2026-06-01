@@ -339,6 +339,8 @@ export function resolveReflectionModelAndFallbacks(
   } else if (cfg.llm && chain.length === 0 && !skipGlobalFallbackAppend) {
     appendUniqueFallback(chain, cfg.llm.fallbackModel, defaultModel);
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
+    // #1801: if maintenance is pinned to a single model (e.g. MiniMax), inherit default-tier
+    // candidates so reflection-rules isn't left with an empty fallback chain.
     if (tier === "maintenance" && explicitMaintList.length === 1 && chain.length === 0) {
       appendUniqueFallbackList(chain, getLLMModelPreference(cronCfg, "default"), defaultModel);
     }
