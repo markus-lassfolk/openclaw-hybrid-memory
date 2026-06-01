@@ -269,7 +269,7 @@ export async function runExtractDirectivesForCli(
             continue;
           }
           if (!vector) {
-            factsDb.delete(entry.id);
+            stored++;
             continue;
           }
           try {
@@ -290,7 +290,7 @@ export async function runExtractDirectivesForCli(
               subsystem: "cli",
               operation: "runExtractDirectivesForCli:vector-store",
             });
-            factsDb.delete(entry.id);
+            stored++;
           }
         } catch (err) {
           const isRetryable = isRetryableStoreError(err);
