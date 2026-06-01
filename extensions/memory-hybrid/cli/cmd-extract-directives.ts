@@ -186,6 +186,10 @@ export async function runExtractDirectivesForCli(
             if (cfg.store?.fuzzyDedupe ?? true) {
               const sourceScope = "global";
               const sourceScopeTarget = null;
+              const embeddingModelName =
+                typeof embeddings.modelName === "string" && embeddings.modelName.trim().length > 0
+                  ? embeddings.modelName
+                  : null;
               const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
               if (!getVectorSearchFailReason(vectorDb)) {
                 vectorCandidates = neighbors
@@ -205,8 +209,7 @@ export async function runExtractDirectivesForCli(
                       fact.source.startsWith("directive:") &&
                       (fact.scope ?? "global") === sourceScope &&
                       (fact.scope === "global" ? null : (fact.scopeTarget ?? null)) === sourceScopeTarget &&
-                      fact.embeddingModel != null &&
-                      fact.embeddingModel === embeddings.modelName
+                      (embeddingModelName == null || fact.embeddingModel == null || fact.embeddingModel === embeddingModelName)
                     );
                   });
               }
