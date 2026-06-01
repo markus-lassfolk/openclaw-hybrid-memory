@@ -12,6 +12,7 @@ import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-in
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
+import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -123,6 +124,13 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     const wantsJson = opts?.json === true || String(opts?.format ?? "").toLowerCase() === "json";
     let lanceBytes: number | null = null;
     const preReportErrors: Array<{ section: string; message: string }> = [];
+    const preReportWarnings: string[] = [];
+    // #1809: warn in audit-health when personaProposals is enabled but scopeFilter is not configured.
+    if (cfg.personaProposals.enabled && !hasAnyScopeFilter(cfg.autoRecall?.scopeFilter)) {
+      preReportWarnings.push(
+        "personaProposals is enabled but autoRecall.scopeFilter is not set; generate-proposals will include facts from all scopes. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-scope contamination. For multi-agent hosts, also consider setting personaProposals.requireScopeFilter: true to hard-fail when scopeFilter is absent.",
+      );
+    }
     const withTimeout = async <T>(promise: Promise<T>, section: string): Promise<T | undefined> => {
       const remainingMs = Math.max(1, deadlineMs - Date.now());
       let timer: NodeJS.Timeout | undefined;
@@ -172,6 +180,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       {
         lanceBytes,
         preReportErrors,
+        preReportWarnings,
         timeoutMs,
         startedAtMs,
         deadlineMs,
