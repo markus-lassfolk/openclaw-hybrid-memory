@@ -323,7 +323,62 @@ describe("runExtractDirectivesForCli", () => {
       }),
     );
     expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
+    expect(db.getById(existing.id)?.embeddingModel).toBe("test-embedding");
     expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
+  });
+
+  it("does not mark a merged directive embedded when vector refresh fails", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const existing = db.store({
+      text: "From now on, always run schema checks before directive extraction.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "seed",
+    });
+    const mergedText = `${existing.text}\nFrom now on, always run schema checks before extracting directives.`;
+    writeSession(dir, "2026-05-27-directives-vector-merge-fail.jsonl", [
+      "From now on, always run schema checks before extracting directives.",
+      "Got it.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    vi.spyOn(db, "storeWithResult").mockImplementation(() => ({
+      embeddingStale: true,
+      entry: { ...existing, text: mergedText },
+      evictedFactId: null,
+      newlyStored: false,
+      preMergeText: existing.text,
+      skipped: false,
+    }));
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockRejectedValue(new Error("lance write failed")),
+    };
+
+    await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings: { embed: vi.fn().mockResolvedValue([0.9]), modelName: "test-embedding" },
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    expect(db.getById(existing.id)?.embeddingModel).toBeNull();
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
   });
 
   it("filters vector candidates to active global directive facts before store-time dedupe", async () => {
@@ -373,6 +428,16 @@ describe("runExtractDirectivesForCli", () => {
       source: "directive:stale-session.jsonl",
     });
     db.supersede(staleDirective.id, null);
+    const expiredDirective = db.store({
+      text: "Expired directive memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:expired-session.jsonl",
+      expiresAt: Math.floor(Date.now() / 1000) - 60,
+    });
 
     const firstDirective = "From now on, always run lint before build and deployment globally.";
     const secondDirective = "From now on, always run lint before build and deployment globally nightly.";
@@ -399,6 +464,7 @@ describe("runExtractDirectivesForCli", () => {
             { entry: { id: conversationFact.id }, score: 0.99 },
             { entry: { id: scopedDirective.id }, score: 0.98 },
             { entry: { id: staleDirective.id }, score: 0.97 },
+            { entry: { id: expiredDirective.id }, score: 0.96 },
           ];
         }
         const existingDirective = db!
@@ -411,7 +477,8 @@ describe("runExtractDirectivesForCli", () => {
           { entry: { id: conversationFact.id }, score: 0.99 },
           { entry: { id: scopedDirective.id }, score: 0.98 },
           { entry: { id: staleDirective.id }, score: 0.97 },
-          ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.96 }] : []),
+          { entry: { id: expiredDirective.id }, score: 0.96 },
+          ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.95 }] : []),
         ];
       }),
     };
@@ -435,7 +502,7 @@ describe("runExtractDirectivesForCli", () => {
     expect(result.incidents.length).toBe(2);
     expect(result.stored).toBe(1);
     expect(result.rejected).toBe(0);
-    expect(db.directivesCount()).toBe(2);
+    expect(db.directivesCount()).toBe(3);
     const storedDirectives = db.search("run lint before build and deployment globally", 5, {
       includeSuperseded: true,
       tierFilter: "all",
@@ -448,6 +515,9 @@ describe("runExtractDirectivesForCli", () => {
     const staleDirectiveAfter = db.getById(staleDirective.id);
     expect(staleDirectiveAfter?.supersededAt).not.toBeNull();
     expect(staleDirectiveAfter?.text).toBe(staleDirective.text);
+    const expiredDirectiveAfter = db.getById(expiredDirective.id);
+    expect(expiredDirectiveAfter?.expiresAt).toBeLessThan(Math.floor(Date.now() / 1000));
+    expect(expiredDirectiveAfter?.text).toBe(expiredDirective.text);
     expect(result.dedupeDegraded).toBe(false);
     expect(result.directiveDedupeMode).toBe("mixed");
     expect(vectorDb.search).toHaveBeenCalled();

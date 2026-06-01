@@ -58,6 +58,11 @@ function getVectorSearchFailReason(vectorDb: unknown): string | null {
   }
 }
 
+function isLiveFact(candidate: { supersededAt?: number | null; expiresAt?: number | null }): boolean {
+  const nowSec = Math.floor(Date.now() / 1000);
+  return candidate.supersededAt == null && (candidate.expiresAt == null || candidate.expiresAt > nowSec);
+}
+
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
   opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
@@ -183,7 +188,6 @@ export async function runExtractDirectivesForCli(
               const sourceScopeTarget = null;
               const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
               if (!getVectorSearchFailReason(vectorDb)) {
-                const nowSec = Math.floor(Date.now() / 1000);
                 vectorCandidates = neighbors
                   .map((candidate) => ({
                     id: candidate.entry.id,
@@ -197,8 +201,7 @@ export async function runExtractDirectivesForCli(
                     const fact = factsDb.getById(candidate.id);
                     return (
                       fact != null &&
-                      fact.supersededAt == null &&
-                      (fact.expiresAt === null || fact.expiresAt > nowSec) &&
+                      isLiveFact(fact) &&
                       fact.source.startsWith("directive:") &&
                       (fact.scope ?? "global") === sourceScope &&
                       (fact.scope === "global" ? null : (fact.scopeTarget ?? null)) === sourceScopeTarget
@@ -261,7 +264,6 @@ export async function runExtractDirectivesForCli(
           if (storeResult.embeddingStale) {
             try {
               const mergedVector = await embeddings.embed(entry.text);
-              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
               // Avoid pre-delete so transient store failures do not leave merged facts without any vector.
               await vectorDb.store({
                 text: entry.text,
@@ -270,6 +272,7 @@ export async function runExtractDirectivesForCli(
                 category: entry.category as MemoryCategory,
                 id: entry.id,
               });
+              factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
             } catch (err) {
               logger.warn?.(`memory-hybrid: extract-directives merged vector refresh failed: ${err}`);
               capturePluginError(err as Error, {
@@ -287,7 +290,6 @@ export async function runExtractDirectivesForCli(
             continue;
           }
           try {
-            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
             if (!(await vectorDb.hasDuplicate(vector))) {
               await vectorDb.store({
                 text: incident.extractedRule,
@@ -297,6 +299,7 @@ export async function runExtractDirectivesForCli(
                 id: entry.id,
               });
             }
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
             stored++;
           } catch (err) {
             logger.warn?.(`memory-hybrid: extract-directives vector store failed: ${err}`);
