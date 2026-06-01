@@ -481,8 +481,7 @@ export async function runEntityEnrichmentForCli(
       const results: Array<FactProcessResult | null | undefined> = new Array(batch.length);
       let nextIdx = 0;
       const hasObservedProviderBudgetPressure = (): boolean =>
-        providerPressureBudget != null &&
-        observedProviderPressureInBatch() >= providerPressureBudget;
+        providerPressureBudget != null && observedProviderPressureInBatch() >= providerPressureBudget;
       const workerCount = Math.min(effectiveConcurrency, batch.length);
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
