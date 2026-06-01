@@ -326,6 +326,134 @@ describe("runExtractDirectivesForCli", () => {
     expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
   });
 
+  it("filters vector candidates to active global directive facts before store-time dedupe", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    const storeConfig = {
+      fuzzyDedupe: true,
+      defaultProfile: { onDuplicate: "store" as const },
+      sourceProfiles: {
+        "directive:*": {
+          vectorThreshold: 0.85,
+          lexicalJaccard: 1,
+          onDuplicate: "skip" as const,
+        },
+      },
+    };
+    db = new FactsDB(join(dir, "facts.db"), {
+      fuzzyDedupe: true,
+      storeConfig,
+    });
+    const conversationFact = db.store({
+      text: "Conversation memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const scopedDirective = db.store({
+      text: "Scoped directive memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:old-session.jsonl",
+      scope: "session",
+      scopeTarget: "session-1",
+    });
+    const staleDirective = db.store({
+      text: "Stale directive memory: lint before build and deployment.",
+      category: "rule",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "directive:stale-session.jsonl",
+    });
+    db.supersede(staleDirective.id, null);
+
+    const firstDirective = "From now on, always run lint before build and deployment globally.";
+    const secondDirective = "From now on, always run lint before build and deployment globally nightly.";
+    writeSession(dir, "2026-05-27-directives-filter-vector-candidates.jsonl", [
+      firstDirective,
+      "Noted.",
+      secondDirective,
+      "Understood.",
+    ]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const FIRST_DIRECTIVE_EMBEDDING = [1];
+    const SECOND_DIRECTIVE_EMBEDDING = [2];
+    const embeddings = {
+      embed: vi.fn(async (text: string) =>
+        text === secondDirective ? SECOND_DIRECTIVE_EMBEDDING : FIRST_DIRECTIVE_EMBEDDING,
+      ),
+    };
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      hasDuplicate: vi.fn().mockResolvedValue(false),
+      search: vi.fn(async (vector: number[]) => {
+        if (vector[0] !== SECOND_DIRECTIVE_EMBEDDING[0]) {
+          return [
+            { entry: { id: conversationFact.id }, score: 0.99 },
+            { entry: { id: scopedDirective.id }, score: 0.98 },
+            { entry: { id: staleDirective.id }, score: 0.97 },
+          ];
+        }
+        const existingDirective = db!
+          .search(firstDirective, 1, {
+            includeSuperseded: true,
+            tierFilter: "all",
+          })
+          .at(0)?.entry;
+        return [
+          { entry: { id: conversationFact.id }, score: 0.99 },
+          { entry: { id: scopedDirective.id }, score: 0.98 },
+          { entry: { id: staleDirective.id }, score: 0.97 },
+          ...(existingDirective ? [{ entry: { id: existingDirective.id }, score: 0.96 }] : []),
+        ];
+      }),
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: storeConfig,
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as any,
+      { days: 30 },
+    );
+
+    expect(result.incidents.length).toBe(2);
+    expect(result.stored).toBe(1);
+    expect(result.rejected).toBe(0);
+    expect(db.directivesCount()).toBe(2);
+    const storedDirectives = db.search("run lint before build and deployment globally", 5, {
+      includeSuperseded: true,
+      tierFilter: "all",
+    });
+    expect(storedDirectives.some((item) => item.entry.text === firstDirective)).toBe(true);
+    expect(storedDirectives.some((item) => item.entry.text === secondDirective)).toBe(false);
+    const scopedDirectiveAfter = db.getById(scopedDirective.id);
+    expect(scopedDirectiveAfter?.scope).toBe("session");
+    expect(scopedDirectiveAfter?.text).toBe(scopedDirective.text);
+    const staleDirectiveAfter = db.getById(staleDirective.id);
+    expect(staleDirectiveAfter?.supersededAt).not.toBeNull();
+    expect(staleDirectiveAfter?.text).toBe(staleDirective.text);
+    expect(result.dedupeDegraded).toBe(false);
+    expect(result.directiveDedupeMode).toBe("mixed");
+    expect(vectorDb.search).toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("extract-directives DEGRADED"));
+  });
+
   it("dedupes near-duplicate directives on the CLI extraction path using vector candidates", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     const storeConfig = {

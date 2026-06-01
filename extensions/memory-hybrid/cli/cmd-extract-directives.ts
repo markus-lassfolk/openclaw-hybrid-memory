@@ -179,6 +179,8 @@ export async function runExtractDirectivesForCli(
           try {
             vector = await embeddings.embed(incident.extractedRule);
             if (cfg.store?.fuzzyDedupe ?? true) {
+              const sourceScope = "global";
+              const sourceScopeTarget = null;
               const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
               if (!getVectorSearchFailReason(vectorDb)) {
                 vectorCandidates = neighbors
@@ -189,7 +191,17 @@ export async function runExtractDirectivesForCli(
                   .filter(
                     (candidate) =>
                       typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
-                  );
+                  )
+                  .filter((candidate) => {
+                    const fact = factsDb.getById(candidate.id);
+                    return (
+                      fact != null &&
+                      fact.supersededAt == null &&
+                      fact.source.startsWith("directive:") &&
+                      (fact.scope ?? "global") === sourceScope &&
+                      (fact.scope === "global" ? null : (fact.scopeTarget ?? null)) === sourceScopeTarget
+                    );
+                  });
               }
             }
           } catch (err) {
