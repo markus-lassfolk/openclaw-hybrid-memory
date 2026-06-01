@@ -105,6 +105,33 @@ describe("maintenance log analyzer", () => {
     expect(finding.logExcerpt).not.toContain("No errors detected");
   });
 
+  it("keeps actionable failure excerpts when benign counters appear on the same line", () => {
+    const finding = findingFromStep(
+      {
+        occurredAt: Date.now() / 1000,
+        job: "nightly-memory-sweep",
+        step: "self-correction-analysis",
+        exitCode: 1,
+        line: "self-correction-analysis exit=1",
+        logPath: "/tmp/nightly.log",
+        logContent: [
+          "summary: errorCount=0 warningCount=0",
+          "summary: errorCount=0 but Unhandled exception: parser timeout",
+          "No failures reported before final command failed with timeout",
+        ].join("\n"),
+      },
+      classifyMaintenanceFailure({
+        step: "self-correction-analysis",
+        exitCode: 1,
+        logContent: "Unhandled exception: parser timeout",
+      }),
+    );
+
+    expect(finding.logExcerpt).toContain("summary: errorCount=0 but Unhandled exception: parser timeout");
+    expect(finding.logExcerpt).toContain("No failures reported before final command failed with timeout");
+    expect(finding.logExcerpt).not.toContain("summary: errorCount=0 warningCount=0");
+  });
+
   it("classifies cron wrapper PATH failure (openclaw binary not in PATH) as env-misconfig", () => {
     // This reproduces the real-world cron failure:
     //   /usr/bin/timeout: failed to run command 'openclaw': No such file or directory
