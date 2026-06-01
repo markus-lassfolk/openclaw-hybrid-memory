@@ -2,25 +2,29 @@
  * reflection & dream-cycle commands — split from register-corrections-and-pipeline.ts.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
-import { capturePluginError } from "../../../services/error-reporter.js";
-import { cleanupImplicitFeedbackDuplicates, type ExtractImplicitFeedbackProgressSnapshot } from "../../cmd-feedback.js";
-import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
-import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { type Chainable, withExit } from "../../shared.js";
-import type { ManageBindings } from "./bindings.js";
-import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
 import type {
   ContradictionReviewDecision,
   ContradictionReviewItem,
 } from "../../../backends/facts-db/contradictions.js";
+import { PROJECT_STATE_LWW_KEYS } from "../../../backends/facts-db/contradictions.js";
+import { getCronModelConfig, getDefaultCronModel } from "../../../config.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import {
+  cleanupImplicitFeedbackDuplicates,
+  type ExtractImplicitFeedbackProgressSnapshot,
+  implicitFeedbackCollapseStatus,
+} from "../../cmd-feedback.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import { type Chainable, withExit } from "../../shared.js";
+import type { ManageBindings } from "./bindings.js";
 
 import {
   assessContinuousVerificationResult,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
-  runVerboseFollowUp,
   type RunVerboseFollowUpOptions,
+  runVerboseFollowUp,
 } from "./dream-cycle-followup.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
@@ -443,14 +447,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   `stage=scan; batches=${batches}; scanned=${scanned}; collapsed=${collapsed}; includeLegacy=${opts?.includeLegacy === true ? "yes" : "no"}`,
               },
             );
-            const collapseStatus =
-              scanned === 0
-                ? "no_candidates"
-                : collapsed === 0
-                  ? "no_changes"
-                  : collapsed < scanned
-                    ? "partial"
-                    : "collapsed";
+            const collapseStatus = implicitFeedbackCollapseStatus(scanned, collapsed);
             console.log(
               `Implicit-feedback collapse summary: scanned ${scanned}, collapsed ${collapsed}, status=${collapseStatus} ${dryRun ? "(dry-run)" : ""}`,
             );
