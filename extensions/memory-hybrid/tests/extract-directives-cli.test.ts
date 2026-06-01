@@ -314,6 +314,7 @@ describe("runExtractDirectivesForCli", () => {
 
     expect(result.stored).toBe(0);
     expect(embeddings.embed).toHaveBeenCalledWith(mergedText);
+    expect(vectorDb.delete).toHaveBeenCalledWith(existing.id);
     expect(vectorDb.store).toHaveBeenCalledWith(
       expect.objectContaining({
         id: existing.id,
