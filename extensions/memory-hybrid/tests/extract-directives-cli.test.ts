@@ -327,6 +327,56 @@ describe("runExtractDirectivesForCli", () => {
     expect(logger.warn).not.toHaveBeenCalledWith(expect.stringContaining("merged vector refresh failed"));
   });
 
+  it("stores a vector for each newly stored directive even when semantic duplicate checks would match", async () => {
+    dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
+    db = new FactsDB(join(dir, "facts.db"));
+    const directive = "From now on, always snapshot branch state before risky refactors.";
+    writeSession(dir, "2026-05-27-directives-vector-store.jsonl", [directive, "Understood."]);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(false),
+      getLastSearchFailReason: vi.fn().mockReturnValue(null),
+      hasDuplicate: vi.fn().mockResolvedValue(true),
+      search: vi.fn().mockResolvedValue([]),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      embed: vi.fn().mockResolvedValue([0.7]),
+      modelName: "test-embedding",
+    };
+
+    const result = await runExtractDirectivesForCli(
+      {
+        factsDb: db,
+        vectorDb,
+        embeddings,
+        cfg: {
+          procedures: { sessionsDir: dir },
+          store: { fuzzyDedupe: true },
+          extraction: { preFilter: { enabled: false } },
+          llm: { providers: { ollama: {} } },
+        },
+        logger,
+      } as unknown as HandlerContext,
+      { days: 30 },
+    );
+
+    const storedDirective = db
+      .search("snapshot branch state", 1, { includeSuperseded: true, tierFilter: "all" })
+      .at(0)?.entry;
+    expect(storedDirective).toBeDefined();
+    expect(result.stored).toBe(1);
+    expect(vectorDb.store).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: storedDirective?.id,
+        text: directive,
+        vector: [0.7],
+      }),
+    );
+    expect(vectorDb.hasDuplicate).not.toHaveBeenCalled();
+    expect(db.getById(storedDirective!.id)?.embeddingModel).toBe("test-embedding");
+  });
+
   it("does not mark a merged directive embedded when vector refresh fails", async () => {
     dir = mkdtempSync(join(tmpdir(), "extract-directives-cli-"));
     db = new FactsDB(join(dir, "facts.db"));

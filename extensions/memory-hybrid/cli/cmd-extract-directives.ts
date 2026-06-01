@@ -297,15 +297,13 @@ export async function runExtractDirectivesForCli(
             continue;
           }
           try {
-            if (!(await vectorDb.hasDuplicate(vector))) {
-              await vectorDb.store({
-                text: incident.extractedRule,
-                vector,
-                importance: 0.8,
-                category: category as MemoryCategory,
-                id: entry.id,
-              });
-            }
+            await vectorDb.store({
+              text: incident.extractedRule,
+              vector,
+              importance: 0.8,
+              category: category as MemoryCategory,
+              id: entry.id,
+            });
             factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
             stored++;
           } catch (err) {
