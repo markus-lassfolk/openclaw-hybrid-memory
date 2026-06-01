@@ -139,10 +139,11 @@ export async function runExtractDirectivesForCli(
             fuzzyDedupe: cfg.store?.fuzzyDedupe ?? true,
             storeConfig: cfg.store,
           });
+          let vector: number[] | undefined;
           let vectorCandidates: Array<{ id: string; score: number }> | undefined;
-          if (shouldCountVectorFallback) {
-            try {
-              const vector = await embeddings.embed(incident.extractedRule);
+          try {
+            vector = await embeddings.embed(incident.extractedRule);
+            if (shouldCountVectorFallback) {
               const neighbors = await vectorDb.search(vector, VECTOR_CANDIDATE_LIMIT, VECTOR_CANDIDATE_MIN_SCORE);
               vectorCandidates = neighbors
                 .map((candidate) => ({
@@ -153,12 +154,12 @@ export async function runExtractDirectivesForCli(
                   (candidate) =>
                     typeof candidate.id === "string" && candidate.id.length > 0 && Number.isFinite(candidate.score),
                 );
-            } catch (err) {
-              capturePluginError(err as Error, {
-                subsystem: "cli",
-                operation: "runExtractDirectivesForCli:vector-candidates",
-              });
             }
+          } catch (err) {
+            capturePluginError(err as Error, {
+              subsystem: "cli",
+              operation: "runExtractDirectivesForCli:vector-candidates",
+            });
           }
           const usedLexicalOnlyFallback = shouldReportVectorDedupeFallback({
             source,
@@ -204,6 +205,26 @@ export async function runExtractDirectivesForCli(
             logger: logger,
             context: "extract-directives",
           });
+          if (vector) {
+            try {
+              factsDb.setEmbeddingModel(storeResult.entry.id, embeddings.modelName);
+              if (!(await vectorDb.hasDuplicate(vector))) {
+                await vectorDb.store({
+                  text: incident.extractedRule,
+                  vector,
+                  importance: 0.8,
+                  category: category as MemoryCategory,
+                  id: storeResult.entry.id,
+                });
+              }
+            } catch (err) {
+              logger.warn?.(`memory-hybrid: extract-directives vector store failed: ${err}`);
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractDirectivesForCli:vector-store",
+              });
+            }
+          }
           stored++;
         } catch (err) {
           retryableRejected++;
