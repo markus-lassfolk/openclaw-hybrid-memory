@@ -209,7 +209,9 @@ export async function runExtractDirectivesForCli(
                       fact.source.startsWith("directive:") &&
                       (fact.scope ?? "global") === sourceScope &&
                       (fact.scope === "global" ? null : (fact.scopeTarget ?? null)) === sourceScopeTarget &&
-                      (embeddingModelName == null || fact.embeddingModel == null || fact.embeddingModel === embeddingModelName)
+                      (embeddingModelName == null ||
+                        fact.embeddingModel == null ||
+                        fact.embeddingModel === embeddingModelName)
                     );
                   });
               }
