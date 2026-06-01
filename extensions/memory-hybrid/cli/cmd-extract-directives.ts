@@ -217,7 +217,7 @@ export async function runExtractDirectivesForCli(
               }
             }
           } catch (err) {
-            capturePluginError(err as Error, {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
               operation: "runExtractDirectivesForCli:vector-candidates",
             });
@@ -282,7 +282,7 @@ export async function runExtractDirectivesForCli(
               factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
             } catch (err) {
               logger.warn?.(`memory-hybrid: extract-directives merged vector refresh failed: ${err}`);
-              capturePluginError(err as Error, {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 subsystem: "cli",
                 operation: "runExtractDirectivesForCli:merged-vector-refresh",
               });
@@ -310,7 +310,7 @@ export async function runExtractDirectivesForCli(
             stored++;
           } catch (err) {
             logger.warn?.(`memory-hybrid: extract-directives vector store failed: ${err}`);
-            capturePluginError(err as Error, {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
               operation: "runExtractDirectivesForCli:vector-store",
             });
