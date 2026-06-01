@@ -108,8 +108,8 @@ export async function runExtractDirectivesForCli(
     let vectorDedupeStores = 0;
     let lexicalOnlyDedupeStores = 0;
     let retryableRejected = 0;
-    const parserOrModelRejected = 0;
-    const boundedPartialRetryRejected = 0;
+    let parserOrModelRejected = 0;
+    let boundedPartialRetryRejected = 0;
     if (!opts.dryRun) {
       for (const incident of result.incidents) {
         try {
@@ -186,6 +186,9 @@ export async function runExtractDirectivesForCli(
               suppressVectorFallbackWarning: true,
             },
           );
+          if (storeResult.skipped || !storeResult.newlyStored) {
+            continue;
+          }
           if (usedLexicalOnlyFallback) {
             storeDedupeVectorFallbackSuppressed++;
             lexicalOnlyDedupeStores++;
@@ -193,9 +196,6 @@ export async function runExtractDirectivesForCli(
             vectorDedupeStores++;
           } else {
             lexicalOnlyDedupeStores++;
-          }
-          if (storeResult.skipped || !storeResult.newlyStored) {
-            continue;
           }
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
