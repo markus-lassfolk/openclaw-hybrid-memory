@@ -1446,7 +1446,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             effectiveBatchSize: adaptiveCatchUp ? batchSize : undefined,
             effectiveDelayMs: adaptiveCatchUp ? batchDelayMs : undefined,
           };
-          if (adaptiveCatchUp) {
+          if (adaptiveCatchUp && !jsonMode) {
             console.log(
               `Entity enrichment adaptive catch-up enabled: baseline batch=${batchSize}, delayMs=${batchDelayMs}.`,
             );
@@ -1484,6 +1484,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               {
                 progressSupplier: () =>
                   `stage=entity-enrichment; mode=${all ? "all" : "bounded"}; processed=${enrichProgress.processed}/${enrichProgress.total}; enriched=${enrichProgress.factsEnriched}; accepted=${enrichProgress.accepted}; rejected=${enrichProgress.rejected}; llmFailures=${enrichProgress.llmFailures ?? 0}; remaining=${enrichProgress.remainingTotal}; eta_runs=${enrichProgress.estimatedRunsRemaining}; batch=${enrichProgress.effectiveBatchSize ?? "static"}; delay_ms=${enrichProgress.effectiveDelayMs ?? "static"}; concurrency=${enrichProgress.effectiveConcurrency ?? "static"}; stop=${enrichProgress.stopReason ?? "running"}; dryRun=${dryRun ? "yes" : "no"}`,
+                jsonMode: jsonMode === true,
               },
             );
           } catch (err) {
@@ -1499,6 +1500,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const estimatedRunsRemaining =
             res.estimatedRunsRemaining ?? (mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)));
           const limitLabel = mode === "all" ? "all" : String(res.effectiveLimit ?? limit);
+          const hasPartialFailure = res.llmFailures && res.llmFailures > 0;
+          const exitCode = hasPartialFailure ? 2 : 0;
+          const exitReason = hasPartialFailure ? "partial_llm_failures" : "success";
           const jsonReport = {
             dryRun,
             mode,
@@ -1514,10 +1518,12 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             adaptiveSummary: res.adaptiveSummary,
             telemetry: res.telemetry,
             rejectReasons: res.rejectReasons,
+            exitCode,
+            exitReason,
           };
           if (jsonMode) {
             console.log(JSON.stringify(jsonReport, null, 2));
-            if (res.llmFailures && res.llmFailures > 0) {
+            if (hasPartialFailure) {
               process.exitCode = 2;
             }
             return;
