@@ -193,6 +193,13 @@ export function is429OrWrapped(err: Error): boolean {
   return false;
 }
 
+/** Returns true when the error is a ByteString serialization failure — direct or wrapped in LLMRetryError. */
+export function isByteStringOrWrapped(err: Error): boolean {
+  if (isByteStringSerializationError(err)) return true;
+  if (err instanceof LLMRetryError && isByteStringSerializationError(err.cause)) return true;
+  return false;
+}
+
 /**
  * Unified 5xx / internal server error detection helper.
  * Checks HTTP status code property first, then uses conservative message patterns.
@@ -663,7 +670,7 @@ export async function withLLMRetry<T>(
       }
       // Don't retry ByteString serialization errors — a non-ASCII character (e.g. U+2026 ELLIPSIS)
       // in an HTTP header value (API key, model name, custom header) cannot be fixed by retrying (#1776).
-      if (isByteStringSerializationError(lastError)) {
+      if (isByteStringOrWrapped(lastError)) {
         throw enrichLlmErrorMessage(lastError, opts?.llmContext);
       }
       const isReasoningSequenceError = isResponsesReasoningSequenceError(lastError);
@@ -958,7 +965,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
   const finalIsOOM = isOllamaOOM(finalError); // #387: OOM is expected when model too large for RAM
   const finalIs429 = is429OrWrapped(finalError); // #397
   const finalIsContextLength = isContextLengthError(finalError); // #488: input too long for model context window
-  const finalIsByteString = isByteStringSerializationError(finalError); // #1776: non-ASCII in HTTP header = config issue
+  const finalIsByteString = isByteStringOrWrapped(finalError); // #1776: non-ASCII in HTTP header = config issue
   const finalIsReasoningSequence = isResponsesReasoningSequenceError(finalError); // #1034
   /** Unwraps LLMRetryError so "Request was aborted" in the cause is detected (#935, #936). */
   const finalIsTransientLlm = isAbortOrTransientLlmError(finalError);
