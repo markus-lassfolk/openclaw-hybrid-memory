@@ -36,6 +36,9 @@ describe("cron-job-bash-harness", () => {
       'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps',
     );
     expect(bash).toContain("trap 'ec=$?; trap - EXIT; hm_validate \"$ec\"; exit $?' EXIT");
+    expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 143; exit $?' TERM INT");
+    expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 129; exit $?' HUP");
+    expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 131; exit $?' QUIT");
   });
 
   it("buildHybridMemCronTaskMessage wraps bash and execution rules", () => {
@@ -115,6 +118,7 @@ exit 2
     expect(result.status).toBe(1);
     expect(readFileSync(marker, "utf-8")).toContain("called");
     expect(result.stdout + result.stderr).toContain("validate-cron-exit");
+    expect(result.stdout + result.stderr).toContain("PARTIAL: nightly-memory-sweep");
   });
 
   it("runs validate-cron-exit automatically and keeps successful cron steps at exit zero", () => {
@@ -146,6 +150,7 @@ exit 2
 
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).toContain('{"maintenanceStatus":"success"}');
+    expect(result.stdout + result.stderr).toContain("SUCCESS: nightly-memory-sweep");
   });
 
   it("still writes HM_EXIT + runs validate-cron-exit when a required hm_step fails under errexit", () => {
@@ -206,6 +211,7 @@ exit 2
     expect(result.stdout + result.stderr).not.toContain("distill --verbose");
     expect(() => readFileSync(shouldNotRun, "utf-8")).toThrow();
     expect(result.stdout + result.stderr).toContain("validate-cron-exit");
+    expect(result.stdout + result.stderr).toContain("FAILED: nightly-memory-sweep");
   });
 
   it("records self-correction cooldown skips as status=skipped in HM_EXIT", () => {
