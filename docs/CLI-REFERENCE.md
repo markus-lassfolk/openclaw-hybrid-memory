@@ -50,7 +50,7 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `lookup <entity> [--key <key>] [--tag <tag>] [--as-of <date>] [--include-superseded]` | Exact lookup in SQLite. `--as-of` = point-in-time (ISO or epoch); `--include-superseded` = include historical facts. |
 | `search <query> [--tag <tag>] [--as-of <date>] [--include-superseded] [--user-id <id>] ...` | Semantic search over LanceDB + FTS5. `--as-of`, `--include-superseded` for bi-temporal queries. Scope filters for user/agent/session. |
 | `forget <id> [--yes]` | Remove a memory by ID (SQLite + LanceDB). ID can be full UUID or a short hex prefix. Without `--yes`, prints a preview and exits; use `--yes` to confirm. |
-| `extract-daily [--dry-run] --days N` | Extract facts from daily logs (`memory/YYYY-MM-DD.md`). |
+| `extract-daily [--dry-run] [--force\|--full] --days N` | Extract facts from daily logs (`memory/YYYY-MM-DD.md`). Override flags accepted for `run-all`/cron parity (no scan cursor). |
 | `prune [--hard] [--soft] [--dry-run]` | Remove expired facts (decay/TTL). `--hard` only expired; `--soft` only confidence decay. |
 | `checkpoint` | Create a checkpoint (pre-flight state). |
 | `backfill [--dry-run] [--workspace path] [--limit N]` | Ingest facts from MEMORY.md / memory/**/*.md. Progress bar in TTY. |

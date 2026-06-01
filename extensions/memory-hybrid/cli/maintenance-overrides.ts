@@ -7,7 +7,10 @@
  * {@link resolveScanMaintenanceOverrides}.
  */
 
-import type { Chainable } from "./shared.js";
+/** Minimal commander chain surface needed to append shared maintenance flags. */
+export type CommandOptionChain = {
+  option(flags: string, desc?: string, defaultValue?: unknown): CommandOptionChain;
+};
 
 /** Parsed override flags from Commander (both flags are accepted during migration). */
 export type ScanMaintenanceOverrideInput = {
@@ -17,7 +20,7 @@ export type ScanMaintenanceOverrideInput = {
 
 /** Normalized overrides for scan-style maintenance commands. */
 export type ScanMaintenanceOverrides = {
-  /** Bypass 23h acquireScanSlot cooldown and in-process concurrency is still enforced separately. */
+  /** Skip acquireScanSlot (23h cooldown and in-process concurrency lock for this scan type). */
   bypassScanCooldown: boolean;
   /** Bypass incremental scan_cursors watermark (full re-scan within the command window). */
   bypassWatermark: boolean;
@@ -38,7 +41,7 @@ export function resolveScanMaintenanceOverrides(
 }
 
 /** Register consistent --force / --full options on scan-style maintenance commands. */
-export function registerScanMaintenanceOverrideOptions(cmd: Chainable): Chainable {
+export function registerScanMaintenanceOverrideOptions(cmd: CommandOptionChain): CommandOptionChain {
   return cmd
     .option(
       "--force",

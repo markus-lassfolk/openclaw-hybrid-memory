@@ -4,6 +4,7 @@ import {
   registerScanMaintenanceOverrideOptions,
   scanMaintenanceOverridePayload,
 } from "../cli/maintenance-overrides.js";
+import { acquireScanSlot, SCAN_MIN_INTERVAL_MS } from "../cli/shared.js";
 
 describe("maintenance-overrides", () => {
   it("resolveScanMaintenanceOverrides: neither flag → no bypass", () => {
@@ -32,9 +33,9 @@ describe("maintenance-overrides", () => {
     expect(scanMaintenanceOverridePayload({})).toEqual({ force: false, full: false });
   });
 
-  it("registerScanMaintenanceOverrideOptions chains on a mock commander", () => {
+  it("registerScanMaintenanceOverrideOptions chains on a minimal option mock", () => {
     const options: Array<{ flags: string; desc?: string }> = [];
-    const cmd = {
+    const cmd: { option(flags: string, desc?: string): typeof cmd } = {
       option(flags: string, desc?: string) {
         options.push({ flags, desc });
         return cmd;
@@ -43,5 +44,14 @@ describe("maintenance-overrides", () => {
     registerScanMaintenanceOverrideOptions(cmd);
     expect(options.map((o) => o.flags)).toEqual(["--force", "--full"]);
     expect(options[0]?.desc).toContain("23h");
+  });
+
+  it("acquireScanSlot cooldown skip mentions --force and --full", () => {
+    const logs: string[] = [];
+    const recent = Date.now() - SCAN_MIN_INTERVAL_MS + 60_000;
+    const skip = acquireScanSlot("test-scan", recent, { info: (s) => logs.push(s) });
+    expect(skip).toContain("test-scan");
+    expect(skip).toMatch(/--force.*--full|--full.*--force/);
+    expect(logs.join("\n")).toMatch(/--force/);
   });
 });
