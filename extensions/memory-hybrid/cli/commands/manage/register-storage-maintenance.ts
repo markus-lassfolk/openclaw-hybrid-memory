@@ -34,11 +34,13 @@ import type { ManageBindings } from "./bindings.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 import {
   countImplicitFeedbackTrajectorySignals,
+  defaultReembedVectorlessMetricsPath,
   defaultReindexCheckpointPath,
   parseBoundedFloatOption,
   parseBoundedIntOption,
   readReindexCheckpoint,
   recordStorageGrowthSample,
+  writeReembedVectorlessMetrics,
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
 
@@ -1017,7 +1019,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             };
           }
           const globalVectorlessAfter = opts?.apply ? factsDb.countVectorlessActiveFacts() : globalVectorlessBefore;
-          report.vectorSloRepair = buildVectorlessSloRepairRecommendation({
+          const vectorSloRepairResult = buildVectorlessSloRepairRecommendation({
             activeFacts: factsDb.getCount(),
             vectorlessBefore: globalVectorlessBefore,
             vectorlessAfter: globalVectorlessAfter,
@@ -1028,6 +1030,43 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             scopedVectorlessBefore: opts?.source ? before : undefined,
             scopedVectorlessAfter: opts?.source ? after : undefined,
           });
+          report.vectorSloRepair = vectorSloRepairResult;
+          // Persist last-run metrics for audit-health progress reporting (#1808).
+          if (opts?.apply && ctx.resolvedSqlitePath) {
+            try {
+              const slo = vectorSloRepairResult;
+              writeReembedVectorlessMetrics(defaultReembedVectorlessMetricsPath(ctx.resolvedSqlitePath), {
+                ts: new Date().toISOString(),
+                embedded,
+                skipped,
+                embedFailures,
+                storeFailures,
+                before,
+                after,
+                activeFacts: factsDb.getCount(),
+                durationMs,
+                aborted,
+                failedReason: providerCircuitBreak
+                  ? providerCircuitBreakCause === "provider_5xx"
+                    ? "failed_embedding_provider_5xx"
+                    : "failed_embedding_provider"
+                  : undefined,
+                vectorSloRepair: {
+                  vectorlessBefore: slo.vectorlessBefore,
+                  vectorlessAfter: slo.vectorlessAfter,
+                  vectorlessRatioAfter: slo.vectorlessRatioAfter,
+                  targetVectorlessRatio: slo.targetVectorlessRatio,
+                  vectorlessToClearForSlo: slo.vectorlessToClearForSlo,
+                  estimatedRunsToReachSlo: slo.estimatedRunsToReachSlo,
+                  recommendedLimitNextRun: slo.recommendedLimitNextRun,
+                  recommendedBatchSizeNextRun: slo.recommendedBatchSizeNextRun,
+                  sloMetAfterRun: slo.sloMetAfterRun,
+                },
+              });
+            } catch {
+              // Best-effort: persist failure must not affect the command result.
+            }
+          }
           if (providerCircuitBreak) {
             report.failedReason =
               providerCircuitBreakCause === "provider_5xx"
@@ -1049,7 +1088,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               `Adaptive pacing: batchSize ${baselineBatchSize}->${effectiveBatchSize}, delayMs ${baselineDelayMs}->${effectiveDelayMs}, adjustments ${adaptiveAdjustments.length}`,
             );
           }
-          const slo = report.vectorSloRepair as ReturnType<typeof buildVectorlessSloRepairRecommendation>;
+          const slo = vectorSloRepairResult;
           console.log(
             `Vectorless SLO repair: ratio ${(slo.vectorlessRatioAfter * 100).toFixed(2)}% (target ${(slo.targetVectorlessRatio * 100).toFixed(0)}%), clear ${slo.vectorlessToClearForSlo} more, ~${slo.estimatedRunsToReachSlo} run(s) at limit ${slo.recommendedLimitNextRun} batch ${slo.recommendedBatchSizeNextRun}`,
           );

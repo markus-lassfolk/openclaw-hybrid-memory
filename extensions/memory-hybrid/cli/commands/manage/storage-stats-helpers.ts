@@ -69,6 +69,67 @@ export function writeReindexCheckpoint(path: string, state: ReindexCheckpoint): 
   writeFileSync(path, JSON.stringify(state, null, 2), "utf-8");
 }
 
+/**
+ * Persisted metrics from the last `reembed-vectorless --apply` run.
+ * Written alongside the SQLite database so audit-health can surface
+ * actionable progress context when the vectorless SLO is breached.
+ */
+export type ReembedVectorlessLastRunMetrics = {
+  /** ISO timestamp of the run. */
+  ts: string;
+  embedded: number;
+  skipped: number;
+  embedFailures: number;
+  storeFailures: number;
+  before: number;
+  after: number;
+  activeFacts: number;
+  durationMs: number;
+  aborted: boolean;
+  failedReason?: string;
+  vectorSloRepair: {
+    vectorlessBefore: number;
+    vectorlessAfter: number;
+    vectorlessRatioAfter: number;
+    targetVectorlessRatio: number;
+    vectorlessToClearForSlo: number;
+    estimatedRunsToReachSlo: number;
+    recommendedLimitNextRun: number;
+    recommendedBatchSizeNextRun: number;
+    sloMetAfterRun: boolean;
+  };
+};
+
+export function defaultReembedVectorlessMetricsPath(resolvedSqlitePath: string): string {
+  return join(dirname(resolvedSqlitePath), ".reembed-vectorless-last-run.json");
+}
+
+export function readReembedVectorlessMetrics(path: string): ReembedVectorlessLastRunMetrics | null {
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf-8")) as Partial<ReembedVectorlessLastRunMetrics>;
+    const slo = parsed.vectorSloRepair;
+    if (
+      typeof parsed.ts === "string" &&
+      typeof parsed.embedded === "number" &&
+      typeof parsed.after === "number" &&
+      slo != null &&
+      typeof slo.estimatedRunsToReachSlo === "number" &&
+      typeof slo.sloMetAfterRun === "boolean"
+    ) {
+      return parsed as ReembedVectorlessLastRunMetrics;
+    }
+  } catch {
+    // ignore malformed file; treat as absent
+  }
+  return null;
+}
+
+export function writeReembedVectorlessMetrics(path: string, metrics: ReembedVectorlessLastRunMetrics): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(metrics, null, 2), "utf-8");
+}
+
 export function parseBoundedIntOption(raw: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number.parseInt(String(raw ?? fallback), 10);
   const value = Number.isFinite(parsed) ? parsed : fallback;
@@ -376,6 +437,8 @@ export type AuditHealthReport = {
       minIntegrityScore: number;
     };
     breaches: Array<{ key: "vectorless_ratio" | "integrity_score"; actual: number; target: number }>;
+    /** Metrics from the last completed `reembed-vectorless --apply` run, if available. */
+    lastReembedProgress: ReembedVectorlessLastRunMetrics | null;
   };
   categories: {
     configured: string[];
@@ -424,6 +487,7 @@ export function buildAuditHealthReport(
     startedAtMs?: number;
     deadlineMs?: number;
     degradedState?: { active: boolean; reason: string | null };
+    lastReembedProgress?: ReembedVectorlessLastRunMetrics | null;
   },
 ): AuditHealthReport {
   const startedAtMs = options?.startedAtMs ?? Date.now();
@@ -921,6 +985,7 @@ export function buildAuditHealthReport(
     vectorLifecycleSlo: {
       targets: vectorLifecycleSloTargets,
       breaches: vectorLifecycleSloBreaches,
+      lastReembedProgress: options?.lastReembedProgress ?? null,
     },
     categories: { configured, present, unknown },
     sources,
@@ -954,6 +1019,13 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
     console.log(
       `Vector lifecycle SLO breaches: ${report.vectorLifecycleSlo.breaches.map(formatVectorLifecycleSloBreach).join(", ")}`,
     );
+    const lrp = report.vectorLifecycleSlo.lastReembedProgress;
+    if (lrp) {
+      const slo = lrp.vectorSloRepair;
+      console.log(
+        `Last reembed run (${lrp.ts}): embedded=${lrp.embedded}, after=${lrp.after}, ratio=${(slo.vectorlessRatioAfter * 100).toFixed(2)}%, toClear=${slo.vectorlessToClearForSlo}, ~${slo.estimatedRunsToReachSlo} run(s) to SLO at limit ${slo.recommendedLimitNextRun}`,
+      );
+    }
   }
   if (report.vectorlessBySource.length > 0) {
     console.log(`Vectorless by source: ${report.vectorlessBySource.map((r) => `${r.source}=${r.count}`).join(", ")}`);

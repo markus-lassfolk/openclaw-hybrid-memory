@@ -515,4 +515,69 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(report.remediation.some((r) => r.includes("low_recall"))).toBe(true);
     db.close();
   });
+
+  it("vectorLifecycleSlo.lastReembedProgress is null when no option is passed (#1808)", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "A fact without embeddings",
+      category: "technical",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    expect(report.vectorLifecycleSlo.lastReembedProgress).toBeNull();
+    db.close();
+  });
+
+  it("vectorLifecycleSlo.lastReembedProgress is surfaced when passed as option (#1808)", () => {
+    const db = new FactsDB(":memory:");
+    db.store({
+      text: "A fact without embeddings",
+      category: "technical",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    const lastReembedProgress = {
+      ts: "2026-06-01T05:03:17.000Z",
+      embedded: 500,
+      skipped: 0,
+      embedFailures: 0,
+      storeFailures: 0,
+      before: 4545,
+      after: 4045,
+      activeFacts: 40700,
+      durationMs: 12000,
+      aborted: false,
+      vectorSloRepair: {
+        vectorlessBefore: 4545,
+        vectorlessAfter: 4045,
+        vectorlessRatioAfter: 0.0993,
+        targetVectorlessRatio: 0.02,
+        vectorlessToClearForSlo: 3230,
+        estimatedRunsToReachSlo: 129,
+        recommendedLimitNextRun: 500,
+        recommendedBatchSizeNextRun: 40,
+        sloMetAfterRun: false,
+      },
+    };
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500, {
+      lastReembedProgress,
+    });
+
+    expect(report.vectorLifecycleSlo.lastReembedProgress).not.toBeNull();
+    expect(report.vectorLifecycleSlo.lastReembedProgress?.embedded).toBe(500);
+    expect(report.vectorLifecycleSlo.lastReembedProgress?.vectorSloRepair.estimatedRunsToReachSlo).toBe(129);
+    expect(report.vectorLifecycleSlo.lastReembedProgress?.vectorSloRepair.sloMetAfterRun).toBe(false);
+    db.close();
+  });
 });
