@@ -12,6 +12,7 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { getDirectiveSignalRegex } from "../utils/language-keywords.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
+import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 
 import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
@@ -66,7 +67,7 @@ function isLiveFact(candidate: { supersededAt?: number | null; expiresAt?: numbe
 
 export async function runExtractDirectivesForCli(
   ctx: HandlerContext,
-  opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean },
+  opts: { days?: number; verbose?: boolean; dryRun?: boolean; full?: boolean; force?: boolean },
 ): Promise<
   DirectiveExtractResult & {
     stored?: number;
@@ -83,6 +84,7 @@ export async function runExtractDirectivesForCli(
     cursorBlockedReason?: "retryable_rejections" | "parser_or_model_failure" | "bounded_partial_retry";
   }
 > {
+  const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
   const { factsDb, vectorDb, embeddings, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-directives";
   logger.info?.("memory-hybrid: extract-directives — regex extraction (no LLM model selection)");
@@ -90,8 +92,8 @@ export async function runExtractDirectivesForCli(
   const days = opts.days ?? 3;
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
-  // Startup guard + concurrency lock (skip when not full mode)
-  if (!opts.full && !opts.dryRun) {
+  // Startup guard + concurrency lock (skip when overrides request a forced rerun)
+  if (!bypassScanCooldown && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip)
       return {
@@ -112,7 +114,7 @@ export async function runExtractDirectivesForCli(
 
   try {
     let filePaths: string[];
-    if (!opts.full && cursor) {
+    if (!bypassWatermark && cursor) {
       filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastSessionTs);
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
     } else {
@@ -389,6 +391,6 @@ export async function runExtractDirectivesForCli(
     }
     return returnVal;
   } finally {
-    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
+    if (!bypassScanCooldown && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }
