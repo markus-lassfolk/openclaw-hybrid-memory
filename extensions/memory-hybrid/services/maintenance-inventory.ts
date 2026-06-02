@@ -2,6 +2,7 @@ import { execSync } from "../utils/process-runner.js";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 
+import { relativeTime } from "../cli/shared.js";
 import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { readExitLedger, validateMaintenanceExecution } from "./cron-exit-validator.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "./hybrid-mem-cron-default-job-steps.js";
@@ -250,16 +251,6 @@ for (const entry of MAINTENANCE_JOB_CATALOG) {
   JOB_CATALOG_INDEX.set(entry.name, entry);
   if (entry.pluginJobId) JOB_CATALOG_INDEX.set(entry.pluginJobId, entry);
   for (const alias of entry.aliases) JOB_CATALOG_INDEX.set(alias, entry);
-}
-
-function relativeTime(ms: number): string {
-  const deltaMs = Date.now() - ms;
-  const abs = Math.abs(deltaMs);
-  const suffix = deltaMs >= 0 ? " ago" : " ahead";
-  if (abs < 60000) return `${Math.floor(abs / 1000)}s${suffix}`;
-  if (abs < 3600000) return `${Math.floor(abs / 60000)}m${suffix}`;
-  if (abs < 172800000) return `${Math.floor(abs / 3600000)}h${suffix}`;
-  return `${Math.floor(abs / 86400000)}d${suffix}`;
 }
 
 function readExecErrorStderr(error: unknown): string {
