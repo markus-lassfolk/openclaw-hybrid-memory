@@ -52,7 +52,10 @@ atomic_write_text() {
 
 write_failure() {
 	local status="$1" error_text="$2" exit_code="$3" timed_out="$4" stderr_file="${5:-}"
-	json_escape_env_writer "$status" "$error_text" "$exit_code" "$timed_out" "$stderr_file" | atomic_write_text "$LIVE_DEST"
+	local tmp="${LIVE_DEST}.tmp-$$-$RANDOM"
+	json_escape_env_writer "$status" "$error_text" "$exit_code" "$timed_out" "$stderr_file" >"$tmp"
+	[[ -s "$tmp" ]] || { rm -f "$tmp"; return 1; }
+	mv -f "$tmp" "$LIVE_DEST"
 }
 
 validate_non_empty_json() {
