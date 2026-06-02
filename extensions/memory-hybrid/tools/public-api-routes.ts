@@ -5,6 +5,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
+import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
 import {
   buildGatewayMemoryDiagnostics,
   buildProcessMemorySnapshot,
@@ -383,6 +384,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     }
 
     const rows = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes, scopeFilter);
+    const visibleActiveRows = rows.active.filter((row) => !isNonActionableSubagentPlaceholderTask(row));
     const projection = await getActiveTaskProjectionStatus(ctx.factsDb, activeTaskFilePath, {
       scopeFilter,
       latestProjectFactSec: rows.latestProjectFactSec,
@@ -400,9 +402,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       source: "category:project",
       staleThresholdMinutes: staleMinutes,
       ledger: activeTaskCfg.ledger,
-      active: rows.active,
-      activeCount: rows.active.length,
-      staleCount: rows.active.filter((row) => row.stale).length,
+      active: visibleActiveRows,
+      activeCount: visibleActiveRows.length,
+      staleCount: visibleActiveRows.filter((row) => row.stale).length,
       ...(includeCompleted ? { completed: rows.completed, completedCount: rows.completed.length } : {}),
       projection,
       render: {

@@ -7,7 +7,6 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { NarrativesDB } from "../backends/narratives-db.js";
-import { invokeNodeHttpRoute } from "./helpers/invoke-node-http-route.js";
 import type { RegisterHttpRouteGatewayParams } from "../tools/http-route-types.js";
 import {
   type HttpRouteOptions,
@@ -16,6 +15,7 @@ import {
   registerPublicApiRoutes,
 } from "../tools/public-api-routes.js";
 import { setEnv } from "../utils/env-manager.js";
+import { invokeNodeHttpRoute } from "./helpers/invoke-node-http-route.js";
 
 interface RouteRegistration {
   path: string;
@@ -453,6 +453,47 @@ describe("registerPublicApiRoutes", () => {
     const scopedBody = JSON.parse(scopedRes.body);
     expect(scopedBody.active.map((row: { label: string }) => row.label)).toContain("task-global");
     expect(scopedBody.active.map((row: { label: string }) => row.label)).toContain("task-agent-a");
+  });
+
+  it("active-tasks endpoint suppresses non-actionable subagent placeholder rows by default", async () => {
+    for (const [entity, key, value] of [
+      ["agent:main:subagent:worker-1", "title", "Subagent task"],
+      ["agent:main:subagent:worker-1", "status", "in_progress"],
+      ["agent:main:subagent:worker-1", "related_session", "agent:main:subagent:worker-1"],
+      ["agent:main:subagent:worker-1", "next", "Task [agent:main:subagent:worker-1] next:"],
+      ["task-live", "title", "Ship projection cleanup"],
+      ["task-live", "status", "in_progress"],
+      ["task-live", "next", "Update the facts projection tests"],
+    ] as const) {
+      factsDb.store({
+        text: `Task [${entity}] ${key}: ${value}`,
+        category: "project",
+        importance: 0.9,
+        entity,
+        key,
+        value,
+        source: "active-task",
+      });
+    }
+
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(true, { ledger: "facts", staleThreshold: "4h", filePath: "ACTIVE-TASKS.md" }),
+        factsDb,
+        narrativesDb,
+      },
+      api,
+    );
+
+    const activeTasksRoute = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`)!;
+    const res = await invokeNodeHttpRoute(
+      activeTasksRoute.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`),
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.active.map((row: { label: string }) => row.label)).toEqual(["task-live"]);
   });
 
   it("active-tasks endpoint returns 404 when activeTask is disabled", async () => {

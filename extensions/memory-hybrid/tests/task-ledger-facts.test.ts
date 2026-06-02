@@ -24,6 +24,7 @@ import {
   loadTaskLedgerFromFacts,
   loadTaskLedgerFromFactsWithMetrics,
   planActiveTaskHygiene,
+  reconcileActiveTaskInProgressSessionsFacts,
   reconcileActiveTaskLiveState,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
@@ -189,6 +190,44 @@ describe("task-ledger-facts", () => {
     expect(active[0].updated).not.toBe(active[1].updated);
     expect(active[0].started).toBe(new Date(1_700_000_000 * 1000).toISOString());
     expect(active[0].updated).toBe(new Date(1_700_000_100 * 1000).toISOString());
+  });
+
+  it("buildTaskEntriesFromGroupedFacts strips placeholder next text for subagent rows", () => {
+    const m = new Map<string, Map<string, MemoryEntry>>();
+    const row = new Map<string, MemoryEntry>();
+    row.set(
+      "status",
+      fact({ id: "s1", entity: "agent:main:subagent:dead-1", key: "status", value: "in_progress", createdAt: 1 }),
+    );
+    row.set(
+      "title",
+      fact({ id: "t1", entity: "agent:main:subagent:dead-1", key: "title", value: "Subagent task", createdAt: 1 }),
+    );
+    row.set(
+      "related_session",
+      fact({
+        id: "r1",
+        entity: "agent:main:subagent:dead-1",
+        key: "related_session",
+        value: "agent:main:subagent:dead-1",
+        createdAt: 1,
+      }),
+    );
+    row.set(
+      "next",
+      fact({
+        id: "n1",
+        entity: "agent:main:subagent:dead-1",
+        key: "next",
+        value: "Task [agent:main:subagent:dead-1] next:",
+        createdAt: 1,
+      }),
+    );
+    m.set("agent:main:subagent:dead-1", row);
+
+    const { active } = buildTaskEntriesFromGroupedFacts(m);
+    expect(active).toHaveLength(1);
+    expect(active[0].next).toBeUndefined();
   });
 
   it("readable projection drops generic Project task titles", () => {
@@ -410,6 +449,75 @@ describe("task-ledger-facts", () => {
 
       const audits = db.listFactsByCategory("episode", 1000).filter((row) => row.source === "active-task-hygiene");
       expect(audits.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reconcileActiveTaskInProgressSessionsFacts records an audit fact for changed orphan subagent rows", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-session-reconcile-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const staleIso = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "agent:main:subagent:dead-1",
+        key: "title",
+        value: "Subagent task",
+        text: "Task [agent:main:subagent:dead-1] title: Subagent task",
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "agent:main:subagent:dead-1",
+        key: "status",
+        value: "in_progress",
+        text: "Task [agent:main:subagent:dead-1] status: in_progress",
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "agent:main:subagent:dead-1",
+        key: "task_updated",
+        value: staleIso,
+        text: `Task [agent:main:subagent:dead-1] task_updated: ${staleIso}`,
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "agent:main:subagent:dead-1",
+        key: "related_session",
+        value: "agent:main:subagent:dead-1",
+        text: "Task [agent:main:subagent:dead-1] related_session: agent:main:subagent:dead-1",
+      });
+
+      const result = await reconcileActiveTaskInProgressSessionsFacts(db, vectorDb, embeddings, 60, {
+        openclawHome: dir,
+      });
+
+      expect(result.reconciledLabels).toEqual(["agent:main:subagent:dead-1"]);
+      expect(result.wrote).toBe(true);
+
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      expect(active.some((task) => task.label === "agent:main:subagent:dead-1")).toBe(false);
+      expect(completed.some((task) => task.label === "agent:main:subagent:dead-1")).toBe(true);
+
+      const audits = db
+        .listFactsByCategory("episode", 1000)
+        .filter((row) => row.source === "active-task-session-reconcile");
+      expect(audits).toHaveLength(1);
+      expect(audits[0].value).toContain("agent:main:subagent:dead-1");
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });

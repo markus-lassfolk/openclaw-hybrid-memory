@@ -104,6 +104,10 @@ export interface ActiveTaskEntry {
   handoff?: ActiveTaskHandoffRef;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Structured handoff reference persisted in ACTIVE-TASKS.md */
 export interface ActiveTaskHandoffRef {
   /** OCTAVE schema identifier */
@@ -605,9 +609,10 @@ export function buildStaleWarningInjection(
   staleMinutes: number,
   maxChars?: number,
 ): { text: string; renderedCount: number } {
-  const staleTasks = tasks.filter((t) => t.stale);
+  const visibleTasks = tasks.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
+  const staleTasks = visibleTasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
-  const inProgressWithSubagent = tasks.filter((t) => t.status === "In progress" && t.subagent);
+  const inProgressWithSubagent = visibleTasks.filter((t) => t.status === "In progress" && t.subagent);
 
   if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return { text: "", renderedCount: 0 };
 
@@ -731,6 +736,39 @@ export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDi
 export function isSubagentSession(sessionKey?: string): boolean {
   if (!sessionKey) return false;
   return sessionKey.includes("subagent:");
+}
+
+export function normalizePlaceholderTaskNext(
+  next: string | undefined,
+  refs: Array<string | undefined> = [],
+): string | undefined {
+  const trimmed = next?.trim();
+  if (!trimmed) return undefined;
+  for (const ref of refs) {
+    const candidate = ref?.trim();
+    if (!candidate) continue;
+    const placeholderPattern = new RegExp(`^Task\\s*\\[${escapeRegExp(candidate)}\\]\\s*next:\\s*$`, "i");
+    if (placeholderPattern.test(trimmed)) {
+      return undefined;
+    }
+  }
+  return trimmed;
+}
+
+export function isNonActionableSubagentPlaceholderTask(task: ActiveTaskEntry): boolean {
+  const subagent = task.subagent?.trim();
+  if (!isSubagentSession(subagent)) return false;
+
+  const normalizedNext = normalizePlaceholderTaskNext(task.next, [task.label, subagent]);
+  if (normalizedNext) return false;
+
+  const normalizedDescription = task.description.trim().toLowerCase();
+  const descriptionLooksPlaceholder =
+    normalizedDescription === "project task" ||
+    normalizedDescription === "task" ||
+    normalizedDescription.startsWith("subagent task");
+  const label = task.label.trim();
+  return descriptionLooksPlaceholder || isSubagentSession(label) || label === subagent;
 }
 
 // ---------------------------------------------------------------------------

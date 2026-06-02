@@ -6,32 +6,33 @@
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { execFile } from "../utils/process-runner.js";
-import { mergeFactProvenanceJson } from "../backends/facts-db/provenance-json.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { execFile } from "../utils/process-runner.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
-  type PendingTaskSignal,
-  OMITTED_CAP_NOTE,
-  UNKNOWN_ACTIVE_TASK_TIME,
   completeTask,
   deleteSignal,
   detectStaleTasks,
   flushCompletedTaskToMemory,
+  isNonActionableSubagentPlaceholderTask,
+  normalizePlaceholderTaskNext,
+  OMITTED_CAP_NOTE,
+  type PendingTaskSignal,
   readPendingSignals,
   serializeActiveTaskFile,
   serializeTaskEntry,
+  UNKNOWN_ACTIVE_TASK_TIME,
   upsertTask,
 } from "./active-task.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
-import { fetchLivePrBlockerStatus, type PrBlockerStatus } from "./task-hygiene.js";
+import { fetchLivePrBlockerStatus } from "./task-hygiene.js";
 import {
   activeTaskProvenance,
   canonicalLabel,
@@ -180,7 +181,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
       branch: f.branch?.trim() || undefined,
       stashCommit: f.stash_commit?.trim() || undefined,
       subagent: f.related_session?.trim() || undefined,
-      next: f.next?.trim() || undefined,
+      next: normalizePlaceholderTaskNext(f.next?.trim(), [entity, f.related_session?.trim()]),
       relatedGoal: f.related_goal?.trim() || f.goal_id?.trim() || undefined,
       started,
       updated,
@@ -430,7 +431,7 @@ export function applyActiveTaskProjectionFilters(
   if (config.mode === "full") {
     return entries;
   }
-  let out = entries;
+  let out = entries.filter((entry) => !isNonActionableSubagentPlaceholderTask(entry));
   if (config.excludeGenericTitle) {
     out = out.filter((e) => e.description.trim() !== "Project task");
   }
@@ -450,6 +451,37 @@ export function applyActiveTaskProjectionFilters(
     result.push(e);
   }
   return result;
+}
+
+function recordActiveTaskSessionReconcileAudit(
+  factsDb: FactsDB,
+  runAt: string,
+  entries: ActiveTaskEntry[],
+): string | undefined {
+  if (entries.length === 0) return undefined;
+  const audit = {
+    runAt,
+    reconciledLabels: entries.map((entry) => entry.label),
+    count: entries.length,
+    tasks: entries.map((entry) => ({
+      label: entry.label,
+      status: entry.status,
+      updated: entry.updated,
+      next: entry.next,
+      relatedSession: entry.subagent ?? null,
+    })),
+  };
+  const auditFact = factsDb.store({
+    text: `Active-task session reconcile ${runAt}: ${entries.length} orphan subagent row(s) completed.`,
+    category: "episode",
+    importance: CLI_STORE_IMPORTANCE,
+    source: "active-task-session-reconcile",
+    decayClass: "permanent",
+    entity: `active-task-session-reconcile:${runAt}`,
+    key: "report",
+    value: JSON.stringify(audit),
+  });
+  return auditFact.id;
 }
 
 export interface ActiveTaskHygieneDuplicateGroup {
@@ -728,7 +760,6 @@ export async function planActiveTaskHygiene(
         if (!blockerStatus) continue;
 
         if (blockerStatus.status !== "no_live_blocker") {
-          const key = `${owner}/${repo}`;
           const reason = `[PR hygiene #${number}] Live GitHub state: ${blockerStatus.status} — task updated to reflect actual PR state.`;
 
           // Apply action to ALL tasks referencing this PR
@@ -1564,6 +1595,9 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   for (const entry of toFlush) {
     await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log);
   }
+
+  const auditRunAt = new Date().toISOString();
+  recordActiveTaskSessionReconcileAudit(factsDb, auditRunAt, toFlush);
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of toFlush) {
