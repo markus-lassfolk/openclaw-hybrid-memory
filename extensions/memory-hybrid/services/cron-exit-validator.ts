@@ -37,11 +37,18 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 
 const SKIP_REASON_COOLDOWN = "skipped_cooldown";
 const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
 const SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP = "1970-01-01T00:00:00Z";
+const LARGE_BACKLOG_THRESHOLD = 1000;
+const MAINTENANCE_JOB_SUFFIX_PATTERNS = [
+  /-\d{8}T\d{6}Z-\d+$/,
+  /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/,
+  /-\d{8}\.cron$/,
+];
 
 export interface ExitStep {
   timestamp: string;
@@ -58,6 +65,8 @@ export interface ExitStep {
 export interface ExitValidationResult {
   /** Overall maintenance status */
   maintenanceStatus: "success" | "skipped" | "partial" | "failed";
+  /** Semantic interpretation of the run for maintenance telemetry. */
+  semanticStatus: "ok" | "degraded" | "semantic_fail" | "unknown";
   /** All steps found in exit ledger */
   steps: ExitStep[];
   /** Required steps that are missing from exit ledger */
@@ -72,6 +81,41 @@ export interface ExitValidationResult {
   exitPath?: string;
   /** Error message if validation failed */
   error?: string;
+  /** Best-effort grouped maintenance telemetry issues derived from the run. */
+  reportableIssues: MaintenanceTelemetryIssue[];
+}
+
+export type MaintenanceSemanticStatus = ExitValidationResult["semanticStatus"];
+
+export type MaintenanceFailureCategory =
+  | "mechanical_failure"
+  | "semantic_failure"
+  | "concurrency_storage_failure"
+  | "diagnostic_failure";
+
+export interface MaintenanceTelemetryIssue {
+  fingerprint: string[];
+  jobName: string;
+  stepName: string;
+  failureCategory: MaintenanceFailureCategory;
+  failureClass: string;
+  message: string;
+  semanticStatus: MaintenanceSemanticStatus;
+  exitCode?: number;
+  hmLogPath?: string;
+  hmExitPath?: string;
+  artifactPaths?: string[];
+  durationMs?: number;
+  factsScanned?: number;
+  factsChanged?: number;
+  storedCount?: number;
+  collapsedCount?: number;
+  model?: string;
+  fallbacks?: string[];
+  guardFile?: string;
+  guardStateBefore?: string;
+  guardStateAfter?: string;
+  lastSuccessAt?: string;
 }
 
 export function normalizeExitStepName(rawStep: string): string {
@@ -205,6 +249,384 @@ function detectDegradedContinuousVerificationStatus(logContent: string): Degrade
   return null;
 }
 
+function extractMaintenanceJobName(path: string | undefined): string {
+  if (!path) return "unknown-job";
+  const file = basename(path);
+  const withoutExitSuffix = file.replace(/\.exit\.txt$/, "").replace(/\.log$/, "");
+  return MAINTENANCE_JOB_SUFFIX_PATTERNS.reduce((jobName, pattern) => jobName.replace(pattern, ""), withoutExitSuffix);
+}
+
+function buildMaintenanceFingerprint(jobName: string, stepName: string, failureClass: string): string[] {
+  return ["hybrid-memory-maintenance", jobName, stepName, failureClass];
+}
+
+function parsePositiveMetric(logContent: string, key: string): number | undefined {
+  const match = logContent.match(new RegExp(`\\b${key}\\s*[=:]\\s*(\\d+)\\b`, "i"));
+  if (!match) return undefined;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function parseFallbacks(logContent: string): string[] | undefined {
+  const match = logContent.match(/\bfallbacks\s*=\s*\[([^\]]*)\]/i);
+  if (!match) return undefined;
+  const fallbacks = match[1]
+    .split(",")
+    .map((part) => part.trim().replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean);
+  return fallbacks.length > 0 ? fallbacks : [];
+}
+
+function parseModel(logContent: string): string | undefined {
+  const modelMatch = logContent.match(/\bmodel\s*[=:]\s*([^\s,;]+)/i);
+  if (modelMatch?.[1]) return modelMatch[1];
+  const minimaxMatch = logContent.match(/\b(MiniMax-[^\s,;]+)/);
+  return minimaxMatch?.[1];
+}
+
+function buildMaintenanceIssue(params: Omit<MaintenanceTelemetryIssue, "fingerprint">): MaintenanceTelemetryIssue {
+  return {
+    ...params,
+    fingerprint: buildMaintenanceFingerprint(params.jobName, params.stepName, params.failureClass),
+  };
+}
+
+function addMaintenanceIssue(issues: Map<string, MaintenanceTelemetryIssue>, issue: MaintenanceTelemetryIssue): void {
+  const key = issue.fingerprint.join(":");
+  if (!issues.has(key)) {
+    issues.set(key, issue);
+  }
+}
+
+/**
+ * Extract log content relevant to a specific step.
+ * Attempts to find step-scoped output by searching for the step name in the log.
+ * Returns a substring of the log that's likely to contain output from that step.
+ */
+function extractStepLog(logContent: string, stepName: string): string {
+  const lines = logContent.split("\n");
+  const relevantLines: string[] = [];
+  let foundStepMarker = false;
+
+  for (const line of lines) {
+    // Look for lines that mention the step name
+    if (line.includes(stepName) || line.includes(stepName.replace(/-/g, "_"))) {
+      foundStepMarker = true;
+      relevantLines.push(line);
+    } else if (foundStepMarker && relevantLines.length > 0) {
+      // Collect subsequent lines until we hit another step or exceed reasonable context
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/.test(line)) {
+        // Hit a new timestamp line from HM_EXIT, stop collecting
+        break;
+      }
+      relevantLines.push(line);
+      if (relevantLines.length > 50) break; // Safety limit
+    }
+  }
+
+  // Fallback: if we didn't find step-specific content, return full log for pattern matching
+  return relevantLines.length > 0 ? relevantLines.join("\n") : logContent;
+}
+
+function collectMaintenanceTelemetryIssues(params: {
+  exitPath: string;
+  logPath?: string;
+  requiredSteps: string[];
+  logContent: string;
+  failedSteps: ExitStep[];
+  missingSteps: string[];
+  unknownCommands: string[];
+  maintenanceStatus: ExitValidationResult["maintenanceStatus"];
+}): MaintenanceTelemetryIssue[] {
+  const {
+    exitPath,
+    logPath,
+    requiredSteps,
+    logContent,
+    failedSteps,
+    missingSteps,
+    unknownCommands,
+    maintenanceStatus,
+  } = params;
+  const issues = new Map<string, MaintenanceTelemetryIssue>();
+  const jobName = extractMaintenanceJobName(exitPath || logPath);
+  const commonFields = {
+    hmExitPath: exitPath,
+    hmLogPath: logPath,
+    guardStateAfter: maintenanceStatus === "success" ? "updated" : "not_updated",
+  };
+
+  for (const step of failedSteps) {
+    // Extract step-scoped log output for better pattern matching
+    const stepLog = extractStepLog(logContent, step.step);
+    const lowerReason = (step.failureReason ?? step.reason ?? "").toLowerCase();
+    const lowerStepLog = stepLog.toLowerCase();
+
+    // Check log content for storage/concurrency patterns
+    if (
+      (lowerReason.includes("lancedb") && /commit|conflict|concurrent|vacuum|optimi/.test(lowerReason)) ||
+      /concurrent maintenance mutation conflict/.test(lowerReason) ||
+      (lowerStepLog.includes("lancedb") && /commit.*conflict|concurrent.*mutation|vacuum.*conflict|optimi.*fail/i.test(stepLog)) ||
+      /concurrent maintenance mutation conflict/i.test(stepLog)
+    ) {
+      addMaintenanceIssue(
+        issues,
+        buildMaintenanceIssue({
+          ...commonFields,
+          jobName,
+          stepName: step.step,
+          failureCategory: "concurrency_storage_failure",
+          failureClass: "lancedb_commit_conflict",
+          message: `${jobName}:${step.step} encountered a LanceDB maintenance conflict`,
+          semanticStatus: "unknown",
+          exitCode: step.exitCode,
+          durationMs: step.durationMs,
+        }),
+      );
+      continue;
+    }
+    if (
+      /database is locked|sqlite_busy|db lock|lock timeout|timed out waiting for lock/.test(lowerReason) ||
+      /database is locked|sqlite[_ ]busy|db[_ ]lock[_ ]timeout|timed out waiting for.*lock/i.test(stepLog)
+    ) {
+      addMaintenanceIssue(
+        issues,
+        buildMaintenanceIssue({
+          ...commonFields,
+          jobName,
+          stepName: step.step,
+          failureCategory: "concurrency_storage_failure",
+          failureClass: "db_lock_timeout",
+          message: `${jobName}:${step.step} hit a database lock or timeout`,
+          semanticStatus: "unknown",
+          exitCode: step.exitCode,
+          durationMs: step.durationMs,
+        }),
+      );
+      continue;
+    }
+    if (step.exitCode === 124 || /\btimeout\b/.test(lowerReason)) {
+      addMaintenanceIssue(
+        issues,
+        buildMaintenanceIssue({
+          ...commonFields,
+          jobName,
+          stepName: step.step,
+          failureCategory: "mechanical_failure",
+          failureClass: "timeout",
+          message: `${jobName}:${step.step} timed out`,
+          semanticStatus: "unknown",
+          exitCode: step.exitCode,
+          durationMs: step.durationMs,
+        }),
+      );
+      continue;
+    }
+    if (step.exitCode === 137 || step.exitCode === 143 || /\boom\b|out of memory|sigkill|killed\b/.test(lowerReason)) {
+      addMaintenanceIssue(
+        issues,
+        buildMaintenanceIssue({
+          ...commonFields,
+          jobName,
+          stepName: step.step,
+          failureCategory: "mechanical_failure",
+          failureClass: "sigkill_or_oom",
+          message: `${jobName}:${step.step} was killed or ran out of memory`,
+          semanticStatus: "unknown",
+          exitCode: step.exitCode,
+          durationMs: step.durationMs,
+        }),
+      );
+      continue;
+    }
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: step.step,
+        failureCategory: "mechanical_failure",
+        failureClass: "nonzero_exit",
+        message: `${jobName}:${step.step} exited non-zero`,
+        semanticStatus: "unknown",
+        exitCode: step.exitCode,
+        durationMs: step.durationMs,
+      }),
+    );
+  }
+
+  for (const missingStep of missingSteps) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: missingStep,
+        failureCategory: "mechanical_failure",
+        failureClass: "missing_required_step",
+        message: `${jobName}:${missingStep} was required but missing from the exit ledger`,
+        semanticStatus: "unknown",
+      }),
+    );
+  }
+
+  for (const unknownCommand of unknownCommands) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "validate-cron-exit",
+        failureCategory: "mechanical_failure",
+        failureClass: "unknown_maintenance_command",
+        message: `${jobName} invoked unknown maintenance command ${unknownCommand}`,
+        semanticStatus: "unknown",
+      }),
+    );
+  }
+
+  const reflectRulesDetected =
+    requiredSteps.includes("reflect-rules") ||
+    /\breflect-rules\b/i.test(logContent) ||
+    /\bparse_success\b/i.test(logContent);
+  const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(logContent);
+  const reflectStored = parsePositiveMetric(logContent, "stored");
+  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0)) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "reflect-rules",
+        failureCategory: "semantic_failure",
+        failureClass:
+          reflectParseFailed && reflectStored === 0
+            ? "invalid_response_format_zero_stored"
+            : reflectParseFailed
+              ? "reflect_rules_parse_failure"
+              : "reflect_rules_zero_stored",
+        message: `${jobName}:reflect-rules produced no usable rules despite a mechanically successful run`,
+        semanticStatus: "semantic_fail",
+        storedCount: reflectStored,
+      }),
+    );
+  }
+
+  const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
+  const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
+  const collapseDetected =
+    /\bimplicit-feedback-collapse\b/i.test(logContent) ||
+    /\bweekly-implicit-feedback-collapse\b/i.test(logContent) ||
+    /\bcollapse\b/i.test(logContent);
+  if (
+    collapseDetected &&
+    typeof collapseScanned === "number" &&
+    collapseScanned >= LARGE_BACKLOG_THRESHOLD &&
+    collapseCount === 0
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "implicit-feedback-collapse",
+        failureCategory: "semantic_failure",
+        failureClass: "implicit_feedback_large_backlog_zero_changes",
+        message: `${jobName}:implicit-feedback-collapse scanned a large backlog but changed nothing`,
+        semanticStatus: "degraded",
+        factsScanned: collapseScanned,
+        collapsedCount: 0,
+        factsChanged: 0,
+      }),
+    );
+  }
+
+  const hiddenLlmFailure =
+    /(?:llm call failed|failed its llm call|provider call failed|model request failed)/i.test(logContent) &&
+    failedSteps.length === 0;
+  if (hiddenLlmFailure) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: /persona-proposals/i.test(logContent) ? "persona-proposals" : "maintenance",
+        failureCategory: "semantic_failure",
+        failureClass: "hidden_llm_failure",
+        message: `${jobName} logged an LLM failure without a matching non-zero exit`,
+        semanticStatus: "semantic_fail",
+        model: parseModel(logContent),
+        fallbacks: parseFallbacks(logContent),
+      }),
+    );
+  }
+
+  if (/\bcursor(?:[_ ]advanced\s*=\s*false|\s+(?:did not|not)\s+advance)\b/i.test(logContent)) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "cursor",
+        failureCategory: "semantic_failure",
+        failureClass: "cursor_not_advanced",
+        message: `${jobName} completed mechanically but did not advance its maintenance cursor`,
+        semanticStatus: "semantic_fail",
+      }),
+    );
+  }
+
+  const finalAuditZeroByte =
+    /(?:final-audit\.json|final audit)[^\n]*(?:0 bytes|0-byte|size=0|empty)/i.test(logContent) ||
+    /final-audit\.json[^\n]*malformed/i.test(logContent);
+  if (finalAuditZeroByte) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "audit",
+        failureCategory: "mechanical_failure",
+        failureClass: "missing_or_empty_required_artifact",
+        message: `${jobName}:audit produced a missing, empty, or malformed final-audit.json artifact`,
+        semanticStatus: "unknown",
+        artifactPaths: ["final-audit.json"],
+      }),
+    );
+  }
+
+  const diagnosticsZeroByte =
+    /memory-diagnostics-live\.json[^\n]*(?:0 bytes|0-byte|size=0|empty|malformed)/i.test(logContent) &&
+    /incident bundle|vm memory incident/i.test(logContent);
+  if (diagnosticsZeroByte) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "diagnostics",
+        failureCategory: "diagnostic_failure",
+        failureClass: "zero_byte_memory_diagnostics",
+        message: `${jobName}:diagnostics produced an incident bundle with unusable memory-diagnostics-live.json`,
+        semanticStatus: "unknown",
+        artifactPaths: ["memory-diagnostics-live.json"],
+      }),
+    );
+  }
+
+  return [...issues.values()];
+}
+
+function deriveSemanticStatus(
+  maintenanceStatus: ExitValidationResult["maintenanceStatus"],
+  issues: MaintenanceTelemetryIssue[],
+): MaintenanceSemanticStatus {
+  if (issues.some((issue) => issue.semanticStatus === "semantic_fail")) return "semantic_fail";
+  if (issues.some((issue) => issue.semanticStatus === "degraded")) return "degraded";
+  if (maintenanceStatus === "success" || maintenanceStatus === "skipped") return "ok";
+  return issues.length > 0 ? "unknown" : "ok";
+}
+
 /**
  * Validate that all required maintenance steps completed successfully.
  *
@@ -222,8 +644,22 @@ export function validateMaintenanceExecution(
 ): ExitValidationResult {
   // Check if files exist
   if (!existsSync(exitPath)) {
+    const reportableIssues = [
+      buildMaintenanceIssue({
+        jobName: extractMaintenanceJobName(exitPath),
+        stepName: "validate-cron-exit",
+        failureCategory: "mechanical_failure",
+        failureClass: "missing_exit_ledger",
+        message: `${extractMaintenanceJobName(exitPath)} is missing its HM_EXIT ledger`,
+        semanticStatus: "unknown",
+        hmExitPath: exitPath,
+        hmLogPath: logPath,
+        guardStateAfter: "not_updated",
+      }),
+    ];
     return {
       maintenanceStatus: "failed",
+      semanticStatus: "unknown",
       steps: [],
       missingSteps: requiredSteps,
       failedSteps: [],
@@ -231,6 +667,7 @@ export function validateMaintenanceExecution(
       exitPath,
       logPath,
       error: `Exit ledger not found: ${exitPath}`,
+      reportableIssues,
     };
   }
 
@@ -243,8 +680,19 @@ export function validateMaintenanceExecution(
   // Check for unknown commands in log
   const unknownCommands = logPath ? checkUnknownCommandsInContent(logContent) : [];
   if (unknownCommands.length > 0) {
+    const reportableIssues = collectMaintenanceTelemetryIssues({
+      exitPath,
+      logPath,
+      requiredSteps,
+      logContent,
+      failedSteps: [],
+      missingSteps: requiredSteps,
+      unknownCommands,
+      maintenanceStatus: "failed",
+    });
     return {
       maintenanceStatus: "failed",
+      semanticStatus: deriveSemanticStatus("failed", reportableIssues),
       steps,
       missingSteps: requiredSteps,
       failedSteps: [],
@@ -252,6 +700,7 @@ export function validateMaintenanceExecution(
       exitPath,
       logPath,
       error: `Unknown command(s) detected: ${unknownCommands.join(", ")}`,
+      reportableIssues,
     };
   }
 
@@ -367,8 +816,20 @@ export function validateMaintenanceExecution(
         : "Feature-gated skip: no hm_step lines in HM_EXIT; log indicates disabled feature (guard not updated).";
   }
 
+  const reportableIssues = collectMaintenanceTelemetryIssues({
+    exitPath,
+    logPath,
+    requiredSteps,
+    logContent,
+    failedSteps,
+    missingSteps,
+    unknownCommands,
+    maintenanceStatus,
+  });
+
   return {
     maintenanceStatus,
+    semanticStatus: deriveSemanticStatus(maintenanceStatus, reportableIssues),
     steps,
     missingSteps,
     failedSteps,
@@ -376,6 +837,7 @@ export function validateMaintenanceExecution(
     exitPath,
     logPath,
     error,
+    reportableIssues,
   };
 }
 
@@ -387,6 +849,7 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
   return JSON.stringify(
     {
       maintenanceStatus: validation.maintenanceStatus,
+      semanticStatus: validation.semanticStatus,
       requiredSteps: validation.steps.map((s) => ({
         name: s.step,
         exit: s.exitCode,
@@ -408,6 +871,14 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
       logPath: validation.logPath,
       exitPath: validation.exitPath,
       error: validation.error,
+      reportableIssues: validation.reportableIssues.map((issue) => ({
+        fingerprint: issue.fingerprint.join(":"),
+        jobName: issue.jobName,
+        stepName: issue.stepName,
+        failureCategory: issue.failureCategory,
+        failureClass: issue.failureClass,
+        semanticStatus: issue.semanticStatus,
+      })),
     },
     null,
     2,
