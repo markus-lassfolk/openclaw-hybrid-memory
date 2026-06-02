@@ -3,7 +3,12 @@ import type { AuditStore } from "../backends/audit-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
+import {
+  buildGatewayMemoryDiagnostics,
+  buildProcessMemorySnapshot,
+} from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   getActiveTaskProjectionStatus,
@@ -37,9 +42,13 @@ export interface PublicApiRoutesContext {
   cfg: PublicApiConfig;
   factsDb: FactsDB;
   narrativesDb: NarrativesDB | null;
+  vectorDb?: VectorDB;
   auditStore?: AuditStore | null;
   eventLog?: EventLog | null;
   resolvedSqlitePath?: string;
+  resolvedLancePath?: string;
+  recallInFlightRef?: { value: number };
+  variantQueue?: { queueLength: number } | null;
 }
 
 export const PUBLIC_API_PREFIX = "/plugins/memory-public";
@@ -53,6 +62,8 @@ export const PUBLIC_API_PATHS = {
   fact: "/fact",
   session: "/session",
   activeTasks: "/active-tasks",
+  processMemory: "/process-memory",
+  memoryDiagnostics: "/memory-diagnostics",
 } as const;
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
@@ -422,5 +433,24 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     });
 
     return toJson(200, report);
+  });
+
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`, async () => {
+    return toJson(200, buildProcessMemorySnapshot());
+  });
+
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`, async () => {
+    if (!ctx.vectorDb) {
+      return toJson(503, { error: "vector_db_unavailable" });
+    }
+    const diag = await buildGatewayMemoryDiagnostics({
+      factsDb: ctx.factsDb,
+      vectorDb: ctx.vectorDb,
+      resolvedSqlitePath: ctx.resolvedSqlitePath,
+      resolvedLancePath: ctx.resolvedLancePath,
+      recallInFlightRef: ctx.recallInFlightRef,
+      variantQueuePending: ctx.variantQueue?.queueLength,
+    });
+    return toJson(200, diag);
   });
 }
