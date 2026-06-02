@@ -164,6 +164,55 @@ exit 2
     expect(exitContents).not.toContain("status=partial");
   });
 
+  it("treats semantic no-op status markers as failures when HYBRID_MEM_STRICT_SEMANTICS=1", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "reflect-meta" ]; then
+  echo "Implicit-feedback collapse summary: scanned 10387, collapsed 0, status=no_changes"
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  echo '{"maintenanceStatus":"failed"}'
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("weekly-implicit-feedback-collapse", [
+      { name: "reflect-meta-collapse", cmd: "openclaw hybrid-mem reflect-meta --collapse-implicit-feedback" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OPENCLAW_HOME: home,
+        HYBRID_MEM_STRICT_SEMANTICS: "1",
+      },
+    });
+
+    expect(result.status).toBe(2);
+    const exitDir = join(home, "logs", "cron-hybrid-mem");
+    const exitPath = readdirSync(exitDir)
+      .filter((name) => name.endsWith(".exit.txt"))
+      .map((name) => join(exitDir, name))[0];
+    expect(exitPath).toBeDefined();
+    const exitContents = readFileSync(exitPath, "utf-8");
+    expect(exitContents).toContain("reflect-meta-collapse exit=2 status=failed reason=failed_semantic_no_changes");
+    expect(result.stdout + result.stderr).toContain("FAILED: weekly-implicit-feedback-collapse");
+  });
+
   it("runs validate-cron-exit automatically and keeps successful cron steps at exit zero", () => {
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
