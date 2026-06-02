@@ -222,6 +222,7 @@ export function cleanupImplicitFeedbackDuplicates(
   carryCanonical: Array<{ id: string; text: string }>;
   interrupted: boolean;
 } {
+  type CanonicalEntry = { id: string; text: string; tokens: Set<string> };
   const rawDb = factsDb.getRawDb();
   if (!rawDb) {
     return {
@@ -266,8 +267,10 @@ export function cleanupImplicitFeedbackDuplicates(
   let collapsed = 0;
   let scanned = 0;
   const reportEvery = Math.max(1, opts.reportEvery ?? 250);
+  // Keep carry above legacy (~2000 at limit=250) so 10k+ paged scans can still match late duplicates,
+  // while capping token index growth and memory overhead in large runs.
   const CANONICAL_WINDOW_SIZE = Math.min(25_000, Math.max(12_000, limit * 12));
-  const canonical: Array<{ id: string; text: string; tokens: Set<string> }> = [...(opts.seedCanonical ?? [])]
+  const canonical: CanonicalEntry[] = [...(opts.seedCanonical ?? [])]
     .slice(-CANONICAL_WINDOW_SIZE)
     .map((c) => ({ id: c.id, text: c.text, tokens: normalizeLessonTokens(c.text) }));
   const canonicalTokenIndex = new Map<string, Set<number>>();
@@ -307,11 +310,21 @@ export function cleanupImplicitFeedbackDuplicates(
           candidateIndices.add(candidateIndex);
         }
       }
-      const match = canonical.find((candidate) => candidate.text === row.text)
-        ?? [...candidateIndices]
-          .sort((left, right) => left - right)
-          .map((index) => canonical[index])
-          .find((candidate) => tokenJaccardFromSets(candidate.tokens, rowTokens) >= threshold);
+      let match = canonical.find((candidate) => candidate.text === row.text);
+      if (!match) {
+        // Preserve prior behavior: when multiple candidates match, choose the earliest canonical row.
+        let earliestMatchIndex: number | null = null;
+        for (const candidateIndex of candidateIndices) {
+          const candidate = canonical[candidateIndex];
+          if (!candidate || tokenJaccardFromSets(candidate.tokens, rowTokens) < threshold) continue;
+          if (earliestMatchIndex == null || candidateIndex < earliestMatchIndex) {
+            earliestMatchIndex = candidateIndex;
+          }
+        }
+        if (earliestMatchIndex != null) {
+          match = canonical[earliestMatchIndex];
+        }
+      }
       if (!match) {
         const index = canonical.push({ id: row.id, text: row.text, tokens: rowTokens }) - 1;
         for (const token of rowTokens) {
