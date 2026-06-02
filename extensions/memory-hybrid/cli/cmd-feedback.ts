@@ -273,8 +273,12 @@ export function cleanupImplicitFeedbackDuplicates(
   const canonical: CanonicalEntry[] = [...(opts.seedCanonical ?? [])]
     .slice(-CANONICAL_WINDOW_SIZE)
     .map((c) => ({ id: c.id, text: c.text, tokens: normalizeLessonTokens(c.text) }));
+  const exactTextIndex = new Map<string, number>();
   const canonicalTokenIndex = new Map<string, Set<number>>();
   for (const [index, entry] of canonical.entries()) {
+    if (!exactTextIndex.has(entry.text)) {
+      exactTextIndex.set(entry.text, index);
+    }
     for (const token of entry.tokens) {
       const tokenEntries = canonicalTokenIndex.get(token);
       if (tokenEntries) {
@@ -310,7 +314,8 @@ export function cleanupImplicitFeedbackDuplicates(
           candidateIndices.add(candidateIndex);
         }
       }
-      let match = canonical.find((candidate) => candidate.text === row.text);
+      const exactMatchIndex = exactTextIndex.get(row.text);
+      let match = exactMatchIndex == null ? undefined : canonical[exactMatchIndex];
       if (!match) {
         // Preserve prior behavior: when multiple candidates match, choose the earliest canonical row.
         let earliestMatchIndex: number | null = null;
@@ -327,6 +332,9 @@ export function cleanupImplicitFeedbackDuplicates(
       }
       if (!match) {
         const index = canonical.push({ id: row.id, text: row.text, tokens: rowTokens }) - 1;
+        if (!exactTextIndex.has(row.text)) {
+          exactTextIndex.set(row.text, index);
+        }
         for (const token of rowTokens) {
           const tokenEntries = canonicalTokenIndex.get(token);
           if (tokenEntries) {
