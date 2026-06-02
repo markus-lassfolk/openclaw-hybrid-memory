@@ -712,7 +712,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .action(
       withExit(async (opts?: { json?: boolean; format?: string }) => {
         const requestedFormat = (opts?.format ?? "text").toLowerCase();
-        if (opts?.json && requestedFormat !== "text" && requestedFormat !== "json") {
+        if (opts?.json && requestedFormat === "markdown") {
           throw new Error("Use either --json or --format markdown, not both.");
         }
         const format = opts?.json ? "json" : requestedFormat;
