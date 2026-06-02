@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { hasAnyScopeFilter } from "../backends/scope-filter-sql.js";
 import { resolveReflectionModelAndFallbacks } from "../config.js";
-import { chatCompleteWithRetryDetailed } from "../services/chat.js";
+import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
@@ -14,6 +14,7 @@ import {
   promotePersonaStateFromReflections,
 } from "../services/persona-state-promotion.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
@@ -181,15 +182,20 @@ export async function runGenerateProposalsForCli(
     const tryModel = allModels[modelIdx];
     let rawResponse: string;
     try {
-      const detail = await chatCompleteWithRetryDetailed({
+      const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
         model: tryModel,
+        modelSource: modelIdx === 0 ? "maintenance" : "fallback",
         content: prompt,
         temperature: 0.3,
         maxTokens: 4000,
         openai,
-        fallbackModels: [], // outer loop handles cross-model fallback for JSON retry
+        fallbackModels: [],
         label: "memory-hybrid: generate-proposals",
         feature: CostFeature.generateProposals,
+        logger: {
+          info: (msg) => ctx.logger.info?.(msg),
+          warn: (msg) => ctx.logger.warn?.(msg),
+        },
       });
       rawResponse = detail.content;
     } catch (err) {
@@ -202,12 +208,13 @@ export async function runGenerateProposalsForCli(
       continue;
     }
     try {
-      const firstBracket = rawResponse.indexOf("[");
-      const lastBracket = rawResponse.lastIndexOf("]");
+      const strippedResponse = stripThinkingWrapperBlocks(rawResponse);
+      const firstBracket = strippedResponse.indexOf("[");
+      const lastBracket = strippedResponse.lastIndexOf("]");
       const trimmed =
         firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
-          ? rawResponse.substring(firstBracket, lastBracket + 1)
-          : rawResponse;
+          ? strippedResponse.substring(firstBracket, lastBracket + 1)
+          : strippedResponse;
       const parsed = JSON.parse(trimmed);
       if (!Array.isArray(parsed)) throw new SyntaxError("Not an array");
       items = parsed;
