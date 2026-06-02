@@ -33,6 +33,7 @@ import {
 import type { EmbeddingProvider } from "./embeddings.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import { fetchLivePrBlockerStatus } from "./task-hygiene.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 import {
   activeTaskProvenance,
   canonicalLabel,
@@ -453,11 +454,13 @@ export function applyActiveTaskProjectionFilters(
   return result;
 }
 
-function recordActiveTaskSessionReconcileAudit(
+async function recordActiveTaskSessionReconcileAudit(
   factsDb: FactsDB,
+  vectorDb: VectorDB,
   runAt: string,
   entries: ActiveTaskEntry[],
-): string | undefined {
+  log?: { warn?: (m: string) => void },
+): Promise<string | undefined> {
   if (entries.length === 0) return undefined;
   const audit = {
     runAt,
@@ -471,7 +474,7 @@ function recordActiveTaskSessionReconcileAudit(
       relatedSession: entry.subagent ?? null,
     })),
   };
-  const auditFact = factsDb.store({
+  const storeResult = factsDb.storeWithResult({
     text: `Active-task session reconcile ${runAt}: ${entries.length} orphan subagent row(s) completed.`,
     category: "episode",
     importance: CLI_STORE_IMPORTANCE,
@@ -481,7 +484,15 @@ function recordActiveTaskSessionReconcileAudit(
     key: "report",
     value: JSON.stringify(audit),
   });
-  return auditFact.id;
+  if (storeResult.evictedFactId) {
+    await cleanupEvictedVector({
+      vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger: log,
+      context: "active-task-session-reconcile-audit",
+    });
+  }
+  return storeResult.entry.id;
 }
 
 export interface ActiveTaskHygieneDuplicateGroup {
@@ -1599,7 +1610,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   }
 
   const auditRunAt = new Date().toISOString();
-  recordActiveTaskSessionReconcileAudit(factsDb, auditRunAt, toAudit);
+  await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, auditRunAt, toAudit, opts.log);
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of toFlush) {
