@@ -37,4 +37,11 @@ export type PersonaProposalsConfig = {
   proposalTTLDays: number;
   /** Require minimum session evidence count (default: 10) */
   minSessionEvidence: number;
+  /**
+   * When true, `generate-proposals` throws an error instead of logging a warning when
+   * `autoRecall.scopeFilter` is not set and the store contains non-global scoped facts.
+   * Recommended for multi-agent/multi-user deployments to prevent cross-scope contamination.
+   * Default: false (warn-only for backward compatibility).
+   */
+  requireScopeFilter: boolean;
 };

@@ -139,8 +139,36 @@ If the target file is missing or write fails, an error is printed and the propos
 | `minConfidence` | `0.7` | Minimum confidence (0–1) for the agent to submit a proposal. |
 | `proposalTTLDays` | `30` | Days until a **pending** proposal expires; expired ones are pruned. Use `0` for no expiry. |
 | `minSessionEvidence` | `10` | Minimum number of session references required in `evidenceSessions`. |
+| `requireScopeFilter` | `false` | When `true`, `generate-proposals` throws an error (instead of logging a warning) if `autoRecall.scopeFilter` is not set and the store contains non-global scoped facts. Recommended for multi-agent/multi-user hosts. |
 
 See [CONFIGURATION.md](CONFIGURATION.md) for where to put these in `openclaw.json`.
+
+---
+
+## Multi-agent / multi-user hosts
+
+When multiple agents or users share the same memory store, proposal generation can inadvertently include facts belonging to other agents or users if `autoRecall.scopeFilter` is not set. This is because `generate-proposals` reads all active `pattern` and `rule` facts without scope restriction.
+
+**Recommended configuration for shared-memory deployments:**
+
+```json
+{
+  "autoRecall": {
+    "scopeFilter": { "agentId": "my-agent", "userId": "alice" }
+  },
+  "personaProposals": {
+    "enabled": true,
+    "requireScopeFilter": true
+  }
+}
+```
+
+- Set `autoRecall.scopeFilter` to restrict proposal inputs to facts belonging to the correct agent/user.
+- Set `personaProposals.requireScopeFilter: true` to hard-fail `generate-proposals` instead of only warning when the scope filter is absent — this prevents silent cross-scope contamination in production.
+
+**Audit health** will warn when `personaProposals.enabled` is `true` but `autoRecall.scopeFilter` is not configured, so you can catch this misconfiguration during regular health checks.
+
+**Single-user installs** (all facts are global scope) are not affected because the warning and hard-fail only trigger when the store contains non-global scoped facts.
 
 ---
 

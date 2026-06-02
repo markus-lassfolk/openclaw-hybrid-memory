@@ -429,6 +429,7 @@ export function buildAuditHealthReport(
   options?: {
     lanceBytes?: number | null;
     preReportErrors?: Array<{ section: string; message: string }>;
+    preReportWarnings?: string[];
     timeoutMs?: number;
     startedAtMs?: number;
     deadlineMs?: number;
@@ -763,7 +764,7 @@ export function buildAuditHealthReport(
     });
   }
 
-  const warnings: string[] = [];
+  const warnings: string[] = [...(options?.preReportWarnings ?? [])];
   // #1193: gate hot=0/structural=0 warnings on storeAgeDays > 14 to avoid false positives during
   // the first 14 days of a fresh install (no facts have aged into warm/cold yet).
   if (storeAgeDays > 14) {
