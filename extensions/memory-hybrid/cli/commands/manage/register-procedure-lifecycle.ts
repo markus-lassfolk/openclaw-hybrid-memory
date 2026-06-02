@@ -711,7 +711,11 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
     .option("--format <format>", "Output format: text, markdown, json", "text")
     .action(
       withExit(async (opts?: { json?: boolean; format?: string }) => {
-        const format = opts?.json ? "json" : (opts?.format ?? "text").toLowerCase();
+        const requestedFormat = (opts?.format ?? "text").toLowerCase();
+        if (opts?.json && requestedFormat !== "text" && requestedFormat !== "json") {
+          throw new Error("Use either --json or --format markdown, not both.");
+        }
+        const format = opts?.json ? "json" : requestedFormat;
         if (!["text", "markdown", "json"].includes(format)) {
           throw new Error(`Unsupported inventory format: ${opts?.format ?? ""}`);
         }

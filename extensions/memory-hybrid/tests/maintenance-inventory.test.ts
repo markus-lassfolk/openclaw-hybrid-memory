@@ -112,6 +112,7 @@ describe("collectMaintenanceInventory", () => {
     expect(gatewayReflection?.prompt).toContain("Weekly reflection pipeline.");
 
     const stewardshipPulse = report.jobs.find((job) => job.inventoryId === "gateway-cron:goal-stewardship-heartbeat");
+    expect(stewardshipPulse?.name).toBe("goal-stewardship-heartbeat");
     expect(stewardshipPulse?.schedule).toBe("every 1200000ms");
     expect(stewardshipPulse?.timezone).toBe("interval");
 

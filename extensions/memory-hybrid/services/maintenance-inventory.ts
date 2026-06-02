@@ -256,6 +256,14 @@ function relativeTime(ms: number): string {
   return `${deltaDay}d${deltaMs >= 0 ? " ago" : " ahead"}`;
 }
 
+function readExecErrorStderr(error: unknown): string {
+  if (typeof error !== "object" || error === null || !("stderr" in error)) {
+    return "";
+  }
+  const stderr = (error as { stderr?: unknown }).stderr;
+  return typeof stderr === "string" ? stderr : String(stderr ?? "");
+}
+
 function readUserCrontab(): { text: string; status: CrontabStatus; error?: string } {
   try {
     const text = execSync("crontab -l", {
@@ -265,7 +273,7 @@ function readUserCrontab(): { text: string; status: CrontabStatus; error?: strin
     const trimmed = text.trim();
     return { text, status: trimmed.length > 0 ? "present" : "empty" };
   } catch (error) {
-    const stderr = error instanceof Error && "stderr" in error ? String((error as { stderr?: unknown }).stderr ?? "") : "";
+    const stderr = readExecErrorStderr(error);
     if (/no crontab for/i.test(stderr)) {
       return { text: "", status: "empty" };
     }
@@ -395,7 +403,7 @@ function parseHostSchedule(line: string): {
 }
 
 function inferHostJobKey(command: string): string | null {
-  const wrapperMatch = command.match(/hybrid-mem-cli-job\.sh(?:['"])?\s+([a-z0-9-]+)/i);
+  const wrapperMatch = command.match(/hybrid-mem-cli-job\.sh\s+['"]?([a-z0-9-]+)['"]?/i);
   if (wrapperMatch) {
     return wrapperMatch[1].toLowerCase();
   }
