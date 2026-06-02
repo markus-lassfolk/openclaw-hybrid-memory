@@ -113,10 +113,10 @@ export async function reportMaintenanceFailureIssues(
   } catch (err) {
     const firstFingerprint = issues[0]?.fingerprint.join(":");
     const message = `memory-hybrid: maintenance failure reporting skipped after reporter error: ${err instanceof Error ? err.message : String(err)} (issues=${issues.length}${firstFingerprint ? ` first=${firstFingerprint}` : ""})`;
-    if (context.logger?.debug) {
+    if (context.logger?.warn) {
+      context.logger.warn(message);
+    } else if (context.logger?.debug) {
       context.logger.debug(message);
-    } else {
-      console.warn(message);
     }
   }
 }

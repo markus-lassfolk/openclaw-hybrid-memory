@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HybridMemoryConfig } from "../config.js";
+import type { MaintenanceTelemetryIssue } from "../services/cron-exit-validator.js";
 
 describe("maintenance-failure-reporter", () => {
   afterEach(() => {
@@ -26,6 +27,25 @@ describe("maintenance-failure-reporter", () => {
     } satisfies Pick<HybridMemoryConfig, "errorReporting" | "maintenance">;
   }
 
+  function buildMockIssue(overrides?: Partial<MaintenanceTelemetryIssue>): MaintenanceTelemetryIssue {
+    return {
+      fingerprint: ["hybrid-memory-maintenance", "test-job", "test-step", "test-class"],
+      jobName: "test-job",
+      stepName: "test-step",
+      failureCategory: "mechanical_failure",
+      failureClass: "nonzero_exit",
+      message: "Test maintenance failure",
+      semanticStatus: "ok",
+      exitCode: 1,
+      guardFile: "/tmp/test-guard",
+      guardStateBefore: "ok",
+      guardStateAfter: "failed",
+      hmLogPath: "/tmp/test.log",
+      hmExitPath: "/tmp/test.exit",
+      ...overrides,
+    };
+  }
+
   it("reports when maintenance and error reporting are both enabled", async () => {
     const { shouldReportMaintenanceFailures } = await import("../services/maintenance-failure-reporter.js");
     expect(shouldReportMaintenanceFailures(buildConfig())).toBe(true);
@@ -42,5 +62,150 @@ describe("maintenance-failure-reporter", () => {
     const cfg = buildConfig();
     cfg.maintenance.failureReporting.enabled = false;
     expect(shouldReportMaintenanceFailures(cfg)).toBe(false);
+  });
+
+  it("honors global error reporting consent flag", async () => {
+    const { shouldReportMaintenanceFailures } = await import("../services/maintenance-failure-reporter.js");
+    const cfg = buildConfig();
+    cfg.errorReporting.consent = false;
+    expect(shouldReportMaintenanceFailures(cfg)).toBe(false);
+  });
+
+  it("honors global error reporting enabled flag", async () => {
+    const { shouldReportMaintenanceFailures } = await import("../services/maintenance-failure-reporter.js");
+    const cfg = buildConfig();
+    cfg.errorReporting.enabled = false;
+    expect(shouldReportMaintenanceFailures(cfg)).toBe(false);
+  });
+
+  it("no-ops when reporting is disabled", async () => {
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+    const cfg = buildConfig();
+    cfg.maintenance.failureReporting.enabled = false;
+
+    // Should not throw and should complete quickly
+    await expect(
+      reportMaintenanceFailureIssues([buildMockIssue()], {
+        cfg,
+        pluginVersion: "test-version",
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("no-ops when issue array is empty", async () => {
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+
+    await expect(
+      reportMaintenanceFailureIssues([], {
+        cfg: buildConfig(),
+        pluginVersion: "test-version",
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("deduplicates issues by fingerprint", async () => {
+    const errorReporterMock = await import("../services/error-reporter.js");
+    const capturePluginErrorSpy = vi.spyOn(errorReporterMock, "capturePluginError");
+    vi.spyOn(errorReporterMock, "initErrorReporter").mockResolvedValue();
+    vi.spyOn(errorReporterMock, "isErrorReporterActive").mockReturnValue(true);
+    vi.spyOn(errorReporterMock, "flushErrorReporter").mockResolvedValue(true);
+
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+
+    const issue1 = buildMockIssue();
+    const issue2 = buildMockIssue({ message: "Different message, same fingerprint" });
+
+    await reportMaintenanceFailureIssues([issue1, issue2], {
+      cfg: buildConfig(),
+      pluginVersion: "test-version",
+    });
+
+    // Should only capture once due to deduplication
+    expect(capturePluginErrorSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes stable fingerprints to the error reporter", async () => {
+    const errorReporterMock = await import("../services/error-reporter.js");
+    const capturePluginErrorSpy = vi.spyOn(errorReporterMock, "capturePluginError");
+    vi.spyOn(errorReporterMock, "initErrorReporter").mockResolvedValue();
+    vi.spyOn(errorReporterMock, "isErrorReporterActive").mockReturnValue(true);
+    vi.spyOn(errorReporterMock, "flushErrorReporter").mockResolvedValue(true);
+
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+
+    const issue = buildMockIssue({
+      fingerprint: ["hybrid-memory-maintenance", "reflect-rules", "parse-output", "zero_stored"],
+    });
+
+    await reportMaintenanceFailureIssues([issue], {
+      cfg: buildConfig(),
+      pluginVersion: "test-version",
+    });
+
+    expect(capturePluginErrorSpy).toHaveBeenCalledTimes(1);
+    const captureCall = capturePluginErrorSpy.mock.calls[0];
+    const context = captureCall?.[1];
+    expect(context?.fingerprint).toEqual(["hybrid-memory-maintenance", "reflect-rules", "parse-output", "zero_stored"]);
+  });
+
+  it("includes maintenance context in the error report", async () => {
+    const errorReporterMock = await import("../services/error-reporter.js");
+    const capturePluginErrorSpy = vi.spyOn(errorReporterMock, "capturePluginError");
+    vi.spyOn(errorReporterMock, "initErrorReporter").mockResolvedValue();
+    vi.spyOn(errorReporterMock, "isErrorReporterActive").mockReturnValue(true);
+    vi.spyOn(errorReporterMock, "flushErrorReporter").mockResolvedValue(true);
+
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+
+    const issue = buildMockIssue({
+      jobName: "reflect-rules",
+      stepName: "parse-output",
+      failureCategory: "semantic_failure",
+      failureClass: "zero_stored",
+    });
+
+    await reportMaintenanceFailureIssues([issue], {
+      cfg: buildConfig(),
+      pluginVersion: "test-version",
+    });
+
+    expect(capturePluginErrorSpy).toHaveBeenCalledTimes(1);
+    const captureCall = capturePluginErrorSpy.mock.calls[0];
+    const context = captureCall?.[1];
+
+    expect(context?.subsystem).toBe("maintenance");
+    expect(context?.operation).toBe("parse-output");
+    expect(context?.phase).toBe("semantic_failure");
+    expect(context?.tags?.job_name).toBe("reflect-rules");
+    expect(context?.tags?.step_name).toBe("parse-output");
+    expect(context?.tags?.failure_class).toBe("zero_stored");
+    expect(context?.contexts?.maintenance).toBeDefined();
+    expect(context?.contexts?.maintenance?.job_name).toBe("reflect-rules");
+    expect(context?.contexts?.maintenance?.failure_category).toBe("semantic_failure");
+  });
+
+  it("does not mask original exit status on reporting failure", async () => {
+    const errorReporterMock = await import("../services/error-reporter.js");
+    vi.spyOn(errorReporterMock, "initErrorReporter").mockRejectedValue(new Error("Reporter init failed"));
+
+    const { reportMaintenanceFailureIssues } = await import("../services/maintenance-failure-reporter.js");
+
+    const mockLogger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+    };
+
+    // Should not throw even if reporter fails
+    await expect(
+      reportMaintenanceFailureIssues([buildMockIssue()], {
+        cfg: buildConfig(),
+        pluginVersion: "test-version",
+        logger: mockLogger,
+      })
+    ).resolves.toBeUndefined();
+
+    // Should log the failure
+    expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining("maintenance failure reporting skipped"));
   });
 });
