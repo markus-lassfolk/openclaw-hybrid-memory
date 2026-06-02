@@ -30,6 +30,9 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageCouncil(mem, b);
   registerManageDigest(mem, b);
   registerAnalyzeMaintenanceLogsCommand(mem, b);
-  registerValidateCronExit(mem);
+  registerValidateCronExit(mem, {
+    cfg: ctx.cfg,
+    versionInfo: ctx.versionInfo,
+  });
   registerReconcileCronLedgers(mem);
 }

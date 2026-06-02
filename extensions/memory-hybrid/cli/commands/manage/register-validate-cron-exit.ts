@@ -5,6 +5,8 @@
  * required steps completed successfully and fail the job if they didn't.
  */
 
+import type { HybridMemoryConfig } from "../../../config.js";
+import { reportMaintenanceFailureIssues } from "../../../services/maintenance-failure-reporter.js";
 import { type Chainable, withExit } from "../../shared.js";
 import {
   validateMaintenanceExecution,
@@ -12,7 +14,13 @@ import {
   type ExitValidationResult,
 } from "../../../services/cron-exit-validator.js";
 
-export function registerValidateCronExit(hybrid: Chainable): void {
+export interface ValidateCronExitContext {
+  cfg: Pick<HybridMemoryConfig, "errorReporting" | "maintenance">;
+  versionInfo: { pluginVersion: string };
+  logger?: Pick<Console, "debug" | "info" | "warn">;
+}
+
+export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCronExitContext): void {
   hybrid
     .command("validate-cron-exit")
     .description("Validate cron exit ledger (internal use by cron jobs)")
@@ -41,6 +49,17 @@ export function registerValidateCronExit(hybrid: Chainable): void {
             console.log(generateCronStatusReport(result));
           } else {
             printValidationResult(result);
+          }
+
+          // Best-effort telemetry runs after output so one-shot cron validation still
+          // emits JSON/status promptly; reportMaintenanceFailureIssues no-ops when no
+          // normalized issues were derived from the run.
+          if (context) {
+            await reportMaintenanceFailureIssues(result.reportableIssues, {
+              cfg: context.cfg,
+              pluginVersion: context.versionInfo.pluginVersion,
+              logger: context.logger,
+            });
           }
 
           if (result.maintenanceStatus === "failed" || result.maintenanceStatus === "partial") {
