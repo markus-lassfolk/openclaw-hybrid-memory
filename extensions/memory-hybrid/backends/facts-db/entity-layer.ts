@@ -611,6 +611,7 @@ function buildEntityEnrichmentPendingBaseSql(): string {
           WHEN 'cold' THEN 3
           ELSE 4
         END ASC,
+        (COALESCE(f.out_degree, 0) + COALESCE(f.in_degree, 0)) DESC,
         COALESCE(f.last_accessed, f.last_confirmed_at, f.created_at) DESC,
         MAX(COALESCE(f.recall_count, 0), COALESCE(f.access_count, 0)) DESC,
         COALESCE(f.importance, 0) DESC,
