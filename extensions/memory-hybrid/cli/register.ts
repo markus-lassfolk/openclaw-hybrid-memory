@@ -116,7 +116,7 @@ export type HybridMemCliContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (
-    opts: { days: number; dryRun: boolean; verbose?: boolean },
+    opts: { days: number; dryRun: boolean; verbose?: boolean; force?: boolean; full?: boolean },
     sink: ExtractDailySink,
   ) => Promise<ExtractDailyResult>;
   runExtractProcedures: (opts: {

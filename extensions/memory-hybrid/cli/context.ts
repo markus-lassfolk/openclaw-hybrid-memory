@@ -263,7 +263,7 @@ export type ManageContext = {
   runBackupVerify?: () => import("../cli/backup.js").BackupVerifyResult;
   resolvePath?: (file: string) => string;
   runExtractDaily?: (
-    opts: { days: number; dryRun: boolean; verbose?: boolean },
+    opts: { days: number; dryRun: boolean; verbose?: boolean; force?: boolean; full?: boolean },
     sink: { log: (s: string) => void; warn: (s: string) => void },
   ) => Promise<{ stored?: number; totalStored?: number; totalExtracted?: number; daysBack?: number; dryRun?: boolean }>;
   runExtractDirectives?: (opts: {
