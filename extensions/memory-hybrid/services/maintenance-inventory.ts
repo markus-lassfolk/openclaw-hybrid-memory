@@ -89,6 +89,14 @@ interface MaintenanceInventoryOptions {
   cronStoreText?: string;
 }
 
+/**
+ * Canonical inventory catalog keyed by human-facing maintenance job names.
+ *
+ * `pluginJobId` intentionally differs for some entries (for example
+ * `nightly-memory-sweep` vs `hybrid-mem:nightly-distill`) because the gateway
+ * cron store already uses those historical stable IDs. The inventory normalizes
+ * back to the operator-facing job name while still exposing the stored ID.
+ */
 const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
   {
     jobKey: "nightly-memory-sweep",
@@ -485,10 +493,7 @@ function parseGatewayJobs(
           ? job.message
           : undefined;
 
-    const stewardshipHint =
-      /stewardship/i.test(name) || (typeof prompt === "string" && /stewardship/i.test(prompt))
-        ? GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID
-        : undefined;
+    const stewardshipHint = isGoalStewardshipHeartbeatJob(name, prompt) ? GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID : undefined;
     const entry = resolveCatalogEntry(pluginJobId, name, stewardshipHint);
     if (!entry) continue;
 
@@ -530,6 +535,16 @@ function parseGatewayJobs(
       lockKey: entry.lockKey,
       mutates: { ...entry.mutates },
     });
+  }
+
+  function isGoalStewardshipHeartbeatJob(name: string, prompt?: string): boolean {
+    if (name === GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID) {
+      return true;
+    }
+    if (/^openclaw-hybrid-memory-.*stewardship/i.test(name)) {
+      return true;
+    }
+    return typeof prompt === "string" && /\bgoal-stewardship-heartbeat\b/i.test(prompt);
   }
   return jobs;
 }
