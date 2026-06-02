@@ -2,9 +2,7 @@ import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { registerDistillCommands, type DistillContext } from "../cli/distill.js";
 
-function makeDistillContext(
-  overrides: Partial<DistillContext>,
-): DistillContext {
+function makeDistillContext(overrides: Partial<DistillContext>): DistillContext {
   return {
     runDistillWindow: vi.fn(async () => ({
       mode: "full",

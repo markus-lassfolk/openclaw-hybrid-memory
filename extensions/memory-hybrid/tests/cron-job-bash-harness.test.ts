@@ -26,7 +26,7 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('if [ -n "${OPENCLAW_HOME:-}" ]; then OW="$OPENCLAW_HOME"; else OW=~/.openclaw; fi');
     expect(bash).toContain('HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"');
     expect(bash).toContain('HM_REQUIRED_STEPS=("prune")');
-    expect(bash).toContain('local ec="${PIPESTATUS[0]}"');
+    expect(bash).toContain('local step_ec="${PIPESTATUS[0]}"');
     expect(bash).toContain('hm_step "prune" openclaw hybrid-mem prune --verbose');
     expect(bash).toContain('local timeout_raw="${STEP_TIMEOUT_SECONDS:-0}"');
     expect(bash).toContain('if [ "$timeout_secs" -gt 0 ]; then');
@@ -304,6 +304,81 @@ exit 2
     expect(() => readFileSync(shouldNotRun, "utf-8")).toThrow();
     expect(result.stdout + result.stderr).toContain("validate-cron-exit");
     expect(result.stdout + result.stderr).toContain("FAILED: nightly-memory-sweep");
+  });
+
+  it("tolerates extract-daily exit=1 in nightly-memory-sweep and continues downstream steps", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const marker = join(tmp, "resolve-ran.txt");
+    const exitCapture = join(tmp, "exit-captured.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "prune" ]; then
+  echo "pruned"
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
+  echo "extract-daily failure simulation"
+  exit 1
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "resolve-contradictions" ]; then
+  echo "downstream-ran" > ${JSON.stringify(marker)}
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  exit_path=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --exit-path) exit_path="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  cp "$exit_path" ${JSON.stringify(exitCapture)}
+  if grep -q "extract-daily exit=1" "$exit_path" && grep -q "resolve-contradictions exit=0" "$exit_path"; then
+    echo '{"maintenanceStatus":"partial","failedSteps":["extract-daily"]}'
+    exit 1
+  fi
+  echo '{"maintenanceStatus":"failed"}'
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
+      { name: "extract-daily", cmd: "openclaw hybrid-mem extract-daily --days 7 --verbose" },
+      { name: "resolve-contradictions", cmd: "openclaw hybrid-mem resolve-contradictions --auto --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.status).toBe(1);
+    expect(readFileSync(marker, "utf-8")).toContain("downstream-ran");
+    const exitContents = readFileSync(exitCapture, "utf-8");
+    expect(exitContents).toContain("extract-daily exit=1 status=failed reason=tolerated_extract_daily_exit_1");
+    expect(exitContents).toContain("resolve-contradictions exit=0");
+    const exitDir = join(home, "logs", "cron-hybrid-mem");
+    const finalExitPath = readdirSync(exitDir)
+      .filter((name) => name.endsWith(".exit.txt"))
+      .map((name) => join(exitDir, name))[0];
+    expect(finalExitPath).toBeDefined();
+    const finalExitContents = readFileSync(finalExitPath, "utf-8");
+    expect(finalExitContents).toContain("validate-cron-exit exit=1 status=failed reason=maintenance_partial");
+    expect(result.stdout + result.stderr).toContain(
+      "WARNING: nightly-memory-sweep tolerated extract-daily exit=1; continuing downstream steps, final status delegated to validate-cron-exit",
+    );
+    expect(result.stdout + result.stderr).toContain("PARTIAL: nightly-memory-sweep");
   });
 
   it("records self-correction cooldown skips as status=skipped in HM_EXIT", () => {
