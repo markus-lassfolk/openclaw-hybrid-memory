@@ -14,6 +14,7 @@
  *     warns about empty or missing critical files.
  */
 
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -133,7 +134,7 @@ export const DEFAULT_CRITICAL_ARTIFACTS = [
  * first, then renaming. Guarantees `destPath` is never partially written.
  */
 function atomicWrite(destPath: string, content: string): void {
-  const tmpPath = `${destPath}.tmp-${process.pid}-${Date.now()}`;
+  const tmpPath = `${destPath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
   mkdirSync(dirname(destPath), { recursive: true });
   try {
     writeFileSync(tmpPath, content, "utf-8");
@@ -151,6 +152,15 @@ function atomicWrite(destPath: string, content: string): void {
 function captureFallbackMemory(): FallbackMemory {
   const m = process.memoryUsage();
   return { rssBytes: m.rss, heapTotalBytes: m.heapTotal, heapUsedBytes: m.heapUsed };
+}
+
+function isTimeoutError(err: unknown): boolean {
+  return (
+    (err as NodeJS.ErrnoException)?.code === "ETIMEDOUT" ||
+    (err as { killed?: boolean })?.killed === true ||
+    (typeof (err as { signal?: string })?.signal === "string" &&
+      (err as { signal: string }).signal === "SIGTERM")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -197,13 +207,14 @@ export async function captureLiveDiagnosticsToFile(
     const trimmed = stdout.trim();
 
     if (!trimmed) {
+      const trimmedStderr = stderr?.trim();
       const failure: LiveDiagnosticsFailure = {
         ok: false,
         status: "empty_output",
         error: "Diagnostics command produced no output",
         exitCode: 0,
         timedOut: false,
-        ...(stderr?.trim() ? { stderr: stderr.trim() } : {}),
+        ...(trimmedStderr ? { stderr: trimmedStderr } : {}),
         ...(includeFallbackMemory ? { fallbackMemory: captureFallbackMemory() } : {}),
         timestamp,
       };
@@ -219,13 +230,14 @@ export async function captureLiveDiagnosticsToFile(
           diagnostics: parsed,
         } satisfies LiveDiagnosticsSuccess;
       } catch (parseErr) {
+        const trimmedStderr = stderr?.trim();
         parsedResult = {
           ok: false,
           status: "invalid_json",
           error: `Diagnostics command output was not valid JSON: ${String(parseErr)}`,
           exitCode: 0,
           timedOut: false,
-          ...(stderr?.trim() ? { stderr: stderr.trim() } : {}),
+          ...(trimmedStderr ? { stderr: trimmedStderr } : {}),
           ...(includeFallbackMemory ? { fallbackMemory: captureFallbackMemory() } : {}),
           timestamp,
         } satisfies LiveDiagnosticsFailure;
@@ -234,11 +246,7 @@ export async function captureLiveDiagnosticsToFile(
     }
   } catch (err: unknown) {
     // execFile rejects on non-zero exit or timeout
-    const isTimeout =
-      (err as NodeJS.ErrnoException)?.code === "ETIMEDOUT" ||
-      (err as { killed?: boolean })?.killed === true ||
-      (typeof (err as { signal?: string })?.signal === "string" &&
-        (err as { signal: string }).signal === "SIGTERM");
+    const timedOut = isTimeoutError(err);
 
     const exitCode =
       typeof (err as { code?: unknown })?.code === "number"
@@ -252,10 +260,10 @@ export async function captureLiveDiagnosticsToFile(
 
     const failure: LiveDiagnosticsFailure = {
       ok: false,
-      status: isTimeout ? "timeout" : "command_failed",
+      status: timedOut ? "timeout" : "command_failed",
       error: err instanceof Error ? err.message : String(err),
       exitCode,
-      timedOut: isTimeout,
+      timedOut,
       ...(stderr ? { stderr } : {}),
       ...(includeFallbackMemory ? { fallbackMemory: captureFallbackMemory() } : {}),
       timestamp,

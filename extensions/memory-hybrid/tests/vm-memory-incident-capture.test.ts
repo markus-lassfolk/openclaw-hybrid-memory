@@ -11,6 +11,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -43,7 +44,7 @@ const FAKE_DIAGNOSTICS = {
 // ---------------------------------------------------------------------------
 
 function makeTmpDir(prefix: string): string {
-  const dir = join(tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const dir = join(tmpdir(), `${prefix}-${Date.now()}-${randomBytes(8).toString("hex")}`);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -55,6 +56,23 @@ function readJsonFile<T>(path: string): T {
 
 function fileSize(path: string): number {
   return statSync(path).size;
+}
+
+/** Matches the (error, stdout, stderr) execFile callback signature. */
+type ExecFileCallback = (
+  error: Error | null,
+  stdout: string,
+  stderr: string,
+) => void;
+
+/** Constructs a fake execFile error with attached stdout/stderr and exit code. */
+function makeExecError(
+  message: string,
+  code: number | string,
+  stderr: string,
+  killed = false,
+): Error & { code: number | string; killed: boolean; signal: string | null; stderr: string } {
+  return Object.assign(new Error(message), { code, killed, signal: null as string | null, stderr });
 }
 
 // ---------------------------------------------------------------------------
@@ -96,7 +114,7 @@ afterEach(() => {
 
 describe("captureLiveDiagnosticsToFile — success", () => {
   it("writes valid non-empty JSON when the command succeeds", async () => {
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb: (...args: unknown[]) => void) => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
       cb(null, JSON.stringify(FAKE_DIAGNOSTICS), "");
     });
 
@@ -116,7 +134,7 @@ describe("captureLiveDiagnosticsToFile — success", () => {
   });
 
   it("fixture: successful diagnostics object matches expected shape", async () => {
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb: (...args: unknown[]) => void) => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
       cb(null, JSON.stringify(FAKE_DIAGNOSTICS), "");
     });
 
@@ -143,14 +161,9 @@ describe("captureLiveDiagnosticsToFile — success", () => {
 
 describe("captureLiveDiagnosticsToFile — command failure", () => {
   it("writes a non-empty failure envelope when the command exits non-zero", async () => {
-    const fakeError = Object.assign(new Error("Command exited with code 1"), {
-      code: 1,
-      killed: false,
-      signal: null,
-      stderr: "Fatal: out of memory",
-    });
+    const fakeError = makeExecError("Command exited with code 1", 1, "Fatal: out of memory");
 
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb: (...args: unknown[]) => void) => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
       cb(fakeError, "", "Fatal: out of memory");
     });
 
@@ -173,14 +186,9 @@ describe("captureLiveDiagnosticsToFile — command failure", () => {
   });
 
   it("fixture: failed diagnostics object matches expected shape", async () => {
-    const fakeError = Object.assign(new Error("exit code 2"), {
-      code: 2,
-      killed: false,
-      signal: null,
-      stderr: "diagnostics tool crashed",
-    });
+    const fakeError = makeExecError("exit code 2", 2, "diagnostics tool crashed");
 
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb: (...args: unknown[]) => void) => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
       cb(fakeError, "", "diagnostics tool crashed");
     });
 
@@ -207,14 +215,11 @@ describe("captureLiveDiagnosticsToFile — command failure", () => {
 
 describe("captureLiveDiagnosticsToFile — timeout", () => {
   it("writes a non-empty failure envelope with timedOut: true when the command is killed", async () => {
-    const timeoutError = Object.assign(new Error("Command timed out"), {
-      code: "ETIMEDOUT",
-      killed: true,
+    const timeoutError = Object.assign(makeExecError("Command timed out", "ETIMEDOUT", "", true), {
       signal: "SIGTERM",
-      stderr: "",
     });
 
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb: (...args: unknown[]) => void) => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
       cb(timeoutError, "", "");
     });
 
@@ -241,7 +246,7 @@ describe("captureLiveDiagnosticsToFile — timeout", () => {
 
 describe("captureLiveDiagnosticsToFile — invalid output", () => {
   it("writes a failure envelope when the command produces non-JSON output", async () => {
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb: (...args: unknown[]) => void) => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
       cb(null, "not json at all <<<>>>", "");
     });
 
@@ -260,7 +265,7 @@ describe("captureLiveDiagnosticsToFile — invalid output", () => {
   });
 
   it("writes a failure envelope when the command produces empty output", async () => {
-    execFileMock.mockImplementation((_cmd, _args, _opts, cb: (...args: unknown[]) => void) => {
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
       cb(null, "   \n\t  ", "");
     });
 
