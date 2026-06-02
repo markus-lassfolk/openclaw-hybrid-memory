@@ -58,14 +58,20 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
       withExit(async (opts?: { json?: boolean }) => {
         const status = runVaultStatus();
         if (!status) {
-          console.log("Credentials vault is not available (disabled or not configured).");
+          if (opts?.json) {
+            console.log(JSON.stringify(null));
+          } else {
+            console.log("Credentials vault is not available (disabled or not configured).");
+          }
           return;
         }
         if (opts?.json) {
           console.log(JSON.stringify(status, null, 2));
           return;
         }
-        const encLabel = status.encryptedAtRest ? `encrypted (kdf_version=${status.kdfVersion})` : `plaintext (kdf_version=${status.kdfVersion})`;
+        const encLabel = status.encryptedAtRest
+          ? `encrypted (kdf_version=${status.kdfVersion})`
+          : `plaintext (kdf_version=${status.kdfVersion})`;
         console.log(`Vault path:  ${status.dbPath}`);
         console.log(`Status:      ${encLabel}`);
         console.log(`Entries:     ${status.entryCount}`);

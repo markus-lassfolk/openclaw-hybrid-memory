@@ -236,9 +236,8 @@ export class CredentialsDB extends BaseSqliteStore {
     const encryptedAtRest = this.kdfVersion !== CRED_KDF_PLAINTEXT;
     const keyIgnored = this.kdfVersion === CRED_KDF_PLAINTEXT && this.configuredKeyPresent;
     const migrationRequired = keyIgnored;
-    const entryCount = (
-      this.liveDb.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }
-    ).count;
+    const entryCount = (this.liveDb.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number })
+      .count;
     return {
       dbPath: this.dbPath,
       kdfVersion: this.kdfVersion,
@@ -335,6 +334,12 @@ export class CredentialsDB extends BaseSqliteStore {
     if (verify) {
       try {
         const entries = this.listAll();
+        // Verify that all encrypted entries were successfully decrypted
+        if (entries.length !== result.migrated) {
+          throw new Error(
+            `Verification failed: only ${entries.length} of ${result.migrated} entries could be decrypted`,
+          );
+        }
         for (const e of entries) {
           this.get(e.service, e.type as CredentialType);
         }
