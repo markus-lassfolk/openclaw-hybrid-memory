@@ -196,6 +196,11 @@ export function implicitFeedbackCollapseStatus(scanned: number, collapsed: numbe
   return "collapsed";
 }
 
+/** Semantic no-op outcomes for collapse maintenance in non-dry-run mode. */
+export function isSemanticNoOpImplicitFeedbackCollapseStatus(status: ImplicitFeedbackCollapseStatus): boolean {
+  return status === "no_candidates" || status === "no_changes";
+}
+
 export function cleanupImplicitFeedbackDuplicates(
   factsDb: FactsDB,
   opts: {

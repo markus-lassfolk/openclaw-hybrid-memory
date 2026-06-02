@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { implicitFeedbackCollapseStatus } from "../cli/cmd-feedback.js";
+import { implicitFeedbackCollapseStatus, isSemanticNoOpImplicitFeedbackCollapseStatus } from "../cli/cmd-feedback.js";
 import {
   cleanupImplicitFeedbackDuplicates,
   type HandlerContext,
@@ -1624,5 +1624,12 @@ describe("implicitFeedbackCollapseStatus (#1736)", () => {
     expect(implicitFeedbackCollapseStatus(10, 0)).toBe("no_changes");
     expect(implicitFeedbackCollapseStatus(10, 4)).toBe("partial");
     expect(implicitFeedbackCollapseStatus(5, 5)).toBe("collapsed");
+  });
+
+  it("flags semantic no-op outcomes used for strict maintenance exit handling", () => {
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("no_candidates")).toBe(true);
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("no_changes")).toBe(true);
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("partial")).toBe(false);
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("collapsed")).toBe(false);
   });
 });
