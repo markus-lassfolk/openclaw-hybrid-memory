@@ -526,14 +526,14 @@ describe("CredentialsDB.encryptVaultSafe", () => {
     const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
     warnSpy.mockRestore();
     const originalGet = db2.get.bind(db2);
-    const getSpy = vi.spyOn(db2, "get").mockImplementation((service, type) => {
+    const getMock = vi.spyOn(db2, "get").mockImplementation((service, type) => {
       if (service === "svc" && type === "api_key") return null;
       return originalGet(service, type);
     });
     expect(() => db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { verify: true })).toThrow(
       /Vault encrypted but post-encryption verification failed: Verification failed: missing credential svc\/api_key\./,
     );
-    getSpy.mockRestore();
+    getMock.mockRestore();
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
