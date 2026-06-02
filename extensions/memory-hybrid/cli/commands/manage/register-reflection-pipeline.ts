@@ -970,6 +970,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           if (Number.isNaN(degradedAmbiguousThreshold) || degradedAmbiguousThreshold < 0) {
             throw new Error("--degraded-ambiguous-threshold must be an integer >= 0");
           }
+          if (jsonMode && (auto || projectStateLww || dryRun || apply)) {
+            throw new Error("--json is only supported in default resolve-contradictions mode");
+          }
           if (applyReview && (auto || projectStateLww || dryRun || apply || exportReview || llm || model)) {
             throw new Error(
               "--apply-review cannot be combined with --auto, --project-state-lww, --dry-run, --apply, --export-review, --llm, or --model",
@@ -1168,7 +1171,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const autoResolvedCount = res.autoResolved.length;
           const ambiguousCount = res.ambiguous.length;
           const totalConsidered = autoResolvedCount + ambiguousCount;
-          const noProgress = autoResolvedCount === 0;
+          const noProgress = totalConsidered > 0 && autoResolvedCount === 0;
           const degradedThresholdEnabled = degradedAmbiguousThreshold > 0;
           const degraded =
             degradedThresholdEnabled && noProgress && ambiguousCount >= degradedAmbiguousThreshold;
@@ -1200,7 +1203,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           );
           if (degraded) {
             console.log(
-              `Backlog alert: ambiguous=${ambiguousCount} with auto-resolved=0 exceeds degraded threshold ${degradedAmbiguousThreshold} (exit code 2).`,
+              `Backlog alert: ambiguous=${ambiguousCount} with auto-resolved=0 meets or exceeds degraded threshold ${degradedAmbiguousThreshold} (exit code 2).`,
             );
           }
           if (verbose && res.autoResolved.length > 0) {
