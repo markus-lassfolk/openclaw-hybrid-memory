@@ -178,7 +178,7 @@ export class CredentialsDB extends BaseSqliteStore {
         _plaintextKeyIgnoredWarnedPaths.add(dbPath);
         pluginLogger.warn(
           "Credentials vault is in plaintext mode (kdf_version=0). The configured encryption key is being ignored. " +
-            "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --yes",
+            "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes",
         );
       }
       return;
