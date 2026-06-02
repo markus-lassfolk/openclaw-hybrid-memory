@@ -437,6 +437,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             }
             if (result.cursorBlockedReason) {
               console.log(`Status: cursorBlockedReason=${result.cursorBlockedReason}`);
+              process.exitCode = 2;
             }
             if (result.partial && result.cursorAdvanced === false) {
               process.exitCode = 2;
