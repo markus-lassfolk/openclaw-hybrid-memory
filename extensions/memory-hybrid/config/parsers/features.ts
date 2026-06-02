@@ -351,6 +351,7 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
       typeof proposalsRaw?.minSessionEvidence === "number" && proposalsRaw.minSessionEvidence > 0
         ? Math.floor(proposalsRaw.minSessionEvidence)
         : 10,
+    requireScopeFilter: proposalsRaw?.requireScopeFilter === true,
   };
 }
 

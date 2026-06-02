@@ -40,6 +40,7 @@ const cfg: Pick<HybridMemoryConfig, "personaProposals"> = {
     minConfidence: 0.7,
     proposalTTLDays: 30,
     minSessionEvidence: 1,
+    requireScopeFilter: false,
   },
 };
 
