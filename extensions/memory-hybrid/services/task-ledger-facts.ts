@@ -1562,6 +1562,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
   const reconciledLabels: string[] = [];
   const toFlush: ActiveTaskEntry[] = [];
+  const toAudit: ActiveTaskEntry[] = [];
   const openclawHome = opts.openclawHome;
 
   for (const task of active) {
@@ -1586,6 +1587,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
     };
     reconciledLabels.push(task.label);
     toFlush.push(doneEntry);
+    toAudit.push(task);
   }
 
   if (reconciledLabels.length === 0 || opts.dryRun) {
@@ -1597,7 +1599,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   }
 
   const auditRunAt = new Date().toISOString();
-  recordActiveTaskSessionReconcileAudit(factsDb, auditRunAt, toFlush);
+  recordActiveTaskSessionReconcileAudit(factsDb, auditRunAt, toAudit);
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of toFlush) {

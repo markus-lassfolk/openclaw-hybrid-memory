@@ -6,10 +6,7 @@ import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
 import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
-import {
-  buildGatewayMemoryDiagnostics,
-  buildProcessMemorySnapshot,
-} from "../services/gateway-memory-diagnostics.js";
+import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot } from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   getActiveTaskProjectionStatus,

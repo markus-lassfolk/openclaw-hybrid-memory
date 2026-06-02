@@ -523,7 +523,10 @@ describe("registerPublicApiRoutes", () => {
     const { api, routes } = makeApi();
     registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb }, api);
     const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`)!;
-    const res = await invokeNodeHttpRoute(route.handler, fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`));
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`),
+    );
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body);
     expect(body.process.rssBytes).toBeGreaterThan(0);
