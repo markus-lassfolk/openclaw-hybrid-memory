@@ -3,6 +3,7 @@ import type {
   CouncilProvenanceMode,
   CronReliabilityConfig,
   HealthConfig,
+  MaintenanceFailureReportingConfig,
   MaintenanceConfig,
   MonthlyReviewConfig,
   NightlyCycleConfig,
@@ -154,6 +155,14 @@ function parseCronReliabilityConfig(cfg: Record<string, unknown>): CronReliabili
   };
 }
 
+function parseMaintenanceFailureReportingConfig(cfg: Record<string, unknown>): MaintenanceFailureReportingConfig {
+  const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
+  const failureReportingRaw = maintenanceRaw?.failureReporting as Record<string, unknown> | undefined;
+  return {
+    enabled: failureReportingRaw?.enabled !== false,
+  };
+}
+
 export function parseMaintenanceConfig(cfg: Record<string, unknown>): MaintenanceConfig {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const monthlyReviewRaw = maintenanceRaw?.monthlyReview as Record<string, unknown> | undefined;
@@ -171,6 +180,7 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
   return {
     monthlyReview,
     cronReliability: parseCronReliabilityConfig(cfg),
+    failureReporting: parseMaintenanceFailureReportingConfig(cfg),
     council: parseCouncilConfig(cfg),
   };
 }

@@ -112,6 +112,7 @@ function generateEventId(): string {
 interface ScopeInterface {
   setTag(key: string, value: string): void;
   setContext(key: string, value: Record<string, unknown>): void;
+  setFingerprint(value: string[]): void;
 }
 
 class GlitchTipReporter {
@@ -137,6 +138,7 @@ class GlitchTipReporter {
   // Current scope — set synchronously during withScope callback
   private currentScopeTags: Record<string, string> = {};
   private currentScopeContexts: Record<string, Record<string, unknown>> = {};
+  private currentScopeFingerprint: string[] | undefined;
 
   constructor(
     dsn: string,
@@ -192,6 +194,7 @@ class GlitchTipReporter {
   withScope(callback: (scope: ScopeInterface) => void): void {
     this.currentScopeTags = {};
     this.currentScopeContexts = {};
+    this.currentScopeFingerprint = undefined;
     callback({
       setTag: (k, v) => {
         this.currentScopeTags[k] = v;
@@ -199,16 +202,21 @@ class GlitchTipReporter {
       setContext: (k, v) => {
         this.currentScopeContexts[k] = v;
       },
+      setFingerprint: (value) => {
+        this.currentScopeFingerprint = value.slice();
+      },
     });
     // Clear after callback — captureException captured the snapshot during the callback
     this.currentScopeTags = {};
     this.currentScopeContexts = {};
+    this.currentScopeFingerprint = undefined;
   }
 
   captureException(error: Error): string {
     // Snapshot scope synchronously (called inside withScope callback)
     const scopeTags = { ...this.currentScopeTags };
     const scopeContexts = { ...this.currentScopeContexts };
+    const scopeFingerprint = this.currentScopeFingerprint?.slice();
     const eventId = generateEventId();
 
     if (shouldDropNoisyError(error)) {
@@ -228,6 +236,7 @@ class GlitchTipReporter {
       release: this.release,
       environment: this.environment,
       server_name: this.serverName,
+      fingerprint: scopeFingerprint,
       exception: {
         values: [
           {
@@ -535,6 +544,10 @@ let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
 let telemetryMuteReason: string | null = null;
 
+function buildFingerprintKey(fingerprint: string[]): string {
+  return fingerprint.map((part) => scrubString(String(part))).join(":");
+}
+
 export function setErrorReporterMuted(muted: boolean, reason?: string): void {
   telemetryMuteReason = muted ? (reason ?? "muted") : null;
 }
@@ -680,6 +693,9 @@ export function capturePluginError(
     memoryCount?: number;
     /** Severity level (e.g. "info", "warning", "error"). Not sent to reporter, used for local logging/filtering. */
     severity?: string;
+    fingerprint?: string[];
+    tags?: Record<string, string | number | boolean | undefined>;
+    contexts?: Record<string, Record<string, unknown>>;
     /** Additional context fields for specific operations */
     [key: string]: unknown;
   },
@@ -692,7 +708,10 @@ export function capturePluginError(
   }
 
   // Rate limiting: dedup same errors within 60s
-  const fingerprint = `${error.name}:${scrubString(error.message).slice(0, 100)}`;
+  const fingerprint =
+    Array.isArray(context.fingerprint) && context.fingerprint.length > 0
+      ? buildFingerprintKey(context.fingerprint)
+      : `${error.name}:${scrubString(error.message).slice(0, 100)}`;
   const now = Date.now();
   const lastSeen = errorDedup.get(fingerprint);
   if (lastSeen && now - lastSeen < 60000) {
@@ -716,8 +735,22 @@ export function capturePluginError(
     if (context.backend) scope.setTag("backend", context.backend);
     if (context.retryAttempt !== undefined) scope.setTag("retryAttempt", String(context.retryAttempt));
     if (context.memoryCount !== undefined) scope.setTag("memoryCount", String(context.memoryCount));
+    if (Array.isArray(context.fingerprint) && context.fingerprint.length > 0) {
+      scope.setFingerprint(context.fingerprint.map((part) => scrubString(String(part))));
+    }
+    if (context.tags) {
+      for (const [key, value] of Object.entries(context.tags)) {
+        if (value === undefined || value === null) continue;
+        scope.setTag(key, String(value));
+      }
+    }
     if (context.configShape) {
       scope.setContext("config_shape", context.configShape);
+    }
+    if (context.contexts) {
+      for (const [key, value] of Object.entries(context.contexts)) {
+        scope.setContext(key, value);
+      }
     }
     eventId = reporter?.captureException(error);
   });
