@@ -26,6 +26,7 @@ import { resolveSecretRef } from "./parsers/core.js";
 import {
   effectiveMaintenanceFallbackPolicy,
   filterMaintenanceTierFallbackModels,
+  isExpensiveMaintenanceFallbackModel,
 } from "./maintenance-fallback-policy.js";
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
@@ -350,6 +351,19 @@ export function resolveReflectionModelAndFallbacks(
 
   if (tier === "maintenance" && maintPolicy === "cheap-only") {
     chain = filterMaintenanceTierFallbackModels(chain, effectivePrimary, explicitMaintenanceSet);
+  }
+
+  // Safety-net (#1824): when no fallback chain has been populated for maintenance tier,
+  // append the first cheap configured model from the default-tier preference list.
+  // Prevents JSON-critical maintenance ops (reflect-rules, generate-proposals) from
+  // running with an empty fallback chain even when only one maintenance model is configured.
+  if (tier === "maintenance" && chain.length === 0 && !skipGlobalFallbackAppend) {
+    for (const candidate of getLLMModelPreference(cronCfg, "default")) {
+      if (!candidate || candidate === effectivePrimary) continue;
+      if (maintPolicy === "cheap-only" && isExpensiveMaintenanceFallbackModel(candidate)) continue;
+      chain.push(candidate);
+      break;
+    }
   }
 
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };

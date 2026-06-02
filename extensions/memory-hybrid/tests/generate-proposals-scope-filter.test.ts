@@ -95,9 +95,7 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
       expect((caughtError as Error).message).not.toContain("autoRecall.scopeFilter is not set");
     }
 
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("autoRecall.scopeFilter is not set"),
-    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("autoRecall.scopeFilter is not set"));
   });
 
   it("throws when requireScopeFilter=true, scopeFilter absent, and non-global scoped facts exist", async () => {
@@ -107,9 +105,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
 
     const ctx = makeCtx(db, proposalsDb, { requireScopeFilter: true });
 
-    await expect(
-      runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f }),
-    ).rejects.toThrow("autoRecall.scopeFilter is not set");
+    await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
+      "autoRecall.scopeFilter is not set",
+    );
   });
 
   it("does not throw when requireScopeFilter=true but all facts are global scope", async () => {
@@ -154,6 +152,110 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     if (thrownError !== null) {
       expect(thrownError.message).not.toContain("autoRecall.scopeFilter is not set");
     }
+  });
+});
+
+describe("generate-proposals — JSON retry (#1824)", () => {
+  function makeCtxWithTwoMaintenanceModels(
+    db: InstanceType<typeof FactsDB>,
+    proposalsDb: InstanceType<typeof ProposalsDB>,
+    openai: unknown,
+  ): HandlerContext {
+    const cfg = {
+      personaProposals: {
+        enabled: true,
+        autoApply: false,
+        allowedFiles: ["SOUL.md"],
+        maxProposalsPerWeek: 5,
+        minConfidence: 0.5,
+        proposalTTLDays: 30,
+        minSessionEvidence: 1,
+        requireScopeFilter: false,
+      },
+      autoRecall: { scopeFilter: undefined },
+      identityReflection: { enabled: false },
+      identityPromotion: { enabled: false },
+      llm: { maintenance: ["primary-model", "fallback-model"], default: ["primary-model"], heavy: ["primary-model"] },
+    } as unknown as HybridMemoryConfig;
+
+    return {
+      factsDb: db,
+      proposalsDb,
+      cfg,
+      openai,
+      personaStateStore: null,
+      identityReflectionStore: null,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    } as unknown as HandlerContext;
+  }
+
+  it("retries with fallback model when primary returns invalid JSON", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+
+    let callIndex = 0;
+    const validJson = JSON.stringify([
+      {
+        targetFile: "SOUL.md",
+        title: "Test proposal",
+        observation: "Observed pattern",
+        suggestedChange: "Add note about TypeScript preference",
+        confidence: 0.8,
+      },
+    ]);
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: callIndex++ === 0 ? "not json at all!!!" : validJson } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoMaintenanceModels(db, proposalsDb, openai);
+    const result = await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+    expect(result.created).toBe(1);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining("invalid JSON"));
+  });
+
+  it("throws when all models return invalid JSON", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: "not valid json" } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoMaintenanceModels(db, proposalsDb, openai);
+
+    await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
+      "all models failed",
+    );
+
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
   });
 });
 

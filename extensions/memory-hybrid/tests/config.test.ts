@@ -1640,6 +1640,57 @@ describe("hybridConfigSchema.parse", () => {
       const heavy = resolveReflectionModelAndFallbacks(cfg, "heavy");
       expect(heavy.defaultModel).toBe("openai/gpt-5.4");
     });
+
+    it("#1824: safety-net appends cheap default-tier model as fallback when maintenance chain is empty", () => {
+      // Single maintenance model, no distill.fallbackModels, no llm.fallbackModel configured.
+      // Safety-net should pick the first non-primary default-tier model as an automatic fallback.
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          maintenance: ["minimax/MiniMax-M2.7-highspeed"],
+          default: ["minimax/MiniMax-M2.7-highspeed", "openai/gpt-4.1-mini"],
+          heavy: ["openai/gpt-5.4"],
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("minimax/MiniMax-M2.7-highspeed");
+      // Safety-net must append a cheap, non-primary default-tier model.
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
+    });
+
+    it("#1824: safety-net skips expensive models under cheap-only policy", () => {
+      // Under cheap-only policy, isExpensiveMaintenanceFallbackModel filters out expensive models.
+      // The safety-net must not append MiniMax-M2.7 (flagged expensive) as a fallback.
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          maintenance: ["openai/gpt-4.1-nano"],
+          default: ["minimax/MiniMax-M2.7", "openai/gpt-4.1-mini"],
+          heavy: ["openai/gpt-5.4"],
+          maintenanceFallbackPolicy: "cheap-only",
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("openai/gpt-4.1-nano");
+      // minimax/MiniMax-M2.7 is expensive → skipped; openai/gpt-4.1-mini is cheap → appended.
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
+    });
+
+    it("#1824: safety-net is skipped when explicit-only policy is active and llm.maintenance is set", () => {
+      // explicit-only + explicit maintenance set → skipGlobalFallbackAppend=true → no safety-net.
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          maintenance: ["openai/gpt-4.1-nano"],
+          default: ["openai/gpt-4.1-mini", "gemini-2.0-flash"],
+          heavy: ["openai/gpt-5.4"],
+          maintenanceFallbackPolicy: "explicit-only",
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("openai/gpt-4.1-nano");
+      expect(r.fallbackModels).toBeUndefined();
+    });
   });
 
   it("parses optional selfCorrection config", () => {

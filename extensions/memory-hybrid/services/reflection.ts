@@ -1223,22 +1223,7 @@ export async function runReflectionRules(
       subsystem: "openai",
       retryAttempt,
     });
-    const diagnostics: ReflectionRulesDiagnostics = {
-      ...baseDiagnostics,
-      zeroRulesReason: "llm_call_failed",
-      status: "degraded",
-    };
-    logger.info(
-      "memory-hybrid: reflect-rules — diagnostics: " +
-        `model_response_chars=${diagnostics.modelResponseChars} ` +
-        `parse_success=${diagnostics.parseSuccess} ` +
-        `parsed_candidates=${diagnostics.parsedCandidates} ` +
-        `rejected_duplicates=${diagnostics.rejectedDuplicates} ` +
-        `rejected_low_confidence=${diagnostics.rejectedLowConfidence} ` +
-        `stored=${diagnostics.stored} ` +
-        `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
-    );
-    return { rulesExtracted: 0, rulesStored: 0, diagnostics };
+    throw err instanceof Error ? err : new Error(String(err));
   }
   const trimmedResponse = rawResponse.trim();
   const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
@@ -1362,6 +1347,26 @@ export async function runReflectionRules(
         `stored=${diagnostics.stored} ` +
         `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
     );
+    // Format retry (#1824): when the model returned an unusable response format and fallbacks are
+    // available, retry with the next model in the chain before giving up.
+    if (
+      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
+      opts.fallbackModels?.length
+    ) {
+      const [fallbackModel, ...remainingFallbacks] = opts.fallbackModels;
+      logger.warn(
+        `memory-hybrid: reflect-rules — ${opts.model} returned ${zeroRulesReason}, retrying with fallback model ${fallbackModel}`,
+      );
+      return runReflectionRules(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        { ...opts, model: fallbackModel, fallbackModels: remainingFallbacks, modelSource: "format-retry-fallback" },
+        logger,
+        provenanceService,
+      );
+    }
     return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
   }
 
