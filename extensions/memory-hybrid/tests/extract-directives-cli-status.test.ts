@@ -66,7 +66,6 @@ describe("extract-directives CLI status", () => {
             boundedPartialRetry: 0,
           },
           cursorAdvanced: false,
-          cursorBlockedReason: "retryable_rejections",
         })),
       }),
     );
