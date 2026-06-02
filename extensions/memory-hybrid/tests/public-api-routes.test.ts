@@ -478,6 +478,45 @@ describe("registerPublicApiRoutes", () => {
     expect(JSON.parse(res.body).error).toBe("active_tasks_disabled");
   });
 
+  it("process-memory returns compact heap snapshot", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`)!;
+    const res = await invokeNodeHttpRoute(route.handler, fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`));
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.process.rssBytes).toBeGreaterThan(0);
+    expect(body.uptimeSeconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it("memory-diagnostics returns hybrid reregister metrics when vectorDb present", async () => {
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(true),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`),
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.hybridMemory.reregisterMetrics).toBeDefined();
+    expect(body.process.nativeRssBytes).toBeGreaterThanOrEqual(0);
+  });
+
   it("does not register routes when health is disabled", () => {
     const { api, routes } = makeApi();
     registerPublicApiRoutes(
