@@ -13,6 +13,7 @@ import { tryRestrictSqliteDbFileMode } from "../../utils/sqlite-file-perms.js";
 import { BaseSqliteStore } from "../base-sqlite-store.js";
 import { runFactsMigrations } from "../migrations/facts-migrations.js";
 import { SupersededTextsCache } from "./cache-manager.js";
+import { resolveFactsDbPragmas } from "./resolve-facts-db-pragmas.js";
 import {
   deleteFact,
   getDuplicateIdByNormalizedHash,
@@ -103,18 +104,16 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       throw err;
     }
 
+    const pragmas = resolveFactsDbPragmas(dbPath);
     super(db, {
       foreignKeys: true,
       customPragmas: [
         "PRAGMA synchronous = NORMAL",
         "PRAGMA wal_autocheckpoint = 1000",
-        // Perf: 64MB page cache (up from 2MB default) — avoids repeated disk reads for
-        // the ~192MB facts DB during FTS two-phase lookups.  Single-connection model so
-        // this is the only consumer.  Env: OPENCLAW_FACTS_CACHE_SIZE_KB to override.
-        `PRAGMA cache_size = -${process.env.OPENCLAW_FACTS_CACHE_SIZE_KB ?? "64000"}`,
-        // Perf: 256MB memory-mapped I/O — lets the OS page cache serve reads without
-        // crossing the user/kernel boundary.  Env: OPENCLAW_FACTS_MMAP_SIZE to override.
-        `PRAGMA mmap_size = ${process.env.OPENCLAW_FACTS_MMAP_SIZE ?? "268435456"}`,
+        // Perf: page cache sized to DB (clamped via resolveFactsDbPragmas). Env: OPENCLAW_FACTS_CACHE_SIZE_KB.
+        `PRAGMA cache_size = -${pragmas.cacheSizeKb}`,
+        // Perf: mmap capped to DB size + headroom. Env: OPENCLAW_FACTS_MMAP_SIZE.
+        `PRAGMA mmap_size = ${pragmas.mmapSizeBytes}`,
         "PRAGMA temp_store = MEMORY",
       ],
     });
