@@ -14,6 +14,7 @@ import {
   cleanupImplicitFeedbackDuplicates,
   type ExtractImplicitFeedbackProgressSnapshot,
   implicitFeedbackCollapseStatus,
+  isSemanticNoOpImplicitFeedbackCollapseStatus,
 } from "../../cmd-feedback.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { registerScanMaintenanceOverrideOptions } from "../../maintenance-overrides.js";
@@ -463,6 +464,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               console.log(
                 "No near-duplicate rows met the current threshold. Consider `--include-legacy` and/or a lower `--threshold`, then rerun audit health to verify bloat reduction.",
               );
+            }
+            if (!dryRun && isSemanticNoOpImplicitFeedbackCollapseStatus(collapseStatus)) {
+              process.exitCode = 2;
             }
             return;
           }
