@@ -69,6 +69,8 @@ export class VectorDB {
   private initGeneration = 0;
   /** Cache of open shadow table handles keyed by table name. Cleared on close/swap. */
   private shadowTableCache = new Map<string, lancedb.Table>();
+  /** Cap shadow table handles during bulk re-index to avoid unbounded native growth. */
+  private static readonly SHADOW_TABLE_CACHE_MAX = 4;
   private static readonly AUTO_OPTIMIZE_INTERVAL = 100;
   /**
    * Set to true if doInitialize() performed an auto-repair (drop + recreate) of the
@@ -1085,6 +1087,14 @@ export class VectorDB {
     let table = this.shadowTableCache.get(tableName);
     if (!table) {
       table = await this.db.openTable(tableName);
+      if (this.shadowTableCache.size >= VectorDB.SHADOW_TABLE_CACHE_MAX && !this.shadowTableCache.has(tableName)) {
+        const oldest = this.shadowTableCache.keys().next().value;
+        if (oldest) this.shadowTableCache.delete(oldest);
+      }
+      this.shadowTableCache.set(tableName, table);
+    } else {
+      // Promote to end of Map iteration order for true LRU eviction
+      this.shadowTableCache.delete(tableName);
       this.shadowTableCache.set(tableName, table);
     }
 
