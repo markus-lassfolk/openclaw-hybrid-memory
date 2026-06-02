@@ -1223,22 +1223,7 @@ export async function runReflectionRules(
       subsystem: "openai",
       retryAttempt,
     });
-    const diagnostics: ReflectionRulesDiagnostics = {
-      ...baseDiagnostics,
-      zeroRulesReason: "llm_call_failed",
-      status: "degraded",
-    };
-    logger.info(
-      "memory-hybrid: reflect-rules — diagnostics: " +
-        `model_response_chars=${diagnostics.modelResponseChars} ` +
-        `parse_success=${diagnostics.parseSuccess} ` +
-        `parsed_candidates=${diagnostics.parsedCandidates} ` +
-        `rejected_duplicates=${diagnostics.rejectedDuplicates} ` +
-        `rejected_low_confidence=${diagnostics.rejectedLowConfidence} ` +
-        `stored=${diagnostics.stored} ` +
-        `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
-    );
-    return { rulesExtracted: 0, rulesStored: 0, diagnostics };
+    throw err;
   }
   const trimmedResponse = rawResponse.trim();
   const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);

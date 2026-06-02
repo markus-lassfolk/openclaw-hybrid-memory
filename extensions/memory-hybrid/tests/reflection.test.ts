@@ -282,6 +282,39 @@ describe("runReflectionRules diagnostics", () => {
     expect(res.diagnostics.parseSuccess).toBe(false);
   });
 
+  it("throws when the LLM call fails", async () => {
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => {
+            throw new Error("upstream unavailable");
+          }),
+        },
+      },
+    };
+
+    await expect(
+      runReflectionRules(
+        factsDb as never,
+        vectorDb as never,
+        embeddings as never,
+        openai as never,
+        { dryRun: true, model: "test-model" },
+        { info: () => undefined, warn: () => undefined },
+      ),
+    ).rejects.toThrow("upstream unavailable");
+  });
+
   it("reports partial insufficient_patterns when fewer than 2 pattern facts are available", async () => {
     const create = vi.fn(async () => ({ choices: [{ message: { content: "RULE: should not be called" } }] }));
     const factsDb = {

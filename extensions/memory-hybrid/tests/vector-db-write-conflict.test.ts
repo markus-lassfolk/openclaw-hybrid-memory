@@ -109,6 +109,42 @@ describe("VectorDB write conflict retries (#reembed-vectorless)", () => {
     expect(warns.some((w) => w.includes("continuing with delete anyway"))).toBe(true);
   });
 
+  it("retries optimize() on retryable commit conflicts before succeeding", async () => {
+    vi.useFakeTimers();
+    try {
+      const db = new VectorDB(`/tmp/test-lance-optimize-retry-${randomUUID()}`, DIM);
+      (db as unknown as { table: object }).table = {};
+      const mockStats = {
+        compaction: { fragmentsRemoved: 2 },
+        prune: { oldVersionsRemoved: 1, bytesRemoved: 4096 },
+      };
+      const optimizeFn = vi
+        .fn<() => Promise<typeof mockStats>>()
+        .mockRejectedValueOnce(
+          new Error(
+            "lance error: Retryable commit conflict for version 5: This Rewrite transaction was preempted by concurrent transaction Append at version 5. Please retry.",
+          ),
+        )
+        .mockResolvedValue(mockStats);
+      vi.spyOn(db as unknown as { ensureInitialized: () => Promise<void> }, "ensureInitialized").mockResolvedValue(
+        undefined,
+      );
+      vi.spyOn(
+        db as unknown as { getTable: () => { optimize: typeof optimizeFn } },
+        "getTable",
+      ).mockReturnValue({ optimize: optimizeFn });
+
+      const optimizePromise = db.optimize(24 * 60 * 60 * 1000);
+
+      await vi.runAllTimersAsync();
+      const result = await optimizePromise;
+      expect(result).toEqual({ compacted: 2, removedFragments: 1, freedBytes: 4096 });
+      expect(optimizeFn).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("suppresses auto-optimize scheduling while runWithAutoOptimizePaused() is active", async () => {
     const db = new VectorDB(`/tmp/test-lance-autopause-${randomUUID()}`, DIM);
     (db as unknown as { table: object }).table = {};
