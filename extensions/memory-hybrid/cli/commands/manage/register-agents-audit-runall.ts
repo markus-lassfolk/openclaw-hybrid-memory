@@ -12,6 +12,10 @@ import { countActivePatternFactsForMaintenance } from "../../../services/reflect
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import { getLanguageKeywordsFilePath } from "../../../utils/language-keywords.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import {
+  registerScanMaintenanceOverrideOptions,
+  scanMaintenanceOverridePayload,
+} from "../../maintenance-overrides.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -100,17 +104,19 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
       }),
     );
 
-  mem
-    .command("run-all")
-    .description(
-      "Run all maintenance tasks in optimal order (prune, compact, distill, extract-*, reflection, generate-proposals, self-correction, build-languages). Use --dry-run to list steps only.",
-    )
-    .option("--dry-run", "List steps that would run without executing")
-    .option("-v, --verbose", "Show detailed output for each step")
-    .action(
-      withExit(async (opts?: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("run-all")
+      .description(
+        "Run all maintenance tasks in optimal order (prune, compact, distill, extract-*, reflection, generate-proposals, self-correction, build-languages). Use --dry-run to list steps only.",
+      )
+      .option("--dry-run", "List steps that would run without executing")
+      .option("-v, --verbose", "Show detailed output for each step"),
+  ).action(
+      withExit(async (opts?: { dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        const scanOverrides = scanMaintenanceOverridePayload(opts);
         const log = (s: string) => console.log(s);
         const sink = { log, warn: (s: string) => console.warn(s) };
         const memoryDir = resolvedSqlitePath ? dirname(resolvedSqlitePath) : null;
@@ -166,7 +172,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 {
                   name: "distill (3 days)",
                   run: async () => {
-                    const r = await runDistill({ dryRun: false, days: 3, verbose }, sink);
+                    const r = await runDistill({ dryRun: false, days: 3, verbose, ...scanOverrides }, sink);
                     log(`Distill: ${r.stored} stored from ${r.sessionsScanned} sessions.`);
                   },
                 },
@@ -177,7 +183,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 {
                   name: "extract-daily (7 days)",
                   run: async () => {
-                    const r = await runExtractDaily({ days: 7, dryRun: false, verbose }, sink);
+                    const r = await runExtractDaily({ days: 7, dryRun: false, verbose, ...scanOverrides }, sink);
                     const stored = r.totalStored ?? r.stored ?? 0;
                     log(`Extract-daily: ${stored} stored.`);
                   },
@@ -189,7 +195,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 {
                   name: "extract-directives (7 days)",
                   run: async () => {
-                    const r = await runExtractDirectives({ days: 7, verbose, dryRun: false });
+                    const r = await runExtractDirectives({ days: 7, verbose, dryRun: false, ...scanOverrides });
                     log(`Extract-directives: ${r.sessionsScanned} sessions scanned.`);
                   },
                 },
@@ -200,7 +206,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 {
                   name: "extract-reinforcement (7 days)",
                   run: async () => {
-                    const r = await runExtractReinforcement({ days: 7, verbose, dryRun: false });
+                    const r = await runExtractReinforcement({ days: 7, verbose, dryRun: false, ...scanOverrides });
                     log(`Extract-reinforcement: ${r.sessionsScanned} sessions scanned.`);
                   },
                 },
@@ -211,7 +217,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 {
                   name: "extract-implicit (3 days)",
                   run: async () => {
-                    const r = await runExtractImplicitFeedback({ days: 3, verbose, dryRun: false });
+                    const r = await runExtractImplicitFeedback({ days: 3, verbose, dryRun: false, ...scanOverrides });
                     log(
                       `Extract-implicit: ${r.signalsExtracted} signals (${r.positiveCount}+/${r.negativeCount}-) from ${r.sessionsScanned} sessions.`,
                     );
@@ -224,7 +230,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
                 {
                   name: "extract-procedures (7 days)",
                   run: async () => {
-                    await runExtractProcedures({ days: 7, dryRun: false, verbose });
+                    await runExtractProcedures({ days: 7, dryRun: false, verbose, ...scanOverrides });
                     log("Extract procedures done.");
                   },
                 },
@@ -325,7 +331,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           {
             name: "self-correction-run",
             run: async () => {
-              await runSelfCorrectionRun({ dryRun: false, verbose });
+              await runSelfCorrectionRun({ dryRun: false, verbose, ...scanOverrides });
               log("Self-correction run done.");
             },
           },
