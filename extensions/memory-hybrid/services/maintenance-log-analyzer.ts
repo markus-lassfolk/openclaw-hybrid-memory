@@ -74,7 +74,7 @@ export interface MaintenanceFinding {
   suggestedAction: string;
   severity: MaintenanceRule["severity"];
   glitchtipEventId?: string;
-  status?: "new" | "still-failing" | "historical-stale";
+  status?: "new" | "still-failing";
   occurrenceCount?: number;
   firstSeenAt?: number;
   lastSeenAt?: number;
@@ -821,9 +821,9 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
         row.fingerprint,
         {
           firstSeenAt: Number(row.first_seen_at ?? 0),
-          lastSeenAt: Number(row.last_seen_at ?? 0),
-          occurrenceCount: Number(row.occurrence_count ?? 0),
-          glitchtipReported: Number(row.glitchtip_reported ?? 0) > 0,
+          lastSeenAt: Number(row.last_seen_at),
+          occurrenceCount: Number(row.occurrence_count),
+          glitchtipReported: Number(row.glitchtip_reported) > 0,
         },
       ]),
     );
@@ -875,7 +875,6 @@ export function summarizeMaintenanceFindings(
   const statusRank: Record<NonNullable<MaintenanceFinding["status"]>, number> = {
     new: 0,
     "still-failing": 1,
-    "historical-stale": 2,
   };
   summarized.sort((a, b) => {
     const statusDelta = statusRank[a.status ?? "new"] - statusRank[b.status ?? "new"];
