@@ -820,7 +820,7 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
       rows.map((row) => [
         row.fingerprint,
         {
-          firstSeenAt: Number(row.first_seen_at ?? 0),
+          firstSeenAt: Number(row.first_seen_at),
           lastSeenAt: Number(row.last_seen_at),
           occurrenceCount: Number(row.occurrence_count),
           glitchtipReported: Number(row.glitchtip_reported) > 0,
@@ -849,21 +849,25 @@ export function summarizeMaintenanceFindings(
     else byFingerprint.set(finding.fingerprint, [finding]);
   }
 
-  const summarized = [...byFingerprint.entries()].map(([fingerprint, bucket]) => {
-    const sorted = bucket.slice().sort((a, b) => a.occurredAt - b.occurredAt);
-    const latest = sorted[sorted.length - 1]!;
-    const earliest = sorted[0]!;
-    const persisted = ledger.get(fingerprint);
-    return {
-      ...latest,
-      status: persisted ? "still-failing" : "new",
-      occurrenceCount: (persisted?.occurrenceCount ?? 0) + sorted.length,
-      firstSeenAt: persisted ? Math.min(persisted.firstSeenAt, earliest.occurredAt) : earliest.occurredAt,
-      lastSeenAt: latest.occurredAt,
-      actionTaken:
-        persisted?.glitchtipReported && GLITCHTIP_CLASSES.has(latest.classification) ? "reported" : latest.actionTaken,
-    } satisfies MaintenanceFinding;
-  });
+  const summarized = [...byFingerprint.entries()]
+    .map(([fingerprint, bucket]) => {
+      if (bucket.length === 0) return null;
+      const sorted = bucket.slice().sort((a, b) => a.occurredAt - b.occurredAt);
+      const latest = sorted[sorted.length - 1];
+      const earliest = sorted[0];
+      if (!latest || !earliest) return null;
+      const persisted = ledger.get(fingerprint);
+      return {
+        ...latest,
+        status: persisted ? "still-failing" : "new",
+        occurrenceCount: (persisted?.occurrenceCount ?? 0) + sorted.length,
+        firstSeenAt: persisted ? Math.min(persisted.firstSeenAt, earliest.occurredAt) : earliest.occurredAt,
+        lastSeenAt: latest.occurredAt,
+        actionTaken:
+          persisted?.glitchtipReported && GLITCHTIP_CLASSES.has(latest.classification) ? "reported" : latest.actionTaken,
+      } satisfies MaintenanceFinding;
+    })
+    .filter((finding): finding is MaintenanceFinding => finding !== null);
 
   const severityRank: Record<MaintenanceRule["severity"], number> = {
     critical: 0,
