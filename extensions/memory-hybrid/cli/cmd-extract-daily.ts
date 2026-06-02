@@ -19,7 +19,7 @@ import type { ExtractDailyResult, ExtractDailySink } from "./types.js";
 
 export async function runExtractDailyForCli(
   ctx: HandlerContext,
-  opts: { days: number; dryRun: boolean; verbose?: boolean },
+  opts: { days: number; dryRun: boolean; verbose?: boolean; force?: boolean; full?: boolean },
   sink: ExtractDailySink,
 ): Promise<ExtractDailyResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, aliasDb } = ctx;

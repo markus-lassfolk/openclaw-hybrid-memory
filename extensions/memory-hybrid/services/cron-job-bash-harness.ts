@@ -6,7 +6,7 @@
  * (or a /tmp fallback if that path is not writable).
  */
 
-export type HybridMemCronStep = { name: string; cmd: string };
+export type HybridMemCronStep = { name: string; cmd: string; optional?: boolean };
 
 export const HYBRID_MEM_CRON_ENV_SANITIZER_MARKER =
   "# Hybrid-mem env sanitizer (strip service vars that can break plugin CLI discovery)";
@@ -49,7 +49,8 @@ export function buildHybridMemCronBashBody(
 ): string {
   const lines = steps.map((s) => {
     const safe = shellSafeStepName(s.name);
-    return `hm_step "${safe}" ${s.cmd}`;
+    const line = `hm_step "${safe}" ${s.cmd}`;
+    return s.optional ? `${line} || true` : line;
   });
   const requiredArgs = requiredSteps.map((s) => `"${shellSafeStepName(s)}"`).join(" ");
   return [
@@ -94,7 +95,7 @@ export function buildHybridMemCronBashBody(
     '  local -a cmd=("$@")',
     '  if [ "$force_mode" -eq 1 ] && [ "${cmd[0]:-}" = "openclaw" ] && [ "${cmd[1]:-}" = "hybrid-mem" ]; then',
     '    case "${cmd[2]:-}" in',
-    "      distill|extract-procedures|extract-directives|extract-reinforcement|extract-implicit|self-correction-run)",
+    "      distill|extract-daily|extract-procedures|extract-directives|extract-reinforcement|extract-implicit|self-correction-run)",
     "        cmd+=(--force)",
     "        ;;",
     "    esac",
