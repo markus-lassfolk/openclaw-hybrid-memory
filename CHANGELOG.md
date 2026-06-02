@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **SQLite facts.db pragmas**: clamp `OPENCLAW_FACTS_CACHE_SIZE_KB` / `OPENCLAW_FACTS_MMAP_SIZE` to on-disk DB size to prevent multi-hundred-MB anonymous over-reservation.
 - **Lance shadow table cache**: cap at 4 entries during bulk re-index to avoid unbounded native handle growth.
 
+### Changed
+
+- **Maintenance CLI overrides ([#1798](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1798), [#1799](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1799)):** scan-style commands share `--force` (preferred) and legacy `--full` to bypass 23h scan cooldown and incremental watermarks; `run-all` propagates overrides; cron QA harness injects `--force`.
+
 ---
 
 ## [2026.6.10] - 2026-06-01
