@@ -18,6 +18,7 @@ import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush
 import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
 import { parseSourceDate } from "../../utils/dates.js";
+import { getEnv } from "../../utils/env-manager.js";
 import { resolveTierPreferenceWithSources } from "../../utils/llm-selection.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { versionInfo } from "../../versionInfo.js";
@@ -382,6 +383,7 @@ export function buildCliContextServices(
           `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped})`,
         );
       }
+      const runId = makeDreamCycleRunId();
       return runDreamCycle(
         factsDb,
         vectorDb,
@@ -411,12 +413,14 @@ export function buildCliContextServices(
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
             deny: cfg.nightlyCycle.consolidationEventTypeDeny,
           },
+          runId,
           stageArtifactDir: (() => {
-            if (process.env.HYBRID_MEM_DREAM_STAGE_DIR?.trim()) {
-              return process.env.HYBRID_MEM_DREAM_STAGE_DIR.trim();
+            const envDir = getEnv("HYBRID_MEM_DREAM_STAGE_DIR");
+            if (envDir?.trim()) {
+              return envDir.trim();
             }
-            const openclawHome = process.env.OPENCLAW_HOME?.trim() || join(homedir(), ".openclaw");
-            return join(openclawHome, "logs", "dream-cycle", `run${makeDreamCycleRunId()}`);
+            const openclawHome = getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw");
+            return join(openclawHome, "logs", "dream-cycle", `run${runId}`);
           })(),
         },
         logSink,

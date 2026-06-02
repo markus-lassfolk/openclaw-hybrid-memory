@@ -96,6 +96,12 @@ export interface DreamCycleConfig {
    * When unset (default), no artifact files are written.
    */
   stageArtifactDir?: string;
+  /**
+   * Run identifier for this dream cycle execution (Issue #1827).
+   * When unset, a new run ID is generated. When set, the provided ID is used
+   * for both the directory name and artifact `runId` field to ensure consistency.
+   */
+  runId?: string;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -628,7 +634,7 @@ export async function runDreamCycle(
   logger.info("memory-hybrid: dream-cycle — starting nightly cycle");
   const cycleStartedAt = Date.now();
   const v = !!config.verbose;
-  const runId = makeDreamCycleRunId();
+  const runId = config.runId ?? makeDreamCycleRunId();
   // Ensure stage artifact dir exists when configured.
   if (config.stageArtifactDir) {
     try {
