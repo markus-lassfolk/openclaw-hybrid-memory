@@ -55,26 +55,6 @@ export function sanitizePath(path: string): string {
     if (idx >= 0) {
       return path.slice(idx);
     }
-
-    function sanitizeFingerprint(fingerprint: string[] | undefined): string[] | undefined {
-      if (!Array.isArray(fingerprint) || fingerprint.length === 0) return undefined;
-      return fingerprint
-        .map((part) => scrubString(String(part)).slice(0, 128))
-        .filter((part) => part.length > 0)
-        .slice(0, 8);
-    }
-
-    function sanitizeMaintenanceValue(value: unknown): unknown {
-      if (typeof value === "string") return scrubString(value);
-      if (typeof value === "number" || typeof value === "boolean") return value;
-      if (Array.isArray(value)) {
-        return value
-          .map((entry) => sanitizeMaintenanceValue(entry))
-          .filter((entry) => entry !== undefined)
-          .slice(0, 20);
-      }
-      return undefined;
-    }
   }
 
   if (path.includes("node_modules") || path.includes("extensions")) {
@@ -86,6 +66,32 @@ export function sanitizePath(path: string): string {
     .replace(/\/home\/[^/]+/g, "$HOME")
     .replace(/\/Users\/[^/]+/g, "$HOME")
     .replace(/C:\\Users\\[^\\]+/g, "%USERPROFILE%");
+}
+
+/**
+ * Sanitize fingerprint array: scrub each part and limit size
+ */
+function sanitizeFingerprint(fingerprint: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(fingerprint) || fingerprint.length === 0) return undefined;
+  return fingerprint
+    .map((part) => scrubString(String(part)).slice(0, 128))
+    .filter((part) => part.length > 0)
+    .slice(0, 8);
+}
+
+/**
+ * Sanitize maintenance context values: recursively scrub strings and limit arrays
+ */
+function sanitizeMaintenanceValue(value: unknown): unknown {
+  if (typeof value === "string") return scrubString(value);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => sanitizeMaintenanceValue(entry))
+      .filter((entry) => entry !== undefined)
+      .slice(0, 20);
+  }
+  return undefined;
 }
 
 /**
