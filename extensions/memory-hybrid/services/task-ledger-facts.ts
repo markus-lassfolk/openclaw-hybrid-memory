@@ -457,6 +457,7 @@ export function applyActiveTaskProjectionFilters(
 async function recordActiveTaskSessionReconcileAudit(
   factsDb: FactsDB,
   vectorDb: VectorDB,
+  embeddings: EmbeddingProvider,
   runAt: string,
   entries: ActiveTaskEntry[],
   log?: { warn?: (m: string) => void },
@@ -491,6 +492,21 @@ async function recordActiveTaskSessionReconcileAudit(
       logger: log,
       context: "active-task-session-reconcile-audit",
     });
+  }
+  if (!storeResult.skipped && storeResult.newlyStored) {
+    try {
+      const vector = await embeddings.embed(storeResult.entry.text);
+      factsDb.setEmbeddingModel(storeResult.entry.id, embeddings.modelName);
+      await vectorDb.store({
+        text: storeResult.entry.text,
+        vector,
+        importance: CLI_STORE_IMPORTANCE,
+        category: "episode",
+        id: storeResult.entry.id,
+      });
+    } catch (err) {
+      log?.warn?.(`memory-hybrid: active-task session reconcile audit vector store failed: ${err}`);
+    }
   }
   return storeResult.entry.id;
 }
@@ -1610,7 +1626,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   }
 
   const auditRunAt = new Date().toISOString();
-  await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, auditRunAt, toAudit, opts.log);
+  await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, embeddings, auditRunAt, toAudit, opts.log);
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of toFlush) {

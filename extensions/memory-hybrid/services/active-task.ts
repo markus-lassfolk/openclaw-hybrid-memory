@@ -27,6 +27,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
+import { escapeRegExp } from "../utils/text.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 
 /** Legacy filename before default became ACTIVE-TASKS.md; still read if the new file is missing. */
@@ -102,10 +103,6 @@ export interface ActiveTaskEntry {
   stale?: boolean;
   /** Structured handoff metadata from latest sub-agent signal */
   handoff?: ActiveTaskHandoffRef;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Structured handoff reference persisted in ACTIVE-TASKS.md */
