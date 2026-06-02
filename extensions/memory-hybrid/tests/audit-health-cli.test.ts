@@ -548,8 +548,8 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
 
   it("warns and adds remediation when entity enrichment backlog eta_runs exceeds threshold (#1806)", () => {
     const db = new FactsDB(":memory:");
-    // Seed 201 facts so estimatedRunsRemaining = ceil(201/200) = 2 which is below the warn threshold of 100.
-    // To exceed threshold we need ceil(total/200) > 100, i.e. total > 20000. Use raw DB INSERT for speed.
+    // Seed 20001 facts so estimatedRunsRemaining = ceil(20001/200) = 101 which exceeds the warn threshold of 100.
+    // ceil(total/200) > 100 requires total > 20000. Use raw DB INSERT for speed.
     const raw = db.getRawDb();
     const nowSec = Math.floor(Date.now() / 1000);
     const insertStmt = raw.prepare(
