@@ -15,7 +15,7 @@ describe("maintenance-failure-reporter", () => {
       errorReporting: {
         enabled: true,
         consent: true,
-        mode: "community",
+        mode: "community" as const,
         dsn: "https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.lassfolk.cc/1",
         sampleRate: 1,
         updateNudge: { enabled: true, intervalHours: 24, cacheTtlHours: 24 },
@@ -25,7 +25,7 @@ describe("maintenance-failure-reporter", () => {
           enabled: true,
         },
       },
-    } satisfies Pick<HybridMemoryConfig, "errorReporting" | "maintenance">;
+    };
   }
 
   function buildMockIssue(overrides?: Partial<MaintenanceTelemetryIssue>): MaintenanceTelemetryIssue {

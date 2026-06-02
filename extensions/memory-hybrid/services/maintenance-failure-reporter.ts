@@ -7,12 +7,18 @@ import {
 } from "./error-reporter.js";
 import type { MaintenanceTelemetryIssue } from "./cron-exit-validator.js";
 import { getEnv } from "../utils/env-manager.js";
+import type { MaintenanceFailureReportingConfig } from "../config/types/maintenance.js";
 
 export const MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV = "HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING";
 const MAINTENANCE_REPORTER_FLUSH_TIMEOUT_MS = 750;
 
 type MaintenanceReporterContext = {
-  cfg: Pick<HybridMemoryConfig, "errorReporting" | "maintenance">;
+  cfg: {
+    errorReporting: HybridMemoryConfig["errorReporting"];
+    maintenance: {
+      failureReporting: MaintenanceFailureReportingConfig;
+    };
+  };
   pluginVersion: string;
   logger?: Pick<Console, "debug" | "info" | "warn">;
 };
@@ -23,7 +29,7 @@ function envDisablesMaintenanceFailureReporting(env?: Record<string, string | un
 }
 
 export function shouldReportMaintenanceFailures(
-  cfg: Pick<HybridMemoryConfig, "errorReporting" | "maintenance">,
+  cfg: MaintenanceReporterContext["cfg"],
   env?: Record<string, string | undefined>,
 ): boolean {
   if (envDisablesMaintenanceFailureReporting(env)) return false;
@@ -39,6 +45,7 @@ async function ensureMaintenanceReporterReady(context: MaintenanceReporterContex
       dsn: context.cfg.errorReporting.dsn,
       mode: context.cfg.errorReporting.mode,
       environment: context.cfg.errorReporting.environment,
+      maxBreadcrumbs: 10,
       sampleRate: context.cfg.errorReporting.sampleRate ?? 1.0,
       consent: context.cfg.errorReporting.consent,
       botId: context.cfg.errorReporting.botId,
