@@ -260,7 +260,7 @@ export class EventLog extends BaseSqliteStore {
     const updateAll = createTransaction(this.liveDb, (ids: string[]) => {
       let updated = 0;
       for (const id of ids) {
-        updated += stmt.run(factId, id).changes;
+        updated += Number(stmt.run(factId, id).changes);
       }
       return updated;
     });
