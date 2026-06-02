@@ -73,7 +73,7 @@ describe("extract-directives CLI status", () => {
 
     await mem.parseAsync(["extract-directives"], { from: "user" });
 
-    expect(process.exitCode).toBe(1);
+    expect(process.exitCode).toBe(2);
   });
 
   it("keeps successful exit when cursor advances", async () => {
