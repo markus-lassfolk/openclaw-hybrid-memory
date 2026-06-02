@@ -21,7 +21,9 @@ import type { ManageBindings } from "./bindings.js";
 import {
   buildAuditHealthReport,
   collectExportBundleFiles,
+  defaultReembedVectorlessMetricsPath,
   printAuditHealthMarkdown,
+  readReembedVectorlessMetrics,
   validateSyncEnvelope,
 } from "./storage-stats-helpers.js";
 
@@ -190,6 +192,9 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           subsystem: "cli",
         });
       }
+      const lastReembedProgress = ctx.resolvedSqlitePath
+        ? readReembedVectorlessMetrics(defaultReembedVectorlessMetricsPath(ctx.resolvedSqlitePath))
+        : null;
       const report = buildAuditHealthReport(
         factsDb,
         getMemoryCategories,
@@ -210,6 +215,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
                   }
                 ).getDegradedState()
               : { active: false, reason: null },
+          lastReembedProgress,
         },
       );
       const strict = opts?.strict === true;
