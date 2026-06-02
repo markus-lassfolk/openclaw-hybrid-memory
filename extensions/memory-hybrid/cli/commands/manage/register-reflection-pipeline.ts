@@ -964,14 +964,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           if (dryRun && apply) {
             throw new Error("--dry-run and --apply are mutually exclusive");
           }
+          if (jsonMode && (auto || projectStateLww || dryRun || apply)) {
+            throw new Error("--json is only supported in default resolve-contradictions mode");
+          }
           if (Number.isNaN(targetRate) || targetRate <= 0 || targetRate > 1) {
             throw new Error("--target-rate must be a number between 0 and 1");
           }
           if (Number.isNaN(degradedAmbiguousThreshold) || degradedAmbiguousThreshold < 0) {
             throw new Error("--degraded-ambiguous-threshold must be an integer >= 0");
-          }
-          if (jsonMode && (auto || projectStateLww || dryRun || apply)) {
-            throw new Error("--json is only supported in default resolve-contradictions mode");
           }
           if (applyReview && (auto || projectStateLww || dryRun || apply || exportReview || llm || model)) {
             throw new Error(

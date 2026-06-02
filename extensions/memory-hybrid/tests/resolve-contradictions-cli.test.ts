@@ -774,4 +774,23 @@ describe("resolve-contradictions CLI contract mode", () => {
     expect(summary.noProgress).toBe(false);
     expect(summary.degraded).toBe(false);
   });
+
+  it("reports noProgress=true when contradictions are considered with zero auto-resolves", async () => {
+    const runResolveContradictions = vi.fn().mockResolvedValue({
+      autoResolved: [],
+      ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
+    });
+    const mem = makeProgram(makeBindings({ runResolveContradictions }));
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      lines.push(args.map((a) => String(a)).join(" "));
+    });
+
+    await mem.parseAsync(["resolve-contradictions", "--json"], { from: "user" });
+
+    const jsonLine = lines.find((line) => line.trim().startsWith("{"));
+    expect(jsonLine).toBeTruthy();
+    const summary = JSON.parse(jsonLine as string);
+    expect(summary.noProgress).toBe(true);
+  });
 });
