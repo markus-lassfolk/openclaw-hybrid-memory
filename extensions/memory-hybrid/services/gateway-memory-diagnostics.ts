@@ -85,7 +85,8 @@ function activeRequestCount(): number {
 function readV8HeapSpaces(): GatewayMemoryDiagnostics["v8"] {
   try {
     const stats = v8.getHeapStatistics();
-    const spaces = v8.getHeapSpaceStatistics?.()
+    const spaces = v8
+      .getHeapSpaceStatistics?.()
       ?.map((s) => ({ spaceName: s.space_name, spaceUsedSize: s.space_used_size }))
       .sort((a, b) => b.spaceUsedSize - a.spaceUsedSize)
       .slice(0, 5);
@@ -146,10 +147,14 @@ function buildLeakHints(opts: {
     hints.push("plugin_reregister_full_teardown_despite_reuse_policy: check bootstrapSettledRef or config drift");
   }
   if (nativeMb > 2048 && opts.reregisterMetrics.databaseReuses > 0) {
-    hints.push("native_rss_high_with_db_reuse: likely Lance/Rust allocator or OpenClaw plugin module reload (not Lance close/reopen)");
+    hints.push(
+      "native_rss_high_with_db_reuse: likely Lance/Rust allocator or OpenClaw plugin module reload (not Lance close/reopen)",
+    );
   }
   if (opts.reregisterMetrics.fullTeardowns >= 3) {
-    hints.push("repeated_lance_sqlite_teardown: each full re-register can retain ~500MB-2GB native RSS until process restart");
+    hints.push(
+      "repeated_lance_sqlite_teardown: each full re-register can retain ~500MB-2GB native RSS until process restart",
+    );
   }
   return hints;
 }
