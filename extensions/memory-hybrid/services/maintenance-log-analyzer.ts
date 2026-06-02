@@ -829,7 +829,7 @@ export function reportGlitchTipFindings(findings: MaintenanceFinding[]): Mainten
         subsystem: "maintenance",
         severity: finding.severity,
         classification: finding.classification,
-        fingerprint: finding.fingerprint,
+        fingerprint: [finding.fingerprint],
         job: finding.job,
         step: finding.step,
       },
