@@ -21,7 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-- Nothing yet.
+### Changed
+
+- **Maintenance CLI overrides ([#1798](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1798), [#1799](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1799)):** scan-style commands share `--force` (preferred) and legacy `--full` to bypass 23h scan cooldown and incremental watermarks; `run-all` propagates overrides; cron QA harness injects `--force`.
 
 ---
 

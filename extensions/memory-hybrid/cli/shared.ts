@@ -88,7 +88,7 @@ export function acquireScanSlot(
   }
   if (lastRunAt !== undefined && lastRunAt !== 0 && Date.now() - lastRunAt < SCAN_MIN_INTERVAL_MS) {
     const hoursAgo = ((Date.now() - lastRunAt) / 3_600_000).toFixed(1);
-    const msg = `Skipping ${scanType}: last run was ${hoursAgo}h ago (threshold: 23h). Use --full to override.`;
+    const msg = `Skipping ${scanType}: last run was ${hoursAgo}h ago (threshold: 23h). Use --force (or --full) to override.`;
     logger.info?.(msg);
     return msg;
   }

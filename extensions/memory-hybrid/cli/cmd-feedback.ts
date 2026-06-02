@@ -32,6 +32,7 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
+import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 
 const IMPLICIT_FEEDBACK_LESSON_TAGS = ["implicit-feedback", "trajectory", "feedback"];
 
@@ -391,6 +392,7 @@ export async function runExtractImplicitFeedbackForCli(
     verbose?: boolean;
     dryRun?: boolean;
     full?: boolean;
+    force?: boolean;
     includeTrajectories?: boolean;
     includeClosedLoop?: boolean;
     onProgress?: (snapshot: ExtractImplicitFeedbackProgressSnapshot) => void;
@@ -413,6 +415,7 @@ export async function runExtractImplicitFeedbackForCli(
   closedLoopReport?: string;
   skipped?: boolean;
 }> {
+  const { bypassWatermark } = resolveScanMaintenanceOverrides(opts);
   const { factsDb, vectorDb, cfg, logger, openai } = ctx;
   const SCAN_TYPE = "extract-implicit-feedback";
   const days = opts.days ?? 3;
@@ -421,9 +424,9 @@ export async function runExtractImplicitFeedbackForCli(
   // Get scan cursor for incremental mode
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
-  // Determine which files to scan based on full flag and cursor
+  // Determine which files to scan based on override flags and cursor
   let filePaths: string[];
-  if (!opts.full && cursor && cursor.lastSessionTs > 0) {
+  if (!bypassWatermark && cursor && cursor.lastSessionTs > 0) {
     // Incremental mode: resume from the stored cursor, not the moving day window.
     // A capped backlog may take longer than `days` to drain; using the day window
     // first would permanently strand old-but-unprocessed sessions after the cursor.
@@ -490,7 +493,7 @@ export async function runExtractImplicitFeedbackForCli(
       if (mtimeDiff !== 0) return mtimeDiff;
       return basename(a).localeCompare(basename(b));
     });
-    if (opts.verbose && !opts.full) {
+    if (opts.verbose && !bypassWatermark) {
       logger?.info?.(`memory-hybrid: ${SCAN_TYPE} full scan — ${filePaths.length} files to process`);
     }
   }

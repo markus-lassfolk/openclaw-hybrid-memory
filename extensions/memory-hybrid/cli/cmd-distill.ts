@@ -50,6 +50,7 @@ import { getMaxMtime } from "./cmd-extract.js";
 import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
 import { extractTextFromSessionJsonl } from "./distill-session-jsonl.js";
 import type { HandlerContext } from "./handlers.js";
+import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
 
@@ -184,16 +185,19 @@ export async function runDistillForCli(
     maxSessions?: number;
     maxSessionTokens?: number;
     full?: boolean;
+    force?: boolean;
   },
   sink: DistillCliSink,
 ): Promise<DistillCliResult> {
+  const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
   const { factsDb, vectorDb, embeddings, openai, cfg, credentialsDb, logger, resolvedSqlitePath } = ctx;
   const SCAN_TYPE = "distill";
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
-  // Startup guard + concurrency lock (skip when --all/--full/--since overrides watermark)
-  const useWatermark = !opts.full && !opts.all && !opts.since;
-  if (useWatermark && !opts.dryRun) {
+  // Startup guard + concurrency lock (skip when --all/--since or scan overrides disable watermark)
+  const useWatermark = !bypassWatermark && !opts.all && !opts.since;
+  const shouldAcquireLock = !bypassScanCooldown && !opts.all && !opts.since;
+  if (shouldAcquireLock && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip)
       return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: false, skipped: true };
@@ -216,7 +220,7 @@ export async function runDistillForCli(
     let filesToProcess = maxSessions > 0 ? sessionFiles.slice(0, maxSessions) : sessionFiles;
     if (filesToProcess.length === 0) {
       sink.log("No session files found under ~/.openclaw/agents/*/sessions/");
-      if (useWatermark && !opts.dryRun) {
+      if (shouldAcquireLock && !opts.dryRun) {
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
       }
@@ -777,6 +781,6 @@ export async function runDistillForCli(
       dryRun: false,
     };
   } finally {
-    if (useWatermark && !opts.dryRun) clearScanLock(SCAN_TYPE);
+    if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }
