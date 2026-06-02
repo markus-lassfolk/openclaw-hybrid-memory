@@ -115,7 +115,10 @@ export function readReembedVectorlessMetrics(path: string): ReembedVectorlessLas
       typeof parsed.after === "number" &&
       slo != null &&
       typeof slo.estimatedRunsToReachSlo === "number" &&
-      typeof slo.sloMetAfterRun === "boolean"
+      typeof slo.sloMetAfterRun === "boolean" &&
+      typeof slo.vectorlessRatioAfter === "number" &&
+      typeof slo.vectorlessToClearForSlo === "number" &&
+      typeof slo.recommendedLimitNextRun === "number"
     ) {
       return parsed as ReembedVectorlessLastRunMetrics;
     }
