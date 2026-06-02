@@ -339,7 +339,7 @@ exit 2
     expect(result.status).toBe(0);
   });
 
-  it("adds --full to guarded extraction commands when forced rerun env is enabled", () => {
+  it("adds --force to guarded extraction commands when forced rerun env is enabled", () => {
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");
     const home = join(tmp, "oc-home");
@@ -376,7 +376,47 @@ exit 2
     });
 
     expect(result.status).toBe(0);
-    expect(readFileSync(marker, "utf-8")).toContain("extract-procedures --days 7 --verbose --full");
+    expect(readFileSync(marker, "utf-8")).toContain("extract-procedures --days 7 --verbose --force");
+  });
+
+  it("adds --force to distill when forced rerun env is enabled", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const marker = join(tmp, "distill-args.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
+  printf '%s\n' "$*" > ${JSON.stringify(marker)}
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "distill", cmd: "openclaw hybrid-mem distill --days 1 --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OPENCLAW_HOME: home,
+        HYBRID_MEM_QA_FORCE: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf-8")).toContain("distill --days 1 --verbose --force");
   });
 
   it("does not add --force to reflection commands when forced rerun env is enabled", () => {
