@@ -4,8 +4,6 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
-  pull_request:
-    types: [opened, synchronize]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -21,7 +19,7 @@ jobs:
   automerge:
     name: Automerge bot PRs
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_run' || github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request'
 
     steps:
       - name: Automerge eligible bot PRs
@@ -50,10 +48,6 @@ jobs:
 
             // Collect candidate PR numbers to evaluate
             let candidatePRNumbers = new Set();
-
-            if (context.eventName === 'pull_request') {
-              candidatePRNumbers.add(context.payload.pull_request.number);
-            }
 
             if (context.eventName === 'workflow_run') {
               const workflowRun = context.payload.workflow_run;
