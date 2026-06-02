@@ -11,7 +11,6 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,7 +26,8 @@ import {
   type LiveDiagnosticsFailure,
   type LiveDiagnosticsSuccess,
 } from "../services/vm-memory-incident-capture.js";
-import { setEnv } from "../utils/env-manager.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
+import { execFileSync } from "../utils/process-runner.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -438,7 +438,7 @@ describe("writeIncidentManifest", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveIncidentBundleRoot", () => {
-  const originalHome = process.env.OPENCLAW_HOME;
+  const originalHome = getEnv("OPENCLAW_HOME");
 
   afterEach(() => {
     setEnv("OPENCLAW_HOME", originalHome);
@@ -486,7 +486,7 @@ describe("vm-memory-collect-diagnostics.sh", () => {
       env: {
         ...process.env,
         OPENCLAW_HOME: openclawHome,
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PATH: `${binDir}:${getEnv("PATH") ?? ""}`,
       },
       stdio: "pipe",
       timeout: 20_000,
