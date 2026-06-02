@@ -8,7 +8,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerValidateCronExit } from "../cli/commands/manage/register-validate-cron-exit.js";
+import {
+  registerValidateCronExit,
+  type ValidateCronExitContext,
+} from "../cli/commands/manage/register-validate-cron-exit.js";
+import * as maintenanceReporter from "../services/maintenance-failure-reporter.js";
 
 describe("validate-cron-exit CLI (#1225)", () => {
   const origArgv = process.argv.slice();
@@ -227,5 +231,108 @@ describe("validate-cron-exit CLI (#1225)", () => {
     );
 
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+  });
+
+  it("calls reportMaintenanceFailureIssues when context is provided with a failed step (council)", async () => {
+    stubOpenclawArgv();
+    const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
+    const exitPath = join(dir, "failed.exit");
+    const logPath = join(dir, "failed.log");
+    
+    // Create a realistic failed maintenance scenario with a storage/concurrency error
+    writeFileSync(exitPath, "2026-05-08T21:10:00Z reflect-rules exit=1 status=failed reason=nonzero_exit\n");
+    writeFileSync(
+      logPath,
+      `[2026-05-08T21:10:00Z] Starting reflect-rules
+Error: LanceDB commit conflict detected
+    at reflectRules (reflect.ts:42)
+[2026-05-08T21:10:01Z] reflect-rules failed\n`,
+    );
+
+    const mem = new Command("hybrid-mem");
+    
+    // Mock reportMaintenanceFailureIssues to verify it's called
+    const reportSpy = vi.spyOn(maintenanceReporter, "reportMaintenanceFailureIssues")
+      .mockResolvedValue(undefined);
+
+    // Provide context with proper config to enable reporting
+    const context: ValidateCronExitContext = {
+      cfg: {
+        errorReporting: {
+          enabled: true,
+          consent: true,
+          dsn: "https://test@example.com/1",
+          mode: "self-hosted" as const,
+          environment: "test",
+          sampleRate: 1.0,
+          updateNudge: {
+            enabled: false,
+            intervalHours: 24,
+            cacheTtlHours: 24,
+          },
+        },
+        maintenance: {
+          failureReporting: {
+            enabled: true,
+          },
+          monthlyReview: {
+            enabled: false,
+            dayOfMonth: 1,
+          },
+          cronReliability: {
+            nightlyCron: "0 3 * * *",
+            weeklyBackupCron: "0 4 * * 0",
+            verifyOnBoot: true,
+            staleThresholdHours: 28,
+          },
+          council: {
+            provenance: "none" as const,
+            sessionKeyPrefix: "council-review",
+          },
+        },
+      },
+      versionInfo: { pluginVersion: "1.0.0-test" },
+      logger: console,
+    };
+
+    registerValidateCronExit(mem, context);
+
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await mem.parseAsync(
+      [
+        "validate-cron-exit",
+        "--exit-path",
+        exitPath,
+        "--log-path",
+        logPath,
+        "--required-steps",
+        "reflect-rules",
+        "--json",
+      ],
+      { from: "user" },
+    );
+
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+    
+    // Verify reportMaintenanceFailureIssues was called with issues
+    expect(reportSpy).toHaveBeenCalledOnce();
+    
+    const [issues, reportContext] = reportSpy.mock.calls[0] ?? [];
+    expect(issues).toBeDefined();
+    expect(issues?.length).toBeGreaterThan(0);
+    
+    // Verify it found the concurrency/storage failure from the log
+    const storageIssue = issues?.find(i => 
+      i.failureClass === "lancedb_commit_conflict" && 
+      i.fingerprint.includes("lancedb_commit_conflict")
+    );
+    expect(storageIssue).toBeDefined();
+    expect(storageIssue?.message).toContain("LanceDB");
+    
+    // Verify context was passed correctly
+    expect(reportContext?.pluginVersion).toBe("1.0.0-test");
+    expect(reportContext?.cfg.errorReporting.enabled).toBe(true);
   });
 });
