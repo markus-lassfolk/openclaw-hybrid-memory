@@ -16,6 +16,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     vectorDb,
     runMigrateToVault,
     runEncryptVault,
+    runVaultStatus,
     runCredentialsList,
     runCredentialsGet,
     runCredentialsAudit,
@@ -50,12 +51,47 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     );
 
   credentials
+    .command("vault-status")
+    .description("Show vault encryption status (kdf_version, entry count, migration readiness)")
+    .option("--json", "Output as JSON")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        const status = runVaultStatus();
+        if (!status) {
+          console.log("Credentials vault is not available (disabled or not configured).");
+          return;
+        }
+        if (opts?.json) {
+          console.log(JSON.stringify(status, null, 2));
+          return;
+        }
+        const encLabel = status.encryptedAtRest ? `encrypted (kdf_version=${status.kdfVersion})` : `plaintext (kdf_version=${status.kdfVersion})`;
+        console.log(`Vault path:  ${status.dbPath}`);
+        console.log(`Status:      ${encLabel}`);
+        console.log(`Entries:     ${status.entryCount}`);
+        console.log(`Key present: ${status.configuredKeyPresent}`);
+        if (status.migrationRequired) {
+          console.log("⚠  Migration required: vault is plaintext but an encryption key is configured.");
+          console.log("   Run: openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes");
+        }
+      }),
+    );
+
+  credentials
     .command("encrypt-vault")
     .description("Encrypt an existing plaintext credentials vault at rest (kdf_version=0 → scrypt/AES-GCM)")
     .option("--yes", "Apply changes (default: dry-run)")
+    .option("--backup", "Create a consistent plaintext backup before encrypting (recommended)")
+    .option("--backup-path <path>", "Custom path for the backup file (implies --backup)")
+    .option("--verify", "Verify all entries are readable after encryption")
     .action(
-      withExit(async (opts?: { yes?: boolean }) => {
-        const res = runEncryptVault({ yes: opts?.yes === true });
+      withExit(async (opts?: { yes?: boolean; backup?: boolean; backupPath?: string; verify?: boolean }) => {
+        const res = runEncryptVault({
+          yes: opts?.yes === true,
+          backup: opts?.backup === true || opts?.backupPath !== undefined,
+          backupPath: opts?.backupPath,
+          verify: opts?.verify === true,
+        });
         if (!res.ok) {
           console.error(`Encrypt vault: FAIL — ${res.error}`);
           process.exitCode = 1;
@@ -69,7 +105,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
           console.log(`Vault is plaintext (kdf_version=${res.status.kdfVersion}).`);
           console.log(`Vault path: ${res.vaultPath}`);
           console.log("Dry-run only. To encrypt the existing vault at rest, run:");
-          console.log("  openclaw hybrid-mem credentials encrypt-vault --yes");
+          console.log("  openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes");
           return;
         }
         console.log(
@@ -77,6 +113,12 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
             res.migrated === 1 ? "y" : "ies"
           }.`,
         );
+        if (res.backupPath) {
+          console.log(`Backup created at: ${res.backupPath}`);
+        }
+        if (res.verified === true) {
+          console.log("Verification: all entries readable ✓");
+        }
         console.log("Restart the gateway (or re-run verify) to confirm.");
       }),
     );

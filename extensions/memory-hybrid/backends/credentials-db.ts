@@ -30,6 +30,9 @@ const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 /** Log once per vault path: legacy v1 KDF is weak; opening triggers migration to scrypt when possible. */
 const _v1KdfWarnedPaths = new Set<string>();
 
+/** Log once per vault path: key is configured but vault is plaintext (kdf_version=0). */
+const _plaintextKeyIgnoredWarnedPaths = new Set<string>();
+
 /** v1 only: legacy SHA-256 KDF (weak). Existing vaults cannot be decrypted with another KDF. */
 function deriveKeyV1Legacy(password: string): Buffer {
   // codeql[js/insufficient-password-hash]
@@ -170,8 +173,9 @@ export class CredentialsDB extends BaseSqliteStore {
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);
       this.password = null;
-      // Optionally warn that key is being ignored
-      if (encryptionKey.length >= 16) {
+      // Optionally warn that key is being ignored (once per process per path)
+      if (encryptionKey.length >= 16 && !_plaintextKeyIgnoredWarnedPaths.has(dbPath)) {
+        _plaintextKeyIgnoredWarnedPaths.add(dbPath);
         pluginLogger.warn(
           "Credentials vault is in plaintext mode (kdf_version=0). The configured encryption key is being ignored. " +
             "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --yes",
@@ -227,10 +231,14 @@ export class CredentialsDB extends BaseSqliteStore {
     configuredKeyPresent: boolean;
     keyIgnored: boolean;
     migrationRequired: boolean;
+    entryCount: number;
   } {
     const encryptedAtRest = this.kdfVersion !== CRED_KDF_PLAINTEXT;
     const keyIgnored = this.kdfVersion === CRED_KDF_PLAINTEXT && this.configuredKeyPresent;
     const migrationRequired = keyIgnored;
+    const entryCount = (
+      this.liveDb.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number }
+    ).count;
     return {
       dbPath: this.dbPath,
       kdfVersion: this.kdfVersion,
@@ -238,6 +246,7 @@ export class CredentialsDB extends BaseSqliteStore {
       configuredKeyPresent: this.configuredKeyPresent,
       keyIgnored,
       migrationRequired,
+      entryCount,
     };
   }
 
@@ -298,9 +307,52 @@ export class CredentialsDB extends BaseSqliteStore {
   }
 
   /**
-   * Insert or update a credential. On conflict (service, type), `updated` and value fields refresh;
-   * `created` is preserved from the original row — intentional for "same key, rotated secret" flows (#894).
+   * Safe vault encryption with optional backup and post-encryption verification.
+   *
+   * Steps:
+   * 1. If `backupPath` is set, create a consistent copy of the current plaintext DB via VACUUM INTO.
+   * 2. Encrypt the vault in-place via `enableEncryptionAtRest`.
+   * 3. If `verify` is true, attempt to decrypt every entry to confirm data integrity.
+   *    On failure, throws with the backup path so the operator can restore manually.
+   *
+   * Safety: does NOT auto-restore on verify failure — the in-place operation may have
+   * already committed. The caller should inspect `backupPath` and restore if needed.
    */
+  encryptVaultSafe(
+    encryptionKey: string,
+    opts: { backupPath?: string; verify?: boolean } = {},
+  ): { migrated: number; kdfVersion: number; backupPath?: string; verified?: boolean } {
+    const { backupPath, verify } = opts;
+
+    if (backupPath) {
+      // VACUUM INTO creates a consistent snapshot even when the DB is open (WAL-safe).
+      this.liveDb.prepare("VACUUM INTO ?").run(backupPath);
+    }
+
+    const result = this.enableEncryptionAtRest(encryptionKey);
+
+    let verified: boolean | undefined;
+    if (verify) {
+      try {
+        const entries = this.listAll();
+        for (const e of entries) {
+          this.get(e.service, e.type as CredentialType);
+        }
+        verified = true;
+      } catch (err) {
+        const backupNote = backupPath ? ` Plaintext backup is at: ${backupPath}` : "";
+        throw new Error(
+          `Vault encrypted but post-encryption verification failed: ${err instanceof Error ? err.message : String(err)}.${backupNote}`,
+        );
+      }
+    }
+
+    return {
+      ...result,
+      ...(backupPath !== undefined ? { backupPath } : {}),
+      ...(verified !== undefined ? { verified } : {}),
+    };
+  }
   store(entry: {
     service: string;
     type: CredentialType;

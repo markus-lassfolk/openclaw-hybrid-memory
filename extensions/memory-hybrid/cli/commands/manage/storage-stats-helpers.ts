@@ -404,6 +404,13 @@ export type AuditHealthReport = {
   remediation: string[];
   /** Errors encountered during report generation (e.g., timeouts, query failures). */
   errors: Array<{ section: string; message: string }>;
+  /** Credentials vault encryption status summary. Null when vault is disabled. */
+  credentials: {
+    encryptedAtRest: boolean;
+    kdfVersion: number;
+    entryCount: number;
+    migrationRequired: boolean;
+  } | null;
   /** Optional operator budget used for audit-health command execution. */
   timeoutMs?: number;
   /** Elapsed wall-clock time spent building the report. */
@@ -434,6 +441,12 @@ export function buildAuditHealthReport(
     startedAtMs?: number;
     deadlineMs?: number;
     degradedState?: { active: boolean; reason: string | null };
+    credentialsStatus?: {
+      encryptedAtRest: boolean;
+      kdfVersion: number;
+      entryCount: number;
+      migrationRequired: boolean;
+    } | null;
   },
 ): AuditHealthReport {
   const startedAtMs = options?.startedAtMs ?? Date.now();
@@ -966,6 +979,7 @@ export function buildAuditHealthReport(
     warnings,
     remediation,
     errors,
+    credentials: options?.credentialsStatus ?? null,
     timeoutMs: options?.timeoutMs,
     elapsedMs: Date.now() - startedAtMs,
   };
@@ -1061,6 +1075,11 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
     console.log(
       `Entity enrichment backlog: total=${eb.total} eta_runs=${eb.estimatedRunsRemaining} (hot=${eb.byTier.hot}, warm=${eb.byTier.warm}, structural=${eb.byTier.structural}, cold=${eb.byTier.cold})`,
     );
+  }
+  if (report.credentials != null) {
+    const c = report.credentials;
+    const encLabel = c.encryptedAtRest ? `encrypted (kdf_version=${c.kdfVersion})` : `plaintext (kdf_version=${c.kdfVersion})`;
+    console.log(`Credentials vault: ${encLabel}, entries=${c.entryCount}, migration_required=${c.migrationRequired}`);
   }
   console.log("");
   if (report.errors.length > 0) {

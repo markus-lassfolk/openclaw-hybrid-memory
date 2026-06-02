@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -412,6 +412,141 @@ describe("CredentialsDB legacy vault mode mismatch", () => {
     encDb.close();
     // Try to open without key → must throw
     expect(() => new CredentialsDB(dbPath, "")).toThrow(/vault contains data/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Warning suppression: once per process per path
+// ---------------------------------------------------------------------------
+
+describe("CredentialsDB plaintext warning suppression", () => {
+  it("warns only once per path when opened multiple times with a key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-warn-suppress-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "v" });
+    plainDb.close();
+
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db1 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    const plaintextWarnings = warnSpy.mock.calls.filter((args) =>
+      String(args[0]).includes("plaintext mode"),
+    );
+    warnSpy.mockRestore();
+
+    // Should warn at most once (deduplication by path)
+    expect(plaintextWarnings.length).toBeLessThanOrEqual(1);
+
+    db1.close();
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getVaultStatus entryCount
+// ---------------------------------------------------------------------------
+
+describe("CredentialsDB.getVaultStatus entryCount", () => {
+  it("returns 0 for empty vault", () => {
+    const st = db.getVaultStatus();
+    expect(st.entryCount).toBe(0);
+  });
+
+  it("returns correct count after storing entries", () => {
+    db.store({ service: "svc1", type: "api_key", value: "v1" });
+    db.store({ service: "svc2", type: "token", value: "v2" });
+    const st = db.getVaultStatus();
+    expect(st.entryCount).toBe(2);
+  });
+
+  it("reflects deletion", () => {
+    db.store({ service: "svc1", type: "api_key", value: "v1" });
+    db.store({ service: "svc2", type: "token", value: "v2" });
+    db.delete("svc1", "api_key");
+    const st = db.getVaultStatus();
+    expect(st.entryCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// encryptVaultSafe: backup and verify
+// ---------------------------------------------------------------------------
+
+describe("CredentialsDB.encryptVaultSafe", () => {
+  it("creates a backup file when backupPath is provided", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-safe-backup-"));
+    const dbPath = join(dir, "creds.db");
+    const backupPath = join(dir, "creds.db.bak");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "secret" });
+    plainDb.close();
+    // Re-open with key configured
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+    const res = db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { backupPath });
+    expect(existsSync(backupPath)).toBe(true);
+    expect(res.backupPath).toBe(backupPath);
+    expect(res.migrated).toBe(1);
+    expect(res.kdfVersion).toBe(2);
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("verify:true confirms entries are readable after encryption", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-safe-verify-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "secret1" });
+    plainDb.store({ service: "svc2", type: "token", value: "secret2" });
+    plainDb.close();
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+    const res = db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { verify: true });
+    expect(res.verified).toBe(true);
+    expect(res.migrated).toBe(2);
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("returns no backupPath or verified when neither option is set", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-safe-plain-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "v" });
+    plainDb.close();
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+    const res = db2.encryptVaultSafe(TEST_ENCRYPTION_KEY);
+    expect(res.backupPath).toBeUndefined();
+    expect(res.verified).toBeUndefined();
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("backup + verify together complete successfully", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-safe-both-"));
+    const dbPath = join(dir, "creds.db");
+    const backupPath = join(dir, "creds.db.bak");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "api", type: "api_key", value: "my-api-key" });
+    plainDb.close();
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+    const res = db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { backupPath, verify: true });
+    expect(existsSync(backupPath)).toBe(true);
+    expect(res.backupPath).toBe(backupPath);
+    expect(res.verified).toBe(true);
+    expect(res.migrated).toBe(1);
+    // Values still accessible after encryption
+    expect(db2.get("api", "api_key")?.value).toBe("my-api-key");
+    db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
 });
