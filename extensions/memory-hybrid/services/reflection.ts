@@ -1195,6 +1195,7 @@ export async function runReflectionRules(
     );
   }
   let rawResponse: string;
+  let modelUsed: string;
   try {
     const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
@@ -1211,6 +1212,7 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
     });
+    modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflect-rules — used fallback model ${detail.modelUsed}`);
     }
@@ -1353,19 +1355,23 @@ export async function runReflectionRules(
       (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
       opts.fallbackModels?.length
     ) {
-      const [fallbackModel, ...remainingFallbacks] = opts.fallbackModels;
-      logger.warn(
-        `memory-hybrid: reflect-rules — ${opts.model} returned ${zeroRulesReason}, retrying with fallback model ${fallbackModel}`,
-      );
-      return runReflectionRules(
-        factsDb,
-        vectorDb,
-        embeddings,
-        openai,
-        { ...opts, model: fallbackModel, fallbackModels: remainingFallbacks, modelSource: "format-retry-fallback" },
-        logger,
-        provenanceService,
-      );
+      // Filter out the model that was actually used (which produced the bad response)
+      const remainingFallbacks = opts.fallbackModels.filter((m) => m !== modelUsed);
+      if (remainingFallbacks.length > 0) {
+        const [fallbackModel, ...nextFallbacks] = remainingFallbacks;
+        logger.warn(
+          `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying with fallback model ${fallbackModel}`,
+        );
+        return runReflectionRules(
+          factsDb,
+          vectorDb,
+          embeddings,
+          openai,
+          { ...opts, model: fallbackModel, fallbackModels: nextFallbacks, modelSource: "format-retry-fallback" },
+          logger,
+          provenanceService,
+        );
+      }
     }
     return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
   }
