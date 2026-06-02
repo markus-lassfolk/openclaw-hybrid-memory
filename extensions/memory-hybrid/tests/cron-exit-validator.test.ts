@@ -589,5 +589,76 @@ error: unknown command 'bar'
         }),
       );
     });
+
+    it("classifies LanceDB commit conflict from step log content when reason is generic nonzero_exit", () => {
+      const testDir = mkdtempSync(join(tmpdir(), "cron-exit-test-"));
+      const exitPath = join(testDir, "test.exit");
+      const logPath = join(testDir, "test.log");
+
+      // Realistic scenario: HM_EXIT has generic reason but log has specific error
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z step=reflect-rules exit=1 status=failed reason=nonzero_exit\n");
+      writeFileSync(
+        logPath,
+        "reflect-rules starting\nError: LanceDB commit conflict: concurrent maintenance detected\nreflect-rules failed with exit code 1\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-rules"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect-rules",
+          failureCategory: "concurrency_storage_failure",
+          failureClass: "lancedb_commit_conflict",
+          exitCode: 1,
+        }),
+      );
+    });
+
+    it("classifies database lock timeout from step log content when reason is generic nonzero_exit", () => {
+      const testDir = mkdtempSync(join(tmpdir(), "cron-exit-test-"));
+      const exitPath = join(testDir, "test.exit");
+      const logPath = join(testDir, "test.log");
+
+      // Realistic scenario: HM_EXIT has generic reason but log has specific error
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z step=consolidate exit=1 status=failed reason=nonzero_exit\n");
+      writeFileSync(
+        logPath,
+        "consolidate starting\nError: database is locked (SQLITE_BUSY)\nconsolidate failed with exit code 1\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["consolidate"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "consolidate",
+          failureCategory: "concurrency_storage_failure",
+          failureClass: "db_lock_timeout",
+          exitCode: 1,
+        }),
+      );
+    });
+
+    it("classifies unknown commands with unknown_maintenance_command not missing_required_step", () => {
+      const testDir = mkdtempSync(join(tmpdir(), "cron-exit-test-"));
+      const exitPath = join(testDir, "test.exit");
+      const logPath = join(testDir, "test.log");
+
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect-rules exit=0\n");
+      writeFileSync(logPath, "error: unknown command 'unknown-fancy-command'\nreflect-rules completed\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-rules"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "validate-cron-exit",
+          failureCategory: "mechanical_failure",
+          failureClass: "unknown_maintenance_command",
+          message: expect.stringContaining("unknown-fancy-command"),
+        }),
+      );
+    });
   });
 });

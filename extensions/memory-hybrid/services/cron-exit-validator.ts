@@ -298,6 +298,36 @@ function addMaintenanceIssue(issues: Map<string, MaintenanceTelemetryIssue>, iss
   }
 }
 
+/**
+ * Extract log content relevant to a specific step.
+ * Attempts to find step-scoped output by searching for the step name in the log.
+ * Returns a substring of the log that's likely to contain output from that step.
+ */
+function extractStepLog(logContent: string, stepName: string): string {
+  const lines = logContent.split("\n");
+  const relevantLines: string[] = [];
+  let foundStepMarker = false;
+
+  for (const line of lines) {
+    // Look for lines that mention the step name
+    if (line.includes(stepName) || line.includes(stepName.replace(/-/g, "_"))) {
+      foundStepMarker = true;
+      relevantLines.push(line);
+    } else if (foundStepMarker && relevantLines.length > 0) {
+      // Collect subsequent lines until we hit another step or exceed reasonable context
+      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z/.test(line)) {
+        // Hit a new timestamp line from HM_EXIT, stop collecting
+        break;
+      }
+      relevantLines.push(line);
+      if (relevantLines.length > 50) break; // Safety limit
+    }
+  }
+
+  // Fallback: if we didn't find step-specific content, return full log for pattern matching
+  return relevantLines.length > 0 ? relevantLines.join("\n") : logContent;
+}
+
 function collectMaintenanceTelemetryIssues(params: {
   exitPath: string;
   logPath?: string;
@@ -327,10 +357,17 @@ function collectMaintenanceTelemetryIssues(params: {
   };
 
   for (const step of failedSteps) {
+    // Extract step-scoped log output for better pattern matching
+    const stepLog = extractStepLog(logContent, step.step);
     const lowerReason = (step.failureReason ?? step.reason ?? "").toLowerCase();
+    const lowerStepLog = stepLog.toLowerCase();
+
+    // Check log content for storage/concurrency patterns
     if (
       (lowerReason.includes("lancedb") && /commit|conflict|concurrent|vacuum|optimi/.test(lowerReason)) ||
-      /concurrent maintenance mutation conflict/.test(lowerReason)
+      /concurrent maintenance mutation conflict/.test(lowerReason) ||
+      (lowerStepLog.includes("lancedb") && /commit.*conflict|concurrent.*mutation|vacuum.*conflict|optimi.*fail/i.test(stepLog)) ||
+      /concurrent maintenance mutation conflict/i.test(stepLog)
     ) {
       addMaintenanceIssue(
         issues,
@@ -348,7 +385,10 @@ function collectMaintenanceTelemetryIssues(params: {
       );
       continue;
     }
-    if (/database is locked|sqlite_busy|db lock|lock timeout|timed out waiting for lock/.test(lowerReason)) {
+    if (
+      /database is locked|sqlite_busy|db lock|lock timeout|timed out waiting for lock/.test(lowerReason) ||
+      /database is locked|sqlite[_ ]busy|db[_ ]lock[_ ]timeout|timed out waiting for.*lock/i.test(stepLog)
+    ) {
       addMaintenanceIssue(
         issues,
         buildMaintenanceIssue({
@@ -438,7 +478,7 @@ function collectMaintenanceTelemetryIssues(params: {
         jobName,
         stepName: "validate-cron-exit",
         failureCategory: "mechanical_failure",
-        failureClass: "missing_required_step",
+        failureClass: "unknown_maintenance_command",
         message: `${jobName} invoked unknown maintenance command ${unknownCommand}`,
         semanticStatus: "unknown",
       }),
