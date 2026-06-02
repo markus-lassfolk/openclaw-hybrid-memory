@@ -14,13 +14,13 @@
  *     warns about empty or missing critical files.
  */
 
-import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { execFile } from "../utils/process-runner.js";
 import { getEnv } from "../utils/env-manager.js";
 import { capturePluginError } from "./error-reporter.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 
 /**
  * Promisified wrapper around execFile that correctly preserves the full
@@ -28,11 +28,7 @@ import { capturePluginError } from "./error-reporter.js";
  * instead of `util.promisify` avoids losing the `util.promisify.custom`
  * symbol when the function is replaced by test doubles.
  */
-function runCommand(
-  command: string,
-  args: string[],
-  timeoutMs: number,
-): Promise<{ stdout: string; stderr: string }> {
+function runCommand(command: string, args: string[], timeoutMs: number): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(command, args, { encoding: "utf-8", timeout: timeoutMs }, (err, stdout, stderr) => {
       if (err) {
@@ -130,23 +126,12 @@ export const DEFAULT_CRITICAL_ARTIFACTS = [
 // ---------------------------------------------------------------------------
 
 /**
- * Atomically writes `content` to `destPath` by writing to a sibling temp file
- * first, then renaming. Guarantees `destPath` is never partially written.
+ * Atomically writes `content` to `destPath` using the shared crash-safe helper.
+ * Keeping this as a tiny local wrapper documents the invariant for this module
+ * without duplicating temp-file/rename semantics.
  */
 function atomicWrite(destPath: string, content: string): void {
-  const tmpPath = `${destPath}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
-  mkdirSync(dirname(destPath), { recursive: true });
-  try {
-    writeFileSync(tmpPath, content, "utf-8");
-    renameSync(tmpPath, destPath);
-  } catch (err) {
-    try {
-      if (existsSync(tmpPath)) unlinkSync(tmpPath);
-    } catch {
-      // best-effort temp cleanup
-    }
-    throw err;
-  }
+  atomicWriteFile(destPath, content);
 }
 
 function captureFallbackMemory(): FallbackMemory {
@@ -158,9 +143,14 @@ function isTimeoutError(err: unknown): boolean {
   return (
     (err as NodeJS.ErrnoException)?.code === "ETIMEDOUT" ||
     (err as { killed?: boolean })?.killed === true ||
-    (typeof (err as { signal?: string })?.signal === "string" &&
-      (err as { signal: string }).signal === "SIGTERM")
+    (typeof (err as { signal?: string })?.signal === "string" && (err as { signal: string }).signal === "SIGTERM")
   );
+}
+
+function isSpawnError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  if (typeof code !== "string") return false;
+  return ["ENOENT", "EACCES", "EPERM", "ENOTDIR", "ELOOP"].includes(code);
 }
 
 // ---------------------------------------------------------------------------
@@ -249,9 +239,7 @@ export async function captureLiveDiagnosticsToFile(
     const timedOut = isTimeoutError(err);
 
     const exitCode =
-      typeof (err as { code?: unknown })?.code === "number"
-        ? ((err as { code: number }).code as number)
-        : -1;
+      typeof (err as { code?: unknown })?.code === "number" ? ((err as { code: number }).code as number) : -1;
 
     const stderr =
       typeof (err as { stderr?: string })?.stderr === "string"
@@ -260,7 +248,7 @@ export async function captureLiveDiagnosticsToFile(
 
     const failure: LiveDiagnosticsFailure = {
       ok: false,
-      status: timedOut ? "timeout" : "command_failed",
+      status: timedOut ? "timeout" : isSpawnError(err) ? "spawn_error" : "command_failed",
       error: err instanceof Error ? err.message : String(err),
       exitCode,
       timedOut,
@@ -295,10 +283,7 @@ export async function captureLiveDiagnosticsToFile(
  *
  * @returns `true` when a repair was performed, `false` otherwise.
  */
-export function repairZeroByteIncidentFile(
-  filePath: string,
-  context?: { command?: string; reason?: string },
-): boolean {
+export function repairZeroByteIncidentFile(filePath: string, context?: { command?: string; reason?: string }): boolean {
   if (!existsSync(filePath)) return false;
   let size: number;
   try {
@@ -350,10 +335,7 @@ export interface WriteIncidentManifestOptions {
  *
  * @returns The manifest that was written.
  */
-export function writeIncidentManifest(
-  bundleDir: string,
-  opts?: WriteIncidentManifestOptions,
-): IncidentManifest {
+export function writeIncidentManifest(bundleDir: string, opts?: WriteIncidentManifestOptions): IncidentManifest {
   const criticalSet = new Set<string>(opts?.criticalFiles ?? DEFAULT_CRITICAL_ARTIFACTS);
 
   // Collect all filenames from the directory (excluding the manifest itself).

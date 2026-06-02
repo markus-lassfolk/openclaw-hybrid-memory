@@ -11,6 +11,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,11 +60,7 @@ function fileSize(path: string): number {
 }
 
 /** Matches the (error, stdout, stderr) execFile callback signature. */
-type ExecFileCallback = (
-  error: Error | null,
-  stdout: string,
-  stderr: string,
-) => void;
+type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
 
 /** Constructs a fake execFile error with attached stdout/stderr and exit code. */
 function makeExecError(
@@ -81,9 +78,7 @@ function makeExecError(
 
 // We vi.mock the entire module to intercept execFile calls.
 vi.mock("../utils/process-runner.js", async () => {
-  const actual = await vi.importActual<typeof import("../utils/process-runner.js")>(
-    "../utils/process-runner.js",
-  );
+  const actual = await vi.importActual<typeof import("../utils/process-runner.js")>("../utils/process-runner.js");
   return {
     ...actual,
     execFile: vi.fn(actual.execFile),
@@ -160,6 +155,28 @@ describe("captureLiveDiagnosticsToFile — success", () => {
 // ---------------------------------------------------------------------------
 
 describe("captureLiveDiagnosticsToFile — command failure", () => {
+  it("classifies executable spawn errors as spawn_error", async () => {
+    const fakeError = makeExecError("spawn fake-diagnostic ENOENT", "ENOENT", "");
+
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb: ExecFileCallback) => {
+      cb(fakeError, "", "");
+    });
+
+    const destPath = join(tmpDir, "memory-diagnostics-live.json");
+    const result = await captureLiveDiagnosticsToFile(destPath, {
+      command: "missing-diagnostic-binary",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(fileSize(destPath)).toBeGreaterThan(0);
+
+    const written = readJsonFile<LiveDiagnosticsFailure>(destPath);
+    expect(written.ok).toBe(false);
+    expect(written.status).toBe("spawn_error");
+    expect(written.exitCode).toBe(-1);
+    expect(written.timedOut).toBe(false);
+  });
+
   it("writes a non-empty failure envelope when the command exits non-zero", async () => {
     const fakeError = makeExecError("Command exited with code 1", 1, "Fatal: out of memory");
 
@@ -361,9 +378,7 @@ describe("writeIncidentManifest", () => {
     const diagArtifact = manifest.artifacts.find((a) => a.filename === "memory-diagnostics-live.json");
     expect(diagArtifact?.empty).toBe(true);
     expect(diagArtifact?.critical).toBe(true);
-    expect(manifest.warnings).toContain(
-      "Critical artifact is empty (0 bytes): memory-diagnostics-live.json",
-    );
+    expect(manifest.warnings).toContain("Critical artifact is empty (0 bytes): memory-diagnostics-live.json");
   });
 
   it("flags missing critical artifacts as warnings", () => {
@@ -439,5 +454,58 @@ describe("resolveIncidentBundleRoot", () => {
     const root = resolveIncidentBundleRoot();
     expect(root).toMatch(/vm-memory-incidents$/);
     expect(root).toMatch(/\.openclaw/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// vm-memory-collect-diagnostics.sh integration guard
+// ---------------------------------------------------------------------------
+
+describe("vm-memory-collect-diagnostics.sh", () => {
+  it("writes a non-empty failure envelope and manifest when live HTTP diagnostics fail", () => {
+    const repoRoot = join(import.meta.dirname, "..", "..", "..");
+    const scriptPath = join(repoRoot, "scripts", "vm-memory-collect-diagnostics.sh");
+    const openclawHome = join(tmpDir, "openclaw-home");
+    const incidentDir = join(openclawHome, "logs", "vm-memory-incidents", "test-incident");
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(openclawHome, ".secrets"), { recursive: true });
+    writeFileSync(join(openclawHome, ".secrets", "gateway-token"), "test-token", "utf-8");
+
+    // Keep the test hermetic and fast: the real script shells out to systemctl,
+    // journalctl, and optionally openclaw, so shadow them with harmless stubs.
+    for (const name of ["systemctl", "journalctl", "openclaw"]) {
+      writeFileSync(join(binDir, name), "#!/usr/bin/env bash\nexit 1\n", { encoding: "utf-8", mode: 0o755 });
+    }
+    writeFileSync(join(binDir, "curl"), "#!/usr/bin/env bash\necho 'simulated connection refused' >&2\nexit 7\n", {
+      encoding: "utf-8",
+      mode: 0o755,
+    });
+
+    execFileSync("/bin/bash", [scriptPath, incidentDir], {
+      env: {
+        ...process.env,
+        OPENCLAW_HOME: openclawHome,
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      },
+      stdio: "pipe",
+      timeout: 20_000,
+    });
+
+    const livePath = join(incidentDir, "memory-diagnostics-live.json");
+    expect(fileSize(livePath)).toBeGreaterThan(0);
+    const live = readJsonFile<LiveDiagnosticsFailure>(livePath);
+    expect(live).toMatchObject({
+      ok: false,
+      status: "command_failed",
+      exitCode: 7,
+      timedOut: false,
+    });
+    expect(live.stderr).toContain("simulated connection refused");
+
+    const manifest = readJsonFile<IncidentManifest>(join(incidentDir, "incident-manifest.json"));
+    const liveArtifact = manifest.artifacts.find((a) => a.filename === "memory-diagnostics-live.json");
+    expect(liveArtifact?.empty).toBe(false);
+    expect(manifest.warnings).not.toContain("Critical artifact is empty (0 bytes): memory-diagnostics-live.json");
   });
 });
