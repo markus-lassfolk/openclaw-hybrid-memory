@@ -33,6 +33,7 @@ import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
+import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
 
@@ -214,15 +215,17 @@ export async function runSelfCorrectionRunForCli(
     approve?: boolean;
     applyTools?: boolean;
     full?: boolean;
+    force?: boolean;
     verbose?: boolean;
   },
 ): Promise<SelfCorrectionRunResult> {
+  const { bypassScanCooldown } = resolveScanMaintenanceOverrides(opts);
   const { factsDb, vectorDb, embeddings, openai, cfg, logger, proposalsDb } = ctx;
   const SCAN_TYPE = "self-correction-run";
 
   // Startup guard + concurrency lock (skip if already ran within 23h and not forced)
   // Only apply when no explicit incidents/extractPath provided (i.e. fresh scan)
-  if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) {
+  if (!bypassScanCooldown && !opts.dryRun && !opts.incidents && !opts.extractPath) {
     const cursor = factsDb.getScanCursor(SCAN_TYPE);
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip) {
@@ -702,6 +705,6 @@ export async function runSelfCorrectionRunForCli(
       status: "success_analyzed",
     };
   } finally {
-    if (!opts.full && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);
+    if (!bypassScanCooldown && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);
   }
 }

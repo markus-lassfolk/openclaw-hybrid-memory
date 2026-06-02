@@ -174,6 +174,38 @@ describe("runEntityEnrichmentForCli", () => {
     expect(hotIdx).toBeLessThan(coldIdx);
   });
 
+  it("listFactIdsNeedingEntityEnrichment returns high-degree facts before low-degree facts within same tier (#1806)", () => {
+    const low = db.store({
+      text: "Low-degree fact with enough text to exceed the minimum length filter threshold here",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    const high = db.store({
+      text: "High-degree fact with enough text to exceed the minimum length filter threshold here",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+    // Both warm tier (default); set degree via raw DB to simulate graph-connected facts.
+    const raw = db.getRawDb();
+    raw.prepare("UPDATE facts SET out_degree = 10, in_degree = 5 WHERE id = ?").run(high.id);
+    raw.prepare("UPDATE facts SET out_degree = 0, in_degree = 0 WHERE id = ?").run(low.id);
+
+    const ids = db.listFactIdsNeedingEntityEnrichment(10, 24);
+    const highIdx = ids.indexOf(high.id);
+    const lowIdx = ids.indexOf(low.id);
+    expect(highIdx).toBeGreaterThanOrEqual(0);
+    expect(lowIdx).toBeGreaterThanOrEqual(0);
+    expect(highIdx).toBeLessThan(lowIdx);
+  });
+
   it("ramps up adaptive throughput after consecutive successful batches", async () => {
     seedFacts(25, "Adaptive success fact");
 

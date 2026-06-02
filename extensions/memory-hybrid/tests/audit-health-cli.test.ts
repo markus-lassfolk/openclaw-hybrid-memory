@@ -515,4 +515,61 @@ describe("buildAuditHealthReport — JSON schema (#1193)", () => {
     expect(report.remediation.some((r) => r.includes("low_recall"))).toBe(true);
     db.close();
   });
+
+  it("entityEnrichmentBacklog is present in report and reflects pending count (#1806)", () => {
+    const db = new FactsDB(":memory:");
+    // Store 3 facts with enough text to qualify for enrichment (minTextLen=24).
+    for (let i = 0; i < 3; i++) {
+      db.store({
+        text: `Entity enrichment backlog test fact ${i} with enough length to exceed min threshold`,
+        category: "technical",
+        importance: 0.5,
+        entity: null,
+        key: null,
+        value: null,
+        source: "test",
+      });
+    }
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    expect(report.entityEnrichmentBacklog).not.toBeNull();
+    expect(report.entityEnrichmentBacklog?.total).toBeGreaterThanOrEqual(3);
+    expect(typeof report.entityEnrichmentBacklog?.estimatedRunsRemaining).toBe("number");
+    expect(report.entityEnrichmentBacklog?.byTier).toMatchObject({
+      hot: expect.any(Number),
+      warm: expect.any(Number),
+      structural: expect.any(Number),
+      cold: expect.any(Number),
+      unknown: expect.any(Number),
+    });
+    db.close();
+  });
+
+  it("warns and adds remediation when entity enrichment backlog eta_runs exceeds threshold (#1806)", () => {
+    const db = new FactsDB(":memory:");
+    // Seed 20001 facts so estimatedRunsRemaining = ceil(20001/200) = 101 which exceeds the warn threshold of 100.
+    // ceil(total/200) > 100 requires total > 20000. Use raw DB INSERT for speed.
+    const raw = db.getRawDb();
+    const nowSec = Math.floor(Date.now() / 1000);
+    const insertStmt = raw.prepare(
+      `INSERT INTO facts (id, text, category, importance, source, created_at, tier)
+       VALUES (?, ?, 'technical', 0.5, 'test', ?, 'warm')`,
+    );
+    for (let i = 0; i < 20001; i++) {
+      insertStmt.run(
+        `enrich-backlog-${i}`,
+        `Entity enrichment large backlog test fact ${i} with enough text to exceed minimum length threshold for enrichment`,
+        nowSec,
+      );
+    }
+
+    const report = buildAuditHealthReport(db as never, () => ["technical"], [], 500);
+
+    expect(report.entityEnrichmentBacklog).not.toBeNull();
+    expect(report.entityEnrichmentBacklog?.estimatedRunsRemaining).toBeGreaterThan(100);
+    expect(report.warnings.some((w) => w.includes("eta_runs="))).toBe(true);
+    expect(report.remediation.some((r) => r.includes("enrich-entities"))).toBe(true);
+    db.close();
+  });
 });
