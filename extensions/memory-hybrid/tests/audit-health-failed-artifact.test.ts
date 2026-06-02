@@ -7,7 +7,7 @@
  * `runAuditHealth` performs when a report is available but strict mode fails.
  */
 
-import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -179,29 +179,28 @@ describe("strict audit failure artifact integration (#1823)", () => {
 // ─── --output atomic write: tmp+rename never leaves a 0-byte artifact ────────
 
 describe("atomic artifact write semantics (#1823)", () => {
-  const tmpFiles: string[] = [];
+  const tmpDirs: string[] = [];
   afterEach(() => {
-    for (const f of tmpFiles) {
-      for (const p of [f, `${f}.tmp`]) {
-        try {
-          if (existsSync(p)) unlinkSync(p);
-        } catch {
-          /* ignore cleanup errors */
-        }
+    for (const dir of tmpDirs) {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* ignore cleanup errors */
       }
     }
-    tmpFiles.length = 0;
+    tmpDirs.length = 0;
   });
 
   it("writes valid JSON to the output path via tmp+rename, leaving no .tmp residue", () => {
-    const outPath = join(tmpdir(), `audit-artifact-test-${Date.now()}.json`);
-    tmpFiles.push(outPath);
+    const outDir = mkdtempSync(join(tmpdir(), "audit-artifact-test-"));
+    const outPath = join(outDir, "final-audit.json");
+    tmpDirs.push(outDir);
 
     const artifact = buildAuditFailureArtifact(new Error("disk-write test"), 100);
     const json = JSON.stringify(artifact, null, 2);
 
     // Reproduce the atomic write that runAuditHealth performs with --output.
-    const tmpPath = `${outPath}.tmp`;
+    const tmpPath = `${outPath}.${process.pid}.${Date.now()}.tmp`;
     writeFileSync(tmpPath, json, "utf-8");
     renameSync(tmpPath, outPath);
 

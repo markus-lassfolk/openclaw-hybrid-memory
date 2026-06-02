@@ -3,7 +3,7 @@
  * Extracted from cli/register.ts lines 290-1552.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
@@ -14,6 +14,7 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -161,12 +162,9 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     const emitJsonArtifact = (payload: unknown): void => {
       const json = JSON.stringify(payload, null, 2);
       if (outputPath) {
-        const tmpPath = `${outputPath}.tmp`;
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(tmpPath, json, "utf-8");
-        renameSync(tmpPath, outputPath);
+        atomicWriteFile(outputPath, json);
       } else {
-        console.log(json);
+        writeFileSync(process.stdout.fd, `${json}\n`, "utf-8");
       }
     };
 
