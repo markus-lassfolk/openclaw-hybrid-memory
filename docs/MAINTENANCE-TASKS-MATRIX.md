@@ -77,9 +77,29 @@ The plugin **ensures** these job definitions exist in `~/.openclaw/cron/jobs.jso
 | **monthly-consolidation**     | 1st of month 05:00 | consolidate --threshold 0.92 → build-languages → backfill-decay → enrich-entities              |
 | **sensor-sweep**              | Every 4h           | sensor-sweep --tier 1 → sensor-sweep --tier 2 (no LLM). Exit 0 if sensorSweep.enabled false. |
 
+### Scan override flags (`--force` / `--full`)
+
+Scan-style maintenance commands share one operator contract ([#1798](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1798)):
+
+| Flag | Effect |
+|------|--------|
+| **`--force`** | Preferred: bypass 23h scan cooldown and incremental `scan_cursors` watermark for this invocation |
+| **`--full`** | Legacy alias (same effect as `--force` on scan commands) |
+
+**Commands:** `distill`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `extract-implicit`, `self-correction-run`. `extract-daily` accepts the flags for CLI/`run-all` parity (no scan cursor). `reflect*` accept the flags for CLI parity (no scan guards).
+
+**`run-all`:** pass `--force` or `--full` once; overrides propagate to the scan-style steps above.
+
+**Cron QA bypass:** when `HYBRID_MEM_QA_FORCE=1`, `QA_FORCE=1`, or `HYBRID_MEM_CLI_JOB_GUARD_WINDOW_MS=0`, the cron bash harness appends `--force` to guarded `hybrid-mem` steps (`distill`, `extract-*`, `self-correction-run`, `extract-implicit`).
+
+**Different semantics (unchanged):** `record-storage-sample --force` (once-per-UTC-day guard), `procedure promote --force` (validation threshold), `generate-auto-skills --bypass-skill-duplicate-cache`.
+
+---
+
 ### In `run-all` (`openclaw hybrid-mem run-all`)
 
-Order of steps (feature flags may omit some):
+Order of steps (feature flags may omit some). Optional **`--force`** / **`--full`** propagates to scan-style steps (see above):
+
 
 1. **backfill-decay** (once per install, marker `.backfill-decay-done`)
 2. **prune**

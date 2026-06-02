@@ -33,6 +33,7 @@ import { getMaxMtime, getSessionFilePathsSince } from "./cmd-extract-sessions.js
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
+import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
@@ -42,8 +43,10 @@ export async function runExtractReinforcementForCli(
     dryRun?: boolean;
     workspace?: string;
     full?: boolean;
+    force?: boolean;
   },
 ): Promise<ReinforcementExtractResult> {
+  const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
   const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb, logger } = ctx;
   const SCAN_TYPE = "extract-reinforcement";
   const sessionDir = cfg.procedures.sessionsDir;
@@ -51,7 +54,7 @@ export async function runExtractReinforcementForCli(
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
   // Startup guard + concurrency lock
-  if (!opts.full && !opts.dryRun) {
+  if (!bypassScanCooldown && !opts.dryRun) {
     const skip = acquireScanSlot(SCAN_TYPE, cursor?.lastRunAt, logger);
     if (skip)
       return {
@@ -63,7 +66,7 @@ export async function runExtractReinforcementForCli(
 
   try {
     let filePaths: string[];
-    if (!opts.full && cursor) {
+    if (!bypassWatermark && cursor) {
       filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastSessionTs);
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
     } else {
@@ -556,6 +559,6 @@ export async function runExtractReinforcementForCli(
     }
     return result;
   } finally {
-    if (!opts.full && !opts.dryRun) clearScanLock(SCAN_TYPE);
+    if (!bypassScanCooldown && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }
 }

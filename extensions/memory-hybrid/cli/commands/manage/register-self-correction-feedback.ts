@@ -1,5 +1,9 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import {
+  registerScanMaintenanceOverrideOptions,
+  scanMaintenanceOverridePayload,
+} from "../../maintenance-overrides.js";
 import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -54,18 +58,18 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
       }),
     );
 
-  mem
-    .command("self-correction-run")
-    .description("Analyze extracted incidents and auto-remediate (memory store, TOOLS.md); report to memory/reports")
-    .option("--extract-path <path>", "Path to incidents JSON (default: memory/.self-correction-incidents.json)")
-    .option("--workspace <w>", "Workspace path (for TOOLS.md)")
-    .option("--dry-run", "Show what would be applied without applying")
-    .option("--model <m>", "LLM model override (default from self-correction heavy tier)")
-    .option("--approve", "Auto-approve all corrections (skip review)")
-    .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
-    .option("--full", "Force full re-scan (bypass 23-hour startup guard)")
-    .option("-v, --verbose", "Log progress before LLM analysis (plugin logger); respects hybrid-mem -v")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("self-correction-run")
+      .description("Analyze extracted incidents and auto-remediate (memory store, TOOLS.md); report to memory/reports")
+      .option("--extract-path <path>", "Path to incidents JSON (default: memory/.self-correction-incidents.json)")
+      .option("--workspace <w>", "Workspace path (for TOOLS.md)")
+      .option("--dry-run", "Show what would be applied without applying")
+      .option("--model <m>", "LLM model override (default from self-correction heavy tier)")
+      .option("--approve", "Auto-approve all corrections (skip review)")
+      .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
+      .option("-v, --verbose", "Log progress before LLM analysis (plugin logger); respects hybrid-mem -v"),
+  ).action(
       withExit(
         async (
           opts?: {
@@ -76,6 +80,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             approve?: boolean;
             applyTools?: boolean;
             full?: boolean;
+            force?: boolean;
             verbose?: boolean;
           },
           cmd?: CommanderOptsParent,
@@ -85,7 +90,6 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           const dryRun = !!opts?.dryRun;
           const model = opts?.model?.trim() || undefined;
           const approve = !!opts?.approve;
-          const full = !!opts?.full;
           const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
           let res;
           try {
@@ -96,7 +100,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
               model,
               approve,
               applyTools: opts?.applyTools,
-              full,
+              ...scanMaintenanceOverridePayload(opts),
               verbose,
             });
           } catch (err) {
@@ -117,7 +121,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
               console.log(`Skipping self-correction-run: scan already in progress. status=skipped_concurrency`);
             } else {
               console.log(
-                `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --full to override. status=skipped_cooldown`,
+                `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --force (or --full) to override. status=skipped_cooldown`,
               );
             }
             return;
@@ -148,24 +152,25 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
     );
 
   if (runExtractImplicitFeedback) {
-    mem
-      .command("extract-implicit")
-      .description(
-        "Extract implicit feedback signals from session transcripts and route to reinforcement/self-correction pipelines",
-      )
-      .option("--days <n>", "Days to look back (default 3)", "3")
-      .option("--dry-run", "Show what would be stored without storing")
-      .option("--full", "Ignore incremental scan cursor and rescan matching sessions")
-      .option("-v, --verbose", "Show detailed signal output per session")
-      .option("--no-trajectories", "Skip trajectory building")
-      .option("--no-closed-loop", "Skip closed-loop analysis")
-      .action(
+    registerScanMaintenanceOverrideOptions(
+      mem
+        .command("extract-implicit")
+        .description(
+          "Extract implicit feedback signals from session transcripts and route to reinforcement/self-correction pipelines",
+        )
+        .option("--days <n>", "Days to look back (default 3)", "3")
+        .option("--dry-run", "Show what would be stored without storing")
+        .option("-v, --verbose", "Show detailed signal output per session")
+        .option("--no-trajectories", "Skip trajectory building")
+        .option("--no-closed-loop", "Skip closed-loop analysis"),
+    ).action(
         withExit(
           async (
             opts?: {
               days?: string;
               dryRun?: boolean;
               full?: boolean;
+              force?: boolean;
               verbose?: boolean;
               trajectories?: boolean;
               closedLoop?: boolean;
@@ -174,7 +179,6 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           ) => {
             const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
             const dryRun = !!opts?.dryRun;
-            const full = !!opts?.full;
             const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
             const includeTrajectories = opts?.trajectories !== false;
             const includeClosedLoop = opts?.closedLoop !== false;
@@ -183,7 +187,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
               res = await runExtractImplicitFeedback({
                 days,
                 dryRun,
-                full,
+                ...scanMaintenanceOverridePayload(opts),
                 verbose,
                 includeTrajectories,
                 includeClosedLoop,

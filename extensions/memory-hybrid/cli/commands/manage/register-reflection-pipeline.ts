@@ -16,6 +16,7 @@ import {
   implicitFeedbackCollapseStatus,
 } from "../../cmd-feedback.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import { registerScanMaintenanceOverrideOptions } from "../../maintenance-overrides.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -304,14 +305,15 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       }),
     );
 
-  mem
-    .command("reflect")
-    .description("Run reflection: analyze recent facts, extract patterns, store in memory")
-    .option("--window <n>", "Days to look back (default from config)", reflectionConfig.defaultWindow.toString())
-    .option("--dry-run", "Show what would be stored without storing")
-    .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .option("-v, --verbose", "Log each pattern as it is extracted")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("reflect")
+      .description("Run reflection: analyze recent facts, extract patterns, store in memory")
+      .option("--window <n>", "Days to look back (default from config)", reflectionConfig.defaultWindow.toString())
+      .option("--dry-run", "Show what would be stored without storing")
+      .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
+      .option("-v, --verbose", "Log each pattern as it is extracted"),
+  ).action(
       withExit(
         async (
           opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean },
@@ -339,13 +341,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       ),
     );
 
-  mem
-    .command("reflect-rules")
-    .description("Run reflection (rules): extract high-level rules from patterns")
-    .option("--dry-run", "Show what would be stored without storing")
-    .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .option("-v, --verbose", "Log each rule as it is extracted")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("reflect-rules")
+      .description("Run reflection (rules): extract high-level rules from patterns")
+      .option("--dry-run", "Show what would be stored without storing")
+      .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
+      .option("-v, --verbose", "Log each rule as it is extracted"),
+  ).action(
       withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
         const model =
@@ -375,20 +378,21 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       }),
     );
 
-  mem
-    .command("reflect-meta")
-    .description("Run reflection (meta-patterns): extract meta-patterns from existing patterns")
-    .option("--dry-run", "Show what would be stored without storing")
-    .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
-    .option("-v, --verbose", "Log each meta-pattern as it is extracted")
-    .option("--collapse-implicit-feedback", "Collapse near-duplicate implicit-feedback trajectory signals")
-    .option(
-      "--include-legacy",
-      "With --collapse-implicit-feedback, also collapse legacy category=pattern implicit-feedback rows",
-    )
-    .option("--threshold <n>", "Jaccard similarity threshold for implicit-feedback collapse", "0.7")
-    .option("--limit <n>", "Maximum implicit-feedback rows to scan per page", "1000")
-    .action(
+  registerScanMaintenanceOverrideOptions(
+    mem
+      .command("reflect-meta")
+      .description("Run reflection (meta-patterns): extract meta-patterns from existing patterns")
+      .option("--dry-run", "Show what would be stored without storing")
+      .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
+      .option("-v, --verbose", "Log each meta-pattern as it is extracted")
+      .option("--collapse-implicit-feedback", "Collapse near-duplicate implicit-feedback trajectory signals")
+      .option(
+        "--include-legacy",
+        "With --collapse-implicit-feedback, also collapse legacy category=pattern implicit-feedback rows",
+      )
+      .option("--threshold <n>", "Jaccard similarity threshold for implicit-feedback collapse", "0.7")
+      .option("--limit <n>", "Maximum implicit-feedback rows to scan per page", "1000"),
+  ).action(
       withExit(
         async (
           opts?: {
