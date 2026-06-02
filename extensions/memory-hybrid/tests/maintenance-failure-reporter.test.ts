@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MaintenanceTelemetryIssue } from "../services/cron-exit-validator.js";
+import { setEnv } from "../utils/env-manager.js";
 
 describe("maintenance-failure-reporter", () => {
   afterEach(() => {
-    delete process.env.HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING;
+    setEnv("HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING", undefined);
     vi.restoreAllMocks();
     vi.resetModules();
   });
@@ -52,7 +53,7 @@ describe("maintenance-failure-reporter", () => {
   });
 
   it("honors the maintenance reporting environment opt-out", async () => {
-    process.env.HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING = "1";
+    setEnv("HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING", "1");
     const { shouldReportMaintenanceFailures } = await import("../services/maintenance-failure-reporter.js");
     expect(shouldReportMaintenanceFailures(buildConfig())).toBe(false);
   });
@@ -88,7 +89,7 @@ describe("maintenance-failure-reporter", () => {
       reportMaintenanceFailureIssues([buildMockIssue()], {
         cfg,
         pluginVersion: "test-version",
-      })
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -99,7 +100,7 @@ describe("maintenance-failure-reporter", () => {
       reportMaintenanceFailureIssues([], {
         cfg: buildConfig(),
         pluginVersion: "test-version",
-      })
+      }),
     ).resolves.toBeUndefined();
   });
 
@@ -202,7 +203,7 @@ describe("maintenance-failure-reporter", () => {
         cfg: buildConfig(),
         pluginVersion: "test-version",
         logger: mockLogger,
-      })
+      }),
     ).resolves.toBeUndefined();
 
     // Should log the failure
