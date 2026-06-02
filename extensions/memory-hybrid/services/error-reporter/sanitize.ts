@@ -69,6 +69,32 @@ export function sanitizePath(path: string): string {
 }
 
 /**
+ * Sanitize fingerprint array: scrub each part and limit size
+ */
+function sanitizeFingerprint(fingerprint: string[] | undefined): string[] | undefined {
+  if (!Array.isArray(fingerprint) || fingerprint.length === 0) return undefined;
+  return fingerprint
+    .map((part) => scrubString(String(part)).slice(0, 128))
+    .filter((part) => part.length > 0)
+    .slice(0, 8);
+}
+
+/**
+ * Sanitize maintenance context values: recursively scrub strings and limit arrays
+ */
+function sanitizeMaintenanceValue(value: unknown): unknown {
+  if (typeof value === "string") return scrubString(value);
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => sanitizeMaintenanceValue(entry))
+      .filter((entry) => entry !== undefined)
+      .slice(0, 20);
+  }
+  return undefined;
+}
+
+/**
  * Sanitize event using ALLOWLIST approach: rebuild event with only safe fields
  */
 export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
@@ -82,7 +108,7 @@ export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
     release: event.release,
     environment: event.environment,
     server_name: event.server_name ? scrubString(String(event.server_name).slice(0, 128)) : undefined,
-    fingerprint: event.fingerprint,
+    fingerprint: sanitizeFingerprint(event.fingerprint),
     exception: event.exception
       ? {
           values: event.exception.values?.map((v) => ({
@@ -114,6 +140,12 @@ export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
       bot_name: event.tags?.bot_name ? scrubString(String(event.tags.bot_name).slice(0, 64)) : undefined,
       retryAttempt: event.tags?.retryAttempt ? scrubString(String(event.tags.retryAttempt)) : undefined,
       memoryCount: event.tags?.memoryCount ? scrubString(String(event.tags.memoryCount)) : undefined,
+      component: event.tags?.component ? scrubString(String(event.tags.component)) : undefined,
+      job_name: event.tags?.job_name ? scrubString(String(event.tags.job_name)) : undefined,
+      step_name: event.tags?.step_name ? scrubString(String(event.tags.step_name)) : undefined,
+      failure_class: event.tags?.failure_class ? scrubString(String(event.tags.failure_class)) : undefined,
+      exit_code: event.tags?.exit_code ? scrubString(String(event.tags.exit_code)) : undefined,
+      semantic_status: event.tags?.semantic_status ? scrubString(String(event.tags.semantic_status)) : undefined,
     },
     contexts: {
       ...(event.contexts?.config_shape
@@ -130,6 +162,34 @@ export function sanitizeEvent(event: GlitchTipEvent): GlitchTipEvent | null {
         ? { runtime: { name: event.contexts.runtime.name, version: event.contexts.runtime.version } }
         : {}),
       ...(event.contexts?.os ? { os: { name: event.contexts.os.name } } : {}),
+      ...(event.contexts?.maintenance
+        ? {
+            maintenance: Object.fromEntries(
+              [
+                "job_name",
+                "step_name",
+                "failure_category",
+                "failure_class",
+                "guard_file",
+                "guard_state_before",
+                "guard_state_after",
+                "hm_log_path",
+                "hm_exit_path",
+                "last_success_at",
+                "duration_ms",
+                "facts_scanned",
+                "facts_changed",
+                "stored_count",
+                "collapsed_count",
+                "model",
+                "fallbacks",
+                "artifact_paths",
+              ]
+                .map((key) => [key, sanitizeMaintenanceValue(event.contexts?.maintenance?.[key])])
+                .filter(([, value]) => value !== undefined),
+            ),
+          }
+        : {}),
     },
     breadcrumbs: event.breadcrumbs
       ?.filter((b) => b.category?.startsWith("plugin."))
