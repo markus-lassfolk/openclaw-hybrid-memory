@@ -138,6 +138,7 @@ jobs:
             build
             ci
             revert
+          subjectPattern: ^(?!Revert ").+
 
   changed-files-summary:
     name: Changed Files Summary
