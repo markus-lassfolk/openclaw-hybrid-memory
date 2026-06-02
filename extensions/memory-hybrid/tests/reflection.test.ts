@@ -248,38 +248,32 @@ describe("runReflectionRules diagnostics", () => {
     return { factsDb, vectorDb, embeddings, openai };
   }
 
-  it("reports degraded diagnostics for empty model response", async () => {
+  it("throws when model response is empty and no fallback models remain", async () => {
     const { factsDb, vectorDb, embeddings, openai } = makeDeps("");
-    const res = await runReflectionRules(
-      factsDb as never,
-      vectorDb as never,
-      embeddings as never,
-      openai as never,
-      { dryRun: true, model: "test-model" },
-      { info: () => undefined, warn: () => undefined },
-    );
-
-    expect(res.rulesStored).toBe(0);
-    expect(res.diagnostics.status).toBe("degraded");
-    expect(res.diagnostics.zeroRulesReason).toBe("empty_model_response");
-    expect(res.diagnostics.parseSuccess).toBe(false);
+    await expect(
+      runReflectionRules(
+        factsDb as never,
+        vectorDb as never,
+        embeddings as never,
+        openai as never,
+        { dryRun: true, model: "test-model" },
+        { info: () => undefined, warn: () => undefined },
+      ),
+    ).rejects.toThrow("failure_type=empty_model_response");
   });
 
-  it("reports degraded diagnostics for invalid response format", async () => {
+  it("throws when model response format is invalid and no fallback models remain", async () => {
     const { factsDb, vectorDb, embeddings, openai } = makeDeps("Some prose without RULE lines");
-    const res = await runReflectionRules(
-      factsDb as never,
-      vectorDb as never,
-      embeddings as never,
-      openai as never,
-      { dryRun: true, model: "test-model" },
-      { info: () => undefined, warn: () => undefined },
-    );
-
-    expect(res.rulesStored).toBe(0);
-    expect(res.diagnostics.status).toBe("degraded");
-    expect(res.diagnostics.zeroRulesReason).toBe("invalid_response_format");
-    expect(res.diagnostics.parseSuccess).toBe(false);
+    await expect(
+      runReflectionRules(
+        factsDb as never,
+        vectorDb as never,
+        embeddings as never,
+        openai as never,
+        { dryRun: true, model: "test-model" },
+        { info: () => undefined, warn: () => undefined },
+      ),
+    ).rejects.toThrow("failure_type=invalid_response_format");
   });
 
   it("#1824: retries with fallback model when primary returns invalid_response_format", async () => {
@@ -334,20 +328,108 @@ describe("runReflectionRules diagnostics", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("fallback-model"));
   });
 
-  it("#1824: does not retry on invalid_response_format when no fallback models are configured", async () => {
-    const { factsDb, vectorDb, embeddings, openai } = makeDeps("Some prose without RULE lines");
-    const res = await runReflectionRules(
-      factsDb as never,
-      vectorDb as never,
-      embeddings as never,
-      openai as never,
-      { dryRun: true, model: "test-model", fallbackModels: [] },
-      { info: () => undefined, warn: () => undefined },
-    );
+  it("#1824: throws when primary and fallback both return invalid_response_format", async () => {
+    let callIndex = 0;
+    const responses = ["Some prose without RULE lines", "Still no RULE lines here either"];
+    const create = vi.fn(async () => ({
+      choices: [{ message: { content: responses[callIndex++] ?? "" } }],
+    }));
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create,
+        },
+      },
+    };
+    await expect(
+      runReflectionRules(
+        factsDb as never,
+        vectorDb as never,
+        embeddings as never,
+        openai as never,
+        { dryRun: true, model: "primary-model", fallbackModels: ["fallback-model"] },
+        { info: () => undefined, warn: () => undefined },
+      ),
+    ).rejects.toThrow("failure_type=invalid_response_format");
+    expect(create).toHaveBeenCalledTimes(2);
+  });
 
-    expect(res.rulesStored).toBe(0);
-    expect(res.diagnostics.status).toBe("degraded");
-    expect(res.diagnostics.zeroRulesReason).toBe("invalid_response_format");
+  it("throws when the LLM call fails", async () => {
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => {
+            throw new Error("upstream unavailable");
+          }),
+        },
+      },
+    };
+
+    await expect(
+      runReflectionRules(
+        factsDb as never,
+        vectorDb as never,
+        embeddings as never,
+        openai as never,
+        { dryRun: true, model: "test-model" },
+        { info: () => undefined, warn: () => undefined },
+      ),
+    ).rejects.toThrow("upstream unavailable");
+  });
+
+  it("#1824: does not retry on invalid_response_format when no fallback models are configured", async () => {
+    const create = vi.fn(async () => ({
+      choices: [{ message: { content: "Some prose without RULE lines" } }],
+    }));
+    const factsDb = {
+      getByCategory: (cat: string) => (cat === "pattern" ? patternEntries : []),
+      setEmbeddingModel: () => undefined,
+    };
+    const vectorDb = {
+      store: async () => undefined,
+      getVectorDim: () => 2,
+      getVectorsByFactIds: async () => new Map(),
+    };
+    const embeddings = { embed: async () => [1, 0], modelName: "test-model" };
+    const openai = {
+      chat: {
+        completions: {
+          create,
+        },
+      },
+    };
+
+    await expect(
+      runReflectionRules(
+        factsDb as never,
+        vectorDb as never,
+        embeddings as never,
+        openai as never,
+        { dryRun: true, model: "test-model", fallbackModels: [] },
+        { info: () => undefined, warn: () => undefined },
+      ),
+    ).rejects.toThrow("failure_type=invalid_response_format");
+    expect(create).toHaveBeenCalledTimes(1);
   });
 
   it("reports partial insufficient_patterns when fewer than 2 pattern facts are available", async () => {

@@ -257,6 +257,81 @@ describe("generate-proposals — JSON retry (#1824)", () => {
 
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
   });
+
+  it("does not leak raw LLM response snippets in thrown/default error when verbose=false", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+    const sensitiveSnippet = "PRIVATE_SOUL_CONTENT_SHOULD_NOT_LEAK";
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: `not valid json ${sensitiveSnippet}` } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoMaintenanceModels(db, proposalsDb, openai);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let thrown: Error | null = null;
+      try {
+        await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+      } catch (err) {
+        thrown = err as Error;
+      }
+      expect(thrown).not.toBeNull();
+      expect(thrown?.message).toContain("failure_type=invalid_json");
+      expect(thrown?.message).not.toContain(sensitiveSnippet);
+      const lastConsoleArg = String(consoleErrorSpy.mock.calls[consoleErrorSpy.mock.calls.length - 1]?.[0] ?? "");
+      expect(lastConsoleArg).toContain("failure_type=invalid_json");
+      expect(lastConsoleArg).not.toContain(sensitiveSnippet);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("allows response snippet logging in verbose mode but keeps thrown error sanitized", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+    const sensitiveSnippet = "VERBOSE_ONLY_SNIPPET";
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: `still not valid json ${sensitiveSnippet}` } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoMaintenanceModels(db, proposalsDb, openai);
+    let thrown: Error | null = null;
+    try {
+      await runGenerateProposalsForCli(ctx, { dryRun: false, verbose: true }, { resolvePath: (f) => f });
+    } catch (err) {
+      thrown = err as Error;
+    }
+    expect(thrown).not.toBeNull();
+    expect(thrown?.message).toContain("failure_type=invalid_json");
+    expect(thrown?.message).not.toContain(sensitiveSnippet);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining(sensitiveSnippet));
+  });
 });
 
 describe("buildAuditHealthReport — preReportWarnings (#1809)", () => {

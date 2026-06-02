@@ -353,16 +353,14 @@ export function resolveReflectionModelAndFallbacks(
     chain = filterMaintenanceTierFallbackModels(chain, effectivePrimary, explicitMaintenanceSet);
   }
 
-  // Safety-net (#1824): when no fallback chain has been populated for maintenance tier,
-  // append the first cheap configured model from the default-tier preference list.
-  // Prevents JSON-critical maintenance ops (reflect-rules, generate-proposals) from
-  // running with an empty fallback chain even when only one maintenance model is configured.
-  if (tier === "maintenance" && chain.length === 0 && !skipGlobalFallbackAppend) {
-    for (const candidate of getLLMModelPreference(cronCfg, "default")) {
-      if (!candidate || candidate === effectivePrimary) continue;
-      if (maintPolicy === "cheap-only" && isExpensiveMaintenanceFallbackModel(candidate)) continue;
-      chain.push(candidate);
-      break;
+  // #1801: After all filtering, if single-model maintenance still has an empty chain, inherit
+  // cheap default-tier candidates. This covers the case where a global fallback (e.g.
+  // llm.fallbackModel) was appended but then stripped by the cheap-only filter.
+  // Skip when explicit-only policy is active — the operator intentionally named no fallbacks.
+  if (tier === "maintenance" && explicitMaintList.length === 1 && chain.length === 0 && !skipGlobalFallbackAppend) {
+    appendUniqueFallbackList(chain, getLLMModelPreference(cronCfg, "default"), effectivePrimary);
+    if (maintPolicy === "cheap-only") {
+      chain = filterMaintenanceTierFallbackModels(chain, effectivePrimary, explicitMaintenanceSet);
     }
   }
 

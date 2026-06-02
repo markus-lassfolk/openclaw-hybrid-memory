@@ -1373,6 +1373,9 @@ export async function runReflectionRules(
         );
       }
     }
+    if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
+      throw new Error(`memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}`);
+    }
     return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
   }
 

@@ -177,7 +177,7 @@ export async function runGenerateProposalsForCli(
         confidence: number;
       }>
     | undefined;
-  let lastFailReason = "";
+  let lastFailReason = "failure_type=unknown";
   for (let modelIdx = 0; modelIdx < allModels.length; modelIdx++) {
     const tryModel = allModels[modelIdx];
     let rawResponse: string;
@@ -200,7 +200,12 @@ export async function runGenerateProposalsForCli(
       rawResponse = detail.content;
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      lastFailReason = `model=${tryModel} LLM call failed: ${errMsg}`;
+      lastFailReason = `model=${tryModel} failure_type=llm_call_failed`;
+      if (opts.verbose) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals — ${tryModel} LLM call failed: ${errMsg.slice(0, 200)}`,
+        );
+      }
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "cli",
         operation: "runGenerateProposalsForCli:llm",
@@ -220,14 +225,15 @@ export async function runGenerateProposalsForCli(
       items = parsed;
       break;
     } catch (_err) {
-      lastFailReason = `model=${tryModel} returned invalid JSON: ${rawResponse.slice(0, 200)}`;
+      const responseSnippet = rawResponse.slice(0, 200);
+      lastFailReason = `model=${tryModel} failure_type=invalid_json`;
       if (modelIdx < allModels.length - 1) {
         ctx.logger.warn?.(
           `memory-hybrid: generate-proposals — ${tryModel} returned invalid JSON, retrying with fallback model`,
         );
       } else if (opts.verbose) {
         ctx.logger.warn?.(
-          `memory-hybrid: generate-proposals — LLM output was not valid JSON: ${rawResponse.slice(0, 200)}`,
+          `memory-hybrid: generate-proposals — LLM output was not valid JSON: ${responseSnippet}`,
         );
       }
       continue;
