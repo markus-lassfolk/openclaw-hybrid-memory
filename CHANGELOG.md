@@ -37,7 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.6.10] - 2026-06-01
+## [2026.6.20] - 2026-06-02
 
 ### Added
 
@@ -54,8 +54,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Changed
 
-- Bumped plugin package, lockfile, plugin manifest, and installer package versions to **2026.6.10**.
-- Added release notes at `release-notes/release-notes-2026.6.10.md`.
+- Bumped plugin package, lockfile, plugin manifest, and installer package versions to **2026.6.20**.
+- Added release notes at `release-notes/release-notes-2026.6.20.md`.
 
 ---
 
