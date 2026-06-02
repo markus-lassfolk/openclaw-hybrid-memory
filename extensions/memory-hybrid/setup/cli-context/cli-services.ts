@@ -8,7 +8,7 @@ import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../../c
 import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
 import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
-import { type DreamCycleResult, runDreamCycle } from "../../services/dream-cycle.js";
+import { type DreamCycleResult, makeDreamCycleRunId, runDreamCycle } from "../../services/dream-cycle.js";
 import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
 import { runExport } from "../../services/export-memory.js";
 import { runFindDuplicates } from "../../services/find-duplicates.js";
@@ -416,8 +416,7 @@ export function buildCliContextServices(
               return process.env.HYBRID_MEM_DREAM_STAGE_DIR.trim();
             }
             const openclawHome = process.env.OPENCLAW_HOME?.trim() || join(homedir(), ".openclaw");
-            const runId = `${new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)}Z-${process.pid}`;
-            return join(openclawHome, "logs", "dream-cycle", `run-${runId}`);
+            return join(openclawHome, "logs", "dream-cycle", `run-${makeDreamCycleRunId()}`);
           })(),
         },
         logSink,

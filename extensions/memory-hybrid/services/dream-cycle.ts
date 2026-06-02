@@ -143,6 +143,17 @@ const MIN_PATTERNS_FOR_RULES = 3;
 export const DEFAULT_MAX_EVENTS_PER_CONSOLIDATION = 200;
 const DREAM_STAGE_HEARTBEAT_MS = 60_000;
 const EPISODIC_PROGRESS_HEARTBEAT_MS = 60_000;
+/** Maximum characters used from the stage label in artifact filenames (Issue #1827). */
+const STAGE_LABEL_MAX_LENGTH = 60;
+
+/**
+ * Returns a run identifier string that encodes the UTC timestamp and process PID,
+ * suitable for directory names and artifact fields (Issue #1827).
+ * Format: `YYYYMMDDTHHmmss`Z-`<pid>` e.g. `20260602T061400Z-12345`.
+ */
+export function makeDreamCycleRunId(): string {
+  return `${new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)}Z-${process.pid}`;
+}
 const EPISODIC_PROGRESS_GROUP_INTERVAL = 25;
 const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
   "heartbeat",
@@ -616,7 +627,7 @@ export async function runDreamCycle(
   logger.info("memory-hybrid: dream-cycle — starting nightly cycle");
   const cycleStartedAt = Date.now();
   const v = !!config.verbose;
-  const runId = `${new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)}Z-${process.pid}`;
+  const runId = makeDreamCycleRunId();
   // Ensure stage artifact dir exists when configured.
   if (config.stageArtifactDir) {
     try {
@@ -632,7 +643,7 @@ export async function runDreamCycle(
         .replace(/[^a-zA-Z0-9]+/g, "-")
         .replace(/^-|-$/g, "")
         .toLowerCase()
-        .slice(0, 60);
+        .slice(0, STAGE_LABEL_MAX_LENGTH);
       const filename = `stage-${String(stageNumber).padStart(2, "0")}-${sanitized}.json`;
       const filePath = join(config.stageArtifactDir, filename);
       writeFileSync(filePath, JSON.stringify({ runId, stage: label, stageNumber, ...payload }, null, 2));
