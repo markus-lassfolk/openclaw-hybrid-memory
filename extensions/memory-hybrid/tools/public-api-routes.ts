@@ -449,7 +449,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       resolvedLancePath: ctx.resolvedLancePath,
       recallInFlightRef: ctx.recallInFlightRef,
-      variantQueuePending: ctx.variantQueue?.queueLength ?? null,
+      variantQueuePending: ctx.variantQueue?.queueLength,
     });
     return toJson(200, diag);
   });
