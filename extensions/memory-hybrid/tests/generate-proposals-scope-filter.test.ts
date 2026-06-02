@@ -14,6 +14,7 @@ import { buildAuditHealthReport } from "../cli/commands/manage/register-storage-
 import type { HandlerContext } from "../cli/handlers.js";
 import type { HybridMemoryConfig } from "../config/types/index.js";
 import { _testing } from "../index.js";
+import * as chatService from "../services/chat.js";
 
 const { FactsDB, ProposalsDB } = _testing;
 
@@ -44,6 +45,7 @@ function makeCtx(
   overrides: {
     requireScopeFilter?: boolean;
     scopeFilter?: { userId?: string; agentId?: string; sessionId?: string };
+    configOverrides?: Partial<HybridMemoryConfig>;
   } = {},
 ): HandlerContext {
   const cfg = {
@@ -62,6 +64,7 @@ function makeCtx(
     },
     identityReflection: { enabled: false },
     identityPromotion: { enabled: false },
+    ...overrides.configOverrides,
   } as unknown as HybridMemoryConfig;
 
   return {
@@ -153,6 +156,30 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     // If an error was thrown (expected: LLM failure), it must not be the scopeFilter contamination error.
     if (thrownError !== null) {
       expect(thrownError.message).not.toContain("autoRecall.scopeFilter is not set");
+    }
+  });
+
+  it("includes llm.fallbackModel for heavy generate-proposals fallback chain", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "global pattern");
+    const chatSpy = vi.spyOn(chatService, "chatCompleteWithRetryDetailed").mockRejectedValue(new Error("forced failure"));
+
+    const ctx = makeCtx(db, proposalsDb, {
+      configOverrides: {
+        llm: {
+          heavy: ["minimax/minimax-m1"],
+          fallbackModel: "openai/gpt-4.1-mini",
+        },
+      } as Partial<HybridMemoryConfig>,
+    });
+
+    try {
+      await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
+        'fallbacks=["openai/gpt-4.1-mini"]',
+      );
+    } finally {
+      chatSpy.mockRestore();
     }
   });
 });

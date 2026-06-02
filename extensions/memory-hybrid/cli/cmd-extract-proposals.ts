@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { hasAnyScopeFilter } from "../backends/scope-filter-sql.js";
-import { getCronModelConfig, getLLMModelPreference, resolveReflectionModelAndFallbacks } from "../config.js";
+import { resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithRetryDetailed } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -161,10 +161,8 @@ export async function runGenerateProposalsForCli(
     insights: insightsBlock,
     identity_files: identityFilesBlock,
   });
-  const cronCfg = getCronModelConfig(cfg);
-  const pref = getLLMModelPreference(cronCfg, "heavy");
-  const model = pref[0];
-  const fallbackModels = pref.length > 1 ? pref.slice(1) : cfg.llm ? [] : (cfg.distill?.fallbackModels ?? []);
+  const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(cfg, "heavy");
+  const fallbackModels = resolvedFallbacks ?? [];
   let rawResponse: string;
   try {
     const detail = await chatCompleteWithRetryDetailed({
