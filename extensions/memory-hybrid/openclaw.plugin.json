@@ -1388,6 +1388,10 @@
           "minSessionEvidence": {
             "type": "number",
             "description": "Min session evidence count (default: 10)"
+          },
+          "requireScopeFilter": {
+            "type": "boolean",
+            "description": "When true, generate-proposals throws an error if autoRecall.scopeFilter is not set and non-global scoped facts exist (default: false)"
           }
         },
         "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
