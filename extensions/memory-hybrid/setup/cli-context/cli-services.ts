@@ -416,7 +416,7 @@ export function buildCliContextServices(
               return process.env.HYBRID_MEM_DREAM_STAGE_DIR.trim();
             }
             const openclawHome = process.env.OPENCLAW_HOME?.trim() || join(homedir(), ".openclaw");
-            return join(openclawHome, "logs", "dream-cycle", `run-${makeDreamCycleRunId()}`);
+            return join(openclawHome, "logs", "dream-cycle", `run${makeDreamCycleRunId()}`);
           })(),
         },
         logSink,
