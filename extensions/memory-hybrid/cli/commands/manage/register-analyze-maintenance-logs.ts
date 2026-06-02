@@ -16,6 +16,7 @@ import {
   persistMaintenanceFindings,
   reportGlitchTipFindings,
   shouldMaintenanceStrictFail,
+  summarizeMaintenanceFindings,
   writeMaintenanceAnalysisOutput,
   type MaintenanceLogStep,
 } from "../../../services/maintenance-log-analyzer.js";
@@ -95,9 +96,7 @@ export async function runAnalyzeMaintenanceLogs(
     const piped = await readStdinIfPiped();
     if (piped.trim()) steps = stepsFromPipedExitLog(piped);
   }
-
   let findings = analyzeMaintenanceSteps(steps);
-  if (opts?.glitchtip) findings = reportGlitchTipFindings(findings);
 
   if (opts?.autoFix) {
     findings = findings.map((f) => applyMaintenanceAutoFix(f));
@@ -108,6 +107,18 @@ export async function runAnalyzeMaintenanceLogs(
         factsDb: b.factsDb,
       });
     }
+  }
+
+  const historicalCutoffSec = Math.floor((Date.now() - parseMaintenanceSinceMs(since)) / 1000);
+  const summarized = summarizeMaintenanceFindings(findings, {
+    dbPath: findingsPath,
+    historicalCutoffSec,
+  });
+  findings = summarized.findings;
+
+  if (opts?.glitchtip) {
+    const alreadyReportedFingerprints = new Set(findings.filter((f) => f.actionTaken === "reported").map((f) => f.fingerprint));
+    findings = reportGlitchTipFindings(findings, { alreadyReportedFingerprints });
   }
 
   if (findings.length > 0 && opts?.noPersist !== true) {
@@ -121,6 +132,7 @@ export async function runAnalyzeMaintenanceLogs(
     steps,
     findings,
     findingsPath: findings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
+    historicalStaleSuppressed: summarized.historicalStaleSuppressed,
     includeTrend: opts?.trend === true || since.endsWith("d") || since.endsWith("w"),
   });
   writeMaintenanceAnalysisOutput(report, format, outPath);
