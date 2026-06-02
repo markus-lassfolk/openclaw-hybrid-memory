@@ -419,6 +419,46 @@ exit 2
     expect(readFileSync(marker, "utf-8")).toContain("distill --days 1 --verbose --force");
   });
 
+  it("adds --force to extract-daily when forced rerun env is enabled", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const marker = join(tmp, "extract-daily-args.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
+  printf '%s\n' "$*" > ${JSON.stringify(marker)}
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "extract-daily", cmd: "openclaw hybrid-mem extract-daily --days 7 --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OPENCLAW_HOME: home,
+        HYBRID_MEM_QA_FORCE: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf-8")).toContain("extract-daily --days 7 --verbose --force");
+  });
+
   it("does not add --force to reflection commands when forced rerun env is enabled", () => {
     const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
     const bin = join(tmp, "bin");

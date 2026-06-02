@@ -94,7 +94,7 @@ export function buildHybridMemCronBashBody(
     '  local -a cmd=("$@")',
     '  if [ "$force_mode" -eq 1 ] && [ "${cmd[0]:-}" = "openclaw" ] && [ "${cmd[1]:-}" = "hybrid-mem" ]; then',
     '    case "${cmd[2]:-}" in',
-    "      distill|extract-procedures|extract-directives|extract-reinforcement|extract-implicit|self-correction-run)",
+    "      distill|extract-daily|extract-procedures|extract-directives|extract-reinforcement|extract-implicit|self-correction-run)",
     "        cmd+=(--force)",
     "        ;;",
     "    esac",
