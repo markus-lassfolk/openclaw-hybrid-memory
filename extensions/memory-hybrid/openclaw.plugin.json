@@ -404,6 +404,10 @@
       "label": "Version check cache TTL (hours)",
       "help": "How long the cached latest-version result stays fresh before startup relies on a new background check (default: 24)"
     },
+    "maintenance.failureReporting.enabled": {
+      "label": "Maintenance failure reporting",
+      "help": "Emit best-effort grouped GlitchTip events for maintenance failures and degraded semantic outcomes (default: enabled; set false for local/dev opt-out)"
+    },
     "wal.enabled": {
       "label": "Write-Ahead Log",
       "help": "Enable WAL for crash resilience - logs memory operations before committing (default: enabled)"

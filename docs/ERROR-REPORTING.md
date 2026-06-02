@@ -216,6 +216,105 @@ The test suite (`tests/error-reporter.test.ts`) verifies:
 
 ---
 
+## Maintenance Failure Reporting
+
+**Added in:** 2026.6.10 (Issue #1836)
+
+The error reporter has been extended to support **maintenance task failure reporting**. This feature allows the plugin to report grouped, deduplicated issues from hybrid-memory maintenance tasks (like `validate-cron-exit`, `reflect-rules`, `implicit-feedback`, etc.) to GlitchTip/Sentry for observability.
+
+### How It Works
+
+1. **Detection**: Maintenance validation (e.g., `validate-cron-exit`) analyzes exit ledgers, logs, and artifacts to detect:
+   - **Mechanical failures**: non-zero exit, timeout, SIGKILL/OOM, missing required step, missing/empty artifacts
+   - **Semantic failures**: exit 0 but zero useful output, parse failures, LLM failures, cursor-not-advanced issues
+   - **Concurrency/storage failures**: LanceDB conflicts, DB lock/timeouts
+   - **Diagnostic failures**: incident bundles with unusable diagnostic files
+
+2. **Normalization**: Issues are normalized into stable fingerprints like:
+   ```
+   hybrid-memory-maintenance:<job>:<step>:<failure_class>
+   ```
+
+3. **Reporting**: Issues are sent to the existing error reporter via `capturePluginError()` with:
+   - Stable fingerprints for deduplication
+   - Rich maintenance context (job name, step name, failure category, exit code, etc.)
+   - Tags for filtering by job, step, and failure type
+
+4. **Best-effort**: Reporting never masks the original maintenance exit code. If reporting fails, a debug message is logged but the validation result is unchanged.
+
+### Configuration
+
+Maintenance failure reporting inherits the existing error reporting configuration and adds an opt-out control:
+
+**Config:**
+```json
+{
+  "plugins": {
+    "openclaw-hybrid-memory": {
+      "errorReporting": {
+        "enabled": true,
+        "consent": true
+      },
+      "maintenance": {
+        "failureReporting": {
+          "enabled": true
+        }
+      }
+    }
+  }
+}
+```
+
+**Environment variable opt-out:**
+```bash
+export HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING=1
+```
+
+To disable maintenance failure reporting while keeping general error reporting enabled, set:
+```bash
+openclaw hybrid-mem config-set maintenance.failureReporting.enabled false
+```
+
+### Privacy & Sanitization
+
+Maintenance failure reports use the same privacy-first approach as general error reporting:
+- **No prompts, memory text, or API keys** are sent
+- Paths are sanitized (home directories replaced with `$HOME`)
+- Emails, IPs, and secrets are scrubbed
+- Only safe metadata is included (job name, step name, failure class, exit code)
+
+### Fingerprinting
+
+Issues are grouped by stable fingerprints to prevent noise:
+```
+hybrid-memory-maintenance:<job>:<step>:<failure_class>
+```
+
+Examples:
+- `hybrid-memory-maintenance:reflect-rules:parse-output:zero_stored`
+- `hybrid-memory-maintenance:implicit-feedback:extract:nonzero_exit`
+- `hybrid-memory-maintenance:distill:db-write:lancedb_conflict`
+
+This ensures repeated runs of the same failure are deduplicated in GlitchTip/Sentry.
+
+### Integration Points
+
+Maintenance failure reporting is integrated at:
+- **`validate-cron-exit` CLI command**: Validates exit ledgers and reports issues
+- **Cron job wrappers**: Shell wrappers call `validate-cron-exit` to check maintenance results
+
+### Example: Viewing Maintenance Issues in GlitchTip
+
+1. Navigate to your GlitchTip dashboard
+2. Filter by tags: `component:hybrid-memory`, `subsystem:maintenance`
+3. Group by fingerprint to see deduplicated issues
+4. Drill down to see:
+   - Job name, step name, failure class
+   - Exit code, guard file state, duration
+   - Artifact paths, log/exit paths
+
+---
+
 ## Example Usage
 
 ### Automatic (Transparent)
@@ -239,6 +338,37 @@ try {
   });
   throw error; // Re-throw to preserve existing behavior
 }
+```
+
+### Maintenance Task Reporting (Automatic)
+
+Maintenance task failures are automatically reported by the `validate-cron-exit` command:
+
+```typescript
+import { reportMaintenanceFailureIssues } from "./services/maintenance-failure-reporter.js";
+import type { MaintenanceTelemetryIssue } from "./services/cron-exit-validator.js";
+
+// In your maintenance validation code:
+const issues: MaintenanceTelemetryIssue[] = [
+  {
+    fingerprint: ["hybrid-memory-maintenance", "job-name", "step-name", "failure-class"],
+    jobName: "reflect-rules",
+    stepName: "parse-output",
+    failureCategory: "semantic_failure",
+    failureClass: "zero_stored",
+    message: "Reflection rules parse succeeded but stored 0 rules",
+    semanticStatus: "semantic_fail",
+    exitCode: 0,
+    guardFile: "/path/to/guard",
+    // ... other fields
+  },
+];
+
+await reportMaintenanceFailureIssues(issues, {
+  cfg: config,
+  pluginVersion: "2026.6.10",
+  logger: console,
+});
 ```
 
 ---

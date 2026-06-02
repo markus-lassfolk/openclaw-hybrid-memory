@@ -295,13 +295,14 @@ describe("EventLog.markConsolidated", () => {
     const id2 = log.append({ sessionId: "s", timestamp: ts, eventType: "fact_learned", content: {} });
     const id3 = log.append({ sessionId: "s", timestamp: ts, eventType: "decision_made", content: {} });
 
-    log.markConsolidated([id1, id2], "fact-abc");
+    const updated = log.markConsolidated([id1, id2], "fact-abc");
 
     const all = log.getBySession("s");
     const e1 = all.find((e) => e.id === id1)!;
     const e2 = all.find((e) => e.id === id2)!;
     const e3 = all.find((e) => e.id === id3)!;
 
+    expect(updated).toBe(2);
     expect(e1.consolidatedInto).toBe("fact-abc");
     expect(e2.consolidatedInto).toBe("fact-abc");
     expect(e3.consolidatedInto).toBeUndefined();
@@ -310,10 +311,17 @@ describe("EventLog.markConsolidated", () => {
   it("is a no-op for an empty id list", () => {
     const ts = new Date().toISOString();
     const id = log.append({ sessionId: "s", timestamp: ts, eventType: "fact_learned", content: {} });
-    log.markConsolidated([], "fact-xyz");
+    expect(log.markConsolidated([], "fact-xyz")).toBe(0);
     const entries = log.getBySession("s");
     expect(entries[0].id).toBe(id);
     expect(entries[0].consolidatedInto).toBeUndefined();
+  });
+
+  it("returns only the rows actually updated", () => {
+    const ts = new Date().toISOString();
+    const id = log.append({ sessionId: "s", timestamp: ts, eventType: "fact_learned", content: {} });
+
+    expect(log.markConsolidated([id, "missing-event-id"], "fact-xyz")).toBe(1);
   });
 });
 

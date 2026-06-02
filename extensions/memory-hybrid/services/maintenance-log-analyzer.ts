@@ -974,7 +974,7 @@ export function reportGlitchTipFindings(
         subsystem: "maintenance",
         severity: finding.severity,
         classification: finding.classification,
-        fingerprint: finding.fingerprint,
+        fingerprint: [finding.fingerprint],
         job: finding.job,
         step: finding.step,
       },
