@@ -872,9 +872,14 @@ export function summarizeMaintenanceFindings(
     low: 3,
     info: 4,
   };
+  const statusRank: Record<NonNullable<MaintenanceFinding["status"]>, number> = {
+    new: 0,
+    "still-failing": 1,
+    "historical-stale": 2,
+  };
   summarized.sort((a, b) => {
-    const statusRank = a.status === b.status ? 0 : a.status === "new" ? -1 : 1;
-    if (statusRank !== 0) return statusRank;
+    const statusDelta = statusRank[a.status ?? "new"] - statusRank[b.status ?? "new"];
+    if (statusDelta !== 0) return statusDelta;
     const severityDelta = severityRank[a.severity] - severityRank[b.severity];
     if (severityDelta !== 0) return severityDelta;
     return b.occurredAt - a.occurredAt;
