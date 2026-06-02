@@ -255,7 +255,8 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       // schema-consistent so `jq` pipelines can detect the failure without special-casing.
       if (wantsJson || outputPath) {
         try {
-          emitJsonArtifact(buildAuditFailureArtifact(err, Date.now() - startedAtMs));
+          const strict = opts?.strict === true;
+          emitJsonArtifact(buildAuditFailureArtifact(err, Date.now() - startedAtMs, strict));
         } catch (emitErr) {
           // Last-resort: if emitJsonArtifact itself fails (e.g. disk full or stdout closed),
           // emit a minimal diagnostic to stderr so the operator has something to act on.

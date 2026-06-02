@@ -82,7 +82,11 @@ export function buildAuditHealthExitInfo(input: {
  * a successful `--json` run. Downstream QA/cron consumers should never receive a 0-byte file
  * (#1823).
  */
-export function buildAuditFailureArtifact(err: unknown, elapsedMs?: number): AuditHealthFailureArtifact {
+export function buildAuditFailureArtifact(
+  err: unknown,
+  elapsedMs?: number,
+  strict?: boolean,
+): AuditHealthFailureArtifact {
   const message = err instanceof Error ? err.message : String(err);
   return {
     schemaVersion: 1,
@@ -90,8 +94,8 @@ export function buildAuditFailureArtifact(err: unknown, elapsedMs?: number): Aud
     ok: false,
     status: "failed",
     exitCode: 2,
-    exitReason: "strict_failed",
-    strictFailureReason: message,
+    exitReason: strict ? "strict_failed" : "errors",
+    strictFailureReason: strict ? message : "",
     errorCount: 1,
     warningCount: 0,
     errors: [{ section: "audit-health", message }],

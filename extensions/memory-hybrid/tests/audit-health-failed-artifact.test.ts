@@ -24,15 +24,15 @@ const { FactsDB } = _testing;
 // ─── buildAuditFailureArtifact ────────────────────────────────────────────────
 
 describe("buildAuditFailureArtifact (#1823)", () => {
-  it("returns a schema-consistent failure artifact from an Error", () => {
+  it("returns a schema-consistent failure artifact from an Error in non-strict mode", () => {
     const artifact = buildAuditFailureArtifact(new Error("DB connection lost"));
 
     expect(artifact.schemaVersion).toBe(1);
     expect(artifact.ok).toBe(false);
     expect(artifact.status).toBe("failed");
     expect(artifact.exitCode).toBe(2);
-    expect(artifact.exitReason).toBe("strict_failed");
-    expect(artifact.strictFailureReason).toBe("DB connection lost");
+    expect(artifact.exitReason).toBe("errors");
+    expect(artifact.strictFailureReason).toBe("");
     expect(artifact.errorCount).toBe(1);
     expect(artifact.warningCount).toBe(0);
     expect(Array.isArray(artifact.errors)).toBe(true);
@@ -42,9 +42,21 @@ describe("buildAuditFailureArtifact (#1823)", () => {
     expect(artifact.generatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
+  it("returns strict_failed exitReason when strict=true", () => {
+    const artifact = buildAuditFailureArtifact(new Error("DB connection lost"), undefined, true);
+    expect(artifact.exitReason).toBe("strict_failed");
+    expect(artifact.strictFailureReason).toBe("DB connection lost");
+  });
+
+  it("returns errors exitReason when strict=false", () => {
+    const artifact = buildAuditFailureArtifact(new Error("DB connection lost"), undefined, false);
+    expect(artifact.exitReason).toBe("errors");
+    expect(artifact.strictFailureReason).toBe("");
+  });
+
   it("accepts a plain string error", () => {
     const artifact = buildAuditFailureArtifact("timeout exceeded");
-    expect(artifact.strictFailureReason).toBe("timeout exceeded");
+    expect(artifact.strictFailureReason).toBe("");
     expect(artifact.errors[0]?.message).toBe("timeout exceeded");
   });
 
@@ -64,7 +76,7 @@ describe("buildAuditFailureArtifact (#1823)", () => {
     const parsed = JSON.parse(json) as typeof artifact;
     expect(parsed.ok).toBe(false);
     expect(parsed.schemaVersion).toBe(1);
-    expect(parsed.strictFailureReason).toBe("parse me");
+    expect(parsed.strictFailureReason).toBe("");
   });
 });
 
