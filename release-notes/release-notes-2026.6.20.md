@@ -1,8 +1,8 @@
-# Release notes — OpenClaw Hybrid Memory **2026.6.10**
+# Release notes — OpenClaw Hybrid Memory **2026.6.20**
 
 **Release date:** 2026-06-01  
 **Since:** [2026.5.311](release-notes-2026.5.311.md)  
-**Full changelog:** [CHANGELOG.md](../CHANGELOG.md) — section **[2026.6.10]**
+**Full changelog:** [CHANGELOG.md](../CHANGELOG.md) — section **[2026.6.20]**
 
 ## Highlights
 
@@ -13,7 +13,7 @@
 ## Upgrade
 
 ```bash
-npm install -g openclaw-hybrid-memory@2026.6.10
+npm install -g openclaw-hybrid-memory@2026.6.20
 ```
 
-Restart the gateway after upgrading. Align `openclaw-hybrid-memory-install` to **2026.6.10** if you use the installer package.
+Restart the gateway after upgrading. Align `openclaw-hybrid-memory-install` to **2026.6.20** if you use the installer package.
