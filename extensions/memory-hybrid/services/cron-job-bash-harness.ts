@@ -6,7 +6,7 @@
  * (or a /tmp fallback if that path is not writable).
  */
 
-export type HybridMemCronStep = { name: string; cmd: string };
+export type HybridMemCronStep = { name: string; cmd: string; optional?: boolean };
 
 export const HYBRID_MEM_CRON_ENV_SANITIZER_MARKER =
   "# Hybrid-mem env sanitizer (strip service vars that can break plugin CLI discovery)";
@@ -45,11 +45,12 @@ function shellSafeStepName(name: string): string {
 export function buildHybridMemCronBashBody(
   jobSlug: string,
   steps: HybridMemCronStep[],
-  requiredSteps: string[] = steps.map((s) => s.name),
+  requiredSteps: string[] = steps.filter((s) => !s.optional).map((s) => s.name),
 ): string {
   const lines = steps.map((s) => {
     const safe = shellSafeStepName(s.name);
-    return `hm_step "${safe}" ${s.cmd}`;
+    const line = `hm_step "${safe}" ${s.cmd}`;
+    return s.optional ? `${line} || true` : line;
   });
   const requiredArgs = requiredSteps.map((s) => `"${shellSafeStepName(s)}"`).join(" ");
   return [
@@ -239,7 +240,7 @@ export function buildHybridMemCronTaskMessage(
   options: { preamble?: string; steps: HybridMemCronStep[]; requiredSteps?: string[] },
 ): string {
   const preamble = options.preamble?.trim();
-  const requiredSteps = options.requiredSteps ?? options.steps.map((s) => s.name);
+  const requiredSteps = options.requiredSteps ?? options.steps.filter((s) => !s.optional).map((s) => s.name);
   const bash = buildHybridMemCronBashBody(jobSlug, options.steps, requiredSteps);
 
   // Build list of required steps for validation
