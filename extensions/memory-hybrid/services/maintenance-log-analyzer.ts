@@ -861,24 +861,23 @@ export function summarizeMaintenanceFindings(
     else byFingerprint.set(finding.fingerprint, [finding]);
   }
 
-  const summarized = [...byFingerprint.entries()]
-    .map(([fingerprint, bucket]) => {
-      if (bucket.length === 0) return null;
-      const sorted = bucket.slice().sort((a, b) => a.occurredAt - b.occurredAt);
-      const latest = sorted[sorted.length - 1];
-      const earliest = sorted[0];
-      if (!latest || !earliest) return null;
-      const persisted = ledger.get(fingerprint);
-      return {
-        ...latest,
-        status: persisted ? "still-failing" : "new",
-        occurrenceCount: (persisted?.occurrenceCount ?? 0) + sorted.length,
-        firstSeenAt: persisted ? Math.min(persisted.firstSeenAt, earliest.occurredAt) : earliest.occurredAt,
-        lastSeenAt: latest.occurredAt,
-        actionTaken: actionTakenForSummarizedFinding(latest, persisted),
-      } satisfies MaintenanceFinding;
-    })
-    .filter((finding): finding is MaintenanceFinding => finding !== null);
+  const summarized: MaintenanceFinding[] = [];
+  for (const [fingerprint, bucket] of byFingerprint.entries()) {
+    if (bucket.length === 0) continue;
+    const sorted = bucket.slice().sort((a, b) => a.occurredAt - b.occurredAt);
+    const latest = sorted[sorted.length - 1];
+    const earliest = sorted[0];
+    if (!latest || !earliest) continue;
+    const persisted = ledger.get(fingerprint);
+    summarized.push({
+      ...latest,
+      status: persisted ? "still-failing" : "new",
+      occurrenceCount: (persisted?.occurrenceCount ?? 0) + sorted.length,
+      firstSeenAt: persisted ? Math.min(persisted.firstSeenAt, earliest.occurredAt) : earliest.occurredAt,
+      lastSeenAt: latest.occurredAt,
+      actionTaken: actionTakenForSummarizedFinding(latest, persisted),
+    });
+  }
 
   const severityRank: Record<MaintenanceRule["severity"], number> = {
     critical: 0,
