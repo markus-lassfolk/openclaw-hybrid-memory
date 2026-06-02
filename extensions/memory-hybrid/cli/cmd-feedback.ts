@@ -118,6 +118,10 @@ function normalizeLessonTokens(text: string): Set<string> {
 function tokenJaccard(a: string, b: string): number {
   const left = normalizeLessonTokens(a);
   const right = normalizeLessonTokens(b);
+  return tokenJaccardFromSets(left, right);
+}
+
+function tokenJaccardFromSets(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
   if (left.size === 0 || right.size === 0) return 0;
   let intersection = 0;
   for (const token of left) {
@@ -193,6 +197,11 @@ export function implicitFeedbackCollapseStatus(scanned: number, collapsed: numbe
   return "collapsed";
 }
 
+/** Semantic no-op outcomes for collapse maintenance in non-dry-run mode. */
+export function isSemanticNoOpImplicitFeedbackCollapseStatus(status: ImplicitFeedbackCollapseStatus): boolean {
+  return status === "no_candidates" || status === "no_changes";
+}
+
 export function cleanupImplicitFeedbackDuplicates(
   factsDb: FactsDB,
   opts: {
@@ -219,6 +228,7 @@ export function cleanupImplicitFeedbackDuplicates(
   carryCanonical: Array<{ id: string; text: string }>;
   interrupted: boolean;
 } {
+  type CanonicalEntry = { id: string; text: string; tokens: Set<string> };
   const rawDb = factsDb.getRawDb();
   if (!rawDb) {
     return {
@@ -263,10 +273,27 @@ export function cleanupImplicitFeedbackDuplicates(
   let collapsed = 0;
   let scanned = 0;
   const reportEvery = Math.max(1, opts.reportEvery ?? 250);
-  const CANONICAL_WINDOW_SIZE = Math.min(20_000, Math.max(2000, limit * 8));
-  const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])]
+  // Keep carry above legacy (~2000 at limit=250) so 10k+ paged scans can still match late duplicates,
+  // while capping token index growth and memory overhead in large runs.
+  const CANONICAL_WINDOW_SIZE = Math.min(25_000, Math.max(12_000, limit * 12));
+  const canonical: CanonicalEntry[] = [...(opts.seedCanonical ?? [])]
     .slice(-CANONICAL_WINDOW_SIZE)
-    .map((c) => ({ id: c.id, text: c.text }));
+    .map((c) => ({ id: c.id, text: c.text, tokens: normalizeLessonTokens(c.text) }));
+  const exactTextIndex = new Map<string, number>();
+  const canonicalTokenIndex = new Map<string, Set<number>>();
+  for (const [index, entry] of canonical.entries()) {
+    if (!exactTextIndex.has(entry.text)) {
+      exactTextIndex.set(entry.text, index);
+    }
+    for (const token of entry.tokens) {
+      const tokenEntries = canonicalTokenIndex.get(token);
+      if (tokenEntries) {
+        tokenEntries.add(index);
+      } else {
+        canonicalTokenIndex.set(token, new Set([index]));
+      }
+    }
+  }
   const nowSec = Math.floor(Date.now() / 1000);
   const reinforce = rawDb.prepare(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
@@ -284,11 +311,42 @@ export function cleanupImplicitFeedbackDuplicates(
         break;
       }
       scanned++;
-      const match = canonical.find(
-        (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
-      );
+      const rowTokens = normalizeLessonTokens(row.text);
+      const candidateIndices = new Set<number>();
+      for (const token of rowTokens) {
+        const tokenEntries = canonicalTokenIndex.get(token);
+        if (!tokenEntries) continue;
+        for (const candidateIndex of tokenEntries) {
+          candidateIndices.add(candidateIndex);
+        }
+      }
+      // Preserve prior behavior: when multiple candidates match, choose the earliest canonical row.
+      let earliestMatchIndex: number | null = null;
+      const exactMatchIndex = exactTextIndex.get(row.text);
+      if (exactMatchIndex != null) {
+        earliestMatchIndex = exactMatchIndex;
+      }
+      for (const candidateIndex of candidateIndices) {
+        const candidate = canonical[candidateIndex];
+        if (!candidate || tokenJaccardFromSets(candidate.tokens, rowTokens) < threshold) continue;
+        if (earliestMatchIndex == null || candidateIndex < earliestMatchIndex) {
+          earliestMatchIndex = candidateIndex;
+        }
+      }
+      const match = earliestMatchIndex != null ? canonical[earliestMatchIndex] : undefined;
       if (!match) {
-        canonical.push({ id: row.id, text: row.text });
+        const index = canonical.push({ id: row.id, text: row.text, tokens: rowTokens }) - 1;
+        if (!exactTextIndex.has(row.text)) {
+          exactTextIndex.set(row.text, index);
+        }
+        for (const token of rowTokens) {
+          const tokenEntries = canonicalTokenIndex.get(token);
+          if (tokenEntries) {
+            tokenEntries.add(index);
+          } else {
+            canonicalTokenIndex.set(token, new Set([index]));
+          }
+        }
         if (scanned % reportEvery === 0 || scanned === rows.length) {
           opts.onProgress?.({ scanned, total: rows.length, collapsed });
         }
