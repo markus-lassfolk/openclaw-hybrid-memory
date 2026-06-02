@@ -29,35 +29,32 @@ permissions:
 
 jobs:
   changes:
-    name: Detect Changes
+    name: Classify Changed Paths
     runs-on: ubuntu-latest
     outputs:
-      code: ${{ github.event_name == 'workflow_call' && 'true' || steps.filter.outputs.code }}
-      # TEMP(pr-1792): fast iteration — set enabled=false before merge to restore full CI
-      fast_iteration: ${{ steps.fast.outputs.enabled }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      workflow_changed: ${{ steps.classify.outputs.workflow_changed }}
+      source_changed: ${{ steps.classify.outputs.source_changed }}
+      tests_changed: ${{ steps.classify.outputs.tests_changed }}
+      package_or_lock_changed: ${{ steps.classify.outputs.package_or_lock_changed }}
+      scripts_changed: ${{ steps.classify.outputs.scripts_changed }}
+      metadata_only: ${{ steps.classify.outputs.metadata_only }}
+      ci_required: ${{ steps.classify.outputs.ci_required }}
+      heavy_ci_required: ${{ steps.classify.outputs.heavy_ci_required }}
+      actionlint_required: ${{ steps.classify.outputs.actionlint_required }}
+      security_required: ${{ steps.classify.outputs.security_required }}
     steps:
       - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v4
-        id: filter
-        if: github.event_name != 'workflow_call'
-        with:
-          filters: |
-            code:
-              - 'extensions/memory-hybrid/**'
-              - 'extensions/memory-hybrid/package*.json'
-              - 'extensions/memory-hybrid/tsconfig*.json'
-              - '.github/workflows/ci.yml'
-              - '.nvmrc'
-      - id: fast
-        name: CI fast iteration toggle (TEMP)
-        run: echo "enabled=true" >> "$GITHUB_OUTPUT"
+      - name: Classify changed paths (policy)
+        id: classify
+        run: node .github/scripts/classify-changes.mjs
 
   typecheck:
     name: Type Check (Node ${{ matrix.job-name-suffix }})
     needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    if: needs.changes.outputs.ci_required == 'true' || github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ needs.changes.outputs.fast_iteration == 'true' && 10 || 360 }}
+    timeout-minutes: 360
     strategy:
       matrix:
         include:
@@ -86,7 +83,7 @@ jobs:
   lint:
     name: Lint (Node ${{ matrix.job-name-suffix }})
     needs: changes
-    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -115,9 +112,9 @@ jobs:
   test:
     name: Test (Node ${{ matrix.job-name-suffix }})
     needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    if: needs.changes.outputs.ci_required == 'true' || github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ needs.changes.outputs.fast_iteration == 'true' && 15 || 360 }}
+    timeout-minutes: 360
     strategy:
       matrix:
         include:
@@ -142,18 +139,14 @@ jobs:
       - name: Run tests
         run: |
           cd extensions/memory-hybrid
-          if [ "${{ needs.changes.outputs.fast_iteration }}" = "true" ]; then
-            npm run test -- reembed-vectorless-cli.test.ts entity-enrichment-cli.test.ts
-          else
-            npm run test
-          fi
+          npm run test
 
   test-coverage:
     name: Test Coverage
     needs: changes
-    if: needs.changes.outputs.code == 'true' || github.event_name == 'pull_request'
+    if: needs.changes.outputs.ci_required == 'true' || github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ needs.changes.outputs.fast_iteration == 'true' && 15 || 360 }}
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -171,11 +164,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           cd extensions/memory-hybrid
-          if [ "${{ needs.changes.outputs.fast_iteration }}" = "true" ]; then
-            npm run test:coverage -- reembed-vectorless-cli.test.ts entity-enrichment-cli.test.ts
-          else
-            npm run test:coverage
-          fi
+          npm run test:coverage
       # Cost optimization: Only upload coverage on main branch (saves ~5 min per PR)
       - name: Upload coverage report
         if: github.ref == 'refs/heads/main'
@@ -188,7 +177,7 @@ jobs:
   dead-code:
     name: Dead Code Analysis (knip)
     needs: changes
-    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -211,7 +200,7 @@ jobs:
   format-check:
     name: Format Check (Biome)
     needs: changes
-    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -230,7 +219,7 @@ jobs:
   publish-invariants:
     name: Publish manifest (npm files[])
     needs: changes
-    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -252,7 +241,7 @@ jobs:
   strict-typecheck:
     name: Strict TypeScript Check
     needs: changes
-    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -279,7 +268,7 @@ jobs:
     # Issue #1171: also asserts the published tarball contains `dist/index.js`.
     name: Install Smoke Test (Node ${{ matrix.job-name-suffix }})
     needs: changes
-    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -361,7 +350,7 @@ jobs:
   lint-arch:
     name: Architectural Lint
     needs: changes
-    if: needs.changes.outputs.fast_iteration != 'true' && (needs.changes.outputs.code == 'true' || github.event_name == 'pull_request')
+    if: needs.changes.outputs.heavy_ci_required == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -374,7 +363,7 @@ jobs:
   typecheck-pass-22:
     name: Type Check (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.ci_required != 'true' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -382,7 +371,7 @@ jobs:
   typecheck-pass-24:
     name: Type Check (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.ci_required != 'true' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -390,7 +379,7 @@ jobs:
   lint-pass-22:
     name: Lint (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.ci_required != 'true' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -398,7 +387,7 @@ jobs:
   lint-pass-24:
     name: Lint (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.ci_required != 'true' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -406,7 +395,7 @@ jobs:
   test-pass-22:
     name: Test (Node 22)
     needs: changes
-    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.ci_required != 'true' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -414,7 +403,7 @@ jobs:
   test-pass-24:
     name: Test (Node 24)
     needs: changes
-    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.ci_required != 'true' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
@@ -422,7 +411,7 @@ jobs:
   publish-invariants-pass:
     name: Publish manifest (npm files[])
     needs: changes
-    if: needs.changes.outputs.code != 'true' && github.event_name != 'pull_request'
+    if: needs.changes.outputs.ci_required != 'true' && github.event_name != 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes detected — required check satisfied"
