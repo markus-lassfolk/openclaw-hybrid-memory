@@ -44,7 +44,11 @@ const SKIP_REASON_COOLDOWN = "skipped_cooldown";
 const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
 const SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP = "1970-01-01T00:00:00Z";
 const LARGE_BACKLOG_THRESHOLD = 1000;
-const MAINTENANCE_JOB_SUFFIX_PATTERNS = [/-\d{8}T\d{6}Z-\d+$/, /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/, /-\d{8}\.cron$/];
+const MAINTENANCE_JOB_SUFFIX_PATTERNS = [
+  /-\d{8}T\d{6}Z-\d+$/,
+  /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/,
+  /-\d{8}\.cron$/,
+];
 
 export interface ExitStep {
   timestamp: string;
@@ -287,10 +291,7 @@ function buildMaintenanceIssue(params: Omit<MaintenanceTelemetryIssue, "fingerpr
   };
 }
 
-function addMaintenanceIssue(
-  issues: Map<string, MaintenanceTelemetryIssue>,
-  issue: MaintenanceTelemetryIssue,
-): void {
+function addMaintenanceIssue(issues: Map<string, MaintenanceTelemetryIssue>, issue: MaintenanceTelemetryIssue): void {
   const key = issue.fingerprint.join(":");
   if (!issues.has(key)) {
     issues.set(key, issue);
@@ -307,8 +308,16 @@ function collectMaintenanceTelemetryIssues(params: {
   unknownCommands: string[];
   maintenanceStatus: ExitValidationResult["maintenanceStatus"];
 }): MaintenanceTelemetryIssue[] {
-  const { exitPath, logPath, requiredSteps, logContent, failedSteps, missingSteps, unknownCommands, maintenanceStatus } =
-    params;
+  const {
+    exitPath,
+    logPath,
+    requiredSteps,
+    logContent,
+    failedSteps,
+    missingSteps,
+    unknownCommands,
+    maintenanceStatus,
+  } = params;
   const issues = new Map<string, MaintenanceTelemetryIssue>();
   const jobName = extractMaintenanceJobName(exitPath || logPath);
   const commonFields = {
@@ -437,10 +446,12 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const reflectRulesDetected =
-    requiredSteps.includes("reflect-rules") || /\breflect-rules\b/i.test(logContent) || /\bparse_success\b/i.test(logContent);
-  const reflectParseSuccess = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(logContent);
+    requiredSteps.includes("reflect-rules") ||
+    /\breflect-rules\b/i.test(logContent) ||
+    /\bparse_success\b/i.test(logContent);
+  const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(logContent);
   const reflectStored = parsePositiveMetric(logContent, "stored");
-  if (reflectRulesDetected && (reflectParseSuccess || reflectStored === 0)) {
+  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0)) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -449,9 +460,9 @@ function collectMaintenanceTelemetryIssues(params: {
         stepName: "reflect-rules",
         failureCategory: "semantic_failure",
         failureClass:
-          reflectParseSuccess && reflectStored === 0
+          reflectParseFailed && reflectStored === 0
             ? "invalid_response_format_zero_stored"
-            : reflectParseSuccess
+            : reflectParseFailed
               ? "reflect_rules_parse_failure"
               : "reflect_rules_zero_stored",
         message: `${jobName}:reflect-rules produced no usable rules despite a mechanically successful run`,
