@@ -1,15 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { GUARD_SUBDIR } from "../services/cron-guard.js";
-import {
-  collectMaintenanceInventory,
-  renderMaintenanceInventoryMarkdown,
-} from "../services/maintenance-inventory.js";
+import { collectMaintenanceInventory, renderMaintenanceInventoryMarkdown } from "../services/maintenance-inventory.js";
 
 function makeOpenclawDir(): string {
   const dir = join(tmpdir(), `maintenance-inventory-${randomUUID()}`);
@@ -54,6 +51,13 @@ describe("collectMaintenanceInventory", () => {
     writeFileSync(vectordbExit, "2026-06-02T04:45:00Z vectordb-optimize exit=0\n", "utf-8");
 
     const recentGuardMs = Date.UTC(2026, 5, 2, 9, 5, 0);
+    const olderArtifactMs = recentGuardMs - 60_000;
+    const artifactMtime = new Date(olderArtifactMs);
+    utimesSync(weeklyReflectionLog, artifactMtime, artifactMtime);
+    utimesSync(weeklyReflectionExit, artifactMtime, artifactMtime);
+    const vectordbMtime = new Date(Date.UTC(2026, 5, 2, 4, 45, 0));
+    utimesSync(vectordbLog, vectordbMtime, vectordbMtime);
+    utimesSync(vectordbExit, vectordbMtime, vectordbMtime);
     writeGuard(openclawDir, "weekly-reflection", recentGuardMs);
 
     const cronStoreText = JSON.stringify(
@@ -139,7 +143,9 @@ describe("collectMaintenanceInventory", () => {
     });
 
     const markdown = renderMaintenanceInventoryMarkdown(report);
-    expect(markdown).toContain("| Scheduler | Job | Enabled | Schedule | TZ | Last run | Last status | Guard | Last log | Collision groups |");
+    expect(markdown).toContain(
+      "| Scheduler | Job | Enabled | Schedule | TZ | Last run | Last status | Guard | Last log | Collision groups |",
+    );
     expect(markdown).toContain("host-cron");
     expect(markdown).toContain("gateway-cron");
     expect(markdown).toContain("lancedb-writer");

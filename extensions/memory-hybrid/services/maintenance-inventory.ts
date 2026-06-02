@@ -254,14 +254,12 @@ for (const entry of MAINTENANCE_JOB_CATALOG) {
 
 function relativeTime(ms: number): string {
   const deltaMs = Date.now() - ms;
-  const deltaSec = Math.round(Math.abs(deltaMs) / 1000);
-  if (deltaSec < 60) return `${deltaSec}s${deltaMs >= 0 ? " ago" : " ahead"}`;
-  const deltaMin = Math.round(deltaSec / 60);
-  if (deltaMin < 60) return `${deltaMin}m${deltaMs >= 0 ? " ago" : " ahead"}`;
-  const deltaHr = Math.round(deltaMin / 60);
-  if (deltaHr < 48) return `${deltaHr}h${deltaMs >= 0 ? " ago" : " ahead"}`;
-  const deltaDay = Math.round(deltaHr / 24);
-  return `${deltaDay}d${deltaMs >= 0 ? " ago" : " ahead"}`;
+  const abs = Math.abs(deltaMs);
+  const suffix = deltaMs >= 0 ? " ago" : " ahead";
+  if (abs < 60000) return `${Math.floor(abs / 1000)}s${suffix}`;
+  if (abs < 3600000) return `${Math.floor(abs / 60000)}m${suffix}`;
+  if (abs < 172800000) return `${Math.floor(abs / 3600000)}h${suffix}`;
+  return `${Math.floor(abs / 86400000)}d${suffix}`;
 }
 
 function readExecErrorStderr(error: unknown): string {
@@ -435,7 +433,12 @@ function deriveArtifactStatus(
   const exitAt = artifact.latestExitMtimeMs ? new Date(artifact.latestExitMtimeMs).toISOString() : undefined;
   const requiredSteps = entry.pluginJobId ? HYBRID_MEM_CRON_DEFAULT_JOB_STEPS[entry.pluginJobId] : undefined;
   if (requiredSteps && requiredSteps.length > 0 && artifact.latestLogPath) {
-    const validation = validateMaintenanceExecution(artifact.latestExitPath, artifact.latestLogPath, requiredSteps, true);
+    const validation = validateMaintenanceExecution(
+      artifact.latestExitPath,
+      artifact.latestLogPath,
+      requiredSteps,
+      true,
+    );
     return { lastStatus: validation.maintenanceStatus, lastExitAt: exitAt };
   }
   const steps = readExitLedger(artifact.latestExitPath);
@@ -507,7 +510,10 @@ function parseGatewayJobs(
     const state = job.state as { lastRunAtMs?: number; lastStatus?: string } | undefined;
     const lastRun = pickLastRun(typeof state?.lastRunAtMs === "number" ? state.lastRunAtMs : null, guardMs, artifact);
     const status = state?.lastStatus
-      ? { lastStatus: state.lastStatus, lastExitAt: artifact?.latestExitMtimeMs ? new Date(artifact.latestExitMtimeMs).toISOString() : undefined }
+      ? {
+          lastStatus: state.lastStatus,
+          lastExitAt: artifact?.latestExitMtimeMs ? new Date(artifact.latestExitMtimeMs).toISOString() : undefined,
+        }
       : deriveArtifactStatus(entry, artifact);
 
     jobs.push({
@@ -630,7 +636,11 @@ export function collectMaintenanceInventory(
     options.crontabText !== undefined || options.crontabError !== undefined
       ? {
           text: options.crontabText ?? "",
-          status: options.crontabError ? ("unavailable" as const) : options.crontabText?.trim() ? ("present" as const) : ("empty" as const),
+          status: options.crontabError
+            ? ("unavailable" as const)
+            : options.crontabText?.trim()
+              ? ("present" as const)
+              : ("empty" as const),
           error: options.crontabError,
         }
       : readUserCrontab();
@@ -638,7 +648,8 @@ export function collectMaintenanceInventory(
   let cronStoreStatus: CronStoreStatus = "missing";
   let cronStoreError: string | undefined;
   let cronStoreJobs: unknown[] = [];
-  const cronStoreText = options.cronStoreText ?? (existsSync(cronStorePath) ? readFileSync(cronStorePath, "utf-8") : undefined);
+  const cronStoreText =
+    options.cronStoreText ?? (existsSync(cronStorePath) ? readFileSync(cronStorePath, "utf-8") : undefined);
   if (cronStoreText != null) {
     try {
       const parsed = JSON.parse(cronStoreText) as { jobs?: unknown[] };
@@ -725,7 +736,9 @@ export function renderMaintenanceInventoryText(report: MaintenanceInventoryRepor
     if (job.command) lines.push(`    command: ${job.command}`);
     if (job.prompt) lines.push(`    prompt: ${job.prompt.split("\n")[0]}`);
     if (job.collisionGroups.length > 0) {
-      lines.push(`    collision groups: ${job.collisionGroups.join(", ")}${job.lockKey ? ` (lock ${job.lockKey})` : ""}`);
+      lines.push(
+        `    collision groups: ${job.collisionGroups.join(", ")}${job.lockKey ? ` (lock ${job.lockKey})` : ""}`,
+      );
     }
   }
   if (report.collisionGroups.length > 0) {
