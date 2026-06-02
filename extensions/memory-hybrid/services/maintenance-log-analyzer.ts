@@ -415,6 +415,8 @@ export function collectMaintenanceSteps(
       const step = normalizeExitStepName(stepRaw);
       const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
       if (!Number.isFinite(occurredAt)) continue;
+      // Use the recorded exit timestamp, not the file mtime, so touched/copied historical ledgers
+      // do not get re-reported as current failures in later digests.
       if (occurredAt * 1000 < cutoff) continue;
       parsedRows++;
       steps.push({
@@ -828,10 +830,20 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
       ]),
     );
   } catch {
+    // Best-effort history lookup: missing/corrupt local state should not block the analyzer from
+    // classifying the current batch, so fall back to an empty ledger.
     return new Map();
   } finally {
     db.close();
   }
+}
+
+function actionTakenForSummarizedFinding(
+  finding: MaintenanceFinding,
+  persisted: PersistedMaintenanceFindingLedgerEntry | undefined,
+): MaintenanceFinding["actionTaken"] {
+  if (persisted?.glitchtipReported && GLITCHTIP_CLASSES.has(finding.classification)) return "reported";
+  return finding.actionTaken;
 }
 
 export function summarizeMaintenanceFindings(
@@ -863,8 +875,7 @@ export function summarizeMaintenanceFindings(
         occurrenceCount: (persisted?.occurrenceCount ?? 0) + sorted.length,
         firstSeenAt: persisted ? Math.min(persisted.firstSeenAt, earliest.occurredAt) : earliest.occurredAt,
         lastSeenAt: latest.occurredAt,
-        actionTaken:
-          persisted?.glitchtipReported && GLITCHTIP_CLASSES.has(latest.classification) ? "reported" : latest.actionTaken,
+        actionTaken: actionTakenForSummarizedFinding(latest, persisted),
       } satisfies MaintenanceFinding;
     })
     .filter((finding): finding is MaintenanceFinding => finding !== null);
