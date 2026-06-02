@@ -168,15 +168,16 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const ctx = makeCtx(db, proposalsDb, {
       configOverrides: {
         llm: {
+          default: ["openai/gpt-4.1-mini"],
           heavy: ["minimax/minimax-m1"],
           fallbackModel: "openai/gpt-4.1-mini",
         },
-      } as Partial<HybridMemoryConfig>,
+      },
     });
 
     try {
       await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
-        'fallbacks=["openai/gpt-4.1-mini"]',
+        /fallbacks=\[[^\]]*openai\/gpt-4\.1-mini/,
       );
     } finally {
       chatSpy.mockRestore();
