@@ -156,10 +156,10 @@ const STAGE_LABEL_MAX_LENGTH = 60;
 /**
  * Returns a run identifier string that encodes the UTC timestamp and process PID,
  * suitable for directory names and artifact fields (Issue #1827).
- * Format: `YYYYMMDDTHHmmssZ<pid>` e.g. `20260602T061400Z12345`.
+ * Format: `YYYYMMDDTHHmmssZ-<pid>` e.g. `20260602T061400Z-12345`.
  */
 export function makeDreamCycleRunId(): string {
-  return `${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}${process.pid}`;
+  return `${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}-${process.pid}`;
 }
 const EPISODIC_PROGRESS_GROUP_INTERVAL = 25;
 const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([

@@ -1010,7 +1010,7 @@ describe("runDreamCycle", () => {
   });
 
   it("uses a sortable path-safe dream-cycle run ID", () => {
-    expect(makeDreamCycleRunId()).toMatch(/^\d{8}T\d{6}Z\d+$/);
+    expect(makeDreamCycleRunId()).toMatch(/^\d{8}T\d{6}Z-\d+$/);
   });
 
   it("preserves successful earlier stage artifacts when a later stage reports failure", async () => {

@@ -420,7 +420,7 @@ export function buildCliContextServices(
               return envDir.trim();
             }
             const openclawHome = getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw");
-            return join(openclawHome, "logs", "dream-cycle", `run${runId}`);
+            return join(openclawHome, "logs", "dream-cycle", `run-${runId}`);
           })(),
         },
         logSink,
