@@ -142,8 +142,7 @@ function captureFallbackMemory(): FallbackMemory {
 function isTimeoutError(err: unknown): boolean {
   return (
     (err as NodeJS.ErrnoException)?.code === "ETIMEDOUT" ||
-    (err as { killed?: boolean })?.killed === true ||
-    (typeof (err as { signal?: string })?.signal === "string" && (err as { signal: string }).signal === "SIGTERM")
+    (err as { killed?: boolean })?.killed === true
   );
 }
 
