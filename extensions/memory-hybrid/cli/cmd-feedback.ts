@@ -320,22 +320,20 @@ export function cleanupImplicitFeedbackDuplicates(
           candidateIndices.add(candidateIndex);
         }
       }
+      // Preserve prior behavior: when multiple candidates match, choose the earliest canonical row.
+      let earliestMatchIndex: number | null = null;
       const exactMatchIndex = exactTextIndex.get(row.text);
-      let match = exactMatchIndex == null ? undefined : canonical[exactMatchIndex];
-      if (!match) {
-        // Preserve prior behavior: when multiple candidates match, choose the earliest canonical row.
-        let earliestMatchIndex: number | null = null;
-        for (const candidateIndex of candidateIndices) {
-          const candidate = canonical[candidateIndex];
-          if (!candidate || tokenJaccardFromSets(candidate.tokens, rowTokens) < threshold) continue;
-          if (earliestMatchIndex == null || candidateIndex < earliestMatchIndex) {
-            earliestMatchIndex = candidateIndex;
-          }
-        }
-        if (earliestMatchIndex != null) {
-          match = canonical[earliestMatchIndex];
+      if (exactMatchIndex != null) {
+        earliestMatchIndex = exactMatchIndex;
+      }
+      for (const candidateIndex of candidateIndices) {
+        const candidate = canonical[candidateIndex];
+        if (!candidate || tokenJaccardFromSets(candidate.tokens, rowTokens) < threshold) continue;
+        if (earliestMatchIndex == null || candidateIndex < earliestMatchIndex) {
+          earliestMatchIndex = candidateIndex;
         }
       }
+      const match = earliestMatchIndex != null ? canonical[earliestMatchIndex] : undefined;
       if (!match) {
         const index = canonical.push({ id: row.id, text: row.text, tokens: rowTokens }) - 1;
         if (!exactTextIndex.has(row.text)) {
