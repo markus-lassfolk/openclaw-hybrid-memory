@@ -410,11 +410,11 @@ export function collectMaintenanceSteps(
     for (const line of exitLines) {
       const m = line.match(/^(\S+)\s+(\S+)\s+exit=(-?\d+)\b/);
       if (!m) continue;
-      sawParseableRow = true;
       const [, iso, stepRaw, exitRaw] = m;
       const step = normalizeExitStepName(stepRaw);
       const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
       if (!Number.isFinite(occurredAt)) continue;
+      sawParseableRow = true;
       // Use the recorded exit timestamp, not the file mtime, so touched/copied historical ledgers
       // do not get re-reported as current failures in later digests.
       if (occurredAt * 1000 < cutoff) continue;

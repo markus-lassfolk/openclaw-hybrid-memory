@@ -1,8 +1,10 @@
-import { existsSync, mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ManageBindings } from "../cli/commands/manage/bindings.js";
+import { runAnalyzeMaintenanceLogs } from "../cli/commands/manage/register-analyze-maintenance-logs.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -514,6 +516,21 @@ describe("maintenance log analyzer", () => {
     expect(steps).toHaveLength(0);
   });
 
+  it("treats malformed exit-ledger timestamps as unparseable and emits the orchestration fallback", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "not-a-date dream-cycle exit=1\n");
+    writeFileSync(logPath, "memory-hybrid: dream-cycle — stage 1/6 prune expired facts complete in 2s\n");
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
+    expect(steps[0].line).toContain("progress-marker=present");
+  });
+
   it("isCanonicalMaintenanceLog and isUnderAuxiliaryDir unit checks", () => {
     // compact timestamp-pid format
     expect(isCanonicalMaintenanceLog("/logs/nightly-distill-20260507T021015Z-123.log")).toBe(true);
@@ -780,6 +797,53 @@ describe("maintenance log analyzer", () => {
     expect(report.digestMd).toContain("### Historical/stale");
     expect(report.digestMd).toContain("Suppressed 1 older historical fingerprint");
     expect(report.digestMd).toContain("Seen 3 times");
+  });
+
+  it("persists raw occurrences while reporting summarized current findings", async () => {
+    const root = tmpRoot();
+    const day = join(root, "20260601");
+    mkdirSync(day, { recursive: true });
+    const exitPath = join(day, "nightly-distill-20260601T060000Z-123.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(
+      exitPath,
+      [
+        "2026-06-01T06:00:01Z distill exit=1",
+        "2026-06-01T06:00:02Z distill exit=1",
+      ].join("\n"),
+    );
+    writeFileSync(logPath, "TypeError: Cannot read properties of undefined\n");
+
+    const outPath = join(root, "report.json");
+    const findingsPath = join(root, "maintenance-findings.db");
+    await runAnalyzeMaintenanceLogs(
+      {
+        root,
+        since: "7d",
+        format: "json",
+        out: outPath,
+        persist: findingsPath,
+      },
+      {
+        cfg: { sqlitePath: "" },
+        factsDb: {} as never,
+      } as unknown as ManageBindings,
+    );
+
+    const report = JSON.parse(readFileSync(outPath, "utf-8")) as {
+      findings: Array<{ fingerprint: string }>;
+      summary: { newFindings: number };
+    };
+    expect(report.findings).toHaveLength(1);
+    expect(report.summary.newFindings).toBe(1);
+
+    const db = new DatabaseSync(findingsPath);
+    try {
+      const count = db.prepare("SELECT COUNT(*) AS c FROM maintenance_finding").get() as { c: number };
+      expect(count.c).toBe(2);
+    } finally {
+      db.close();
+    }
   });
 
   it("pluginVersionGte compares dotted plugin versions for resolved-issue suppression", () => {

@@ -114,32 +114,43 @@ export async function runAnalyzeMaintenanceLogs(
     dbPath: findingsPath,
     historicalCutoffSec,
   });
-  findings = summarized.findings;
+  let reportFindings = summarized.findings;
 
   if (opts?.glitchtip) {
     const alreadyReportedFingerprints = new Set(
-      findings.filter((f) => f.actionTaken === "reported").map((f) => f.fingerprint),
+      reportFindings.filter((f) => f.actionTaken === "reported").map((f) => f.fingerprint),
     );
-    findings = reportGlitchTipFindings(findings, { alreadyReportedFingerprints });
+    reportFindings = reportGlitchTipFindings(reportFindings, { alreadyReportedFingerprints });
   }
 
-  if (findings.length > 0 && opts?.noPersist !== true) {
+  const reportedByFingerprint = new Map(reportFindings.map((finding) => [finding.fingerprint, finding] as const));
+  const persistedFindings = findings.map((finding) => {
+    const reported = reportedByFingerprint.get(finding.fingerprint);
+    if (!reported) return finding;
+    return {
+      ...finding,
+      actionTaken: reported.actionTaken,
+      glitchtipEventId: reported.glitchtipEventId,
+    };
+  });
+
+  if (persistedFindings.length > 0 && opts?.noPersist !== true) {
     mkdirSync(dirname(findingsPath), { recursive: true });
-    persistMaintenanceFindings(findingsPath, findings);
+    persistMaintenanceFindings(findingsPath, persistedFindings);
   }
 
   const report = buildMaintenanceAnalysisReport({
     root,
     since,
     steps,
-    findings,
-    findingsPath: findings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
+    findings: reportFindings,
+    findingsPath: persistedFindings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
     historicalStaleSuppressed: summarized.historicalStaleSuppressed,
     includeTrend: opts?.trend === true || since.endsWith("d") || since.endsWith("w"),
   });
   writeMaintenanceAnalysisOutput(report, format, outPath);
 
-  if (opts?.strict && shouldMaintenanceStrictFail(findings)) process.exitCode = 1;
+  if (opts?.strict && shouldMaintenanceStrictFail(reportFindings)) process.exitCode = 1;
 }
 
 function addAnalyzeOptions(cmd: Chainable): Chainable {
