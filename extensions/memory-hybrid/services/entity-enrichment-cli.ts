@@ -504,41 +504,45 @@ export async function runEntityEnrichmentForCli(
       const workerCount = Math.min(effectiveConcurrency, batch.length);
       await Promise.all(
         Array.from({ length: workerCount }, async () => {
-          while (true) {
-            if (isPastDeadline()) {
-              stopReason = "time_budget";
-              return;
-            }
-            if (hasObservedProviderBudgetPressure()) {
-              stopReason = "provider_budget";
-              return;
-            }
-            while (!canStartAnotherLlm()) {
-              if (hasObservedProviderBudgetPressure()) {
-                stopReason = "provider_budget";
-                return;
-              }
+          try {
+            while (true) {
               if (isPastDeadline()) {
                 stopReason = "time_budget";
                 return;
               }
-              await waitForProviderSlot();
+              if (hasObservedProviderBudgetPressure()) {
+                stopReason = "provider_budget";
+                return;
+              }
+              while (!canStartAnotherLlm()) {
+                if (hasObservedProviderBudgetPressure()) {
+                  stopReason = "provider_budget";
+                  return;
+                }
+                if (isPastDeadline()) {
+                  stopReason = "time_budget";
+                  return;
+                }
+                await waitForProviderSlot();
+              }
+              const idx = nextIdx++;
+              if (idx >= batch.length) return;
+              const result = await processFact(batch[idx]!);
+              results[idx] = result;
+              if (result == null) {
+                notifyNextProviderSlotWaiter();
+                continue;
+              }
+              applyFactProcessResult(result, mergeCounters);
+              if (hasObservedProviderBudgetPressure()) {
+                stopReason = "provider_budget";
+                notifyAllProviderSlotWaiters();
+              } else {
+                notifyNextProviderSlotWaiter();
+              }
             }
-            const idx = nextIdx++;
-            if (idx >= batch.length) return;
-            const result = await processFact(batch[idx]!);
-            results[idx] = result;
-            if (result == null) {
-              notifyNextProviderSlotWaiter();
-              continue;
-            }
-            applyFactProcessResult(result, mergeCounters);
-            if (hasObservedProviderBudgetPressure()) {
-              stopReason = "provider_budget";
-              notifyAllProviderSlotWaiters();
-            } else {
-              notifyNextProviderSlotWaiter();
-            }
+          } finally {
+            notifyAllProviderSlotWaiters();
           }
         }),
       );
