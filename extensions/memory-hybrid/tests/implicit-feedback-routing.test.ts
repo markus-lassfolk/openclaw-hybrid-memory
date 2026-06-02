@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { implicitFeedbackCollapseStatus } from "../cli/cmd-feedback.js";
+import { implicitFeedbackCollapseStatus, isSemanticNoOpImplicitFeedbackCollapseStatus } from "../cli/cmd-feedback.js";
 import {
   cleanupImplicitFeedbackDuplicates,
   type HandlerContext,
@@ -931,6 +931,71 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
     expect(row.supersededBy).toBe(canonical.id);
   });
 
+  it("keeps enough canonical context across many batches so late-page duplicates still collapse", () => {
+    const db = makeDb(tmpDir);
+    // Put the late duplicate in the first batch after legacy 2k carry would evict the canonical row.
+    const PAGED_SCAN_LIMIT = 250;
+    const INTERLEAVED_UNIQUE_ROWS = 2249;
+    const canonical = db.store({
+      text: "collapse canonical alpha beta gamma delta epsilon",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+    for (let i = 0; i < INTERLEAVED_UNIQUE_ROWS; i++) {
+      db.store({
+        text: `uniquesignal${i}`,
+        category: "technical",
+        importance: 0.7,
+        entity: null,
+        key: "implicit_feedback_signal",
+        value: null,
+        source: "implicit-feedback",
+        tags: ["implicit-feedback", "trajectory", "feedback"],
+      });
+    }
+    // Keep this similar (not exact) so cleanup exercises Jaccard matching rather than exact-text dedupe.
+    const lateDuplicate = db.store({
+      text: "collapse canonical alpha beta gamma delta epsilon zeta",
+      category: "technical",
+      importance: 0.7,
+      entity: null,
+      key: "implicit_feedback_signal",
+      value: null,
+      source: "implicit-feedback",
+      tags: ["implicit-feedback", "trajectory", "feedback"],
+    });
+
+    let afterRowid = 0;
+    let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
+    let totalScanned = 0;
+    let totalCollapsed = 0;
+    for (;;) {
+      const batch = cleanupImplicitFeedbackDuplicates(db, {
+        threshold: 0.8,
+        limit: PAGED_SCAN_LIMIT,
+        afterRowid,
+        seedCanonical: carryCanonical,
+      });
+      totalScanned += batch.scanned;
+      totalCollapsed += batch.collapsed;
+      carryCanonical = batch.carryCanonical;
+      if (batch.scanned < PAGED_SCAN_LIMIT || batch.resumeAfterRowid == null) break;
+      afterRowid = batch.resumeAfterRowid;
+    }
+
+    expect(totalScanned).toBeGreaterThan(INTERLEAVED_UNIQUE_ROWS);
+    expect(totalCollapsed).toBe(1);
+    const row = rawDb(db)
+      .prepare("SELECT superseded_by as supersededBy FROM facts WHERE id = ?")
+      .get(lateDuplicate.id) as { supersededBy: string | null };
+    expect(row.supersededBy).toBe(canonical.id);
+  });
+
   it("does NOT store implicit-feedback signal facts when feedToSelfCorrection=false", async () => {
     const db = makeDb(tmpDir);
     writeNegativeSession(sessionsDir, "2026-01-01-session.jsonl");
@@ -1559,5 +1624,12 @@ describe("implicitFeedbackCollapseStatus (#1736)", () => {
     expect(implicitFeedbackCollapseStatus(10, 0)).toBe("no_changes");
     expect(implicitFeedbackCollapseStatus(10, 4)).toBe("partial");
     expect(implicitFeedbackCollapseStatus(5, 5)).toBe("collapsed");
+  });
+
+  it("flags semantic no-op outcomes used for strict maintenance exit handling", () => {
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("no_candidates")).toBe(true);
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("no_changes")).toBe(true);
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("partial")).toBe(false);
+    expect(isSemanticNoOpImplicitFeedbackCollapseStatus("collapsed")).toBe(false);
   });
 });
