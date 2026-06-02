@@ -773,6 +773,12 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
       CREATE INDEX IF NOT EXISTS idx_maintenance_finding_class ON maintenance_finding(classification, occurred_at);
       CREATE INDEX IF NOT EXISTS idx_maintenance_finding_fingerprint ON maintenance_finding(fingerprint);
     `);
+    try {
+      const checkCol = db.prepare(`SELECT occurrence_count FROM maintenance_finding LIMIT 0`);
+      checkCol.all();
+    } catch {
+      db.exec(`ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1`);
+    }
     const stmt = db.prepare(
       `INSERT OR IGNORE INTO maintenance_finding
        (id, occurred_at, job, step, exit_code, classification, fingerprint, log_excerpt, log_path, plugin_version, action_taken, occurrence_count)
@@ -791,7 +797,7 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
         f.logPath,
         f.pluginVersion,
         f.actionTaken,
-        f.occurrenceCount ?? 1,
+        1,
       );
     }
   } finally {
@@ -808,7 +814,7 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
         `SELECT fingerprint,
            MIN(occurred_at) AS first_seen_at,
            MAX(occurred_at) AS last_seen_at,
-           SUM(IFNULL(occurrence_count, 1)) AS occurrence_count,
+           COUNT(*) AS occurrence_count,
            MAX(CASE WHEN action_taken = 'reported-glitchtip' THEN 1 ELSE 0 END) AS glitchtip_reported
          FROM maintenance_finding
          GROUP BY fingerprint`,

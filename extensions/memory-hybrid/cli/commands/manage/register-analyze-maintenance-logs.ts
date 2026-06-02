@@ -117,7 +117,9 @@ export async function runAnalyzeMaintenanceLogs(
   findings = summarized.findings;
 
   if (opts?.glitchtip) {
-    const alreadyReportedFingerprints = new Set(findings.filter((f) => f.actionTaken === "reported").map((f) => f.fingerprint));
+    const alreadyReportedFingerprints = new Set(
+      findings.filter((f) => f.actionTaken === "reported").map((f) => f.fingerprint),
+    );
     findings = reportGlitchTipFindings(findings, { alreadyReportedFingerprints });
   }
 
