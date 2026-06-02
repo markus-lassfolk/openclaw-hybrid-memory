@@ -412,6 +412,24 @@ describe("runEpisodicConsolidation", () => {
     expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
   });
 
+  it("counts only rows actually marked when lifecycle skips race with event-log writes", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "action_taken",
+      content: { text: "session_start" },
+    });
+    eventLog.append({ sessionId: "s1", timestamp: oldTs, eventType: "action_taken", content: { text: "session_end" } });
+
+    const markConsolidatedSpy = vi.spyOn(eventLog, "markConsolidated").mockReturnValueOnce(1);
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+
+    expect(result.eventsConsolidated).toBe(1);
+    expect(result.factsCreated).toBe(0);
+    markConsolidatedSpy.mockRestore();
+  });
+
   it("skips session_start eventType even when body text is innocuous (#1185)", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     eventLog.append({
