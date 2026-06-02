@@ -4,7 +4,7 @@
  *
  * Keys use installed `pluginJobId` values from cmd-install (e.g. nightly-distill, not the job display name).
  */
-const NIGHTLY_DISTILL_STEPS = ["prune", "distill", "extract-daily", "resolve-contradictions", "enrich-entities"];
+const NIGHTLY_DISTILL_STEPS = ["prune", "distill", "resolve-contradictions", "enrich-entities"];
 
 export const HYBRID_MEM_CRON_DEFAULT_JOB_STEPS: Record<string, string[]> = {
   "hybrid-mem:nightly-distill": NIGHTLY_DISTILL_STEPS,
