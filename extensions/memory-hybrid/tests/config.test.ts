@@ -780,6 +780,7 @@ describe("hybridConfigSchema.parse", () => {
     expect(result.errorReporting.consent).toBe(true);
     expect(result.errorReporting.mode).toBe("community");
     expect(result.errorReporting.dsn).toBe("https://7d641cabffdb4557a7bd2f02c338dc80@glitchtip.lassfolk.cc/1");
+    expect(result.maintenance.failureReporting.enabled).toBe(true);
   });
 
   it("parses errorReporting in community mode", () => {
@@ -913,6 +914,18 @@ describe("hybridConfigSchema.parse", () => {
     });
     expect(result.errorReporting?.botName).toHaveLength(64);
     expect(result.errorReporting?.botName).toBe("a".repeat(64));
+  });
+
+  it("allows maintenance failure reporting to be disabled explicitly", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      maintenance: {
+        failureReporting: {
+          enabled: false,
+        },
+      },
+    });
+    expect(result.maintenance.failureReporting.enabled).toBe(false);
   });
 
   it("parses custom categories", () => {

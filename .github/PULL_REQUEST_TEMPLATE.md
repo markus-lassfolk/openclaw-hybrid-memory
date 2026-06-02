@@ -6,6 +6,8 @@ Closes #
 
 **PR title:** Must follow [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `fix: …`, `chore: merge develop into main`). CI validates the title via the **Conventional Commits** check.
 
+**Emergency revert PRs:** Use title format `revert: <what is being reverted>` (lowercase `revert:`). Avoid Git auto-title `Revert "..."` because it fails title validation.
+
 **Large merges:** For branches with many commits (e.g. `develop` → `main`), GitHub may pre-fill the merge/squash description with every commit message. Before completing merge or auto-merge, switch to **Squash and merge** (if allowed) and replace that body with a short summary, or merge locally with `git merge -m "…"`.
 
 ## Type of Change
