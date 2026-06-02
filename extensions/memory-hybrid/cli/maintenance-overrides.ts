@@ -25,7 +25,9 @@ export type ScanMaintenanceOverrides = {
  * `--full` is the legacy name for watermark + cooldown bypass on extraction commands.
  * `--force` is the preferred umbrella flag (same effect for scan commands).
  */
-export function resolveScanMaintenanceOverrides(opts?: ScanMaintenanceOverrideInput | null): ScanMaintenanceOverrides {
+export function resolveScanMaintenanceOverrides(
+  opts?: ScanMaintenanceOverrideInput | null,
+): ScanMaintenanceOverrides {
   const forced = opts?.force === true || opts?.full === true;
   return {
     bypassScanCooldown: forced,
@@ -38,7 +40,10 @@ export function registerScanMaintenanceOverrideOptions<
   T extends { option(flags: string, desc?: string, defaultValue?: unknown): T },
 >(cmd: T): T {
   return cmd
-    .option("--force", "Bypass maintenance guards for this run (23h scan cooldown and incremental watermark)")
+    .option(
+      "--force",
+      "Bypass maintenance guards for this run (23h scan cooldown and incremental watermark)",
+    )
     .option("--full", "Alias for --force on scan commands (legacy; prefer --force)");
 }
 

@@ -95,7 +95,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
       expect((caughtError as Error).message).not.toContain("autoRecall.scopeFilter is not set");
     }
 
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("autoRecall.scopeFilter is not set"));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining("autoRecall.scopeFilter is not set"),
+    );
   });
 
   it("throws when requireScopeFilter=true, scopeFilter absent, and non-global scoped facts exist", async () => {
@@ -105,9 +107,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
 
     const ctx = makeCtx(db, proposalsDb, { requireScopeFilter: true });
 
-    await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
-      "autoRecall.scopeFilter is not set",
-    );
+    await expect(
+      runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f }),
+    ).rejects.toThrow("autoRecall.scopeFilter is not set");
   });
 
   it("does not throw when requireScopeFilter=true but all facts are global scope", async () => {

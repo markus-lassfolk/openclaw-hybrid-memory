@@ -1,6 +1,9 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "../../maintenance-overrides.js";
+import {
+  registerScanMaintenanceOverrideOptions,
+  scanMaintenanceOverridePayload,
+} from "../../maintenance-overrides.js";
 import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -67,86 +70,86 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
       .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
       .option("-v, --verbose", "Log progress before LLM analysis (plugin logger); respects hybrid-mem -v"),
   ).action(
-    withExit(
-      async (
-        opts?: {
-          extractPath?: string;
-          workspace?: string;
-          dryRun?: boolean;
-          model?: string;
-          approve?: boolean;
-          applyTools?: boolean;
-          full?: boolean;
-          force?: boolean;
-          verbose?: boolean;
+      withExit(
+        async (
+          opts?: {
+            extractPath?: string;
+            workspace?: string;
+            dryRun?: boolean;
+            model?: string;
+            approve?: boolean;
+            applyTools?: boolean;
+            full?: boolean;
+            force?: boolean;
+            verbose?: boolean;
+          },
+          cmd?: CommanderOptsParent,
+        ) => {
+          const extractPath = opts?.extractPath;
+          const workspace = opts?.workspace;
+          const dryRun = !!opts?.dryRun;
+          const model = opts?.model?.trim() || undefined;
+          const approve = !!opts?.approve;
+          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+          let res;
+          try {
+            res = await runSelfCorrectionRun({
+              extractPath,
+              workspace,
+              dryRun,
+              model,
+              approve,
+              applyTools: opts?.applyTools,
+              ...scanMaintenanceOverridePayload(opts),
+              verbose,
+            });
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "self-correction-run",
+            });
+            throw err;
+          }
+          if (res.error) {
+            console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
+            process.exitCode = 1;
+            return;
+          }
+          if (res.skipped) {
+            const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);
+            if (res.status === "skipped_concurrency") {
+              console.log(`Skipping self-correction-run: scan already in progress. status=skipped_concurrency`);
+            } else {
+              console.log(
+                `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --force (or --full) to override. status=skipped_cooldown`,
+              );
+            }
+            return;
+          }
+          console.log(
+            `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}${res.status ? ` status=${res.status}` : ""}`,
+          );
+          if (res.proposals.length > 0) {
+            console.log(`Proposals (${res.proposals.length}):`);
+            for (const p of res.proposals) {
+              console.log(`  - ${p}`);
+            }
+          }
+          if (res.reportPath) {
+            console.log(`Report: ${res.reportPath}`);
+          }
+          if (res.toolsSuggestions && res.toolsSuggestions.length > 0) {
+            console.log(`TOOLS.md suggestions (${res.toolsSuggestions.length}):`);
+            for (const s of res.toolsSuggestions) {
+              console.log(`  - ${s}`);
+            }
+          }
+          if (res.toolsApplied != null && res.toolsApplied > 0) {
+            console.log(`TOOLS.md updates applied: ${res.toolsApplied}`);
+          }
         },
-        cmd?: CommanderOptsParent,
-      ) => {
-        const extractPath = opts?.extractPath;
-        const workspace = opts?.workspace;
-        const dryRun = !!opts?.dryRun;
-        const model = opts?.model?.trim() || undefined;
-        const approve = !!opts?.approve;
-        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-        let res;
-        try {
-          res = await runSelfCorrectionRun({
-            extractPath,
-            workspace,
-            dryRun,
-            model,
-            approve,
-            applyTools: opts?.applyTools,
-            ...scanMaintenanceOverridePayload(opts),
-            verbose,
-          });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "self-correction-run",
-          });
-          throw err;
-        }
-        if (res.error) {
-          console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
-          process.exitCode = 1;
-          return;
-        }
-        if (res.skipped) {
-          const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);
-          if (res.status === "skipped_concurrency") {
-            console.log(`Skipping self-correction-run: scan already in progress. status=skipped_concurrency`);
-          } else {
-            console.log(
-              `Skipping self-correction-run: cooldown active (last run < ${thresholdH}h ago). Use --force (or --full) to override. status=skipped_cooldown`,
-            );
-          }
-          return;
-        }
-        console.log(
-          `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}${res.status ? ` status=${res.status}` : ""}`,
-        );
-        if (res.proposals.length > 0) {
-          console.log(`Proposals (${res.proposals.length}):`);
-          for (const p of res.proposals) {
-            console.log(`  - ${p}`);
-          }
-        }
-        if (res.reportPath) {
-          console.log(`Report: ${res.reportPath}`);
-        }
-        if (res.toolsSuggestions && res.toolsSuggestions.length > 0) {
-          console.log(`TOOLS.md suggestions (${res.toolsSuggestions.length}):`);
-          for (const s of res.toolsSuggestions) {
-            console.log(`  - ${s}`);
-          }
-        }
-        if (res.toolsApplied != null && res.toolsApplied > 0) {
-          console.log(`TOOLS.md updates applied: ${res.toolsApplied}`);
-        }
-      },
-    ),
-  );
+      ),
+    );
 
   if (runExtractImplicitFeedback) {
     registerScanMaintenanceOverrideOptions(
@@ -161,65 +164,65 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         .option("--no-trajectories", "Skip trajectory building")
         .option("--no-closed-loop", "Skip closed-loop analysis"),
     ).action(
-      withExit(
-        async (
-          opts?: {
-            days?: string;
-            dryRun?: boolean;
-            full?: boolean;
-            force?: boolean;
-            verbose?: boolean;
-            trajectories?: boolean;
-            closedLoop?: boolean;
-          },
-          cmd?: CommanderOptsParent,
-        ) => {
-          const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
-          const dryRun = !!opts?.dryRun;
-          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-          const includeTrajectories = opts?.trajectories !== false;
-          const includeClosedLoop = opts?.closedLoop !== false;
-          let res;
-          try {
-            res = await runExtractImplicitFeedback({
-              days,
-              dryRun,
-              ...scanMaintenanceOverridePayload(opts),
-              verbose,
-              includeTrajectories,
-              includeClosedLoop,
-            });
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "cli",
-              operation: "extract-implicit",
-            });
-            throw err;
-          }
-          console.log(
-            `Extract-implicit complete: ${res.signalsExtracted} signals from ${res.sessionsScanned} sessions ${dryRun ? "(dry-run)" : ""}`,
-          );
-          console.log(`  Sessions visited: ${res.sessionsVisited}`);
-          console.log(`  Sessions processed: ${res.sessionsProcessed}`);
-          console.log(`  Sessions skipped: ${res.sessionsSkipped}`);
-          if (res.sessionsDeferred > 0) {
-            console.log(`  Sessions deferred: ${res.sessionsDeferred}`);
+        withExit(
+          async (
+            opts?: {
+              days?: string;
+              dryRun?: boolean;
+              full?: boolean;
+              force?: boolean;
+              verbose?: boolean;
+              trajectories?: boolean;
+              closedLoop?: boolean;
+            },
+            cmd?: CommanderOptsParent,
+          ) => {
+            const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
+            const dryRun = !!opts?.dryRun;
+            const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+            const includeTrajectories = opts?.trajectories !== false;
+            const includeClosedLoop = opts?.closedLoop !== false;
+            let res;
+            try {
+              res = await runExtractImplicitFeedback({
+                days,
+                dryRun,
+                ...scanMaintenanceOverridePayload(opts),
+                verbose,
+                includeTrajectories,
+                includeClosedLoop,
+              });
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation: "extract-implicit",
+              });
+              throw err;
+            }
             console.log(
-              `  Backlog estimate: ${res.backlogSignalsEstimate} signals, ${res.backlogTrajectoriesEstimate} trajectories`,
+              `Extract-implicit complete: ${res.signalsExtracted} signals from ${res.sessionsScanned} sessions ${dryRun ? "(dry-run)" : ""}`,
             );
-          }
-          console.log(`  Positive signals: ${res.positiveCount}`);
-          console.log(`  Negative signals: ${res.negativeCount}`);
-          console.log(`  Trajectories built: ${res.trajectoriesBuilt}`);
-          if (res.partial) {
-            console.log(`  Partial run: yes (${res.partialReason ?? "capped"})`);
-          }
-          if (res.closedLoopReport) {
-            console.log(`\n${res.closedLoopReport}`);
-          }
-        },
-      ),
-    );
+            console.log(`  Sessions visited: ${res.sessionsVisited}`);
+            console.log(`  Sessions processed: ${res.sessionsProcessed}`);
+            console.log(`  Sessions skipped: ${res.sessionsSkipped}`);
+            if (res.sessionsDeferred > 0) {
+              console.log(`  Sessions deferred: ${res.sessionsDeferred}`);
+              console.log(
+                `  Backlog estimate: ${res.backlogSignalsEstimate} signals, ${res.backlogTrajectoriesEstimate} trajectories`,
+              );
+            }
+            console.log(`  Positive signals: ${res.positiveCount}`);
+            console.log(`  Negative signals: ${res.negativeCount}`);
+            console.log(`  Trajectories built: ${res.trajectoriesBuilt}`);
+            if (res.partial) {
+              console.log(`  Partial run: yes (${res.partialReason ?? "capped"})`);
+            }
+            if (res.closedLoopReport) {
+              console.log(`\n${res.closedLoopReport}`);
+            }
+          },
+        ),
+      );
   }
 
   // ----- cross-agent-learning (Issue #263 — Phase 2) -----

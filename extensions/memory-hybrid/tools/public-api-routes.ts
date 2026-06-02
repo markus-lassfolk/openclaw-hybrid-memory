@@ -5,7 +5,10 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
-import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot } from "../services/gateway-memory-diagnostics.js";
+import {
+  buildGatewayMemoryDiagnostics,
+  buildProcessMemorySnapshot,
+} from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   getActiveTaskProjectionStatus,

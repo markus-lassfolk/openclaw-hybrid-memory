@@ -12,7 +12,10 @@ import { countActivePatternFactsForMaintenance } from "../../../services/reflect
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import { getLanguageKeywordsFilePath } from "../../../utils/language-keywords.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
-import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "../../maintenance-overrides.js";
+import {
+  registerScanMaintenanceOverrideOptions,
+  scanMaintenanceOverridePayload,
+} from "../../maintenance-overrides.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -110,11 +113,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
       .option("--dry-run", "List steps that would run without executing")
       .option("-v, --verbose", "Show detailed output for each step"),
   ).action(
-    withExit(
-      async (
-        opts?: { dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean },
-        cmd?: CommanderOptsParent,
-      ) => {
+      withExit(async (opts?: { dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean }, cmd?: CommanderOptsParent) => {
         const dryRun = !!opts?.dryRun;
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         const scanOverrides = scanMaintenanceOverridePayload(opts);
@@ -378,7 +377,6 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           }
         }
         log("run-all complete.");
-      },
-    ),
-  );
+      }),
+    );
 }
