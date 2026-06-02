@@ -964,7 +964,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           if (dryRun && apply) {
             throw new Error("--dry-run and --apply are mutually exclusive");
           }
-          if (jsonMode && (auto || projectStateLww || dryRun || apply)) {
+          if (jsonMode && (auto || projectStateLww || dryRun || apply || applyReview)) {
             throw new Error("--json is only supported in default resolve-contradictions mode");
           }
           if (Number.isNaN(targetRate) || targetRate <= 0 || targetRate > 1) {
