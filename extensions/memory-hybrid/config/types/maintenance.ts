@@ -108,11 +108,22 @@ export type MonthlyReviewConfig = {
   dayOfMonth: number; // default: 1
 };
 
+/** Maintenance-failure telemetry configuration (Issue #1836). */
+export type MaintenanceFailureReportingConfig = {
+  /**
+   * When true, emit best-effort grouped GlitchTip/Sentry-compatible events for
+   * maintenance failures and degraded semantic outcomes. Default: true.
+   */
+  enabled: boolean;
+};
+
 /** Maintenance configuration group. */
 export type MaintenanceConfig = {
   monthlyReview: MonthlyReviewConfig;
   /** Cron reliability settings for memory maintenance jobs (Issue #281). */
   cronReliability: CronReliabilityConfig;
+  /** Grouped GlitchTip/Sentry-compatible reporting for maintenance failures (Issue #1836). */
+  failureReporting: MaintenanceFailureReportingConfig;
   /** Council review provenance configuration (Issue #280). */
   council: CouncilConfig;
 };

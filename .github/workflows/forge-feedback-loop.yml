@@ -48,13 +48,34 @@ jobs:
               return [...new Set(values.filter(Boolean).map((value) => Number(value)).filter((value) => Number.isInteger(value) && value > 0))];
             }
 
+            const actionableCommands = [
+              /^\s*\/forge\b/i,
+              /^\s*\/codex\b/i,
+              /^\s*\/fix\b/i,
+              /^\s*\/retry\b/i,
+              /\bplease\s+fix\b/i,
+              /\bplease\s+address\b/i,
+              /\bship\s+it\b/i,
+            ];
+            const automationMarkerPatterns = [
+              /<!--\s*forge-feedback-loop\s*-->/i,
+              /<!--\s*forge-feedback-fingerprint:/i,
+              /\bforge-pr-remediation\.requested\b/i,
+              /^\s*✅\s*Auto-merge/i,
+              /^\s*❌\s*Auto-merge skipped/i,
+              /^\s*⚠️\s*Auto-merge skipped/i,
+              /\bChanged Files Summary\b/i,
+            ];
+
             let prNumbers = [];
             if (context.eventName === 'workflow_dispatch') {
               prNumbers = unique([context.payload.inputs?.pr_number]);
             } else if (context.eventName === 'workflow_run') {
               prNumbers = unique((context.payload.workflow_run?.pull_requests ?? []).map((pr) => pr.number));
             } else if (context.eventName === 'issue_comment') {
-              if (context.payload.comment?.user?.type === 'Bot') {
+              const comment = context.payload.comment;
+              const body = String(comment?.body ?? '').trim();
+              if (comment?.user?.type === 'Bot') {
                 core.setOutput('should_skip', 'true');
                 core.setOutput('skip_reason', 'Ignoring bot-authored issue comment event to avoid feedback loops.');
                 return;
@@ -64,6 +85,20 @@ jobs:
                 core.setOutput('skip_reason', 'Issue comment is not attached to a pull request.');
                 return;
               }
+              if (!body) {
+                core.setOutput('should_skip', 'true');
+                core.setOutput('skip_reason', 'Ignoring empty issue comment body.');
+                return;
+              }
+
+              const hasActionableCommand = actionableCommands.some((pattern) => pattern.test(body));
+              const hasAutomationMarker = automationMarkerPatterns.some((pattern) => pattern.test(body));
+              if (hasAutomationMarker && !hasActionableCommand) {
+                core.setOutput('should_skip', 'true');
+                core.setOutput('skip_reason', 'Ignoring non-actionable automation marker comment.');
+                return;
+              }
+
               prNumbers = unique([context.payload.issue.number]);
             } else {
               prNumbers = unique([context.payload.pull_request?.number]);
@@ -258,12 +293,23 @@ jobs:
                 lines.push('- Dispatch: queued `forge-pr-remediation.requested` for Forge/Codex `gpt-5.4-pro`.');
               }
             } else {
-              lines.push('- Dispatch: skipped because CI is green and no open human feedback remains.');
+              lines.push('- Dispatch: not needed; no blockers detected.');
             }
 
             const body = lines.join('\n');
+
             if (botComment) {
-              await github.rest.issues.updateComment({ owner, repo, comment_id: botComment.id, body });
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: botComment.id,
+                body,
+              });
             } else {
-              await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body,
+              });
             }
