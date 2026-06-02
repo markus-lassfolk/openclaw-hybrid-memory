@@ -53,7 +53,7 @@ describe("extract-directives CLI status", () => {
     registerDistillCommands(
       mem,
       makeDistillContext({
-        runExtractDirectives: vi.fn(async () => ({
+        runExtractDirectives: vi.fn<DistillContext["runExtractDirectives"]>(async () => ({
           incidents: [],
           sessionsScanned: 1,
           stored: 0,
