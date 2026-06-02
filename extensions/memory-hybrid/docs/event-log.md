@@ -119,8 +119,8 @@ Retrieve events where `consolidated_into` is null. When `olderThanDays` is given
 ### `getByEntity(entityName, limit?): EventLogEntry[]`
 Retrieve events whose `entities` array contains the exact entity name.
 
-### `markConsolidated(eventIds, factId): void`
-Mark a batch of events as consolidated into the given fact id. Runs atomically.
+### `markConsolidated(eventIds, factId): number`
+Mark a batch of events as consolidated into the given fact id. Runs atomically. Returns the number of rows actually updated.
 
 ### `archiveConsolidated(olderThanDays, archiveDir): Promise<{ archived, files }>`
 Archive consolidated events older than N days into compressed JSONL files and delete them from SQLite.

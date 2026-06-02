@@ -30,7 +30,7 @@ describe("resolveFactsDbPragmas", () => {
     setEnv("OPENCLAW_FACTS_CACHE_SIZE_KB", "524288"); // 512GB request
     setEnv("OPENCLAW_FACTS_MMAP_SIZE", String(2 * 1024 * 1024 * 1024)); // 2GB
     const p = resolveFactsDbPragmas(dbPath);
-    expect(p.cacheSizeKb).toBeLessThanOrEqual(Math.ceil((10 * 1024 * 1024) / 1024 * 1.5));
+    expect(p.cacheSizeKb).toBeLessThanOrEqual(Math.ceil(((10 * 1024 * 1024) / 1024) * 1.5));
     expect(p.mmapSizeBytes).toBeLessThanOrEqual(10 * 1024 * 1024 + 64 * 1024 * 1024);
   });
 });
