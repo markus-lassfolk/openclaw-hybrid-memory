@@ -454,6 +454,15 @@ export type AuditHealthReport = {
     connectedProbe: GraphConnectedStats;
     expansionProbe: GraphExpansionStats;
   } | null;
+  /**
+   * Entity enrichment backlog summary (#1806). `null` when the query could not run (timeout/budget).
+   * `estimatedRunsRemaining` uses the default enrichment limit of 200 for ETA computation.
+   */
+  entityEnrichmentBacklog: {
+    total: number;
+    byTier: { hot: number; warm: number; structural: number; cold: number; unknown: number };
+    estimatedRunsRemaining: number;
+  } | null;
   warnings: string[];
   remediation: string[];
   /** Errors encountered during report generation (e.g., timeouts, query failures). */
@@ -909,6 +918,32 @@ export function buildAuditHealthReport(
     );
   }
 
+  // #1806: entity enrichment backlog — warn when eta_runs exceeds threshold.
+  const ENTITY_ENRICHMENT_DEFAULT_LIMIT = 200;
+  const ENTITY_ENRICHMENT_ETA_WARN_THRESHOLD = 100;
+  let entityEnrichmentBacklog: AuditHealthReport["entityEnrichmentBacklog"] = null;
+  if (hasBudget("entityEnrichmentBacklog")) {
+    try {
+      const backlogSummary = factsDb.getEntityEnrichmentBacklogSummary(24);
+      const estimatedRunsRemaining = Math.ceil(backlogSummary.total / ENTITY_ENRICHMENT_DEFAULT_LIMIT);
+      entityEnrichmentBacklog = {
+        total: backlogSummary.total,
+        byTier: backlogSummary.byTier,
+        estimatedRunsRemaining,
+      };
+      if (estimatedRunsRemaining > ENTITY_ENRICHMENT_ETA_WARN_THRESHOLD) {
+        warnings.push(
+          `Entity enrichment backlog: ${backlogSummary.total} fact(s) pending enrichment (eta_runs=${estimatedRunsRemaining} at limit=${ENTITY_ENRICHMENT_DEFAULT_LIMIT}).`,
+        );
+        remediation.push(
+          `Run \`openclaw hybrid-mem enrich-entities --limit ${ENTITY_ENRICHMENT_DEFAULT_LIMIT} --adaptive-catch-up\` or increase the limit to clear the backlog faster.`,
+        );
+      }
+    } catch {
+      // Non-fatal: backlog query failure does not block the audit report.
+    }
+  }
+
   let graphHubGuard: AuditHealthReport["graphHubGuard"] = null;
   if (raw && hasBudget("graphHubGuard")) {
     const probeRow = raw.prepare("SELECT id FROM facts WHERE superseded_at IS NULL LIMIT 1").get() as
@@ -991,6 +1026,7 @@ export function buildAuditHealthReport(
     sources,
     implicitFeedbackTrajectorySignals,
     graphHubGuard,
+    entityEnrichmentBacklog,
     warnings,
     remediation,
     errors,
@@ -1089,6 +1125,12 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
     const g = report.graphHubGuard;
     console.log(
       `Graph hub guard probe (cap=${String(g.configuredCap)} effective=${String(g.effectiveCap)}): connected considered=${g.connectedProbe.nodesConsidered} skipped=${g.connectedProbe.nodesSkipped} hubsSkipped=${g.connectedProbe.hubsSkipped}; expansion considered=${g.expansionProbe.nodesConsidered} skipped=${g.expansionProbe.nodesSkipped} hubsSkipped=${g.expansionProbe.hubsSkipped}`,
+    );
+  }
+  if (report.entityEnrichmentBacklog != null) {
+    const eb = report.entityEnrichmentBacklog;
+    console.log(
+      `Entity enrichment backlog: total=${eb.total} eta_runs=${eb.estimatedRunsRemaining} (hot=${eb.byTier.hot}, warm=${eb.byTier.warm}, structural=${eb.byTier.structural}, cold=${eb.byTier.cold})`,
     );
   }
   console.log("");
