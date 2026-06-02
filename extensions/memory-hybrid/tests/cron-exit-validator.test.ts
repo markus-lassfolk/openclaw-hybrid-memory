@@ -136,10 +136,14 @@ error: unknown command 'bar'
       const result = validateMaintenanceExecution(exitPath, undefined, ["prune", "distill"]);
 
       expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("unknown");
       expect(result.guardUpdated).toBe(false);
       expect(result.failedSteps.length).toBe(1);
       expect(result.failedSteps[0].step).toBe("distill");
       expect(result.failedSteps[0].exitCode).toBe(1);
+      expect(result.reportableIssues[0]?.fingerprint.join(":")).toBe(
+        "hybrid-memory-maintenance:test:distill:nonzero_exit",
+      );
     });
 
     it("should surface HM_EXIT failure reasons for non-zero steps", () => {
@@ -512,6 +516,76 @@ error: unknown command 'bar'
       expect(result.failedSteps[0].timestamp).toBe("1970-01-01T00:00:00Z");
       expect(Number.isNaN(Date.parse(result.failedSteps[0].timestamp))).toBe(false);
       expect(result.failedSteps[0].failureReason).toBe("all_uncertain");
+    });
+
+    it("detects semantic reflect-rules failures with stable grouped fingerprints", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const firstExitPath = join(tmpDir, "weekly-reflection-20260508T021500Z-111.exit.txt");
+      const secondExitPath = join(tmpDir, "weekly-reflection-20260509T021500Z-222.exit.txt");
+      const logPath = join(tmpDir, "reflect.log");
+      writeFileSync(firstExitPath, "2026-05-08T02:15:30Z reflect-rules exit=0\n");
+      writeFileSync(secondExitPath, "2026-05-09T02:15:30Z reflect-rules exit=0\n");
+      writeFileSync(logPath, "reflect-rules parse_success=false stored=0 model=minimax/MiniMax-M2.7-highspeed\n");
+
+      const first = validateMaintenanceExecution(firstExitPath, logPath, ["reflect-rules"]);
+      const second = validateMaintenanceExecution(secondExitPath, logPath, ["reflect-rules"]);
+
+      expect(first.maintenanceStatus).toBe("success");
+      expect(first.semanticStatus).toBe("semantic_fail");
+      expect(first.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect-rules",
+          failureCategory: "semantic_failure",
+          failureClass: "invalid_response_format_zero_stored",
+          storedCount: 0,
+        }),
+      );
+      expect(first.reportableIssues[0]?.fingerprint.join(":")).toBe(
+        "hybrid-memory-maintenance:weekly-reflection:reflect-rules:invalid_response_format_zero_stored",
+      );
+      expect(second.reportableIssues[0]?.fingerprint.join(":")).toBe(first.reportableIssues[0]?.fingerprint.join(":"));
+    });
+
+    it("detects degraded implicit-feedback collapse backlogs that change nothing", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "weekly-implicit-feedback-collapse-20260508T021500Z-111.exit.txt");
+      const logPath = join(tmpDir, "collapse.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z implicit-feedback-collapse exit=0\n");
+      writeFileSync(logPath, "weekly-implicit-feedback-collapse scanned=10432 collapsed=0 changed=0\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["implicit-feedback-collapse"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          failureClass: "implicit_feedback_large_backlog_zero_changes",
+          factsScanned: 10432,
+          collapsedCount: 0,
+        }),
+      );
+    });
+
+    it("detects unusable incident diagnostics artifacts", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "vm-memory-incident-20260508T021500Z-111.exit.txt");
+      const logPath = join(tmpDir, "incident.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z diagnostics exit=0\n");
+      writeFileSync(
+        logPath,
+        "vm memory incident bundle created at /tmp/bundle; memory-diagnostics-live.json 0 bytes and malformed",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["diagnostics"]);
+
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "diagnostics",
+          failureCategory: "diagnostic_failure",
+          failureClass: "zero_byte_memory_diagnostics",
+          artifactPaths: ["memory-diagnostics-live.json"],
+        }),
+      );
     });
   });
 });
