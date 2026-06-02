@@ -258,8 +258,12 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       if (wantsJson || outputPath) {
         try {
           emitJsonArtifact(buildAuditFailureArtifact(err, Date.now() - startedAtMs));
-        } catch {
-          // Last-resort: if emitJsonArtifact itself fails (e.g. disk full), nothing more we can do.
+        } catch (emitErr) {
+          // Last-resort: if emitJsonArtifact itself fails (e.g. disk full or stdout closed),
+          // emit a minimal diagnostic to stderr so the operator has something to act on.
+          console.error(
+            `audit health: failed to write failure artifact: ${emitErr instanceof Error ? emitErr.message : String(emitErr)}`,
+          );
         }
       }
       process.exitCode = 2;
