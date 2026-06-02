@@ -366,7 +366,8 @@ function collectMaintenanceTelemetryIssues(params: {
     if (
       (lowerReason.includes("lancedb") && /commit|conflict|concurrent|vacuum|optimi/.test(lowerReason)) ||
       /concurrent maintenance mutation conflict/.test(lowerReason) ||
-      (lowerStepLog.includes("lancedb") && /commit.*conflict|concurrent.*mutation|vacuum.*conflict|optimi.*fail/i.test(stepLog)) ||
+      (lowerStepLog.includes("lancedb") &&
+        /commit.*conflict|concurrent.*mutation|vacuum.*conflict|optimi.*fail/i.test(stepLog)) ||
       /concurrent maintenance mutation conflict/i.test(stepLog)
     ) {
       addMaintenanceIssue(

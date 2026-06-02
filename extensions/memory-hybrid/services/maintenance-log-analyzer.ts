@@ -797,7 +797,7 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
         f.logPath,
         f.pluginVersion,
         f.actionTaken,
-        1,
+        f.occurrenceCount ?? 1,
       );
     }
   } finally {
@@ -814,7 +814,7 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
         `SELECT fingerprint,
            MIN(occurred_at) AS first_seen_at,
            MAX(occurred_at) AS last_seen_at,
-           COUNT(*) AS occurrence_count,
+           MAX(occurrence_count) AS occurrence_count,
            MAX(CASE WHEN action_taken = 'reported-glitchtip' THEN 1 ELSE 0 END) AS glitchtip_reported
          FROM maintenance_finding
          GROUP BY fingerprint`,

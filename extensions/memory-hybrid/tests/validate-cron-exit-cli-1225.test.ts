@@ -217,16 +217,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await mem.parseAsync(
-      [
-        "validate-cron-exit",
-        "--exit-path",
-        exitPath,
-        "--log-path",
-        logPath,
-        "--required-steps",
-        "distill",
-        "--json",
-      ],
+      ["validate-cron-exit", "--exit-path", exitPath, "--log-path", logPath, "--required-steps", "distill", "--json"],
       { from: "user" },
     );
 
@@ -238,7 +229,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
     const exitPath = join(dir, "failed.exit");
     const logPath = join(dir, "failed.log");
-    
+
     // Create a realistic failed maintenance scenario with a storage/concurrency error
     writeFileSync(exitPath, "2026-05-08T21:10:00Z reflect-rules exit=1 status=failed reason=nonzero_exit\n");
     writeFileSync(
@@ -250,10 +241,9 @@ Error: LanceDB commit conflict detected
     );
 
     const mem = new Command("hybrid-mem");
-    
+
     // Mock reportMaintenanceFailureIssues to verify it's called
-    const reportSpy = vi.spyOn(maintenanceReporter, "reportMaintenanceFailureIssues")
-      .mockResolvedValue(undefined);
+    const reportSpy = vi.spyOn(maintenanceReporter, "reportMaintenanceFailureIssues").mockResolvedValue(undefined);
 
     // Provide context with proper config to enable reporting
     const context: ValidateCronExitContext = {
@@ -315,22 +305,21 @@ Error: LanceDB commit conflict detected
     );
 
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
-    
+
     // Verify reportMaintenanceFailureIssues was called with issues
     expect(reportSpy).toHaveBeenCalledOnce();
-    
+
     const [issues, reportContext] = reportSpy.mock.calls[0] ?? [];
     expect(issues).toBeDefined();
     expect(issues?.length).toBeGreaterThan(0);
-    
+
     // Verify it found the concurrency/storage failure from the log
-    const storageIssue = issues?.find(i => 
-      i.failureClass === "lancedb_commit_conflict" && 
-      i.fingerprint.includes("lancedb_commit_conflict")
+    const storageIssue = issues?.find(
+      (i) => i.failureClass === "lancedb_commit_conflict" && i.fingerprint.includes("lancedb_commit_conflict"),
     );
     expect(storageIssue).toBeDefined();
     expect(storageIssue?.message).toContain("LanceDB");
-    
+
     // Verify context was passed correctly
     expect(reportContext?.pluginVersion).toBe("1.0.0-test");
     expect(reportContext?.cfg.errorReporting.enabled).toBe(true);
