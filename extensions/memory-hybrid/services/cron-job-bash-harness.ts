@@ -45,7 +45,7 @@ function shellSafeStepName(name: string): string {
 export function buildHybridMemCronBashBody(
   jobSlug: string,
   steps: HybridMemCronStep[],
-  requiredSteps: string[] = steps.map((s) => s.name),
+  requiredSteps: string[] = steps.filter((s) => !s.optional).map((s) => s.name),
 ): string {
   const lines = steps.map((s) => {
     const safe = shellSafeStepName(s.name);
@@ -218,7 +218,7 @@ export function buildHybridMemCronTaskMessage(
   options: { preamble?: string; steps: HybridMemCronStep[]; requiredSteps?: string[] },
 ): string {
   const preamble = options.preamble?.trim();
-  const requiredSteps = options.requiredSteps ?? options.steps.map((s) => s.name);
+  const requiredSteps = options.requiredSteps ?? options.steps.filter((s) => !s.optional).map((s) => s.name);
   const bash = buildHybridMemCronBashBody(jobSlug, options.steps, requiredSteps);
 
   // Build list of required steps for validation
