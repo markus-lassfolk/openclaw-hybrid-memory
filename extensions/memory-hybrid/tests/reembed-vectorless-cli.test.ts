@@ -636,3 +636,155 @@ describe("reembed-vectorless CLI partial success reporting", () => {
     expect(sleepMs).toContain(50);
   });
 });
+
+describe("reembed-vectorless metrics persistence (#1808)", () => {
+  const origArgv = process.argv.slice();
+
+  afterEach(() => {
+    process.argv = origArgv;
+    process.exitCode = undefined;
+    vi.restoreAllMocks();
+  });
+
+  it("writes .reembed-vectorless-last-run.json after --apply with resolvedSqlitePath set", async () => {
+    const { mkdtempSync, rmSync, existsSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const tmpDir = mkdtempSync(join(tmpdir(), "reembed-persist-test-"));
+    const resolvedSqlitePath = join(tmpDir, "memory.db");
+    const metricsPath = join(tmpDir, ".reembed-vectorless-last-run.json");
+
+    try {
+      process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+      const mem = new Command("hybrid-mem");
+
+      const fact = {
+        id: "persist-test-fact-0001",
+        text: "persisted fact text",
+        category: "fact",
+        source: "manual",
+      };
+
+      let vectorlessCallCount = 0;
+      const factsDb = {
+        getCount: vi.fn().mockReturnValue(50),
+        countVectorlessActiveFacts: vi.fn((source?: string) => {
+          if (source !== undefined) return 1;
+          vectorlessCallCount++;
+          return vectorlessCallCount <= 2 ? 1 : 0;
+        }),
+        listVectorlessActiveFacts: vi.fn().mockReturnValue([fact]),
+        storeEmbedding: vi.fn(),
+        setEmbeddingModel: vi.fn(),
+      };
+      const vectorDb = {
+        runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+        delete: vi.fn().mockResolvedValue(false),
+        store: vi.fn().mockResolvedValue(undefined),
+      };
+      const embeddings = {
+        modelName: "test-embed-model",
+        embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2, 0.3]]),
+        embed: vi.fn(),
+      };
+
+      registerManageStorageAndStats(mem, {
+        factsDb,
+        vectorDb,
+        aliasDb: {},
+        versionInfo: { version: "test" },
+        embeddings,
+        mergeResults: vi.fn(),
+        getMemoryCategories: () => ["fact"],
+        cfg: { memory: { categories: ["fact"] } },
+        runCompaction: vi.fn(),
+        tieringEnabled: false,
+        ctx: { resolvedSqlitePath },
+        listCommands: () => [],
+        auditStore: null,
+        merge: vi.fn(),
+        BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+      } as any);
+
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+
+      await mem.parseAsync(["reembed-vectorless", "--apply", "--limit", "1", "--batch-size", "1", "--json"], {
+        from: "user",
+      });
+
+      expect(existsSync(metricsPath)).toBe(true);
+      const metricsContent = JSON.parse(readFileSync(metricsPath, "utf-8")) as {
+        ts?: string;
+        embedded?: number;
+        after?: number;
+        vectorSloRepair?: { sloMetAfterRun?: boolean; estimatedRunsToReachSlo?: number };
+      };
+      expect(typeof metricsContent.ts).toBe("string");
+      expect(metricsContent.embedded).toBe(1);
+      expect(typeof metricsContent.after).toBe("number");
+      expect(metricsContent.vectorSloRepair).toBeDefined();
+      expect(typeof metricsContent.vectorSloRepair?.sloMetAfterRun).toBe("boolean");
+      expect(typeof metricsContent.vectorSloRepair?.estimatedRunsToReachSlo).toBe("number");
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips metrics persistence when resolvedSqlitePath is null", async () => {
+    const { existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    process.argv = ["node", "/usr/bin/openclaw", "hybrid-mem"];
+    const mem = new Command("hybrid-mem");
+
+    const factsDb = {
+      getCount: vi.fn().mockReturnValue(10),
+      countVectorlessActiveFacts: vi.fn().mockReturnValue(1),
+      listVectorlessActiveFacts: vi
+        .fn()
+        .mockReturnValue([{ id: "skip-persist-001", text: "fact", category: "fact", source: "manual" }]),
+      storeEmbedding: vi.fn(),
+      setEmbeddingModel: vi.fn(),
+    };
+    const vectorDb = {
+      runWithAutoOptimizePaused: vi.fn(async (fn: () => Promise<void>) => await fn()),
+      delete: vi.fn().mockResolvedValue(false),
+      store: vi.fn().mockResolvedValue(undefined),
+    };
+    const embeddings = {
+      modelName: "test-embed-model",
+      embedBatch: vi.fn().mockResolvedValue([[0.1, 0.2]]),
+      embed: vi.fn(),
+    };
+
+    registerManageStorageAndStats(mem, {
+      factsDb,
+      vectorDb,
+      aliasDb: {},
+      versionInfo: { version: "test" },
+      embeddings,
+      mergeResults: vi.fn(),
+      getMemoryCategories: () => ["fact"],
+      cfg: { memory: { categories: ["fact"] } },
+      runCompaction: vi.fn(),
+      tieringEnabled: false,
+      ctx: { resolvedSqlitePath: null },
+      listCommands: () => [],
+      auditStore: null,
+      merge: vi.fn(),
+      BACKFILL_DECAY_MARKER: ".backfill-decay-done",
+    } as any);
+
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(process, "exit").mockImplementation(() => undefined as never);
+
+    await mem.parseAsync(["reembed-vectorless", "--apply", "--limit", "1", "--json"], { from: "user" });
+
+    // No metrics file should appear anywhere in tmpdir since resolvedSqlitePath is null
+    const strayMetrics = join(tmpdir(), ".reembed-vectorless-last-run.json");
+    expect(existsSync(strayMetrics)).toBe(false);
+  });
+});
