@@ -318,7 +318,7 @@ function collectMaintenanceTelemetryIssues(params: {
   };
 
   for (const step of failedSteps) {
-    const lowerReason = `${step.failureReason ?? step.reason ?? ""} ${logContent}`.toLowerCase();
+    const lowerReason = (step.failureReason ?? step.reason ?? "").toLowerCase();
     if (
       (lowerReason.includes("lancedb") && /commit|conflict|concurrent|vacuum|optimi/.test(lowerReason)) ||
       /concurrent maintenance mutation conflict/.test(lowerReason)

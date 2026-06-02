@@ -6,6 +6,7 @@ import {
   isErrorReporterActive,
 } from "./error-reporter.js";
 import type { MaintenanceTelemetryIssue } from "./cron-exit-validator.js";
+import { getEnv } from "../utils/env-manager.js";
 
 export const MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV = "HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING";
 const MAINTENANCE_REPORTER_FLUSH_TIMEOUT_MS = 750;
@@ -16,14 +17,14 @@ type MaintenanceReporterContext = {
   logger?: Pick<Console, "debug" | "info" | "warn">;
 };
 
-function envDisablesMaintenanceFailureReporting(env: NodeJS.ProcessEnv = process.env): boolean {
-  const value = env[MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV];
+function envDisablesMaintenanceFailureReporting(env?: Record<string, string | undefined>): boolean {
+  const value = env ? env[MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV] : getEnv(MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV);
   return typeof value === "string" && /^(1|true|yes|on)$/i.test(value.trim());
 }
 
 export function shouldReportMaintenanceFailures(
   cfg: Pick<HybridMemoryConfig, "errorReporting" | "maintenance">,
-  env: NodeJS.ProcessEnv = process.env,
+  env?: Record<string, string | undefined>,
 ): boolean {
   if (envDisablesMaintenanceFailureReporting(env)) return false;
   if (cfg.maintenance.failureReporting.enabled === false) return false;

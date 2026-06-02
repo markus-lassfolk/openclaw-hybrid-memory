@@ -159,7 +159,7 @@ function parseMaintenanceFailureReportingConfig(cfg: Record<string, unknown>): M
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const failureReportingRaw = maintenanceRaw?.failureReporting as Record<string, unknown> | undefined;
   return {
-    enabled: failureReportingRaw?.enabled !== false,
+    enabled: failureReportingRaw?.enabled === true,
   };
 }
 
