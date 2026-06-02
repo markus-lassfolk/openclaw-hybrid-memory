@@ -1515,6 +1515,25 @@ describe("hybridConfigSchema.parse", () => {
       expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
     });
 
+    it("#1801: single-model maintenance keeps cheap default-tier fallback when expensive global fallback is filtered", () => {
+      // Regression: when llm.fallbackModel is expensive (gpt-4o) it fills the chain, skipping
+      // the old chain.length===0 guard, then gets stripped by cheap-only; the safety-net must
+      // still append cheap default-tier candidates after the final filter.
+      const cfg = hybridConfigSchema.parse({
+        ...validBase,
+        llm: {
+          maintenance: ["minimax/MiniMax-M2.7-highspeed"],
+          fallbackModel: "openai/gpt-4o",
+          default: ["openai/gpt-4.1-mini"],
+          heavy: ["openai/gpt-5.4"],
+        },
+      });
+      const r = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      expect(r.defaultModel).toBe("minimax/MiniMax-M2.7-highspeed");
+      // gpt-4o is expensive → filtered; gpt-4.1-mini is cheap → kept as fallback
+      expect(r.fallbackModels).toEqual(["openai/gpt-4.1-mini"]);
+    });
+
     it("keeps maintenance fallback order when reflection primary is overridden", () => {
       const cfg = hybridConfigSchema.parse({
         ...validBase,

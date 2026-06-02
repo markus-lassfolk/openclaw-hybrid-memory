@@ -339,11 +339,6 @@ export function resolveReflectionModelAndFallbacks(
   } else if (cfg.llm && chain.length === 0 && !skipGlobalFallbackAppend) {
     appendUniqueFallback(chain, cfg.llm.fallbackModel, defaultModel);
     appendUniqueFallbackList(chain, cfg.distill?.fallbackModels, defaultModel);
-    // #1801: if maintenance is pinned to a single model (e.g. MiniMax), inherit default-tier
-    // candidates so reflection-rules isn't left with an empty fallback chain.
-    if (tier === "maintenance" && explicitMaintList.length === 1 && chain.length === 0) {
-      appendUniqueFallbackList(chain, getLLMModelPreference(cronCfg, "default"), defaultModel);
-    }
   }
 
   const primaryOverride = primaryModelOverride?.trim();
@@ -355,6 +350,17 @@ export function resolveReflectionModelAndFallbacks(
 
   if (tier === "maintenance" && maintPolicy === "cheap-only") {
     chain = filterMaintenanceTierFallbackModels(chain, effectivePrimary, explicitMaintenanceSet);
+  }
+
+  // #1801: After all filtering, if single-model maintenance still has an empty chain, inherit
+  // cheap default-tier candidates. This covers the case where a global fallback (e.g.
+  // llm.fallbackModel) was appended but then stripped by the cheap-only filter.
+  // Skip when explicit-only policy is active — the operator intentionally named no fallbacks.
+  if (tier === "maintenance" && explicitMaintList.length === 1 && chain.length === 0 && !skipGlobalFallbackAppend) {
+    appendUniqueFallbackList(chain, getLLMModelPreference(cronCfg, "default"), effectivePrimary);
+    if (maintPolicy === "cheap-only") {
+      chain = filterMaintenanceTierFallbackModels(chain, effectivePrimary, explicitMaintenanceSet);
+    }
   }
 
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };
