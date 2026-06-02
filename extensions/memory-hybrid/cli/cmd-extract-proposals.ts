@@ -40,9 +40,12 @@ export async function runGenerateProposalsForCli(
     );
   const hasNonGlobalScopedFacts = allRelevant.some((fact) => fact.scope && fact.scope !== "global");
   if (!hasScopeFilter && hasNonGlobalScopedFacts) {
-    ctx.logger.warn?.(
-      "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.",
-    );
+    const scopeFilterWarning =
+      "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.";
+    if (cfg.personaProposals.requireScopeFilter) {
+      throw new Error(scopeFilterWarning);
+    }
+    ctx.logger.warn?.(scopeFilterWarning);
   }
   const patterns = allRelevant.filter((f) => f.category === "pattern");
   const rules = allRelevant.filter((f) => f.category === "rule");

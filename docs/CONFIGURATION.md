@@ -182,7 +182,7 @@ Set **`interactiveEnrichment`** to **`fast`** for stable, cost-effective default
 | `progressiveGroupByCategory` | `false` | Group index lines by category for readability |
 | `progressivePinnedRecallCount` | `3` | In `progressive_hybrid`: facts with recallCount ≥ this or permanent decay are injected in full |
 | `interactiveEnrichment` | `balanced` | `fast` \| `balanced` \| `full` — unified control for HyDE + ambient multi-query on interactive turns; see table above |
-| `scopeFilter` | (none) | Multi-user: restrict auto-recall to global + matching scopes. `{ "userId": "alice", "agentId": "support-bot", "sessionId": "sess-xyz" }` — omit any to not filter by that dimension. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). |
+| `scopeFilter` | (none) | Multi-user: restrict auto-recall to global + matching scopes. `{ "userId": "alice", "agentId": "support-bot", "sessionId": "sess-xyz" }` — omit any to not filter by that dimension. See [MEMORY-SCOPING.md](MEMORY-SCOPING.md). When `personaProposals.enabled` is `true`, this also scopes proposal inputs; set it in shared-memory setups to avoid cross-user/agent contamination. |
 
 ### Retrieval directives
 
