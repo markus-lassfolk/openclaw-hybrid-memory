@@ -764,6 +764,7 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
         log_path TEXT,
         plugin_version TEXT,
         action_taken TEXT,
+        occurrence_count INTEGER NOT NULL DEFAULT 1,
         resolved_at INTEGER,
         resolved_by TEXT,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
@@ -774,8 +775,8 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
     `);
     const stmt = db.prepare(
       `INSERT OR IGNORE INTO maintenance_finding
-       (id, occurred_at, job, step, exit_code, classification, fingerprint, log_excerpt, log_path, plugin_version, action_taken)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, occurred_at, job, step, exit_code, classification, fingerprint, log_excerpt, log_path, plugin_version, action_taken, occurrence_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const f of findings) {
       stmt.run(
@@ -790,6 +791,7 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
         f.logPath,
         f.pluginVersion,
         f.actionTaken,
+        f.occurrenceCount ?? 1,
       );
     }
   } finally {
@@ -806,7 +808,7 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
         `SELECT fingerprint,
            MIN(occurred_at) AS first_seen_at,
            MAX(occurred_at) AS last_seen_at,
-           COUNT(*) AS occurrence_count,
+           SUM(IFNULL(occurrence_count, 1)) AS occurrence_count,
            MAX(CASE WHEN action_taken = 'reported-glitchtip' THEN 1 ELSE 0 END) AS glitchtip_reported
          FROM maintenance_finding
          GROUP BY fingerprint`,
@@ -1028,7 +1030,8 @@ export function renderMaintenanceDigestMarkdown(report: Omit<MaintenanceAnalysis
     } else {
       lines.push("None.");
     }
-    const hiddenCount = Math.max(0, report.findings.length - 40);
+    const actualShown = Math.min(newFindings.length, 20) + Math.min(stillFailing.length, 20);
+    const hiddenCount = Math.max(0, report.findings.length - actualShown);
     if (hiddenCount > 0) lines.push("", `… and ${hiddenCount} more findings.`);
   }
   const trend = report.summary.weekOverWeek ?? [];
