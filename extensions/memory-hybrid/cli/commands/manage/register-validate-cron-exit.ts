@@ -51,6 +51,9 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
             printValidationResult(result);
           }
 
+          // Best-effort telemetry runs after output so one-shot cron validation still
+          // emits JSON/status promptly; reportMaintenanceFailureIssues no-ops when no
+          // normalized issues were derived from the run.
           if (context) {
             await reportMaintenanceFailureIssues(result.reportableIssues, {
               cfg: context.cfg,

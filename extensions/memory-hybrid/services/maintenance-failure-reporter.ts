@@ -8,6 +8,7 @@ import {
 import type { MaintenanceTelemetryIssue } from "./cron-exit-validator.js";
 
 export const MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV = "HYBRID_MEMORY_DISABLE_MAINTENANCE_ERROR_REPORTING";
+const MAINTENANCE_REPORTER_FLUSH_TIMEOUT_MS = 750;
 
 type MaintenanceReporterContext = {
   cfg: Pick<HybridMemoryConfig, "errorReporting" | "maintenance">;
@@ -108,10 +109,14 @@ export async function reportMaintenanceFailureIssues(
       });
     }
 
-    await flushErrorReporter(750);
+    await flushErrorReporter(MAINTENANCE_REPORTER_FLUSH_TIMEOUT_MS);
   } catch (err) {
-    context.logger?.debug?.(
-      `memory-hybrid: maintenance failure reporting skipped after reporter error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    const firstFingerprint = issues[0]?.fingerprint.join(":");
+    const message = `memory-hybrid: maintenance failure reporting skipped after reporter error: ${err instanceof Error ? err.message : String(err)} (issues=${issues.length}${firstFingerprint ? ` first=${firstFingerprint}` : ""})`;
+    if (context.logger?.debug) {
+      context.logger.debug(message);
+    } else {
+      console.warn(message);
+    }
   }
 }

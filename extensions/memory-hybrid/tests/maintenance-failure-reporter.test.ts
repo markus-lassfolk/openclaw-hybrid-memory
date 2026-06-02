@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { HybridMemoryConfig } from "../config.js";
 
 describe("maintenance-failure-reporter", () => {
   afterEach(() => {
@@ -22,7 +23,7 @@ describe("maintenance-failure-reporter", () => {
           enabled: true,
         },
       },
-    } as any;
+    } satisfies Pick<HybridMemoryConfig, "errorReporting" | "maintenance">;
   }
 
   it("reports when maintenance and error reporting are both enabled", async () => {

@@ -543,6 +543,8 @@ error: unknown command 'bar'
       expect(first.reportableIssues[0]?.fingerprint.join(":")).toBe(
         "hybrid-memory-maintenance:weekly-reflection:reflect-rules:invalid_response_format_zero_stored",
       );
+      expect(first.reportableIssues.length).toBeGreaterThan(0);
+      expect(second.reportableIssues.length).toBeGreaterThan(0);
       expect(second.reportableIssues[0]?.fingerprint.join(":")).toBe(first.reportableIssues[0]?.fingerprint.join(":"));
     });
 

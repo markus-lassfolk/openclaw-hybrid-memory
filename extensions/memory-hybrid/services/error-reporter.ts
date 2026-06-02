@@ -544,6 +544,10 @@ let logger: any = console; // Default fallback to console
 const errorDedup = new Map<string, number>(); // Rate limiting: fingerprint -> timestamp
 let telemetryMuteReason: string | null = null;
 
+function buildFingerprintKey(fingerprint: string[]): string {
+  return fingerprint.map((part) => scrubString(String(part))).join(":");
+}
+
 export function setErrorReporterMuted(muted: boolean, reason?: string): void {
   telemetryMuteReason = muted ? (reason ?? "muted") : null;
 }
@@ -706,7 +710,7 @@ export function capturePluginError(
   // Rate limiting: dedup same errors within 60s
   const fingerprint =
     Array.isArray(context.fingerprint) && context.fingerprint.length > 0
-      ? context.fingerprint.map((part) => scrubString(String(part))).join(":")
+      ? buildFingerprintKey(context.fingerprint)
       : `${error.name}:${scrubString(error.message).slice(0, 100)}`;
   const now = Date.now();
   const lastSeen = errorDedup.get(fingerprint);

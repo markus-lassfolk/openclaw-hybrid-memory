@@ -43,6 +43,8 @@ import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 const SKIP_REASON_COOLDOWN = "skipped_cooldown";
 const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
 const SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP = "1970-01-01T00:00:00Z";
+const LARGE_BACKLOG_THRESHOLD = 1000;
+const MAINTENANCE_JOB_SUFFIX_PATTERNS = [/-\d{8}T\d{6}Z-\d+$/, /-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/, /-\d{8}\.cron$/];
 
 export interface ExitStep {
   timestamp: string;
@@ -247,10 +249,7 @@ function extractMaintenanceJobName(path: string | undefined): string {
   if (!path) return "unknown-job";
   const file = basename(path);
   const withoutExitSuffix = file.replace(/\.exit\.txt$/, "").replace(/\.log$/, "");
-  return withoutExitSuffix
-    .replace(/-\d{8}T\d{6}Z-\d+$/, "")
-    .replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/, "")
-    .replace(/-\d{8}\.cron$/, "");
+  return MAINTENANCE_JOB_SUFFIX_PATTERNS.reduce((jobName, pattern) => jobName.replace(pattern, ""), withoutExitSuffix);
 }
 
 function buildMaintenanceFingerprint(jobName: string, stepName: string, failureClass: string): string[] {
@@ -468,7 +467,12 @@ function collectMaintenanceTelemetryIssues(params: {
     /\bimplicit-feedback-collapse\b/i.test(logContent) ||
     /\bweekly-implicit-feedback-collapse\b/i.test(logContent) ||
     /\bcollapse\b/i.test(logContent);
-  if (collapseDetected && typeof collapseScanned === "number" && collapseScanned >= 1000 && collapseCount === 0) {
+  if (
+    collapseDetected &&
+    typeof collapseScanned === "number" &&
+    collapseScanned >= LARGE_BACKLOG_THRESHOLD &&
+    collapseCount === 0
+  ) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
