@@ -218,7 +218,7 @@ The test suite (`tests/error-reporter.test.ts`) verifies:
 
 ## Maintenance Failure Reporting
 
-**Added in:** 2026.6.10 (Issue #1836)
+**Added in:** 2026.6.20 (Issue #1836)
 
 The error reporter has been extended to support **maintenance task failure reporting**. This feature allows the plugin to report grouped, deduplicated issues from hybrid-memory maintenance tasks (like `validate-cron-exit`, `reflect-rules`, `implicit-feedback`, etc.) to GlitchTip/Sentry for observability.
 
@@ -366,7 +366,7 @@ const issues: MaintenanceTelemetryIssue[] = [
 
 await reportMaintenanceFailureIssues(issues, {
   cfg: config,
-  pluginVersion: "2026.6.10",
+  pluginVersion: "2026.6.20",
   logger: console,
 });
 ```
