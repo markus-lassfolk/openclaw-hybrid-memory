@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execSync } from "../utils/process-runner.js";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 
