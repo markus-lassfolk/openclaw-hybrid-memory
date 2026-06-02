@@ -140,9 +140,10 @@ function captureFallbackMemory(): FallbackMemory {
 }
 
 function isTimeoutError(err: unknown): boolean {
+  const errObj = err as NodeJS.ErrnoException & { killed?: boolean };
   return (
-    (err as NodeJS.ErrnoException)?.code === "ETIMEDOUT" ||
-    (err as { killed?: boolean })?.killed === true
+    errObj?.code === "ETIMEDOUT" ||
+    (errObj?.killed === true && errObj?.code !== "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
   );
 }
 
