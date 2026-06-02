@@ -933,9 +933,9 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
 
   it("keeps enough canonical context across many batches so late-page duplicates still collapse", () => {
     const db = makeDb(tmpDir);
-    // Keep these paired values large enough to span many pages and exceed legacy carry windows.
+    // Keep these paired values large enough to span many pages and exceed legacy carry windows (~2000 at limit=250).
     const PAGED_SCAN_LIMIT = 250;
-    const INTERLEAVED_UNIQUE_ROWS = 2200;
+    const INTERLEAVED_UNIQUE_ROWS = 2050;
     const canonical = db.store({
       text: "collapse canonical alpha beta gamma delta epsilon",
       category: "technical",

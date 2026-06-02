@@ -117,6 +117,10 @@ function normalizeLessonTokens(text: string): Set<string> {
 function tokenJaccard(a: string, b: string): number {
   const left = normalizeLessonTokens(a);
   const right = normalizeLessonTokens(b);
+  return tokenJaccardFromSets(left, right);
+}
+
+function tokenJaccardFromSets(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
   if (left.size === 0 || right.size === 0) return 0;
   let intersection = 0;
   for (const token of left) {
@@ -262,10 +266,21 @@ export function cleanupImplicitFeedbackDuplicates(
   let collapsed = 0;
   let scanned = 0;
   const reportEvery = Math.max(1, opts.reportEvery ?? 250);
-  const CANONICAL_WINDOW_SIZE = Math.min(50_000, Math.max(20_000, limit * 8));
-  const canonical: Array<{ id: string; text: string }> = [...(opts.seedCanonical ?? [])]
+  const CANONICAL_WINDOW_SIZE = Math.min(25_000, Math.max(12_000, limit * 12));
+  const canonical: Array<{ id: string; text: string; tokens: Set<string> }> = [...(opts.seedCanonical ?? [])]
     .slice(-CANONICAL_WINDOW_SIZE)
-    .map((c) => ({ id: c.id, text: c.text }));
+    .map((c) => ({ id: c.id, text: c.text, tokens: normalizeLessonTokens(c.text) }));
+  const canonicalTokenIndex = new Map<string, Set<number>>();
+  for (const [index, entry] of canonical.entries()) {
+    for (const token of entry.tokens) {
+      const tokenEntries = canonicalTokenIndex.get(token);
+      if (tokenEntries) {
+        tokenEntries.add(index);
+      } else {
+        canonicalTokenIndex.set(token, new Set([index]));
+      }
+    }
+  }
   const nowSec = Math.floor(Date.now() / 1000);
   const reinforce = rawDb.prepare(
     "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
@@ -283,11 +298,30 @@ export function cleanupImplicitFeedbackDuplicates(
         break;
       }
       scanned++;
-      const match = canonical.find(
-        (candidate) => candidate.text === row.text || tokenJaccard(candidate.text, row.text) >= threshold,
-      );
+      const rowTokens = normalizeLessonTokens(row.text);
+      const candidateIndices = new Set<number>();
+      for (const token of rowTokens) {
+        const tokenEntries = canonicalTokenIndex.get(token);
+        if (!tokenEntries) continue;
+        for (const candidateIndex of tokenEntries) {
+          candidateIndices.add(candidateIndex);
+        }
+      }
+      const match = canonical.find((candidate) => candidate.text === row.text)
+        ?? [...candidateIndices]
+          .sort((left, right) => left - right)
+          .map((index) => canonical[index])
+          .find((candidate) => tokenJaccardFromSets(candidate.tokens, rowTokens) >= threshold);
       if (!match) {
-        canonical.push({ id: row.id, text: row.text });
+        const index = canonical.push({ id: row.id, text: row.text, tokens: rowTokens }) - 1;
+        for (const token of rowTokens) {
+          const tokenEntries = canonicalTokenIndex.get(token);
+          if (tokenEntries) {
+            tokenEntries.add(index);
+          } else {
+            canonicalTokenIndex.set(token, new Set([index]));
+          }
+        }
         if (scanned % reportEvery === 0 || scanned === rows.length) {
           opts.onProgress?.({ scanned, total: rows.length, collapsed });
         }
