@@ -160,7 +160,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     expect(payload.failedSteps.some((s) => s.name === "distill" && s.exit === 124)).toBe(true);
   });
 
-  it("emits grouped maintenance events for semantic failures without changing a zero exit status", async () => {
+  it("exits non-zero for reflect-rules semantic failures that would otherwise look mechanically successful", async () => {
     stubOpenclawArgv();
     const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
     const exitPath = join(dir, "weekly-reflection-20260508T021500Z-111.exit.txt");
@@ -188,13 +188,13 @@ describe("validate-cron-exit CLI (#1225)", () => {
       { from: "user" },
     );
 
-    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
     const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
       maintenanceStatus: string;
       semanticStatus: string;
       reportableIssues: Array<{ fingerprint: string; failureClass: string }>;
     };
-    expect(payload.maintenanceStatus).toBe("success");
+    expect(payload.maintenanceStatus).toBe("failed");
     expect(payload.semanticStatus).toBe("semantic_fail");
     expect(payload.reportableIssues[0]?.fingerprint).toBe(
       "hybrid-memory-maintenance:weekly-reflection:reflect-rules:invalid_response_format_zero_stored",
@@ -217,16 +217,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     vi.spyOn(console, "log").mockImplementation(() => {});
 
     await mem.parseAsync(
-      [
-        "validate-cron-exit",
-        "--exit-path",
-        exitPath,
-        "--log-path",
-        logPath,
-        "--required-steps",
-        "distill",
-        "--json",
-      ],
+      ["validate-cron-exit", "--exit-path", exitPath, "--log-path", logPath, "--required-steps", "distill", "--json"],
       { from: "user" },
     );
 
@@ -238,7 +229,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
     const exitPath = join(dir, "failed.exit");
     const logPath = join(dir, "failed.log");
-    
+
     // Create a realistic failed maintenance scenario with a storage/concurrency error
     writeFileSync(exitPath, "2026-05-08T21:10:00Z reflect-rules exit=1 status=failed reason=nonzero_exit\n");
     writeFileSync(
@@ -250,10 +241,9 @@ Error: LanceDB commit conflict detected
     );
 
     const mem = new Command("hybrid-mem");
-    
+
     // Mock reportMaintenanceFailureIssues to verify it's called
-    const reportSpy = vi.spyOn(maintenanceReporter, "reportMaintenanceFailureIssues")
-      .mockResolvedValue(undefined);
+    const reportSpy = vi.spyOn(maintenanceReporter, "reportMaintenanceFailureIssues").mockResolvedValue(undefined);
 
     // Provide context with proper config to enable reporting
     const context: ValidateCronExitContext = {
@@ -315,22 +305,21 @@ Error: LanceDB commit conflict detected
     );
 
     await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
-    
+
     // Verify reportMaintenanceFailureIssues was called with issues
     expect(reportSpy).toHaveBeenCalledOnce();
-    
+
     const [issues, reportContext] = reportSpy.mock.calls[0] ?? [];
     expect(issues).toBeDefined();
     expect(issues?.length).toBeGreaterThan(0);
-    
+
     // Verify it found the concurrency/storage failure from the log
-    const storageIssue = issues?.find(i => 
-      i.failureClass === "lancedb_commit_conflict" && 
-      i.fingerprint.includes("lancedb_commit_conflict")
+    const storageIssue = issues?.find(
+      (i) => i.failureClass === "lancedb_commit_conflict" && i.fingerprint.includes("lancedb_commit_conflict"),
     );
     expect(storageIssue).toBeDefined();
     expect(storageIssue?.message).toContain("LanceDB");
-    
+
     // Verify context was passed correctly
     expect(reportContext?.pluginVersion).toBe("1.0.0-test");
     expect(reportContext?.cfg.errorReporting.enabled).toBe(true);
