@@ -326,6 +326,7 @@ export class CredentialsDB extends BaseSqliteStore {
     if (backupPath) {
       // VACUUM INTO creates a consistent snapshot even when the DB is open (WAL-safe).
       this.liveDb.prepare("VACUUM INTO ?").run(backupPath);
+      tryRestrictSqliteDbFileMode(backupPath);
     }
 
     const result = this.enableEncryptionAtRest(encryptionKey);
@@ -341,7 +342,10 @@ export class CredentialsDB extends BaseSqliteStore {
           );
         }
         for (const e of entries) {
-          this.get(e.service, e.type as CredentialType);
+          const verifiedEntry = this.get(e.service, e.type as CredentialType);
+          if (!verifiedEntry) {
+            throw new Error(`Verification failed: missing credential ${e.service}/${e.type}`);
+          }
         }
         verified = true;
       } catch (err) {

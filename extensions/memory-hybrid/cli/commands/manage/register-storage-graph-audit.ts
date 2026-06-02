@@ -132,7 +132,20 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       );
     }
     // #1832: warn when credentials vault is plaintext but an encryption key is configured.
-    const credentialsStatus = b.runVaultStatus?.() ?? null;
+    let credentialsStatus = null;
+    try {
+      credentialsStatus = b.runVaultStatus?.() ?? null;
+    } catch (err) {
+      preReportErrors.push({
+        section: "credentials.vaultStatus",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "audit-health-vault-status",
+        severity: "info",
+        subsystem: "cli",
+      });
+    }
     if (credentialsStatus?.migrationRequired) {
       preReportWarnings.push(
         `Credentials vault is plaintext (kdf_version=${credentialsStatus.kdfVersion}) but an encryption key is configured. ` +

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -489,6 +489,9 @@ describe("CredentialsDB.encryptVaultSafe", () => {
     warnSpy.mockRestore();
     const res = db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { backupPath });
     expect(existsSync(backupPath)).toBe(true);
+    if (process.platform !== "win32") {
+      expect(statSync(backupPath).mode & 0o777).toBe(0o600);
+    }
     expect(res.backupPath).toBe(backupPath);
     expect(res.migrated).toBe(1);
     expect(res.kdfVersion).toBe(2);
@@ -509,6 +512,28 @@ describe("CredentialsDB.encryptVaultSafe", () => {
     const res = db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { verify: true });
     expect(res.verified).toBe(true);
     expect(res.migrated).toBe(2);
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("verify:true fails when a migrated entry cannot be read back", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-safe-verify-fail-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "secret1" });
+    plainDb.close();
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+    const originalGet = db2.get.bind(db2);
+    const getSpy = vi.spyOn(db2, "get").mockImplementation((service, type) => {
+      if (service === "svc" && type === "api_key") return null;
+      return originalGet(service, type);
+    });
+    expect(() => db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { verify: true })).toThrow(
+      /Vault encrypted but post-encryption verification failed: Verification failed: missing credential svc\/api_key\./,
+    );
+    getSpy.mockRestore();
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });

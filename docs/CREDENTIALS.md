@@ -106,7 +106,7 @@ openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes
 ```
 
 This will:
-1. Create a consistent plaintext backup at `<vault-path>.bak.<timestamp>` (VACUUM INTO — safe on a live open connection).
+1. Create a consistent plaintext backup at `<vault-path>.bak.<timestamp>-<pid>` (VACUUM INTO — safe on a live open connection).
 2. Encrypt the vault in-place via an atomic SQLite transaction.
 3. Decrypt every entry to confirm values are readable after encryption.
 4. Print the backup path and a verification confirmation.
@@ -116,14 +116,14 @@ This will:
 | Option | Description |
 |--------|-------------|
 | `--yes` | Apply changes (default is dry-run) |
-| `--backup` | Auto-generate a `.bak.<timestamp>` backup before encrypting |
+| `--backup` | Auto-generate a `.bak.<timestamp>-<pid>` backup before encrypting |
 | `--backup-path <path>` | Custom backup path (implies backup) |
 | `--verify` | Verify all entries are readable after encryption |
 
 **Safety note:** If `--verify` fails (which would indicate a corrupt DB), the command throws with the backup path so you can manually restore. The in-place encryption is already committed at that point — do NOT re-run encrypt-vault. Restore from the backup instead:
 
 ```bash
-cp /path/to/credentials.db.bak.<timestamp> /path/to/credentials.db
+cp /path/to/credentials.db.bak.<timestamp>-<pid> /path/to/credentials.db
 ```
 
 After running, restart the gateway (or run `openclaw hybrid-mem verify`) to confirm the vault now reports `encrypted (kdf_version=2)`.
