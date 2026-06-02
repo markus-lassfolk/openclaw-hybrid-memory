@@ -10,6 +10,8 @@
  * Self-contained — does not require an active agent session.
  */
 
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -86,6 +88,13 @@ export interface DreamCycleConfig {
    * Default: true (enabled for backward compatibility).
    */
   enableReflectionRules?: boolean;
+  /**
+   * Directory where per-stage durable JSON artifacts are written (Issue #1827).
+   * Each stage writes `stage-NN-<label>.json` with started/succeeded/failed status,
+   * timing, and summary. Created automatically if it does not exist.
+   * When unset (default), no artifact files are written.
+   */
+  stageArtifactDir?: string;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -607,6 +616,30 @@ export async function runDreamCycle(
   logger.info("memory-hybrid: dream-cycle — starting nightly cycle");
   const cycleStartedAt = Date.now();
   const v = !!config.verbose;
+  const runId = `${new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)}Z-${process.pid}`;
+  // Ensure stage artifact dir exists when configured.
+  if (config.stageArtifactDir) {
+    try {
+      mkdirSync(config.stageArtifactDir, { recursive: true });
+    } catch {
+      // Non-fatal: artifact writes below will also fail gracefully.
+    }
+  }
+  const writeStageArtifact = (stageNumber: number, label: string, payload: Record<string, unknown>): void => {
+    if (!config.stageArtifactDir) return;
+    try {
+      const sanitized = label
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .toLowerCase()
+        .slice(0, 60);
+      const filename = `stage-${String(stageNumber).padStart(2, "0")}-${sanitized}.json`;
+      const filePath = join(config.stageArtifactDir, filename);
+      writeFileSync(filePath, JSON.stringify({ runId, stage: label, stageNumber, ...payload }, null, 2));
+    } catch {
+      // Artifact write failures are non-fatal.
+    }
+  };
   let stageCounter = 0;
   const beginStage = (
     label: string,
@@ -618,6 +651,7 @@ export async function runDreamCycle(
     const stageNumber = ++stageCounter;
     const startedAt = Date.now();
     logger.info(`memory-hybrid: dream-cycle — stage ${stageNumber} start: ${label}`);
+    writeStageArtifact(stageNumber, label, { status: "started", startedAt: new Date(startedAt).toISOString() });
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     if (v && opts?.heartbeat === true) {
       heartbeat = setInterval(() => {
@@ -639,11 +673,25 @@ export async function runDreamCycle(
         logger.info(
           `memory-hybrid: dream-cycle — stage ${stageNumber} complete in ${elapsedSec}s: ${label}${summary ? `; ${summary}` : ""}`,
         );
+        writeStageArtifact(stageNumber, label, {
+          status: "succeeded",
+          startedAt: new Date(startedAt).toISOString(),
+          completedAt: new Date().toISOString(),
+          elapsedSec,
+          ...(summary != null ? { summary } : {}),
+        });
       },
       fail: (err: unknown) => {
         clearHeartbeat();
         const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
         logger.warn(`memory-hybrid: dream-cycle — stage ${stageNumber} failed after ${elapsedSec}s: ${label}: ${err}`);
+        writeStageArtifact(stageNumber, label, {
+          status: "failed",
+          startedAt: new Date(startedAt).toISOString(),
+          completedAt: new Date().toISOString(),
+          elapsedSec,
+          error: String(err),
+        });
       },
     };
   };

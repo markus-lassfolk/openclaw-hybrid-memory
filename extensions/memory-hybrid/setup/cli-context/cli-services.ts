@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
@@ -410,6 +411,14 @@ export function buildCliContextServices(
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
             deny: cfg.nightlyCycle.consolidationEventTypeDeny,
           },
+          stageArtifactDir: (() => {
+            if (process.env.HYBRID_MEM_DREAM_STAGE_DIR?.trim()) {
+              return process.env.HYBRID_MEM_DREAM_STAGE_DIR.trim();
+            }
+            const openclawHome = process.env.OPENCLAW_HOME?.trim() || join(homedir(), ".openclaw");
+            const runId = `${new Date().toISOString().replace(/[:.]/g, "").slice(0, 15)}Z-${process.pid}`;
+            return join(openclawHome, "logs", "dream-cycle", `run-${runId}`);
+          })(),
         },
         logSink,
         provenanceService,

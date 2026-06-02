@@ -919,6 +919,95 @@ describe("runDreamCycle", () => {
 
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("active SQLite fact(s) without vectors"));
   });
+
+  it("writes per-stage JSON artifacts when stageArtifactDir is configured", async () => {
+    const artifactDir = mkdtempSync(join(tmpdir(), "dream-artifacts-"));
+    try {
+      const openaiStub = {
+        chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+      } as never;
+      const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+      await runDreamCycle(
+        factsDb,
+        {} as never,
+        embeddingsStub,
+        openaiStub,
+        null,
+        { ...baseConfig, stageArtifactDir: artifactDir },
+        silentLogger,
+      );
+
+      const { readdirSync } = await import("node:fs");
+      const files = readdirSync(artifactDir)
+        .filter((f) => f.endsWith(".json"))
+        .sort();
+      expect(files.length).toBeGreaterThan(0);
+      // Each file is a valid JSON object with required fields
+      for (const f of files) {
+        const artifact = JSON.parse(readFileSync(join(artifactDir, f), "utf-8"));
+        expect(artifact).toHaveProperty("runId");
+        expect(artifact).toHaveProperty("stage");
+        expect(artifact).toHaveProperty("stageNumber");
+        expect(artifact).toHaveProperty("status");
+        // All stages should have succeeded
+        expect(artifact.status).toBe("succeeded");
+        expect(artifact).toHaveProperty("startedAt");
+        expect(artifact).toHaveProperty("completedAt");
+      }
+    } finally {
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
+  });
+
+  it("stage artifact 'started' entry is overwritten with final status on completion", async () => {
+    const artifactDir = mkdtempSync(join(tmpdir(), "dream-artifacts-"));
+    try {
+      const openaiStub = {
+        chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+      } as never;
+      const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+      await runDreamCycle(
+        factsDb,
+        {} as never,
+        embeddingsStub,
+        openaiStub,
+        null,
+        { ...baseConfig, stageArtifactDir: artifactDir },
+        silentLogger,
+      );
+
+      const { readdirSync } = await import("node:fs");
+      const files = readdirSync(artifactDir).filter((f) => f.endsWith(".json"));
+      // No artifact should be stuck in 'started' — each should be succeeded or failed
+      for (const f of files) {
+        const artifact = JSON.parse(readFileSync(join(artifactDir, f), "utf-8"));
+        expect(artifact.status).not.toBe("started");
+      }
+    } finally {
+      rmSync(artifactDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write artifacts when stageArtifactDir is not set", async () => {
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    // Should complete without throwing even without artifact dir
+    const result = await runDreamCycle(
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      null,
+      baseConfig,
+      silentLogger,
+    );
+    expect(result.skipped).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
