@@ -358,6 +358,11 @@ export class CredentialsDB extends BaseSqliteStore {
       ...(verified !== undefined ? { verified } : {}),
     };
   }
+
+  /**
+   * Insert or update a credential. On conflict (service, type), `updated` and value fields refresh;
+   * `created` is preserved from the original row — intentional for "same key, rotated secret" flows (#894).
+   */
   store(entry: {
     service: string;
     type: CredentialType;
