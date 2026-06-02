@@ -57,6 +57,17 @@ openclaw hybrid-mem validate-cron-exit \
 
 Returns exit code 1 if validation fails.
 
+### Semantic no-op strict mode for wrappers
+
+Cron wrappers can opt into stricter semantic failure handling with:
+
+```bash
+HYBRID_MEM_STRICT_SEMANTICS=1
+```
+
+When enabled, a step that exits `0` but reports semantic no-op/degraded markers (for example `status=no_changes`, `status=no_candidates`, or `Status: cursorBlockedReason=...`) is treated as a failed step in `HM_EXIT`.
+This ensures `validate-cron-exit` fails and guard files are not updated for semantic no-op maintenance runs.
+
 ### 5. Cron Ledger Reconciliation (`services/cron-maintenance-reconciler.ts`)
 
 New reconciliation system that repairs past false-OK entries:
