@@ -50,9 +50,11 @@ import {
   incrementActiveReaderCount,
   incrementReindexLockCount,
   isOptimizeLocked,
+  isReindexLockHeld,
   optimizeExclusiveLockByPath,
   reindexExclusiveLockByPath,
   setOptimizeLock,
+  waitForReindexLockClear,
 } from "./runtime-locks.js";
 
 export class VectorDB {
@@ -228,15 +230,7 @@ export class VectorDB {
   }
 
   private async waitForReindexLockRelease(maxWaitMs = 30_000): Promise<void> {
-    const started = Date.now();
-    while (getReindexLockCount(this.dbPath) > 0) {
-      if (Date.now() - started > maxWaitMs) {
-        throw new Error(
-          `VectorDB operation blocked by active re-index lock for >${maxWaitMs}ms. Retry after re-index completes.`,
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await waitForReindexLockClear(this.dbPath, maxWaitMs);
   }
 
   async runWithReindexLock<T>(fn: () => Promise<T>): Promise<T> {
@@ -1342,6 +1336,11 @@ export class VectorDB {
     return /retryable commit conflict/i.test(msg);
   }
 
+  /** TOCTOU guard after waitForReindexLockRelease; distinct from max-wait timeout errors. */
+  private isRetryableReindexLockBlockError(err: unknown): boolean {
+    return err instanceof Error && err.message === "VectorDB write blocked by active re-index lock";
+  }
+
   private async sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -1359,13 +1358,21 @@ export class VectorDB {
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        await this.waitForReindexLockRelease();
+        if (isReindexLockHeld(this.dbPath)) {
+          throw new Error("VectorDB write blocked by active re-index lock");
+        }
         return await fn();
       } catch (err) {
         lastErr = err;
-        if (!this.isRetryableCommitConflictError(err) || attempt >= maxAttempts) throw err;
+        const isCommitConflict = this.isRetryableCommitConflictError(err);
+        const isReindexBlock = this.isRetryableReindexLockBlockError(err);
+        if (!isCommitConflict && !isReindexBlock) throw err;
+        if (attempt >= maxAttempts) throw err;
         const delayMs = this.getWriteConflictRetryDelayMs(attempt);
+        const reason = isReindexBlock ? "re-index lock block" : "retryable commit conflict";
         this.logWarn(
-          `memory-hybrid: ${operation} hit retryable commit conflict (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
+          `memory-hybrid: ${operation} hit ${reason} (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
         );
         await this.sleep(delayMs);
       }
