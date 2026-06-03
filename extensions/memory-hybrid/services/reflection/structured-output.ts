@@ -339,6 +339,13 @@ export function parseMetasFromModelResponse(rawResponse: string): ReflectionMeta
     metas = lineParse.metas;
     parseableLines = lineParse.parseableLines;
     rejectedLength = lineParse.rejectedLength;
+
+    for (const wrapperContent of extractThinkingWrapperContents(trimmedResponse)) {
+      const wrapperParse = parseMetaLines(wrapperContent);
+      metas.push(...wrapperParse.metas);
+      parseableLines += wrapperParse.parseableLines;
+      rejectedLength += wrapperParse.rejectedLength;
+    }
   }
 
   const { unique, rejectedDuplicates } = dedupeStrings(metas);
