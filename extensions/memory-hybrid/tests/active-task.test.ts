@@ -3,10 +3,10 @@
  * Tests for ACTIVE-TASKS.md working memory service and CLI commands.
  */
 
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type ActiveTaskContext,
   runActiveTaskAdd,
@@ -33,6 +33,7 @@ import {
   readPendingSignals,
   reconcileActiveTaskInProgressSessions,
   STALE_CORRUPT_SIGNAL_MS,
+  tryDeleteStaleCorruptSignalFile,
   serializeActiveTaskFile,
   serializeTaskEntry,
   type TaskSignal,
@@ -1427,6 +1428,34 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
     await utimes(tmpPath, old, old);
     await readPendingSignals(tmpDir);
     await expect(readFile(tmpPath, "utf-8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("warns on non-ENOENT stale corrupt signal delete failures without throwing", async () => {
+    const { initPluginLogger, resetPluginLogger } = await import("../utils/logger.js");
+    const warn = vi.fn();
+    initPluginLogger({ info: vi.fn(), warn, error: vi.fn() });
+    try {
+      const signalsDir = join(tmpDir, "task-signals");
+      await mkdir(signalsDir, { recursive: true });
+      const old = new Date(Date.now() - STALE_CORRUPT_SIGNAL_MS - 60_000);
+      await utimes(signalsDir, old, old);
+      await expect(tryDeleteStaleCorruptSignalFile(signalsDir)).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to delete stale corrupt task signal"));
+    } finally {
+      resetPluginLogger();
+    }
+  });
+
+  it("tryDeleteStaleCorruptSignalFile ignores ENOENT on delete races", async () => {
+    const { writeFile: fsWrite, mkdir: fsMkdir, utimes, unlink: fsUnlink } = await import("node:fs/promises");
+    const signalsDir = join(tmpDir, "task-signals");
+    await fsMkdir(signalsDir, { recursive: true });
+    const badPath = join(signalsDir, "race-delete.json");
+    await fsWrite(badPath, "{", "utf-8");
+    const old = new Date(Date.now() - STALE_CORRUPT_SIGNAL_MS - 60_000);
+    await utimes(badPath, old, old);
+    await fsUnlink(badPath);
+    await expect(tryDeleteStaleCorruptSignalFile(badPath)).resolves.toBeUndefined();
   });
 
   it("ignores non-JSON files in signals dir", async () => {
