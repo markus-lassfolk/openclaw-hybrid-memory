@@ -9,6 +9,7 @@ import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.
 import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot } from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
+  applyActiveTaskProjectionFilters,
   getActiveTaskProjectionStatus,
   readActiveTaskRowsFromFacts,
   refreshActiveTaskProjectionBestEffort,
@@ -381,7 +382,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     }
 
     const rows = readActiveTaskRowsFromFacts(ctx.factsDb, staleMinutes, scopeFilter);
-    const visibleActiveRows = rows.active.filter((row) => !isNonActionableSubagentPlaceholderTask(row));
+    const visibleActiveRows = applyActiveTaskProjectionFilters(rows.active, activeTaskCfg.projection);
     const projection = await getActiveTaskProjectionStatus(ctx.factsDb, activeTaskFilePath, {
       scopeFilter,
       latestProjectFactSec: rows.latestProjectFactSec,
