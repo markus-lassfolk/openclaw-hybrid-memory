@@ -93,4 +93,19 @@ describe("contradiction-progress-summary", () => {
     expect(parsed.consecutiveNoProgressRuns).toBe(1);
     expect(parsed.lastAmbiguous).toBe(5);
   });
+
+  it("treats degradedConsecutiveThreshold=0 as 1 in returned value", () => {
+    const metrics = { autoResolved: 0, ambiguous: 250, totalConsidered: 250 };
+
+    const evaluation = evaluateContradictionProgress(metrics, {
+      degradedAmbiguousThreshold: 200,
+      degradedConsecutiveThreshold: 0,
+      previousConsecutiveNoProgressRuns: 0,
+    });
+
+    expect(evaluation.degradedConsecutiveThreshold).toBe(1);
+    expect(evaluation.consecutiveNoProgressRuns).toBe(1);
+    expect(evaluation.degraded).toBe(true);
+    expect(evaluation.exitCode).toBe(2);
+  });
 });

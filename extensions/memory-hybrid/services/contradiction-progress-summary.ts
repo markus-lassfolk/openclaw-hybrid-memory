@@ -114,7 +114,7 @@ export function evaluateContradictionProgress(
     noProgress,
     degradedThresholdEnabled,
     degradedAmbiguousThreshold,
-    degradedConsecutiveThreshold,
+    degradedConsecutiveThreshold: consecutiveRequired,
     consecutiveNoProgressRuns,
     degraded,
     exitCode,
