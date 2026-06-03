@@ -310,6 +310,27 @@ export type ActiveTaskListResult = {
 
 export type ActiveTaskCompleteResult = { ok: true; label: string; flushedTo?: string } | { ok: false; error: string };
 
+export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean } | { ok: false; error: string };
+
+export type ActiveTaskReconcileResult = {
+  mode: "apply" | "dry-run";
+  ledger: "markdown" | "facts";
+  reconciledLabels: string[];
+  candidates: number;
+  reconciled: number;
+  skipped: number;
+  failed: number;
+  scanned: number;
+  wrote: boolean;
+  elapsedMs: number;
+  factsWritten?: number;
+  liveState?: {
+    updatedCount: number;
+    checkedCount: number;
+    skippedCount: number;
+  };
+};
+
 export type ActiveTaskStaleResult = {
   tasks: Array<{
     label: string;
@@ -321,8 +342,6 @@ export type ActiveTaskStaleResult = {
   total: number;
   filePath: string;
 };
-
-export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean } | { ok: false; error: string };
 
 export type ActiveTaskHygieneResult = {
   ledger: "markdown" | "facts";

@@ -40,8 +40,11 @@ import type {
   ActiveTaskCompleteResult,
   ActiveTaskHygieneResult,
   ActiveTaskListResult,
+  ActiveTaskReconcileResult,
   ActiveTaskStaleResult,
 } from "./types.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
+import { ActiveTaskReconcileProgressReporter } from "../services/active-task-reconcile-progress.js";
 
 /** Context injected into all active-task CLI commands */
 export type ActiveTaskContext = {
@@ -456,6 +459,140 @@ export async function runActiveTaskHygiene(
   };
 }
 
+/** Reconcile orphan in-progress subagent tasks against session transcripts (#978, #1864). */
+export async function runActiveTaskReconcile(
+  ctx: ActiveTaskContext,
+  cfg: HybridMemoryConfig,
+  opts: {
+    dryRun?: boolean;
+    verbose?: boolean;
+    openclawHome?: string;
+  } = {},
+): Promise<ActiveTaskReconcileResult> {
+  const dryRun = opts.dryRun === true;
+  const mode = dryRun ? "dry-run" : "apply";
+  const progress =
+    mode === "apply" || opts.verbose
+      ? new ActiveTaskReconcileProgressReporter({
+          mode,
+          ledger: ctx.ledger,
+          verbose: opts.verbose === true,
+        })
+      : undefined;
+
+  if (ctx.ledger === "facts") {
+    const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+    const result = await reconcileActiveTaskInProgressSessionsFacts(
+      factsDb,
+      vectorDb,
+      embeddings,
+      ctx.staleMinutes,
+      {
+        flushOnComplete: ctx.flushOnComplete,
+        memoryDir: ctx.memoryDir,
+        dryRun,
+        openclawHome: opts.openclawHome,
+        progress,
+      },
+    );
+    progress?.complete();
+
+    let liveState: ActiveTaskReconcileResult["liveState"];
+    if (!dryRun && cfg.activeTask.liveStateReconcile.enabled) {
+      try {
+        const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+          maxRequests: 20,
+          log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+        });
+        liveState = {
+          updatedCount: liveResult.updatedCount,
+          checkedCount: liveResult.checkedCount,
+          skippedCount: liveResult.skippedCount,
+        };
+        if (liveResult.updatedCount > 0) {
+          await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+        }
+      } catch (liveErr) {
+        console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+      }
+    }
+
+    return {
+      mode,
+      ledger: "facts",
+      reconciledLabels: result.reconciledLabels,
+      candidates: result.candidates,
+      reconciled: result.reconciledLabels.length,
+      skipped: result.skipped,
+      failed: result.failed,
+      scanned: result.scanned,
+      wrote: result.wrote,
+      elapsedMs: result.elapsedMs,
+      factsWritten: result.factsWritten,
+      liveState,
+    };
+  }
+
+  const result = await reconcileActiveTaskInProgressSessions(ctx.activeTaskFilePath, ctx.staleMinutes, {
+    flushOnComplete: ctx.flushOnComplete,
+    memoryDir: ctx.memoryDir,
+    dryRun,
+    openclawHome: opts.openclawHome,
+    progress,
+  });
+  progress?.complete();
+
+  return {
+    mode,
+    ledger: "markdown",
+    reconciledLabels: result.reconciledLabels,
+    candidates: result.candidates,
+    reconciled: result.reconciledLabels.length,
+    skipped: result.skipped,
+    failed: result.failed,
+    scanned: result.scanned,
+    wrote: result.wrote,
+    elapsedMs: result.elapsedMs,
+  };
+}
+
+function printActiveTaskReconcile(result: ActiveTaskReconcileResult): void {
+  if (result.reconciledLabels.length === 0) {
+    console.log("✅ No orphan in-progress subagent tasks to reconcile.");
+    return;
+  }
+
+  if (result.mode === "dry-run") {
+    console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
+    for (const label of result.reconciledLabels) {
+      console.log(`  - [${label}]`);
+    }
+    return;
+  }
+
+  if (result.ledger === "facts") {
+    console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
+  } else {
+    console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) (moved to Completed):`);
+  }
+  for (const label of result.reconciledLabels) {
+    console.log(`  - [${label}]`);
+  }
+
+  if (result.liveState) {
+    const { updatedCount, checkedCount, skippedCount } = result.liveState;
+    if (updatedCount > 0) {
+      console.log(
+        `✅ Live-state reconcile: marked ${updatedCount} task(s) done (checked ${checkedCount}, skipped ${skippedCount})`,
+      );
+    } else {
+      console.log(
+        `✅ Live-state reconcile: no terminal states found (checked ${checkedCount}, skipped ${skippedCount})`,
+      );
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Display helpers
 // ---------------------------------------------------------------------------
@@ -617,70 +754,14 @@ export function registerActiveTaskCommands(
       "Complete in-progress tasks whose OpenClaw session transcript no longer exists (subagent bookkeeping cleanup)",
     )
     .option("--dry-run", "List tasks that would be reconciled without persisting changes")
-    .action(async (opts: { dryRun?: boolean }) => {
-      if (ctx.ledger === "facts") {
-        const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
-        const result = await reconcileActiveTaskInProgressSessionsFacts(
-          factsDb,
-          vectorDb,
-          embeddings,
-          ctx.staleMinutes,
-          {
-            flushOnComplete: ctx.flushOnComplete,
-            memoryDir: ctx.memoryDir,
-            dryRun: opts.dryRun === true,
-          },
-        );
-        if (result.reconciledLabels.length === 0) {
-          console.log("✅ No orphan in-progress subagent tasks to reconcile.");
-        } else {
-          if (opts.dryRun) {
-            console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
-            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
-          } else {
-            console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
-            for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
-          }
-        }
-        if (!opts.dryRun && cfg.activeTask.liveStateReconcile.enabled) {
-          try {
-            const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
-              maxRequests: 20,
-              log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
-            });
-            if (liveResult.updatedCount > 0) {
-              await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
-              console.log(
-                `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
-              );
-            } else {
-              console.log(
-                `✅ Live-state reconcile: no terminal states found (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
-              );
-            }
-          } catch (liveErr) {
-            console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
-          }
-        }
-        return;
-      }
-
-      const result = await reconcileActiveTaskInProgressSessions(ctx.activeTaskFilePath, ctx.staleMinutes, {
-        flushOnComplete: ctx.flushOnComplete,
-        memoryDir: ctx.memoryDir,
+    .option("-v, --verbose", "Log per-task reconciliation decisions and phase markers")
+    .action(async (opts: { dryRun?: boolean; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      const verbose = !!opts.verbose || readHybridMemVerbose(cmd);
+      const result = await runActiveTaskReconcile(ctx, cfg, {
         dryRun: opts.dryRun === true,
+        verbose,
       });
-      if (result.reconciledLabels.length === 0) {
-        console.log("✅ No orphan in-progress subagent tasks to reconcile.");
-        return;
-      }
-      if (opts.dryRun) {
-        console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
-        for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
-        return;
-      }
-      console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) (moved to Completed):`);
-      for (const l of result.reconciledLabels) console.log(`  - [${l}]`);
+      printActiveTaskReconcile(result);
     });
 
   activeTasks
