@@ -754,7 +754,8 @@ export function normalizePlaceholderTaskNext(
 
 export function isNonActionableSubagentPlaceholderTask(task: ActiveTaskEntry): boolean {
   const subagent = task.subagent?.trim();
-  if (!isSubagentSession(subagent)) return false;
+  const label = task.label.trim();
+  if (!isSubagentSession(subagent) && !isSubagentSession(label)) return false;
 
   const normalizedNext = normalizePlaceholderTaskNext(task.next, [task.label, subagent]);
   if (normalizedNext) return false;
@@ -764,7 +765,6 @@ export function isNonActionableSubagentPlaceholderTask(task: ActiveTaskEntry): b
     normalizedDescription === "project task" ||
     normalizedDescription === "task" ||
     normalizedDescription.startsWith("subagent task");
-  const label = task.label.trim();
   return descriptionLooksPlaceholder || isSubagentSession(label) || label === subagent;
 }
 
