@@ -226,6 +226,15 @@ const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
     mutates: { sqlite: false, lancedb: false, github: false, memoryFacts: false },
   },
   {
+    jobKey: "weekly-pending-digest-autopilot",
+    name: "weekly-pending-digest-autopilot",
+    pluginJobId: "hybrid-mem:weekly-pending-digest-autopilot",
+    aliases: [],
+    lockKey: undefined,
+    collisionGroups: [],
+    mutates: { sqlite: false, lancedb: false, github: false, memoryFacts: false },
+  },
+  {
     jobKey: "maintenance-log-analyzer",
     name: "maintenance-log-analyzer",
     pluginJobId: "hybrid-mem:maintenance-log-analyzer",
@@ -297,6 +306,10 @@ function extractRunIdFromFilename(file: string): string | null {
   if (exitMatch) return exitMatch[2];
   const logMatch = file.match(/^(.+)-(\d{8}T\d{6}Z-\d+)\.log$/);
   if (logMatch) return logMatch[2];
+  const isoExitMatch = file.match(/^(.+)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.exit\.txt$/);
+  if (isoExitMatch) return isoExitMatch[2];
+  const isoLogMatch = file.match(/^(.+)-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)\.log$/);
+  if (isoLogMatch) return isoLogMatch[2];
   return null;
 }
 
@@ -628,8 +641,12 @@ function parseHostCrontab(
     const entry = resolveCatalogEntry(inferredJobKey);
     if (!entry) continue;
 
-    const inventoryId = `host-cron:${entry.jobKey}`;
-    if (jobsByInventoryId.has(inventoryId)) continue;
+    let inventoryId = `host-cron:${entry.jobKey}`;
+    let duplicateSuffix = 1;
+    while (jobsByInventoryId.has(inventoryId)) {
+      duplicateSuffix++;
+      inventoryId = `host-cron:${entry.jobKey}#${duplicateSuffix}`;
+    }
 
     const artifact = artifacts.get(entry.name) ?? (entry.pluginJobId ? artifacts.get(entry.pluginJobId) : undefined);
     const guardPath = getGuardFilePath(entry.name, openclawDir);
