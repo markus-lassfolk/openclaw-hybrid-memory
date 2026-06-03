@@ -8,12 +8,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createCipheriv, createDecipheriv, pbkdf2Sync, randomBytes } from "node:crypto";
 import { isValidCategory } from "../../../config.js";
-import { buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
+import { buildAuditFailureArtifact, buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 import { listDumpTypeAliases, runSqliteTableDump } from "../../../services/cli-sql-dump.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -116,7 +117,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     );
 
   const runAuditHealth = async (
-    opts?: { json?: boolean; format?: string; strict?: boolean; timeoutMs?: string },
+    opts?: { json?: boolean; format?: string; strict?: boolean; timeoutMs?: string; output?: string },
     cmd?: CommanderOptsParent,
   ) => {
     const parsedTimeoutMs = Number.parseInt(String(opts?.timeoutMs ?? "30000"), 10);
@@ -124,6 +125,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     const startedAtMs = Date.now();
     const deadlineMs = startedAtMs + timeoutMs;
     const wantsJson = opts?.json === true || String(opts?.format ?? "").toLowerCase() === "json";
+    const outputPath = opts?.output ?? null;
     let lanceBytes: number | null = null;
     const preReportErrors: Array<{ section: string; message: string }> = [];
     const preReportWarnings: string[] = [];
@@ -153,95 +155,132 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
         if (timer) clearTimeout(timer);
       }
     };
+
+    /**
+     * Write JSON payload to --output path atomically (tmp + rename) or to stdout when --json.
+     * Atomic tmp+rename avoids leaving a 0-byte destination file if the process is killed mid-write
+     * (#1823).
+     */
+    const emitJsonArtifact = (payload: unknown): void => {
+      const json = JSON.stringify(payload, null, 2);
+      if (outputPath) {
+        atomicWriteFile(outputPath, json);
+      } else {
+        writeFileSync(process.stdout.fd, `${json}\n`, "utf-8");
+      }
+    };
+
     try {
-      const sizes = await withTimeout(Promise.resolve(ctx.richStatsExtras?.getStorageSizes()), "storage.lanceBytes");
-      if (sizes?.lanceBytesTimedOut) {
+      try {
+        const sizes = await withTimeout(Promise.resolve(ctx.richStatsExtras?.getStorageSizes()), "storage.lanceBytes");
+        if (sizes?.lanceBytesTimedOut) {
+          preReportErrors.push({
+            section: "storage.lanceBytes",
+            message: "LanceDB directory size probe timed out (du terminated after 5s); storage.lanceBytes omitted",
+          });
+        } else if (sizes && typeof sizes.lanceBytes === "number") {
+          lanceBytes = sizes.lanceBytes;
+        }
+      } catch (err) {
         preReportErrors.push({
           section: "storage.lanceBytes",
-          message: "LanceDB directory size probe timed out (du terminated after 5s); storage.lanceBytes omitted",
+          message: err instanceof Error ? err.message : String(err),
         });
-      } else if (sizes && typeof sizes.lanceBytes === "number") {
-        lanceBytes = sizes.lanceBytes;
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "audit-health-lance-bytes",
+          severity: "info",
+          subsystem: "cli",
+        });
       }
-    } catch (err) {
-      preReportErrors.push({
-        section: "storage.lanceBytes",
-        message: err instanceof Error ? err.message : String(err),
-      });
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "audit-health-lance-bytes",
-        severity: "info",
-        subsystem: "cli",
-      });
-    }
-    const lastReembedProgress = ctx.resolvedSqlitePath
-      ? readReembedVectorlessMetrics(defaultReembedVectorlessMetricsPath(ctx.resolvedSqlitePath))
-      : null;
-    const report = buildAuditHealthReport(
-      factsDb,
-      getMemoryCategories,
-      cfg.entityExtraction.stopWords,
-      cfg.graph.hubDegreeCap,
-      {
-        lanceBytes,
-        preReportErrors,
-        preReportWarnings,
-        timeoutMs,
-        startedAtMs,
-        deadlineMs,
-        degradedState:
-          typeof (vectorDb as { getDegradedState?: unknown }).getDegradedState === "function"
-            ? (
-                vectorDb as {
-                  getDegradedState: () => { active: boolean; reason: string | null; sinceEpochMs: number | null };
-                }
-              ).getDegradedState()
-            : { active: false, reason: null },
-        lastReembedProgress,
-      },
-    );
-    const strict = opts?.strict === true;
-    const exitInfo = buildAuditHealthExitInfo({
-      strict,
-      warningCount: report.warningCount,
-      errorCount: report.errorCount,
-      ok: report.ok,
-      status: report.status,
-    });
-    const verbose = readHybridMemVerbose(cmd) || getEnv("HYBRID_MEMORY_VERBOSE") === "1";
-    if (wantsJson) {
-      console.log(
-        JSON.stringify(
-          {
-            ...report,
-            exitCode: exitInfo.exitCode,
-            exitReason: exitInfo.exitReason,
-            strictFailureReason: exitInfo.strictFailureReason,
-          },
-          null,
-          2,
-        ),
+      const lastReembedProgress = ctx.resolvedSqlitePath
+        ? readReembedVectorlessMetrics(defaultReembedVectorlessMetricsPath(ctx.resolvedSqlitePath))
+        : null;
+      const report = buildAuditHealthReport(
+        factsDb,
+        getMemoryCategories,
+        cfg.entityExtraction.stopWords,
+        cfg.graph.hubDegreeCap,
+        {
+          lanceBytes,
+          preReportErrors,
+          preReportWarnings,
+          timeoutMs,
+          startedAtMs,
+          deadlineMs,
+          degradedState:
+            typeof (vectorDb as { getDegradedState?: unknown }).getDegradedState === "function"
+              ? (
+                  vectorDb as {
+                    getDegradedState: () => { active: boolean; reason: string | null; sinceEpochMs: number | null };
+                  }
+                ).getDegradedState()
+              : { active: false, reason: null },
+          lastReembedProgress,
+        },
       );
-    } else {
-      printAuditHealthMarkdown(report);
-    }
-    if (strict && exitInfo.exitCode !== 0) {
-      process.exitCode = exitInfo.exitCode;
-      if (verbose) {
-        if (exitInfo.exitReason === "strict_warnings") {
-          console.error(
-            `audit health: strict mode failed because ${report.warningCount} warning(s) were present; errors=${report.errorCount}`,
-          );
-        } else if (exitInfo.exitReason === "strict_errors") {
-          console.error(
-            `audit health: strict mode failed because ${report.errorCount} error(s) were present; warnings=${report.warningCount}`,
-          );
-        } else {
-          console.error(
-            `audit health: strict mode failed (${exitInfo.exitReason}); warnings=${report.warningCount} errors=${report.errorCount}`,
-          );
+      const strict = opts?.strict === true;
+      const exitInfo = buildAuditHealthExitInfo({
+        strict,
+        warningCount: report.warningCount,
+        errorCount: report.errorCount,
+        ok: report.ok,
+        status: report.status,
+      });
+      const verbose = readHybridMemVerbose(cmd) || getEnv("HYBRID_MEMORY_VERBOSE") === "1";
+      if (wantsJson || outputPath) {
+        emitJsonArtifact({
+          ...report,
+          exitCode: exitInfo.exitCode,
+          exitReason: exitInfo.exitReason,
+          strictFailureReason: exitInfo.strictFailureReason,
+        });
+      } else {
+        printAuditHealthMarkdown(report);
+      }
+      if (strict && exitInfo.exitCode !== 0) {
+        process.exitCode = exitInfo.exitCode;
+        if (verbose) {
+          if (exitInfo.exitReason === "strict_warnings") {
+            console.error(
+              `audit health: strict mode failed because ${report.warningCount} warning(s) were present; errors=${report.errorCount}`,
+            );
+          } else if (exitInfo.exitReason === "strict_errors") {
+            console.error(
+              `audit health: strict mode failed because ${report.errorCount} error(s) were present; warnings=${report.warningCount}`,
+            );
+          } else {
+            console.error(
+              `audit health: strict mode failed (${exitInfo.exitReason}); warnings=${report.warningCount} errors=${report.errorCount}`,
+            );
+          }
         }
       }
+    } catch (err) {
+      // #1823: on unhandled error emit a structured failure artifact so downstream consumers
+      // (final-audit.json etc.) never receive a 0-byte file. The failure artifact is
+      // schema-consistent so `jq` pipelines can detect the failure without special-casing.
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "audit-health",
+        severity: "error",
+        subsystem: "cli",
+      });
+      if (wantsJson || outputPath) {
+        try {
+          const strict = opts?.strict === true;
+          emitJsonArtifact(
+            buildAuditFailureArtifact(err, Date.now() - startedAtMs, strict, preReportErrors, preReportWarnings),
+          );
+        } catch (emitErr) {
+          // Last-resort: if emitJsonArtifact itself fails (e.g. disk full or stdout closed),
+          // emit a minimal diagnostic to stderr so the operator has something to act on.
+          console.error(
+            `audit health: failed to write failure artifact: ${emitErr instanceof Error ? emitErr.message : String(emitErr)}`,
+          );
+        }
+        process.exitCode = 2;
+        return;
+      }
+      throw err;
     }
   };
 
@@ -255,6 +294,10 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       "--strict",
       "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
     )
+    .option(
+      "--output <path>",
+      "Write JSON artifact atomically to this path (tmp+rename) instead of stdout. Always written even on strict failure (#1823).",
+    )
     .action(withExit(runAuditHealth));
 
   const audit = mem.command("audit").description("Audit hybrid-memory health and maintenance state");
@@ -267,6 +310,10 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
     .option(
       "--strict",
       "Exit 2 when warnings/errors or partial/failed status are present. JSON includes exitCode/exitReason/strictFailureReason.",
+    )
+    .option(
+      "--output <path>",
+      "Write JSON artifact atomically to this path (tmp+rename) instead of stdout. Always written even on strict failure (#1823).",
     )
     .action(withExit(runAuditHealth));
 
