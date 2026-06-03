@@ -132,14 +132,15 @@ export class WriteAheadLog {
     try {
       // "a+" read+append so fdatasync works on more filesystems than read-only or append-only edge cases (issue #854).
       fh = await open(this.walPath, "a+");
-      await fh.datasync();
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      if (code === "EPERM" || code === "EINVAL") {
+      try {
+        await fh.datasync();
+        return;
+      } catch (datasyncErr) {
+        const code = (datasyncErr as NodeJS.ErrnoException).code;
+        if (code !== "EPERM" && code !== "EINVAL") throw datasyncErr;
         // Intentional fail-fast when neither datasync nor fsync can persist WAL writes (#7, #1846).
         // Some filesystems (e.g. NTFS via WSL2) reject fdatasync; reopen and try fsync() as fallback.
-        const datasyncErr = err;
-        await fh?.close().catch(() => {});
+        await fh.close().catch(() => {});
         fh = undefined;
         try {
           fh = await open(this.walPath, "a+");
@@ -158,12 +159,16 @@ export class WriteAheadLog {
             );
             this.fsyncWarnEmitted = true;
           }
-          throw new Error(`WAL fsync unavailable (${code}): datasync and fsync fallback both failed`, {
+          const causes = [datasyncErr, fsyncErr].filter((e): e is Error => e instanceof Error);
+          const err = new Error(`WAL fsync unavailable (${code}): datasync and fsync fallback both failed`, {
             cause: fsyncErr instanceof Error ? fsyncErr : datasyncErr,
           });
+          if (causes.length > 1) {
+            (err as Error & { causes: Error[] }).causes = causes;
+          }
+          throw err;
         }
       }
-      throw err;
     } finally {
       await fh?.close();
     }
