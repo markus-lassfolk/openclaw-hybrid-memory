@@ -65,4 +65,3 @@ export async function waitForReindexLockClear(dbPath: string, maxWaitMs = 30_000
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
-}
