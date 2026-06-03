@@ -142,8 +142,8 @@ export class WriteAheadLog {
         // Some filesystems (e.g. NTFS via WSL2) reject fdatasync; reopen and try fsync() as fallback.
         await fh.close().catch(() => {});
         fh = undefined;
+        fh = await open(this.walPath, "a+");
         try {
-          fh = await open(this.walPath, "a+");
           await fh.sync();
           if (!this.fsyncWarnEmitted) {
             pluginLogger.warn(
@@ -152,16 +152,16 @@ export class WriteAheadLog {
             this.fsyncWarnEmitted = true;
           }
           return;
-        } catch (fsyncErr) {
+        } catch (syncErr) {
           if (!this.fsyncWarnEmitted) {
             pluginLogger.error(
               `[WAL] CRITICAL: Both datasync() and fsync() failed (${code}) — WAL durability unavailable on this filesystem. Data loss may occur on crash. Consider moving the database to a POSIX-compliant filesystem.`,
             );
             this.fsyncWarnEmitted = true;
           }
-          const causes = [datasyncErr, fsyncErr].filter((e): e is Error => e instanceof Error);
+          const causes = [datasyncErr, syncErr].filter((e): e is Error => e instanceof Error);
           const err = new Error(`WAL fsync unavailable (${code}): datasync and fsync fallback both failed`, {
-            cause: fsyncErr instanceof Error ? fsyncErr : datasyncErr,
+            cause: syncErr instanceof Error ? syncErr : datasyncErr,
           });
           if (causes.length > 1) {
             (err as Error & { causes: Error[] }).causes = causes;
