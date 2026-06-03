@@ -28,10 +28,52 @@ import {
   type RunVerboseFollowUpOptions,
   runVerboseFollowUp,
 } from "./dream-cycle-followup.js";
+import {
+  DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
+  DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,
+  buildContradictionProgressJsonSummary,
+  evaluateContradictionProgress,
+  formatContradictionProgressSummaryLine,
+  persistConsecutiveNoProgressState,
+  readConsecutiveNoProgressRuns,
+  type ContradictionProgressJsonSummary,
+} from "../../../services/contradiction-progress-summary.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 
 const CONTRADICTION_BUCKET_PREVIEW_TARGET_RATE = 0.8;
-const DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD = 200;
+
+function logContradictionProgressOutcome(params: {
+  mode: "default" | "auto";
+  metrics: { autoResolved: number; ambiguous: number; totalConsidered: number };
+  evaluation: ReturnType<typeof evaluateContradictionProgress>;
+  jsonMode: boolean;
+  suggestions?: ContradictionProgressJsonSummary["suggestions"];
+}): void {
+  const { mode, metrics, evaluation, jsonMode, suggestions } = params;
+  if (evaluation.exitCode !== 0) process.exitCode = evaluation.exitCode;
+  if (jsonMode) {
+    console.log(
+      JSON.stringify(
+        buildContradictionProgressJsonSummary(mode, metrics, evaluation, suggestions ? { suggestions } : undefined),
+      ),
+    );
+    return;
+  }
+  console.log(formatContradictionProgressSummaryLine(mode, metrics, evaluation));
+  if (evaluation.degraded) {
+    console.log(
+      `Backlog alert: ambiguous=${metrics.ambiguous} with auto-resolved=0 meets or exceeds degraded threshold ${evaluation.degradedAmbiguousThreshold} for ${evaluation.consecutiveNoProgressRuns} consecutive run(s) (exit code 2).`,
+    );
+  } else if (
+    evaluation.noProgress &&
+    evaluation.degradedThresholdEnabled &&
+    metrics.ambiguous >= evaluation.degradedAmbiguousThreshold
+  ) {
+    console.log(
+      `Backlog monitor: ambiguous=${metrics.ambiguous} with auto-resolved=0; consecutive no-progress runs=${evaluation.consecutiveNoProgressRuns}/${evaluation.degradedConsecutiveThreshold} before degraded exit.`,
+    );
+  }
+}
 
 function writeContradictionReviewFile(outputPath: string, items: ContradictionReviewItem[]): void {
   const content = `${items.map((item) => JSON.stringify(item)).join("\n")}${items.length > 0 ? "\n" : ""}`;
@@ -931,6 +973,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       "Set degraded exit threshold when ambiguous backlog is large and no pairs were auto-resolved (0 disables)",
       String(DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD),
     )
+    .option(
+      "--degraded-consecutive-threshold <n>",
+      "Require this many consecutive no-progress runs before degraded exit (default 1; 0 uses 1)",
+      String(DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD),
+    )
     .action(
       withExit(
         async (
@@ -948,6 +995,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             model?: string;
             json?: boolean;
             degradedAmbiguousThreshold?: string;
+            degradedConsecutiveThreshold?: string;
           },
           cmd?: CommanderOptsParent,
         ) => {
@@ -967,18 +1015,27 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             opts?.degradedAmbiguousThreshold ?? String(DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD),
             10,
           );
+          const degradedConsecutiveThreshold = Number.parseInt(
+            opts?.degradedConsecutiveThreshold ?? String(DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD),
+            10,
+          );
 
           if (dryRun && apply) {
             throw new Error("--dry-run and --apply are mutually exclusive");
           }
-          if (jsonMode && (auto || projectStateLww || dryRun || apply || applyReview)) {
-            throw new Error("--json is only supported in default resolve-contradictions mode");
+          if (jsonMode && (projectStateLww || dryRun || apply || applyReview)) {
+            throw new Error(
+              "--json is only supported in default or --auto resolve-contradictions mode (not LWW/dry-run/apply-review)",
+            );
           }
           if (Number.isNaN(targetRate) || targetRate <= 0 || targetRate > 1) {
             throw new Error("--target-rate must be a number between 0 and 1");
           }
           if (Number.isNaN(degradedAmbiguousThreshold) || degradedAmbiguousThreshold < 0) {
             throw new Error("--degraded-ambiguous-threshold must be an integer >= 0");
+          }
+          if (Number.isNaN(degradedConsecutiveThreshold) || degradedConsecutiveThreshold < 0) {
+            throw new Error("--degraded-consecutive-threshold must be an integer >= 0");
           }
           if (applyReview && (auto || projectStateLww || dryRun || apply || exportReview || llm || model)) {
             throw new Error(
@@ -1099,6 +1156,38 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 `contradiction-auto target-missed achieved=${res.achievedRate.toFixed(3)} target=${res.targetRate.toFixed(2)}`,
               );
             }
+            const autoResolvedCount = res.deterministic + res.llm + res.merged;
+            const ambiguousCount = res.manualReview;
+            const metrics = {
+              autoResolved: autoResolvedCount,
+              ambiguous: ambiguousCount,
+              totalConsidered: res.total,
+            };
+            const previousConsecutive = readConsecutiveNoProgressRuns();
+            const evaluation = evaluateContradictionProgress(metrics, {
+              degradedAmbiguousThreshold,
+              degradedConsecutiveThreshold,
+              previousConsecutiveNoProgressRuns: previousConsecutive,
+            });
+            persistConsecutiveNoProgressState(metrics, evaluation);
+            logContradictionProgressOutcome({
+              mode: "auto",
+              metrics,
+              evaluation,
+              jsonMode,
+              suggestions: {
+                details: "openclaw hybrid-mem resolve-contradictions --auto --details",
+                projectStateLwwDryRun: "openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
+                autoApply:
+                  autoResolvedCount > 0
+                    ? "openclaw hybrid-mem resolve-contradictions --auto --apply"
+                    : undefined,
+                exportReview:
+                  ambiguousCount > 0
+                    ? "openclaw hybrid-mem resolve-contradictions --auto --dry-run --export-review <path>"
+                    : undefined,
+              },
+            });
             if (exportReview) {
               writeContradictionReviewFile(exportReview, res.reviewItems);
               console.log(`manual-review exported: ${res.reviewItems.length} item(s) -> ${exportReview}`);
@@ -1177,41 +1266,26 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           }
           const autoResolvedCount = res.autoResolved.length;
           const ambiguousCount = res.ambiguous.length;
-          const totalConsidered = autoResolvedCount + ambiguousCount;
-          const noProgress = totalConsidered > 0 && autoResolvedCount === 0;
-          const degradedThresholdEnabled = degradedAmbiguousThreshold > 0;
-          const degraded =
-            degradedThresholdEnabled && noProgress && ambiguousCount >= degradedAmbiguousThreshold;
-          const exitCode = degraded ? 2 : 0;
-          const summary = {
-            mode: "default",
+          const metrics = {
             autoResolved: autoResolvedCount,
             ambiguous: ambiguousCount,
-            totalConsidered,
-            resolutionRate: totalConsidered === 0 ? 1 : autoResolvedCount / totalConsidered,
-            noProgress,
-            degradedThresholdEnabled,
-            degradedAmbiguousThreshold,
-            degraded,
-            exitCode,
-            exitReason: degraded ? "ambiguous_backlog_no_progress" : "success",
-            suggestions: {
-              details: "openclaw hybrid-mem resolve-contradictions --details",
-              projectStateLwwDryRun: "openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
-            },
+            totalConsidered: autoResolvedCount + ambiguousCount,
           };
-          if (exitCode !== 0) process.exitCode = exitCode;
+          const previousConsecutive = readConsecutiveNoProgressRuns();
+          const evaluation = evaluateContradictionProgress(metrics, {
+            degradedAmbiguousThreshold,
+            degradedConsecutiveThreshold,
+            previousConsecutiveNoProgressRuns: previousConsecutive,
+          });
+          persistConsecutiveNoProgressState(metrics, evaluation);
+          logContradictionProgressOutcome({
+            mode: "default",
+            metrics,
+            evaluation,
+            jsonMode,
+          });
           if (jsonMode) {
-            console.log(JSON.stringify(summary));
             return;
-          }
-          console.log(
-            `resolve-contradictions summary auto_resolved=${autoResolvedCount} ambiguous=${ambiguousCount} no_progress=${noProgress ? 1 : 0} degraded=${degraded ? 1 : 0} threshold_enabled=${degradedThresholdEnabled ? 1 : 0} threshold=${degradedAmbiguousThreshold}`,
-          );
-          if (degraded) {
-            console.log(
-              `Backlog alert: ambiguous=${ambiguousCount} with auto-resolved=0 meets or exceeds degraded threshold ${degradedAmbiguousThreshold} (exit code 2).`,
-            );
           }
           if (verbose && res.autoResolved.length > 0) {
             console.log("Auto-resolved (--verbose):");
