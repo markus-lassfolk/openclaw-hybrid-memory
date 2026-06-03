@@ -1336,6 +1336,11 @@ export class VectorDB {
     return /retryable commit conflict/i.test(msg);
   }
 
+  /** TOCTOU guard after waitForReindexLockRelease; distinct from max-wait timeout errors. */
+  private isRetryableReindexLockBlockError(err: unknown): boolean {
+    return err instanceof Error && err.message === "VectorDB write blocked by active re-index lock";
+  }
+
   private async sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -1360,16 +1365,14 @@ export class VectorDB {
         return await fn();
       } catch (err) {
         lastErr = err;
-        if (
-          !this.isRetryableCommitConflictError(err) &&
-          !(err instanceof Error && err.message.includes("re-index lock"))
-        ) {
-          throw err;
-        }
+        const isCommitConflict = this.isRetryableCommitConflictError(err);
+        const isReindexBlock = this.isRetryableReindexLockBlockError(err);
+        if (!isCommitConflict && !isReindexBlock) throw err;
         if (attempt >= maxAttempts) throw err;
         const delayMs = this.getWriteConflictRetryDelayMs(attempt);
+        const reason = isReindexBlock ? "re-index lock block" : "retryable commit conflict";
         this.logWarn(
-          `memory-hybrid: ${operation} hit retryable commit conflict (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
+          `memory-hybrid: ${operation} hit ${reason} (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
         );
         await this.sleep(delayMs);
       }
