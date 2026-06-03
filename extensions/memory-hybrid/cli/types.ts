@@ -322,6 +322,46 @@ export type ActiveTaskListResult = {
 
 export type ActiveTaskCompleteResult = { ok: true; label: string; flushedTo?: string } | { ok: false; error: string };
 
+export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean } | { ok: false; error: string };
+
+export type ActiveTaskReconcileResult = {
+  mode: "apply" | "dry-run";
+  ledger: "markdown" | "facts";
+  reconciledLabels: string[];
+  candidates: number;
+  reconciled: number;
+  skipped: number;
+  failed: number;
+  scanned: number;
+  wrote: boolean;
+  elapsedMs: number;
+  factsWritten?: number;
+  liveState?: {
+    updatedCount: number;
+    checkedCount: number;
+    skippedCount: number;
+  };
+};
+
+export type ActiveTaskRenderResult =
+  | { ok: true; path: string; active: number; stale: number; bytes: number }
+  | { ok: false; skipped: true; reason: string };
+
+export type ActiveTaskMaintainResult = {
+  status: "ok" | "failed" | "partial";
+  mode: "apply" | "dry-run" | "qa";
+  ledger: "markdown" | "facts";
+  staleBefore?: number;
+  staleAfter?: number;
+  reconcileDryRun?: ActiveTaskReconcileResult;
+  reconcile?: ActiveTaskReconcileResult;
+  hygieneDryRun?: ActiveTaskHygieneResult;
+  hygiene?: ActiveTaskHygieneResult;
+  render?: ActiveTaskRenderResult;
+  elapsedMs: number;
+  error?: string;
+};
+
 export type ActiveTaskStaleResult = {
   tasks: Array<{
     label: string;
@@ -333,8 +373,6 @@ export type ActiveTaskStaleResult = {
   total: number;
   filePath: string;
 };
-
-export type ActiveTaskAddResult = { ok: true; label: string; upserted: boolean } | { ok: false; error: string };
 
 export type ActiveTaskHygieneResult = {
   ledger: "markdown" | "facts";
