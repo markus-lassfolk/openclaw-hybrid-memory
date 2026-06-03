@@ -869,7 +869,7 @@ export async function runActiveTaskMaintain(
     printActiveTaskHygiene(hygiene, log);
     if (hygiene.cannotApplyReason) {
       status = "failed";
-      error = hygiene.cannotApplyReason;
+      error = error ? `${error}; ${hygiene.cannotApplyReason}` : hygiene.cannotApplyReason;
     } else if (apply && hygiene.actions.length > 0) {
       log(`\nApplied ${hygiene.appliedCount} action(s).`);
       if (hygiene.auditFactId) {
