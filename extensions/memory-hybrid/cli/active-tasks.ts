@@ -470,6 +470,7 @@ export async function runActiveTaskReconcile(
     dryRun?: boolean;
     verbose?: boolean;
     openclawHome?: string;
+    jsonMode?: boolean;
   } = {},
 ): Promise<ActiveTaskReconcileResult> {
   const dryRun = opts.dryRun === true;
@@ -480,6 +481,7 @@ export async function runActiveTaskReconcile(
           mode,
           ledger: ctx.ledger,
           verbose: opts.verbose === true,
+          emit: opts.jsonMode ? (line: string) => process.stderr.write(`${line}\n`) : undefined,
         })
       : undefined;
 
@@ -806,6 +808,7 @@ export async function runActiveTaskMaintain(
   const reconcileOpts = {
     verbose: opts.verbose,
     openclawHome: opts.openclawHome,
+    jsonMode: opts.jsonMode,
   };
 
   if (beforeStale) {
