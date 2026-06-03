@@ -139,6 +139,75 @@ describe("maintenance log analyzer", () => {
     expect(finding.logExcerpt).not.toContain("summary: errorCount=0 warningCount=0");
   });
 
+  it("collects benign SDK and Codex warnings in noiseWarnings without actionable findings", () => {
+    const steps = [
+      {
+        occurredAt: Math.floor(Date.now() / 1000),
+        iso: new Date().toISOString(),
+        job: "weekly-reflection",
+        step: "reflect",
+        exitCode: 0,
+        exitPath: "/tmp/reflect.exit.txt",
+        line: "reflect exit=0",
+        logPath: "/tmp/reflect.log",
+        logContent: [
+          "memory-hybrid: registerContextEngine not found in SDK; skipping ContextEngine registration",
+          "[agent/embedded] codex app-server stderr: ERROR codex_app_server: Ignored unsupported project-local config keys in /mnt/openclaw/.openclaw/workspace/.codex/config.toml: model_provider, model_providers, profiles. If you want these settings to apply, manually set them in your user-level config.toml.",
+        ].join("\n"),
+      },
+    ];
+
+    const findings = analyzeMaintenanceSteps(steps);
+    expect(findings).toHaveLength(0);
+
+    const report = buildMaintenanceAnalysisReport({ since: "24h", steps, findings });
+    expect(report.noiseWarnings).toHaveLength(2);
+    expect(report.noiseWarnings.map((w) => w.patternId)).toEqual(
+      expect.arrayContaining(["register-context-engine-missing", "codex-unsupported-project-local-config"]),
+    );
+    expect(report.noiseWarnings.every((w) => w.classification === "benign_noise")).toBe(true);
+    expect(report.digestMd).toContain("Benign noise (suppressed from failure counts)");
+    expect(report.digestMd).toContain("register-context-engine-missing");
+  });
+
+  it("suppresses benign-noise-only non-zero steps but keeps co-occurring actionable failures", () => {
+    const benignOnly = analyzeMaintenanceSteps([
+      {
+        occurredAt: Math.floor(Date.now() / 1000),
+        iso: new Date().toISOString(),
+        job: "weekly-reflection",
+        step: "reflect",
+        exitCode: 1,
+        exitPath: "/tmp/reflect.exit.txt",
+        line: "reflect exit=1",
+        logPath: "/tmp/reflect.log",
+        logContent:
+          "ERROR codex_app_server: Ignored unsupported project-local config keys in /mnt/openclaw/.openclaw/workspace/.codex/config.toml: model_provider, model_providers, profiles.",
+      },
+    ]);
+    expect(benignOnly).toHaveLength(0);
+
+    const actionable = analyzeMaintenanceSteps([
+      {
+        occurredAt: Math.floor(Date.now() / 1000),
+        iso: new Date().toISOString(),
+        job: "weekly-reflection",
+        step: "reflect",
+        exitCode: 1,
+        exitPath: "/tmp/reflect.exit.txt",
+        line: "reflect exit=1",
+        logPath: "/tmp/reflect.log",
+        logContent: [
+          "ERROR codex_app_server: Ignored unsupported project-local config keys in /mnt/openclaw/.openclaw/workspace/.codex/config.toml: model_provider, model_providers, profiles.",
+          "Unhandled exception: parser timeout",
+        ].join("\n"),
+      },
+    ]);
+    expect(actionable).toHaveLength(1);
+    expect(actionable[0]?.logExcerpt).toContain("Unhandled exception: parser timeout");
+    expect(actionable[0]?.logExcerpt).not.toContain("codex_app_server");
+  });
+
   it("classifies cron wrapper PATH failure (openclaw binary not in PATH) as env-misconfig", () => {
     // This reproduces the real-world cron failure:
     //   /usr/bin/timeout: failed to run command 'openclaw': No such file or directory
