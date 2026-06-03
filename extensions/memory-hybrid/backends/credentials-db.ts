@@ -5,7 +5,7 @@
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
@@ -349,6 +349,12 @@ export class CredentialsDB extends BaseSqliteStore {
         if (backupPath) {
           // Create backup database and copy all data within this transaction
           mkdirSync(dirname(backupPath), { recursive: true });
+          // Remove existing backup file to avoid "table already exists" errors on retry
+          try {
+            unlinkSync(backupPath);
+          } catch {
+            // File doesn't exist or can't be deleted; proceed anyway
+          }
           const backupDb = new DatabaseSync(backupPath);
           try {
             // Copy schema
