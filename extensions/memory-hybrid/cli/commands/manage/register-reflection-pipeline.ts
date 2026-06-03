@@ -1180,8 +1180,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const totalConsidered = autoResolvedCount + ambiguousCount;
           const noProgress = totalConsidered > 0 && autoResolvedCount === 0;
           const degradedThresholdEnabled = degradedAmbiguousThreshold > 0;
-          const degraded =
-            degradedThresholdEnabled && noProgress && ambiguousCount >= degradedAmbiguousThreshold;
+          const degraded = degradedThresholdEnabled && noProgress && ambiguousCount >= degradedAmbiguousThreshold;
           const exitCode = degraded ? 2 : 0;
           const summary = {
             mode: "default",

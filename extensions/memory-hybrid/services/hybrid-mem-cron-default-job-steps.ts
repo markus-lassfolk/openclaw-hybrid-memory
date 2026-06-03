@@ -11,8 +11,18 @@ export const HYBRID_MEM_CRON_DEFAULT_JOB_STEPS: Record<string, string[]> = {
   /** Legacy ledger basename if present; same steps as nightly-distill. */
   "hybrid-mem:nightly-memory-sweep": NIGHTLY_DISTILL_STEPS,
   "hybrid-mem:nightly-dream-cycle": ["dream-cycle"],
-  "hybrid-mem:weekly-reflection": ["reflect", "reflect-rules"],
+  "hybrid-mem:weekly-reflection": ["reflect", "reflect-rules", "reflect-meta"],
   "hybrid-mem:nightly-self-correction": ["self-correct"],
+  "hybrid-mem:self-correction-analysis": ["self-correction-run"],
+  "hybrid-mem:sensor-sweep": ["sensor-sweep-tier-1", "sensor-sweep-tier-2"],
+  /** Legacy sensor-sweep job ID; validates single-step execution. */
   "hybrid-mem:weekly-sensor-sweep": ["sensor-sweep"],
   "hybrid-mem:weekly-persona-proposals": ["generate-proposals"],
+  "hybrid-mem:weekly-extract-procedures": [
+    "extract-procedures",
+    "extract-directives",
+    "extract-reinforcement",
+    "generate-auto-skills",
+  ],
+  "hybrid-mem:weekly-deep-maintenance": ["compact", "vectordb-optimize", "scope-promote"],
 };

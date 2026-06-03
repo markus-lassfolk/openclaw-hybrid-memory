@@ -159,7 +159,10 @@ const STAGE_LABEL_MAX_LENGTH = 60;
  * Format: `YYYYMMDDTHHmmssZ-<pid>` e.g. `20260602T061400Z-12345`.
  */
 export function makeDreamCycleRunId(): string {
-  return `${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}-${process.pid}`;
+  return `${new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z")}-${process.pid}`;
 }
 const EPISODIC_PROGRESS_GROUP_INTERVAL = 25;
 const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
@@ -897,8 +900,7 @@ export async function runDreamCycle(
   }
   vectorReconcileStep.complete(`removed=${orphanVectorsRemoved}`);
   {
-    const summary =
-      `factsPruned=${factsPruned}, factsDecayed=${factsDecayed}, linksPruned=${linksPruned}, decayReclassified=${decayReclassified}, orphanVectorsRemoved=${orphanVectorsRemoved}`;
+    const summary = `factsPruned=${factsPruned}, factsDecayed=${factsDecayed}, linksPruned=${linksPruned}, decayReclassified=${decayReclassified}, orphanVectorsRemoved=${orphanVectorsRemoved}`;
     if (stageCoreError === undefined) stageCore.complete(summary);
     else stageCore.fail(stageCoreError, summary);
   }
@@ -1218,8 +1220,7 @@ export async function runDreamCycle(
     vacuumStep.complete(`vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`);
   }
   {
-    const summary =
-      `logRowsPruned=${logRowsPruned}, vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`;
+    const summary = `logRowsPruned=${logRowsPruned}, vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`;
     if (stageOperationalError === undefined) stageOperational.complete(summary);
     else stageOperational.fail(stageOperationalError, summary);
   }

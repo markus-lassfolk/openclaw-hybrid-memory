@@ -1,0 +1,286 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import { GUARD_SUBDIR } from "../services/cron-guard.js";
+import { collectMaintenanceInventory, renderMaintenanceInventoryMarkdown } from "../services/maintenance-inventory.js";
+
+function makeOpenclawDir(): string {
+  const dir = join(tmpdir(), `maintenance-inventory-${randomUUID()}`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function writeGuard(openclawDir: string, jobName: string, timestampMs: number): void {
+  const guardDir = join(openclawDir, GUARD_SUBDIR);
+  mkdirSync(guardDir, { recursive: true });
+  writeFileSync(join(guardDir, `${jobName}.ms`), String(timestampMs), "utf-8");
+}
+
+describe("collectMaintenanceInventory", () => {
+  const cleanup: string[] = [];
+
+  afterEach(() => {
+    for (const dir of cleanup.splice(0, cleanup.length)) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("merges host crontab and gateway cron jobs into one inventory", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const logsDayDir = join(openclawDir, "logs", "cron-hybrid-mem", "20260602");
+    mkdirSync(logsDayDir, { recursive: true });
+
+    const weeklyReflectionLog = join(logsDayDir, "weekly-reflection-20260602T090000Z-123.log");
+    const weeklyReflectionExit = join(logsDayDir, "weekly-reflection-20260602T090000Z-123.exit.txt");
+    writeFileSync(weeklyReflectionLog, "[weekly-reflection] run started\n", "utf-8");
+    writeFileSync(
+      weeklyReflectionExit,
+      [
+        "2026-06-02T09:00:00Z reflect exit=0",
+        "2026-06-02T09:01:00Z reflect-rules exit=0",
+        "2026-06-02T09:02:00Z reflect-meta exit=0",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const vectordbLog = join(logsDayDir, "weekly-vectordb-optimize-sunday-20260602T044500Z-456.log");
+    const vectordbExit = join(logsDayDir, "weekly-vectordb-optimize-sunday-20260602T044500Z-456.exit.txt");
+    writeFileSync(vectordbLog, "[weekly-vectordb-optimize-sunday] run started\n", "utf-8");
+    writeFileSync(vectordbExit, "2026-06-02T04:45:00Z vectordb-optimize exit=0\n", "utf-8");
+
+    const nowMs = Date.now();
+    const recentGuardMs = nowMs - 60_000;
+    const gatewayStateMs = nowMs - 120_000;
+    const olderArtifactMs = nowMs - 180_000;
+    const artifactMtime = new Date(olderArtifactMs);
+    utimesSync(weeklyReflectionLog, artifactMtime, artifactMtime);
+    utimesSync(weeklyReflectionExit, artifactMtime, artifactMtime);
+    const vectordbMtime = new Date(nowMs - 240_000);
+    utimesSync(vectordbLog, vectordbMtime, vectordbMtime);
+    utimesSync(vectordbExit, vectordbMtime, vectordbMtime);
+    writeGuard(openclawDir, "weekly-reflection", recentGuardMs);
+
+    const cronStoreText = JSON.stringify(
+      {
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:weekly-reflection",
+            name: "weekly-reflection",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 3 * * 0" },
+            state: { lastRunAtMs: gatewayStateMs, lastStatus: "ok" },
+            payload: {
+              message: "Weekly reflection pipeline.\n```bash\nopenclaw hybrid-mem reflect --verbose\n```",
+            },
+          },
+          {
+            name: "openclaw-hybrid-memory-pr-stewardship-minimax",
+            enabled: true,
+            schedule: { kind: "every", everyMs: 1_200_000 },
+          },
+        ],
+      },
+      null,
+      2,
+    );
+
+    const crontabText = [
+      "CRON_TZ=Europe/Helsinki",
+      "19 9 * * 1 /home/markus/.openclaw/scripts/hybrid-mem-cli-job.sh weekly-reflection",
+      "45 4 * * 0 /home/markus/.openclaw/scripts/hybrid-mem-cli-job.sh weekly-vectordb-optimize-sunday",
+      "",
+    ].join("\n");
+
+    const report = collectMaintenanceInventory(openclawDir, { crontabText, cronStoreText });
+
+    expect(report.jobs.map((job) => job.inventoryId)).toEqual(
+      expect.arrayContaining([
+        "gateway-cron:weekly-reflection",
+        "gateway-cron:goal-stewardship-heartbeat",
+        "host-cron:weekly-reflection",
+        "host-cron:weekly-vectordb-optimize-sunday",
+      ]),
+    );
+
+    const hostReflection = report.jobs.find((job) => job.inventoryId === "host-cron:weekly-reflection");
+    expect(hostReflection?.timezone).toBe("Europe/Helsinki");
+    expect(hostReflection?.command).toContain("hybrid-mem-cli-job.sh weekly-reflection");
+    expect(hostReflection?.guardPath).toContain("weekly-reflection.ms");
+    expect(hostReflection?.lastStatus).toBe("success");
+    expect(hostReflection?.collisionGroups).toContain("sqlite-writer");
+
+    const gatewayReflection = report.jobs.find((job) => job.inventoryId === "gateway-cron:weekly-reflection");
+    expect(gatewayReflection?.timezone).toBe("UTC");
+    expect(gatewayReflection?.lastRunSource).toBe("guard");
+    expect(gatewayReflection?.lastRunAt).toBe(new Date(recentGuardMs).toISOString());
+    expect(gatewayReflection?.prompt).toContain("Weekly reflection pipeline.");
+
+    const stewardshipPulse = report.jobs.find((job) => job.inventoryId === "gateway-cron:goal-stewardship-heartbeat");
+    expect(stewardshipPulse?.name).toBe("goal-stewardship-heartbeat");
+    expect(stewardshipPulse?.schedule).toBe("every 1200000ms");
+    expect(stewardshipPulse?.timezone).toBe("interval");
+
+    const vectordb = report.jobs.find((job) => job.inventoryId === "host-cron:weekly-vectordb-optimize-sunday");
+    expect(vectordb?.collisionGroups).toEqual(["lancedb-writer"]);
+  });
+
+  it("renders markdown output with combined collision groups", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      crontabText: "0 2 * * * /home/markus/.openclaw/scripts/hybrid-mem-cli-job.sh nightly-memory-sweep\n",
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-distill",
+            name: "nightly-memory-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+          },
+        ],
+      }),
+    });
+
+    const markdown = renderMaintenanceInventoryMarkdown(report);
+    expect(markdown).toContain(
+      "| Scheduler | Job | Enabled | Schedule | TZ | Last run | Last status | Guard | Last log | Collision groups |",
+    );
+    expect(markdown).toContain("host-cron");
+    expect(markdown).toContain("gateway-cron");
+    expect(markdown).toContain("lancedb-writer");
+  });
+
+  it("deduplicates gateway jobs with aliased pluginJobIds", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-distill",
+            name: "nightly-memory-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "nightly-memory-sweep-legacy",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].inventoryId).toBe("gateway-cron:nightly-memory-sweep");
+    expect(gatewayJobs[0].jobKey).toBe("nightly-memory-sweep");
+  });
+
+  it("prefers canonical pluginJobId over alias when deduplicating", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "legacy-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 1 * * *" },
+            payload: { message: "Legacy configuration" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-distill",
+            name: "nightly-memory-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+            payload: { message: "Canonical configuration" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].pluginJobId).toBe("hybrid-mem:nightly-distill");
+    expect(gatewayJobs[0].schedule).toBe("0 2 * * *");
+    expect(gatewayJobs[0].prompt).toContain("Canonical configuration");
+  });
+
+  it("prefers enabled job over disabled when both use same alias", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "disabled-sweep",
+            enabled: false,
+            schedule: { kind: "cron", expr: "0 1 * * *" },
+            payload: { message: "Disabled job" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "enabled-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 3 * * *" },
+            payload: { message: "Enabled job" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].enabled).toBe(true);
+    expect(gatewayJobs[0].schedule).toBe("0 3 * * *");
+    expect(gatewayJobs[0].prompt).toContain("Enabled job");
+  });
+
+  it("prefers enabled alias over disabled canonical job", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "enabled-alias",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 3 * * *" },
+            payload: { message: "Enabled alias configuration" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-distill",
+            name: "disabled-canonical",
+            enabled: false,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+            payload: { message: "Disabled canonical configuration" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].enabled).toBe(true);
+    expect(gatewayJobs[0].pluginJobId).toBe("hybrid-mem:nightly-memory-sweep");
+    expect(gatewayJobs[0].schedule).toBe("0 3 * * *");
+    expect(gatewayJobs[0].prompt).toContain("Enabled alias configuration");
+  });
+});

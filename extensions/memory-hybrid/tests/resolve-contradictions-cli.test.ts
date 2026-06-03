@@ -735,10 +735,7 @@ describe("resolve-contradictions CLI contract mode", () => {
       lines.push(args.map((a) => String(a)).join(" "));
     });
 
-    await mem.parseAsync(
-      ["resolve-contradictions", "--json", "--degraded-ambiguous-threshold", "1"],
-      { from: "user" },
-    );
+    await mem.parseAsync(["resolve-contradictions", "--json", "--degraded-ambiguous-threshold", "1"], { from: "user" });
 
     const jsonLine = lines.find((line) => line.trim().startsWith("{"));
     expect(jsonLine).toBeTruthy();
