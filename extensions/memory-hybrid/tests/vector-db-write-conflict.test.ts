@@ -129,10 +129,9 @@ describe("VectorDB write conflict retries (#reembed-vectorless)", () => {
       vi.spyOn(db as unknown as { ensureInitialized: () => Promise<void> }, "ensureInitialized").mockResolvedValue(
         undefined,
       );
-      vi.spyOn(
-        db as unknown as { getTable: () => { optimize: typeof optimizeFn } },
-        "getTable",
-      ).mockReturnValue({ optimize: optimizeFn });
+      vi.spyOn(db as unknown as { getTable: () => { optimize: typeof optimizeFn } }, "getTable").mockReturnValue({
+        optimize: optimizeFn,
+      });
 
       const optimizePromise = db.optimize(24 * 60 * 60 * 1000);
 

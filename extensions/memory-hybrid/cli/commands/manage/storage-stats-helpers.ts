@@ -1153,7 +1153,9 @@ export function printAuditHealthMarkdown(report: AuditHealthReport): void {
   }
   if (report.credentials != null) {
     const c = report.credentials;
-    const encLabel = c.encryptedAtRest ? `encrypted (kdf_version=${c.kdfVersion})` : `plaintext (kdf_version=${c.kdfVersion})`;
+    const encLabel = c.encryptedAtRest
+      ? `encrypted (kdf_version=${c.kdfVersion})`
+      : `plaintext (kdf_version=${c.kdfVersion})`;
     console.log(`Credentials vault: ${encLabel}, entries=${c.entryCount}, migration_required=${c.migrationRequired}`);
   }
   console.log("");
