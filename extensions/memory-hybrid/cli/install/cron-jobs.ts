@@ -210,7 +210,7 @@ const MAINTENANCE_CRON_JOBS: Array<
         { name: "prune", cmd: "openclaw hybrid-mem prune --verbose" },
         { name: "distill", cmd: "openclaw hybrid-mem distill --days 1 --verbose" },
         { name: "extract-daily", cmd: "openclaw hybrid-mem extract-daily --days 7 --verbose", optional: true },
-        { name: "resolve-contradictions", cmd: "openclaw hybrid-mem resolve-contradictions --auto --verbose" },
+        { name: "resolve-contradictions", cmd: "openclaw hybrid-mem resolve-contradictions --auto --verbose --degraded-consecutive-threshold 3" },
         { name: "enrich-entities", cmd: "openclaw hybrid-mem enrich-entities --limit 200 --verbose" },
       ],
     }),
