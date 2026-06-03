@@ -41,6 +41,8 @@ export type AdaptiveMaintenanceLlmOptions = {
   logger: MaintenanceLlmLogger;
   adaptiveStatePath?: string;
   enabled?: boolean;
+  /** OpenAI chat.completions response_format (chat wire API only). */
+  responseFormat?: { type: "json_object" };
 };
 
 function emptyState(): AdaptiveModelLimitsStateV1 {
@@ -119,6 +121,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
       fallbackModels,
       label: opts.label,
       feature: opts.feature,
+      responseFormat: opts.responseFormat,
     });
     if (enabled) {
       const usedModel = detail.modelUsed;
