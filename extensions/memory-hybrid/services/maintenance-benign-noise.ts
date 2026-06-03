@@ -82,7 +82,6 @@ export function isBenignNoiseOnlyMaintenanceStep(input: {
   line?: string;
   logContent?: string;
 }): boolean {
-  if (input.exitCode === 0) return logContainsMaintenanceBenignNoise(`${input.line ?? ""}\n${input.logContent ?? ""}`);
   const combined = `${input.line ?? ""}\n${input.logContent ?? ""}`;
   if (!logContainsMaintenanceBenignNoise(combined)) return false;
   return !stepHasActionableFailureSignal(input);
