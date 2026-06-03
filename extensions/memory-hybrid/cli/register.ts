@@ -33,6 +33,7 @@ import type {
   DistillCliResult,
   DistillCliSink,
   DistillWindowResult,
+  EncryptVaultResult,
   ExtractDailyResult,
   ExtractDailySink,
   ExtractProceduresResult,
@@ -49,6 +50,7 @@ import type {
   StoreCliResult,
   UninstallCliResult,
   UpgradeCliResult,
+  VaultStatusResult,
   VerifyCliSink,
 } from "./types.js";
 import { registerVerifiedCommands } from "./verified.js";
@@ -65,6 +67,7 @@ export type {
   DistillCliResult,
   DistillCliSink,
   DistillWindowResult,
+  EncryptVaultResult,
   ExtractDailyResult,
   ExtractDailySink,
   ExtractProceduresResult,
@@ -81,6 +84,7 @@ export type {
   StoreCliResult,
   UninstallCliResult,
   UpgradeCliResult,
+  VaultStatusResult,
   VerifyCliSink,
 };
 
@@ -116,7 +120,7 @@ export type HybridMemCliContext = {
   runDistillWindow: (opts: { json: boolean }) => Promise<DistillWindowResult>;
   runRecordDistill: () => Promise<RecordDistillResult>;
   runExtractDaily: (
-    opts: { days: number; dryRun: boolean; verbose?: boolean },
+    opts: { days: number; dryRun: boolean; verbose?: boolean; force?: boolean; full?: boolean },
     sink: ExtractDailySink,
   ) => Promise<ExtractDailyResult>;
   runExtractProcedures: (opts: {
@@ -164,6 +168,8 @@ export type HybridMemCliContext = {
     sink: DistillCliSink,
   ) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
+  runEncryptVault: (opts: { yes?: boolean; backup?: boolean; backupPath?: string; verify?: boolean }) => EncryptVaultResult;
+  runVaultStatus: () => VaultStatusResult | null;
   runCredentialsList: () => Array<{
     service: string;
     type: string;
