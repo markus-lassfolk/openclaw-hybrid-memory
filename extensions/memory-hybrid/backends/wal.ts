@@ -136,14 +136,21 @@ export class WriteAheadLog {
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === "EPERM" || code === "EINVAL") {
-        // CRITICAL FIX (#7): Some filesystems (e.g. NTFS via WSL2) reject fdatasync/fsync.
-        // Instead of silently degrading durability forever, try fsync() as a fallback.
-        // If both fail, throw an error so operators know their WAL has no crash safety.
+        // Intentional fail-fast when neither datasync nor fsync can persist WAL writes (#7, #1846).
+        // Some filesystems (e.g. NTFS via WSL2) reject fdatasync; reopen and try fsync() as fallback.
+        const datasyncErr = err;
+        await fh?.close().catch(() => {});
+        fh = undefined;
         try {
-          if (!fh) {
-            throw new Error(`fallback fsync could not open WAL file after datasync() failed with ${code}`);
+          fh = await open(this.walPath, "a+");
+          await fh.sync();
+          if (!this.fsyncWarnEmitted) {
+            pluginLogger.warn(
+              `[WAL] datasync() unsupported (${code}), using fsync() fallback — durability available but may be slower`,
+            );
+            this.fsyncWarnEmitted = true;
           }
-          await fh.sync(); // Try fsync() instead of datasync()
+          return;
         } catch (fsyncErr) {
           if (!this.fsyncWarnEmitted) {
             pluginLogger.error(
@@ -151,21 +158,12 @@ export class WriteAheadLog {
             );
             this.fsyncWarnEmitted = true;
           }
-          // Throw so the write operation fails fast rather than silently losing crash safety.
-          throw new Error(
-            `WAL fsync unavailable: ${code}: ${fsyncErr instanceof Error ? fsyncErr.message : String(fsyncErr)}`,
-          );
+          throw new Error(`WAL fsync unavailable (${code}): datasync and fsync fallback both failed`, {
+            cause: fsyncErr instanceof Error ? fsyncErr : datasyncErr,
+          });
         }
-        // fsync() succeeded as fallback
-        if (!this.fsyncWarnEmitted) {
-          pluginLogger.warn(
-            `[WAL] datasync() unsupported (${code}), using fsync() fallback — durability available but may be slower`,
-          );
-          this.fsyncWarnEmitted = true;
-        }
-      } else {
-        throw err;
       }
+      throw err;
     } finally {
       await fh?.close();
     }
@@ -189,7 +187,7 @@ export class WriteAheadLog {
         operation: "wal-write",
         subsystem: "wal",
       });
-      throw new Error(`WAL write failed: ${err}`);
+      throw new Error(`WAL write failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
@@ -284,7 +282,7 @@ export class WriteAheadLog {
         operation: "wal-remove",
         subsystem: "wal",
       });
-      throw new Error(`WAL remove failed: ${err}`);
+      throw new Error(`WAL remove failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     } finally {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
@@ -300,7 +298,7 @@ export class WriteAheadLog {
         operation: "wal-clear",
         subsystem: "wal",
       });
-      throw new Error(`WAL clear failed: ${err}`);
+      throw new Error(`WAL clear failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
     }
   }
 
