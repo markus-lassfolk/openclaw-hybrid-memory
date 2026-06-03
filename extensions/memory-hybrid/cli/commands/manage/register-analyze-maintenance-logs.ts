@@ -20,6 +20,7 @@ import {
   writeMaintenanceAnalysisOutput,
   type MaintenanceLogStep,
 } from "../../../services/maintenance-log-analyzer.js";
+import { isBenignNoiseOnlyMaintenanceStep } from "../../../services/maintenance-benign-noise.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -146,6 +147,7 @@ export async function runAnalyzeMaintenanceLogs(
     findings: reportFindings,
     findingsPath: persistedFindings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
     historicalStaleSuppressed: summarized.historicalStaleSuppressed,
+    benignNoiseSuppressed: steps.filter((step) => step.exitCode !== 0 && isBenignNoiseOnlyMaintenanceStep(step)).length,
     includeTrend: opts?.trend === true || since.endsWith("d") || since.endsWith("w"),
   });
   writeMaintenanceAnalysisOutput(report, format, outPath);
