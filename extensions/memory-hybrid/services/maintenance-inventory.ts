@@ -288,6 +288,7 @@ function extractMaintenanceJobName(file: string): string {
   return withoutLogSuffix
     .replace(/-\d{8}T\d{6}Z-\d+$/, "")
     .replace(/-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/, "")
+    .replace(/-\d{8}\.cron$/, "")
     .replace(/\.cron$/, "");
 }
 
