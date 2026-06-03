@@ -127,12 +127,12 @@ When ambiguous pairs remain, the CLI now also prints `unresolved_by_reason` buck
 
 Every run prints a summary with total contradictions, deterministic/LLM/manual counts, target rate, and achieved rate so nightly maintenance does not hide leftover backlog.
 
-Default `resolve-contradictions` now also emits an actionable summary line (`auto_resolved`, `ambiguous`, `no_progress`, `degraded`, `threshold`). For cron/automation, use `--json` to get a structured payload with `exitReason` and recommended follow-up commands. When ambiguous backlog is large and no pairs were auto-resolved, the command exits degraded (`exitCode=2`); tune or disable this guard with `--degraded-ambiguous-threshold <n>` (`0` disables).
+Default `resolve-contradictions` and `--auto` both emit an actionable progress summary (`mode`, `auto_resolved`, `ambiguous`, `no_progress`, `degraded`, `threshold`, `consecutive`). For cron/automation, use `--json` to get a structured payload with `exitReason`, consecutive-run counters, and recommended follow-up commands. When ambiguous backlog is large and no pairs were auto-resolved for `--degraded-consecutive-threshold` runs in a row, the command exits degraded (`exitCode=2`); tune with `--degraded-ambiguous-threshold <n>` (default `200`, `0` disables) and `--degraded-consecutive-threshold <m>` (default `1`; nightly cron uses `3`).
 
 Summary log format (single line):
 
 ```text
-resolve-contradictions summary auto_resolved=<n> ambiguous=<n> no_progress=<0|1> degraded=<0|1> threshold_enabled=<0|1> threshold=<n>
+resolve-contradictions summary mode=<default|auto> auto_resolved=<n> ambiguous=<n> no_progress=<0|1> degraded=<0|1> threshold_enabled=<0|1> threshold=<n> consecutive=<run-count> consecutive_threshold=<m>
 ```
 
 Use `--json` when possible; the text summary is intended as a lightweight fallback for log scrapers.
