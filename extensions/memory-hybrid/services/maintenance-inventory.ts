@@ -500,12 +500,7 @@ function parseGatewayJobs(
     const schedule = describeGatewaySchedule(job.schedule);
     const state = job.state as { lastRunAtMs?: number; lastStatus?: string } | undefined;
     const lastRun = pickLastRun(typeof state?.lastRunAtMs === "number" ? state.lastRunAtMs : null, guardMs, artifact);
-    const status = state?.lastStatus
-      ? {
-          lastStatus: state.lastStatus,
-          lastExitAt: artifact?.latestExitMtimeMs ? new Date(artifact.latestExitMtimeMs).toISOString() : undefined,
-        }
-      : deriveArtifactStatus(entry, artifact);
+    const status = deriveArtifactStatus(entry, artifact);
 
     jobs.push({
       inventoryId: `gateway-cron:${entry.jobKey}`,
