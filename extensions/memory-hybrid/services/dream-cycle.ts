@@ -10,12 +10,15 @@
  * Self-contained — does not require an active agent session.
  */
 
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
@@ -86,6 +89,19 @@ export interface DreamCycleConfig {
    * Default: true (enabled for backward compatibility).
    */
   enableReflectionRules?: boolean;
+  /**
+   * Directory where per-stage durable JSON artifacts are written (Issue #1827).
+   * Each stage writes `stage-NN-<label>.json` with started/succeeded/failed status,
+   * timing, and summary. Created automatically if it does not exist.
+   * When unset (default), no artifact files are written.
+   */
+  stageArtifactDir?: string;
+  /**
+   * Run identifier for this dream cycle execution (Issue #1827).
+   * When unset, a new run ID is generated. When set, the provided ID is used
+   * for both the directory name and artifact `runId` field to ensure consistency.
+   */
+  runId?: string;
 }
 
 /** Result returned by a single dream cycle run. */
@@ -134,6 +150,17 @@ const MIN_PATTERNS_FOR_RULES = 3;
 export const DEFAULT_MAX_EVENTS_PER_CONSOLIDATION = 200;
 const DREAM_STAGE_HEARTBEAT_MS = 60_000;
 const EPISODIC_PROGRESS_HEARTBEAT_MS = 60_000;
+/** Maximum characters used from the stage label in artifact filenames (Issue #1827). */
+const STAGE_LABEL_MAX_LENGTH = 60;
+
+/**
+ * Returns a run identifier string that encodes the UTC timestamp and process PID,
+ * suitable for directory names and artifact fields (Issue #1827).
+ * Format: `YYYYMMDDTHHmmssZ-<pid>` e.g. `20260602T061400Z-12345`.
+ */
+export function makeDreamCycleRunId(): string {
+  return `${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")}-${process.pid}`;
+}
 const EPISODIC_PROGRESS_GROUP_INTERVAL = 25;
 const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
   "heartbeat",
@@ -607,17 +634,42 @@ export async function runDreamCycle(
   logger.info("memory-hybrid: dream-cycle — starting nightly cycle");
   const cycleStartedAt = Date.now();
   const v = !!config.verbose;
+  const runId = config.runId ?? makeDreamCycleRunId();
+  // Ensure stage artifact dir exists when configured.
+  if (config.stageArtifactDir) {
+    try {
+      mkdirSync(config.stageArtifactDir, { recursive: true });
+    } catch {
+      // Non-fatal: artifact writes below will also fail gracefully.
+    }
+  }
+  const writeStageArtifact = (stageNumber: number, label: string, payload: Record<string, unknown>): void => {
+    if (!config.stageArtifactDir) return;
+    try {
+      const sanitized = label
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .toLowerCase()
+        .slice(0, STAGE_LABEL_MAX_LENGTH);
+      const filename = `stage-${String(stageNumber).padStart(2, "0")}-${sanitized}.json`;
+      const filePath = join(config.stageArtifactDir, filename);
+      atomicWriteFile(filePath, JSON.stringify({ runId, stage: label, stageNumber, ...payload }, null, 2));
+    } catch {
+      // Artifact write failures are non-fatal.
+    }
+  };
   let stageCounter = 0;
   const beginStage = (
     label: string,
     opts?: { heartbeat?: boolean; progressSupplier?: () => string | undefined },
   ): {
     complete: (summary?: string) => void;
-    fail: (err: unknown) => void;
+    fail: (err: unknown, summary?: string) => void;
   } => {
     const stageNumber = ++stageCounter;
     const startedAt = Date.now();
     logger.info(`memory-hybrid: dream-cycle — stage ${stageNumber} start: ${label}`);
+    writeStageArtifact(stageNumber, label, { status: "started", startedAt: new Date(startedAt).toISOString() });
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     if (v && opts?.heartbeat === true) {
       heartbeat = setInterval(() => {
@@ -639,11 +691,26 @@ export async function runDreamCycle(
         logger.info(
           `memory-hybrid: dream-cycle — stage ${stageNumber} complete in ${elapsedSec}s: ${label}${summary ? `; ${summary}` : ""}`,
         );
+        writeStageArtifact(stageNumber, label, {
+          status: "succeeded",
+          startedAt: new Date(startedAt).toISOString(),
+          completedAt: new Date().toISOString(),
+          elapsedSec,
+          ...(summary != null ? { summary } : {}),
+        });
       },
-      fail: (err: unknown) => {
+      fail: (err: unknown, summary?: string) => {
         clearHeartbeat();
         const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
         logger.warn(`memory-hybrid: dream-cycle — stage ${stageNumber} failed after ${elapsedSec}s: ${label}: ${err}`);
+        writeStageArtifact(stageNumber, label, {
+          status: "failed",
+          startedAt: new Date(startedAt).toISOString(),
+          completedAt: new Date().toISOString(),
+          elapsedSec,
+          error: String(err),
+          ...(summary != null ? { summary } : {}),
+        });
       },
     };
   };
@@ -663,6 +730,7 @@ export async function runDreamCycle(
 
   // ── Stage 1: Core pruning / decay / graph-vector maintenance ─────────────
   const stageCore = beginStage("core prune/decay/link/vector maintenance");
+  let stageCoreError: unknown;
   let factsPruned = 0;
   let factsDecayed = 0;
   if (config.pruneMode === "expired" || config.pruneMode === "both") {
@@ -680,6 +748,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
+      stageCoreError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — pruneExpired failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-prune-expired",
@@ -710,6 +779,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
+      stageCoreError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — reclassifyDecayClasses failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-reclassify-decay",
@@ -735,6 +805,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
+      stageCoreError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — decayConfidence failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-decay",
@@ -751,6 +822,7 @@ export async function runDreamCycle(
       logger.info(`memory-hybrid: dream-cycle — pruned ${linksPruned} orphaned link(s)`);
     }
   } catch (err) {
+    stageCoreError ??= err;
     logger.warn(`memory-hybrid: dream-cycle — pruneOrphanedLinks failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "dream-cycle-prune-orphaned-links",
@@ -770,6 +842,7 @@ export async function runDreamCycle(
         logger.info(`memory-hybrid: dream-cycle — refreshed fact degrees for ${result.updated} facts`);
       }
     } catch (err) {
+      stageCoreError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — refreshFactDegrees failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-refresh-degrees",
@@ -815,6 +888,7 @@ export async function runDreamCycle(
       }
     }
   } catch (err) {
+    stageCoreError ??= err;
     logger.warn(`memory-hybrid: dream-cycle — vector reconciliation failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "dream-cycle-vector-reconcile",
@@ -822,14 +896,18 @@ export async function runDreamCycle(
     });
   }
   vectorReconcileStep.complete(`removed=${orphanVectorsRemoved}`);
-  stageCore.complete(
-    `factsPruned=${factsPruned}, factsDecayed=${factsDecayed}, linksPruned=${linksPruned}, decayReclassified=${decayReclassified}, orphanVectorsRemoved=${orphanVectorsRemoved}`,
-  );
+  {
+    const summary =
+      `factsPruned=${factsPruned}, factsDecayed=${factsDecayed}, linksPruned=${linksPruned}, decayReclassified=${decayReclassified}, orphanVectorsRemoved=${orphanVectorsRemoved}`;
+    if (stageCoreError === undefined) stageCore.complete(summary);
+    else stageCore.fail(stageCoreError, summary);
+  }
 
   // ── Stage 2: Episodic consolidation + event log maintenance ──────────────
   let eventsConsolidated = 0;
   let factsCreated = 0;
   let eventLogPhase = "consolidation";
+  let stageEventLogError: unknown;
   const stageEventLog = beginStage("episodic consolidation + event log maintenance", {
     heartbeat: true,
     progressSupplier: () =>
@@ -851,6 +929,7 @@ export async function runDreamCycle(
       eventsConsolidated = consolidationResult.eventsConsolidated;
       factsCreated = consolidationResult.factsCreated;
     } catch (err) {
+      stageEventLogError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — consolidation step failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-consolidation",
@@ -872,6 +951,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
+      stageEventLogError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — archiveConsolidated failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-archive",
@@ -891,6 +971,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
+      stageEventLogError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — archiveOld failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-archive-old",
@@ -898,10 +979,15 @@ export async function runDreamCycle(
       });
     }
   }
-  stageEventLog.complete(`eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}`);
+  {
+    const summary = `eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}`;
+    if (stageEventLogError === undefined) stageEventLog.complete(summary);
+    else stageEventLog.fail(stageEventLogError, summary);
+  }
 
   // ── Stage 3: Reflection (patterns) ────────────────────────────────────────
   let patternsFound = 0;
+  let stageReflectionError: unknown;
   const stageReflection = beginStage("reflection (patterns)", {
     heartbeat: true,
     progressSupplier: () => `phase=extract-patterns; patternsStored=${patternsFound}`,
@@ -931,13 +1017,18 @@ export async function runDreamCycle(
     patternsFound = reflectionResult.patternsStored;
     logger.info(`memory-hybrid: dream-cycle — reflection complete: ${patternsFound} patterns stored`);
   } catch (err) {
+    stageReflectionError ??= err;
     logger.warn(`memory-hybrid: dream-cycle — reflection step failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "dream-cycle-reflect",
       subsystem: "reflection",
     });
   }
-  stageReflection.complete(`patternsStored=${patternsFound}`);
+  {
+    const summary = `patternsStored=${patternsFound}`;
+    if (stageReflectionError === undefined) stageReflection.complete(summary);
+    else stageReflection.fail(stageReflectionError, summary);
+  }
 
   const livePatternCountForRules = countActivePatternFactsForMaintenance(factsDb);
   const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
@@ -947,6 +1038,7 @@ export async function runDreamCycle(
   let reflectionRulesDiagnostics: DreamCycleResult["reflectionRulesDiagnostics"];
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
   if (enableReflectionRules && patternGateForRules >= MIN_PATTERNS_FOR_RULES) {
+    let stageReflectRulesError: unknown;
     const stageReflectRules = beginStage("reflect-rules", {
       heartbeat: true,
       progressSupplier: () => `phase=extract-rules; rulesStored=${rulesGenerated}`,
@@ -967,6 +1059,7 @@ export async function runDreamCycle(
         `memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored (status=${rulesResult.diagnostics.status}${rulesResult.diagnostics.zeroRulesReason ? `, zero_rules_reason=${rulesResult.diagnostics.zeroRulesReason}` : ""})`,
       );
     } catch (err) {
+      stageReflectRulesError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — reflect-rules step failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-reflect-rules",
@@ -983,7 +1076,11 @@ export async function runDreamCycle(
         status: "degraded",
       };
     }
-    stageReflectRules.complete(`rulesStored=${rulesGenerated}`);
+    {
+      const summary = `rulesStored=${rulesGenerated}`;
+      if (stageReflectRulesError === undefined) stageReflectRules.complete(summary);
+      else stageReflectRules.fail(stageReflectRulesError, summary);
+    }
   } else if (!enableReflectionRules) {
     reflectionRulesDiagnostics = {
       modelResponseChars: 0,
@@ -1017,6 +1114,7 @@ export async function runDreamCycle(
   }
 
   // ── Stage 5: Refresh memory awareness index ───────────────────────────────
+  let stageMemoryIndexError: unknown;
   const stageMemoryIndex = beginStage("MEMORY_INDEX.md refresh", {
     heartbeat: true,
     progressSupplier: () => "phase=refresh-index",
@@ -1034,18 +1132,21 @@ export async function runDreamCycle(
       logger,
     );
   } catch (err) {
+    stageMemoryIndexError ??= err;
     logger.warn(`memory-hybrid: dream-cycle — memory index update failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "dream-cycle-memory-index",
       subsystem: "reflection",
     });
   }
-  stageMemoryIndex.complete();
+  if (stageMemoryIndexError === undefined) stageMemoryIndex.complete();
+  else stageMemoryIndex.fail(stageMemoryIndexError);
 
   // ── Stage 6: Operational table/index cleanup ──────────────────────────────
   let logRowsPruned = 0;
   let vacuumRan = false;
   let walCheckpointRan = false;
+  let stageOperationalError: unknown;
   const stageOperational = beginStage("prune operational logs + FTS optimize + optional vacuum", {
     heartbeat: true,
     progressSupplier: () =>
@@ -1060,6 +1161,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
+      stageOperationalError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — pruneLogTables failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-prune-log-tables",
@@ -1074,6 +1176,7 @@ export async function runDreamCycle(
     factsDb.optimizeFts();
     logger.info("memory-hybrid: dream-cycle — FTS5 index optimized");
   } catch (err) {
+    stageOperationalError ??= err;
     logger.warn(`memory-hybrid: dream-cycle — optimizeFts failed: ${err}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "dream-cycle-optimize-fts",
@@ -1105,6 +1208,7 @@ export async function runDreamCycle(
         );
       }
     } catch (err) {
+      stageOperationalError ??= err;
       logger.warn(`memory-hybrid: dream-cycle — vacuumAndCheckpoint failed: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "dream-cycle-vacuum",
@@ -1113,9 +1217,12 @@ export async function runDreamCycle(
     }
     vacuumStep.complete(`vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`);
   }
-  stageOperational.complete(
-    `logRowsPruned=${logRowsPruned}, vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`,
-  );
+  {
+    const summary =
+      `logRowsPruned=${logRowsPruned}, vacuumRan=${vacuumRan ? "yes" : "no"}, walCheckpointRan=${walCheckpointRan ? "yes" : "no"}`;
+    if (stageOperationalError === undefined) stageOperational.complete(summary);
+    else stageOperational.fail(stageOperationalError, summary);
+  }
 
   // ── Step 6: Digest summary ───────────────────────────────────────────────
   const digestSummary = buildDigestSummary({
