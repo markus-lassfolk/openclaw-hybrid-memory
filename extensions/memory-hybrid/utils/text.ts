@@ -177,6 +177,13 @@ export function sanitizeRecallFactText(text: string): string {
 export const sanitizeHotFactText = sanitizeRecallFactText;
 
 /**
+ * Escape a string for use in a regular expression literal.
+ */
+export function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
  * Strip leading whitespace plus repeated HTML comment blocks from skill content.
  *
  * Skill installers can prepend metadata comments before YAML frontmatter. This

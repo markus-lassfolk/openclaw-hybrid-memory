@@ -10,7 +10,7 @@ import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limit
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { atomicWriteSkillDir, SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
-import { stripLeadingHtmlComments, titleCase } from "../utils/text.js";
+import { escapeRegExp, stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import { redactAutopilotText } from "./pending-autopilot/redaction.js";
 import { buildClusterDeferMap, clusterProcedureItems } from "./procedure-cluster.js";
@@ -226,10 +226,6 @@ function rebaseDraftSlug(
     triggerEvalJson,
     referenceTelemetryMd,
   };
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function promotionWriteFailureReason(err: unknown): string {
