@@ -1148,14 +1148,6 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               throw err;
             }
 
-            console.log(
-              `contradiction-auto summary total=${res.total} deterministic=${res.deterministic} llm=${res.llm} merged=${res.merged} manual_review=${res.manualReview} applied=${res.applied} target=${res.targetRate.toFixed(2)} achieved=${res.achievedRate.toFixed(3)}`,
-            );
-            if (!res.targetMet) {
-              console.log(
-                `contradiction-auto target-missed achieved=${res.achievedRate.toFixed(3)} target=${res.targetRate.toFixed(2)}`,
-              );
-            }
             const autoResolvedCount = res.deterministic + res.llm + res.merged;
             const ambiguousCount = res.manualReview;
             const metrics = {
@@ -1188,6 +1180,19 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                     : undefined,
               },
             });
+            if (!jsonMode) {
+              console.log(
+                `contradiction-auto summary total=${res.total} deterministic=${res.deterministic} llm=${res.llm} merged=${res.merged} manual_review=${res.manualReview} applied=${res.applied} target=${res.targetRate.toFixed(2)} achieved=${res.achievedRate.toFixed(3)}`,
+              );
+              if (!res.targetMet) {
+                console.log(
+                  `contradiction-auto target-missed achieved=${res.achievedRate.toFixed(3)} target=${res.targetRate.toFixed(2)}`,
+                );
+              }
+            }
+            if (jsonMode) {
+              return;
+            }
             if (exportReview) {
               writeContradictionReviewFile(exportReview, res.reviewItems);
               console.log(`manual-review exported: ${res.reviewItems.length} item(s) -> ${exportReview}`);
