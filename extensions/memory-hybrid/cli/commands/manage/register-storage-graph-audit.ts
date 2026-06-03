@@ -259,6 +259,11 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       // #1823: on unhandled error emit a structured failure artifact so downstream consumers
       // (final-audit.json etc.) never receive a 0-byte file. The failure artifact is
       // schema-consistent so `jq` pipelines can detect the failure without special-casing.
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "audit-health",
+        severity: "error",
+        subsystem: "cli",
+      });
       if (wantsJson || outputPath) {
         try {
           const strict = opts?.strict === true;
@@ -272,11 +277,10 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
             `audit health: failed to write failure artifact: ${emitErr instanceof Error ? emitErr.message : String(emitErr)}`,
           );
         }
+        process.exitCode = 1;
+        return;
       }
-      process.exitCode = 2;
-      if (!wantsJson && !outputPath) {
-        throw err;
-      }
+      throw err;
     }
   };
 
