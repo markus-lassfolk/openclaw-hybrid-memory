@@ -323,13 +323,130 @@ export class CredentialsDB extends BaseSqliteStore {
   ): { migrated: number; kdfVersion: number; backupPath?: string; verified?: boolean } {
     const { backupPath, verify } = opts;
 
-    if (backupPath) {
-      // VACUUM INTO creates a consistent snapshot even when the DB is open (WAL-safe).
-      this.liveDb.prepare("VACUUM INTO ?").run(backupPath);
-      tryRestrictSqliteDbFileMode(backupPath);
+    const keyLooksEncrypted = encryptionKey.length >= 16;
+    if (!keyLooksEncrypted) {
+      throw new Error(
+        "Encryption key is missing or too short. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY before encrypting the vault.",
+      );
+    }
+    if (this.kdfVersion !== CRED_KDF_PLAINTEXT) {
+      throw new Error(`Credentials vault is already encrypted (kdf_version=${this.kdfVersion}).`);
     }
 
-    const result = this.enableEncryptionAtRest(encryptionKey);
+    const newSalt = randomBytes(32);
+    const newKdfVersion = CRED_KDF_VERSION;
+    const newKey = deriveKey(encryptionKey, newSalt, newKdfVersion);
+
+    let migratedCount = 0;
+
+    // Perform backup and encryption in a single IMMEDIATE transaction to prevent
+    // writes between backup snapshot and encryption. This fixes the race condition
+    // where VACUUM INTO would snapshot at T1, then new rows could be written at T2,
+    // then encryption would start at T3, resulting in encrypted rows missing from backup.
+    const migrateWithBackup = createTransaction(
+      this.liveDb,
+      () => {
+        if (backupPath) {
+          // Create backup database and copy all data within this transaction
+          const backupDb = new DatabaseSync(backupPath);
+          try {
+            // Copy schema
+            backupDb.exec(`
+              CREATE TABLE vault_meta (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL
+              )
+            `);
+            backupDb.exec(`
+              CREATE TABLE credentials (
+                service TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'other',
+                value BLOB NOT NULL,
+                url TEXT,
+                notes TEXT,
+                created INTEGER NOT NULL,
+                updated INTEGER NOT NULL,
+                expires INTEGER,
+                PRIMARY KEY (service, type)
+              )
+            `);
+            backupDb.exec(`
+              CREATE INDEX idx_credentials_service ON credentials(service)
+            `);
+
+            // Copy vault_meta
+            const metaRows = this.liveDb.prepare("SELECT key, value FROM vault_meta").all() as Array<{
+              key: string;
+              value: Uint8Array | Buffer;
+            }>;
+            const insertMeta = backupDb.prepare("INSERT INTO vault_meta (key, value) VALUES (?, ?)");
+            for (const row of metaRows) {
+              insertMeta.run(row.key, row.value);
+            }
+
+            // Copy credentials
+            const credRows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
+            migratedCount = credRows.length;
+            const insertCred = backupDb.prepare(
+              "INSERT INTO credentials (service, type, value, url, notes, created, updated, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            for (const row of credRows) {
+              insertCred.run(
+                row.service,
+                row.type,
+                row.value,
+                row.url,
+                row.notes,
+                row.created,
+                row.updated,
+                row.expires,
+              );
+            }
+
+            backupDb.close();
+            tryRestrictSqliteDbFileMode(backupPath);
+          } catch (err) {
+            backupDb.close();
+            throw err;
+          }
+        } else {
+          // No backup, just count rows
+          const rows = this.liveDb.prepare("SELECT service, type FROM credentials").all() as Array<{
+            service: string;
+            type: string;
+          }>;
+          migratedCount = rows.length;
+        }
+
+        // Now encrypt within the same transaction
+        const rows = this.liveDb.prepare("SELECT service, type, value FROM credentials").all() as Array<{
+          service: string;
+          type: string;
+          value: Uint8Array | Buffer;
+        }>;
+        const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+        for (const r of rows) {
+          const plaintext = toBuffer(r.value).toString("utf8");
+          const encrypted = encryptValue(plaintext, newKey);
+          updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
+        }
+        this.liveDb
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([newKdfVersion]));
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(newSalt);
+      },
+      "IMMEDIATE",
+    );
+
+    migrateWithBackup();
+
+    this.kdfVersion = newKdfVersion;
+    this.salt = newSalt;
+    this.key = newKey;
+    this.password = null;
+    this.storesEncryptedValues = true;
+
+    const result = { migrated: migratedCount, kdfVersion: this.kdfVersion };
 
     let verified: boolean | undefined;
     if (verify) {
