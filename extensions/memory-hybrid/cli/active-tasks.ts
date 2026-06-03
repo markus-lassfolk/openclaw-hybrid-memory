@@ -525,7 +525,7 @@ export async function runActiveTaskReconcile(
       ledger: "facts",
       reconciledLabels: result.reconciledLabels,
       candidates: result.candidates,
-      reconciled: result.reconciledLabels.length,
+      reconciled: result.factsWritten,
       skipped: result.skipped,
       failed: result.failed,
       scanned: result.scanned,
@@ -550,7 +550,7 @@ export async function runActiveTaskReconcile(
     ledger: "markdown",
     reconciledLabels: result.reconciledLabels,
     candidates: result.candidates,
-    reconciled: result.reconciledLabels.length,
+    reconciled: result.wrote ? result.reconciledLabels.length : 0,
     skipped: result.skipped,
     failed: result.failed,
     scanned: result.scanned,
@@ -560,13 +560,14 @@ export async function runActiveTaskReconcile(
 }
 
 function printActiveTaskReconcile(result: ActiveTaskReconcileResult): void {
-  if (result.reconciledLabels.length === 0) {
+  const reconciledCount = result.reconciled ?? 0;
+  if (reconciledCount === 0 && result.candidates === 0) {
     console.log("✅ No orphan in-progress subagent tasks to reconcile.");
     return;
   }
 
   if (result.mode === "dry-run") {
-    console.log(`Dry run — would reconcile ${result.reconciledLabels.length} task(s):`);
+    console.log(`Dry run — would reconcile ${result.candidates} task(s):`);
     for (const label of result.reconciledLabels) {
       console.log(`  - [${label}]`);
     }
@@ -574,12 +575,15 @@ function printActiveTaskReconcile(result: ActiveTaskReconcileResult): void {
   }
 
   if (result.ledger === "facts") {
-    console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) in facts ledger:`);
+    console.log(`✅ Reconciled ${reconciledCount} task(s) in facts ledger:`);
   } else {
-    console.log(`✅ Reconciled ${result.reconciledLabels.length} task(s) (moved to Completed):`);
+    console.log(`✅ Reconciled ${reconciledCount} task(s) (moved to Completed):`);
   }
-  for (const label of result.reconciledLabels) {
-    console.log(`  - [${label}]`);
+  for (let i = 0; i < Math.min(reconciledCount, result.reconciledLabels.length); i++) {
+    console.log(`  - [${result.reconciledLabels[i]}]`);
+  }
+  if (result.failed > 0) {
+    console.log(`⚠️  ${result.failed} task(s) failed to write.`);
   }
 
   if (result.liveState) {
@@ -1040,6 +1044,9 @@ export function registerActiveTaskCommands(
         verbose,
       });
       printActiveTaskReconcile(result);
+      if (!opts.dryRun && result.failed > 0) {
+        process.exitCode = 2;
+      }
     });
 
   activeTasks

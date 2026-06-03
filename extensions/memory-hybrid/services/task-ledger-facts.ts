@@ -1650,11 +1650,13 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   progress?.phaseStart("fact-write", { candidates: reconciledLabels.length });
   let factsWritten = 0;
   let failed = 0;
+  const successfullyWritten: ActiveTaskEntry[] = [];
   for (let i = 0; i < toFlush.length; i++) {
     const entry = toFlush[i]!;
     try {
       await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log);
       factsWritten += 1;
+      successfullyWritten.push(entry);
       progress?.onWriteItem(entry.label, i + 1, toFlush.length, false);
     } catch {
       failed += 1;
@@ -1664,7 +1666,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   progress?.phaseComplete("fact-write", { factsWritten, failed });
 
   if (opts.flushOnComplete && opts.memoryDir) {
-    for (const entry of toFlush) {
+    for (const entry of successfullyWritten) {
       await flushCompletedTaskToMemory(entry, opts.memoryDir).catch(() => {});
     }
   }
