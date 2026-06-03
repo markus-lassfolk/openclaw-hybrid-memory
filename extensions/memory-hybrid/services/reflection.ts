@@ -51,7 +51,14 @@ import {
 
 export { dotProductSimilarity, normalizeVector, parsePatternsFromReflectionResponse } from "./reflection/shared.js";
 
-import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
+import {
+  classifyZeroMetasReason,
+  classifyZeroRulesReason,
+  parseMetasFromModelResponse,
+  parseRulesFromModelResponse,
+  REFLECTION_META_JSON_INSTRUCTION,
+  REFLECTION_RULES_JSON_INSTRUCTION,
+} from "./reflection/structured-output.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 /** Non-superseded, non-expired pattern facts (same filter as reflection dedupe corpus). */
@@ -97,36 +104,6 @@ export interface ReflectionRulesDiagnostics {
   stored: number;
   zeroRulesReason?: string;
   status: "ok" | "partial" | "degraded";
-}
-
-// Accepted model phrases when "0 rules" is a valid no-op rather than parse failure.
-// Anchored to start-of-string but allows leading whitespace so phrases like
-// "No actionable rules detected from ..." are correctly classified.
-// Only accepts single-line no-op responses; multiline outputs must be parsed for RULE lines.
-const VALID_NO_RULES_PATTERN =
-  /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[^\n\r]*$/i;
-const LOW_CONFIDENCE_PREFIX_PATTERN =
-  /^\s*(?:\[(?:low[-\s]?confidence)\]|\((?:low[-\s]?confidence)\)|low[-\s]?confidence\s*[:\-])\s*/i;
-const EXPLICIT_CONFIDENCE_PREFIX_PATTERN =
-  /^\s*(?:\[|\()?\s*confidence\s*[:=]\s*(?<value>0(?:\.\d+)?|1(?:\.0+)?)\s*(?:\]|\))?\s*/i;
-const REFLECTION_RULE_MIN_CONFIDENCE = 0.5;
-
-const THINKING_WRAPPER_TAGS_PATTERN = /<\/?(?:redacted_thinking|thinking|reasoning|think)>/gi;
-
-function stripThinkingWrapperTagsKeepContent(s: string): string {
-  return s.replace(THINKING_WRAPPER_TAGS_PATTERN, "").trim();
-}
-
-function extractThinkingWrapperContents(s: string): string[] {
-  const matches = s.matchAll(
-    /<(?:redacted_thinking|thinking|reasoning|think)>([\s\S]*?)<\/(?:redacted_thinking|thinking|reasoning|think)>/gi,
-  );
-  const contents: string[] = [];
-  for (const match of matches) {
-    const content = match[1]?.trim();
-    if (content) contents.push(content);
-  }
-  return contents;
 }
 
 function derivePreMergeText(mergedText: string, appendedText: string): string | null {
@@ -276,6 +253,17 @@ function reusedExistingStoreEntry(
 interface ReflectionMetaResult {
   metaExtracted: number;
   metaStored: number;
+  diagnostics?: ReflectionMetaDiagnostics;
+}
+
+export interface ReflectionMetaDiagnostics {
+  modelResponseChars: number;
+  parseSuccess: boolean;
+  parsedCandidates: number;
+  rejectedLength: number;
+  stored: number;
+  zeroMetasReason?: string;
+  status: "ok" | "partial" | "degraded";
 }
 
 /**
@@ -1188,10 +1176,11 @@ export async function runReflectionRules(
     return { rulesExtracted: 0, rulesStored: 0, diagnostics };
   }
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
-  const prompt = fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock });
+  const prompt =
+    fillPrompt(loadPrompt("reflection-rules"), { patterns: patternsBlock }) + REFLECTION_RULES_JSON_INSTRUCTION;
   if (opts.verbose) {
     logger.info(
-      `memory-hybrid: reflect-rules — LLM call (${prompt.length} chars, ${patterns.length} patterns, model=${opts.model})`,
+      `memory-hybrid: reflect-rules — LLM call (${prompt.length} chars, ${patterns.length} patterns, model=${opts.model}, jsonMode=true)`,
     );
   }
   let rawResponse: string;
@@ -1211,6 +1200,7 @@ export async function runReflectionRules(
       logger,
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
+      responseFormat: { type: "json_object" },
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1227,103 +1217,14 @@ export async function runReflectionRules(
     });
     throw err instanceof Error ? err : new Error(String(err));
   }
-  const trimmedResponse = rawResponse.trim();
-  const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
-  const wrapperContents = extractThinkingWrapperContents(trimmedResponse);
-  const responseForParsing = strippedResponse.length > 0 ? strippedResponse : trimmedResponse;
-  const rules: string[] = [];
-  let rejectedLowConfidence = 0;
-  let rejectedLength = 0;
-  let parseableLines = 0;
-  for (const line of responseForParsing.split(/\n/)) {
-    const m = line.match(/^\s*RULE:\s*(.+)/);
-    if (!m) continue;
-    parseableLines++;
-    let text = m[1].trim();
-    if (LOW_CONFIDENCE_PREFIX_PATTERN.test(text)) {
-      rejectedLowConfidence++;
-      continue;
-    }
-    const confidencePrefix = text.match(EXPLICIT_CONFIDENCE_PREFIX_PATTERN);
-    if (confidencePrefix?.groups?.value) {
-      const confidence = Number.parseFloat(confidencePrefix.groups.value);
-      text = text.slice(confidencePrefix[0].length).trim();
-      if (Number.isFinite(confidence) && confidence < REFLECTION_RULE_MIN_CONFIDENCE) {
-        rejectedLowConfidence++;
-        continue;
-      }
-    }
-    if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) {
-      rules.push(text);
-    } else {
-      rejectedLength++;
-    }
-  }
-  for (const wrapperContent of wrapperContents) {
-    for (const line of wrapperContent.split(/\n/)) {
-      const m = line.match(/^\s*RULE:\s*(.+)/);
-      if (!m) continue;
-      parseableLines++;
-      let text = m[1].trim();
-      if (LOW_CONFIDENCE_PREFIX_PATTERN.test(text)) {
-        rejectedLowConfidence++;
-        continue;
-      }
-      const confidencePrefix = text.match(EXPLICIT_CONFIDENCE_PREFIX_PATTERN);
-      if (confidencePrefix?.groups?.value) {
-        const confidence = Number.parseFloat(confidencePrefix.groups.value);
-        text = text.slice(confidencePrefix[0].length).trim();
-        if (Number.isFinite(confidence) && confidence < REFLECTION_RULE_MIN_CONFIDENCE) {
-          rejectedLowConfidence++;
-          continue;
-        }
-      }
-      if (text.length >= REFLECTION_RULE_MIN_CHARS && text.length <= REFLECTION_RULE_MAX_CHARS) {
-        rules.push(text);
-      } else {
-        rejectedLength++;
-      }
-    }
-  }
-  const seenInBatch = new Set<string>();
-  const uniqueRules: string[] = [];
-  let rejectedDuplicates = 0;
-  for (const r of rules) {
-    const key = r.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) {
-      rejectedDuplicates++;
-      continue;
-    }
-    seenInBatch.add(key);
-    uniqueRules.push(r);
-  }
-  const wrapperTagStrippedResponse = stripThinkingWrapperTagsKeepContent(trimmedResponse);
-  const noRulesClassificationResponse = strippedResponse.length > 0 ? strippedResponse : wrapperTagStrippedResponse;
-  const containsRuleLineInResponse =
-    /(?:^|\n)\s*RULE:/i.test(noRulesClassificationResponse) ||
-    wrapperContents.some((content) => /(?:^|\n)\s*RULE:/i.test(content));
-  const looksLikeValidNoRules =
-    !containsRuleLineInResponse &&
-    (VALID_NO_RULES_PATTERN.test(noRulesClassificationResponse) ||
-      wrapperContents.some((content) => VALID_NO_RULES_PATTERN.test(content)));
-  const parseSuccess = parseableLines > 0 || looksLikeValidNoRules;
+  const parseResult = parseRulesFromModelResponse(rawResponse);
+  const uniqueRules = parseResult.rules;
+  const { parseableLines, rejectedLowConfidence, rejectedLength, rejectedDuplicates, parseSuccess, parsedFromJson } =
+    parseResult;
   const modelResponseChars = rawResponse.length;
   if (uniqueRules.length === 0) {
     logger.info("memory-hybrid: reflect-rules — 0 rules extracted from LLM");
-    const zeroRulesReason =
-      parseableLines > 0 && rejectedDuplicates > 0 && rejectedLowConfidence === 0 && rejectedLength === 0
-        ? "all_candidates_duplicate"
-        : parseableLines > 0 && rejectedLowConfidence > 0 && rejectedDuplicates === 0 && rejectedLength === 0
-          ? "all_candidates_rejected_low_confidence"
-          : parseableLines > 0 && rejectedLength > 0 && rejectedLowConfidence === 0 && rejectedDuplicates === 0
-            ? "all_candidates_rejected_length"
-            : parseableLines > 0
-              ? "all_candidates_rejected"
-              : looksLikeValidNoRules
-                ? "valid_no_actionable_rules"
-                : noRulesClassificationResponse.length === 0
-                  ? "empty_model_response"
-                  : "invalid_response_format";
+    const zeroRulesReason = classifyZeroRulesReason(parseResult, rawResponse.trim().length);
     const diagnostics: ReflectionRulesDiagnostics = {
       modelResponseChars,
       parseSuccess,
@@ -1347,7 +1248,8 @@ export async function runReflectionRules(
         `rejected_duplicates=${diagnostics.rejectedDuplicates} ` +
         `rejected_low_confidence=${diagnostics.rejectedLowConfidence} ` +
         `stored=${diagnostics.stored} ` +
-        `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
+        `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}` +
+        (parsedFromJson ? " parsed_from=json" : ""),
     );
     // Format retry (#1824): when the model returned an unusable response format and fallbacks are
     // available, retry with the next model in the chain before giving up.
@@ -1377,6 +1279,10 @@ export async function runReflectionRules(
       throw new Error(`memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}`);
     }
     return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
+  }
+
+  if (parsedFromJson && opts.verbose) {
+    logger.info("memory-hybrid: reflect-rules — parsed rules from JSON response");
   }
 
   logger.info(
@@ -1909,13 +1815,15 @@ export async function runReflectionMeta(
     return { metaExtracted: 0, metaStored: 0 };
   }
   const patternsBlock = patterns.map((p, i) => `${i + 1}. ${p}`).join("\n");
-  const prompt = fillPrompt(loadPrompt("reflection-meta"), { patterns: patternsBlock });
+  const prompt =
+    fillPrompt(loadPrompt("reflection-meta"), { patterns: patternsBlock }) + REFLECTION_META_JSON_INSTRUCTION;
   if (opts.verbose) {
     logger.info(
-      `memory-hybrid: reflect-meta — LLM call (${prompt.length} chars, ${patterns.length} patterns, model=${opts.model})`,
+      `memory-hybrid: reflect-meta — LLM call (${prompt.length} chars, ${patterns.length} patterns, model=${opts.model}, jsonMode=true)`,
     );
   }
   let rawResponse: string;
+  let modelUsed: string;
   try {
     const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
@@ -1931,7 +1839,9 @@ export async function runReflectionMeta(
       logger,
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
+      responseFormat: { type: "json_object" },
     });
+    modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflect-meta — used fallback model ${detail.modelUsed}`);
     }
@@ -1944,26 +1854,67 @@ export async function runReflectionMeta(
       subsystem: "openai",
       retryAttempt,
     });
-    return { metaExtracted: 0, metaStored: 0 };
+    throw err instanceof Error ? err : new Error(String(err));
   }
-  const metas: string[] = [];
-  for (const line of rawResponse.split(/\n/)) {
-    const m = line.match(/^\s*META:\s*(.+)/);
-    if (!m) continue;
-    const text = m[1].trim();
-    if (text.length >= REFLECTION_META_MIN_CHARS && text.length <= REFLECTION_META_MAX_CHARS) metas.push(text);
-  }
-  const seenInBatch = new Set<string>();
-  const uniqueMetas: string[] = [];
-  for (const x of metas) {
-    const key = x.toLowerCase().replace(/\s+/g, " ");
-    if (seenInBatch.has(key)) continue;
-    seenInBatch.add(key);
-    uniqueMetas.push(x);
-  }
+  const parseResult = parseMetasFromModelResponse(rawResponse);
+  const uniqueMetas = parseResult.metas;
+  const modelResponseChars = rawResponse.length;
   if (uniqueMetas.length === 0) {
     logger.info("memory-hybrid: reflect-meta — 0 meta-patterns extracted from LLM");
-    return { metaExtracted: metas.length, metaStored: 0 };
+    const zeroMetasReason = classifyZeroMetasReason(parseResult, rawResponse.trim().length);
+    const diagnostics: ReflectionMetaDiagnostics = {
+      modelResponseChars,
+      parseSuccess: parseResult.parseSuccess,
+      parsedCandidates: parseResult.parseableLines,
+      rejectedLength: parseResult.rejectedLength,
+      stored: 0,
+      zeroMetasReason,
+      status:
+        zeroMetasReason === "invalid_response_format" || zeroMetasReason === "empty_model_response"
+          ? "degraded"
+          : zeroMetasReason === "valid_no_actionable_metas"
+            ? "ok"
+            : "partial",
+    };
+    logger.info(
+      "memory-hybrid: reflect-meta — diagnostics: " +
+        `model_response_chars=${diagnostics.modelResponseChars} ` +
+        `parse_success=${diagnostics.parseSuccess} ` +
+        `parsed_candidates=${diagnostics.parsedCandidates} ` +
+        `rejected_length=${diagnostics.rejectedLength} ` +
+        `stored=${diagnostics.stored} ` +
+        `status=${diagnostics.status} zero_metas_reason=${diagnostics.zeroMetasReason}` +
+        (parseResult.parsedFromJson ? " parsed_from=json" : ""),
+    );
+    if (
+      (zeroMetasReason === "invalid_response_format" || zeroMetasReason === "empty_model_response") &&
+      opts.fallbackModels?.length
+    ) {
+      const remainingFallbacks = opts.fallbackModels.filter((m) => m !== modelUsed);
+      if (remainingFallbacks.length > 0) {
+        const [fallbackModel, ...nextFallbacks] = remainingFallbacks;
+        logger.warn(
+          `memory-hybrid: reflect-meta — ${modelUsed} returned ${zeroMetasReason}, retrying with fallback model ${fallbackModel}`,
+        );
+        return runReflectionMeta(
+          factsDb,
+          vectorDb,
+          embeddings,
+          openai,
+          { ...opts, model: fallbackModel, fallbackModels: nextFallbacks, modelSource: "format-retry-fallback" },
+          logger,
+          provenanceService,
+        );
+      }
+    }
+    if (zeroMetasReason === "invalid_response_format" || zeroMetasReason === "empty_model_response") {
+      throw new Error(`memory-hybrid: reflect-meta — model=${modelUsed} failure_type=${zeroMetasReason}`);
+    }
+    return { metaExtracted: parseResult.parseableLines, metaStored: 0, diagnostics };
+  }
+
+  if (parseResult.parsedFromJson && opts.verbose) {
+    logger.info("memory-hybrid: reflect-meta — parsed meta-patterns from JSON response");
   }
 
   logger.info(
@@ -2378,5 +2329,16 @@ export async function runReflectionMeta(
     );
   }
 
-  return { metaExtracted: metas.length, metaStored: stored };
+  return {
+    metaExtracted: uniqueMetas.length,
+    metaStored: stored,
+    diagnostics: {
+      modelResponseChars,
+      parseSuccess: true,
+      parsedCandidates: parseResult.parseableLines,
+      rejectedLength: parseResult.rejectedLength,
+      stored,
+      status: "ok",
+    },
+  };
 }
