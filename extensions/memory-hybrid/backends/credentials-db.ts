@@ -5,7 +5,7 @@
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
@@ -29,6 +29,9 @@ const CRED_KDF_PLAINTEXT = 0; // no encryption (user secures by other means)
 
 /** Log once per vault path: legacy v1 KDF is weak; opening triggers migration to scrypt when possible. */
 const _v1KdfWarnedPaths = new Set<string>();
+
+/** Log once per vault path: key is configured but vault is plaintext (kdf_version=0). */
+const _plaintextKeyIgnoredWarnedPaths = new Set<string>();
 
 /** v1 only: legacy SHA-256 KDF (weak). Existing vaults cannot be decrypted with another KDF. */
 function deriveKeyV1Legacy(password: string): Buffer {
@@ -170,11 +173,12 @@ export class CredentialsDB extends BaseSqliteStore {
       this.salt = Buffer.alloc(0);
       this.key = Buffer.alloc(0);
       this.password = null;
-      // Optionally warn that key is being ignored
-      if (encryptionKey.length >= 16) {
+      // Optionally warn that key is being ignored (once per process per path)
+      if (encryptionKey.length >= 16 && !_plaintextKeyIgnoredWarnedPaths.has(dbPath)) {
+        _plaintextKeyIgnoredWarnedPaths.add(dbPath);
         pluginLogger.warn(
           "Credentials vault is in plaintext mode (kdf_version=0). The configured encryption key is being ignored. " +
-            "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --yes",
+            "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes",
         );
       }
       return;
@@ -227,10 +231,13 @@ export class CredentialsDB extends BaseSqliteStore {
     configuredKeyPresent: boolean;
     keyIgnored: boolean;
     migrationRequired: boolean;
+    entryCount: number;
   } {
     const encryptedAtRest = this.kdfVersion !== CRED_KDF_PLAINTEXT;
     const keyIgnored = this.kdfVersion === CRED_KDF_PLAINTEXT && this.configuredKeyPresent;
     const migrationRequired = keyIgnored;
+    const entryCount = (this.liveDb.prepare("SELECT COUNT(*) as count FROM credentials").get() as { count: number })
+      .count;
     return {
       dbPath: this.dbPath,
       kdfVersion: this.kdfVersion,
@@ -238,6 +245,7 @@ export class CredentialsDB extends BaseSqliteStore {
       configuredKeyPresent: this.configuredKeyPresent,
       keyIgnored,
       migrationRequired,
+      entryCount,
     };
   }
 
@@ -295,6 +303,224 @@ export class CredentialsDB extends BaseSqliteStore {
     this.storesEncryptedValues = true;
 
     return { migrated: migratedCount, kdfVersion: this.kdfVersion };
+  }
+
+  /**
+   * Safe vault encryption with optional backup and post-encryption verification.
+   *
+   * Steps:
+   * 1. If `backupPath` is set, create a consistent copy of the current plaintext DB via VACUUM INTO.
+   * 2. Encrypt the vault in-place via `enableEncryptionAtRest`.
+   * 3. If `verify` is true, attempt to decrypt every entry to confirm data integrity.
+   *    On failure, throws with the backup path so the operator can restore manually.
+   *
+   * Safety: does NOT auto-restore on verify failure — the in-place operation may have
+   * already committed. The caller should inspect `backupPath` and restore if needed.
+   */
+  encryptVaultSafe(
+    encryptionKey: string,
+    opts: { backupPath?: string; verify?: boolean } = {},
+  ): { migrated: number; kdfVersion: number; backupPath?: string; verified?: boolean } {
+    const { backupPath, verify } = opts;
+
+    const keyLooksEncrypted = encryptionKey.length >= 16;
+    if (!keyLooksEncrypted) {
+      throw new Error(
+        "Encryption key is missing or too short. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY before encrypting the vault.",
+      );
+    }
+    if (this.kdfVersion !== CRED_KDF_PLAINTEXT) {
+      throw new Error(`Credentials vault is already encrypted (kdf_version=${this.kdfVersion}).`);
+    }
+
+    const newSalt = randomBytes(32);
+    const newKdfVersion = CRED_KDF_VERSION;
+    const newKey = deriveKey(encryptionKey, newSalt, newKdfVersion);
+
+    let migratedCount = 0;
+
+    // Perform backup and encryption in a single IMMEDIATE transaction to prevent
+    // writes between backup snapshot and encryption. This fixes the race condition
+    // where VACUUM INTO would snapshot at T1, then new rows could be written at T2,
+    // then encryption would start at T3, resulting in encrypted rows missing from backup.
+
+    // Preserve existing backup during retry by renaming it temporarily
+    let oldBackupPath: string | undefined;
+    if (backupPath) {
+      mkdirSync(dirname(backupPath), { recursive: true });
+      try {
+        // Check if old backup exists and rename it temporarily
+        if (existsSync(backupPath)) {
+          oldBackupPath = `${backupPath}.old.${Date.now()}`;
+          renameSync(backupPath, oldBackupPath);
+        }
+      } catch {
+        // If rename fails, proceed anyway (file might not exist)
+      }
+    }
+
+    const migrateWithBackup = createTransaction(
+      this.liveDb,
+      () => {
+        if (backupPath) {
+          // Create backup database and copy all data within this transaction
+          const backupDb = new DatabaseSync(backupPath);
+          try {
+            // Copy schema
+            backupDb.exec(`
+              CREATE TABLE vault_meta (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL
+              )
+            `);
+            backupDb.exec(`
+              CREATE TABLE credentials (
+                service TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'other',
+                value BLOB NOT NULL,
+                url TEXT,
+                notes TEXT,
+                created INTEGER NOT NULL,
+                updated INTEGER NOT NULL,
+                expires INTEGER,
+                PRIMARY KEY (service, type)
+              )
+            `);
+            backupDb.exec(`
+              CREATE INDEX idx_credentials_service ON credentials(service)
+            `);
+
+            // Copy vault_meta
+            const metaRows = this.liveDb.prepare("SELECT key, value FROM vault_meta").all() as Array<{
+              key: string;
+              value: Uint8Array | Buffer;
+            }>;
+            const insertMeta = backupDb.prepare("INSERT INTO vault_meta (key, value) VALUES (?, ?)");
+            for (const row of metaRows) {
+              insertMeta.run(row.key, row.value);
+            }
+
+            // Copy credentials
+            const credRows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
+            migratedCount = credRows.length;
+            const insertCred = backupDb.prepare(
+              "INSERT INTO credentials (service, type, value, url, notes, created, updated, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            for (const row of credRows) {
+              insertCred.run(
+                row.service,
+                row.type,
+                row.value,
+                row.url,
+                row.notes,
+                row.created,
+                row.updated,
+                row.expires,
+              );
+            }
+
+            backupDb.close();
+            tryRestrictSqliteDbFileMode(backupPath);
+          } catch (err) {
+            backupDb.close();
+            throw err;
+          }
+        } else {
+          // No backup, just count rows
+          const rows = this.liveDb.prepare("SELECT service, type FROM credentials").all() as Array<{
+            service: string;
+            type: string;
+          }>;
+          migratedCount = rows.length;
+        }
+
+        // Now encrypt within the same transaction
+        const rows = this.liveDb.prepare("SELECT service, type, value FROM credentials").all() as Array<{
+          service: string;
+          type: string;
+          value: Uint8Array | Buffer;
+        }>;
+        const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+        for (const r of rows) {
+          const plaintext = toBuffer(r.value).toString("utf8");
+          const encrypted = encryptValue(plaintext, newKey);
+          updateStmt.run(encrypted as unknown as Uint8Array, r.service, r.type);
+        }
+        this.liveDb
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([newKdfVersion]));
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(newSalt);
+      },
+      "IMMEDIATE",
+    );
+
+    let migrationSucceeded = false;
+    try {
+      migrateWithBackup();
+      migrationSucceeded = true;
+
+      this.kdfVersion = newKdfVersion;
+      this.salt = newSalt;
+      this.key = newKey;
+      this.password = null;
+      this.storesEncryptedValues = true;
+
+      const result = { migrated: migratedCount, kdfVersion: this.kdfVersion };
+
+      let verified: boolean | undefined;
+      if (verify) {
+        try {
+          const entries = this.listAll();
+          // Verify that all encrypted entries were successfully decrypted
+          if (entries.length !== result.migrated) {
+            throw new Error(
+              `Verification failed: only ${entries.length} of ${result.migrated} entries could be decrypted`,
+            );
+          }
+          for (const e of entries) {
+            const verifiedEntry = this.get(e.service, e.type as CredentialType);
+            if (!verifiedEntry) {
+              throw new Error(`Verification failed: missing credential ${e.service}/${e.type}`);
+            }
+          }
+          verified = true;
+        } catch (err) {
+          const backupNote = backupPath ? ` Plaintext backup is at: ${backupPath}` : "";
+          throw new Error(
+            `Vault encrypted but post-encryption verification failed: ${err instanceof Error ? err.message : String(err)}.${backupNote}`,
+          );
+        }
+      }
+
+      // Success: delete the old backup if it exists
+      if (oldBackupPath) {
+        try {
+          unlinkSync(oldBackupPath);
+        } catch {
+          // Best effort cleanup; don't fail on cleanup errors
+        }
+      }
+
+      return {
+        ...result,
+        ...(backupPath !== undefined ? { backupPath } : {}),
+        ...(verified !== undefined ? { verified } : {}),
+      };
+    } catch (err) {
+      // After successful migration, keep the new backup (at backupPath) that matches the encrypted state.
+      // Only restore the old backup if migration itself failed.
+      if (oldBackupPath && backupPath && !migrationSucceeded) {
+        try {
+          if (existsSync(backupPath)) {
+            unlinkSync(backupPath);
+          }
+          renameSync(oldBackupPath, backupPath);
+        } catch {
+          // If restore fails, leave both files (old backup is preserved with .old suffix)
+        }
+      }
+      throw err;
+    }
   }
 
   /**
