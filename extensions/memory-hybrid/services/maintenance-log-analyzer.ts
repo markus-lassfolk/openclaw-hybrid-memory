@@ -6,6 +6,12 @@ import { DatabaseSync } from "node:sqlite";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { normalizeExitStepName } from "./cron-exit-validator.js";
 import { capturePluginError } from "./error-reporter.js";
+import {
+  collectMaintenanceNoiseWarnings,
+  isBenignNoiseOnlyMaintenanceStep,
+  sanitizeMaintenanceLogText,
+  type MaintenanceNoiseWarning,
+} from "./maintenance-benign-noise.js";
 
 export type MaintenanceClassification =
   | "env-misconfig"
@@ -88,12 +94,15 @@ export interface MaintenanceAnalysisReport {
   totalSteps: number;
   successfulSteps: number;
   findings: MaintenanceFinding[];
+  /** Known benign compatibility/config warnings suppressed from primary failure counts (#1833). */
+  noiseWarnings: MaintenanceNoiseWarning[];
   summary: {
     jobsOk: number;
     jobsWithFindings: number;
     newFindings: number;
     stillFailing: number;
     historicalStaleSuppressed: number;
+    benignNoiseSuppressed: number;
     byClassification: Record<string, number>;
     byAction: Record<string, number>;
     weekOverWeek?: Array<{ classification: string; currentWeek: number; previousWeek: number; delta: number }>;
@@ -496,7 +505,9 @@ export function classifyMaintenanceFailure(input: {
   const auditRule = classifyAuditHealthFailure(input.step, input.exitCode, input.logContent);
   if (auditRule) return auditRule;
 
-  const text = `${input.step ?? ""}\nexit=${input.exitCode ?? ""}\n${input.line ?? ""}\n${input.logContent ?? ""}`;
+  const text = sanitizeMaintenanceLogText(
+    `${input.step ?? ""}\nexit=${input.exitCode ?? ""}\n${input.line ?? ""}\n${input.logContent ?? ""}`,
+  );
   for (const rule of input.rules ?? RULES) {
     if (new RegExp(rule.pattern, "ims").test(text)) return rule;
   }
@@ -652,15 +663,18 @@ function excerptFor(logContent: string, line: string): string {
   const benignSignal =
     /\b(no|without|zero)\s+(errors?|failures?)\b|\berrors?\s*[:=]\s*0\b|\bfailures?\s*[:=]\s*0\b|\b0\s+errors?\b|\b0\s+failures?\b|\berrorcount\s*[:=]\s*0\b/gi;
   const hasActionableFailureSignal = (candidate: string): boolean => {
-    if (!failureSignal.test(candidate)) return false;
+    const sanitized = sanitizeMaintenanceLogText(candidate);
+    if (!failureSignal.test(sanitized)) return false;
 
     // Keep real failures even when the same log line also includes a benign
     // zero-error/zero-failure counter. Suppress only lines whose failure-like
     // text disappears after removing the benign phrases.
-    return failureSignal.test(candidate.replace(benignSignal, " "));
+    return failureSignal.test(sanitized.replace(benignSignal, " "));
   };
-  const interesting = logContent.split("\n").filter(hasActionableFailureSignal).slice(-8).join("\n");
-  return (interesting || line || logContent.slice(0, 1000)).slice(0, 1800);
+  const sanitizedLog = sanitizeMaintenanceLogText(logContent);
+  const sanitizedLine = sanitizeMaintenanceLogText(line);
+  const interesting = sanitizedLog.split("\n").filter(hasActionableFailureSignal).slice(-8).join("\n");
+  return (interesting || sanitizedLine || sanitizedLog.slice(0, 1000)).slice(0, 1800);
 }
 
 function fingerprintFor(step: MaintenanceLogStep, rule: MaintenanceRule): string {
@@ -700,6 +714,7 @@ export function analyzeMaintenanceSteps(
   const zeroExitHeuristicSeen = new Set<string>();
   for (const step of steps) {
     if (step.exitCode !== 0) {
+      if (isBenignNoiseOnlyMaintenanceStep(step)) continue;
       findings.push(findingFromStep(step));
       continue;
     }
@@ -1022,6 +1037,33 @@ function renderFindingSection(title: string, findings: MaintenanceFinding[]): st
   return lines;
 }
 
+function renderNoiseWarningSection(noiseWarnings: MaintenanceNoiseWarning[]): string[] {
+  const lines = ["", "### Benign noise (suppressed from failure counts)", ""];
+  if (noiseWarnings.length === 0) {
+    lines.push("None.");
+    return lines;
+  }
+
+  const byPattern = new Map<string, { label: string; count: number; jobs: Set<string> }>();
+  for (const warning of noiseWarnings) {
+    const bucket = byPattern.get(warning.patternId) ?? {
+      label: warning.label,
+      count: 0,
+      jobs: new Set<string>(),
+    };
+    bucket.count += warning.occurrenceCount;
+    bucket.jobs.add(warning.job);
+    byPattern.set(warning.patternId, bucket);
+  }
+
+  for (const [patternId, bucket] of [...byPattern.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    lines.push(
+      `- \`${patternId}\` — ${bucket.label}: ${bucket.count} occurrence(s) across ${bucket.jobs.size} job(s).`,
+    );
+  }
+  return lines;
+}
+
 export function renderMaintenanceDigestMarkdown(report: Omit<MaintenanceAnalysisReport, "digestMd">): string {
   const okJobs = report.summary.jobsOk;
   const totalJobs = okJobs + report.summary.jobsWithFindings;
@@ -1040,6 +1082,7 @@ export function renderMaintenanceDigestMarkdown(report: Omit<MaintenanceAnalysis
         `Suppressed ${report.summary.historicalStaleSuppressed} older historical fingerprint(s) that are outside the current reporting window.`,
       );
     }
+    lines.push(...renderNoiseWarningSection(report.noiseWarnings));
   } else {
     lines.push(...renderFindingSection("New", newFindings.slice(0, 20)));
     lines.push(...renderFindingSection("Still failing", stillFailing.slice(0, 20)));
@@ -1054,6 +1097,7 @@ export function renderMaintenanceDigestMarkdown(report: Omit<MaintenanceAnalysis
     const actualShown = Math.min(newFindings.length, 20) + Math.min(stillFailing.length, 20);
     const hiddenCount = Math.max(0, report.findings.length - actualShown);
     if (hiddenCount > 0) lines.push("", `… and ${hiddenCount} more findings.`);
+    lines.push(...renderNoiseWarningSection(report.noiseWarnings));
   }
   const trend = report.summary.weekOverWeek ?? [];
   if (trend.length > 0) {
@@ -1072,9 +1116,11 @@ export function buildMaintenanceAnalysisReport(opts: {
   since?: string;
   steps: MaintenanceLogStep[];
   findings: MaintenanceFinding[];
+  noiseWarnings?: MaintenanceNoiseWarning[];
   findingsPath?: string;
   includeTrend?: boolean;
   historicalStaleSuppressed?: number;
+  benignNoiseSuppressed?: number;
 }): MaintenanceAnalysisReport {
   const jobs = new Set(opts.steps.map((s) => s.job));
   const failedJobs = new Set(opts.findings.map((f) => f.job));
@@ -1086,6 +1132,7 @@ export function buildMaintenanceAnalysisReport(opts: {
     incr(byClassification, f.classification);
     incr(byAction, f.actionTaken);
   }
+  const noiseWarnings = opts.noiseWarnings ?? collectMaintenanceNoiseWarnings(opts.steps);
   const base = {
     schemaVersion: 1 as const,
     generatedAt: new Date().toISOString(),
@@ -1094,12 +1141,14 @@ export function buildMaintenanceAnalysisReport(opts: {
     totalSteps: opts.steps.length,
     successfulSteps: opts.steps.filter((s) => s.exitCode === 0).length,
     findings: opts.findings,
+    noiseWarnings,
     summary: {
       jobsOk: [...jobs].filter((j) => !failedJobs.has(j)).length,
       jobsWithFindings: failedJobs.size,
       newFindings,
       stillFailing,
       historicalStaleSuppressed: opts.historicalStaleSuppressed ?? 0,
+      benignNoiseSuppressed: opts.benignNoiseSuppressed ?? 0,
       byClassification,
       byAction,
       weekOverWeek: opts.includeTrend && opts.findingsPath ? weekOverWeekTrend(opts.findingsPath) : undefined,
