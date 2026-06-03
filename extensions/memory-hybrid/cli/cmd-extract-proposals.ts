@@ -162,10 +162,7 @@ export async function runGenerateProposalsForCli(
     insights: insightsBlock,
     identity_files: identityFilesBlock,
   });
-  const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(
-    cfg,
-    "maintenance",
-  );
+  const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(cfg, "heavy");
   const fallbackModels = resolvedFallbacks ?? [];
   const allModels = [model, ...fallbackModels];
   let items:
@@ -184,7 +181,7 @@ export async function runGenerateProposalsForCli(
     try {
       const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
         model: tryModel,
-        modelSource: modelIdx === 0 ? "maintenance" : "fallback",
+        modelSource: modelIdx === 0 ? "heavy" : "fallback",
         content: prompt,
         temperature: 0.3,
         maxTokens: 4000,
