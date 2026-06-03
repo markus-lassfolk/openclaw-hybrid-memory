@@ -29,6 +29,7 @@ import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { escapeRegExp } from "../utils/text.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
+import type { ActiveTaskReconcileProgressReporter } from "./active-task-reconcile-progress.js";
 
 /** Legacy filename before default became ACTIVE-TASKS.md; still read if the new file is missing. */
 const LEGACY_ACTIVE_TASK_BASENAME = "ACTIVE-TASK.md";
@@ -1167,6 +1168,11 @@ export interface ActiveTaskSessionReconcileResult {
   reconciledLabels: string[];
   /** True when the file was written (skipped when dryRun or nothing to do). */
   wrote: boolean;
+  candidates: number;
+  scanned: number;
+  skipped: number;
+  failed: number;
+  elapsedMs: number;
 }
 
 /**
@@ -1182,11 +1188,29 @@ export async function reconcileActiveTaskInProgressSessions(
     flushOnComplete?: boolean;
     memoryDir?: string;
     dryRun?: boolean;
+    progress?: ActiveTaskReconcileProgressReporter;
   } = {},
 ): Promise<ActiveTaskSessionReconcileResult> {
+  const startedAt = Date.now();
+  const progress = opts.progress;
+  const emptyResult = (partial?: Partial<ActiveTaskSessionReconcileResult>): ActiveTaskSessionReconcileResult => ({
+    reconciledLabels: [],
+    wrote: false,
+    candidates: 0,
+    scanned: 0,
+    skipped: 0,
+    failed: 0,
+    elapsedMs: Date.now() - startedAt,
+    ...partial,
+  });
+
+  progress?.start();
+  progress?.phaseStart("session-index");
+
   const taskFile = await readActiveTaskFile(filePath, staleMinutes);
   if (!taskFile) {
-    return { reconciledLabels: [], wrote: false };
+    progress?.phaseComplete("session-index", { sessions: 0, candidates: 0 });
+    return emptyResult();
   }
 
   const openclawHome = opts.openclawHome;
@@ -1194,20 +1218,56 @@ export async function reconcileActiveTaskInProgressSessions(
   const newCompleted = [...taskFile.completed];
   const reconciledLabels: string[] = [];
   const toFlush: ActiveTaskEntry[] = [];
+  let scanned = 0;
+  let skipped = 0;
+  const scanTotal = taskFile.active.length;
+  progress?.setScanTotal(scanTotal);
 
   for (const task of taskFile.active) {
+    scanned += 1;
+    const elapsedMs = Date.now() - startedAt;
     if (task.status !== "In progress") {
       newActive.push(task);
+      skipped += 1;
+      progress?.onScanItem({
+        index: scanned,
+        total: scanTotal,
+        entity: task.label,
+        action: "skip",
+        reason: "not_in_progress",
+        previousStatus: task.status,
+        elapsedMs,
+      });
       continue;
     }
     const ref = task.subagent?.trim();
     if (!ref || !looksLikeOpenClawSessionRef(ref)) {
       newActive.push(task);
+      skipped += 1;
+      progress?.onScanItem({
+        index: scanned,
+        total: scanTotal,
+        entity: task.label,
+        action: "skip",
+        reason: "no_session_ref",
+        previousStatus: task.status,
+        elapsedMs,
+      });
       continue;
     }
     const present = await isOpenClawSessionLikelyPresent(ref, openclawHome);
     if (present) {
       newActive.push(task);
+      skipped += 1;
+      progress?.onScanItem({
+        index: scanned,
+        total: scanTotal,
+        entity: task.label,
+        action: "skip",
+        reason: "session_present",
+        previousStatus: task.status,
+        elapsedMs,
+      });
       continue;
     }
 
@@ -1221,16 +1281,50 @@ export async function reconcileActiveTaskInProgressSessions(
     newCompleted.push(completedEntry);
     reconciledLabels.push(task.label);
     toFlush.push(completedEntry);
+    progress?.onScanItem({
+      index: scanned,
+      total: scanTotal,
+      entity: task.label,
+      action: "mark_done",
+      reason: "session_missing",
+      previousStatus: task.status,
+      elapsedMs,
+    });
   }
+
+  progress?.phaseComplete("session-index", {
+    sessions: scanTotal,
+    candidates: reconciledLabels.length,
+  });
+  progress?.setWriteTotal(reconciledLabels.length);
+
+  const baseResult = {
+    reconciledLabels,
+    candidates: reconciledLabels.length,
+    scanned,
+    skipped,
+    failed: 0,
+    elapsedMs: Date.now() - startedAt,
+  };
 
   if (reconciledLabels.length === 0) {
-    return { reconciledLabels, wrote: false };
+    return { ...baseResult, wrote: false };
   }
   if (opts.dryRun) {
-    return { reconciledLabels, wrote: false };
+    return { ...baseResult, wrote: false };
   }
 
-  await writeActiveTaskFile(filePath, newActive, newCompleted);
+  progress?.phaseStart("file-write", { candidates: reconciledLabels.length });
+  try {
+    await writeActiveTaskFile(filePath, newActive, newCompleted);
+  } catch {
+    if (progress) {
+      progress.failed += 1;
+    }
+    progress?.phaseComplete("file-write", { failed: 1 });
+    return { ...baseResult, wrote: false, failed: 1 };
+  }
+  progress?.phaseComplete("file-write", { candidates: reconciledLabels.length });
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of toFlush) {
@@ -1242,7 +1336,7 @@ export async function reconcileActiveTaskInProgressSessions(
     }
   }
 
-  return { reconciledLabels, wrote: true };
+  return { ...baseResult, wrote: true, elapsedMs: Date.now() - startedAt };
 }
 
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ import {
   upsertTask,
 } from "./active-task.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import type { ActiveTaskReconcileProgressReporter } from "./active-task-reconcile-progress.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import { fetchLivePrBlockerStatus } from "./task-hygiene.js";
 import {
@@ -1577,6 +1578,12 @@ export async function consumePendingTaskSignalsFacts(
 export interface FactsReconcileResult {
   reconciledLabels: string[];
   wrote: boolean;
+  candidates: number;
+  scanned: number;
+  skipped: number;
+  failed: number;
+  elapsedMs: number;
+  factsWritten: number;
 }
 
 export async function reconcileActiveTaskInProgressSessionsFacts(
@@ -1590,24 +1597,67 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
     memoryDir?: string;
     dryRun?: boolean;
     log?: { warn?: (m: string) => void };
+    progress?: ActiveTaskReconcileProgressReporter;
   } = {},
 ): Promise<FactsReconcileResult> {
+  const startedAt = Date.now();
+  const progress = opts.progress;
+
+  progress?.start();
+  progress?.phaseStart("session-index");
+
   const { active } = readActiveTaskRowsFromFacts(factsDb, staleMinutes);
   const reconciledLabels: string[] = [];
   const toFlush: ActiveTaskEntry[] = [];
   const toAudit: ActiveTaskEntry[] = [];
   const openclawHome = opts.openclawHome;
+  let scanned = 0;
+  let skipped = 0;
+  const scanTotal = active.length;
+  progress?.setScanTotal(scanTotal);
 
   for (const task of active) {
+    scanned += 1;
+    const elapsedMs = Date.now() - startedAt;
     if (task.status !== "In progress") {
+      skipped += 1;
+      progress?.onScanItem({
+        index: scanned,
+        total: scanTotal,
+        entity: task.label,
+        action: "skip",
+        reason: "not_in_progress",
+        previousStatus: task.status,
+        elapsedMs,
+      });
       continue;
     }
     const ref = task.subagent?.trim();
     if (!ref || !looksLikeOpenClawSessionRef(ref)) {
+      skipped += 1;
+      progress?.onScanItem({
+        index: scanned,
+        total: scanTotal,
+        entity: task.label,
+        action: "skip",
+        reason: "no_session_ref",
+        previousStatus: task.status,
+        elapsedMs,
+      });
       continue;
     }
     const present = await isOpenClawSessionLikelyPresent(ref, openclawHome);
     if (present) {
+      skipped += 1;
+      progress?.onScanItem({
+        index: scanned,
+        total: scanTotal,
+        entity: task.label,
+        action: "skip",
+        reason: "session_present",
+        previousStatus: task.status,
+        elapsedMs,
+      });
       continue;
     }
     const now = new Date().toISOString();
@@ -1621,26 +1671,75 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
     reconciledLabels.push(task.label);
     toFlush.push(doneEntry);
     toAudit.push(task);
+    progress?.onScanItem({
+      index: scanned,
+      total: scanTotal,
+      entity: task.label,
+      action: "mark_done",
+      reason: "session_missing",
+      previousStatus: task.status,
+      elapsedMs,
+    });
   }
+
+  progress?.phaseComplete("session-index", {
+    sessions: scanTotal,
+    candidates: reconciledLabels.length,
+  });
+  progress?.setWriteTotal(reconciledLabels.length);
+
+  const baseResult = {
+    reconciledLabels,
+    candidates: reconciledLabels.length,
+    scanned,
+    skipped,
+    failed: 0,
+    factsWritten: 0,
+    elapsedMs: Date.now() - startedAt,
+  };
 
   if (reconciledLabels.length === 0 || opts.dryRun) {
-    return { reconciledLabels, wrote: false };
+    return { ...baseResult, wrote: false };
   }
 
-  for (const entry of toFlush) {
-    await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log);
+  progress?.phaseStart("fact-write", { candidates: reconciledLabels.length });
+  let factsWritten = 0;
+  let failed = 0;
+  const successfullyWritten: ActiveTaskEntry[] = [];
+  for (let i = 0; i < toFlush.length; i++) {
+    const entry = toFlush[i]!;
+    try {
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log);
+      factsWritten += 1;
+      successfullyWritten.push(entry);
+      progress?.onWriteItem(entry.label, i + 1, toFlush.length, false);
+    } catch (err) {
+      failed += 1;
+      opts.log?.warn?.(
+        `memory-hybrid: active-task reconcile failed for [${entry.label}]: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      progress?.onWriteItem(entry.label, i + 1, toFlush.length, true);
+    }
   }
+  progress?.phaseComplete("fact-write", { factsWritten, failed });
 
   const auditRunAt = new Date().toISOString();
-  await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, embeddings, auditRunAt, toAudit, opts.log);
+  await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, embeddings, auditRunAt, successfullyWritten, opts.log);
 
   if (opts.flushOnComplete && opts.memoryDir) {
-    for (const entry of toFlush) {
+    for (const entry of successfullyWritten) {
       await flushCompletedTaskToMemory(entry, opts.memoryDir).catch(() => {});
     }
   }
 
-  return { reconciledLabels, wrote: true };
+  return {
+    ...baseResult,
+    reconciledLabels: successfullyWritten.map((e) => e.label),
+    wrote: failed === 0,
+    failed,
+    factsWritten,
+    elapsedMs: Date.now() - startedAt,
+  };
 }
 
 // -----------------------------------------------------------------------------------------
