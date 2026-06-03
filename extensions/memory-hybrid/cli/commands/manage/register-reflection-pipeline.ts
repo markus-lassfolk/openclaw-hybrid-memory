@@ -1190,13 +1190,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 );
               }
             }
-            if (jsonMode) {
-              return;
-            }
             if (exportReview) {
               writeContradictionReviewFile(exportReview, res.reviewItems);
               console.log(`manual-review exported: ${res.reviewItems.length} item(s) -> ${exportReview}`);
-            } else if (res.reviewItems.length > 0) {
+            }
+            if (jsonMode) {
+              return;
+            }
+            if (!exportReview && res.reviewItems.length > 0) {
               console.log(
                 `Manual review remaining: ${res.reviewItems.length}. Export with --export-review <path> for stable JSONL.`,
               );
