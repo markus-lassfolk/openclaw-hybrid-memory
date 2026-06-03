@@ -1034,6 +1034,12 @@ export function renderMaintenanceDigestMarkdown(report: Omit<MaintenanceAnalysis
   ];
   if (report.findings.length === 0) {
     lines.push("No maintenance failures detected.");
+    if (report.summary.historicalStaleSuppressed > 0) {
+      lines.push("", "### Historical/stale", "");
+      lines.push(
+        `Suppressed ${report.summary.historicalStaleSuppressed} older historical fingerprint(s) that are outside the current reporting window.`,
+      );
+    }
   } else {
     lines.push(...renderFindingSection("New", newFindings.slice(0, 20)));
     lines.push(...renderFindingSection("Still failing", stillFailing.slice(0, 20)));
