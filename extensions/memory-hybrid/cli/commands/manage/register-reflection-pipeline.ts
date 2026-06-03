@@ -1170,6 +1170,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               previousConsecutiveNoProgressRuns: previousConsecutive,
             });
             persistConsecutiveNoProgressState(metrics, evaluation);
+            if (exportReview) {
+              writeContradictionReviewFile(exportReview, res.reviewItems);
+            }
             logContradictionProgressOutcome({
               mode: "auto",
               metrics,
@@ -1197,10 +1200,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                   `contradiction-auto target-missed achieved=${res.achievedRate.toFixed(3)} target=${res.targetRate.toFixed(2)}`,
                 );
               }
-            }
-            if (exportReview) {
-              writeContradictionReviewFile(exportReview, res.reviewItems);
-              console.log(`manual-review exported: ${res.reviewItems.length} item(s) -> ${exportReview}`);
+              if (exportReview) {
+                console.log(`manual-review exported: ${res.reviewItems.length} item(s) -> ${exportReview}`);
+              }
+            } else if (exportReview) {
+              console.error(`manual-review exported: ${res.reviewItems.length} item(s) -> ${exportReview}`);
             }
             if (jsonMode) {
               return;

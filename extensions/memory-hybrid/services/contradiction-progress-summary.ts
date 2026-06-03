@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getEnv } from "../utils/env-manager.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 
 export const DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD = 200;
 export const DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD = 1;
@@ -68,8 +69,8 @@ export function persistConsecutiveNoProgressState(
   openclawHome?: string,
 ): void {
   const statePath = resolveStatePath(openclawHome);
-  mkdirSync(join(statePath, ".."), { recursive: true });
-  writeFileSync(
+  mkdirSync(dirname(statePath), { recursive: true });
+  atomicWriteFile(
     statePath,
     `${JSON.stringify(
       {
@@ -81,7 +82,6 @@ export function persistConsecutiveNoProgressState(
       null,
       2,
     )}\n`,
-    "utf-8",
   );
 }
 
