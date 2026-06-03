@@ -5,7 +5,7 @@
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
-import { mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
@@ -343,18 +343,27 @@ export class CredentialsDB extends BaseSqliteStore {
     // writes between backup snapshot and encryption. This fixes the race condition
     // where VACUUM INTO would snapshot at T1, then new rows could be written at T2,
     // then encryption would start at T3, resulting in encrypted rows missing from backup.
+
+    // Preserve existing backup during retry by renaming it temporarily
+    let oldBackupPath: string | undefined;
+    if (backupPath) {
+      mkdirSync(dirname(backupPath), { recursive: true });
+      try {
+        // Check if old backup exists and rename it temporarily
+        if (existsSync(backupPath)) {
+          oldBackupPath = `${backupPath}.old.${Date.now()}`;
+          renameSync(backupPath, oldBackupPath);
+        }
+      } catch {
+        // If rename fails, proceed anyway (file might not exist)
+      }
+    }
+
     const migrateWithBackup = createTransaction(
       this.liveDb,
       () => {
         if (backupPath) {
           // Create backup database and copy all data within this transaction
-          mkdirSync(dirname(backupPath), { recursive: true });
-          // Remove existing backup file to avoid "table already exists" errors on retry
-          try {
-            unlinkSync(backupPath);
-          } catch {
-            // File doesn't exist or can't be deleted; proceed anyway
-          }
           const backupDb = new DatabaseSync(backupPath);
           try {
             // Copy schema
@@ -445,46 +454,70 @@ export class CredentialsDB extends BaseSqliteStore {
       "IMMEDIATE",
     );
 
-    migrateWithBackup();
+    try {
+      migrateWithBackup();
 
-    this.kdfVersion = newKdfVersion;
-    this.salt = newSalt;
-    this.key = newKey;
-    this.password = null;
-    this.storesEncryptedValues = true;
+      this.kdfVersion = newKdfVersion;
+      this.salt = newSalt;
+      this.key = newKey;
+      this.password = null;
+      this.storesEncryptedValues = true;
 
-    const result = { migrated: migratedCount, kdfVersion: this.kdfVersion };
+      const result = { migrated: migratedCount, kdfVersion: this.kdfVersion };
 
-    let verified: boolean | undefined;
-    if (verify) {
-      try {
-        const entries = this.listAll();
-        // Verify that all encrypted entries were successfully decrypted
-        if (entries.length !== result.migrated) {
+      let verified: boolean | undefined;
+      if (verify) {
+        try {
+          const entries = this.listAll();
+          // Verify that all encrypted entries were successfully decrypted
+          if (entries.length !== result.migrated) {
+            throw new Error(
+              `Verification failed: only ${entries.length} of ${result.migrated} entries could be decrypted`,
+            );
+          }
+          for (const e of entries) {
+            const verifiedEntry = this.get(e.service, e.type as CredentialType);
+            if (!verifiedEntry) {
+              throw new Error(`Verification failed: missing credential ${e.service}/${e.type}`);
+            }
+          }
+          verified = true;
+        } catch (err) {
+          const backupNote = backupPath ? ` Plaintext backup is at: ${backupPath}` : "";
           throw new Error(
-            `Verification failed: only ${entries.length} of ${result.migrated} entries could be decrypted`,
+            `Vault encrypted but post-encryption verification failed: ${err instanceof Error ? err.message : String(err)}.${backupNote}`,
           );
         }
-        for (const e of entries) {
-          const verifiedEntry = this.get(e.service, e.type as CredentialType);
-          if (!verifiedEntry) {
-            throw new Error(`Verification failed: missing credential ${e.service}/${e.type}`);
-          }
-        }
-        verified = true;
-      } catch (err) {
-        const backupNote = backupPath ? ` Plaintext backup is at: ${backupPath}` : "";
-        throw new Error(
-          `Vault encrypted but post-encryption verification failed: ${err instanceof Error ? err.message : String(err)}.${backupNote}`,
-        );
       }
-    }
 
-    return {
-      ...result,
-      ...(backupPath !== undefined ? { backupPath } : {}),
-      ...(verified !== undefined ? { verified } : {}),
-    };
+      // Success: delete the old backup if it exists
+      if (oldBackupPath) {
+        try {
+          unlinkSync(oldBackupPath);
+        } catch {
+          // Best effort cleanup; don't fail on cleanup errors
+        }
+      }
+
+      return {
+        ...result,
+        ...(backupPath !== undefined ? { backupPath } : {}),
+        ...(verified !== undefined ? { verified } : {}),
+      };
+    } catch (err) {
+      // Failure: restore the old backup if it exists
+      if (oldBackupPath && backupPath) {
+        try {
+          if (existsSync(backupPath)) {
+            unlinkSync(backupPath);
+          }
+          renameSync(oldBackupPath, backupPath);
+        } catch {
+          // If restore fails, leave both files (old backup is preserved with .old suffix)
+        }
+      }
+      throw err;
+    }
   }
 
   /**
