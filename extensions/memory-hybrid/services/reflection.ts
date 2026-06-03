@@ -1195,6 +1195,7 @@ export async function runReflectionRules(
     );
   }
   let rawResponse: string;
+  let modelUsed: string;
   try {
     const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
@@ -1211,6 +1212,7 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
     });
+    modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflect-rules — used fallback model ${detail.modelUsed}`);
     }
@@ -1223,7 +1225,7 @@ export async function runReflectionRules(
       subsystem: "openai",
       retryAttempt,
     });
-    throw err;
+    throw err instanceof Error ? err : new Error(String(err));
   }
   const trimmedResponse = rawResponse.trim();
   const strippedResponse = stripThinkingWrapperBlocks(trimmedResponse);
@@ -1347,6 +1349,33 @@ export async function runReflectionRules(
         `stored=${diagnostics.stored} ` +
         `status=${diagnostics.status} zero_rules_reason=${diagnostics.zeroRulesReason}`,
     );
+    // Format retry (#1824): when the model returned an unusable response format and fallbacks are
+    // available, retry with the next model in the chain before giving up.
+    if (
+      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
+      opts.fallbackModels?.length
+    ) {
+      // Filter out the model that was actually used (which produced the bad response)
+      const remainingFallbacks = opts.fallbackModels.filter((m) => m !== modelUsed);
+      if (remainingFallbacks.length > 0) {
+        const [fallbackModel, ...nextFallbacks] = remainingFallbacks;
+        logger.warn(
+          `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying with fallback model ${fallbackModel}`,
+        );
+        return runReflectionRules(
+          factsDb,
+          vectorDb,
+          embeddings,
+          openai,
+          { ...opts, model: fallbackModel, fallbackModels: nextFallbacks, modelSource: "format-retry-fallback" },
+          logger,
+          provenanceService,
+        );
+      }
+    }
+    if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
+      throw new Error(`memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}`);
+    }
     return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
   }
 
