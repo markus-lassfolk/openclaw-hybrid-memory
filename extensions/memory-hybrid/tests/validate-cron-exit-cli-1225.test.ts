@@ -160,7 +160,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     expect(payload.failedSteps.some((s) => s.name === "distill" && s.exit === 124)).toBe(true);
   });
 
-  it("emits grouped maintenance events for semantic failures without changing a zero exit status", async () => {
+  it("exits non-zero for reflect-rules semantic failures that would otherwise look mechanically successful", async () => {
     stubOpenclawArgv();
     const dir = mkdtempSync(join(tmpdir(), "hm-val-cron-"));
     const exitPath = join(dir, "weekly-reflection-20260508T021500Z-111.exit.txt");
@@ -188,13 +188,13 @@ describe("validate-cron-exit CLI (#1225)", () => {
       { from: "user" },
     );
 
-    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
     const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
       maintenanceStatus: string;
       semanticStatus: string;
       reportableIssues: Array<{ fingerprint: string; failureClass: string }>;
     };
-    expect(payload.maintenanceStatus).toBe("success");
+    expect(payload.maintenanceStatus).toBe("failed");
     expect(payload.semanticStatus).toBe("semantic_fail");
     expect(payload.reportableIssues[0]?.fingerprint).toBe(
       "hybrid-memory-maintenance:weekly-reflection:reflect-rules:invalid_response_format_zero_stored",

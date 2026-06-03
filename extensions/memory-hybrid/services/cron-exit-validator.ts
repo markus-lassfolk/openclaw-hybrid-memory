@@ -492,7 +492,8 @@ function collectMaintenanceTelemetryIssues(params: {
     /\bparse_success\b/i.test(logContent);
   const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(logContent);
   const reflectStored = parsePositiveMetric(logContent, "stored");
-  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0)) {
+  const reflectInsufficientPatterns = /\bzero_rules_reason\s*[=:]\s*insufficient_patterns\b/i.test(logContent);
+  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0) && !reflectInsufficientPatterns) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -626,6 +627,10 @@ function deriveSemanticStatus(
   if (issues.some((issue) => issue.semanticStatus === "degraded")) return "degraded";
   if (maintenanceStatus === "success" || maintenanceStatus === "skipped") return "ok";
   return issues.length > 0 ? "unknown" : "ok";
+}
+
+function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
+  return issue.failureCategory === "semantic_failure" && issue.stepName === "reflect-rules";
 }
 
 /**
@@ -792,6 +797,30 @@ export function validateMaintenanceExecution(
     maintenanceStatus = "success";
   }
 
+  let reportableIssues = collectMaintenanceTelemetryIssues({
+    exitPath,
+    logPath,
+    requiredSteps,
+    logContent,
+    failedSteps,
+    missingSteps,
+    unknownCommands,
+    maintenanceStatus,
+  });
+  if (maintenanceStatus === "success" && reportableIssues.some(isGuardBlockingSemanticIssue)) {
+    maintenanceStatus = "failed";
+    reportableIssues = collectMaintenanceTelemetryIssues({
+      exitPath,
+      logPath,
+      requiredSteps,
+      logContent,
+      failedSteps,
+      missingSteps,
+      unknownCommands,
+      maintenanceStatus,
+    });
+  }
+
   // Guard should only be updated on full success (not feature-gated skips).
   const guardUpdated = maintenanceStatus === "success";
 
@@ -809,6 +838,14 @@ export function validateMaintenanceExecution(
           .join(", ")}`,
       );
     }
+    const blockingSemanticIssues = reportableIssues.filter(isGuardBlockingSemanticIssue);
+    if (blockingSemanticIssues.length > 0) {
+      parts.push(
+        `Semantic failures: ${blockingSemanticIssues
+          .map((issue) => `${issue.stepName} (${issue.failureClass})`)
+          .join(", ")}`,
+      );
+    }
     error = parts.join("; ");
   } else if (maintenanceStatus === "skipped") {
     error =
@@ -816,17 +853,6 @@ export function validateMaintenanceExecution(
         ? `Skipped steps: ${skippedSteps.map((s) => `${s.step}${s.reason ? ` (${s.reason})` : ""}`).join(", ")}`
         : "Feature-gated skip: no hm_step lines in HM_EXIT; log indicates disabled feature (guard not updated).";
   }
-
-  const reportableIssues = collectMaintenanceTelemetryIssues({
-    exitPath,
-    logPath,
-    requiredSteps,
-    logContent,
-    failedSteps,
-    missingSteps,
-    unknownCommands,
-    maintenanceStatus,
-  });
 
   return {
     maintenanceStatus,
