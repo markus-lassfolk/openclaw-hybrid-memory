@@ -580,6 +580,8 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 // Registration helper (feature-detected)
 // ---------------------------------------------------------------------------
 
+let loggedMissingRegisterContextEngine = false;
+
 /**
  * Attempt to register HybridMemoryContextEngine with the OpenClaw plugin SDK.
  *
@@ -604,7 +606,12 @@ export async function registerHybridContextEngine(opts: ContextEngineOptions): P
     };
 
     if (typeof registerContextEngine !== "function") {
-      opts.logger.debug?.("memory-hybrid: registerContextEngine not found in SDK; skipping ContextEngine registration");
+      if (!loggedMissingRegisterContextEngine) {
+        loggedMissingRegisterContextEngine = true;
+        opts.logger.debug?.(
+          "memory-hybrid: registerContextEngine not found in SDK; skipping ContextEngine registration",
+        );
+      }
       return false;
     }
 
