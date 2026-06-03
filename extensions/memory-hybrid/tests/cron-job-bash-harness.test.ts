@@ -508,4 +508,95 @@ exit 2
     expect(readFileSync(marker, "utf-8")).toContain("reflect --verbose");
     expect(readFileSync(marker, "utf-8")).not.toContain("--force");
   });
+
+  it("adds --force to extract-daily when forced rerun env is enabled", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const marker = join(tmp, "extract-daily-args.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
+  printf '%s\n' "$*" > ${JSON.stringify(marker)}
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"success"}'; exit 0; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "extract-daily", cmd: "openclaw hybrid-mem extract-daily --days 7 --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+        OPENCLAW_HOME: home,
+        HYBRID_MEM_QA_FORCE: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(marker, "utf-8")).toContain("extract-daily --days 7 --verbose --force");
+  });
+
+  it("optional step failure does not abort subsequent steps (chain continues)", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const secondStepMarker = join(tmp, "second-step-ran.txt");
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "extract-daily" ]; then
+  echo "extract-daily failed"
+  exit 1
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "resolve-contradictions" ]; then
+  echo "resolve-contradictions ran" > ${JSON.stringify(secondStepMarker)}
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then echo '{"maintenanceStatus":"partial"}'; exit 1; fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "extract-daily", cmd: "openclaw hybrid-mem extract-daily --days 7 --verbose", optional: true },
+      { name: "resolve-contradictions", cmd: "openclaw hybrid-mem resolve-contradictions --auto --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    // Chain should NOT be aborted by the optional step failure; validate-cron-exit returns partial exit=1.
+    expect(result.status).toBe(1);
+    // The subsequent required step must have run.
+    expect(readFileSync(secondStepMarker, "utf-8")).toContain("resolve-contradictions ran");
+    // The failure must still be recorded in exit ledger for visibility.
+    const exitDir = join(home, "logs", "cron-hybrid-mem");
+    const exitPath = readdirSync(exitDir)
+      .filter((name) => name.endsWith(".exit.txt"))
+      .map((name) => join(exitDir, name))[0];
+    expect(exitPath).toBeDefined();
+    const exitContents = readFileSync(exitPath, "utf-8");
+    expect(exitContents).toContain("extract-daily exit=1 status=failed");
+    expect(exitContents).toContain("resolve-contradictions exit=0");
+  });
 });
