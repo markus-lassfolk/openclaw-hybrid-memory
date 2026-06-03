@@ -43,6 +43,15 @@ describe("parseRulesFromModelResponse (#1801)", () => {
     expect(res.rules).toHaveLength(1);
   });
 
+  it("parses JSON inside thinking wrappers", () => {
+    const res = parseRulesFromModelResponse(
+      `<thinking>${JSON.stringify({ rules: ["Never hardcode credentials in source code"], noAction: false })}</thinking>`,
+    );
+    expect(res.parsedFromJson).toBe(true);
+    expect(res.rules).toHaveLength(1);
+    expect(res.rules[0]).toBe("Never hardcode credentials in source code");
+  });
+
   it("classifies prose-only response as invalid_response_format", () => {
     const raw = "Some prose without RULE lines or JSON";
     const res = parseRulesFromModelResponse(raw);
@@ -70,6 +79,15 @@ describe("parseMetasFromModelResponse (#1801)", () => {
   it("classifies invalid prose as invalid_response_format", () => {
     const res = parseMetasFromModelResponse("Some prose without META lines or JSON");
     expect(classifyZeroMetasReason(res, 40)).toBe("invalid_response_format");
+  });
+
+  it("parses JSON inside thinking wrappers", () => {
+    const text = "User demonstrates strong preference for immutability and functional patterns across multiple domains";
+    const res = parseMetasFromModelResponse(
+      `<thinking>${JSON.stringify({ metas: [text], noAction: false })}</thinking>`,
+    );
+    expect(res.parsedFromJson).toBe(true);
+    expect(res.metas).toEqual([text]);
   });
 });
 

@@ -262,7 +262,7 @@ export function parseRulesFromModelResponse(rawResponse: string): ReflectionRule
       };
     }
   }
-  
+
   const lineParse = parseRuleLines(responseForParsing);
   if (!jsonObject) {
     rules = lineParse.rules;
@@ -276,6 +276,24 @@ export function parseRulesFromModelResponse(rawResponse: string): ReflectionRule
     rules.push(...lineParse.rules);
   }
   for (const wrapperContent of wrapperContents) {
+    const wrapperJsonObject = tryParseJsonObject(wrapperContent);
+    if (wrapperJsonObject && !parsedFromJson) {
+      parsedFromJson = true;
+      const jsonRules = readStringArrayField(wrapperJsonObject, "rules");
+      parseableLines += jsonRules.length;
+      for (const candidate of jsonRules) {
+        const normalized = normalizeRuleCandidate(candidate);
+        if (normalized.rejectedLowConfidence) {
+          rejectedLowConfidence++;
+          continue;
+        }
+        if (normalized.rejectedLength) {
+          rejectedLength++;
+          continue;
+        }
+        rules.push(normalized.text);
+      }
+    }
     const wrapperParse = parseRuleLines(wrapperContent);
     parseableLines += wrapperParse.parseableLines;
     rejectedLowConfidence += wrapperParse.rejectedLowConfidence;
@@ -355,6 +373,19 @@ export function parseMetasFromModelResponse(rawResponse: string): ReflectionMeta
   }
 
   for (const wrapperContent of extractThinkingWrapperContents(trimmedResponse)) {
+    const wrapperJsonObject = tryParseJsonObject(wrapperContent);
+    if (wrapperJsonObject && !parsedFromJson) {
+      parsedFromJson = true;
+      const jsonMetas = readStringArrayField(wrapperJsonObject, "metas");
+      parseableLines += jsonMetas.length;
+      for (const candidate of jsonMetas) {
+        if (candidate.length >= REFLECTION_META_MIN_CHARS && candidate.length <= REFLECTION_META_MAX_CHARS) {
+          metas.push(candidate);
+        } else {
+          rejectedLength++;
+        }
+      }
+    }
     const wrapperParse = parseMetaLines(wrapperContent);
     metas.push(...wrapperParse.metas);
     parseableLines += wrapperParse.parseableLines;
