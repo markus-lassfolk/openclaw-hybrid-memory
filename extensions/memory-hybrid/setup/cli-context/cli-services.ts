@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
@@ -7,7 +8,7 @@ import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../../c
 import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
 import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
-import { type DreamCycleResult, runDreamCycle } from "../../services/dream-cycle.js";
+import { type DreamCycleResult, makeDreamCycleRunId, runDreamCycle } from "../../services/dream-cycle.js";
 import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.js";
 import { runExport } from "../../services/export-memory.js";
 import { runFindDuplicates } from "../../services/find-duplicates.js";
@@ -17,6 +18,7 @@ import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush
 import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
 import { parseSourceDate } from "../../utils/dates.js";
+import { getEnv } from "../../utils/env-manager.js";
 import { resolveTierPreferenceWithSources } from "../../utils/llm-selection.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { versionInfo } from "../../versionInfo.js";
@@ -381,6 +383,7 @@ export function buildCliContextServices(
           `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped})`,
         );
       }
+      const runId = makeDreamCycleRunId();
       return runDreamCycle(
         factsDb,
         vectorDb,
@@ -410,6 +413,15 @@ export function buildCliContextServices(
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
             deny: cfg.nightlyCycle.consolidationEventTypeDeny,
           },
+          runId,
+          stageArtifactDir: (() => {
+            const envDir = getEnv("HYBRID_MEM_DREAM_STAGE_DIR");
+            if (envDir?.trim()) {
+              return join(envDir.trim(), `run-${runId}`);
+            }
+            const openclawHome = getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw");
+            return join(openclawHome, "logs", "dream-cycle", `run-${runId}`);
+          })(),
         },
         logSink,
         provenanceService,
