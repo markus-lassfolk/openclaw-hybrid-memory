@@ -449,6 +449,8 @@ export async function chatComplete(opts: {
   feature?: string;
   /** Force a specific wire API surface ("chat" or "responses"). When unset, resolved from the model's provider prefix. */
   wireApi?: WireApi;
+  /** OpenAI chat.completions response_format (chat wire API only). */
+  responseFormat?: { type: "json_object" };
 }): Promise<string> {
   const {
     model,
@@ -459,6 +461,7 @@ export async function chatComplete(opts: {
     signal,
     feature,
     wireApi: wireApiOverride,
+    responseFormat,
   } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
   const controller = new AbortController();
@@ -497,6 +500,9 @@ export async function chatComplete(opts: {
     };
     if (!shouldOmitSamplingParams(model)) {
       body.temperature = temperature;
+    }
+    if (responseFormat) {
+      body.response_format = responseFormat;
     }
     const doCreate = () =>
       opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
@@ -856,6 +862,8 @@ export async function chatCompleteWithRetryDetailed(opts: {
   pendingWarnings?: PendingLLMWarnings;
   /** Feature label for cost tracking. Passed to chatComplete which wraps the call in withCostFeature(). */
   feature?: string;
+  /** OpenAI chat.completions response_format (chat wire API only). */
+  responseFormat?: { type: "json_object" };
 }): Promise<ChatCompleteWithRetryDetails> {
   const {
     fallbackModels = [],
