@@ -214,12 +214,12 @@ export function parseHandoffRef(value: string, context?: string): ActiveTaskHand
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!isHandoffRef(parsed)) {
-      pluginLogger.warn?.(`memory-hybrid: invalid active-task handoff JSON for ${label}: shape validation failed`);
+      pluginLogger.warn(`memory-hybrid: invalid active-task handoff JSON for ${label}: shape validation failed`);
       return null;
     }
     return parsed;
   } catch (err) {
-    pluginLogger.warn?.(
+    pluginLogger.warn(
       `memory-hybrid: failed to parse active-task handoff JSON for ${label}: ${err instanceof Error ? err.message : String(err)}`,
     );
     return null;
