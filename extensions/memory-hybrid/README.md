@@ -303,6 +303,16 @@ Rules are data-driven in [`services/maintenance-rules.json`](services/maintenanc
 
 The installer registers `hybrid-mem:maintenance-log-analyzer` to run after the nightly chain and announce the rendered digest to the operator.
 
+### Unified maintenance inventory
+
+Use the maintenance inventory report to see host crontab jobs and gateway `~/.openclaw/cron/jobs.json` jobs in one place, including scheduler ownership, timezone, guard/log paths, last-run state, and collision groups:
+
+```bash
+openclaw hybrid-mem maintenance inventory
+openclaw hybrid-mem maintenance inventory --format markdown
+openclaw hybrid-mem maintenance inventory --json
+```
+
 ### Auto-fix whitelist (#1199)
 
 `--auto-fix` applies **only** safe, idempotent actions implemented in [`services/maintenance-auto-fix.ts`](services/maintenance-auto-fix.ts):

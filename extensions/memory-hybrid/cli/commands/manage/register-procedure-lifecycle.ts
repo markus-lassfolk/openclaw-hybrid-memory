@@ -10,6 +10,11 @@ import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import {
+  collectMaintenanceInventory,
+  renderMaintenanceInventoryMarkdown,
+  renderMaintenanceInventoryText,
+} from "../../../services/maintenance-inventory.js";
+import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
   type ProcedurePromotionDuplicateCandidate,
   createProcedurePromotionItem,
@@ -698,6 +703,35 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
   const maintenance = mem
     .command("maintenance")
     .description("Memory maintenance management and health checks (Issue #281).");
+
+  maintenance
+    .command("inventory")
+    .description("List host-crontab and gateway-cron maintenance jobs in one report.")
+    .option("--json", "Output as JSON")
+    .option("--format <format>", "Output format: text, markdown, json", "text")
+    .action(
+      withExit(async (opts?: { json?: boolean; format?: string }) => {
+        const requestedFormat = (opts?.format ?? "text").toLowerCase();
+        if (opts?.json && requestedFormat === "markdown") {
+          throw new Error("Use either --json or --format markdown, not both.");
+        }
+        const format = opts?.json ? "json" : requestedFormat;
+        if (!["text", "markdown", "json"].includes(format)) {
+          throw new Error(`Unsupported inventory format: ${opts?.format ?? ""}`);
+        }
+
+        const report = collectMaintenanceInventory(join(homedir(), ".openclaw"));
+        if (format === "json") {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        if (format === "markdown") {
+          console.log(renderMaintenanceInventoryMarkdown(report));
+          return;
+        }
+        console.log(renderMaintenanceInventoryText(report));
+      }),
+    );
 
   maintenance
     .command("status")
