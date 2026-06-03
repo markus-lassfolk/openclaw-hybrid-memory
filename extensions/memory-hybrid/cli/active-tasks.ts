@@ -6,6 +6,7 @@
  * (aligned with memory_store). Optional `active-tasks render` writes markdown projection.
  */
 
+import { stat } from "node:fs/promises";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig, HybridMemoryConfig } from "../config.js";
@@ -40,7 +41,9 @@ import type {
   ActiveTaskCompleteResult,
   ActiveTaskHygieneResult,
   ActiveTaskListResult,
+  ActiveTaskMaintainResult,
   ActiveTaskReconcileResult,
+  ActiveTaskRenderResult,
   ActiveTaskStaleResult,
 } from "./types.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
@@ -593,6 +596,291 @@ function printActiveTaskReconcile(result: ActiveTaskReconcileResult): void {
   }
 }
 
+function emitMaintainLine(line: string): void {
+  process.stdout.write(`${line}\n`);
+}
+
+/** Write ACTIVE-TASKS.md projection from facts ledger (#1865). */
+export async function runActiveTaskRender(
+  ctx: ActiveTaskContext,
+  cfg: HybridMemoryConfig,
+  opts: { includeCompleted?: boolean } = {},
+): Promise<ActiveTaskRenderResult> {
+  if (ctx.ledger !== "facts") {
+    return {
+      ok: false,
+      skipped: true,
+      reason: "markdown ledger (ACTIVE-TASKS.md is the source of truth)",
+    };
+  }
+  const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+  if (cfg.activeTask.liveStateReconcile.enabled) {
+    try {
+      const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
+        maxRequests: 20,
+        log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+      });
+      if (liveResult.updatedCount > 0) {
+        console.log(
+          `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
+        );
+      }
+    } catch (liveErr) {
+      console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+    }
+  }
+  await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection, undefined, {
+    includeCompleted: opts.includeCompleted === true,
+  });
+  const list = await runActiveTaskList(ctx);
+  const stale = await runActiveTaskStale(ctx);
+  let bytes = 0;
+  try {
+    bytes = (await stat(ctx.activeTaskFilePath)).size;
+  } catch {
+    // Non-fatal — projection path may be unreadable in edge cases.
+  }
+  return {
+    ok: true,
+    path: ctx.activeTaskFilePath,
+    active: list.total,
+    stale: stale.total,
+    bytes,
+  };
+}
+
+function printActiveTaskStaleSummary(result: ActiveTaskStaleResult, headingPrefix = ""): void {
+  if (result.total === 0) {
+    console.log("✅ No stale tasks.");
+    return;
+  }
+  console.log(`${headingPrefix}Stale tasks (${result.total}):`);
+  for (const t of result.tasks) {
+    console.log(`  [${t.label}] ${t.description}`);
+    console.log(`    Status: ${t.status}`);
+    console.log(`    Last updated: ${t.updated} (${t.hoursStale}h ago)`);
+  }
+}
+
+function summarizeReconcileLine(result: ActiveTaskReconcileResult): string {
+  return `active-tasks reconcile: candidates=${result.candidates} reconciled=${result.reconciled} skipped=${result.skipped} failed=${result.failed} elapsedMs=${result.elapsedMs}`;
+}
+
+function summarizeHygieneLine(result: ActiveTaskHygieneResult): string {
+  const audit = result.auditFactId ? ` auditFact=${result.auditFactId}` : "";
+  const failed = Math.max(0, result.actions.length - result.appliedCount);
+  return `active-tasks hygiene: actions=${result.actions.length} applied=${result.appliedCount} skipped=${Math.max(0, result.actions.length - result.appliedCount - failed)} failed=${failed}${audit}`;
+}
+
+export type ActiveTaskMaintainCompleteEvent = {
+  event: "active_tasks_maintain_complete";
+  status: "ok" | "failed" | "partial";
+  mode: "apply" | "dry-run" | "qa";
+  ledger: "markdown" | "facts";
+  reconcile?: {
+    candidates: number;
+    reconciled: number;
+    skipped: number;
+    failed: number;
+  };
+  hygiene?: {
+    actions: number;
+    applied: number;
+    failed: number;
+    auditFact?: string;
+  };
+  render?: {
+    wrote: string;
+    active: number;
+    stale: number;
+    bytes?: number;
+  };
+  staleBefore?: number;
+  staleAfter?: number;
+  elapsedMs: number;
+  error?: string;
+};
+
+export function buildMaintainCompleteEvent(result: ActiveTaskMaintainResult): ActiveTaskMaintainCompleteEvent {
+  const reconcile = result.reconcile ?? result.reconcileDryRun;
+  const hygiene = result.hygiene ?? result.hygieneDryRun;
+  return {
+    event: "active_tasks_maintain_complete",
+    status: result.status,
+    mode: result.mode,
+    ledger: result.ledger,
+    ...(reconcile
+      ? {
+          reconcile: {
+            candidates: reconcile.candidates,
+            reconciled: reconcile.reconciled,
+            skipped: reconcile.skipped,
+            failed: reconcile.failed,
+          },
+        }
+      : {}),
+    ...(hygiene
+      ? {
+          hygiene: {
+            actions: hygiene.actions.length,
+            applied: hygiene.appliedCount,
+            failed: Math.max(0, hygiene.actions.length - hygiene.appliedCount),
+            ...(hygiene.auditFactId ? { auditFact: hygiene.auditFactId } : {}),
+          },
+        }
+      : {}),
+    ...(result.render?.ok
+      ? {
+          render: {
+            wrote: result.render.path,
+            active: result.render.active,
+            stale: result.render.stale,
+            bytes: result.render.bytes,
+          },
+        }
+      : {}),
+    ...(result.staleBefore !== undefined ? { staleBefore: result.staleBefore } : {}),
+    ...(result.staleAfter !== undefined ? { staleAfter: result.staleAfter } : {}),
+    elapsedMs: result.elapsedMs,
+    ...(result.error ? { error: result.error } : {}),
+  };
+}
+
+/** Run reconcile + hygiene + optional render/stale summary in one plugin process (#1865). */
+export async function runActiveTaskMaintain(
+  ctx: ActiveTaskContext,
+  cfg: HybridMemoryConfig,
+  opts: {
+    apply?: boolean;
+    dryRun?: boolean;
+    qa?: boolean;
+    render?: boolean;
+    staleSummary?: boolean;
+    beforeStale?: boolean;
+    verbose?: boolean;
+    olderThanMinutes?: number;
+    openclawHome?: string;
+  } = {},
+): Promise<ActiveTaskMaintainResult> {
+  const startedAt = Date.now();
+  const qa = opts.qa === true;
+  const apply = qa || opts.apply === true;
+  const dryRunPass = qa || opts.dryRun === true || !apply;
+  const applyPass = apply;
+  const render = qa || opts.render === true;
+  const staleSummary = qa || opts.staleSummary === true;
+  const beforeStale = qa || opts.beforeStale === true;
+  const mode: ActiveTaskMaintainResult["mode"] = qa ? "qa" : apply ? "apply" : "dry-run";
+  const maintainMode = apply ? "apply" : "dry-run";
+
+  emitMaintainLine(`active-tasks maintain: start mode=${maintainMode} ledger=${ctx.ledger}`);
+
+  let status: ActiveTaskMaintainResult["status"] = "ok";
+  let error: string | undefined;
+  let staleBefore: number | undefined;
+  let staleAfter: number | undefined;
+  let reconcileDryRun: ActiveTaskReconcileResult | undefined;
+  let reconcile: ActiveTaskReconcileResult | undefined;
+  let hygieneDryRun: ActiveTaskHygieneResult | undefined;
+  let hygiene: ActiveTaskHygieneResult | undefined;
+  let renderResult: ActiveTaskRenderResult | undefined;
+
+  const hygieneOpts = {
+    olderThanMinutes: opts.olderThanMinutes,
+    openclawHome: opts.openclawHome,
+  };
+  const reconcileOpts = {
+    verbose: opts.verbose,
+    openclawHome: opts.openclawHome,
+  };
+
+  if (beforeStale) {
+    const stale = await runActiveTaskStale(ctx);
+    staleBefore = stale.total;
+    printActiveTaskStaleSummary(stale);
+  }
+
+  if (dryRunPass) {
+    emitMaintainLine("active-tasks maintain: phase=reconcile start mode=dry-run");
+    reconcileDryRun = await runActiveTaskReconcile(ctx, cfg, { ...reconcileOpts, dryRun: true });
+    emitMaintainLine(summarizeReconcileLine(reconcileDryRun));
+    printActiveTaskReconcile(reconcileDryRun);
+
+    emitMaintainLine("active-tasks maintain: phase=hygiene start mode=dry-run");
+    hygieneDryRun = await runActiveTaskHygiene(ctx, { ...hygieneOpts, apply: false });
+    emitMaintainLine(summarizeHygieneLine(hygieneDryRun));
+    printActiveTaskHygiene(hygieneDryRun);
+  }
+
+  if (applyPass) {
+    emitMaintainLine("active-tasks maintain: phase=reconcile start mode=apply");
+    reconcile = await runActiveTaskReconcile(ctx, cfg, { ...reconcileOpts, dryRun: false });
+    emitMaintainLine(summarizeReconcileLine(reconcile));
+    printActiveTaskReconcile(reconcile);
+    if (reconcile.failed > 0) {
+      status = "partial";
+      error = `reconcile failed ${reconcile.failed} task write(s)`;
+    }
+
+    emitMaintainLine("active-tasks maintain: phase=hygiene start mode=apply");
+    hygiene = await runActiveTaskHygiene(ctx, { ...hygieneOpts, apply: true });
+    emitMaintainLine(summarizeHygieneLine(hygiene));
+    printActiveTaskHygiene(hygiene);
+    if (hygiene.cannotApplyReason) {
+      status = "failed";
+      error = hygiene.cannotApplyReason;
+    } else if (apply && hygiene.actions.length > 0) {
+      console.log(`\nApplied ${hygiene.appliedCount} action(s).`);
+      if (hygiene.auditFactId) {
+        console.log(`Audit fact: ${hygiene.auditFactId}`);
+      }
+      if (hygiene.ledger === "facts") {
+        console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
+      }
+    }
+  }
+
+  if (render && applyPass) {
+    emitMaintainLine("active-tasks maintain: phase=render start");
+    renderResult = await runActiveTaskRender(ctx, cfg);
+    if (renderResult.ok) {
+      emitMaintainLine(
+        `active-tasks render: wrote=${renderResult.path} active=${renderResult.active} stale=${renderResult.stale} bytes=${renderResult.bytes}`,
+      );
+      console.log(`✅ Wrote ${renderResult.path}`);
+    } else {
+      emitMaintainLine(`active-tasks render: skipped reason=${renderResult.reason}`);
+    }
+  }
+
+  if (staleSummary) {
+    const stale = await runActiveTaskStale(ctx);
+    staleAfter = stale.total;
+    printActiveTaskStaleSummary(stale);
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  const result: ActiveTaskMaintainResult = {
+    status,
+    mode,
+    ledger: ctx.ledger,
+    ...(staleBefore !== undefined ? { staleBefore } : {}),
+    ...(staleAfter !== undefined ? { staleAfter } : {}),
+    ...(reconcileDryRun ? { reconcileDryRun } : {}),
+    ...(reconcile ? { reconcile } : {}),
+    ...(hygieneDryRun ? { hygieneDryRun } : {}),
+    ...(hygiene ? { hygiene } : {}),
+    ...(renderResult ? { render: renderResult } : {}),
+    elapsedMs,
+    ...(error ? { error } : {}),
+  };
+
+  emitMaintainLine(
+    `active-tasks maintain: complete status=${status}${staleBefore !== undefined ? ` staleBefore=${staleBefore}` : ""}${staleAfter !== undefined ? ` staleAfter=${staleAfter}` : ""} elapsedMs=${elapsedMs}`,
+  );
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Display helpers
 // ---------------------------------------------------------------------------
@@ -680,7 +968,7 @@ export function registerActiveTaskCommands(
     .command("active-tasks")
     .description(
       ctx
-        ? `Working memory: active tasks (${ctx.ledger} ledger). Subcommands: list, complete, stale, reconcile, hygiene, add, render, config`
+        ? `Working memory: active tasks (${ctx.ledger} ledger). Subcommands: list, complete, stale, reconcile, maintain, hygiene, add, render, config`
         : "Active tasks disabled (activeTask.enabled: false). Subcommand: config. Enable: openclaw hybrid-mem config-set activeTask enabled",
     )
     .action(async () => {
@@ -735,17 +1023,7 @@ export function registerActiveTaskCommands(
     .command("stale")
     .description(`Show tasks not updated in >${formatDuration(ctx.staleMinutes)}`)
     .action(async () => {
-      const result = await runActiveTaskStale(ctx);
-      if (result.total === 0) {
-        console.log("✅ No stale tasks.");
-        return;
-      }
-      console.log(`Stale tasks (${result.total}):`);
-      for (const t of result.tasks) {
-        console.log(`  [${t.label}] ${t.description}`);
-        console.log(`    Status: ${t.status}`);
-        console.log(`    Last updated: ${t.updated} (${t.hoursStale}h ago)`);
-      }
+      printActiveTaskStaleSummary(await runActiveTaskStale(ctx));
     });
 
   activeTasks
@@ -763,6 +1041,75 @@ export function registerActiveTaskCommands(
       });
       printActiveTaskReconcile(result);
     });
+
+  activeTasks
+    .command("maintain")
+    .description(
+      "Run reconcile + hygiene (+ optional render/stale summary) in one plugin process (#1865)",
+    )
+    .option("--apply", "Apply reconcile/hygiene mutations (default: dry-run/report only)")
+    .option("--dry-run", "Report planned reconcile/hygiene actions without mutations")
+    .option(
+      "--qa",
+      "Operator QA: before-stale + dry-run summaries + apply + render + final stale summary",
+    )
+    .option("--render", "Write ACTIVE-TASKS.md projection after apply (facts ledger)")
+    .option("--stale-summary", "Print stale task summary after maintenance")
+    .option("--before-stale", "Print stale task summary before mutations")
+    .option("--json", "Emit machine-readable final summary JSON line")
+    .option("-v, --verbose", "Log per-task reconciliation decisions and phase markers")
+    .option("--older-than <duration>", `Hygiene age threshold (default: ${formatDuration(ctx.staleMinutes)})`)
+    .action(
+      async (
+        opts: {
+          apply?: boolean;
+          dryRun?: boolean;
+          qa?: boolean;
+          render?: boolean;
+          staleSummary?: boolean;
+          beforeStale?: boolean;
+          json?: boolean;
+          verbose?: boolean;
+          olderThan?: string;
+        },
+        cmd?: CommanderOptsParent,
+      ) => {
+        if (opts.apply && opts.dryRun && !opts.qa) {
+          console.error("Error: --dry-run and --apply are mutually exclusive (use --qa for both passes).");
+          process.exitCode = 1;
+          return;
+        }
+        let olderThanMinutes = ctx.staleMinutes;
+        if (opts.olderThan?.trim()) {
+          try {
+            olderThanMinutes = parseDuration(opts.olderThan.trim());
+          } catch (err) {
+            console.error(`Error: invalid --older-than value "${opts.olderThan}": ${String(err)}`);
+            process.exitCode = 1;
+            return;
+          }
+        }
+        const verbose = !!opts.verbose || readHybridMemVerbose(cmd);
+        const result = await runActiveTaskMaintain(ctx, cfg, {
+          apply: opts.apply,
+          dryRun: opts.dryRun,
+          qa: opts.qa,
+          render: opts.render,
+          staleSummary: opts.staleSummary,
+          beforeStale: opts.beforeStale,
+          verbose,
+          olderThanMinutes,
+        });
+        if (opts.json) {
+          emitMaintainLine(JSON.stringify(buildMaintainCompleteEvent(result)));
+        }
+        if (result.status === "failed") {
+          process.exitCode = 1;
+        } else if (result.status === "partial") {
+          process.exitCode = 2;
+        }
+      },
+    );
 
   activeTasks
     .command("hygiene")
@@ -927,29 +1274,11 @@ export function registerActiveTaskCommands(
         );
         return;
       }
-      const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
-      if (cfg.activeTask.liveStateReconcile.enabled) {
-        try {
-          const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
-            maxRequests: 20,
-            log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
-          });
-          if (liveResult.updatedCount > 0) {
-            console.log(
-              `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
-            );
-          } else {
-            console.log(
-              `✅ Live-state reconcile: no terminal states found (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
-            );
-          }
-        } catch (liveErr) {
-          console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
-        }
-      }
-      await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection, undefined, {
+      const renderResult = await runActiveTaskRender(ctx, cfg, {
         includeCompleted: opts.includeCompleted === true,
       });
-      console.log(`✅ Wrote ${ctx.activeTaskFilePath}`);
+      if (renderResult.ok) {
+        console.log(`✅ Wrote ${renderResult.path}`);
+      }
     });
 }

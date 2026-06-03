@@ -331,6 +331,25 @@ export type ActiveTaskReconcileResult = {
   };
 };
 
+export type ActiveTaskRenderResult =
+  | { ok: true; path: string; active: number; stale: number; bytes: number }
+  | { ok: false; skipped: true; reason: string };
+
+export type ActiveTaskMaintainResult = {
+  status: "ok" | "failed" | "partial";
+  mode: "apply" | "dry-run" | "qa";
+  ledger: "markdown" | "facts";
+  staleBefore?: number;
+  staleAfter?: number;
+  reconcileDryRun?: ActiveTaskReconcileResult;
+  reconcile?: ActiveTaskReconcileResult;
+  hygieneDryRun?: ActiveTaskHygieneResult;
+  hygiene?: ActiveTaskHygieneResult;
+  render?: ActiveTaskRenderResult;
+  elapsedMs: number;
+  error?: string;
+};
+
 export type ActiveTaskStaleResult = {
   tasks: Array<{
     label: string;
