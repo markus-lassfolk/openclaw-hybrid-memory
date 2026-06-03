@@ -454,8 +454,10 @@ export class CredentialsDB extends BaseSqliteStore {
       "IMMEDIATE",
     );
 
+    let migrationSucceeded = false;
     try {
       migrateWithBackup();
+      migrationSucceeded = true;
 
       this.kdfVersion = newKdfVersion;
       this.salt = newSalt;
@@ -505,8 +507,9 @@ export class CredentialsDB extends BaseSqliteStore {
         ...(verified !== undefined ? { verified } : {}),
       };
     } catch (err) {
-      // Failure: restore the old backup if it exists
-      if (oldBackupPath && backupPath) {
+      // After successful migration, keep the new backup (at backupPath) that matches the encrypted state.
+      // Only restore the old backup if migration itself failed.
+      if (oldBackupPath && backupPath && !migrationSucceeded) {
         try {
           if (existsSync(backupPath)) {
             unlinkSync(backupPath);
