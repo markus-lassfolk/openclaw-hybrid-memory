@@ -162,9 +162,15 @@ export async function runGenerateProposalsForCli(
     insights: insightsBlock,
     identity_files: identityFilesBlock,
   });
-  const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(cfg, "heavy");
+  const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(
+    cfg,
+    "maintenance",
+  );
   const fallbackModels = resolvedFallbacks ?? [];
   const allModels = [model, ...fallbackModels];
+  ctx.logger.info?.(
+    `memory-hybrid: generate-proposals fallback chain = [${fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+  );
   let items:
     | Array<{
         targetFile: string;
@@ -181,7 +187,7 @@ export async function runGenerateProposalsForCli(
     try {
       const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
         model: tryModel,
-        modelSource: modelIdx === 0 ? "heavy" : "fallback",
+        modelSource: modelIdx === 0 ? "maintenance" : "fallback",
         content: prompt,
         temperature: 0.3,
         maxTokens: 4000,

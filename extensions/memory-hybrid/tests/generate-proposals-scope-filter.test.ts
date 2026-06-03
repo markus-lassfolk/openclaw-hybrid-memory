@@ -157,7 +157,7 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     }
   });
 
-  it("includes llm.fallbackModel for heavy generate-proposals fallback chain", async () => {
+  it("includes llm.fallbackModel for maintenance generate-proposals fallback chain", async () => {
     const db = new FactsDB(":memory:");
     const proposalsDb = new ProposalsDB(":memory:");
     insertScopedPattern(db, "global", null, "global pattern");
@@ -166,8 +166,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const ctx = makeCtx(db, proposalsDb, {
       configOverrides: {
         llm: {
+          maintenance: ["minimax/minimax-m1"],
           default: ["openai/gpt-4.1-mini"],
-          heavy: ["minimax/minimax-m1"],
+          heavy: ["openai/gpt-5.4"],
           fallbackModel: "openai/gpt-4.1-mini",
         },
       },
@@ -181,10 +182,38 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
       chatSpy.mockRestore();
     }
   });
+
+  it("#1824: uses maintenance safety-net fallback when single maintenance model has no configured fallbacks", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "global pattern");
+    const chatSpy = vi.spyOn(chatService, "chatCompleteWithRetryDetailed").mockRejectedValue(new Error("forced failure"));
+
+    const ctx = makeCtx(db, proposalsDb, {
+      configOverrides: {
+        llm: {
+          maintenance: ["minimax/MiniMax-M2.7-highspeed"],
+          default: ["minimax/MiniMax-M2.7-highspeed", "openai/gpt-4.1-mini"],
+          heavy: ["openai/gpt-5.4"],
+        },
+      },
+    });
+
+    try {
+      await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
+        /models tried:.*openai\/gpt-4\.1-mini/,
+      );
+      expect(ctx.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("generate-proposals fallback chain = [openai/gpt-4.1-mini]"),
+      );
+    } finally {
+      chatSpy.mockRestore();
+    }
+  });
 });
 
 describe("generate-proposals — JSON retry (#1824)", () => {
-  function makeCtxWithTwoHeavyModels(
+  function makeCtxWithMaintenanceFallbackModels(
     db: InstanceType<typeof FactsDB>,
     proposalsDb: InstanceType<typeof ProposalsDB>,
     openai: unknown,
@@ -203,7 +232,11 @@ describe("generate-proposals — JSON retry (#1824)", () => {
       autoRecall: { scopeFilter: undefined },
       identityReflection: { enabled: false },
       identityPromotion: { enabled: false },
-      llm: { maintenance: ["primary-model"], default: ["primary-model"], heavy: ["primary-model", "fallback-model"] },
+      llm: {
+        maintenance: ["primary-model"],
+        default: ["primary-model", "fallback-model"],
+        heavy: ["openai/gpt-5.4"],
+      },
     } as unknown as HybridMemoryConfig;
 
     return {
@@ -248,7 +281,7 @@ describe("generate-proposals — JSON retry (#1824)", () => {
       },
     };
 
-    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
     const result = await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
 
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
@@ -277,7 +310,7 @@ describe("generate-proposals — JSON retry (#1824)", () => {
       },
     };
 
-    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
 
     await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
       "all models failed",
@@ -307,7 +340,7 @@ describe("generate-proposals — JSON retry (#1824)", () => {
       },
     };
 
-    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       let thrown: Error | null = null;
@@ -348,7 +381,7 @@ describe("generate-proposals — JSON retry (#1824)", () => {
       },
     };
 
-    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
     let thrown: Error | null = null;
     try {
       await runGenerateProposalsForCli(ctx, { dryRun: false, verbose: true }, { resolvePath: (f) => f });
