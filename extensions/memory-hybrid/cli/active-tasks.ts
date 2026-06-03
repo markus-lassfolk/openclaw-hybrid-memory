@@ -462,6 +462,32 @@ export async function runActiveTaskHygiene(
   };
 }
 
+type ActiveTaskUserLog = {
+  log: (msg: string) => void;
+  warn: (msg: string) => void;
+  liveStateLog: {
+    info: (m: string) => void;
+    debug: (m: string) => void;
+    warn: (m: string) => void;
+  };
+};
+
+function activeTaskUserLog(jsonMode?: boolean): ActiveTaskUserLog {
+  if (jsonMode) {
+    const writeStderr = (m: string) => process.stderr.write(`${m}\n`);
+    return {
+      log: writeStderr,
+      warn: writeStderr,
+      liveStateLog: { info: writeStderr, debug: () => {}, warn: writeStderr },
+    };
+  }
+  return {
+    log: (m) => console.log(m),
+    warn: (m) => console.warn(m),
+    liveStateLog: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+  };
+}
+
 /** Reconcile orphan in-progress subagent tasks against session transcripts (#978, #1864). */
 export async function runActiveTaskReconcile(
   ctx: ActiveTaskContext,
@@ -475,6 +501,7 @@ export async function runActiveTaskReconcile(
 ): Promise<ActiveTaskReconcileResult> {
   const dryRun = opts.dryRun === true;
   const mode = dryRun ? "dry-run" : "apply";
+  const userLog = activeTaskUserLog(opts.jsonMode);
   const progress =
     mode === "apply" || opts.verbose
       ? new ActiveTaskReconcileProgressReporter({
@@ -500,14 +527,13 @@ export async function runActiveTaskReconcile(
         progress,
       },
     );
-    progress?.complete();
 
     let liveState: ActiveTaskReconcileResult["liveState"];
     if (!dryRun && cfg.activeTask.liveStateReconcile.enabled) {
       try {
         const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
           maxRequests: 20,
-          log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+          log: userLog.liveStateLog,
         });
         liveState = {
           updatedCount: liveResult.updatedCount,
@@ -518,9 +544,10 @@ export async function runActiveTaskReconcile(
           await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
         }
       } catch (liveErr) {
-        console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+        userLog.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
       }
     }
+    progress?.complete();
 
     return {
       mode,
@@ -602,22 +629,17 @@ function printActiveTaskReconcile(result: ActiveTaskReconcileResult, log: (msg: 
   }
 }
 
-let emitMaintainLineTarget: "stdout" | "stderr" = "stdout";
 
-function setMaintainOutputTarget(target: "stdout" | "stderr"): void {
-  emitMaintainLineTarget = target;
-}
-
-function emitMaintainLine(line: string): void {
-  const target = emitMaintainLineTarget === "stderr" ? process.stderr : process.stdout;
-  target.write(`${line}\n`);
+function createMaintainLineEmitter(jsonMode?: boolean): (line: string) => void {
+  const target = jsonMode ? process.stderr : process.stdout;
+  return (line: string) => target.write(`${line}\n`);
 }
 
 /** Write ACTIVE-TASKS.md projection from facts ledger (#1865). */
 export async function runActiveTaskRender(
   ctx: ActiveTaskContext,
   cfg: HybridMemoryConfig,
-  opts: { includeCompleted?: boolean } = {},
+  opts: { includeCompleted?: boolean; jsonMode?: boolean } = {},
 ): Promise<ActiveTaskRenderResult> {
   if (ctx.ledger !== "facts") {
     return {
@@ -627,19 +649,20 @@ export async function runActiveTaskRender(
     };
   }
   const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
+  const userLog = activeTaskUserLog(opts.jsonMode);
   if (cfg.activeTask.liveStateReconcile.enabled) {
     try {
       const liveResult = await reconcileActiveTaskLiveState(factsDb, vectorDb, embeddings, {
         maxRequests: 20,
-        log: { info: (m) => console.log(m), debug: () => {}, warn: (m) => console.warn(m) },
+        log: userLog.liveStateLog,
       });
       if (liveResult.updatedCount > 0) {
-        console.log(
+        userLog.log(
           `✅ Live-state reconcile: marked ${liveResult.updatedCount} task(s) done (checked ${liveResult.checkedCount}, skipped ${liveResult.skippedCount})`,
         );
       }
     } catch (liveErr) {
-      console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
+      userLog.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
     }
   }
   await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection, undefined, {
@@ -777,6 +800,7 @@ export async function runActiveTaskMaintain(
     jsonMode?: boolean;
   } = {},
 ): Promise<ActiveTaskMaintainResult> {
+  const emitMaintainLine = createMaintainLineEmitter(opts.jsonMode);
   const log = opts.jsonMode ? (msg: string) => process.stderr.write(`${msg}\n`) : (msg: string) => console.log(msg);
   const startedAt = Date.now();
   const qa = opts.qa === true;
@@ -859,7 +883,7 @@ export async function runActiveTaskMaintain(
 
   if (render && applyPass) {
     emitMaintainLine("active-tasks maintain: phase=render start");
-    renderResult = await runActiveTaskRender(ctx, cfg);
+    renderResult = await runActiveTaskRender(ctx, cfg, { jsonMode: opts.jsonMode });
     if (renderResult.ok) {
       emitMaintainLine(
         `active-tasks render: wrote=${renderResult.path} active=${renderResult.active} stale=${renderResult.stale} bytes=${renderResult.bytes}`,
@@ -1110,9 +1134,6 @@ export function registerActiveTaskCommands(
           }
         }
         const verbose = !!opts.verbose || readHybridMemVerbose(cmd);
-        if (opts.json) {
-          setMaintainOutputTarget("stderr");
-        }
         const result = await runActiveTaskMaintain(ctx, cfg, {
           apply: opts.apply,
           dryRun: opts.dryRun,

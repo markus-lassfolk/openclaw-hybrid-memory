@@ -1538,17 +1538,6 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
 ): Promise<FactsReconcileResult> {
   const startedAt = Date.now();
   const progress = opts.progress;
-  const emptyResult = (partial?: Partial<FactsReconcileResult>): FactsReconcileResult => ({
-    reconciledLabels: [],
-    wrote: false,
-    candidates: 0,
-    scanned: 0,
-    skipped: 0,
-    failed: 0,
-    factsWritten: 0,
-    elapsedMs: Date.now() - startedAt,
-    ...partial,
-  });
 
   progress?.start();
   progress?.phaseStart("session-index");
@@ -1658,8 +1647,11 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
       factsWritten += 1;
       successfullyWritten.push(entry);
       progress?.onWriteItem(entry.label, i + 1, toFlush.length, false);
-    } catch {
+    } catch (err) {
       failed += 1;
+      opts.log?.warn?.(
+        `memory-hybrid: active-task reconcile failed for [${entry.label}]: ${err instanceof Error ? err.message : String(err)}`,
+      );
       progress?.onWriteItem(entry.label, i + 1, toFlush.length, true);
     }
   }

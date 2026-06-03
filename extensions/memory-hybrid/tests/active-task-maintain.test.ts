@@ -167,4 +167,110 @@ describe("runActiveTaskMaintain (#1865)", () => {
     expect(result.reconcile?.reconciledLabels).toEqual(["orphan"]);
     expect(result.staleAfter).toBeDefined();
   });
+
+  it("jsonMode routes maintain progress to stderr and leaves stdout clean", async () => {
+    const key = "agent:x:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
+    await writeFile(
+      ctx.activeTaskFilePath,
+      `## Active Tasks
+
+### [orphan]: Ghost task
+- **Status:** In progress
+- **Subagent:** ${key}
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T15:00:00.000Z
+`,
+      "utf-8",
+    );
+
+    const stdoutChunks: string[] = [];
+    const stderrChunks: string[] = [];
+    const origStdoutWrite = process.stdout.write.bind(process.stdout);
+    const origStderrWrite = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      stdoutChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrChunks.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      await runActiveTaskMaintain(ctx, mockCfg, {
+        apply: true,
+        jsonMode: true,
+        openclawHome: join(tmpDir, "empty-openclaw"),
+      });
+    } finally {
+      process.stdout.write = origStdoutWrite;
+      process.stderr.write = origStderrWrite;
+    }
+
+    expect(stdoutChunks.join("")).toBe("");
+    expect(stderrChunks.join("")).toContain("active-tasks maintain:");
+  });
+
+  it("jsonMode does not stick stderr routing for subsequent non-json maintain runs", async () => {
+    const key = "agent:x:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
+    await writeFile(
+      ctx.activeTaskFilePath,
+      `## Active Tasks
+
+### [orphan]: Ghost task
+- **Status:** In progress
+- **Subagent:** ${key}
+- **Started:** 2026-02-24T10:00:00.000Z
+- **Updated:** 2026-02-24T15:00:00.000Z
+`,
+      "utf-8",
+    );
+
+    const capture = () => {
+      const stdoutChunks: string[] = [];
+      const stderrChunks: string[] = [];
+      const origStdoutWrite = process.stdout.write.bind(process.stdout);
+      const origStderrWrite = process.stderr.write.bind(process.stderr);
+      process.stdout.write = ((chunk: string | Uint8Array) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      }) as typeof process.stdout.write;
+      process.stderr.write = ((chunk: string | Uint8Array) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write;
+      return {
+        restore: () => {
+          process.stdout.write = origStdoutWrite;
+          process.stderr.write = origStderrWrite;
+        },
+        stdout: stdoutChunks,
+        stderr: stderrChunks,
+      };
+    };
+
+    const jsonCapture = capture();
+    try {
+      await runActiveTaskMaintain(ctx, mockCfg, {
+        dryRun: true,
+        jsonMode: true,
+        openclawHome: join(tmpDir, "empty-openclaw"),
+      });
+    } finally {
+      jsonCapture.restore();
+    }
+    expect(jsonCapture.stdout.join("")).toBe("");
+
+    const normalCapture = capture();
+    try {
+      await runActiveTaskMaintain(ctx, mockCfg, {
+        dryRun: true,
+        openclawHome: join(tmpDir, "empty-openclaw"),
+      });
+    } finally {
+      normalCapture.restore();
+    }
+    expect(normalCapture.stdout.join("")).toContain("active-tasks maintain:");
+    expect(normalCapture.stderr.join("")).toBe("");
+  });
 });
