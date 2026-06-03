@@ -1531,7 +1531,9 @@ export class VectorDB {
 
         const table = this.getTable();
         const cleanupOlderThan = new Date(Date.now() - olderThanMs);
-        const stats = await table.optimize({ cleanupOlderThan });
+        const stats = await this.withRetryableWriteConflictRetry("LanceDB optimize", () =>
+          table.optimize({ cleanupOlderThan }),
+        );
         const out = {
           compacted: stats.compaction?.fragmentsRemoved ?? 0,
           removedFragments: stats.prune?.oldVersionsRemoved ?? 0,
