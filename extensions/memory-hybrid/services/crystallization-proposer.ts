@@ -16,7 +16,7 @@ import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
-import { stripLeadingHtmlComments } from "../utils/text.js";
+import { escapeRegExp, stripLeadingHtmlComments } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -801,10 +801,6 @@ function endIndexForYamlValueBlock(lines: string[], startIdx: number, keyLineRe:
     break;
   }
   return j;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {

@@ -8,6 +8,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findPluginRoot } from "./plugin-root.js";
+import { escapeRegExp } from "./text.js";
 
 const PROMPTS_DIR = join(findPluginRoot(import.meta.url), "prompts");
 
@@ -20,10 +21,6 @@ export function loadPrompt(name: string): string {
   template = readFileSync(path, "utf-8");
   cache.set(name, template);
   return template;
-}
-
-function escapeRegExp(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function fillPrompt(template: string, vars: Record<string, string>): string {

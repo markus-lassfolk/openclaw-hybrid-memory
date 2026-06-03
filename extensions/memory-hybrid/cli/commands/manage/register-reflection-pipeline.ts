@@ -315,32 +315,32 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
       .option("-v, --verbose", "Log each pattern as it is extracted"),
   ).action(
-      withExit(
-        async (
-          opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean },
-          cmd?: CommanderOptsParent,
-        ) => {
-          const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
-          const dryRun = !!opts?.dryRun;
-          const model =
-            opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
-          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-          let res;
-          try {
-            res = await runReflection({ window, dryRun, model, verbose });
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "cli",
-              operation: "reflect",
-            });
-            throw err;
-          }
-          console.log(
-            `Reflection complete: analyzed ${res.factsAnalyzed} facts, extracted ${res.patternsExtracted} patterns, stored ${res.patternsStored} ${dryRun ? "(dry-run)" : ""}`,
-          );
-        },
-      ),
-    );
+    withExit(
+      async (
+        opts?: { window?: string; dryRun?: boolean; model?: string; verbose?: boolean },
+        cmd?: CommanderOptsParent,
+      ) => {
+        const window = opts?.window ? Number.parseInt(opts.window, 10) : reflectionConfig.defaultWindow;
+        const dryRun = !!opts?.dryRun;
+        const model =
+          opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        let res;
+        try {
+          res = await runReflection({ window, dryRun, model, verbose });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "reflect",
+          });
+          throw err;
+        }
+        console.log(
+          `Reflection complete: analyzed ${res.factsAnalyzed} facts, extracted ${res.patternsExtracted} patterns, stored ${res.patternsStored} ${dryRun ? "(dry-run)" : ""}`,
+        );
+      },
+    ),
+  );
 
   registerScanMaintenanceOverrideOptions(
     mem
@@ -350,34 +350,34 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
       .option("-v, --verbose", "Log each rule as it is extracted"),
   ).action(
-      withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
-        const dryRun = !!opts?.dryRun;
-        const model =
-          opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
-        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-        let res;
-        try {
-          res = await runReflectionRules({ dryRun, model, verbose });
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "cli",
-            operation: "reflect-rules",
-          });
-          throw err;
-        }
+    withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      const dryRun = !!opts?.dryRun;
+      const model =
+        opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
+      const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+      let res;
+      try {
+        res = await runReflectionRules({ dryRun, model, verbose });
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "cli",
+          operation: "reflect-rules",
+        });
+        throw err;
+      }
+      console.log(
+        `Reflection (rules) complete: extracted ${res.rulesExtracted} rules, stored ${res.rulesStored} ${dryRun ? "(dry-run)" : ""}`,
+      );
+      if (res.diagnostics) {
+        const zeroReason = res.diagnostics.zeroRulesReason
+          ? ` zero_rules_reason=${res.diagnostics.zeroRulesReason}`
+          : "";
         console.log(
-          `Reflection (rules) complete: extracted ${res.rulesExtracted} rules, stored ${res.rulesStored} ${dryRun ? "(dry-run)" : ""}`,
+          `Reflection (rules) diagnostics: model_response_chars=${res.diagnostics.modelResponseChars} parse_success=${res.diagnostics.parseSuccess} parsed_candidates=${res.diagnostics.parsedCandidates} rejected_duplicates=${res.diagnostics.rejectedDuplicates} rejected_low_confidence=${res.diagnostics.rejectedLowConfidence} stored=${res.diagnostics.stored} status=${res.diagnostics.status}${zeroReason}`,
         );
-        if (res.diagnostics) {
-          const zeroReason = res.diagnostics.zeroRulesReason
-            ? ` zero_rules_reason=${res.diagnostics.zeroRulesReason}`
-            : "";
-          console.log(
-            `Reflection (rules) diagnostics: model_response_chars=${res.diagnostics.modelResponseChars} parse_success=${res.diagnostics.parseSuccess} parsed_candidates=${res.diagnostics.parsedCandidates} rejected_duplicates=${res.diagnostics.rejectedDuplicates} rejected_low_confidence=${res.diagnostics.rejectedLowConfidence} stored=${res.diagnostics.stored} status=${res.diagnostics.status}${zeroReason}`,
-          );
-        }
-      }),
-    );
+      }
+    }),
+  );
 
   registerScanMaintenanceOverrideOptions(
     mem
@@ -394,106 +394,105 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       .option("--threshold <n>", "Jaccard similarity threshold for implicit-feedback collapse", "0.7")
       .option("--limit <n>", "Maximum implicit-feedback rows to scan per page", "1000"),
   ).action(
-      withExit(
-        async (
-          opts?: {
-            dryRun?: boolean;
-            model?: string;
-            verbose?: boolean;
-            collapseImplicitFeedback?: boolean;
-            includeLegacy?: boolean;
-            threshold?: string;
-            limit?: string;
-          },
-          cmd?: CommanderOptsParent,
-        ) => {
-          const dryRun = !!opts?.dryRun;
-          const model =
-            opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
-          const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-          if (opts?.collapseImplicitFeedback) {
-            const thresholdRaw = opts?.threshold ? Number.parseFloat(opts.threshold) : 0.7;
-            const threshold =
-              Number.isFinite(thresholdRaw) && thresholdRaw > 0 && thresholdRaw <= 1 ? thresholdRaw : 0.7;
-            const limitRaw = opts?.limit ? Number.parseInt(opts.limit, 10) : 1000;
-            const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(10000, Math.floor(limitRaw)) : 1000;
-            let afterRowid = 0;
-            let scanned = 0;
-            let collapsed = 0;
-            let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
-            let batches = 0;
-            await runMaintenanceHeartbeat(
-              "reflect-meta-collapse",
-              verbose,
-              async (heartbeat) => {
-                for (;;) {
-                  batches++;
-                  const res = cleanupImplicitFeedbackDuplicates(factsDb, {
-                    threshold,
-                    limit,
-                    afterRowid,
-                    dryRun,
-                    seedCanonical: carryCanonical,
-                    includeLegacy: opts?.includeLegacy === true,
-                    reportEvery: 250,
-                    onProgress: () => heartbeat.heartbeat(),
-                  });
-                  scanned += res.scanned;
-                  collapsed += res.collapsed;
-                  carryCanonical = res.carryCanonical;
-                  heartbeat.heartbeat();
-                  if (res.scanned < limit || res.resumeAfterRowid == null) break;
-                  afterRowid = res.resumeAfterRowid;
-                  await new Promise((resolve) => setImmediate(resolve));
-                }
-              },
-              {
-                forceHeartbeat: true,
-                progressSupplier: () =>
-                  `stage=scan; batches=${batches}; scanned=${scanned}; collapsed=${collapsed}; includeLegacy=${opts?.includeLegacy === true ? "yes" : "no"}`,
-              },
-            );
-            const collapseStatus = implicitFeedbackCollapseStatus(scanned, collapsed);
-            console.log(
-              `Implicit-feedback collapse summary: scanned ${scanned}, collapsed ${collapsed}, status=${collapseStatus} ${dryRun ? "(dry-run)" : ""}`,
-            );
-            if (!dryRun && collapseStatus === "no_candidates") {
-              console.log(
-                "No implicit-feedback rows matched the collapse scan window. Verify source='implicit-feedback' rows exist and rerun with a wider scan limit.",
-              );
-            } else if (!dryRun && collapseStatus === "no_changes") {
-              console.log(
-                "No near-duplicate rows met the current threshold. Consider `--include-legacy` and/or a lower `--threshold`, then rerun audit health to verify bloat reduction.",
-              );
-            }
-            if (!dryRun && isSemanticNoOpImplicitFeedbackCollapseStatus(collapseStatus)) {
-              process.exitCode = 2;
-            }
-            return;
-          }
-          let res;
-          try {
-            res = await runMaintenanceHeartbeat(
-              "reflect-meta",
-              verbose,
-              () => runReflectionMeta({ dryRun, model, verbose }),
-              {
-                progressSupplier: () => `stage=extract-meta-patterns; dryRun=${dryRun ? "yes" : "no"}`,
-              },
-            );
-          } catch (err) {
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "cli",
-              operation: "reflect-meta",
-            });
-            throw err;
-          }
-          console.log(
-            `Reflection (meta) complete: extracted ${res.metaExtracted} meta-patterns, stored ${res.metaStored} ${dryRun ? "(dry-run)" : ""}`,
-          );
+    withExit(
+      async (
+        opts?: {
+          dryRun?: boolean;
+          model?: string;
+          verbose?: boolean;
+          collapseImplicitFeedback?: boolean;
+          includeLegacy?: boolean;
+          threshold?: string;
+          limit?: string;
         },
-      ),
-    );
+        cmd?: CommanderOptsParent,
+      ) => {
+        const dryRun = !!opts?.dryRun;
+        const model =
+          opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        if (opts?.collapseImplicitFeedback) {
+          const thresholdRaw = opts?.threshold ? Number.parseFloat(opts.threshold) : 0.7;
+          const threshold = Number.isFinite(thresholdRaw) && thresholdRaw > 0 && thresholdRaw <= 1 ? thresholdRaw : 0.7;
+          const limitRaw = opts?.limit ? Number.parseInt(opts.limit, 10) : 1000;
+          const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(10000, Math.floor(limitRaw)) : 1000;
+          let afterRowid = 0;
+          let scanned = 0;
+          let collapsed = 0;
+          let carryCanonical: ReadonlyArray<{ id: string; text: string }> | undefined;
+          let batches = 0;
+          await runMaintenanceHeartbeat(
+            "reflect-meta-collapse",
+            verbose,
+            async (heartbeat) => {
+              for (;;) {
+                batches++;
+                const res = cleanupImplicitFeedbackDuplicates(factsDb, {
+                  threshold,
+                  limit,
+                  afterRowid,
+                  dryRun,
+                  seedCanonical: carryCanonical,
+                  includeLegacy: opts?.includeLegacy === true,
+                  reportEvery: 250,
+                  onProgress: () => heartbeat.heartbeat(),
+                });
+                scanned += res.scanned;
+                collapsed += res.collapsed;
+                carryCanonical = res.carryCanonical;
+                heartbeat.heartbeat();
+                if (res.scanned < limit || res.resumeAfterRowid == null) break;
+                afterRowid = res.resumeAfterRowid;
+                await new Promise((resolve) => setImmediate(resolve));
+              }
+            },
+            {
+              forceHeartbeat: true,
+              progressSupplier: () =>
+                `stage=scan; batches=${batches}; scanned=${scanned}; collapsed=${collapsed}; includeLegacy=${opts?.includeLegacy === true ? "yes" : "no"}`,
+            },
+          );
+          const collapseStatus = implicitFeedbackCollapseStatus(scanned, collapsed);
+          console.log(
+            `Implicit-feedback collapse summary: scanned ${scanned}, collapsed ${collapsed}, status=${collapseStatus} ${dryRun ? "(dry-run)" : ""}`,
+          );
+          if (!dryRun && collapseStatus === "no_candidates") {
+            console.log(
+              "No implicit-feedback rows matched the collapse scan window. Verify source='implicit-feedback' rows exist and rerun with a wider scan limit.",
+            );
+          } else if (!dryRun && collapseStatus === "no_changes") {
+            console.log(
+              "No near-duplicate rows met the current threshold. Consider `--include-legacy` and/or a lower `--threshold`, then rerun audit health to verify bloat reduction.",
+            );
+          }
+          if (!dryRun && isSemanticNoOpImplicitFeedbackCollapseStatus(collapseStatus)) {
+            process.exitCode = 2;
+          }
+          return;
+        }
+        let res;
+        try {
+          res = await runMaintenanceHeartbeat(
+            "reflect-meta",
+            verbose,
+            () => runReflectionMeta({ dryRun, model, verbose }),
+            {
+              progressSupplier: () => `stage=extract-meta-patterns; dryRun=${dryRun ? "yes" : "no"}`,
+            },
+          );
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "reflect-meta",
+          });
+          throw err;
+        }
+        console.log(
+          `Reflection (meta) complete: extracted ${res.metaExtracted} meta-patterns, stored ${res.metaStored} ${dryRun ? "(dry-run)" : ""}`,
+        );
+      },
+    ),
+  );
 
   const entityMentions = mem.command("entity-mentions").description("Audit and cleanup stored entity mention rows");
 
