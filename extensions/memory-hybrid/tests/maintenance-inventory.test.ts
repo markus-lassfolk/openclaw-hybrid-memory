@@ -41,7 +41,12 @@ describe("collectMaintenanceInventory", () => {
     writeFileSync(weeklyReflectionLog, "[weekly-reflection] run started\n", "utf-8");
     writeFileSync(
       weeklyReflectionExit,
-      ["2026-06-02T09:00:00Z reflect exit=0", "2026-06-02T09:01:00Z reflect-rules exit=0", ""].join("\n"),
+      [
+        "2026-06-02T09:00:00Z reflect exit=0",
+        "2026-06-02T09:01:00Z reflect-rules exit=0",
+        "2026-06-02T09:02:00Z reflect-meta exit=0",
+        "",
+      ].join("\n"),
       "utf-8",
     );
 

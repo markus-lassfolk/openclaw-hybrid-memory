@@ -94,7 +94,12 @@ describe("collectMaintenanceInventory - unpaired artifacts", () => {
     const newerExitPath = join(logsDayDir, "weekly-reflection-20260602T100000Z-456.exit.txt");
     writeFileSync(
       newerExitPath,
-      ["2026-06-02T10:00:00Z reflect exit=0", "2026-06-02T10:01:00Z reflect-rules exit=0", ""].join("\n"),
+      [
+        "2026-06-02T10:00:00Z reflect exit=0",
+        "2026-06-02T10:01:00Z reflect-rules exit=0",
+        "2026-06-02T10:02:00Z reflect-meta exit=0",
+        "",
+      ].join("\n"),
       "utf-8",
     );
     const newerLogPath = join(logsDayDir, "weekly-reflection-20260602T100000Z-456.log");
