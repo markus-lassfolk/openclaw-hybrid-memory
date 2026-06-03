@@ -23,6 +23,7 @@ import {
   isNonActionableSubagentPlaceholderTask,
   normalizePlaceholderTaskNext,
   OMITTED_CAP_NOTE,
+  parseHandoffRef,
   type PendingTaskSignal,
   readPendingSignals,
   serializeActiveTaskFile,
@@ -170,11 +171,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
     const updated = resolveTaskUpdated(f, bounds);
     let handoff: ActiveTaskEntry["handoff"];
     if (f.handoff?.trim()) {
-      try {
-        handoff = JSON.parse(f.handoff.trim());
-      } catch {
-        // Ignore parse errors
-      }
+      handoff = parseHandoffRef(f.handoff.trim(), entity) ?? undefined;
     }
     const entry: ActiveTaskEntry = {
       label: entity,
