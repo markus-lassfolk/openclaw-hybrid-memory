@@ -277,7 +277,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
             `audit health: failed to write failure artifact: ${emitErr instanceof Error ? emitErr.message : String(emitErr)}`,
           );
         }
-        process.exitCode = 1;
+        process.exitCode = 2;
         return;
       }
       throw err;
