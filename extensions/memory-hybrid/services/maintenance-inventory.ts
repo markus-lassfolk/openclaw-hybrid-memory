@@ -292,11 +292,24 @@ function extractMaintenanceJobName(file: string): string {
     .replace(/\.cron$/, "");
 }
 
+function extractRunIdFromFilename(file: string): string | null {
+  const exitMatch = file.match(/^(.+)-(\d{8}T\d{6}Z-\d+)\.exit\.txt$/);
+  if (exitMatch) return exitMatch[2];
+  const logMatch = file.match(/^(.+)-(\d{8}T\d{6}Z-\d+)\.log$/);
+  if (logMatch) return logMatch[2];
+  return null;
+}
+
 function scanLatestMaintenanceArtifacts(logRoot: string): Map<string, MaintenanceArtifacts> {
   const artifacts = new Map<string, MaintenanceArtifacts>();
   if (!existsSync(logRoot)) {
     return artifacts;
   }
+
+  const runPairs = new Map<
+    string,
+    Map<string, { exitPath?: string; exitMtime?: number; logPath?: string; logMtime?: number }>
+  >();
 
   const stack = [logRoot];
   while (stack.length > 0) {
@@ -329,16 +342,49 @@ function scanLatestMaintenanceArtifacts(logRoot: string): Map<string, Maintenanc
       const jobName = extractMaintenanceJobName(basename(path));
       if (!jobName) continue;
 
-      const current = artifacts.get(jobName) ?? {};
-      if (isExit && (current.latestExitMtimeMs === undefined || stat.mtimeMs >= current.latestExitMtimeMs)) {
-        current.latestExitPath = path;
-        current.latestExitMtimeMs = stat.mtimeMs;
+      const runId = extractRunIdFromFilename(entry);
+      if (!runId) continue;
+
+      if (!runPairs.has(jobName)) {
+        runPairs.set(jobName, new Map());
       }
-      if (isLog && (current.latestLogMtimeMs === undefined || stat.mtimeMs >= current.latestLogMtimeMs)) {
-        current.latestLogPath = path;
-        current.latestLogMtimeMs = stat.mtimeMs;
+      const jobRuns = runPairs.get(jobName);
+      if (!jobRuns) continue;
+      const currentRun = jobRuns.get(runId) ?? {};
+
+      if (isExit) {
+        currentRun.exitPath = path;
+        currentRun.exitMtime = stat.mtimeMs;
       }
-      artifacts.set(jobName, current);
+      if (isLog) {
+        currentRun.logPath = path;
+        currentRun.logMtime = stat.mtimeMs;
+      }
+      jobRuns.set(runId, currentRun);
+    }
+  }
+
+  for (const [jobName, jobRuns] of runPairs) {
+    let latestPair: MaintenanceArtifacts | undefined;
+    let latestMtime = -1;
+
+    for (const run of jobRuns.values()) {
+      if (run.exitPath && run.logPath) {
+        const runMtime = Math.max(run.exitMtime ?? 0, run.logMtime ?? 0);
+        if (runMtime > latestMtime) {
+          latestMtime = runMtime;
+          latestPair = {
+            latestExitPath: run.exitPath,
+            latestExitMtimeMs: run.exitMtime,
+            latestLogPath: run.logPath,
+            latestLogMtimeMs: run.logMtime,
+          };
+        }
+      }
+    }
+
+    if (latestPair) {
+      artifacts.set(jobName, latestPair);
     }
   }
 
