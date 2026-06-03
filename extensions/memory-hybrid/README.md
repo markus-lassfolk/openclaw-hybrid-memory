@@ -299,7 +299,7 @@ openclaw hybrid-mem analyze-maintenance-logs --since 7d --format json --out /tmp
 openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --strict
 ```
 
-Rules are data-driven in [`services/maintenance-rules.json`](services/maintenance-rules.json), so operators can inspect or extend classifications without changing analyzer code. Findings are persisted in `maintenance-findings.db` table `maintenance_finding`, enabling week-over-week trend output for `--since 7d` / `--trend` runs.
+Rules are data-driven in [`services/maintenance-rules.json`](services/maintenance-rules.json), so operators can inspect or extend classifications without changing analyzer code. Findings are persisted in `maintenance-findings.db` table `maintenance_finding`, enabling week-over-week trend output for `--since 7d` / `--trend` runs. The digest collapses repeated fingerprints into `New` vs `Still failing`, suppresses stale historical fingerprints outside the current window from the primary findings, and avoids re-reporting already GlitchTip-reported fingerprints on every analyzer run.
 
 The installer registers `hybrid-mem:maintenance-log-analyzer` to run after the nightly chain and announce the rendered digest to the operator.
 

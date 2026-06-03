@@ -16,6 +16,7 @@ import {
   persistMaintenanceFindings,
   reportGlitchTipFindings,
   shouldMaintenanceStrictFail,
+  summarizeMaintenanceFindings,
   writeMaintenanceAnalysisOutput,
   type MaintenanceLogStep,
 } from "../../../services/maintenance-log-analyzer.js";
@@ -95,9 +96,7 @@ export async function runAnalyzeMaintenanceLogs(
     const piped = await readStdinIfPiped();
     if (piped.trim()) steps = stepsFromPipedExitLog(piped);
   }
-
   let findings = analyzeMaintenanceSteps(steps);
-  if (opts?.glitchtip) findings = reportGlitchTipFindings(findings);
 
   if (opts?.autoFix) {
     findings = findings.map((f) => applyMaintenanceAutoFix(f));
@@ -110,22 +109,48 @@ export async function runAnalyzeMaintenanceLogs(
     }
   }
 
-  if (findings.length > 0 && opts?.noPersist !== true) {
+  const historicalCutoffSec = Math.floor((Date.now() - parseMaintenanceSinceMs(since)) / 1000);
+  const summarized = summarizeMaintenanceFindings(findings, {
+    dbPath: findingsPath,
+    historicalCutoffSec,
+  });
+  let reportFindings = summarized.findings;
+
+  if (opts?.glitchtip) {
+    const alreadyReportedFingerprints = new Set(
+      reportFindings.filter((f) => f.actionTaken === "reported").map((f) => f.fingerprint),
+    );
+    reportFindings = reportGlitchTipFindings(reportFindings, { alreadyReportedFingerprints });
+  }
+
+  const reportedByFingerprint = new Map(reportFindings.map((finding) => [finding.fingerprint, finding] as const));
+  const persistedFindings = findings.map((finding) => {
+    const reported = reportedByFingerprint.get(finding.fingerprint);
+    if (!reported) return finding;
+    return {
+      ...finding,
+      actionTaken: reported.actionTaken,
+      glitchtipEventId: reported.glitchtipEventId,
+    };
+  });
+
+  if (persistedFindings.length > 0 && opts?.noPersist !== true) {
     mkdirSync(dirname(findingsPath), { recursive: true });
-    persistMaintenanceFindings(findingsPath, findings);
+    persistMaintenanceFindings(findingsPath, persistedFindings);
   }
 
   const report = buildMaintenanceAnalysisReport({
     root,
     since,
     steps,
-    findings,
-    findingsPath: findings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
+    findings: reportFindings,
+    findingsPath: persistedFindings.length > 0 && opts?.noPersist !== true ? findingsPath : undefined,
+    historicalStaleSuppressed: summarized.historicalStaleSuppressed,
     includeTrend: opts?.trend === true || since.endsWith("d") || since.endsWith("w"),
   });
   writeMaintenanceAnalysisOutput(report, format, outPath);
 
-  if (opts?.strict && shouldMaintenanceStrictFail(findings)) process.exitCode = 1;
+  if (opts?.strict && shouldMaintenanceStrictFail(reportFindings)) process.exitCode = 1;
 }
 
 function addAnalyzeOptions(cmd: Chainable): Chainable {

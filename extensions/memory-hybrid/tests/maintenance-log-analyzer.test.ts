@@ -1,8 +1,10 @@
-import { existsSync, mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ManageBindings } from "../cli/commands/manage/bindings.js";
+import { runAnalyzeMaintenanceLogs } from "../cli/commands/manage/register-analyze-maintenance-logs.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
@@ -31,6 +33,7 @@ import {
   pluginVersionGte,
   reportGlitchTipFindings,
   shouldMaintenanceStrictFail,
+  summarizeMaintenanceFindings,
   weekOverWeekTrend,
 } from "../services/maintenance-log-analyzer.js";
 
@@ -496,6 +499,38 @@ describe("maintenance log analyzer", () => {
     expect(steps[0].job).toBe("nightly-memory-sweep");
   });
 
+  it("ignores stale manual exit rows even when the files were touched recently", () => {
+    const root = tmpRoot();
+    const manualDir = join(root, "manual-20260508-20260508-053702");
+    mkdirSync(manualDir, { recursive: true });
+    const exitPath = join(manualDir, "preflight.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "2026-05-08T05:44:29Z current-config exit=1\n");
+    writeFileSync(logPath, "Unknown command: openclaw hybrid-mem\n");
+
+    const refreshedMs = Date.UTC(2026, 5, 1, 5, 0, 0);
+    utimesSync(exitPath, refreshedMs / 1000, refreshedMs / 1000);
+    utimesSync(logPath, refreshedMs / 1000, refreshedMs / 1000);
+
+    const steps = collectMaintenanceSteps(root, "7d", refreshedMs);
+    expect(steps).toHaveLength(0);
+  });
+
+  it("treats malformed exit-ledger timestamps as unparseable and emits the orchestration fallback", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-dream-cycle-20260511T024522Z-17502.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "not-a-date dream-cycle exit=1\n");
+    writeFileSync(logPath, "memory-hybrid: dream-cycle — stage 1/6 prune expired facts complete in 2s\n");
+
+    const nowMs = Date.UTC(2026, 4, 11, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs, { staleThresholdMs: 45 * 60 * 1000 });
+
+    expect(steps).toHaveLength(1);
+    expect(steps[0].step).toBe("orchestration-empty-exit-after-progress");
+    expect(steps[0].line).toContain("progress-marker=present");
+  });
+
   it("isCanonicalMaintenanceLog and isUnderAuxiliaryDir unit checks", () => {
     // compact timestamp-pid format
     expect(isCanonicalMaintenanceLog("/logs/nightly-distill-20260507T021015Z-123.log")).toBe(true);
@@ -639,6 +674,176 @@ describe("maintenance log analyzer", () => {
     expect(findings.filter((f) => f.glitchtipEventId === "event-1")).toHaveLength(2);
     expect(shouldMaintenanceStrictFail(findings)).toBe(true);
     expect(shouldMaintenanceStrictFail([findings[3]])).toBe(false);
+  });
+
+  it("collapses repeated fingerprints into new/still-failing sections and suppresses stale historical noise", () => {
+    const dbPath = join(tmpRoot(), "maintenance-findings.db");
+    const now = Math.floor(Date.UTC(2026, 5, 1, 6, 0, 0) / 1000);
+    persistMaintenanceFindings(dbPath, [
+      {
+        id: "old-still",
+        occurredAt: now - 3600,
+        job: "nightly",
+        step: "distill",
+        exitCode: 1,
+        classification: "plugin-bug",
+        ruleId: "plugin-type-error",
+        fingerprint: "fp-still",
+        logExcerpt: "TypeError",
+        logPath: "/tmp/old-still.log",
+        pluginVersion: null,
+        actionTaken: "reported-glitchtip",
+        suggestedAction: "fix",
+        severity: "high",
+      },
+      {
+        id: "old-stale",
+        occurredAt: now - 10 * 24 * 3600,
+        job: "manual",
+        step: "current-config",
+        exitCode: 1,
+        classification: "transient-network",
+        ruleId: "network",
+        fingerprint: "fp-stale",
+        logExcerpt: "ECONNRESET",
+        logPath: "/tmp/old-stale.log",
+        pluginVersion: null,
+        actionTaken: "retry-once",
+        suggestedAction: "retry",
+        severity: "medium",
+      },
+    ]);
+
+    const summarized = summarizeMaintenanceFindings(
+      [
+        {
+          id: "still-1",
+          occurredAt: now - 120,
+          job: "nightly",
+          step: "distill",
+          exitCode: 1,
+          classification: "plugin-bug",
+          ruleId: "plugin-type-error",
+          fingerprint: "fp-still",
+          logExcerpt: "TypeError",
+          logPath: "/tmp/still-1.log",
+          pluginVersion: null,
+          actionTaken: "glitchtip+digest",
+          suggestedAction: "fix",
+          severity: "high",
+        },
+        {
+          id: "still-2",
+          occurredAt: now - 60,
+          job: "nightly",
+          step: "distill",
+          exitCode: 1,
+          classification: "plugin-bug",
+          ruleId: "plugin-type-error",
+          fingerprint: "fp-still",
+          logExcerpt: "TypeError",
+          logPath: "/tmp/still-2.log",
+          pluginVersion: null,
+          actionTaken: "glitchtip+digest",
+          suggestedAction: "fix",
+          severity: "high",
+        },
+        {
+          id: "new",
+          occurredAt: now - 30,
+          job: "dream-cycle",
+          step: "orchestration-stale-running",
+          exitCode: 1,
+          classification: "orchestration-bug",
+          ruleId: "orchestration-stale-maintenance-run",
+          fingerprint: "fp-new",
+          logExcerpt: "still running after",
+          logPath: "/tmp/new.log",
+          pluginVersion: null,
+          actionTaken: "glitchtip+digest",
+          suggestedAction: "rerun",
+          severity: "high",
+        },
+      ],
+      { dbPath, historicalCutoffSec: now - 7 * 24 * 3600 },
+    );
+
+    expect(summarized.findings).toHaveLength(2);
+    expect(summarized.historicalStaleSuppressed).toBe(1);
+    expect(summarized.findings[0]?.fingerprint).toBe("fp-new");
+    expect(summarized.findings[0]?.status).toBe("new");
+
+    const stillFailing = summarized.findings.find((f) => f.fingerprint === "fp-still");
+    expect(stillFailing?.status).toBe("still-failing");
+    expect(stillFailing?.occurrenceCount).toBe(3);
+    expect(stillFailing?.actionTaken).toBe("reported");
+
+    const findings = reportGlitchTipFindings(summarized.findings, {
+      alreadyReportedFingerprints: new Set(["fp-still"]),
+    });
+    expect(capturePluginError).toHaveBeenCalledTimes(1);
+    expect(findings.find((f) => f.fingerprint === "fp-still")?.actionTaken).toBe("reported");
+
+    const report = buildMaintenanceAnalysisReport({
+      since: "7d",
+      steps: [],
+      findings,
+      historicalStaleSuppressed: summarized.historicalStaleSuppressed,
+    });
+    expect(report.summary.newFindings).toBe(1);
+    expect(report.summary.stillFailing).toBe(1);
+    expect(report.digestMd).toContain("### New");
+    expect(report.digestMd).toContain("### Still failing");
+    expect(report.digestMd).toContain("### Historical/stale");
+    expect(report.digestMd).toContain("Suppressed 1 older historical fingerprint");
+    expect(report.digestMd).toContain("Seen 3 times");
+  });
+
+  it("persists raw occurrences while reporting summarized current findings", async () => {
+    const root = tmpRoot();
+    const day = join(root, "20260601");
+    mkdirSync(day, { recursive: true });
+    const exitPath = join(day, "nightly-distill-20260601T060000Z-123.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(
+      exitPath,
+      [
+        "2026-06-01T06:00:01Z distill exit=1",
+        "2026-06-01T06:00:02Z distill exit=1",
+      ].join("\n"),
+    );
+    writeFileSync(logPath, "TypeError: Cannot read properties of undefined\n");
+
+    const outPath = join(root, "report.json");
+    const findingsPath = join(root, "maintenance-findings.db");
+    await runAnalyzeMaintenanceLogs(
+      {
+        root,
+        since: "7d",
+        format: "json",
+        out: outPath,
+        persist: findingsPath,
+      },
+      {
+        cfg: { sqlitePath: "" },
+        factsDb: {} as never,
+      } as unknown as ManageBindings,
+    );
+
+    const report = JSON.parse(readFileSync(outPath, "utf-8")) as {
+      findings: Array<{ fingerprint: string }>;
+      summary: { newFindings: number };
+    };
+    expect(report.findings).toHaveLength(1);
+    expect(report.summary.newFindings).toBe(1);
+
+    const db = new DatabaseSync(findingsPath);
+    try {
+      const count = db.prepare("SELECT COUNT(*) AS c FROM maintenance_finding").get() as { c: number };
+      expect(count.c).toBe(2);
+    } finally {
+      db.close();
+    }
   });
 
   it("pluginVersionGte compares dotted plugin versions for resolved-issue suppression", () => {

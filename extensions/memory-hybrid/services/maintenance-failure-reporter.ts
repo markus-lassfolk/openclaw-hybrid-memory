@@ -1,10 +1,5 @@
 import type { HybridMemoryConfig } from "../config.js";
-import {
-  capturePluginError,
-  flushErrorReporter,
-  initErrorReporter,
-  isErrorReporterActive,
-} from "./error-reporter.js";
+import { capturePluginError, flushErrorReporter, initErrorReporter, isErrorReporterActive } from "./error-reporter.js";
 import type { MaintenanceTelemetryIssue } from "./cron-exit-validator.js";
 import { getEnv } from "../utils/env-manager.js";
 import type { MaintenanceFailureReportingConfig } from "../config/types/maintenance.js";
@@ -24,7 +19,9 @@ type MaintenanceReporterContext = {
 };
 
 function envDisablesMaintenanceFailureReporting(env?: Record<string, string | undefined>): boolean {
-  const value = env ? env[MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV] : getEnv(MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV);
+  const value = env
+    ? env[MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV]
+    : getEnv(MAINTENANCE_FAILURE_REPORTING_DISABLE_ENV);
   return typeof value === "string" && /^(1|true|yes|on)$/i.test(value.trim());
 }
 
