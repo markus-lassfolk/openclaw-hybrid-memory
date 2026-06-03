@@ -333,19 +333,16 @@ describe("resolve-contradictions CLI contract mode", () => {
     );
   });
 
-  it("rejects --json in non-default resolve modes", async () => {
+  it("rejects --json in LWW and dry-run contract modes", async () => {
     const mem = makeProgram(makeBindings());
     vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(mem.parseAsync(["resolve-contradictions", "--auto", "--json"], { from: "user" })).rejects.toThrow(
-      "--json is only supported in default resolve-contradictions mode",
-    );
     await expect(mem.parseAsync(["resolve-contradictions", "--dry-run", "--json"], { from: "user" })).rejects.toThrow(
-      "--json is only supported in default resolve-contradictions mode",
+      "--json is only supported in default or --auto resolve-contradictions mode",
     );
     await expect(
       mem.parseAsync(["resolve-contradictions", "--project-state-lww", "--json"], { from: "user" }),
-    ).rejects.toThrow("--json is only supported in default resolve-contradictions mode");
+    ).rejects.toThrow("--json is only supported in default or --auto resolve-contradictions mode");
   });
 
   it("supports --auto dry-run, summary reporting, and review export", async () => {
@@ -687,107 +684,197 @@ describe("resolve-contradictions CLI contract mode", () => {
   });
 
   it("marks large ambiguous backlog with no progress as degraded", async () => {
-    const runResolveContradictions = vi.fn().mockResolvedValue({
-      autoResolved: [],
-      ambiguous: [
-        { contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" },
-        { contradictionId: "c-2", factIdNew: "new-2", factIdOld: "old-2" },
-      ],
-    });
-    const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
-      total: 2,
-      deterministic: 0,
-      llm: 0,
-      merged: 0,
-      manualReview: 2,
-      applied: false,
-      decisionsApplied: 0,
-      targetRate: 0.8,
-      achievedRate: 0,
-      targetMet: false,
-      reviewItems: [],
-    });
-    const mem = makeProgram(makeBindings({ runResolveContradictions, runResolveContradictionsAuto }));
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-      lines.push(args.map((a) => String(a)).join(" "));
-    });
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      const runResolveContradictions = vi.fn().mockResolvedValue({
+        autoResolved: [],
+        ambiguous: [
+          { contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" },
+          { contradictionId: "c-2", factIdNew: "new-2", factIdOld: "old-2" },
+        ],
+      });
+      const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+        total: 2,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 2,
+        applied: false,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      });
+      const mem = makeProgram(makeBindings({ runResolveContradictions, runResolveContradictionsAuto }));
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+        lines.push(args.map((a) => String(a)).join(" "));
+      });
 
-    await mem.parseAsync(["resolve-contradictions", "--degraded-ambiguous-threshold", "1"], { from: "user" });
+      await mem.parseAsync(["resolve-contradictions", "--degraded-ambiguous-threshold", "1"], { from: "user" });
 
-    expect(process.exitCode).toBe(2);
-    expect(lines.some((l) => l.includes("resolve-contradictions summary auto_resolved=0 ambiguous=2"))).toBe(true);
-    expect(
-      lines.some((l) =>
-        l.includes("Backlog alert: ambiguous=2 with auto-resolved=0 meets or exceeds degraded threshold 1"),
-      ),
-    ).toBe(true);
+      expect(process.exitCode).toBe(2);
+      expect(
+        lines.some((l) => l.includes("resolve-contradictions summary mode=default auto_resolved=0 ambiguous=2")),
+      ).toBe(true);
+      expect(
+        lines.some((l) =>
+          l.includes("Backlog alert: ambiguous=2 with auto-resolved=0 meets or exceeds degraded threshold 1"),
+        ),
+      ).toBe(true);
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 
   it("emits resolve-contradictions JSON summary for cron validation", async () => {
-    const runResolveContradictions = vi.fn().mockResolvedValue({
-      autoResolved: [],
-      ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
-    });
-    const mem = makeProgram(makeBindings({ runResolveContradictions }));
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-      lines.push(args.map((a) => String(a)).join(" "));
-    });
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      const runResolveContradictions = vi.fn().mockResolvedValue({
+        autoResolved: [],
+        ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
+      });
+      const mem = makeProgram(makeBindings({ runResolveContradictions }));
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+        lines.push(args.map((a) => String(a)).join(" "));
+      });
 
-    await mem.parseAsync(["resolve-contradictions", "--json", "--degraded-ambiguous-threshold", "1"], { from: "user" });
+      await mem.parseAsync(["resolve-contradictions", "--json", "--degraded-ambiguous-threshold", "1"], {
+        from: "user",
+      });
 
-    const jsonLine = lines.find((line) => line.trim().startsWith("{"));
-    expect(jsonLine).toBeTruthy();
-    const summary = JSON.parse(jsonLine as string);
-    expect(summary).toMatchObject({
-      mode: "default",
-      autoResolved: 0,
-      ambiguous: 1,
-      noProgress: true,
-      degraded: true,
-      exitCode: 2,
-      exitReason: "ambiguous_backlog_no_progress",
-      suggestions: {
-        details: "openclaw hybrid-mem resolve-contradictions --details",
-        projectStateLwwDryRun: "openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
-      },
-    });
+      const jsonLine = lines.find((line) => line.trim().startsWith("{"));
+      expect(jsonLine).toBeTruthy();
+      const summary = JSON.parse(jsonLine as string);
+      expect(summary).toMatchObject({
+        mode: "default",
+        autoResolved: 0,
+        ambiguous: 1,
+        noProgress: true,
+        degraded: true,
+        exitCode: 2,
+        exitReason: "ambiguous_backlog_no_progress",
+        consecutiveNoProgressRuns: 1,
+        suggestions: {
+          details: "openclaw hybrid-mem resolve-contradictions --details",
+          projectStateLwwDryRun: "openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
+        },
+      });
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("marks auto mode backlog with no progress as degraded for cron validation", async () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      const runResolveContradictionsAuto = vi.fn().mockResolvedValue({
+        total: 222,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 222,
+        applied: false,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      });
+      const mem = makeProgram(makeBindings({ runResolveContradictionsAuto }));
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+        lines.push(args.map((a) => String(a)).join(" "));
+      });
+
+      await mem.parseAsync(["resolve-contradictions", "--auto", "--json", "--degraded-ambiguous-threshold", "200"], {
+        from: "user",
+      });
+
+      const jsonLine = lines.find((line) => line.trim().startsWith("{"));
+      expect(jsonLine).toBeTruthy();
+      const summary = JSON.parse(jsonLine as string);
+      expect(summary).toMatchObject({
+        mode: "auto",
+        autoResolved: 0,
+        ambiguous: 222,
+        noProgress: true,
+        degraded: true,
+        exitCode: 2,
+        exitReason: "ambiguous_backlog_no_progress",
+      });
+      expect(process.exitCode).toBe(2);
+      expect(lines.some((l) => l.includes("contradiction-auto summary total=222"))).toBe(false);
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 
   it("reports noProgress=false when no contradictions are considered", async () => {
-    const runResolveContradictions = vi.fn().mockResolvedValue({ autoResolved: [], ambiguous: [] });
-    const mem = makeProgram(makeBindings({ runResolveContradictions }));
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-      lines.push(args.map((a) => String(a)).join(" "));
-    });
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      const runResolveContradictions = vi.fn().mockResolvedValue({ autoResolved: [], ambiguous: [] });
+      const mem = makeProgram(makeBindings({ runResolveContradictions }));
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+        lines.push(args.map((a) => String(a)).join(" "));
+      });
 
-    await mem.parseAsync(["resolve-contradictions", "--json"], { from: "user" });
+      await mem.parseAsync(["resolve-contradictions", "--json"], { from: "user" });
 
-    const jsonLine = lines.find((line) => line.trim().startsWith("{"));
-    expect(jsonLine).toBeTruthy();
-    const summary = JSON.parse(jsonLine as string);
-    expect(summary.noProgress).toBe(false);
-    expect(summary.degraded).toBe(false);
+      const jsonLine = lines.find((line) => line.trim().startsWith("{"));
+      expect(jsonLine).toBeTruthy();
+      const summary = JSON.parse(jsonLine as string);
+      expect(summary.noProgress).toBe(false);
+      expect(summary.degraded).toBe(false);
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 
   it("reports noProgress=true when contradictions are considered with zero auto-resolves", async () => {
-    const runResolveContradictions = vi.fn().mockResolvedValue({
-      autoResolved: [],
-      ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
-    });
-    const mem = makeProgram(makeBindings({ runResolveContradictions }));
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
-      lines.push(args.map((a) => String(a)).join(" "));
-    });
+    const tmpHome = mkdtempSync(join(tmpdir(), "openclaw-test-"));
+    const originalHome = process.env.OPENCLAW_HOME;
+    try {
+      process.env.OPENCLAW_HOME = tmpHome;
+      const runResolveContradictions = vi.fn().mockResolvedValue({
+        autoResolved: [],
+        ambiguous: [{ contradictionId: "c-1", factIdNew: "new-1", factIdOld: "old-1" }],
+      });
+      const mem = makeProgram(makeBindings({ runResolveContradictions }));
+      const lines: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+        lines.push(args.map((a) => String(a)).join(" "));
+      });
 
-    await mem.parseAsync(["resolve-contradictions", "--json"], { from: "user" });
+      await mem.parseAsync(["resolve-contradictions", "--json"], { from: "user" });
 
-    const jsonLine = lines.find((line) => line.trim().startsWith("{"));
-    expect(jsonLine).toBeTruthy();
-    const summary = JSON.parse(jsonLine as string);
-    expect(summary.noProgress).toBe(true);
+      const jsonLine = lines.find((line) => line.trim().startsWith("{"));
+      expect(jsonLine).toBeTruthy();
+      const summary = JSON.parse(jsonLine as string);
+      expect(summary.noProgress).toBe(true);
+    } finally {
+      if (originalHome !== undefined) process.env.OPENCLAW_HOME = originalHome;
+      else Reflect.deleteProperty(process.env, "OPENCLAW_HOME");
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 });
