@@ -1724,7 +1724,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   progress?.phaseComplete("fact-write", { factsWritten, failed });
 
   const auditRunAt = new Date().toISOString();
-  await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, embeddings, auditRunAt, toAudit, opts.log);
+  await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, embeddings, auditRunAt, successfullyWritten, opts.log);
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of successfullyWritten) {
