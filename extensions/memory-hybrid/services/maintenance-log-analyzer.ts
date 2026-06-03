@@ -74,6 +74,10 @@ export interface MaintenanceFinding {
   suggestedAction: string;
   severity: MaintenanceRule["severity"];
   glitchtipEventId?: string;
+  status?: "new" | "still-failing";
+  occurrenceCount?: number;
+  firstSeenAt?: number;
+  lastSeenAt?: number;
 }
 
 export interface MaintenanceAnalysisReport {
@@ -87,6 +91,9 @@ export interface MaintenanceAnalysisReport {
   summary: {
     jobsOk: number;
     jobsWithFindings: number;
+    newFindings: number;
+    stillFailing: number;
+    historicalStaleSuppressed: number;
     byClassification: Record<string, number>;
     byAction: Record<string, number>;
     weekOverWeek?: Array<{ classification: string; currentWeek: number; previousWeek: number; delta: number }>;
@@ -109,6 +116,12 @@ function resolveMaintenanceRulesPath(): string {
 }
 
 type MaintenanceResolvedEntry = { resolvedInVersion: string; note?: string };
+type PersistedMaintenanceFindingLedgerEntry = {
+  firstSeenAt: number;
+  lastSeenAt: number;
+  occurrenceCount: number;
+  glitchtipReported: boolean;
+};
 
 function resolveMaintenanceResolvedPath(): string {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -392,6 +405,7 @@ export function collectMaintenanceSteps(
     const job = extractJobFromPath(exitPath, ".exit.txt");
     const exitLines = safeRead(exitPath).split("\n");
     let parsedRows = 0;
+    let sawParseableRow = false;
 
     for (const line of exitLines) {
       const m = line.match(/^(\S+)\s+(\S+)\s+exit=(-?\d+)\b/);
@@ -400,6 +414,10 @@ export function collectMaintenanceSteps(
       const step = normalizeExitStepName(stepRaw);
       const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
       if (!Number.isFinite(occurredAt)) continue;
+      sawParseableRow = true;
+      // Use the recorded exit timestamp, not the file mtime, so touched/copied historical ledgers
+      // do not get re-reported as current failures in later digests.
+      if (occurredAt * 1000 < cutoff) continue;
       parsedRows++;
       steps.push({
         occurredAt,
@@ -414,7 +432,7 @@ export function collectMaintenanceSteps(
       });
     }
 
-    if (parsedRows === 0) {
+    if (parsedRows === 0 && !sawParseableRow) {
       steps.push(
         buildOrchestrationSyntheticStep({
           job,
@@ -746,6 +764,7 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
         log_path TEXT,
         plugin_version TEXT,
         action_taken TEXT,
+        occurrence_count INTEGER NOT NULL DEFAULT 1,
         resolved_at INTEGER,
         resolved_by TEXT,
         created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
@@ -754,10 +773,16 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
       CREATE INDEX IF NOT EXISTS idx_maintenance_finding_class ON maintenance_finding(classification, occurred_at);
       CREATE INDEX IF NOT EXISTS idx_maintenance_finding_fingerprint ON maintenance_finding(fingerprint);
     `);
+    try {
+      const checkCol = db.prepare(`SELECT occurrence_count FROM maintenance_finding LIMIT 0`);
+      checkCol.all();
+    } catch {
+      db.exec(`ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1`);
+    }
     const stmt = db.prepare(
       `INSERT OR IGNORE INTO maintenance_finding
-       (id, occurred_at, job, step, exit_code, classification, fingerprint, log_excerpt, log_path, plugin_version, action_taken)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, occurred_at, job, step, exit_code, classification, fingerprint, log_excerpt, log_path, plugin_version, action_taken, occurrence_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const f of findings) {
       stmt.run(
@@ -772,11 +797,134 @@ export function persistMaintenanceFindings(dbPath: string, findings: Maintenance
         f.logPath,
         f.pluginVersion,
         f.actionTaken,
+        f.occurrenceCount ?? 1,
       );
     }
   } finally {
     db.close();
   }
+}
+
+function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, PersistedMaintenanceFindingLedgerEntry> {
+  if (!existsSync(dbPath)) return new Map();
+  const db = new DatabaseSync(dbPath);
+  try {
+    // Ensure occurrence_count column exists before querying it (schema migration for older DBs).
+    try {
+      const checkCol = db.prepare(`SELECT occurrence_count FROM maintenance_finding LIMIT 0`);
+      checkCol.all();
+    } catch {
+      db.exec(`ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1`);
+    }
+    const rows = db
+      .prepare(
+        `SELECT fingerprint,
+           MIN(occurred_at) AS first_seen_at,
+           MAX(occurred_at) AS last_seen_at,
+           MAX(occurrence_count) AS occurrence_count,
+           MAX(CASE WHEN action_taken = 'reported-glitchtip' 
+                      OR (action_taken = 'reported' AND classification IN ('plugin-bug', 'command-crash', 'json-parse-failure', 'orchestration-bug'))
+                THEN 1 ELSE 0 END) AS glitchtip_reported
+         FROM maintenance_finding
+         GROUP BY fingerprint`,
+      )
+      .all() as Array<{
+      fingerprint: string;
+      first_seen_at: number;
+      last_seen_at: number;
+      occurrence_count: number;
+      glitchtip_reported: number;
+    }>;
+    return new Map(
+      rows.map((row) => [
+        row.fingerprint,
+        {
+          firstSeenAt: Number(row.first_seen_at),
+          lastSeenAt: Number(row.last_seen_at),
+          occurrenceCount: Number(row.occurrence_count),
+          glitchtipReported: Number(row.glitchtip_reported) > 0,
+        },
+      ]),
+    );
+  } catch {
+    // Best-effort history lookup: missing/corrupt local state should not block the analyzer from
+    // classifying the current batch, so fall back to an empty ledger.
+    return new Map();
+  } finally {
+    db.close();
+  }
+}
+
+function actionTakenForSummarizedFinding(
+  finding: MaintenanceFinding,
+  persisted: PersistedMaintenanceFindingLedgerEntry | undefined,
+): MaintenanceFinding["actionTaken"] {
+  if (persisted?.glitchtipReported && GLITCHTIP_CLASSES.has(finding.classification)) return "reported";
+  return finding.actionTaken;
+}
+
+export function summarizeMaintenanceFindings(
+  findings: MaintenanceFinding[],
+  opts: { dbPath?: string; historicalCutoffSec?: number } = {},
+): { findings: MaintenanceFinding[]; historicalStaleSuppressed: number } {
+  const ledger =
+    typeof opts.dbPath === "string" && opts.dbPath.trim().length > 0
+      ? loadPersistedMaintenanceFindingLedger(opts.dbPath)
+      : new Map<string, PersistedMaintenanceFindingLedgerEntry>();
+  const byFingerprint = new Map<string, MaintenanceFinding[]>();
+  for (const finding of findings) {
+    const bucket = byFingerprint.get(finding.fingerprint);
+    if (bucket) bucket.push(finding);
+    else byFingerprint.set(finding.fingerprint, [finding]);
+  }
+
+  const summarized: MaintenanceFinding[] = [];
+  for (const [fingerprint, bucket] of byFingerprint.entries()) {
+    if (bucket.length === 0) continue;
+    const sorted = bucket.slice().sort((a, b) => a.occurredAt - b.occurredAt);
+    const latest = sorted[sorted.length - 1];
+    const earliest = sorted[0];
+    if (!latest || !earliest) continue;
+    const persisted = ledger.get(fingerprint);
+    summarized.push({
+      ...latest,
+      status: persisted ? "still-failing" : "new",
+      occurrenceCount: (persisted?.occurrenceCount ?? 0) + sorted.length,
+      firstSeenAt: persisted ? Math.min(persisted.firstSeenAt, earliest.occurredAt) : earliest.occurredAt,
+      lastSeenAt: latest.occurredAt,
+      actionTaken: actionTakenForSummarizedFinding(latest, persisted),
+    });
+  }
+
+  const severityRank: Record<MaintenanceRule["severity"], number> = {
+    critical: 0,
+    high: 1,
+    medium: 2,
+    low: 3,
+    info: 4,
+  };
+  const statusRank: Record<NonNullable<MaintenanceFinding["status"]>, number> = {
+    new: 0,
+    "still-failing": 1,
+  };
+  summarized.sort((a, b) => {
+    const statusDelta = statusRank[a.status ?? "new"] - statusRank[b.status ?? "new"];
+    if (statusDelta !== 0) return statusDelta;
+    const severityDelta = severityRank[a.severity] - severityRank[b.severity];
+    if (severityDelta !== 0) return severityDelta;
+    return b.occurredAt - a.occurredAt;
+  });
+
+  const currentFingerprints = new Set(byFingerprint.keys());
+  const historicalCutoffSec = opts.historicalCutoffSec ?? 0;
+  let historicalStaleSuppressed = 0;
+  for (const [fingerprint, entry] of ledger.entries()) {
+    if (currentFingerprints.has(fingerprint)) continue;
+    if (historicalCutoffSec > 0 && entry.lastSeenAt >= historicalCutoffSec) continue;
+    historicalStaleSuppressed++;
+  }
+
+  return { findings: summarized, historicalStaleSuppressed };
 }
 
 export function weekOverWeekTrend(dbPath: string, nowSec = Math.floor(Date.now() / 1000)) {
@@ -817,9 +965,15 @@ function incr(map: Record<string, number>, key: string): void {
   map[key] = (map[key] ?? 0) + 1;
 }
 
-export function reportGlitchTipFindings(findings: MaintenanceFinding[]): MaintenanceFinding[] {
+export function reportGlitchTipFindings(
+  findings: MaintenanceFinding[],
+  opts: { alreadyReportedFingerprints?: Set<string> } = {},
+): MaintenanceFinding[] {
   return findings.map((finding) => {
     if (!GLITCHTIP_CLASSES.has(finding.classification)) return finding;
+    if (opts.alreadyReportedFingerprints?.has(finding.fingerprint)) {
+      return { ...finding, actionTaken: "reported" };
+    }
     const eventId = capturePluginError(
       new Error(
         `maintenance-log ${finding.classification}: ${finding.job}/${finding.step} fingerprint=${finding.fingerprint}`,
@@ -838,9 +992,41 @@ export function reportGlitchTipFindings(findings: MaintenanceFinding[]): Mainten
   });
 }
 
+function renderFindingSection(title: string, findings: MaintenanceFinding[]): string[] {
+  const lines = ["", `### ${title}`, ""];
+  if (findings.length === 0) {
+    lines.push("None.");
+    return lines;
+  }
+
+  for (const f of findings) {
+    const icon =
+      f.classification === "plugin-bug" || f.classification === "orchestration-bug"
+        ? "🐞"
+        : f.severity === "critical"
+          ? "🚨"
+          : "⚠️";
+    lines.push(
+      `${icon} **${f.job}** — ${f.step} exit=${f.exitCode} at ${new Date(f.occurredAt * 1000).toISOString()}. Class: ${f.classification}. Action: ${f.actionTaken}. Fingerprint: ${f.fingerprint}.`,
+    );
+    if ((f.occurrenceCount ?? 1) > 1) {
+      const firstSeen = typeof f.firstSeenAt === "number" ? new Date(f.firstSeenAt * 1000).toISOString() : "unknown";
+      const lastSeen = typeof f.lastSeenAt === "number" ? new Date(f.lastSeenAt * 1000).toISOString() : "unknown";
+      lines.push(`Seen ${f.occurrenceCount} times since ${firstSeen}; last seen ${lastSeen}.`);
+    }
+    lines.push(`Suggested: ${f.suggestedAction}`);
+    lines.push(`Log: ${f.logPath}`);
+    if (f.logExcerpt) lines.push(`Excerpt: \`${f.logExcerpt.replace(/\s+/g, " ").slice(0, 240)}\``);
+    lines.push("");
+  }
+  return lines;
+}
+
 export function renderMaintenanceDigestMarkdown(report: Omit<MaintenanceAnalysisReport, "digestMd">): string {
   const okJobs = report.summary.jobsOk;
   const totalJobs = okJobs + report.summary.jobsWithFindings;
+  const newFindings = report.findings.filter((f) => f.status !== "still-failing");
+  const stillFailing = report.findings.filter((f) => f.status === "still-failing");
   const lines = [
     `## Hybrid-memory maintenance digest (${report.since})`,
     `${report.findings.length === 0 ? "✅" : "⚠️"} ${okJobs}/${totalJobs} jobs OK`,
@@ -848,23 +1034,26 @@ export function renderMaintenanceDigestMarkdown(report: Omit<MaintenanceAnalysis
   ];
   if (report.findings.length === 0) {
     lines.push("No maintenance failures detected.");
-  } else {
-    for (const f of report.findings.slice(0, 20)) {
-      const icon =
-        f.classification === "plugin-bug" || f.classification === "orchestration-bug"
-          ? "🐞"
-          : f.severity === "critical"
-            ? "🚨"
-            : "⚠️";
+    if (report.summary.historicalStaleSuppressed > 0) {
+      lines.push("", "### Historical/stale", "");
       lines.push(
-        `${icon} **${f.job}** — ${f.step} exit=${f.exitCode} at ${new Date(f.occurredAt * 1000).toISOString()}. Class: ${f.classification}. Action: ${f.actionTaken}. Fingerprint: ${f.fingerprint}.`,
+        `Suppressed ${report.summary.historicalStaleSuppressed} older historical fingerprint(s) that are outside the current reporting window.`,
       );
-      lines.push(`Suggested: ${f.suggestedAction}`);
-      lines.push(`Log: ${f.logPath}`);
-      if (f.logExcerpt) lines.push(`Excerpt: \`${f.logExcerpt.replace(/\s+/g, " ").slice(0, 240)}\``);
-      lines.push("");
     }
-    if (report.findings.length > 20) lines.push(`… and ${report.findings.length - 20} more findings.`);
+  } else {
+    lines.push(...renderFindingSection("New", newFindings.slice(0, 20)));
+    lines.push(...renderFindingSection("Still failing", stillFailing.slice(0, 20)));
+    lines.push("", "### Historical/stale", "");
+    if (report.summary.historicalStaleSuppressed > 0) {
+      lines.push(
+        `Suppressed ${report.summary.historicalStaleSuppressed} older historical fingerprint(s) that are outside the current reporting window.`,
+      );
+    } else {
+      lines.push("None.");
+    }
+    const actualShown = Math.min(newFindings.length, 20) + Math.min(stillFailing.length, 20);
+    const hiddenCount = Math.max(0, report.findings.length - actualShown);
+    if (hiddenCount > 0) lines.push("", `… and ${hiddenCount} more findings.`);
   }
   const trend = report.summary.weekOverWeek ?? [];
   if (trend.length > 0) {
@@ -885,9 +1074,12 @@ export function buildMaintenanceAnalysisReport(opts: {
   findings: MaintenanceFinding[];
   findingsPath?: string;
   includeTrend?: boolean;
+  historicalStaleSuppressed?: number;
 }): MaintenanceAnalysisReport {
   const jobs = new Set(opts.steps.map((s) => s.job));
   const failedJobs = new Set(opts.findings.map((f) => f.job));
+  const newFindings = opts.findings.filter((f) => f.status !== "still-failing").length;
+  const stillFailing = opts.findings.filter((f) => f.status === "still-failing").length;
   const byClassification: Record<string, number> = {};
   const byAction: Record<string, number> = {};
   for (const f of opts.findings) {
@@ -905,6 +1097,9 @@ export function buildMaintenanceAnalysisReport(opts: {
     summary: {
       jobsOk: [...jobs].filter((j) => !failedJobs.has(j)).length,
       jobsWithFindings: failedJobs.size,
+      newFindings,
+      stillFailing,
+      historicalStaleSuppressed: opts.historicalStaleSuppressed ?? 0,
       byClassification,
       byAction,
       weekOverWeek: opts.includeTrend && opts.findingsPath ? weekOverWeekTrend(opts.findingsPath) : undefined,
