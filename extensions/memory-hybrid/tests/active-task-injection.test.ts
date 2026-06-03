@@ -122,6 +122,37 @@ describe("buildActiveTaskContextBundle", () => {
     expect(bundle.filteredActiveCount).toBe(0);
   });
 
+  it("suppresses stale orphan subagent placeholder rows from default injection", () => {
+    const tasks = [
+      entry({
+        label: "agent:main:subagent:worker-1",
+        description: "Subagent task placeholder",
+        subagent: "agent:main:subagent:worker-1",
+        next: "Task [agent:main:subagent:worker-1] next:",
+        stale: true,
+        updated: "2020-01-01T00:00:00.000Z",
+      }),
+      entry({
+        label: "live-task",
+        description: "Investigate projection cleanup",
+        next: "Check the latest task projection rows",
+        stale: false,
+      }),
+    ];
+    const bundle = buildActiveTaskContextBundle({
+      ledgerTasks: tasks,
+      injectionBudgetTokens: 500,
+      staleMinutes: 60,
+      staleWarningEnabled: true,
+      projection: { ...defaultProjection, excludeGenericTitle: false },
+    });
+    const combined = bundle.parts.join("\n");
+    expect(combined).toContain("[live-task]");
+    expect(combined).not.toContain("agent:main:subagent:worker-1");
+    expect(combined).not.toContain("STALE ACTIVE TASKS");
+    expect(bundle.injectedTaskCount).toBe(1);
+  });
+
   it("reports injectedTaskCount after the shared budget caps rendered tasks", () => {
     const tasks = Array.from({ length: 12 }, (_, i) =>
       entry({

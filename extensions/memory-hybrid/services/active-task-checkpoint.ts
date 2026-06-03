@@ -9,6 +9,7 @@ import { type HybridMemoryConfig, getCronModelConfig, getDefaultCronModel, getLL
 import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
+import { escapeRegExp } from "../utils/text.js";
 import { renderActiveTaskMarkdownFile, taskEntityKey, upsertProjectTaskKey } from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -271,10 +272,6 @@ function slugify(input: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function extractProjectValueFromText(text: string, key: string): string | undefined {

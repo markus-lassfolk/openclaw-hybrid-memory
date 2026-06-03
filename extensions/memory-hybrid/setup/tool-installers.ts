@@ -341,7 +341,7 @@ function selectPublicApiRoutesContext({
     narrativesDb,
     vectorDb,
     resolvedSqlitePath,
-    resolvedLancePath: typeof vectorDb.getPath === "function" ? vectorDb.getPath() : undefined,
+    resolvedLancePath: typeof vectorDb?.getPath === "function" ? vectorDb.getPath() : undefined,
     recallInFlightRef,
     variantQueue,
   };
