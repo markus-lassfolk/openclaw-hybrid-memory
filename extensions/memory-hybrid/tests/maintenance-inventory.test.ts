@@ -274,6 +274,7 @@ describe("collectMaintenanceInventory", () => {
     const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
     expect(gatewayJobs.length).toBe(1);
     expect(gatewayJobs[0].enabled).toBe(true);
+    expect(gatewayJobs[0].pluginJobId).toBe("hybrid-mem:nightly-memory-sweep");
     expect(gatewayJobs[0].schedule).toBe("0 3 * * *");
     expect(gatewayJobs[0].prompt).toContain("Enabled alias configuration");
   });

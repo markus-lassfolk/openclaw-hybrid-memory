@@ -524,7 +524,7 @@ function parseGatewayJobs(
       inventoryId,
       jobKey: entry.jobKey,
       name: entry.name,
-      pluginJobId: entry.pluginJobId ?? pluginJobId,
+      pluginJobId: pluginJobId ?? entry.pluginJobId,
       scheduler: "gateway-cron",
       schedulerOwner: "gateway-cron",
       enabled: job.enabled !== false,
