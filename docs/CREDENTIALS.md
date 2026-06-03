@@ -71,17 +71,62 @@ export OPENCLAW_CRED_KEY="your-secret-key-min-16-chars"
 - **autoCapture** (optional): Auto-capture credentials from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below). You can set **requirePatternMatch** to `true` so that only values matching a known credential pattern (e.g. JWT, `sk-...`, `ghp_...`) are stored; narrative or value-only text is then rejected.
 - **expiryWarningDays** (optional): Days before expiry to warn (default: 7).
 
+## Check vault encryption status
+
+Use `vault-status` to see the current state of your credentials vault at any time:
+
+```bash
+openclaw hybrid-mem credentials vault-status
+```
+
+Example output (plaintext vault with key configured):
+```
+Vault path:  /home/user/.openclaw/memory/credentials.db
+Status:      plaintext (kdf_version=0)
+Entries:     3
+Key present: true
+⚠  Migration required: vault is plaintext but an encryption key is configured.
+   Run: openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes
+```
+
+Pass `--json` for machine-readable output. The `migrationRequired` field is also surfaced in the `audit-health` report under the `credentials` key.
+
 ## Encrypt an existing plaintext vault
 
 If your credentials vault was initialized in **plaintext mode** (`kdf_version=0`) and you later configure an encryption key, the key is **ignored** until you encrypt the existing vault at rest. This prevents the plugin from accidentally treating an existing plaintext database as encrypted (or vice versa).
 
-To safely encrypt the existing vault in place (no secrets printed):
+A warning is logged once per process at startup when migration is required, and the `audit-health` report will include a `credentials.migrationRequired: true` field.
+
+### Recommended safe migration workflow
+
+The recommended approach uses `--backup` (consistent snapshot via VACUUM INTO) and `--verify` (decrypt every entry after encryption to confirm integrity):
 
 ```bash
-openclaw hybrid-mem credentials encrypt-vault --yes
+openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes
 ```
 
-After running the command, restart the gateway (or run `openclaw hybrid-mem verify`) to confirm the vault now reports `encrypted (kdf_version=2)`.
+This will:
+1. Create a consistent plaintext backup at `<vault-path>.bak.<timestamp>-<pid>` (VACUUM INTO — safe on a live open connection).
+2. Encrypt the vault in-place via an atomic SQLite transaction.
+3. Decrypt every entry to confirm values are readable after encryption.
+4. Print the backup path and a verification confirmation.
+
+#### Options
+
+| Option | Description |
+|--------|-------------|
+| `--yes` | Apply changes (default is dry-run) |
+| `--backup` | Auto-generate a `.bak.<timestamp>-<pid>` backup before encrypting |
+| `--backup-path <path>` | Custom backup path (implies backup) |
+| `--verify` | Verify all entries are readable after encryption |
+
+**Safety note:** If `--verify` fails (which would indicate a corrupt DB), the command throws with the backup path so you can manually restore. The in-place encryption is already committed at that point — do NOT re-run encrypt-vault. Restore from the backup instead:
+
+```bash
+cp /path/to/credentials.db.bak.<timestamp>-<pid> /path/to/credentials.db
+```
+
+After running, restart the gateway (or run `openclaw hybrid-mem verify`) to confirm the vault now reports `encrypted (kdf_version=2)`.
 
 ## API (Tools)
 

@@ -13,6 +13,7 @@ export {
   recordStorageGrowthSample,
   buildAuditHealthReport,
 } from "./storage-stats-helpers.js";
+export { buildAuditFailureArtifact, buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 
 export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings): void {
   registerManageStorageMaintenance(mem, b);
