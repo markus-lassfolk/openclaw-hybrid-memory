@@ -519,7 +519,7 @@ function parseGatewayJobs(
       lastRunAt: lastRun.lastRunAt,
       lastRunSource: lastRun.lastRunSource,
       lastExitAt: status.lastExitAt,
-      lastStatus: status.lastStatus,
+      lastStatus: status.lastStatus ?? state?.lastStatus,
       lastLogPath: artifact?.latestLogPath,
       lastExitPath: artifact?.latestExitPath,
       logRoot: join(openclawDir, "logs", "cron-hybrid-mem"),
