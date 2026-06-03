@@ -348,6 +348,7 @@ export class CredentialsDB extends BaseSqliteStore {
       () => {
         if (backupPath) {
           // Create backup database and copy all data within this transaction
+          mkdirSync(dirname(backupPath), { recursive: true });
           const backupDb = new DatabaseSync(backupPath);
           try {
             // Copy schema

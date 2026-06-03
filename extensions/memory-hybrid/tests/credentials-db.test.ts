@@ -431,9 +431,7 @@ describe("CredentialsDB plaintext warning suppression", () => {
     const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const db1 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
     const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
-    const plaintextWarnings = warnSpy.mock.calls.filter((args) =>
-      String(args[0]).includes("plaintext mode"),
-    );
+    const plaintextWarnings = warnSpy.mock.calls.filter((args) => String(args[0]).includes("plaintext mode"));
     warnSpy.mockRestore();
 
     // Should warn at most once (deduplication by path)
@@ -571,6 +569,24 @@ describe("CredentialsDB.encryptVaultSafe", () => {
     expect(res.migrated).toBe(1);
     // Values still accessible after encryption
     expect(db2.get("api", "api_key")?.value).toBe("my-api-key");
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("creates parent directories for custom backup path", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-safe-nested-"));
+    const dbPath = join(dir, "creds.db");
+    const backupPath = join(dir, "nested", "backup", "dir", "vault.db.bak");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "secret" });
+    plainDb.close();
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+    const res = db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { backupPath });
+    expect(existsSync(backupPath)).toBe(true);
+    expect(res.backupPath).toBe(backupPath);
+    expect(res.migrated).toBe(1);
     db2.close();
     rmSync(dir, { recursive: true, force: true });
   });
