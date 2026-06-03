@@ -1665,6 +1665,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
 
   return {
     ...baseResult,
+    reconciledLabels: successfullyWritten.map((e) => e.label),
     wrote: failed === 0,
     failed,
     factsWritten,
