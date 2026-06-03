@@ -1431,7 +1431,7 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
   });
 
   it("warns on non-ENOENT stale corrupt signal delete failures without throwing", async () => {
-    const { initPluginLogger, resetPluginLogger } = await import("../utils/logger.js");
+    const { initPluginLogger, restoreDefaultLogger } = await import("../utils/logger.js");
     const warn = vi.fn();
     initPluginLogger({ info: vi.fn(), warn, error: vi.fn() });
     try {
@@ -1442,11 +1442,11 @@ describe("writeTaskSignal / readPendingSignals / deleteSignal", () => {
       await expect(tryDeleteStaleCorruptSignalFile(signalsDir)).resolves.toBeUndefined();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to delete stale corrupt task signal"));
     } finally {
-      resetPluginLogger();
+      restoreDefaultLogger();
     }
   });
 
-  it("tryDeleteStaleCorruptSignalFile ignores ENOENT on delete races", async () => {
+  it("tryDeleteStaleCorruptSignalFile ignores ENOENT when file is already gone before stat", async () => {
     const { writeFile: fsWrite, mkdir: fsMkdir, utimes, unlink: fsUnlink } = await import("node:fs/promises");
     const signalsDir = join(tmpDir, "task-signals");
     await fsMkdir(signalsDir, { recursive: true });

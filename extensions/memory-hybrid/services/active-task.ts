@@ -59,7 +59,7 @@ export async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise
     mtimeMs = s.mtimeMs;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-    pluginLogger.warn?.(
+    pluginLogger.warn(
       `memory-hybrid: failed to stat stale corrupt task signal for cleanup (${filePath}): ${err instanceof Error ? err.message : String(err)}`,
     );
     return;
@@ -71,7 +71,7 @@ export async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise
     await unlink(filePath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-    pluginLogger.warn?.(
+    pluginLogger.warn(
       `memory-hybrid: failed to delete stale corrupt task signal (${filePath}): ${err instanceof Error ? err.message : String(err)}`,
     );
   }
