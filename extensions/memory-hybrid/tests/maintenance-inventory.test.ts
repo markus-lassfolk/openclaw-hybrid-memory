@@ -50,12 +50,14 @@ describe("collectMaintenanceInventory", () => {
     writeFileSync(vectordbLog, "[weekly-vectordb-optimize-sunday] run started\n", "utf-8");
     writeFileSync(vectordbExit, "2026-06-02T04:45:00Z vectordb-optimize exit=0\n", "utf-8");
 
-    const recentGuardMs = Date.UTC(2026, 5, 2, 9, 5, 0);
-    const olderArtifactMs = recentGuardMs - 60_000;
+    const nowMs = Date.now();
+    const recentGuardMs = nowMs - 60_000;
+    const gatewayStateMs = nowMs - 120_000;
+    const olderArtifactMs = nowMs - 180_000;
     const artifactMtime = new Date(olderArtifactMs);
     utimesSync(weeklyReflectionLog, artifactMtime, artifactMtime);
     utimesSync(weeklyReflectionExit, artifactMtime, artifactMtime);
-    const vectordbMtime = new Date(Date.UTC(2026, 5, 2, 4, 45, 0));
+    const vectordbMtime = new Date(nowMs - 240_000);
     utimesSync(vectordbLog, vectordbMtime, vectordbMtime);
     utimesSync(vectordbExit, vectordbMtime, vectordbMtime);
     writeGuard(openclawDir, "weekly-reflection", recentGuardMs);
@@ -68,7 +70,7 @@ describe("collectMaintenanceInventory", () => {
             name: "weekly-reflection",
             enabled: true,
             schedule: { kind: "cron", expr: "0 3 * * 0" },
-            state: { lastRunAtMs: recentGuardMs - 60_000, lastStatus: "ok" },
+            state: { lastRunAtMs: gatewayStateMs, lastStatus: "ok" },
             payload: {
               message: "Weekly reflection pipeline.\n```bash\nopenclaw hybrid-mem reflect --verbose\n```",
             },
