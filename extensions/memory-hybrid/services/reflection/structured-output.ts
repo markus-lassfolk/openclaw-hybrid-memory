@@ -293,6 +293,18 @@ export function parseRulesFromModelResponse(rawResponse: string): ReflectionRule
         }
         rules.push(normalized.text);
       }
+      if (rules.length === 0 && readBooleanField(wrapperJsonObject, "noAction") && parseableLines === 0) {
+        return {
+          rules: [],
+          parseableLines: 0,
+          rejectedLowConfidence: 0,
+          rejectedLength: 0,
+          rejectedDuplicates: 0,
+          looksLikeValidNoRules: true,
+          parseSuccess: true,
+          parsedFromJson: true,
+        };
+      }
     }
     const wrapperParse = parseRuleLines(wrapperContent);
     parseableLines += wrapperParse.parseableLines;
@@ -384,6 +396,17 @@ export function parseMetasFromModelResponse(rawResponse: string): ReflectionMeta
         } else {
           rejectedLength++;
         }
+      }
+      if (metas.length === 0 && readBooleanField(wrapperJsonObject, "noAction") && parseableLines === 0) {
+        return {
+          metas: [],
+          parseableLines: 0,
+          rejectedLength: 0,
+          rejectedDuplicates: 0,
+          looksLikeValidNoMetas: true,
+          parseSuccess: true,
+          parsedFromJson: true,
+        };
       }
     }
     const wrapperParse = parseMetaLines(wrapperContent);

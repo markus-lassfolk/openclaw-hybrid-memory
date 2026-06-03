@@ -57,6 +57,15 @@ describe("parseRulesFromModelResponse (#1801)", () => {
     const res = parseRulesFromModelResponse(raw);
     expect(classifyZeroRulesReason(res, raw.length)).toBe("invalid_response_format");
   });
+
+  it("accepts JSON noAction inside thinking wrapper (bug #6ff54c2a)", () => {
+    const res = parseRulesFromModelResponse(`<thinking>${JSON.stringify({ rules: [], noAction: true })}</thinking>`);
+    expect(res.parsedFromJson).toBe(true);
+    expect(res.rules).toHaveLength(0);
+    expect(res.looksLikeValidNoRules).toBe(true);
+    expect(res.parseSuccess).toBe(true);
+    expect(classifyZeroRulesReason(res, 50)).toBe("valid_no_actionable_rules");
+  });
 });
 
 describe("parseMetasFromModelResponse (#1801)", () => {
@@ -95,5 +104,14 @@ describe("classifyZeroMetasReason", () => {
   it("returns valid_no_actionable_metas for JSON noAction", () => {
     const res = parseMetasFromModelResponse(JSON.stringify({ metas: [], noAction: true }));
     expect(classifyZeroMetasReason(res, 18)).toBe("valid_no_actionable_metas");
+  });
+
+  it("accepts JSON noAction inside thinking wrapper (bug #6ff54c2a)", () => {
+    const res = parseMetasFromModelResponse(`<thinking>${JSON.stringify({ metas: [], noAction: true })}</thinking>`);
+    expect(res.parsedFromJson).toBe(true);
+    expect(res.metas).toHaveLength(0);
+    expect(res.looksLikeValidNoMetas).toBe(true);
+    expect(res.parseSuccess).toBe(true);
+    expect(classifyZeroMetasReason(res, 50)).toBe("valid_no_actionable_metas");
   });
 });
