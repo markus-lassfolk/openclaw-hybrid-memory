@@ -418,12 +418,14 @@ function inferHostJobKey(command: string): string | null {
 function deriveArtifactStatus(
   entry: MaintenanceJobCatalogEntry,
   artifact: MaintenanceArtifacts | undefined,
+  actualPluginJobId?: string,
 ): { lastStatus?: string; lastExitAt?: string } {
   if (!artifact?.latestExitPath) {
     return {};
   }
   const exitAt = artifact.latestExitMtimeMs ? new Date(artifact.latestExitMtimeMs).toISOString() : undefined;
-  const requiredSteps = entry.pluginJobId ? HYBRID_MEM_CRON_DEFAULT_JOB_STEPS[entry.pluginJobId] : undefined;
+  const pluginJobIdForSteps = actualPluginJobId ?? entry.pluginJobId;
+  const requiredSteps = pluginJobIdForSteps ? HYBRID_MEM_CRON_DEFAULT_JOB_STEPS[pluginJobIdForSteps] : undefined;
   if (requiredSteps && requiredSteps.length > 0 && artifact.latestLogPath) {
     const validation = validateMaintenanceExecution(
       artifact.latestExitPath,
@@ -502,7 +504,7 @@ function parseGatewayJobs(
     const schedule = describeGatewaySchedule(job.schedule);
     const state = job.state as { lastRunAtMs?: number; lastStatus?: string } | undefined;
     const lastRun = pickLastRun(typeof state?.lastRunAtMs === "number" ? state.lastRunAtMs : null, guardMs, artifact);
-    const status = deriveArtifactStatus(entry, artifact);
+    const status = deriveArtifactStatus(entry, artifact, pluginJobId);
 
     const inventoryId = `gateway-cron:${entry.jobKey}`;
     const existing = jobsByInventoryId.get(inventoryId);
