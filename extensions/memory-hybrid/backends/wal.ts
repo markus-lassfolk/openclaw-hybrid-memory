@@ -142,7 +142,11 @@ export class WriteAheadLog {
         // Some filesystems (e.g. NTFS via WSL2) reject fdatasync; reopen and try fsync() as fallback.
         await fh.close().catch(() => {});
         fh = undefined;
-        fh = await open(this.walPath, "a+");
+        try {
+          fh = await open(this.walPath, "a+");
+        } catch (openErr) {
+          throw openErr;
+        }
         try {
           await fh.sync();
           if (!this.fsyncWarnEmitted) {
