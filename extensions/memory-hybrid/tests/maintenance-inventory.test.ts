@@ -150,4 +150,33 @@ describe("collectMaintenanceInventory", () => {
     expect(markdown).toContain("gateway-cron");
     expect(markdown).toContain("lancedb-writer");
   });
+
+  it("deduplicates gateway jobs with aliased pluginJobIds", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-distill",
+            name: "nightly-memory-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "nightly-memory-sweep-legacy",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].inventoryId).toBe("gateway-cron:nightly-memory-sweep");
+    expect(gatewayJobs[0].jobKey).toBe("nightly-memory-sweep");
+  });
 });

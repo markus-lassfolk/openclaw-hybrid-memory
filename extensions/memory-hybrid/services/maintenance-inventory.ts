@@ -473,7 +473,7 @@ function parseGatewayJobs(
   rawJobs: unknown[],
   artifacts: Map<string, MaintenanceArtifacts>,
 ): MaintenanceInventoryJob[] {
-  const jobs: MaintenanceInventoryJob[] = [];
+  const jobsByInventoryId = new Map<string, MaintenanceInventoryJob>();
   for (const rawJob of rawJobs) {
     if (!rawJob || typeof rawJob !== "object") continue;
     const job = rawJob as Record<string, unknown>;
@@ -502,8 +502,11 @@ function parseGatewayJobs(
     const lastRun = pickLastRun(typeof state?.lastRunAtMs === "number" ? state.lastRunAtMs : null, guardMs, artifact);
     const status = deriveArtifactStatus(entry, artifact);
 
-    jobs.push({
-      inventoryId: `gateway-cron:${entry.jobKey}`,
+    const inventoryId = `gateway-cron:${entry.jobKey}`;
+    if (jobsByInventoryId.has(inventoryId)) continue;
+
+    jobsByInventoryId.set(inventoryId, {
+      inventoryId,
       jobKey: entry.jobKey,
       name: entry.name,
       pluginJobId: entry.pluginJobId ?? pluginJobId,
@@ -538,7 +541,7 @@ function parseGatewayJobs(
     }
     return typeof prompt === "string" && /\bgoal-stewardship-heartbeat\b/i.test(prompt);
   }
-  return jobs;
+  return [...jobsByInventoryId.values()];
 }
 
 function parseHostCrontab(
