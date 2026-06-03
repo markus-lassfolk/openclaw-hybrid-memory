@@ -417,7 +417,7 @@ export function buildCliContextServices(
           stageArtifactDir: (() => {
             const envDir = getEnv("HYBRID_MEM_DREAM_STAGE_DIR");
             if (envDir?.trim()) {
-              return envDir.trim();
+              return join(envDir.trim(), `run-${runId}`);
             }
             const openclawHome = getEnv("OPENCLAW_HOME")?.trim() || join(homedir(), ".openclaw");
             return join(openclawHome, "logs", "dream-cycle", `run-${runId}`);
