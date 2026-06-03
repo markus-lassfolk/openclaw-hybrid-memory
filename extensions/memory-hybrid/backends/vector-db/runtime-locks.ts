@@ -56,15 +56,13 @@ export function isReindexLockHeld(dbPath: string): boolean {
  */
 export async function waitForReindexLockClear(dbPath: string, maxWaitMs = 30_000): Promise<void> {
   const started = Date.now();
-  for (;;) {
-    while (isReindexLockHeld(dbPath)) {
-      if (Date.now() - started > maxWaitMs) {
-        throw new Error(
-          `VectorDB operation blocked by active re-index lock for >${maxWaitMs}ms. Retry after re-index completes.`,
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
+  while (isReindexLockHeld(dbPath)) {
+    if (Date.now() - started > maxWaitMs) {
+      throw new Error(
+        `VectorDB operation blocked by active re-index lock for >${maxWaitMs}ms. Retry after re-index completes.`,
+      );
     }
-    if (!isReindexLockHeld(dbPath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
+}
 }
