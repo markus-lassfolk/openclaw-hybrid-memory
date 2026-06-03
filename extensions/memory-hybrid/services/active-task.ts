@@ -1282,6 +1282,9 @@ export async function reconcileActiveTaskInProgressSessions(
   try {
     await writeActiveTaskFile(filePath, newActive, newCompleted);
   } catch {
+    if (progress) {
+      progress.failed += 1;
+    }
     progress?.phaseComplete("file-write", { failed: 1 });
     return { ...baseResult, wrote: false, failed: 1 };
   }

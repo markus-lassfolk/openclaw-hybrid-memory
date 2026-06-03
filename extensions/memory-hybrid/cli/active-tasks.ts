@@ -525,7 +525,7 @@ export async function runActiveTaskReconcile(
       ledger: "facts",
       reconciledLabels: result.reconciledLabels,
       candidates: result.candidates,
-      reconciled: result.factsWritten,
+      reconciled: dryRun ? result.candidates : result.factsWritten,
       skipped: result.skipped,
       failed: result.failed,
       scanned: result.scanned,
@@ -550,7 +550,7 @@ export async function runActiveTaskReconcile(
     ledger: "markdown",
     reconciledLabels: result.reconciledLabels,
     candidates: result.candidates,
-    reconciled: result.wrote ? result.reconciledLabels.length : 0,
+    reconciled: dryRun ? result.candidates : (result.wrote ? result.reconciledLabels.length : 0),
     skipped: result.skipped,
     failed: result.failed,
     scanned: result.scanned,
@@ -559,49 +559,56 @@ export async function runActiveTaskReconcile(
   };
 }
 
-function printActiveTaskReconcile(result: ActiveTaskReconcileResult): void {
+function printActiveTaskReconcile(result: ActiveTaskReconcileResult, log: (msg: string) => void = console.log): void {
   const reconciledCount = result.reconciled ?? 0;
   if (reconciledCount === 0 && result.candidates === 0) {
-    console.log("✅ No orphan in-progress subagent tasks to reconcile.");
+    log("✅ No orphan in-progress subagent tasks to reconcile.");
     return;
   }
 
   if (result.mode === "dry-run") {
-    console.log(`Dry run — would reconcile ${result.candidates} task(s):`);
+    log(`Dry run — would reconcile ${result.candidates} task(s):`);
     for (const label of result.reconciledLabels) {
-      console.log(`  - [${label}]`);
+      log(`  - [${label}]`);
     }
     return;
   }
 
   if (result.ledger === "facts") {
-    console.log(`✅ Reconciled ${reconciledCount} task(s) in facts ledger:`);
+    log(`✅ Reconciled ${reconciledCount} task(s) in facts ledger:`);
   } else {
-    console.log(`✅ Reconciled ${reconciledCount} task(s) (moved to Completed):`);
+    log(`✅ Reconciled ${reconciledCount} task(s) (moved to Completed):`);
   }
   for (let i = 0; i < Math.min(reconciledCount, result.reconciledLabels.length); i++) {
-    console.log(`  - [${result.reconciledLabels[i]}]`);
+    log(`  - [${result.reconciledLabels[i]}]`);
   }
   if (result.failed > 0) {
-    console.log(`⚠️  ${result.failed} task(s) failed to write.`);
+    log(`⚠️  ${result.failed} task(s) failed to write.`);
   }
 
   if (result.liveState) {
     const { updatedCount, checkedCount, skippedCount } = result.liveState;
     if (updatedCount > 0) {
-      console.log(
+      log(
         `✅ Live-state reconcile: marked ${updatedCount} task(s) done (checked ${checkedCount}, skipped ${skippedCount})`,
       );
     } else {
-      console.log(
+      log(
         `✅ Live-state reconcile: no terminal states found (checked ${checkedCount}, skipped ${skippedCount})`,
       );
     }
   }
 }
 
+let emitMaintainLineTarget: "stdout" | "stderr" = "stdout";
+
+function setMaintainOutputTarget(target: "stdout" | "stderr"): void {
+  emitMaintainLineTarget = target;
+}
+
 function emitMaintainLine(line: string): void {
-  process.stdout.write(`${line}\n`);
+  const target = emitMaintainLineTarget === "stderr" ? process.stderr : process.stdout;
+  target.write(`${line}\n`);
 }
 
 /** Write ACTIVE-TASKS.md projection from facts ledger (#1865). */
@@ -653,16 +660,16 @@ export async function runActiveTaskRender(
   };
 }
 
-function printActiveTaskStaleSummary(result: ActiveTaskStaleResult, headingPrefix = ""): void {
+function printActiveTaskStaleSummary(result: ActiveTaskStaleResult, log: (msg: string) => void = console.log, headingPrefix = ""): void {
   if (result.total === 0) {
-    console.log("✅ No stale tasks.");
+    log("✅ No stale tasks.");
     return;
   }
-  console.log(`${headingPrefix}Stale tasks (${result.total}):`);
+  log(`${headingPrefix}Stale tasks (${result.total}):`);
   for (const t of result.tasks) {
-    console.log(`  [${t.label}] ${t.description}`);
-    console.log(`    Status: ${t.status}`);
-    console.log(`    Last updated: ${t.updated} (${t.hoursStale}h ago)`);
+    log(`  [${t.label}] ${t.description}`);
+    log(`    Status: ${t.status}`);
+    log(`    Last updated: ${t.updated} (${t.hoursStale}h ago)`);
   }
 }
 
@@ -672,8 +679,9 @@ function summarizeReconcileLine(result: ActiveTaskReconcileResult): string {
 
 function summarizeHygieneLine(result: ActiveTaskHygieneResult): string {
   const audit = result.auditFactId ? ` auditFact=${result.auditFactId}` : "";
-  const failed = Math.max(0, result.actions.length - result.appliedCount);
-  return `active-tasks hygiene: actions=${result.actions.length} applied=${result.appliedCount} skipped=${Math.max(0, result.actions.length - result.appliedCount - failed)} failed=${failed}${audit}`;
+  const failed = result.dryRun ? 0 : Math.max(0, result.actions.length - result.appliedCount);
+  const skipped = result.dryRun ? result.actions.length : Math.max(0, result.actions.length - result.appliedCount - failed);
+  return `active-tasks hygiene: actions=${result.actions.length} applied=${result.appliedCount} skipped=${skipped} failed=${failed}${audit}`;
 }
 
 export type ActiveTaskMaintainCompleteEvent = {
@@ -728,7 +736,7 @@ export function buildMaintainCompleteEvent(result: ActiveTaskMaintainResult): Ac
           hygiene: {
             actions: hygiene.actions.length,
             applied: hygiene.appliedCount,
-            failed: Math.max(0, hygiene.actions.length - hygiene.appliedCount),
+            failed: hygiene.dryRun ? 0 : Math.max(0, hygiene.actions.length - hygiene.appliedCount),
             ...(hygiene.auditFactId ? { auditFact: hygiene.auditFactId } : {}),
           },
         }
@@ -764,8 +772,10 @@ export async function runActiveTaskMaintain(
     verbose?: boolean;
     olderThanMinutes?: number;
     openclawHome?: string;
+    jsonMode?: boolean;
   } = {},
 ): Promise<ActiveTaskMaintainResult> {
+  const log = opts.jsonMode ? (msg: string) => process.stderr.write(`${msg}\n`) : (msg: string) => console.log(msg);
   const startedAt = Date.now();
   const qa = opts.qa === true;
   const apply = qa || opts.apply === true;
@@ -801,26 +811,26 @@ export async function runActiveTaskMaintain(
   if (beforeStale) {
     const stale = await runActiveTaskStale(ctx);
     staleBefore = stale.total;
-    printActiveTaskStaleSummary(stale);
+    printActiveTaskStaleSummary(stale, log);
   }
 
   if (dryRunPass) {
     emitMaintainLine("active-tasks maintain: phase=reconcile start mode=dry-run");
     reconcileDryRun = await runActiveTaskReconcile(ctx, cfg, { ...reconcileOpts, dryRun: true });
     emitMaintainLine(summarizeReconcileLine(reconcileDryRun));
-    printActiveTaskReconcile(reconcileDryRun);
+    printActiveTaskReconcile(reconcileDryRun, log);
 
     emitMaintainLine("active-tasks maintain: phase=hygiene start mode=dry-run");
     hygieneDryRun = await runActiveTaskHygiene(ctx, { ...hygieneOpts, apply: false });
     emitMaintainLine(summarizeHygieneLine(hygieneDryRun));
-    printActiveTaskHygiene(hygieneDryRun);
+    printActiveTaskHygiene(hygieneDryRun, log);
   }
 
   if (applyPass) {
     emitMaintainLine("active-tasks maintain: phase=reconcile start mode=apply");
     reconcile = await runActiveTaskReconcile(ctx, cfg, { ...reconcileOpts, dryRun: false });
     emitMaintainLine(summarizeReconcileLine(reconcile));
-    printActiveTaskReconcile(reconcile);
+    printActiveTaskReconcile(reconcile, log);
     if (reconcile.failed > 0) {
       status = "partial";
       error = `reconcile failed ${reconcile.failed} task write(s)`;
@@ -829,17 +839,17 @@ export async function runActiveTaskMaintain(
     emitMaintainLine("active-tasks maintain: phase=hygiene start mode=apply");
     hygiene = await runActiveTaskHygiene(ctx, { ...hygieneOpts, apply: true });
     emitMaintainLine(summarizeHygieneLine(hygiene));
-    printActiveTaskHygiene(hygiene);
+    printActiveTaskHygiene(hygiene, log);
     if (hygiene.cannotApplyReason) {
       status = "failed";
       error = hygiene.cannotApplyReason;
     } else if (apply && hygiene.actions.length > 0) {
-      console.log(`\nApplied ${hygiene.appliedCount} action(s).`);
+      log(`\nApplied ${hygiene.appliedCount} action(s).`);
       if (hygiene.auditFactId) {
-        console.log(`Audit fact: ${hygiene.auditFactId}`);
+        log(`Audit fact: ${hygiene.auditFactId}`);
       }
       if (hygiene.ledger === "facts") {
-        console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
+        log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
       }
     }
   }
@@ -851,7 +861,7 @@ export async function runActiveTaskMaintain(
       emitMaintainLine(
         `active-tasks render: wrote=${renderResult.path} active=${renderResult.active} stale=${renderResult.stale} bytes=${renderResult.bytes}`,
       );
-      console.log(`✅ Wrote ${renderResult.path}`);
+      log(`✅ Wrote ${renderResult.path}`);
     } else {
       emitMaintainLine(`active-tasks render: skipped reason=${renderResult.reason}`);
     }
@@ -860,7 +870,7 @@ export async function runActiveTaskMaintain(
   if (staleSummary) {
     const stale = await runActiveTaskStale(ctx);
     staleAfter = stale.total;
-    printActiveTaskStaleSummary(stale);
+    printActiveTaskStaleSummary(stale, log);
   }
 
   const elapsedMs = Date.now() - startedAt;
@@ -919,39 +929,39 @@ function printActiveTaskList(result: ActiveTaskListResult): void {
   }
 }
 
-function printActiveTaskHygiene(result: ActiveTaskHygieneResult): void {
-  console.log(`Active-task hygiene report [${result.ledger}] (older than ${formatDuration(result.olderThanMinutes)}):`);
+function printActiveTaskHygiene(result: ActiveTaskHygieneResult, log: (msg: string) => void = console.log): void {
+  log(`Active-task hygiene report [${result.ledger}] (older than ${formatDuration(result.olderThanMinutes)}):`);
   if (result.cannotApplyReason) {
-    console.log(`  Apply blocked: ${result.cannotApplyReason}`);
+    log(`  Apply blocked: ${result.cannotApplyReason}`);
   }
-  console.log(`  Duplicate groups: ${result.duplicates.length}`);
-  console.log(`  Stale candidates: ${result.stale.length}`);
-  console.log(`  Actions: ${result.actions.length}`);
+  log(`  Duplicate groups: ${result.duplicates.length}`);
+  log(`  Stale candidates: ${result.stale.length}`);
+  log(`  Actions: ${result.actions.length}`);
 
   if (result.duplicates.length > 0) {
-    console.log("\nDuplicate groups:");
+    log("\nDuplicate groups:");
     for (const group of result.duplicates) {
       const variants = group.labels.filter((label) => label !== group.canonicalLabel);
-      console.log(`  Canonical: [${group.canonicalLabel}] (normalized: ${group.normalized})`);
+      log(`  Canonical: [${group.canonicalLabel}] (normalized: ${group.normalized})`);
       if (variants.length > 0) {
-        console.log(`    Variants: ${variants.map((label) => `[${label}]`).join(", ")}`);
+        log(`    Variants: ${variants.map((label) => `[${label}]`).join(", ")}`);
       }
     }
   }
 
   if (result.stale.length > 0) {
-    console.log("\nStale candidates:");
+    log("\nStale candidates:");
     for (const row of result.stale) {
-      console.log(`  [${row.label}] ${row.status} — updated ${row.updated} (${row.hoursStale}h)`);
-      console.log(`    ${row.reason}`);
+      log(`  [${row.label}] ${row.status} — updated ${row.updated} (${row.hoursStale}h)`);
+      log(`    ${row.reason}`);
     }
   }
 
   if (result.actions.length > 0) {
-    console.log("\nPlanned actions:");
+    log("\nPlanned actions:");
     for (const action of result.actions) {
       const canonical = action.canonicalLabel ? ` -> [${action.canonicalLabel}]` : "";
-      console.log(`  [${action.label}] ${action.kind} => ${action.toStatus}${canonical}`);
+      log(`  [${action.label}] ${action.kind} => ${action.toStatus}${canonical}`);
     }
   }
 }
@@ -1097,6 +1107,9 @@ export function registerActiveTaskCommands(
           }
         }
         const verbose = !!opts.verbose || readHybridMemVerbose(cmd);
+        if (opts.json) {
+          setMaintainOutputTarget("stderr");
+        }
         const result = await runActiveTaskMaintain(ctx, cfg, {
           apply: opts.apply,
           dryRun: opts.dryRun,
@@ -1106,9 +1119,10 @@ export function registerActiveTaskCommands(
           beforeStale: opts.beforeStale,
           verbose,
           olderThanMinutes,
+          jsonMode: opts.json,
         });
         if (opts.json) {
-          emitMaintainLine(JSON.stringify(buildMaintainCompleteEvent(result)));
+          process.stdout.write(`${JSON.stringify(buildMaintainCompleteEvent(result))}\n`);
         }
         if (result.status === "failed") {
           process.exitCode = 1;

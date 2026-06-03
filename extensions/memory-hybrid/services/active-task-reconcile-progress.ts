@@ -150,7 +150,7 @@ export class ActiveTaskReconcileProgressReporter {
   complete(): ActiveTaskReconcileCompleteEvent {
     this.stopHeartbeat();
     const elapsedMs = Date.now() - this.startedAt;
-    const reconciled = this.opts.mode === "dry-run" ? this.scanMarked : this.factsWritten;
+    const reconciled = this.opts.mode === "dry-run" ? this.scanMarked : (this.opts.ledger === "markdown" ? this.candidates - this.skipped - this.failed : this.factsWritten);
     const summary: ActiveTaskReconcileCompleteEvent = {
       event: "active_tasks_reconcile_complete",
       mode: this.opts.mode,
