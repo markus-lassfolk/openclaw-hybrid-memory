@@ -27,7 +27,7 @@ describe("resolveFactsDbPragmas", () => {
     tmp = mkdtempSync(join(tmpdir(), "facts-pragmas-"));
     const dbPath = join(tmp, "facts.db");
     writeFileSync(dbPath, Buffer.alloc(10 * 1024 * 1024)); // 10MB
-    setEnv("OPENCLAW_FACTS_CACHE_SIZE_KB", "524288"); // 512GB request
+    setEnv("OPENCLAW_FACTS_CACHE_SIZE_KB", "524288"); // 512MB request
     setEnv("OPENCLAW_FACTS_MMAP_SIZE", String(2 * 1024 * 1024 * 1024)); // 2GB
     const p = resolveFactsDbPragmas(dbPath);
     expect(p.cacheSizeKb).toBeLessThanOrEqual(Math.ceil(((10 * 1024 * 1024) / 1024) * 1.5));

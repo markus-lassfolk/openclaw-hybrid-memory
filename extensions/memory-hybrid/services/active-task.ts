@@ -27,6 +27,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
+import { escapeRegExp } from "../utils/text.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import type { ActiveTaskReconcileProgressReporter } from "./active-task-reconcile-progress.js";
 
@@ -606,9 +607,10 @@ export function buildStaleWarningInjection(
   staleMinutes: number,
   maxChars?: number,
 ): { text: string; renderedCount: number } {
-  const staleTasks = tasks.filter((t) => t.stale);
+  const visibleTasks = tasks.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
+  const staleTasks = visibleTasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
-  const inProgressWithSubagent = tasks.filter((t) => t.status === "In progress" && t.subagent);
+  const inProgressWithSubagent = visibleTasks.filter((t) => t.status === "In progress" && t.subagent);
 
   if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return { text: "", renderedCount: 0 };
 
@@ -732,6 +734,40 @@ export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDi
 export function isSubagentSession(sessionKey?: string): boolean {
   if (!sessionKey) return false;
   return sessionKey.includes("subagent:");
+}
+
+export function normalizePlaceholderTaskNext(
+  next: string | undefined,
+  refs: Array<string | undefined> = [],
+): string | undefined {
+  const trimmed = next?.trim();
+  if (!trimmed) return undefined;
+  for (const ref of refs) {
+    const candidate = ref?.trim();
+    if (!candidate) continue;
+    const placeholderPattern = new RegExp(`^Task\\s*\\[${escapeRegExp(candidate)}\\]\\s*next:\\s*$`, "i");
+    if (placeholderPattern.test(trimmed)) {
+      return undefined;
+    }
+  }
+  return trimmed;
+}
+
+export function isNonActionableSubagentPlaceholderTask(task: ActiveTaskEntry): boolean {
+  const subagent = task.subagent?.trim();
+  const label = task.label.trim();
+  if (!isSubagentSession(subagent) && !isSubagentSession(label)) return false;
+
+  const normalizedNext = normalizePlaceholderTaskNext(task.next, [task.label, subagent]);
+  if (normalizedNext) return false;
+
+  const normalizedDescription = task.description.trim().toLowerCase();
+  const descriptionLooksPlaceholder =
+    normalizedDescription === "project task" ||
+    normalizedDescription === "task" ||
+    normalizedDescription.startsWith("subagent task");
+  if (!descriptionLooksPlaceholder && !isSubagentSession(label) && label !== subagent) return false;
+  return descriptionLooksPlaceholder || isSubagentSession(label) || label === subagent;
 }
 
 // ---------------------------------------------------------------------------

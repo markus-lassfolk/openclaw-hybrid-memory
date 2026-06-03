@@ -20,6 +20,7 @@ import { dirname, isAbsolute, join, resolve as pathResolve, relative } from "nod
 
 import { getEnv } from "../../utils/env-manager.js";
 import { expandTilde } from "../../utils/path.js";
+import { escapeRegExp } from "../../utils/text.js";
 
 import type { HybridMemoryConfig } from "../../config.js";
 import { compileHeartbeatMatchers } from "../../services/goal-stewardship-heartbeat.js";
@@ -224,10 +225,6 @@ export function ensureHybridMemoryWorkspaceSkillIfMissing(opts: {
 
 const TOOLS_MD_MANAGED_BEGIN = "<!-- openclaw-hybrid-memory:managed-begin -->";
 const TOOLS_MD_MANAGED_END = "<!-- openclaw-hybrid-memory:managed-end -->";
-
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 function getToolsMdManagedBlockRe(): RegExp {
   return new RegExp(`${escapeRegExp(TOOLS_MD_MANAGED_BEGIN)}[\\s\\S]*?${escapeRegExp(TOOLS_MD_MANAGED_END)}`);

@@ -6,7 +6,7 @@
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { ActiveTaskEntry } from "./active-task.js";
-import { isSubagentSession } from "./active-task.js";
+import { isNonActionableSubagentPlaceholderTask, isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
 import { execFile } from "../utils/process-runner.js";
@@ -397,7 +397,8 @@ export function buildHeartbeatTaskHygieneBlock(
   },
 ): string {
   const formatLabels = opts.formatLabelList ?? ((labels: string[]) => labels.map((l) => `[${l}]`).join(", "));
-  const stale = tasks.filter((t) => t.stale);
+  const visibleTasks = tasks.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
+  const stale = visibleTasks.filter((t) => t.stale);
   const lines: string[] = [
     "<task-hygiene>",
     "**Heartbeat — active task review**",
@@ -412,7 +413,7 @@ export function buildHeartbeatTaskHygieneBlock(
 
   if (opts.suggestGoalAfterTaskAgeDays > 0) {
     const cutoff = Date.now() - opts.suggestGoalAfterTaskAgeDays * 86_400_000;
-    const longRunning = tasks.filter((t) => {
+    const longRunning = visibleTasks.filter((t) => {
       const u = new Date(t.updated).getTime();
       return !Number.isNaN(u) && u < cutoff;
     });

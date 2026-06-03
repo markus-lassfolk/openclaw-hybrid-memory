@@ -25,7 +25,7 @@ Journal confirmation: `memory-hybrid: re-register reusing database handles (poli
 
 ## Secondary cause: SQLite env over-reservation
 
-Stale `OPENCLAW_FACTS_CACHE_SIZE_KB=524288` (512GB page cache request) plus large `OPENCLAW_FACTS_MMAP_SIZE` caused ~400MB+ anonymous reservation on a ~414MB DB.
+Stale `OPENCLAW_FACTS_CACHE_SIZE_KB=524288` (512MB page cache request) plus large `OPENCLAW_FACTS_MMAP_SIZE` caused ~400MB+ anonymous reservation on a ~414MB DB.
 
 **Mitigation:** `resolveFactsDbPragmas()` clamps cache/mmap to DB file size (+ headroom) at open time.
 
