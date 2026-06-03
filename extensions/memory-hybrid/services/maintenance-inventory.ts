@@ -475,6 +475,7 @@ function parseGatewayJobs(
   artifacts: Map<string, MaintenanceArtifacts>,
 ): MaintenanceInventoryJob[] {
   const jobsByInventoryId = new Map<string, MaintenanceInventoryJob>();
+  const rawPluginJobIdByInventoryId = new Map<string, string | undefined>();
   for (const rawJob of rawJobs) {
     if (!rawJob || typeof rawJob !== "object") continue;
     const job = rawJob as Record<string, unknown>;
@@ -504,8 +505,20 @@ function parseGatewayJobs(
     const status = deriveArtifactStatus(entry, artifact);
 
     const inventoryId = `gateway-cron:${entry.jobKey}`;
-    if (jobsByInventoryId.has(inventoryId)) continue;
+    const existing = jobsByInventoryId.get(inventoryId);
+    if (existing) {
+      const existingRawPluginJobId = rawPluginJobIdByInventoryId.get(inventoryId);
+      const isCanonical = pluginJobId === entry.pluginJobId;
+      const existingIsCanonical = existingRawPluginJobId === entry.pluginJobId;
+      const isEnabled = job.enabled !== false;
+      const existingIsEnabled = existing.enabled;
+      const shouldReplace =
+        (isCanonical && !existingIsCanonical) ||
+        (isCanonical === existingIsCanonical && isEnabled && !existingIsEnabled);
+      if (!shouldReplace) continue;
+    }
 
+    rawPluginJobIdByInventoryId.set(inventoryId, pluginJobId);
     jobsByInventoryId.set(inventoryId, {
       inventoryId,
       jobKey: entry.jobKey,

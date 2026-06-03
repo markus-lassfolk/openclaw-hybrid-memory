@@ -179,4 +179,68 @@ describe("collectMaintenanceInventory", () => {
     expect(gatewayJobs[0].inventoryId).toBe("gateway-cron:nightly-memory-sweep");
     expect(gatewayJobs[0].jobKey).toBe("nightly-memory-sweep");
   });
+
+  it("prefers canonical pluginJobId over alias when deduplicating", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "legacy-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 1 * * *" },
+            payload: { message: "Legacy configuration" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-distill",
+            name: "nightly-memory-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+            payload: { message: "Canonical configuration" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].pluginJobId).toBe("hybrid-mem:nightly-distill");
+    expect(gatewayJobs[0].schedule).toBe("0 2 * * *");
+    expect(gatewayJobs[0].prompt).toContain("Canonical configuration");
+  });
+
+  it("prefers enabled job over disabled when both use same alias", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "disabled-sweep",
+            enabled: false,
+            schedule: { kind: "cron", expr: "0 1 * * *" },
+            payload: { message: "Disabled job" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "enabled-sweep",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 3 * * *" },
+            payload: { message: "Enabled job" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].enabled).toBe(true);
+    expect(gatewayJobs[0].schedule).toBe("0 3 * * *");
+    expect(gatewayJobs[0].prompt).toContain("Enabled job");
+  });
 });
