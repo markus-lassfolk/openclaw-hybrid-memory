@@ -249,7 +249,7 @@ export function parseRulesFromModelResponse(rawResponse: string): ReflectionRule
       }
       rules.push(normalized.text);
     }
-    if (rules.length === 0 && readBooleanField(jsonObject, "noAction")) {
+    if (rules.length === 0 && readBooleanField(jsonObject, "noAction") && parseableLines === 0) {
       return {
         rules: [],
         parseableLines: 0,
@@ -323,7 +323,7 @@ export function parseMetasFromModelResponse(rawResponse: string): ReflectionMeta
         rejectedLength++;
       }
     }
-    if (metas.length === 0 && readBooleanField(jsonObject, "noAction")) {
+    if (metas.length === 0 && readBooleanField(jsonObject, "noAction") && parseableLines === 0) {
       return {
         metas: [],
         parseableLines: 0,
