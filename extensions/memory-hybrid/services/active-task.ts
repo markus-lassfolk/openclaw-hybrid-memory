@@ -51,13 +51,29 @@ export function resolveActiveTaskReadPath(filePath: string): string | null {
 export const STALE_CORRUPT_SIGNAL_MS = 5 * 60 * 1000;
 const MAX_TASK_SIGNAL_BYTES = 256 * 1024;
 
-async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> {
+/** Best-effort cleanup for stale corrupt/orphan signal files (#812, #1842). Exported for tests. */
+export async function tryDeleteStaleCorruptSignalFile(filePath: string): Promise<void> {
+  let mtimeMs: number;
   try {
     const s = await stat(filePath);
-    if (Date.now() - s.mtimeMs <= STALE_CORRUPT_SIGNAL_MS) return;
+    mtimeMs = s.mtimeMs;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    pluginLogger.warn(
+      `memory-hybrid: failed to stat stale corrupt task signal for cleanup (${filePath}): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return;
+  }
+
+  if (Date.now() - mtimeMs <= STALE_CORRUPT_SIGNAL_MS) return;
+
+  try {
     await unlink(filePath);
-  } catch {
-    // ENOENT or other — ignore
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    pluginLogger.warn(
+      `memory-hybrid: failed to delete stale corrupt task signal (${filePath}): ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
