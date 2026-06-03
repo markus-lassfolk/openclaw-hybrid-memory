@@ -490,6 +490,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
         console.log(
           `Reflection (meta) complete: extracted ${res.metaExtracted} meta-patterns, stored ${res.metaStored} ${dryRun ? "(dry-run)" : ""}`,
         );
+        if (res.diagnostics) {
+          const zeroReason = res.diagnostics.zeroMetasReason
+            ? ` zero_metas_reason=${res.diagnostics.zeroMetasReason}`
+            : "";
+          console.log(
+            `Reflection (meta) diagnostics: model_response_chars=${res.diagnostics.modelResponseChars} parse_success=${res.diagnostics.parseSuccess} parsed_candidates=${res.diagnostics.parsedCandidates} rejected_length=${res.diagnostics.rejectedLength} stored=${res.diagnostics.stored} status=${res.diagnostics.status}${zeroReason}`,
+          );
+        }
       },
     ),
   );
