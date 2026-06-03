@@ -530,8 +530,9 @@ error: unknown command 'bar'
       const first = validateMaintenanceExecution(firstExitPath, logPath, ["reflect-rules"]);
       const second = validateMaintenanceExecution(secondExitPath, logPath, ["reflect-rules"]);
 
-      expect(first.maintenanceStatus).toBe("success");
+      expect(first.maintenanceStatus).toBe("failed");
       expect(first.semanticStatus).toBe("semantic_fail");
+      expect(first.guardUpdated).toBe(false);
       expect(first.reportableIssues).toContainEqual(
         expect.objectContaining({
           stepName: "reflect-rules",
