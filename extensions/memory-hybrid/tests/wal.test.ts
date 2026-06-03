@@ -694,6 +694,25 @@ describe("WriteAheadLog", () => {
       // fh was opened (open() succeeded) so close() must have been called.
       expect(closedHandleCount.value).toBeGreaterThan(before);
     });
+
+    it("chains fsync durability failures through write() error cause (#1846)", async () => {
+      const epermError = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      const syncFail = Object.assign(new Error("sync unsupported"), { code: "EPERM" });
+      fsyncError.value = epermError;
+      syncError.value = syncFail;
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "cause-check double-fail", category: "general", importance: 0.5, source: "test" },
+      };
+
+      await expect(wal.write(entry)).rejects.toSatisfy((err: unknown) => {
+        if (!(err instanceof Error)) return false;
+        const durabilityErr = err.cause;
+        return durabilityErr instanceof Error && /WAL fsync unavailable \(EPERM\)/.test(durabilityErr.message);
+      });
+    });
   });
 
   describe("idempotency and crash recovery simulation", () => {
