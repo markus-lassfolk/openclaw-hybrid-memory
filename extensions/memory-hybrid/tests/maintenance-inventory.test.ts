@@ -245,4 +245,36 @@ describe("collectMaintenanceInventory", () => {
     expect(gatewayJobs[0].schedule).toBe("0 3 * * *");
     expect(gatewayJobs[0].prompt).toContain("Enabled job");
   });
+
+  it("prefers enabled alias over disabled canonical job", () => {
+    const openclawDir = makeOpenclawDir();
+    cleanup.push(openclawDir);
+
+    const report = collectMaintenanceInventory(openclawDir, {
+      cronStoreText: JSON.stringify({
+        jobs: [
+          {
+            pluginJobId: "hybrid-mem:nightly-memory-sweep",
+            name: "enabled-alias",
+            enabled: true,
+            schedule: { kind: "cron", expr: "0 3 * * *" },
+            payload: { message: "Enabled alias configuration" },
+          },
+          {
+            pluginJobId: "hybrid-mem:nightly-distill",
+            name: "disabled-canonical",
+            enabled: false,
+            schedule: { kind: "cron", expr: "0 2 * * *" },
+            payload: { message: "Disabled canonical configuration" },
+          },
+        ],
+      }),
+    });
+
+    const gatewayJobs = report.jobs.filter((job) => job.scheduler === "gateway-cron");
+    expect(gatewayJobs.length).toBe(1);
+    expect(gatewayJobs[0].enabled).toBe(true);
+    expect(gatewayJobs[0].schedule).toBe("0 3 * * *");
+    expect(gatewayJobs[0].prompt).toContain("Enabled alias configuration");
+  });
 });

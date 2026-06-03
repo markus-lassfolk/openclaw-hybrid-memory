@@ -168,7 +168,12 @@ export type HybridMemCliContext = {
     sink: DistillCliSink,
   ) => Promise<DistillCliResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
-  runEncryptVault: (opts: { yes?: boolean; backup?: boolean; backupPath?: string; verify?: boolean }) => EncryptVaultResult;
+  runEncryptVault: (opts: {
+    yes?: boolean;
+    backup?: boolean;
+    backupPath?: string;
+    verify?: boolean;
+  }) => EncryptVaultResult;
   runVaultStatus: () => VaultStatusResult | null;
   runCredentialsList: () => Array<{
     service: string;

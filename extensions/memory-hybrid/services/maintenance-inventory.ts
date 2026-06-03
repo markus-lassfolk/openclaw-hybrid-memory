@@ -513,8 +513,7 @@ function parseGatewayJobs(
       const isEnabled = job.enabled !== false;
       const existingIsEnabled = existing.enabled;
       const shouldReplace =
-        (isCanonical && !existingIsCanonical) ||
-        (isCanonical === existingIsCanonical && isEnabled && !existingIsEnabled);
+        (isEnabled && !existingIsEnabled) || (isEnabled === existingIsEnabled && isCanonical && !existingIsCanonical);
       if (!shouldReplace) continue;
     }
 

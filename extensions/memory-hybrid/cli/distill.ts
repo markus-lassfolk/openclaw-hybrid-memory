@@ -3,10 +3,7 @@
  */
 
 import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
-import {
-  registerScanMaintenanceOverrideOptions,
-  scanMaintenanceOverridePayload,
-} from "./maintenance-overrides.js";
+import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "./maintenance-overrides.js";
 import { type Chainable, withExit } from "./shared.js";
 import type { ReinforcementExtractResult } from "../services/reinforcement-extract.js";
 import type {
@@ -136,54 +133,54 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         "0",
       ),
   ).action(
-      withExit(
-        async (
-          opts: {
-            dryRun?: boolean;
-            all?: boolean;
-            days?: string;
-            since?: string;
-            model?: string;
-            verbose?: boolean;
-            maxSessions?: string;
-            maxSessionTokens?: string;
-            full?: boolean;
-            force?: boolean;
-          },
-          cmd?: CommanderOptsParent,
-        ) => {
-          const sink = {
-            log: (s: string) => console.log(s),
-            warn: (s: string) => console.warn(s),
-          };
-          const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0", 10) || 0);
-          const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0", 10) || 0);
-          const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
-          const overrides = scanMaintenanceOverridePayload(opts);
-          const result = await runDistill(
-            {
-              dryRun: !!opts.dryRun,
-              all: !!opts.all,
-              days: Number.isFinite(days) ? days : undefined,
-              since: opts.since?.trim() || undefined,
-              model: opts.model,
-              verbose: !!opts.verbose || readHybridMemVerbose(cmd),
-              maxSessions: maxSessions > 0 ? maxSessions : undefined,
-              maxSessionTokens: maxSessionTokens > 0 ? maxSessionTokens : undefined,
-              ...overrides,
-            },
-            sink,
-          );
-          if (result.dryRun) {
-            console.log(`\nWould extract ${result.factsExtracted} facts from ${result.sessionsScanned} sessions.`);
-          } else {
-            console.log(
-              `\nDistill done: ${result.stored} stored, ${result.dedupSkipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
-            );
-          }
+    withExit(
+      async (
+        opts: {
+          dryRun?: boolean;
+          all?: boolean;
+          days?: string;
+          since?: string;
+          model?: string;
+          verbose?: boolean;
+          maxSessions?: string;
+          maxSessionTokens?: string;
+          full?: boolean;
+          force?: boolean;
         },
-      ),
-    );
+        cmd?: CommanderOptsParent,
+      ) => {
+        const sink = {
+          log: (s: string) => console.log(s),
+          warn: (s: string) => console.warn(s),
+        };
+        const maxSessions = Math.max(0, Number.parseInt(opts.maxSessions || "0", 10) || 0);
+        const maxSessionTokens = Math.max(0, Number.parseInt(opts.maxSessionTokens || "0", 10) || 0);
+        const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
+        const overrides = scanMaintenanceOverridePayload(opts);
+        const result = await runDistill(
+          {
+            dryRun: !!opts.dryRun,
+            all: !!opts.all,
+            days: Number.isFinite(days) ? days : undefined,
+            since: opts.since?.trim() || undefined,
+            model: opts.model,
+            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            maxSessions: maxSessions > 0 ? maxSessions : undefined,
+            maxSessionTokens: maxSessionTokens > 0 ? maxSessionTokens : undefined,
+            ...overrides,
+          },
+          sink,
+        );
+        if (result.dryRun) {
+          console.log(`\nWould extract ${result.factsExtracted} facts from ${result.sessionsScanned} sessions.`);
+        } else {
+          console.log(
+            `\nDistill done: ${result.stored} stored, ${result.dedupSkipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
+          );
+        }
+      },
+    ),
+  );
 
   mem
     .command("distill-window")
@@ -227,11 +224,11 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       .option("--dry-run", "Show extractions without storing")
       .option("-v, --verbose", "Log each extracted fact as it is stored"),
   ).action(
-      withExit(
-        async (
-          opts: { days: string; dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean },
-          cmd?: CommanderOptsParent,
-        ) => {
+    withExit(
+      async (
+        opts: { days: string; dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean },
+        cmd?: CommanderOptsParent,
+      ) => {
         const daysBack = Number.parseInt(opts.days, 10);
         const result = await runExtractDaily(
           {
@@ -251,8 +248,9 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             } duplicates skipped)`,
           );
         }
-      }),
-    );
+      },
+    ),
+  );
 
   registerScanMaintenanceOverrideOptions(
     mem
@@ -263,38 +261,38 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       .option("--dry-run", "Show what would be stored without writing")
       .option("-v, --verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)"),
   ).action(
-      withExit(
-        async (
-          opts: {
-            dir?: string;
-            days?: string;
-            dryRun?: boolean;
-            verbose?: boolean;
-            full?: boolean;
-            force?: boolean;
-          },
-          cmd?: CommanderOptsParent,
-        ) => {
-          const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
-          const result = await runExtractProcedures({
-            sessionDir: opts.dir,
-            days: Number.isFinite(days) ? days : undefined,
-            dryRun: !!opts.dryRun,
-            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
-            ...scanMaintenanceOverridePayload(opts),
-          });
-          if (result.dryRun) {
-            console.log(
-              `\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
-            );
-          } else {
-            console.log(
-              `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
-            );
-          }
+    withExit(
+      async (
+        opts: {
+          dir?: string;
+          days?: string;
+          dryRun?: boolean;
+          verbose?: boolean;
+          full?: boolean;
+          force?: boolean;
         },
-      ),
-    );
+        cmd?: CommanderOptsParent,
+      ) => {
+        const days = opts.days != null ? Number.parseInt(opts.days, 10) : undefined;
+        const result = await runExtractProcedures({
+          sessionDir: opts.dir,
+          days: Number.isFinite(days) ? days : undefined,
+          dryRun: !!opts.dryRun,
+          verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+          ...scanMaintenanceOverridePayload(opts),
+        });
+        if (result.dryRun) {
+          console.log(
+            `\n[dry-run] Sessions scanned: ${result.sessionsScanned}, procedures that would be stored: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
+          );
+        } else {
+          console.log(
+            `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
+          );
+        }
+      },
+    ),
+  );
 
   mem
     .command("generate-auto-skills")
@@ -388,61 +386,59 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       .option("-v, --verbose", "Log each directive as it is detected")
       .option("--dry-run", "Show what would be extracted without storing"),
   ).action(
-      withExit(
-        async (
-          opts: {
-            days?: string;
-            verbose?: boolean;
-            dryRun?: boolean;
-            full?: boolean;
-            force?: boolean;
-          },
-          cmd?: CommanderOptsParent,
-        ) => {
-          const days = Number.parseInt(opts.days ?? "3", 10);
-          const result = await runExtractDirectives({
-            days,
-            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
-            dryRun: opts.dryRun,
-            ...scanMaintenanceOverridePayload(opts),
-          });
-          console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
-          if (opts.dryRun) {
-            console.log(`[dry-run] Would store ${result.incidents.length} directives as facts.`);
-          } else {
-            const stored = result.stored ?? result.incidents.length;
-            const skipped = result.incidents.length - stored;
-            console.log(
-              `Stored ${stored} directives as facts${skipped > 0 ? ` (${skipped} duplicates skipped)` : ""}.`,
-            );
-            if ((result.rejected ?? 0) > 0) {
-              console.log(`Rejected ${result.rejected} non-durable/untrusted directive candidate(s).`);
-            }
-            if (result.directiveRejected) {
-              console.log(
-                `Status: directiveRejected=permanent:${result.directiveRejected.permanent},retryable:${result.directiveRejected.retryable},parserOrModelFailure:${result.directiveRejected.parserOrModelFailure},boundedPartialRetry:${result.directiveRejected.boundedPartialRetry}`,
-              );
-            }
-            if (result.partial) {
-              console.log("Status: partial (retryable rejections detected; cursor not advanced).");
-            }
-            if (result.dedupeDegraded) {
-              console.log("Status: degraded dedupe (lexical-only fallback used).");
-            }
-            if (result.directiveDedupeMode) {
-              console.log(`Status: directiveDedupeMode=${result.directiveDedupeMode}`);
-            }
-            if (typeof result.cursorAdvanced === "boolean") {
-              console.log(`Status: cursorAdvanced=${result.cursorAdvanced}`);
-            }
-            if (result.cursorBlockedReason) {
-              console.log(`Status: cursorBlockedReason=${result.cursorBlockedReason}`);
-              process.exitCode = 2;
-            }
-          }
+    withExit(
+      async (
+        opts: {
+          days?: string;
+          verbose?: boolean;
+          dryRun?: boolean;
+          full?: boolean;
+          force?: boolean;
         },
-      ),
-    );
+        cmd?: CommanderOptsParent,
+      ) => {
+        const days = Number.parseInt(opts.days ?? "3", 10);
+        const result = await runExtractDirectives({
+          days,
+          verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+          dryRun: opts.dryRun,
+          ...scanMaintenanceOverridePayload(opts),
+        });
+        console.log(`\nSessions scanned: ${result.sessionsScanned}; directives found: ${result.incidents.length}`);
+        if (opts.dryRun) {
+          console.log(`[dry-run] Would store ${result.incidents.length} directives as facts.`);
+        } else {
+          const stored = result.stored ?? result.incidents.length;
+          const skipped = result.incidents.length - stored;
+          console.log(`Stored ${stored} directives as facts${skipped > 0 ? ` (${skipped} duplicates skipped)` : ""}.`);
+          if ((result.rejected ?? 0) > 0) {
+            console.log(`Rejected ${result.rejected} non-durable/untrusted directive candidate(s).`);
+          }
+          if (result.directiveRejected) {
+            console.log(
+              `Status: directiveRejected=permanent:${result.directiveRejected.permanent},retryable:${result.directiveRejected.retryable},parserOrModelFailure:${result.directiveRejected.parserOrModelFailure},boundedPartialRetry:${result.directiveRejected.boundedPartialRetry}`,
+            );
+          }
+          if (result.partial) {
+            console.log("Status: partial (retryable rejections detected; cursor not advanced).");
+          }
+          if (result.dedupeDegraded) {
+            console.log("Status: degraded dedupe (lexical-only fallback used).");
+          }
+          if (result.directiveDedupeMode) {
+            console.log(`Status: directiveDedupeMode=${result.directiveDedupeMode}`);
+          }
+          if (typeof result.cursorAdvanced === "boolean") {
+            console.log(`Status: cursorAdvanced=${result.cursorAdvanced}`);
+          }
+          if (result.cursorBlockedReason) {
+            console.log(`Status: cursorBlockedReason=${result.cursorBlockedReason}`);
+            process.exitCode = 2;
+          }
+        }
+      },
+    ),
+  );
 
   registerScanMaintenanceOverrideOptions(
     mem
@@ -452,58 +448,58 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       .option("-v, --verbose", "Log each reinforcement as it is detected")
       .option("--dry-run", "Show what would be annotated without storing"),
   ).action(
-      withExit(
-        async (
-          opts: {
-            days?: string;
-            verbose?: boolean;
-            dryRun?: boolean;
-            full?: boolean;
-            force?: boolean;
-          },
-          cmd?: CommanderOptsParent,
-        ) => {
-          const days = Number.parseInt(opts.days ?? "3", 10);
-          const result = await runExtractReinforcement({
-            days,
-            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
-            dryRun: opts.dryRun,
-            ...scanMaintenanceOverridePayload(opts),
-          });
-          console.log(
-            `\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`,
-          );
-          if (opts.dryRun) {
-            console.log("[dry-run] Would annotate facts/procedures with reinforcement data.");
-          } else {
-            const factsReinforced = result.annotated ?? 0;
-            console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
-            if (result.incidents.length > 0 && factsReinforced === 0) {
-              const reasons = result.annotationReasons;
-              if (reasons) {
-                console.log(
-                  `Annotation reason breakdown: noRecalledIds=${reasons.noRecalledIds} reinforced=${reasons.reinforced} recalledIdsNoMatch=${reasons.recalledIdsNoMatch} errors=${reasons.errors}`,
-                );
-              }
-              const status = result.annotationStatus;
-              if (status) {
-                console.log(`Annotation status: ${status}`);
-                if (result.annotationDiagnostic) {
-                  const diagnostic = result.annotationDiagnostic;
-                  console.log(`Annotation diagnostic: ${diagnostic.kind} — ${diagnostic.summary}`);
-                  for (const action of diagnostic.recommendedActions) {
-                    console.log(`  next: ${action}`);
-                  }
-                }
-                if (status === "failed_annotation" || status === "degraded_model_or_parser") {
-                  process.exitCode = 1;
-                }
-              }
-            } else if (factsReinforced > 0 && result.annotationReasons?.errors && result.annotationReasons.errors > 0) {
-              process.exitCode = 2;
-            }
-          }
+    withExit(
+      async (
+        opts: {
+          days?: string;
+          verbose?: boolean;
+          dryRun?: boolean;
+          full?: boolean;
+          force?: boolean;
         },
-      ),
-    );
+        cmd?: CommanderOptsParent,
+      ) => {
+        const days = Number.parseInt(opts.days ?? "3", 10);
+        const result = await runExtractReinforcement({
+          days,
+          verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+          dryRun: opts.dryRun,
+          ...scanMaintenanceOverridePayload(opts),
+        });
+        console.log(
+          `\nSessions scanned: ${result.sessionsScanned}; reinforcement incidents found: ${result.incidents.length}`,
+        );
+        if (opts.dryRun) {
+          console.log("[dry-run] Would annotate facts/procedures with reinforcement data.");
+        } else {
+          const factsReinforced = result.annotated ?? 0;
+          console.log(`Annotated ${factsReinforced} facts with reinforcement data.`);
+          if (result.incidents.length > 0 && factsReinforced === 0) {
+            const reasons = result.annotationReasons;
+            if (reasons) {
+              console.log(
+                `Annotation reason breakdown: noRecalledIds=${reasons.noRecalledIds} reinforced=${reasons.reinforced} recalledIdsNoMatch=${reasons.recalledIdsNoMatch} errors=${reasons.errors}`,
+              );
+            }
+            const status = result.annotationStatus;
+            if (status) {
+              console.log(`Annotation status: ${status}`);
+              if (result.annotationDiagnostic) {
+                const diagnostic = result.annotationDiagnostic;
+                console.log(`Annotation diagnostic: ${diagnostic.kind} — ${diagnostic.summary}`);
+                for (const action of diagnostic.recommendedActions) {
+                  console.log(`  next: ${action}`);
+                }
+              }
+              if (status === "failed_annotation" || status === "degraded_model_or_parser") {
+                process.exitCode = 1;
+              }
+            }
+          } else if (factsReinforced > 0 && result.annotationReasons?.errors && result.annotationReasons.errors > 0) {
+            process.exitCode = 2;
+          }
+        }
+      },
+    ),
+  );
 }

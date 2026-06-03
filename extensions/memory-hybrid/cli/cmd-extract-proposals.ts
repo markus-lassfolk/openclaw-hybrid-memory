@@ -202,9 +202,7 @@ export async function runGenerateProposalsForCli(
       const errMsg = err instanceof Error ? err.message : String(err);
       lastFailReason = `model=${tryModel} failure_type=llm_call_failed`;
       if (opts.verbose) {
-        ctx.logger.warn?.(
-          `memory-hybrid: generate-proposals — ${tryModel} LLM call failed: ${errMsg.slice(0, 200)}`,
-        );
+        ctx.logger.warn?.(`memory-hybrid: generate-proposals — ${tryModel} LLM call failed: ${errMsg.slice(0, 200)}`);
       }
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "cli",
@@ -232,9 +230,7 @@ export async function runGenerateProposalsForCli(
           `memory-hybrid: generate-proposals — ${tryModel} returned invalid JSON, retrying with fallback model`,
         );
       } else if (opts.verbose) {
-        ctx.logger.warn?.(
-          `memory-hybrid: generate-proposals — LLM output was not valid JSON: ${responseSnippet}`,
-        );
+        ctx.logger.warn?.(`memory-hybrid: generate-proposals — LLM output was not valid JSON: ${responseSnippet}`);
       }
       continue;
     }

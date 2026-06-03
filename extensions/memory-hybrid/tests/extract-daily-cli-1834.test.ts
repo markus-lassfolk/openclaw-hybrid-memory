@@ -13,9 +13,7 @@ import { registerDistillCommands } from "../cli/distill.js";
 import type { DistillContext } from "../cli/distill.js";
 import type { ExtractDailySink } from "../cli/types.js";
 
-function makeDistillContext(
-  runExtractDaily: DistillContext["runExtractDaily"],
-): DistillContext {
+function makeDistillContext(runExtractDaily: DistillContext["runExtractDaily"]): DistillContext {
   return {
     runDistillWindow: vi.fn().mockResolvedValue({ mode: "incremental", startDate: "", endDate: "", mtimeDays: 1 }),
     runRecordDistill: vi.fn().mockResolvedValue({ timestamp: "", path: "" }),
