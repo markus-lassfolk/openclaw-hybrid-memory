@@ -11,7 +11,7 @@ export const HYBRID_MEM_CRON_DEFAULT_JOB_STEPS: Record<string, string[]> = {
   /** Legacy ledger basename if present; same steps as nightly-distill. */
   "hybrid-mem:nightly-memory-sweep": NIGHTLY_DISTILL_STEPS,
   "hybrid-mem:nightly-dream-cycle": ["dream-cycle"],
-  "hybrid-mem:weekly-reflection": ["reflect", "reflect-rules"],
+  "hybrid-mem:weekly-reflection": ["reflect", "reflect-rules", "reflect-meta"],
   "hybrid-mem:nightly-self-correction": ["self-correct"],
   "hybrid-mem:self-correction-analysis": ["self-correction-run"],
   "hybrid-mem:sensor-sweep": ["sensor-sweep-tier-1", "sensor-sweep-tier-2"],
