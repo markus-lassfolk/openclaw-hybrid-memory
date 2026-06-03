@@ -492,7 +492,7 @@ function parseGatewayJobs(
     const entry = resolveCatalogEntry(pluginJobId, name, stewardshipHint);
     if (!entry) continue;
 
-    const artifact = artifacts.get(entry.name);
+    const artifact = artifacts.get(entry.name) ?? (entry.pluginJobId ? artifacts.get(entry.pluginJobId) : undefined);
     const guardPath =
       entry.pluginJobId?.startsWith(HYBRID_MEM_PLUGIN_JOB_ID_PREFIX) || entry.jobKey === "nightly-memory-sweep"
         ? getGuardFilePath(entry.name, openclawDir)
@@ -550,7 +550,7 @@ function parseHostCrontab(
   crontabText: string,
   artifacts: Map<string, MaintenanceArtifacts>,
 ): MaintenanceInventoryJob[] {
-  const jobs: MaintenanceInventoryJob[] = [];
+  const jobsByInventoryId = new Map<string, MaintenanceInventoryJob>();
   let currentTimezone = "system";
   for (const rawLine of crontabText.split("\n")) {
     const line = rawLine.trim();
@@ -568,14 +568,17 @@ function parseHostCrontab(
     const entry = resolveCatalogEntry(inferredJobKey);
     if (!entry) continue;
 
-    const artifact = artifacts.get(entry.name);
+    const inventoryId = `host-cron:${entry.jobKey}`;
+    if (jobsByInventoryId.has(inventoryId)) continue;
+
+    const artifact = artifacts.get(entry.name) ?? (entry.pluginJobId ? artifacts.get(entry.pluginJobId) : undefined);
     const guardPath = getGuardFilePath(entry.name, openclawDir);
     const guardMs = readGuardTimestampMs(entry.name, openclawDir);
     const lastRun = pickLastRun(null, guardMs, artifact);
     const status = deriveArtifactStatus(entry, artifact);
 
-    jobs.push({
-      inventoryId: `host-cron:${entry.jobKey}`,
+    jobsByInventoryId.set(inventoryId, {
+      inventoryId,
       jobKey: entry.jobKey,
       name: entry.name,
       pluginJobId: entry.pluginJobId,
@@ -600,7 +603,7 @@ function parseHostCrontab(
       mutates: { ...entry.mutates },
     });
   }
-  return jobs;
+  return [...jobsByInventoryId.values()];
 }
 
 function buildCollisionGroups(jobs: MaintenanceInventoryJob[]): MaintenanceInventoryCollisionGroup[] {

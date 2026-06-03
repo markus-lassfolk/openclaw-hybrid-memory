@@ -13,6 +13,7 @@ export const HYBRID_MEM_CRON_DEFAULT_JOB_STEPS: Record<string, string[]> = {
   "hybrid-mem:nightly-dream-cycle": ["dream-cycle"],
   "hybrid-mem:weekly-reflection": ["reflect", "reflect-rules"],
   "hybrid-mem:nightly-self-correction": ["self-correct"],
+  "hybrid-mem:self-correction-analysis": ["self-correction-run"],
   "hybrid-mem:weekly-sensor-sweep": ["sensor-sweep"],
   "hybrid-mem:weekly-persona-proposals": ["generate-proposals"],
   "hybrid-mem:weekly-extract-procedures": [
