@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { hasAnyScopeFilter } from "../backends/scope-filter-sql.js";
 import { resolveReflectionModelAndFallbacks } from "../config.js";
-import { chatCompleteWithRetryDetailed } from "../services/chat.js";
+import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
@@ -14,6 +14,7 @@ import {
   promotePersonaStateFromReflections,
 } from "../services/persona-state-promotion.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
@@ -163,53 +164,82 @@ export async function runGenerateProposalsForCli(
   });
   const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(cfg, "heavy");
   const fallbackModels = resolvedFallbacks ?? [];
-  let rawResponse: string;
-  try {
-    const detail = await chatCompleteWithRetryDetailed({
-      model,
-      content: prompt,
-      temperature: 0.3,
-      maxTokens: 4000,
-      openai,
-      fallbackModels,
-      label: "memory-hybrid: generate-proposals",
-      feature: CostFeature.generateProposals,
-    });
-    rawResponse = detail.content;
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const failureMessage = `memory-hybrid: generate-proposals LLM call failed (model=${model}, fallbacks=${JSON.stringify(
-      fallbackModels,
-    )}): ${errMsg}`;
-    console.error(failureMessage);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      subsystem: "cli",
-      operation: "runGenerateProposalsForCli:llm",
-    });
-    throw new Error(failureMessage);
+  const allModels = [model, ...fallbackModels];
+  let items:
+    | Array<{
+        targetFile: string;
+        title: string;
+        observation: string;
+        suggestedChange: string;
+        confidence: number;
+      }>
+    | undefined;
+  let lastFailReason = "failure_type=unknown";
+  for (let modelIdx = 0; modelIdx < allModels.length; modelIdx++) {
+    const tryModel = allModels[modelIdx];
+    let rawResponse: string;
+    try {
+      const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+        model: tryModel,
+        modelSource: modelIdx === 0 ? "heavy" : "fallback",
+        content: prompt,
+        temperature: 0.3,
+        maxTokens: 4000,
+        openai,
+        fallbackModels: [],
+        label: "memory-hybrid: generate-proposals",
+        feature: CostFeature.generateProposals,
+        logger: {
+          info: (msg) => ctx.logger.info?.(msg),
+          warn: (msg) => ctx.logger.warn?.(msg),
+        },
+      });
+      rawResponse = detail.content;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      lastFailReason = `model=${tryModel} failure_type=llm_call_failed`;
+      if (opts.verbose) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals — ${tryModel} LLM call failed: ${errMsg.slice(0, 200)}`,
+        );
+      }
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "cli",
+        operation: "runGenerateProposalsForCli:llm",
+      });
+      continue;
+    }
+    try {
+      const strippedResponse = stripThinkingWrapperBlocks(rawResponse);
+      const firstBracket = strippedResponse.indexOf("[");
+      const lastBracket = strippedResponse.lastIndexOf("]");
+      const trimmed =
+        firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
+          ? strippedResponse.substring(firstBracket, lastBracket + 1)
+          : strippedResponse;
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) throw new SyntaxError("Not an array");
+      items = parsed;
+      break;
+    } catch (_err) {
+      const responseSnippet = rawResponse.slice(0, 200);
+      lastFailReason = `model=${tryModel} failure_type=invalid_json`;
+      if (modelIdx < allModels.length - 1) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals — ${tryModel} returned invalid JSON, retrying with fallback model`,
+        );
+      } else if (opts.verbose) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals — LLM output was not valid JSON: ${responseSnippet}`,
+        );
+      }
+      continue;
+    }
   }
-  let items: Array<{
-    targetFile: string;
-    title: string;
-    observation: string;
-    suggestedChange: string;
-    confidence: number;
-  }>;
-  try {
-    const firstBracket = rawResponse.indexOf("[");
-    const lastBracket = rawResponse.lastIndexOf("]");
-    const trimmed =
-      firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
-        ? rawResponse.substring(firstBracket, lastBracket + 1)
-        : rawResponse;
-    items = JSON.parse(trimmed);
-    if (!Array.isArray(items)) items = [];
-  } catch (_err) {
-    if (opts.verbose)
-      ctx.logger.warn?.(
-        `memory-hybrid: generate-proposals — LLM output was not valid JSON: ${rawResponse.slice(0, 200)}`,
-      );
-    return { created: 0 };
+  if (items === undefined) {
+    const failureMessage = `memory-hybrid: generate-proposals — all models failed: ${lastFailReason} (models tried: ${allModels.join(", ")})`;
+    console.error(failureMessage);
+    throw new Error(failureMessage);
   }
   const weekDays = 7;
   const recentCount = proposalsDb.countRecentProposals(weekDays);

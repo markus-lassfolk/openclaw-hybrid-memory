@@ -175,11 +175,190 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
 
     try {
       await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
-        /fallbacks=\[[^\]]*openai\/gpt-4\.1-mini/,
+        /models tried:.*openai\/gpt-4\.1-mini/,
       );
     } finally {
       chatSpy.mockRestore();
     }
+  });
+});
+
+describe("generate-proposals — JSON retry (#1824)", () => {
+  function makeCtxWithTwoHeavyModels(
+    db: InstanceType<typeof FactsDB>,
+    proposalsDb: InstanceType<typeof ProposalsDB>,
+    openai: unknown,
+  ): HandlerContext {
+    const cfg = {
+      personaProposals: {
+        enabled: true,
+        autoApply: false,
+        allowedFiles: ["SOUL.md"],
+        maxProposalsPerWeek: 5,
+        minConfidence: 0.5,
+        proposalTTLDays: 30,
+        minSessionEvidence: 1,
+        requireScopeFilter: false,
+      },
+      autoRecall: { scopeFilter: undefined },
+      identityReflection: { enabled: false },
+      identityPromotion: { enabled: false },
+      llm: { maintenance: ["primary-model"], default: ["primary-model"], heavy: ["primary-model", "fallback-model"] },
+    } as unknown as HybridMemoryConfig;
+
+    return {
+      factsDb: db,
+      proposalsDb,
+      cfg,
+      openai,
+      personaStateStore: null,
+      identityReflectionStore: null,
+      logger: { warn: vi.fn(), info: vi.fn() },
+    } as unknown as HandlerContext;
+  }
+
+  it("retries with fallback model when primary returns invalid JSON", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+
+    let callIndex = 0;
+    const validJson = JSON.stringify([
+      {
+        targetFile: "SOUL.md",
+        title: "Test proposal",
+        observation: "Observed pattern",
+        suggestedChange: "Add note about TypeScript preference",
+        confidence: 0.8,
+      },
+    ]);
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: callIndex++ === 0 ? "not json at all!!!" : validJson } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+    const result = await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+    expect(result.created).toBe(1);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining("invalid JSON"));
+  });
+
+  it("throws when all models return invalid JSON", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: "not valid json" } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+
+    await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
+      "all models failed",
+    );
+
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not leak raw LLM response snippets in thrown/default error when verbose=false", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+    const sensitiveSnippet = "PRIVATE_SOUL_CONTENT_SHOULD_NOT_LEAK";
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: `not valid json ${sensitiveSnippet}` } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      let thrown: Error | null = null;
+      try {
+        await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+      } catch (err) {
+        thrown = err as Error;
+      }
+      expect(thrown).not.toBeNull();
+      expect(thrown?.message).toContain("failure_type=invalid_json");
+      expect(thrown?.message).not.toContain(sensitiveSnippet);
+      const lastConsoleArg = String(consoleErrorSpy.mock.calls[consoleErrorSpy.mock.calls.length - 1]?.[0] ?? "");
+      expect(lastConsoleArg).toContain("failure_type=invalid_json");
+      expect(lastConsoleArg).not.toContain(sensitiveSnippet);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("allows response snippet logging in verbose mode but keeps thrown error sanitized", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+    const sensitiveSnippet = "VERBOSE_ONLY_SNIPPET";
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: `still not valid json ${sensitiveSnippet}` } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithTwoHeavyModels(db, proposalsDb, openai);
+    let thrown: Error | null = null;
+    try {
+      await runGenerateProposalsForCli(ctx, { dryRun: false, verbose: true }, { resolvePath: (f) => f });
+    } catch (err) {
+      thrown = err as Error;
+    }
+    expect(thrown).not.toBeNull();
+    expect(thrown?.message).toContain("failure_type=invalid_json");
+    expect(thrown?.message).not.toContain(sensitiveSnippet);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringContaining(sensitiveSnippet));
   });
 });
 

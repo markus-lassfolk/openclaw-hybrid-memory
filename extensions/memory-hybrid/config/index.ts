@@ -26,6 +26,7 @@ import { resolveSecretRef } from "./parsers/core.js";
 import {
   effectiveMaintenanceFallbackPolicy,
   filterMaintenanceTierFallbackModels,
+  isExpensiveMaintenanceFallbackModel,
 } from "./maintenance-fallback-policy.js";
 // LLM model utilities
 import type { CronModelConfig, CronModelTier, HybridMemoryConfig } from "./types/index.js";
