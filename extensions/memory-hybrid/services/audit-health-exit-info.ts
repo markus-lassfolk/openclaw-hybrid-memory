@@ -86,8 +86,12 @@ export function buildAuditFailureArtifact(
   err: unknown,
   elapsedMs?: number,
   strict?: boolean,
+  preReportErrors?: Array<{ section: string; message: string }>,
+  preReportWarnings?: string[],
 ): AuditHealthFailureArtifact {
   const message = err instanceof Error ? err.message : String(err);
+  const allErrors = [...(preReportErrors ?? []), { section: "audit-health", message }];
+  const allWarnings = [...(preReportWarnings ?? [])];
   return {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
@@ -96,10 +100,10 @@ export function buildAuditFailureArtifact(
     exitCode: 2,
     exitReason: strict ? "strict_failed" : "errors",
     strictFailureReason: strict ? message : "",
-    errorCount: 1,
-    warningCount: 0,
-    errors: [{ section: "audit-health", message }],
-    warnings: [],
+    errorCount: allErrors.length,
+    warningCount: allWarnings.length,
+    errors: allErrors,
+    warnings: allWarnings,
     ...(elapsedMs != null ? { elapsedMs } : {}),
   };
 }

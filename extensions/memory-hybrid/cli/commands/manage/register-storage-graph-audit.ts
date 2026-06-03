@@ -262,7 +262,9 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
       if (wantsJson || outputPath) {
         try {
           const strict = opts?.strict === true;
-          emitJsonArtifact(buildAuditFailureArtifact(err, Date.now() - startedAtMs, strict));
+          emitJsonArtifact(
+            buildAuditFailureArtifact(err, Date.now() - startedAtMs, strict, preReportErrors, preReportWarnings),
+          );
         } catch (emitErr) {
           // Last-resort: if emitJsonArtifact itself fails (e.g. disk full or stdout closed),
           // emit a minimal diagnostic to stderr so the operator has something to act on.
