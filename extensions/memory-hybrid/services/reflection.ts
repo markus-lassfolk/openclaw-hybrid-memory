@@ -1910,7 +1910,7 @@ export async function runReflectionMeta(
     if (zeroMetasReason === "invalid_response_format" || zeroMetasReason === "empty_model_response") {
       throw new Error(`memory-hybrid: reflect-meta — model=${modelUsed} failure_type=${zeroMetasReason}`);
     }
-    return { metaExtracted: parseResult.parseableLines, metaStored: 0, diagnostics };
+    return { metaExtracted: uniqueMetas.length, metaStored: 0, diagnostics };
   }
 
   if (parseResult.parsedFromJson && opts.verbose) {

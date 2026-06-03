@@ -261,19 +261,26 @@ export function parseRulesFromModelResponse(rawResponse: string): ReflectionRule
         parsedFromJson: true,
       };
     }
-  } else {
-    const lineParse = parseRuleLines(responseForParsing);
+  }
+  
+  const lineParse = parseRuleLines(responseForParsing);
+  if (!jsonObject) {
     rules = lineParse.rules;
     parseableLines = lineParse.parseableLines;
     rejectedLowConfidence = lineParse.rejectedLowConfidence;
     rejectedLength = lineParse.rejectedLength;
-    for (const wrapperContent of wrapperContents) {
-      const wrapperParse = parseRuleLines(wrapperContent);
-      parseableLines += wrapperParse.parseableLines;
-      rejectedLowConfidence += wrapperParse.rejectedLowConfidence;
-      rejectedLength += wrapperParse.rejectedLength;
-      rules.push(...wrapperParse.rules);
-    }
+  } else {
+    parseableLines += lineParse.parseableLines;
+    rejectedLowConfidence += lineParse.rejectedLowConfidence;
+    rejectedLength += lineParse.rejectedLength;
+    rules.push(...lineParse.rules);
+  }
+  for (const wrapperContent of wrapperContents) {
+    const wrapperParse = parseRuleLines(wrapperContent);
+    parseableLines += wrapperParse.parseableLines;
+    rejectedLowConfidence += wrapperParse.rejectedLowConfidence;
+    rejectedLength += wrapperParse.rejectedLength;
+    rules.push(...wrapperParse.rules);
   }
 
   const { unique, rejectedDuplicates } = dedupeStrings(rules);
@@ -334,18 +341,24 @@ export function parseMetasFromModelResponse(rawResponse: string): ReflectionMeta
         parsedFromJson: true,
       };
     }
-  } else {
-    const lineParse = parseMetaLines(responseForParsing);
+  }
+
+  const lineParse = parseMetaLines(responseForParsing);
+  if (!jsonObject) {
     metas = lineParse.metas;
     parseableLines = lineParse.parseableLines;
     rejectedLength = lineParse.rejectedLength;
+  } else {
+    parseableLines += lineParse.parseableLines;
+    rejectedLength += lineParse.rejectedLength;
+    metas.push(...lineParse.metas);
+  }
 
-    for (const wrapperContent of extractThinkingWrapperContents(trimmedResponse)) {
-      const wrapperParse = parseMetaLines(wrapperContent);
-      metas.push(...wrapperParse.metas);
-      parseableLines += wrapperParse.parseableLines;
-      rejectedLength += wrapperParse.rejectedLength;
-    }
+  for (const wrapperContent of extractThinkingWrapperContents(trimmedResponse)) {
+    const wrapperParse = parseMetaLines(wrapperContent);
+    metas.push(...wrapperParse.metas);
+    parseableLines += wrapperParse.parseableLines;
+    rejectedLength += wrapperParse.rejectedLength;
   }
 
   const { unique, rejectedDuplicates } = dedupeStrings(metas);
