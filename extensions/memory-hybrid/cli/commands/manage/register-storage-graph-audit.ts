@@ -135,6 +135,27 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
         `personaProposals is enabled but autoRecall.scopeFilter is not set; generate-proposals will include facts from all scopes. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-scope contamination. For multi-agent hosts, also consider setting personaProposals.requireScopeFilter: true to hard-fail when scopeFilter is absent.`,
       );
     }
+    // #1832: warn when credentials vault is plaintext but an encryption key is configured.
+    let credentialsStatus = null;
+    try {
+      credentialsStatus = b.runVaultStatus?.() ?? null;
+    } catch (err) {
+      preReportErrors.push({
+        section: "credentials.vaultStatus",
+        message: err instanceof Error ? err.message : String(err),
+      });
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "audit-health-vault-status",
+        severity: "info",
+        subsystem: "cli",
+      });
+    }
+    if (credentialsStatus?.migrationRequired) {
+      preReportWarnings.push(
+        `Credentials vault is plaintext (kdf_version=${credentialsStatus.kdfVersion}) but an encryption key is configured. ` +
+          `Encrypt the vault: run \`openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes\` (see docs/CREDENTIALS.md).`,
+      );
+    }
     const withTimeout = async <T>(promise: Promise<T>, section: string): Promise<T | undefined> => {
       const remainingMs = Math.max(1, deadlineMs - Date.now());
       let timer: NodeJS.Timeout | undefined;
@@ -207,6 +228,14 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           timeoutMs,
           startedAtMs,
           deadlineMs,
+          credentialsStatus: credentialsStatus
+            ? {
+                encryptedAtRest: credentialsStatus.encryptedAtRest,
+                kdfVersion: credentialsStatus.kdfVersion,
+                entryCount: credentialsStatus.entryCount,
+                migrationRequired: credentialsStatus.migrationRequired,
+              }
+            : null,
           degradedState:
             typeof (vectorDb as { getDegradedState?: unknown }).getDegradedState === "function"
               ? (

@@ -96,9 +96,21 @@ export type EncryptVaultResult =
       dryRun: false;
       vaultPath: string;
       migrated: number;
+      backupPath?: string;
+      verified?: boolean;
       status: { kdfVersion: number; encryptedAtRest: boolean };
     }
   | { ok: false; vaultPath: string; error: string };
+
+export type VaultStatusResult = {
+  dbPath: string;
+  kdfVersion: number;
+  encryptedAtRest: boolean;
+  configuredKeyPresent: boolean;
+  keyIgnored: boolean;
+  migrationRequired: boolean;
+  entryCount: number;
+};
 
 export type DistillWindowResult = {
   mode: "full" | "incremental";

@@ -7,6 +7,7 @@
  *   - credentials list   — list vault metadata without decryption
  *   - credentials get    — retrieve a single vault entry by service
  *   - credentials prune  — remove flagged entries (dry-run by default)
+ *   - credentials vault-status — show vault encryption status
  */
 
 import { dirname, join } from "node:path";
@@ -21,6 +22,7 @@ import type {
   CredentialsPruneResult,
   EncryptVaultResult,
   MigrateToVaultResult,
+  VaultStatusResult,
 } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -58,8 +60,13 @@ export async function runMigrateToVaultForCli(ctx: HandlerContext): Promise<Migr
 /**
  * Encrypt an existing plaintext vault at rest (kdf_version=0).
  * Safe by default: returns a dry-run unless `yes` is true.
+ * Pass `backup: true` to auto-generate a plaintext backup path, or `backupPath` for a custom path.
+ * Pass `verify: true` to confirm every entry is readable after encryption.
  */
-export function runEncryptVaultForCli(ctx: HandlerContext, opts: { yes?: boolean }): EncryptVaultResult {
+export function runEncryptVaultForCli(
+  ctx: HandlerContext,
+  opts: { yes?: boolean; backup?: boolean; backupPath?: string; verify?: boolean },
+): EncryptVaultResult {
   const { credentialsDb, resolvedSqlitePath, cfg } = ctx;
   const vaultPath = join(dirname(resolvedSqlitePath), "credentials.db");
   if (!credentialsDb) {
@@ -84,20 +91,44 @@ export function runEncryptVaultForCli(ctx: HandlerContext, opts: { yes?: boolean
     return { ok: true, dryRun: true, vaultPath, status: { kdfVersion: st.kdfVersion, encryptedAtRest: false } };
   }
 
+  // Resolve backup path: explicit path > auto-generated (when --backup is set) > none
+  let resolvedBackupPath: string | undefined = opts.backupPath;
+  if (!resolvedBackupPath && opts.backup) {
+    resolvedBackupPath = `${vaultPath}.bak.${Date.now()}-${process.pid}`;
+  }
+
   try {
-    const res = credentialsDb.enableEncryptionAtRest(cfg.credentials.encryptionKey ?? "");
+    const res = credentialsDb.encryptVaultSafe(cfg.credentials.encryptionKey ?? "", {
+      backupPath: resolvedBackupPath,
+      verify: opts.verify,
+    });
     const after = credentialsDb.getVaultStatus();
     return {
       ok: true,
       dryRun: false,
       vaultPath,
       migrated: res.migrated,
+      ...(res.backupPath !== undefined ? { backupPath: res.backupPath } : {}),
+      ...(res.verified !== undefined ? { verified: res.verified } : {}),
       status: { kdfVersion: after.kdfVersion, encryptedAtRest: after.encryptedAtRest },
     };
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runEncryptVaultForCli" });
     return { ok: false, vaultPath, error: String(err) };
   }
+}
+
+// ---------------------------------------------------------------------------
+// credentials vault-status
+// ---------------------------------------------------------------------------
+
+/**
+ * Return vault encryption status. Returns null when the credentials vault is disabled.
+ */
+export function runVaultStatusForCli(ctx: HandlerContext): VaultStatusResult | null {
+  const { credentialsDb } = ctx;
+  if (!credentialsDb) return null;
+  return credentialsDb.getVaultStatus();
 }
 
 // ---------------------------------------------------------------------------
