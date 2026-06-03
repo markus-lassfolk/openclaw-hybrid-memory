@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { getEnv } from "../utils/env-manager.js";
 
 export const DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD = 200;
 export const DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD = 1;
@@ -44,7 +45,7 @@ interface PersistedNoProgressState {
 }
 
 function resolveStatePath(openclawHome?: string): string {
-  const root = openclawHome ?? process.env.OPENCLAW_HOME ?? join(homedir(), ".openclaw");
+  const root = openclawHome ?? getEnv("OPENCLAW_HOME") ?? join(homedir(), ".openclaw");
   return join(root, "cron", "guard", "resolve-contradictions-no-progress.json");
 }
 
