@@ -24,6 +24,7 @@ import type {
   StoreCliResult,
   UninstallCliResult,
   UpgradeCliResult,
+  VaultStatusResult,
 } from "./types.js";
 
 export type ManageContext = {
@@ -46,7 +47,8 @@ export type ManageContext = {
     sink: IngestFilesSink,
   ) => Promise<IngestFilesResult>;
   runMigrateToVault: () => Promise<MigrateToVaultResult | null>;
-  runEncryptVault: (opts: { yes?: boolean }) => EncryptVaultResult;
+  runEncryptVault: (opts: { yes?: boolean; backup?: boolean; backupPath?: string; verify?: boolean }) => EncryptVaultResult;
+  runVaultStatus: () => VaultStatusResult | null;
   runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
   runCredentialsGet: (opts: {
     service: string;
