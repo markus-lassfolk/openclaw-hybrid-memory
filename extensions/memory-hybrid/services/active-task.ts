@@ -765,6 +765,7 @@ export function isNonActionableSubagentPlaceholderTask(task: ActiveTaskEntry): b
     normalizedDescription === "project task" ||
     normalizedDescription === "task" ||
     normalizedDescription.startsWith("subagent task");
+  if (!descriptionLooksPlaceholder && !isSubagentSession(label) && label !== subagent) return false;
   return descriptionLooksPlaceholder || isSubagentSession(label) || label === subagent;
 }
 

@@ -33,7 +33,6 @@ import {
 import type { EmbeddingProvider } from "./embeddings.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import { fetchLivePrBlockerStatus } from "./task-hygiene.js";
-import { cleanupEvictedVector } from "./vector-maintenance.js";
 import {
   activeTaskProvenance,
   canonicalLabel,
@@ -44,6 +43,7 @@ import {
   isTerminalFactStatus,
   readCanonicalLabelFromFact,
 } from "./task-ledger/canonical.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -495,6 +495,12 @@ async function recordActiveTaskSessionReconcileAudit(
   }
   if (!storeResult.skipped && storeResult.newlyStored) {
     try {
+      if (!vectorDb.isLanceAvailable()) {
+        log?.warn?.(
+          "memory-hybrid: active-task session reconcile audit vector store skipped (Lance unavailable in degraded FTS-only mode)",
+        );
+        return storeResult.entry.id;
+      }
       const vector = await embeddings.embed(storeResult.entry.text);
       factsDb.setEmbeddingModel(storeResult.entry.id, embeddings.modelName);
       await vectorDb.store({
