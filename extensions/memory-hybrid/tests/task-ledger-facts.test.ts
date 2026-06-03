@@ -11,6 +11,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
 import { type ActiveTaskEntry, UNKNOWN_ACTIVE_TASK_TIME } from "../services/active-task.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { initPluginLogger, resetPluginLogger } from "../utils/logger.js";
 import {
   applyActiveTaskHygieneFacts,
   applyActiveTaskProjectionFilters,
@@ -166,6 +167,58 @@ describe("task-ledger-facts", () => {
     expect(completed).toHaveLength(1);
     expect(completed[0].label).toBe("done-task");
     expect(completed[0].status).toBe("Done");
+  });
+
+  it("buildTaskEntriesFromGroupedFacts parses valid handoff JSON and warns on malformed handoff facts", () => {
+    const warn = vi.fn();
+    initPluginLogger({ info: vi.fn(), warn, error: vi.fn() });
+    try {
+      const validHandoff = JSON.stringify({
+        schema: "octave/task-handoff@v1",
+        artifactId: "artifact-1",
+        signal: "completed",
+        agent: "worker",
+        timestamp: "2026-01-01T00:00:00.000Z",
+        checksum: "abc123",
+      });
+
+      const valid = new Map<string, MemoryEntry>();
+      valid.set("status", fact({ id: "s1", entity: "task-valid", key: "status", value: "in_progress", createdAt: 1 }));
+      valid.set("title", fact({ id: "t1", entity: "task-valid", key: "title", value: "Valid handoff", createdAt: 1 }));
+      valid.set(
+        "handoff",
+        fact({ id: "h1", entity: "task-valid", key: "handoff", value: validHandoff, createdAt: 1 }),
+      );
+
+      const invalid = new Map<string, MemoryEntry>();
+      invalid.set(
+        "status",
+        fact({ id: "s2", entity: "task-invalid", key: "status", value: "in_progress", createdAt: 1 }),
+      );
+      invalid.set(
+        "title",
+        fact({ id: "t2", entity: "task-invalid", key: "title", value: "Bad handoff", createdAt: 1 }),
+      );
+      invalid.set(
+        "handoff",
+        fact({ id: "h2", entity: "task-invalid", key: "handoff", value: "{not-json", createdAt: 1 }),
+      );
+
+      const grouped = new Map<string, Map<string, MemoryEntry>>([
+        ["task-valid", valid],
+        ["task-invalid", invalid],
+      ]);
+      const { active } = buildTaskEntriesFromGroupedFacts(grouped);
+
+      expect(active.find((task) => task.label === "task-valid")?.handoff).toMatchObject({
+        artifactId: "artifact-1",
+        signal: "completed",
+      });
+      expect(active.find((task) => task.label === "task-invalid")?.handoff).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to parse active-task handoff JSON for task-invalid"));
+    } finally {
+      resetPluginLogger();
+    }
   });
 
   it("derives Started/Updated from fact row createdAt when string fields absent", () => {

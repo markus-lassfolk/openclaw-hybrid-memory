@@ -215,7 +215,7 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
         entry.relatedGoal = value || undefined;
         break;
       case "handoff":
-        entry.handoff = parseHandoffRef(value) ?? undefined;
+        entry.handoff = parseHandoffRef(value, entry.label) ?? undefined;
         break;
     }
   }
@@ -223,13 +223,21 @@ function parseTaskBlock(header: string, lines: string[]): ActiveTaskEntry | null
   return entry as ActiveTaskEntry;
 }
 
-function parseHandoffRef(value: string): ActiveTaskHandoffRef | null {
+/** Parse persisted handoff JSON into a typed ref; logs malformed values (#1845). */
+export function parseHandoffRef(value: string, context?: string): ActiveTaskHandoffRef | null {
   if (!value) return null;
+  const label = context?.trim() || "task";
   try {
     const parsed = JSON.parse(value) as unknown;
-    if (!isHandoffRef(parsed)) return null;
+    if (!isHandoffRef(parsed)) {
+      pluginLogger.warn(`memory-hybrid: invalid active-task handoff JSON for ${label}: shape validation failed`);
+      return null;
+    }
     return parsed;
-  } catch {
+  } catch (err) {
+    pluginLogger.warn(
+      `memory-hybrid: failed to parse active-task handoff JSON for ${label}: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
 }
