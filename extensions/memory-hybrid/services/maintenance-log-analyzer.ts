@@ -809,6 +809,13 @@ function loadPersistedMaintenanceFindingLedger(dbPath: string): Map<string, Pers
   if (!existsSync(dbPath)) return new Map();
   const db = new DatabaseSync(dbPath);
   try {
+    // Ensure occurrence_count column exists before querying it (schema migration for older DBs).
+    try {
+      const checkCol = db.prepare(`SELECT occurrence_count FROM maintenance_finding LIMIT 0`);
+      checkCol.all();
+    } catch {
+      db.exec(`ALTER TABLE maintenance_finding ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1`);
+    }
     const rows = db
       .prepare(
         `SELECT fingerprint,
