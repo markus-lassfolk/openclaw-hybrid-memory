@@ -907,8 +907,8 @@ export async function resolveContradictionsAutonomously(
       reviewItem.suggestedStrategy = "project-state-lww";
       reviewItem.suggestedConfidence = 1;
       reviewItem.suggestedReason = "Trusted newer project-state fact supersedes the stale value.";
+      deterministic++;
       if (!dryRun) {
-        deterministic++;
         const applied = persistContradictionDecision(db, getById, supersede, {
           contradictionId: contradiction.id,
           keptFactId: contradiction.factIdNew,
@@ -941,8 +941,8 @@ export async function resolveContradictionsAutonomously(
           reviewItem.suggestedStrategy = "llm-adjudication";
           reviewItem.suggestedConfidence = confidence;
           reviewItem.suggestedReason = llmDecision.reason?.trim() || "LLM adjudication approved the resolution.";
+          llmResolved++;
           if (!dryRun) {
-            llmResolved++;
             const keepNew = llmDecision.decision === "keep_new";
             const applied = persistContradictionDecision(db, getById, supersede, {
               contradictionId: contradiction.id,
