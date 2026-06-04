@@ -926,6 +926,57 @@ export async function runSelfCorrectionRunForCli(
           batch,
         );
         if (result.items === null) {
+          const trimmedRaw = (result.rawContent ?? "").trim();
+          const emptyArrayResponse =
+            trimmedRaw === "[]" ||
+            (() => {
+              try {
+                const parsed = JSON.parse(trimmedRaw);
+                return Array.isArray(parsed) && parsed.length === 0;
+              } catch {
+                return false;
+              }
+            })();
+          if (emptyArrayResponse) {
+            if (batch.length === 0) {
+              completedBatchIndexes.add(batchIndex);
+              persistBatchState();
+              if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+                await sleepSelfCorrectionBackoff(batchDelayMs);
+              }
+              continue;
+            }
+            const synthesized: SelfCorrectionRemediationItem[] = batch.map((_, localIdx) => ({
+              incidentIndex: localIdx,
+              remediationType: "NO_ACTION",
+              category: "",
+              severity: "",
+              remediationContent: "",
+            }));
+            const ordered = orderBatchItemsByIncidentIndex(batch.length, synthesized, logger, globalIncidentOffset);
+            if (ordered === null) {
+              diagnostics.unparseableFailures++;
+              const emptyError = new Error(
+                `Self-correction analysis: ${batchLabel} empty [] response could not be mapped to incidents.`,
+              );
+              (emptyError as any).isParseFailure = true;
+              throw emptyError;
+            }
+            const attached = attachOrderedItemsToIncidents<CorrectionIncident, SelfCorrectionRemediationItem>(
+              batch,
+              ordered,
+              globalIncidentOffset,
+            );
+            const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
+            diagnostics.parsedItems += added;
+            completedBatchIndexes.add(batchIndex);
+            logger.info?.(`memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${attached.length}`);
+            persistBatchState();
+            if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+              await sleepSelfCorrectionBackoff(batchDelayMs);
+            }
+            continue;
+          }
           diagnostics.unparseableFailures++;
           const excerpt = sanitizeLlmResponseExcerpt(result.rawContent ?? "");
           const parseError = new Error(
