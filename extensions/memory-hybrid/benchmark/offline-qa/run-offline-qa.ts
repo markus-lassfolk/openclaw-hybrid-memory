@@ -10,7 +10,6 @@
  *   npm run offline-qa -- --reuse-work       # skip clone; use sandbox-work
  *   npm run offline-qa -- --work-home PATH   # clone template to PATH for this run
  */
-import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -42,6 +41,7 @@ import { loadCorpus, writeCorpusSnapshot } from "../ab-maintenance/corpus.js";
 import { buildDecisionReport } from "../ab-maintenance/decide.js";
 import type { AbRunResult } from "../ab-maintenance/types.js";
 import { setEnv, getEnv } from "../../utils/env-manager.js";
+import { spawnSync } from "../../utils/process-runner.js";
 import type { QaPhaseResult, QaReport } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
