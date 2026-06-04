@@ -15,9 +15,13 @@ import {
   formatMaintenanceCoverageReport,
 } from "../../../services/maintenance-coverage.js";
 import {
-  extractToolCallSequence,
   parseSessionMessagesFromLines,
 } from "../../../services/session-signal-context.js";
+import {
+  extractToolSequenceFromMessages,
+  extractToolSequenceFromTrajectoryLines,
+  readTrajectoryLines,
+} from "../../../services/session-v3-parser.js";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { redactMaintenancePrivateText } from "../../../utils/maintenance-privacy.js";
@@ -46,18 +50,27 @@ function inferSessionOutcome(messages: Array<{ role: string; text: string }>): "
   return "unknown";
 }
 
+function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
+  const lines = readFileSync(filePath, "utf-8").split("\n");
+  const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
+  const tools = extractToolSequenceFromMessages(messages);
+  const trajLines = readTrajectoryLines(filePath);
+  if (trajLines) {
+    tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "backfill-workflow-traces"));
+  }
+  return tools;
+}
+
 function backfillWorkflowTracesFromFile(
   factsDb: FactsDB,
   workflowStore: WorkflowStore,
   filePath: string,
 ): { traces: number; proceduresUpdated: number } {
+  const tools = collectWorkflowToolsFromSessionFile(filePath);
+  if (tools.length < 2) return { traces: 0, proceduresUpdated: 0 };
+
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
-  const tools: string[] = [];
-  for (const msg of messages) {
-    tools.push(...extractToolCallSequence(msg.content));
-  }
-  if (tools.length < 2) return { traces: 0, proceduresUpdated: 0 };
 
   const sessionId = basename(filePath);
   const goal =

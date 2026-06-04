@@ -6,11 +6,18 @@
 import { readFileSync } from "node:fs";
 import { extractMessageText } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
+import { normalizeSessionRole } from "./session-v3-parser.js";
 
 export type SessionMessage = {
   role: "user" | "assistant" | "tool";
   text: string;
   content: unknown;
+  /** v3 toolResult: tool name (e.g. memory_recall, exec). */
+  toolName?: string;
+  /** v3 toolResult: links back to assistant toolCall id. */
+  toolCallId?: string;
+  /** v3 toolResult: structured payload (e.g. details.memories). */
+  details?: unknown;
 };
 
 export type SignalContext = {
@@ -41,12 +48,15 @@ export function parseSessionMessagesFromLines(lines: string[], subsystem: string
       const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: unknown } };
       if (obj.type !== "message" || !obj.message) continue;
       const msg = obj.message;
-      const role = msg.role === "user" || msg.role === "assistant" || msg.role === "tool" ? msg.role : null;
+      const role = normalizeSessionRole(msg.role);
       if (!role) continue;
       messages.push({
         role,
         text: extractMessageText(msg.content),
         content: msg.content,
+        toolName: typeof msg.toolName === "string" ? msg.toolName : undefined,
+        toolCallId: typeof msg.toolCallId === "string" ? msg.toolCallId : undefined,
+        details: msg.details,
       });
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -101,7 +111,7 @@ export function extractToolCallSequence(content: unknown): string[] {
   for (const block of content) {
     if (block && typeof block === "object") {
       const type = (block as { type?: string }).type;
-      if (type === "tool_use") {
+      if (type === "tool_use" || type === "toolCall") {
         const name = (block as { name?: string }).name;
         if (typeof name === "string" && name.trim()) {
           tools.push(name.trim());

@@ -5,6 +5,11 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import {
+  extractRecallEventsFromMessages,
+  extractRecallEventsFromTrajectoryLines,
+  readTrajectoryLines,
+} from "./session-v3-parser.js";
 import { extractRecalledMemoryIds, parseSessionMessagesFromLines } from "./session-signal-context.js";
 import { timestampFromFilename } from "../utils/text.js";
 
@@ -131,12 +136,14 @@ export function extractRecallEventsFromAssistantContent(content: unknown): Parse
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
     const type = (block as { type?: string }).type;
-    if (type === "tool_use") {
+    if (type === "tool_use" || type === "toolCall") {
       const name = (block as { name?: string }).name;
       if (name !== "memory_recall") continue;
       const toolId = (block as { id?: string }).id;
       const input = (block as { input?: Record<string, unknown> }).input;
-      const query = typeof input?.query === "string" ? input.query : undefined;
+      const args = (block as { arguments?: Record<string, unknown> }).arguments;
+      const querySource = input ?? args;
+      const query = typeof querySource?.query === "string" ? querySource.query : undefined;
       if (toolId) pending.set(toolId, { query });
       continue;
     }
@@ -180,11 +187,9 @@ export function backfillRecallEventsFromSessionFile(db: DatabaseSync, filePath: 
   let inserted = 0;
   let turnIndex = 0;
 
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    turnIndex++;
-    const parsed = extractRecallEventsFromAssistantContent(msg.content);
-    for (const ev of parsed) {
+  const logParsedEvents = (events: ReturnType<typeof extractRecallEventsFromMessages>): void => {
+    for (const ev of events) {
+      turnIndex++;
       logRecallEvent(db, {
         occurredAtSec: occurredBase + turnIndex,
         sessionKey,
@@ -195,6 +200,20 @@ export function backfillRecallEventsFromSessionFile(db: DatabaseSync, filePath: 
       });
       inserted++;
     }
+  };
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    const inline = extractRecallEventsFromAssistantContent(msg.content);
+    logParsedEvents(inline);
   }
+
+  logParsedEvents(extractRecallEventsFromMessages(messages));
+
+  const trajLines = readTrajectoryLines(filePath);
+  if (trajLines) {
+    logParsedEvents(extractRecallEventsFromTrajectoryLines(trajLines, "backfill-recall-events"));
+  }
+
   return inserted;
 }

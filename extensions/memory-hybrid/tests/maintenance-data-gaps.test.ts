@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { runFactsMigrations } from "../backends/migrations/facts-migrations.js";
@@ -146,6 +146,25 @@ describe("maintenance data gaps", () => {
     const row = scanSessionFileForMetadata(db, file);
     expect(row).not.toBeNull();
     expect(row!.userCharCount).toBeGreaterThan(20);
+    db.close();
+  });
+
+  it("backfills recall_events from v3 toolCall + toolResult session messages", () => {
+    const db = openTestDb();
+    const dir = mkdtempSync(join(tmpdir(), "sess-v3-"));
+    const memoryId = "83ea74d1-736d-44bd-b4c1-82463f6e8e80";
+    const sessionFile = join(dir, "a8419e96-827e-4ad2-b8ed-0e4839721239.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        `{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_v3_1","name":"memory_recall","arguments":{"query":"smart-home","limit":10}}]}}`,
+        `{"type":"message","message":{"role":"toolResult","toolCallId":"call_v3_1","toolName":"memory_recall","content":[{"type":"text","text":"Found 1 memories"}],"details":{"memories":[{"id":"${memoryId}","text":"Task title","category":"project"}]}}}`,
+      ].join("\n"),
+    );
+    const inserted = backfillRecallEventsFromSessionFile(db, sessionFile);
+    expect(inserted).toBeGreaterThanOrEqual(1);
+    const ids = mergeRecallFactIdsForSession(db, basename(sessionFile));
+    expect(ids).toContain(memoryId);
     db.close();
   });
 });

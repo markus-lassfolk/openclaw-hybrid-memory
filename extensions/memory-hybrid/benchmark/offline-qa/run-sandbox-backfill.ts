@@ -16,7 +16,8 @@ import {
   buildMaintenanceCoverageReport,
   formatMaintenanceCoverageReport,
 } from "../../services/maintenance-coverage.js";
-import { extractToolCallSequence, parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
+import { extractToolSequenceFromMessages, extractToolSequenceFromTrajectoryLines, readTrajectoryLines } from "../../services/session-v3-parser.js";
+import { parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
 import { redactMaintenancePrivateText } from "../../utils/maintenance-privacy.js";
 
 const home = process.env.HOME ?? homedir();
@@ -41,8 +42,9 @@ for (const p of paths) {
   if (synthesizeDailyLogFromSessionFile(p)) daily++;
   if (scanSessionFileForMetadata(factsDb.getRawDb(), p)) langs++;
   const messages = parseSessionMessagesFromLines(readFileSync(p, "utf-8").split("\n"), "sandbox-backfill");
-  const tools: string[] = [];
-  for (const m of messages) tools.push(...extractToolCallSequence(m.content));
+  const tools = extractToolSequenceFromMessages(messages);
+  const trajLines = readTrajectoryLines(p);
+  if (trajLines) tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "sandbox-backfill"));
   if (tools.length >= 2) {
     wf.record({
       goal: redactMaintenancePrivateText(messages.find((m) => m.role === "user")?.text.slice(0, 200) ?? "session"),
