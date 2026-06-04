@@ -202,4 +202,50 @@ describe("buildActiveTaskContextBundle", () => {
     expect(hygiene).toContain("<task-hygiene>");
     expect(hygiene).toContain("and 15 more");
   });
+
+  it("suppresses non-stale orphan subagent placeholders in full projection mode", () => {
+    const tasks = [
+      entry({
+        label: "agent:main:subagent:worker-2",
+        description: "Subagent task (session: agent:main:subagent:worker-2)",
+        subagent: "agent:main:subagent:worker-2",
+        stale: false,
+      }),
+      entry({
+        label: "real-work",
+        description: "Investigate projection cleanup",
+        stale: false,
+      }),
+    ];
+    const bundle = buildActiveTaskContextBundle({
+      ledgerTasks: tasks,
+      injectionBudgetTokens: 500,
+      staleMinutes: 60,
+      staleWarningEnabled: false,
+      projection: { ...defaultProjection, mode: "full", excludeGenericTitle: false },
+    });
+    const main = bundle.parts.find((p) => p.includes("<active-tasks>")) ?? "";
+    expect(main).toContain("[real-work]");
+    expect(main).not.toContain("agent:main:subagent:worker-2");
+    expect(bundle.injectedTaskCount).toBe(1);
+  });
+
+  it("excludes Failed rows from heartbeat main injection block", () => {
+    const tasks = [
+      entry({ label: "failed-task", status: "Failed", description: "Dispatch failed", stale: false }),
+      entry({ label: "live-task", status: "In progress", description: "Continue rollout", stale: false }),
+    ];
+    const bundle = buildActiveTaskContextBundle({
+      ledgerTasks: tasks,
+      injectionBudgetTokens: 500,
+      staleMinutes: 60,
+      staleWarningEnabled: false,
+      projection: { ...defaultProjection, excludeGenericTitle: false },
+      heartbeatHygiene: { maxChars: 800, suggestGoalAfterTaskAgeDays: 0 },
+    });
+    const main = bundle.parts.find((p) => p.includes("<active-tasks>")) ?? "";
+    expect(main).toContain("[live-task]");
+    expect(main).not.toContain("[failed-task]");
+    expect(bundle.injectedTaskCount).toBe(1);
+  });
 });

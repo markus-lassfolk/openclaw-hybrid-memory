@@ -434,6 +434,44 @@ describe("stage-cleanup facts ledger subagent hooks", () => {
     expect(task?.handoff).toBeUndefined();
   });
 
+  it("subagent_ended does not mark terminal Failed tasks Done on late success", async () => {
+    await api.emitAll(
+      "subagent_spawned",
+      {
+        label: "failed-no-reopen",
+        childSessionKey: "agent:main:subagent:failed-no-reopen",
+        task: "Work that will fail",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    await api.emitAll(
+      "subagent_ended",
+      {
+        label: "failed-no-reopen",
+        targetSessionKey: "agent:main:subagent:failed-no-reopen",
+        success: false,
+        outcome: "error",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    await api.emitAll(
+      "subagent_ended",
+      {
+        label: "failed-no-reopen",
+        targetSessionKey: "agent:main:subagent:failed-no-reopen",
+        success: true,
+        outcome: "success",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    const { active, completed } = loadTaskLedgerFromFacts(factsDb);
+    expect(completed.some((t) => t.label === "failed-no-reopen")).toBe(false);
+    expect(active.some((t) => t.label === "failed-no-reopen" && t.status === "Failed")).toBe(true);
+  });
+
   it("subagent_ended does not auto-complete when success is ambiguous", async () => {
     await api.emitAll(
       "subagent_spawned",

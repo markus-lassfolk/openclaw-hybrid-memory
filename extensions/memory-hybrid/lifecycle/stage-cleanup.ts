@@ -555,6 +555,12 @@ export function registerCleanupHandlers(
 
       const now = new Date().toISOString();
       const newStatus = subagentEndedIsSuccess(ev) ? "Done" : "Failed";
+      if (newStatus === "Done" && isTerminalActiveTaskStatus(taskAfterSignals.status)) {
+        api.logger.debug?.(
+          `memory-hybrid: skipped Done auto-checkpoint for terminal task [${taskLabel}] (${taskAfterSignals.status})`,
+        );
+        return;
+      }
       if (newStatus === "Done") {
         const { updated, completed } = completeTask(taskFile.active, taskLabel);
         if (completed) {
