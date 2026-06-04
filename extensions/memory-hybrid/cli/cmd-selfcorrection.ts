@@ -878,6 +878,13 @@ export async function runSelfCorrectionRunForCli(
     if (incidents.length > 0 && analysed.length === 0) {
       const error = `Self-correction analysis suspect: ${incidents.length} incident(s) found but zero parsed/analysed remediation items.`;
       logger.warn?.(`memory-hybrid: ${SCAN_TYPE} — ${error}`);
+      if (existsSync(statePath)) {
+        try {
+          rmSync(statePath, { force: true });
+        } catch (err) {
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-state" });
+        }
+      }
       return {
         incidentsFound: incidents.length,
         analysed: 0,
