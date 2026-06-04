@@ -41,11 +41,16 @@ for (const p of paths) {
   recall += backfillRecallEventsFromSessionFile(factsDb.getRawDb(), p);
   if (synthesizeDailyLogFromSessionFile(p)) daily++;
   if (scanSessionFileForMetadata(factsDb.getRawDb(), p)) langs++;
-  const messages = parseSessionMessagesFromLines(readFileSync(p, "utf-8").split("\n"), "sandbox-backfill");
-  const tools = extractToolSequenceFromMessages(messages);
   const trajLines = readTrajectoryLines(p);
-  if (trajLines) tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "sandbox-backfill"));
+  let tools: string[];
+  if (trajLines) {
+    tools = extractToolSequenceFromTrajectoryLines(trajLines, "sandbox-backfill");
+  } else {
+    const messages = parseSessionMessagesFromLines(readFileSync(p, "utf-8").split("\n"), "sandbox-backfill");
+    tools = extractToolSequenceFromMessages(messages);
+  }
   if (tools.length >= 2) {
+    const messages = parseSessionMessagesFromLines(readFileSync(p, "utf-8").split("\n"), "sandbox-backfill");
     wf.record({
       goal: redactMaintenancePrivateText(messages.find((m) => m.role === "user")?.text.slice(0, 200) ?? "session"),
       toolSequence: tools,

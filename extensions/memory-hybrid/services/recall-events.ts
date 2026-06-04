@@ -202,17 +202,17 @@ export function backfillRecallEventsFromSessionFile(db: DatabaseSync, filePath: 
     }
   };
 
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    const inline = extractRecallEventsFromAssistantContent(msg.content);
-    logParsedEvents(inline);
-  }
-
-  logParsedEvents(extractRecallEventsFromMessages(messages));
-
   const trajLines = readTrajectoryLines(filePath);
   if (trajLines) {
     logParsedEvents(extractRecallEventsFromTrajectoryLines(trajLines, "backfill-recall-events"));
+  } else {
+    for (const msg of messages) {
+      if (msg.role !== "assistant") continue;
+      const inline = extractRecallEventsFromAssistantContent(msg.content);
+      logParsedEvents(inline);
+    }
+
+    logParsedEvents(extractRecallEventsFromMessages(messages));
   }
 
   return inserted;

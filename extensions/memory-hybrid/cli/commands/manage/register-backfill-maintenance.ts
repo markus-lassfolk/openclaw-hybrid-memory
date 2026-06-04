@@ -51,14 +51,13 @@ function inferSessionOutcome(messages: Array<{ role: string; text: string }>): "
 }
 
 function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
-  const lines = readFileSync(filePath, "utf-8").split("\n");
-  const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
-  const tools = extractToolSequenceFromMessages(messages);
   const trajLines = readTrajectoryLines(filePath);
   if (trajLines) {
-    tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "backfill-workflow-traces"));
+    return extractToolSequenceFromTrajectoryLines(trajLines, "backfill-workflow-traces");
   }
-  return tools;
+  const lines = readFileSync(filePath, "utf-8").split("\n");
+  const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
+  return extractToolSequenceFromMessages(messages);
 }
 
 function backfillWorkflowTracesFromFile(
