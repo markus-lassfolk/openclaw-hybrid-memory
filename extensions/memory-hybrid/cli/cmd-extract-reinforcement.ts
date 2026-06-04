@@ -435,9 +435,10 @@ export async function runExtractReinforcementForCli(
               if (currentTools.includes(line.trim())) continue;
             }
 
+            let ruleVec: number[] | null = null;
             if (semanticDedup) {
               try {
-                const ruleVec = await embeddings.embed(line.trim());
+                ruleVec = await embeddings.embed(line.trim());
                 if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
                   logger?.info?.(
                     `memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`,
@@ -454,6 +455,23 @@ export async function runExtractReinforcementForCli(
 
             if (existsSync(toolsPath)) {
               insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
+              
+              if (ruleVec) {
+                try {
+                  await vectorDb.store({
+                    text: line.trim(),
+                    vector: ruleVec,
+                    importance: CLI_STORE_IMPORTANCE,
+                    category: "technical",
+                    id: `positive-rule-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                  });
+                } catch (err) {
+                  capturePluginError(err as Error, {
+                    subsystem: "cli",
+                    operation: "reinforcement:positive-rule-vector-store",
+                  });
+                }
+              }
             }
           } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
             const c = a.remediationContent;

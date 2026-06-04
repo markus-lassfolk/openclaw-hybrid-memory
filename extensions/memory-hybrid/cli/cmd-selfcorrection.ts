@@ -1036,7 +1036,7 @@ export async function runSelfCorrectionRunForCli(
     const totalBatchesCompleted = completedBatchIndexes.size;
     const allBatchesSucceeded = totalBatchesCompleted === batches.length;
     const diagnosticsIndicateFailure = diagnostics.unparseableFailures > 0 || diagnostics.parseFailures > 0;
-    if (incidents.length > 0 && analysed.length === 0 && (diagnosticsIndicateFailure || !allBatchesSucceeded)) {
+    if (incidents.length > 0 && analysed.length === 0) {
       const error = `Self-correction analysis suspect: ${incidents.length} incident(s) found but zero parsed/analysed remediation items.`;
       logger.warn?.(`memory-hybrid: ${SCAN_TYPE} — ${error}`);
       if (existsSync(statePath)) {
