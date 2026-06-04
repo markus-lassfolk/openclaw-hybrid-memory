@@ -334,12 +334,13 @@ describe("generate-proposals — JSON retry (#1824)", () => {
       "User values type safety and enables TypeScript strict mode in all projects",
     );
 
+    const emptyArrayResponse = {
+      choices: [{ message: { content: [{ type: "text", text: "[]" }] } }],
+    };
     const openai = {
       chat: {
         completions: {
-          create: vi.fn(async () => ({
-            choices: [{ message: { content: "[]" } }],
-          })),
+          create: vi.fn(async () => emptyArrayResponse),
         },
       },
     };
@@ -362,7 +363,7 @@ describe("generate-proposals — JSON retry (#1824)", () => {
       chat: {
         completions: {
           create: vi.fn(async () => ({
-            choices: [{ message: { content: "[]" } }],
+            choices: [{ message: { content: [{ type: "text", text: "[]" }] } }],
           })),
         },
       },
