@@ -11,21 +11,26 @@ import { stringEnum } from "../utils/typebox.js";
 
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { FactsDB } from "../backends/facts-db.js";
-import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig, type MemoryCategory } from "../config.js";
-import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import type { VectorDB } from "../backends/vector-db.js";
+import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "../config.js";
+import {
+  deleteCredentialPointerFacts,
+  ensureCredentialVaultPointer,
+  rollbackVaultCredentialWrite,
+} from "../services/credential-vault-pointer.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { CREDENTIAL_NOTES_MAX_CHARS, CREDENTIAL_URL_MAX_CHARS, SECONDS_PER_DAY } from "../utils/constants.js";
-import { extractTags } from "../utils/tags.js";
 
 export interface PluginContext {
   credentialsDb: CredentialsDB | null;
   factsDb: FactsDB | null;
+  vectorDb?: VectorDB | null;
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;
 }
 
 export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, factsDb, cfg } = ctx;
+  const { credentialsDb, factsDb, vectorDb, cfg } = ctx;
 
   if (cfg.credentials.enabled && credentialsDb) {
     api.registerTool(
