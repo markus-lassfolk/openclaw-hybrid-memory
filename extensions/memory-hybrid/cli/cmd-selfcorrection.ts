@@ -465,7 +465,6 @@ export async function runSelfCorrectionRunForCli(
     }
 
     const persistBatchState = () => {
-      if (opts.dryRun) return;
       writeSelfCorrectionBatchState(statePath, {
         version: SELF_CORRECTION_BATCH_STATE_VERSION,
         incidentsHash,
@@ -579,47 +578,89 @@ export async function runSelfCorrectionRunForCli(
 
       const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
       if (useSpawn) {
-        const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
-          incidents_json: JSON.stringify(incidents),
-        });
-        const { spawnSync } = await import("node:child_process");
-        const { tmpdir: osTmp } = await import("node:os");
-        const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
-        writeFileSync(promptPath, prompt, "utf-8");
-        const spawnModel = scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default");
-        const r = spawnSync(
-          "openclaw",
-          [
-            "sessions",
-            "spawn",
-            "--model",
-            spawnModel,
-            "--message",
-            "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.",
-            "--attach",
-            promptPath,
-          ],
-          { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
+        logger.info?.("memory-hybrid: self-correction-run model tier = heavy");
+        logger.info?.(`memory-hybrid: self-correction-run starting with model ${model} (source=${modelSource})`);
+        logger.info?.(
+          `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
         );
-        try {
-          if (existsSync(promptPath)) rmSync(promptPath, { force: true });
-        } catch (err) {
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
-        }
-        const content = (r.stdout ?? "") + (r.stderr ?? "");
-        if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
-        const parsedRemediations = parseSelfCorrectionLLMResponse(content);
-        if (parsedRemediations !== null) {
-          analysed = parsedRemediations as SelfCorrectionRemediation[];
-          diagnostics.parsedItems += analysed.length;
-        } else {
-          diagnostics.parseFailures++;
-          diagnostics.unparseableFailures++;
-          const excerpt = sanitizeLlmResponseExcerpt(content);
-          throw Object.assign(
-            new Error(`Self-correction analysis: LLM response could not be parsed as a JSON array. excerpt="${excerpt}"`),
-            { isParseFailure: true },
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          if (completedBatchIndexes.has(batchIndex)) continue;
+          const batch = batches[batchIndex];
+          const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+            incidents_json: JSON.stringify(batch),
+          });
+          logger.info?.(
+            `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} start incidents=${batch.length}`,
           );
+          const { spawnSync } = await import("node:child_process");
+          const { tmpdir: osTmp } = await import("node:os");
+          const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
+          writeFileSync(promptPath, prompt, "utf-8");
+          const spawnModel = scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default");
+          const r = spawnSync(
+            "openclaw",
+            [
+              "sessions",
+              "spawn",
+              "--model",
+              spawnModel,
+              "--message",
+              "Analyze the attached incidents and output ONLY a JSON array (no markdown, no code fences). Use the instructions in the attached file.",
+              "--attach",
+              promptPath,
+            ],
+            { encoding: "utf-8", maxBuffer: 2 * 1024 * 1024 },
+          );
+          try {
+            if (existsSync(promptPath)) rmSync(promptPath, { force: true });
+          } catch (err) {
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
+          }
+          const content = (r.stdout ?? "") + (r.stderr ?? "");
+          if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
+          const parsedRemediations = parseSelfCorrectionLLMResponse(content);
+          let batchAnalysed: SelfCorrectionRemediation[] | null = null;
+          if (parsedRemediations !== null) {
+            batchAnalysed = parsedRemediations as SelfCorrectionRemediation[];
+          } else if (content.trim().length > 0) {
+            diagnostics.parseFailures++;
+            const excerpt = sanitizeLlmResponseExcerpt(content);
+            logger.warn?.(
+              `memory-hybrid: self-correction-run batch ${batchIndex + 1}/${batches.length} initial JSON parse failed; attempting repair pass. rawExcerpt="${excerpt}"`,
+            );
+            try {
+              const repaired = await attemptAnalysisJsonRepair(content);
+              diagnostics.retries += repaired.retries;
+              diagnostics.fallbacks += repaired.fallbacks;
+              batchAnalysed = repaired.items;
+            } catch (repairErr) {
+              capturePluginError(repairErr as Error, {
+                subsystem: "cli",
+                operation: "runSelfCorrectionRunForCli:llm-analysis-repair",
+              });
+            }
+          } else {
+            batchAnalysed = [];
+          }
+          if (batchAnalysed === null) {
+            diagnostics.unparseableFailures++;
+            const excerpt = sanitizeLlmResponseExcerpt(content);
+            const parseError = new Error(
+              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+            );
+            (parseError as any).isParseFailure = true;
+            throw parseError;
+          }
+          diagnostics.parsedItems += batchAnalysed.length;
+          analysed.push(...batchAnalysed);
+          completedBatchIndexes.add(batchIndex);
+          logger.info?.(
+            `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} parsed item count=${batchAnalysed.length} rawExcerpt="${sanitizeLlmResponseExcerpt(
+              content,
+            )}"`,
+          );
+          persistBatchState();
         }
       } else {
         logger.info?.("memory-hybrid: self-correction-run model tier = heavy");
