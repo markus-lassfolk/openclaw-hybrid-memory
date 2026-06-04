@@ -965,9 +965,15 @@ export async function runExtractImplicitFeedbackForCli(
           sig.confidence >= bridgeMinConfidence &&
           bridgeIncidents.length < (implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5)
         ) {
+          let followingAssistant = "";
+          const userTurnIndex = sig.context.precedingTurns;
+          if (userTurnIndex + 1 < turns.length && turns[userTurnIndex + 1].role === "assistant") {
+            followingAssistant = turns[userTurnIndex + 1].content;
+          }
           bridgeIncidents.push({
             userMessage: sig.context.userMessage,
             precedingAssistant: sig.context.agentMessage,
+            followingAssistant: followingAssistant.slice(0, 500),
             sessionFile: sig.context.sessionFile,
             timestamp: new Date(sig.context.timestamp).toISOString(),
           });
