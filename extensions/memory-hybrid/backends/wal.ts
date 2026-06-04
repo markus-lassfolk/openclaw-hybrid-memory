@@ -468,6 +468,59 @@ export class WriteAheadLog {
       await this.atomicRewriteEntries(entries);
       return 1;
     } catch (err) {
+      if (err instanceof WalReadCorruptionError) {
+        pluginLogger.warn(
+          `memory-hybrid: WAL compactIfOversized detected corruption (${err.corruptLineCount} corrupt lines), attempting repair by rewriting valid entries`,
+        );
+        try {
+          const rawContent = await readFile(this.walPath, "utf-8");
+          const content = rawContent.trim();
+          if (!content) {
+            await this._clearInternal();
+            return 1;
+          }
+
+          const removedIds = new Set<string>();
+          for (const line of content.split("\n")) {
+            const trimmed = line.trim();
+            if (!trimmed?.startsWith(WAL_REMOVE_PREFIX)) continue;
+            try {
+              const obj = JSON.parse(trimmed) as { op: string; id: string };
+              if (obj.op === "remove" && obj.id) removedIds.add(obj.id);
+            } catch {
+              // Skip invalid remove lines during repair.
+            }
+          }
+
+          const validEntries: WALEntry[] = [];
+          const lines = content.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
+            try {
+              const obj = JSON.parse(trimmed) as unknown;
+              if (isWalEntry(obj) && !removedIds.has(obj.id)) validEntries.push(obj);
+            } catch {
+              // Skip corrupt lines during repair.
+            }
+          }
+
+          await this.atomicRewriteEntries(validEntries);
+          pluginLogger.info(
+            `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${validEntries.length} valid entries`,
+          );
+          return 1;
+        } catch (repairErr) {
+          capturePluginError(repairErr instanceof Error ? repairErr : new Error(String(repairErr)), {
+            operation: "wal-compact-repair",
+            subsystem: "wal",
+          });
+          pluginLogger.error(
+            `memory-hybrid: WAL compactIfOversized repair failed: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}`,
+          );
+          throw repairErr;
+        }
+      }
       pluginLogger.warn(
         `memory-hybrid: WAL compactIfOversized failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
       );
