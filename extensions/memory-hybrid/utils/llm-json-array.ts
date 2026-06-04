@@ -210,11 +210,23 @@ export function extractBalancedObjectSlice(s: string, start: number): string | n
 
 /**
  * Find the first balanced `{...}` in the response that passes the filter callback.
+ * When no filter is provided, returns the first successfully parsed object.
+ * 
+ * @param raw - The raw string to parse
+ * @param filter - Optional filter callback to validate parsed objects; receives the parsed object
+ *                 and should return an array to accept or null/undefined to continue searching.
+ *                 When provided, the function returns the first array accepted by the filter.
+ *                 When omitted, returns the first successfully parsed object directly.
  */
+export function tryParseFirstJsonObject(raw: string): unknown | null;
 export function tryParseFirstJsonObject(
   raw: string,
   filter: (parsed: unknown) => unknown[] | null | undefined,
-): unknown[] | null {
+): unknown[] | null;
+export function tryParseFirstJsonObject(
+  raw: string,
+  filter?: (parsed: unknown) => unknown[] | null | undefined,
+): unknown | unknown[] | null {
   let searchFrom = 0;
   while (searchFrom < raw.length) {
     const start = raw.indexOf("{", searchFrom);
@@ -226,8 +238,12 @@ export function tryParseFirstJsonObject(
     }
     try {
       const parsed: unknown = JSON.parse(slice);
-      const result = filter(parsed);
-      if (result !== null && result !== undefined) return result;
+      if (filter) {
+        const result = filter(parsed);
+        if (result !== null && result !== undefined) return result;
+      } else {
+        return parsed;
+      }
     } catch {
       /* try next { */
     }
