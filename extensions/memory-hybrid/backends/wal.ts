@@ -89,6 +89,7 @@ export class WriteAheadLog {
   private writeLock: Promise<void> = Promise.resolve();
   private activeIds = new Set<string>();
   private initPromise: Promise<void> | null = null;
+  private initSucceeded = false;
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
@@ -116,6 +117,7 @@ export class WriteAheadLog {
         await prevLock;
         const entries = await this.readAll();
         this.activeIds = new Set(entries.map((e) => e.id));
+        this.initSucceeded = true;
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "wal-init",
@@ -125,6 +127,7 @@ export class WriteAheadLog {
           `WAL init: failed to load active IDs, continuing with empty in-memory set: ${err instanceof Error ? err.message : String(err)}`,
         );
         this.activeIds = new Set();
+        this.initSucceeded = false;
       } finally {
         // biome-ignore lint/style/noNonNullAssertion: Synchronous
         releaseLock!();
@@ -307,7 +310,7 @@ export class WriteAheadLog {
       await appendFile(this.walPath, line, "utf-8");
       this.activeIds.delete(id);
       await this.fsyncAfterWrite();
-      if (this.activeIds.size === 0) {
+      if (this.activeIds.size === 0 && this.initSucceeded) {
         await this._clearInternal();
       }
     } catch (err) {

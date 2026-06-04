@@ -260,7 +260,7 @@ agents = $(printf '%s\n' "${AGENT_LIST[@]}" | python3 -c 'import json,sys; print
 manifest = {
   "fetchedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
   "maeve": "$MAEVE",
-  "fullMode": $FULL == "1",
+  "fullMode": "$FULL" == "1",
   "sessionDays": $DAYS,
   "sessionCapPerAgent": $CAP,
   "sessionFiles": $total_session_files,
