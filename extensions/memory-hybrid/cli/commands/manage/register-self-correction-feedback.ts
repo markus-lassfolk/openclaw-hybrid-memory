@@ -109,7 +109,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         }
         if (res.error) {
           console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
-          process.exitCode = 1;
+          process.exitCode = res.status === "failed_partial" ? 2 : 1;
           return;
         }
         if (res.skipped) {

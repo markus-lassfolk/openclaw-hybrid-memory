@@ -1660,6 +1660,11 @@
             "type": "number",
             "minimum": 0,
             "description": "Delay in milliseconds between analysis batches (default: 250)"
+          },
+          "maxIncidentsPerRun": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Maximum number of incidents to analyze per run (default: 100)"
           }
         },
         "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
