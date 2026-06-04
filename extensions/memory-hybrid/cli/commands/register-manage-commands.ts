@@ -13,6 +13,7 @@ import { registerManageProcedureAndLifecycle } from "./manage/register-procedure
 import { registerManageDigest } from "./manage/register-digest.js";
 import { registerExpireBySourceCommands, registerLifecycleSyncCommands } from "./manage/register-lifecycle.js";
 import { registerAnalyzeMaintenanceLogsCommand } from "./manage/register-analyze-maintenance-logs.js";
+import { registerBackfillMaintenanceCommands } from "./manage/register-backfill-maintenance.js";
 import { registerManageStorageAndStats } from "./manage/register-storage-and-stats.js";
 import { registerValidateCronExit } from "./manage/register-validate-cron-exit.js";
 import { registerReconcileCronLedgers } from "./manage/register-reconcile-cron-ledgers.js";
@@ -30,6 +31,7 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageCouncil(mem, b);
   registerManageDigest(mem, b);
   registerAnalyzeMaintenanceLogsCommand(mem, b);
+  registerBackfillMaintenanceCommands(mem, b);
   registerValidateCronExit(mem, {
     cfg: ctx.cfg,
     versionInfo: ctx.versionInfo,
