@@ -452,7 +452,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     const first = await runSelfCorrectionRunForCli(makeCtx(openaiFirst), {
       incidents: manyIncidents,
       workspace: tmpDir,
-      dryRun: true,
+      applyTools: false,
     });
     expect(first.error).toBeDefined();
     const reportsDir = join(tmpDir, "memory", "reports");
@@ -477,7 +477,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     const second = await runSelfCorrectionRunForCli(makeCtx(openaiSecond), {
       incidents: manyIncidents,
       workspace: tmpDir,
-      dryRun: true,
+      applyTools: false,
     });
 
     expect(second.status).toBe("success_analyzed");
