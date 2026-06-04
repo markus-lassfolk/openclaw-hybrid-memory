@@ -13,6 +13,7 @@ import {
 import { scoreIdentityGaps } from "../services/identity-gap-scorer.js";
 import { appendDailySessionSummary } from "../services/daily-log-synthesizer.js";
 import { scanSessionFileForMetadata } from "../services/session-metadata.js";
+import { WorkflowStore } from "../backends/workflow-store.js";
 
 function openTestDb(): DatabaseSync {
   const dir = mkdtempSync(join(tmpdir(), "maint-gap-"));
@@ -182,5 +183,19 @@ describe("maintenance data gaps", () => {
     const row = db.prepare("SELECT COUNT(*) AS cnt FROM recall_events").get() as { cnt: number };
     expect(row.cnt).toBe(1);
     db.close();
+  });
+
+  it("backfill workflow traces is idempotent on rerun", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wf-idem-"));
+    const store = new WorkflowStore(join(dir, "workflow-traces.db"));
+    const input = {
+      goal: "Deploy service",
+      toolSequence: ["read", "exec", "write"],
+      outcome: "success" as const,
+      sessionId: "2026-06-04-wf.jsonl",
+    };
+    expect(store.recordBackfillIfAbsent(input)).toBe(true);
+    expect(store.recordBackfillIfAbsent(input)).toBe(false);
+    expect(store.count()).toBe(1);
   });
 });

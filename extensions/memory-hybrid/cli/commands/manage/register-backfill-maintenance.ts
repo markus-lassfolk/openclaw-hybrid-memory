@@ -76,12 +76,13 @@ function backfillWorkflowTracesFromFile(_factsDb: FactsDB, workflowStore: Workfl
       .slice(0, 200) ?? "session workflow";
   const outcome = inferSessionOutcome(messages);
   try {
-    workflowStore.record({
+    const inserted = workflowStore.recordBackfillIfAbsent({
       goal: redactMaintenancePrivateText(goal),
       toolSequence: tools,
       outcome,
       sessionId,
     });
+    return inserted ? 1 : 0;
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "backfill-workflow-traces:record",
@@ -91,8 +92,6 @@ function backfillWorkflowTracesFromFile(_factsDb: FactsDB, workflowStore: Workfl
     });
     return 0;
   }
-
-  return 1;
 }
 
 export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBindings): void {

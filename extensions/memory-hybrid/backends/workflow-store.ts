@@ -159,6 +159,13 @@ export function hashToolSequence(toolSequence: string[]): string {
   return createHash("sha256").update(JSON.stringify(toolSequence)).digest("hex").slice(0, 16);
 }
 
+/** Stable primary key for backfilled workflow rows (session file + tool-sequence fingerprint). */
+export function backfillWorkflowTraceId(sessionId: string, argsHash: string): string {
+  const payload = `backfill\0${sessionId}\0${argsHash}`;
+  const hex = createHash("sha256").update(payload).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 // ---------------------------------------------------------------------------
 // WorkflowStore
 // ---------------------------------------------------------------------------
@@ -277,6 +284,57 @@ export class WorkflowStore extends BaseSqliteStore {
 
     // biome-ignore lint/style/noNonNullAssertion: Known to exist
     return this.getById(id)!;
+  }
+
+  /**
+   * Backfill-only insert: one trace per session file + tool fingerprint.
+   * Skips when any row already exists for the same session_id and args_hash.
+   */
+  recordBackfillIfAbsent(input: CreateWorkflowTraceInput): boolean {
+    const argsHash = input.argsHash ?? hashToolSequence(input.toolSequence);
+    const sessionId = input.sessionId ?? "";
+    const exists = this.runSqliteOp("recordBackfillIfAbsent:exists", () => {
+      const row = this.liveDb
+        .prepare("SELECT 1 AS ok FROM workflow_traces WHERE session_id = ? AND args_hash = ? LIMIT 1")
+        .get(sessionId, argsHash) as { ok: number } | undefined;
+      return !!row;
+    });
+    if (exists) return false;
+
+    const id = backfillWorkflowTraceId(sessionId, argsHash);
+    const now = new Date().toISOString();
+    const keywords = input.goalKeywords
+      ? [...new Set(input.goalKeywords.map((k) => k.toLowerCase().trim()).filter((k) => k.length > 0))]
+      : extractGoalKeywords(input.goal);
+    const outcome = input.outcome ?? "unknown";
+    const toolCount = input.toolSequence.length;
+    const durationMs = Math.round(input.durationMs ?? 0);
+
+    return this.runSqliteOp("recordBackfillIfAbsent:insert", () => {
+      const result = this.liveDb
+        .prepare(
+          `INSERT OR IGNORE INTO workflow_traces
+           (id, goal, goal_keywords, tool_sequence, args_hash, outcome, tool_count, duration_ms, session_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          input.goal,
+          JSON.stringify(keywords),
+          JSON.stringify(input.toolSequence),
+          argsHash,
+          outcome,
+          toolCount,
+          durationMs,
+          sessionId,
+          now,
+        );
+      if ((result.changes ?? 0) > 0) {
+        this.invalidateWorkflowPatternsMemo();
+        return true;
+      }
+      return false;
+    });
   }
 
   // -------------------------------------------------------------------------
