@@ -711,7 +711,13 @@ MiniMax M3 maintenance tuning under `llm.minimax`:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `llm.minimax.thinking` | `"disabled"` | M3 thinking mode for maintenance LLM calls: `"disabled"` (recommended for JSON extraction) or `"adaptive"` |
+| `llm.minimax.thinking` | `"disabled"` | Global MiniMax thinking fallback for maintenance LLM calls: `"disabled"` (recommended for JSON extraction) or `"adaptive"` |
+| `selfCorrection.thinking` | (falls back to `llm.minimax.thinking`) | Self-correction batch analysis thinking mode |
+| `reinforcement.thinking` | (falls back to `llm.minimax.thinking`) | Reinforcement incident analysis thinking mode |
+| `distill.thinking` | (falls back to `llm.minimax.thinking`) | Session distill LLM thinking mode |
+| `reflection.thinking` | (falls back to `llm.minimax.thinking`) | Reflection / reflect-rules / reflect-meta / consolidation thinking mode |
+
+Maintenance chat timeouts (MiniMax): M3 disabled **120s**, M3+thinking **180s**, M2.x+thinking **120s**; default **45s** otherwise. On thinking timeout the plugin retries once with `thinking=disabled`, then the maintenance fallback chain. See `benchmark/ab-maintenance/latency-report.md`.
 
 ---
 

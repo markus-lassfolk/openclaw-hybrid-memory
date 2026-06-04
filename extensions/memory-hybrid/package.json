@@ -79,6 +79,8 @@
     "lint:fix": "node ../../scripts/run-with-supported-node.mjs biome lint --write --unsafe --max-diagnostics=none .",
     "format": "node ../../scripts/run-with-supported-node.mjs biome format --write --max-diagnostics=none .",
     "format:check": "node ../../scripts/run-with-supported-node.mjs biome format --max-diagnostics=none .",
+    "ab-maintenance": "node ../../scripts/run-with-supported-node.mjs tsx benchmark/ab-maintenance/run.ts",
+    "ab-maintenance:probe": "node ../../scripts/run-with-supported-node.mjs tsx benchmark/ab-maintenance/probe-cell.ts",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
     "prepack": "npm run build && node scripts/manage-shrinkwrap.cjs create",

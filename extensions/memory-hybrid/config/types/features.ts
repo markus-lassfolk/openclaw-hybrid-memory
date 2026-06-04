@@ -170,6 +170,10 @@ export type ReinforcementConfig = {
   analysisBatchSize?: number;
   /** Max incidents passed to analysis per run; excess logged as truncated (default: 100). */
   maxIncidentsPerRun?: number;
+  /** Optional model override for reinforcement LLM analysis (default: nano tier). */
+  model?: string;
+  /** MiniMax thinking mode for reinforcement analysis (default: llm.minimax.thinking or disabled). */
+  thinking?: "disabled" | "adaptive";
 };
 
 /** Future-date decay freeze protection (#144). */

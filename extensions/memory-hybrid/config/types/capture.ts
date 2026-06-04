@@ -22,6 +22,8 @@ export type ReflectionConfig = {
   model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "default")
   defaultWindow: number; // Time window in days (default: 14)
   minObservations: number; // Min observations to support a pattern (default: 2)
+  /** MiniMax thinking mode for reflection/consolidation LLM calls (default: llm.minimax.thinking or disabled). */
+  thinking?: "disabled" | "adaptive";
 };
 
 /** Identity reflection: persona-level synthesis from reflection outputs */

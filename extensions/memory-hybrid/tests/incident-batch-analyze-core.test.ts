@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { CostFeature } from "../services/cost-feature-labels.js";
-import { analyzeIncidentBatchWithSplit } from "../services/incident-batch-analyze-core.js";
+import { analyzeIncidentBatchWithSplit, inferFinishReasonFromLlmContent } from "../services/incident-batch-analyze-core.js";
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
 
 const SAMPLE_ITEM = { remediationType: "TOOLS_RULE", category: "X", severity: "LOW" };
@@ -149,5 +149,43 @@ describe("analyzeIncidentBatchWithSplit", () => {
     expect(llmCalls.length).toBeGreaterThan(1);
     expect(result.diagnostics.batchSplits).toBeGreaterThan(0);
     expect(result.items?.length).toBe(4);
+  });
+
+  it("splits when parse returns null on a multi-incident batch", async () => {
+    let parseCalls = 0;
+    const result = await analyzeIncidentBatchWithSplit(
+      {
+        ...baseDeps,
+        maxTokens: 8000,
+        parseBatchContent: async () => {
+          parseCalls++;
+          return null;
+        },
+        llmCall: async () => ({
+          content: "not-json",
+          fallbacks: 0,
+          finishReason: "stop",
+        }),
+      },
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+    );
+
+    expect(parseCalls).toBeGreaterThan(1);
+    expect(result.diagnostics.batchSplits).toBeGreaterThan(0);
+    expect(result.items).toBeNull();
+  });
+});
+
+describe("inferFinishReasonFromLlmContent", () => {
+  it("detects truncated JSON arrays", () => {
+    expect(inferFinishReasonFromLlmContent('[{"a":1}')).toBe("length");
+  });
+
+  it("returns stop for balanced JSON", () => {
+    expect(inferFinishReasonFromLlmContent('[{"a":1}]')).toBe("stop");
+  });
+
+  it("returns length for empty content", () => {
+    expect(inferFinishReasonFromLlmContent("   ")).toBe("length");
   });
 });

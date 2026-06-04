@@ -38,7 +38,7 @@ type UtilityInstallerContext = {
   runReflection: MemoryPluginAPI["runReflection"];
   runReflectionRules: MemoryPluginAPI["runReflectionRules"];
   runReflectionMeta: MemoryPluginAPI["runReflectionMeta"];
-  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string>;
+  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string | null>;
   walRemove: (id: string) => Promise<void>;
 };
 
@@ -111,6 +111,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
+    wal,
     walWrite: (operation, data, logger, supersedeTargetId) => walWrite(wal, operation, data, logger, supersedeTargetId),
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,

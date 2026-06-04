@@ -51,18 +51,17 @@ describe("walWrite — happy path", () => {
     expect(id).toMatch(/^[0-9a-f-]{36}$/);
     expect(wal.write).toHaveBeenCalledOnce();
     const arg = (wal.write as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(arg.id).toBe(id);
+    expect(arg.id).toBe(id as string);
     expect(arg.operation).toBe("store");
     expect(arg.data).toEqual({ text: "hello" });
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it("still returns an id when wal is null", async () => {
+  it("returns null when wal is null (WAL not configured)", async () => {
     const logger = makeLogger();
     const id = await walWrite(null, "store", {}, logger);
 
-    expect(typeof id).toBe("string");
-    expect(id.length).toBeGreaterThan(0);
+    expect(id).toBeNull();
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -104,6 +103,18 @@ describe("walWrite — happy path", () => {
 // ---------------------------------------------------------------------------
 
 describe("walWrite — failure accumulation", () => {
+  it("returns null on a single write failure", async () => {
+    const wal = makeWal({
+      write: vi.fn().mockRejectedValue(new Error("io error")),
+    });
+    const logger = makeLogger();
+
+    const id = await walWrite(wal, "store", { text: "x" }, logger);
+
+    expect(id).toBeNull();
+    expect(wal.write).toHaveBeenCalledOnce();
+  });
+
   it("logs a warning on each failure", async () => {
     const wal = makeWal({
       write: vi.fn().mockRejectedValue(new Error("io error")),
@@ -175,7 +186,7 @@ describe("walWrite — circuit breaker trips at 10 consecutive failures", () => 
     expect((wal.write as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore);
   });
 
-  it("still returns a valid id even when WAL is disabled", async () => {
+  it("returns null when WAL is disabled after circuit breaker trips", async () => {
     const wal = makeWal({
       write: vi.fn().mockRejectedValue(new Error("fail")),
     });
@@ -186,8 +197,7 @@ describe("walWrite — circuit breaker trips at 10 consecutive failures", () => 
     }
 
     const id = await walWrite(wal, "store", {}, logger);
-    expect(typeof id).toBe("string");
-    expect(id.length).toBeGreaterThan(0);
+    expect(id).toBeNull();
   });
 
   it("persists a circuit-breaker sentinel when the threshold is reached", async () => {

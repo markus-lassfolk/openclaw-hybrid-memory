@@ -80,6 +80,15 @@ export const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 /** Default timeout for chat completion requests (ms). */
 export const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
 
+/** Maintenance LLM timeout for MiniMax M3 without thinking (A/B p95 ~40–90s). */
+export const MAINTENANCE_M3_CHAT_TIMEOUT_MS = 120_000;
+
+/** Maintenance LLM timeout when MiniMax thinking is on (A/B: M3 adaptive reflection can exceed 90s). */
+export const MAINTENANCE_THINKING_CHAT_TIMEOUT_MS = 180_000;
+
+/** Maintenance LLM timeout for MiniMax M2.x with thinking enabled. */
+export const MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS = 120_000;
+
 /** Daily narrative prompts aggregate many events — allow longer than default chat timeout (#935, #936). */
 export const NARRATIVE_CHAT_TIMEOUT_MS = 120_000;
 

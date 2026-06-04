@@ -20,6 +20,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
+import { isMiniMaxModel } from "./chat.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
@@ -31,6 +32,7 @@ interface ConsolidateOptions {
   dryRun: boolean;
   limit: number;
   model: string;
+  thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
 }
 
 interface ConsolidateResult {
@@ -206,6 +208,9 @@ export async function runConsolidate(
               messages: [{ role: "user", content: prompt }],
               temperature: 0,
               ...chatCompletionTokenParams(opts.model, 300),
+              ...(opts.thinkingMode && isMiniMaxModel(opts.model)
+                ? { thinking: { type: opts.thinkingMode } }
+                : {}),
             }),
           { maxRetries: 2 },
         ),

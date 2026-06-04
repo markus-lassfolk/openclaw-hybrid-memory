@@ -32,6 +32,7 @@ export function resolveIncidentIndexInBatch(
   item: Record<string, unknown>,
   itemPosition: number,
   batchLength: number,
+  globalOffset = 0,
 ): number {
   if (batchLength <= 0) return 0;
 
@@ -39,12 +40,20 @@ export function resolveIncidentIndexInBatch(
   if (typeof raw === "number" && Number.isInteger(raw)) {
     if (raw >= 0 && raw < batchLength) return raw;
     if (raw >= 1 && raw <= batchLength) return raw - 1;
+    if (globalOffset > 0 && raw >= globalOffset && raw < globalOffset + batchLength) {
+      return raw - globalOffset;
+    }
+    return -1;
   }
   if (typeof raw === "string" && raw.trim().length > 0) {
     const parsed = Number.parseInt(raw.trim(), 10);
     if (Number.isInteger(parsed)) {
       if (parsed >= 0 && parsed < batchLength) return parsed;
       if (parsed >= 1 && parsed <= batchLength) return parsed - 1;
+      if (globalOffset > 0 && parsed >= globalOffset && parsed < globalOffset + batchLength) {
+        return parsed - globalOffset;
+      }
+      return -1;
     }
   }
 
@@ -77,6 +86,7 @@ export function orderBatchItemsByIncidentIndex<T extends Record<string, unknown>
   batchLength: number,
   items: T[],
   logger?: { warn?: (msg: string) => void },
+  globalOffset = 0,
 ): OrderedBatchItems<T> | null {
   if (batchLength === 0) return { items: [], batchIndices: [] };
   if (items.length === 0) return null;
@@ -92,7 +102,13 @@ export function orderBatchItemsByIncidentIndex<T extends Record<string, unknown>
 
   for (let position = 0; position < items.length; position++) {
     const item = items[position]!;
-    const idx = resolveIncidentIndexInBatch(item, position, batchLength);
+    const idx = resolveIncidentIndexInBatch(item, position, batchLength, globalOffset);
+    if (idx < 0) {
+      logger?.warn?.(
+        `memory-hybrid: batch analysis out-of-range incidentIndex=${String(item[INCIDENT_INDEX_FIELD] ?? item.incident_index ?? item._batchIndex)}; rejecting batch`,
+      );
+      return null;
+    }
     if (slots[idx] !== null) {
       logger?.warn?.(
         `memory-hybrid: batch analysis duplicate incidentIndex=${idx}; rejecting batch`,
@@ -121,6 +137,7 @@ export function mergeSplitBatchItemsWithOffset<T extends Record<string, unknown>
   leftItems: T[],
   rightItems: T[],
   leftBatchSize: number,
+  rightBatchSize = rightItems.length,
 ): T[] {
   const normalize = (batchItems: T[], baseOffset: number, subBatchSize: number) =>
     batchItems.map((item, position) => {
@@ -129,7 +146,7 @@ export function mergeSplitBatchItemsWithOffset<T extends Record<string, unknown>
     });
   return [
     ...normalize(leftItems, 0, leftBatchSize),
-    ...normalize(rightItems, leftBatchSize, rightItems.length),
+    ...normalize(rightItems, leftBatchSize, rightBatchSize),
   ];
 }
 
@@ -139,9 +156,12 @@ export function stripBatchMetadataFromItem<T extends Record<string, unknown>>(it
 }
 
 /** Append remediations, skipping duplicate global incidentIndex values (safe on batch resume). */
-export function appendUniqueRemediationsByIncidentIndex<T extends { incidentIndex?: number }>(
-  target: T[],
-  incoming: T[],
+export function appendUniqueRemediationsByIncidentIndex<
+  TTarget extends { incidentIndex?: number; remediationType?: string },
+  TIncoming extends { incidentIndex?: number; remediationType?: string },
+>(
+  target: TTarget[],
+  incoming: TIncoming[],
 ): number {
   const seen = new Set(
     target.map((item) => item.incidentIndex).filter((idx): idx is number => typeof idx === "number"),
@@ -150,10 +170,22 @@ export function appendUniqueRemediationsByIncidentIndex<T extends { incidentInde
   for (const item of incoming) {
     const idx = item.incidentIndex;
     if (typeof idx === "number") {
-      if (seen.has(idx)) continue;
+      if (seen.has(idx)) {
+        const existingIndex = target.findIndex((t) => t.incidentIndex === idx);
+        const existing = existingIndex >= 0 ? target[existingIndex] : undefined;
+        if (
+          existing &&
+          existing.remediationType === "NO_ACTION" &&
+          item.remediationType !== "NO_ACTION"
+        ) {
+          target[existingIndex] = item as unknown as TTarget;
+          added++;
+        }
+        continue;
+      }
       seen.add(idx);
     }
-    target.push(item);
+    target.push(item as unknown as TTarget);
     added++;
   }
   return added;

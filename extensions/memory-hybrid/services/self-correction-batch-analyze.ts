@@ -1,6 +1,6 @@
 import type OpenAI from "openai";
 
-import { resolveMiniMaxThinkingMode, type HybridMemoryConfig } from "../config.js";
+import type { SelfCorrectionConfig } from "../config/types/index.js";
 import { serializeIncidentsForBatchPrompt } from "./batch-incident-analysis.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import {
@@ -37,16 +37,19 @@ export const DEFAULT_MINIMAX_SELF_CORRECTION_BATCH_SIZE = 5;
 export const DEFAULT_SELF_CORRECTION_BATCH_SIZE = 25;
 export const DEFAULT_SELF_CORRECTION_BATCH_DELAY_MS = 250;
 
-export function resolveSelfCorrectionBatchSize(model: string, scCfg: { analysisBatchSize?: number }): number {
-  if (typeof scCfg.analysisBatchSize === "number" && scCfg.analysisBatchSize >= 1) {
+/** Batch timing fields from self-correction config (safe for parsed config, defaults, and partial overrides). */
+export type SelfCorrectionBatchSettings = Pick<SelfCorrectionConfig, "analysisBatchSize" | "batchDelayMs">;
+
+export function resolveSelfCorrectionBatchSize(model: string, scCfg?: SelfCorrectionBatchSettings): number {
+  if (typeof scCfg?.analysisBatchSize === "number" && scCfg.analysisBatchSize >= 1) {
     return Math.floor(scCfg.analysisBatchSize);
   }
   if (/minimax|m3/i.test(model)) return DEFAULT_MINIMAX_SELF_CORRECTION_BATCH_SIZE;
   return DEFAULT_SELF_CORRECTION_BATCH_SIZE;
 }
 
-export function resolveSelfCorrectionBatchDelayMs(scCfg: { batchDelayMs?: number }): number {
-  if (typeof scCfg.batchDelayMs === "number" && scCfg.batchDelayMs >= 0) {
+export function resolveSelfCorrectionBatchDelayMs(scCfg?: SelfCorrectionBatchSettings): number {
+  if (typeof scCfg?.batchDelayMs === "number" && scCfg.batchDelayMs >= 0) {
     return Math.floor(scCfg.batchDelayMs);
   }
   return DEFAULT_SELF_CORRECTION_BATCH_DELAY_MS;
@@ -86,6 +89,7 @@ async function parseBatchContent(
     diagnostics.fallbacks += repaired.fallbacks;
     if (repaired.items !== null) return repaired.items;
   } catch {
+    diagnostics.parseFailures++;
     return null;
   }
   diagnostics.parseFailures++;
@@ -119,6 +123,4 @@ export async function analyzeSelfCorrectionIncidentBatchWithSplit(
   );
 }
 
-export function resolveSelfCorrectionThinkingMode(cfg: HybridMemoryConfig | undefined): MiniMaxThinkingMode {
-  return resolveMiniMaxThinkingMode(cfg, "disabled");
-}
+export { resolveSelfCorrectionThinkingMode } from "../config/thinking-mode.js";

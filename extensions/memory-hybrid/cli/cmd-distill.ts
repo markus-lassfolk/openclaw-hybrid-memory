@@ -14,6 +14,7 @@ import {
   getCronModelConfig,
   getDefaultCronModel,
   isValidCategory,
+  resolveDistillThinkingMode,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import {
@@ -484,6 +485,7 @@ export async function runDistillForCli(
           fallbackModels: compatibleFallbacks,
           label: `memory-hybrid: distill batch ${batchNum}`,
           feature: CostFeature.distillCli,
+          thinkingMode: resolveDistillThinkingMode(cfg),
         });
         if (detail.modelUsed !== model) {
           const src = fallbackSources.get(detail.modelUsed) ?? "fallback";

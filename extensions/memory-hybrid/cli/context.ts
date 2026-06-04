@@ -106,7 +106,11 @@ export type ManageContext = {
     dryRun: boolean;
     model: string;
     verbose?: boolean;
-  }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  }) => Promise<{
+    metaExtracted: number;
+    metaStored: number;
+    diagnostics?: import("../services/reflection.js").ReflectionMetaDiagnostics;
+  }>;
   runReflectIdentity?: (opts: {
     dryRun: boolean;
     model?: string;

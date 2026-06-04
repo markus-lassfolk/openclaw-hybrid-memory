@@ -28,6 +28,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import { isWalWriteFailure } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
@@ -533,6 +534,10 @@ export async function runCapture(
                       api.logger,
                       classification.targetId,
                     );
+                    if (isWalWriteFailure(ctx.wal, walEntryId)) {
+                      api.logger.warn?.("memory-hybrid: auto-capture UPDATE aborted (WAL write failed)");
+                      continue;
+                    }
                     const nowSec = Math.floor(Date.now() / 1000);
                     const storeResult = ctx.factsDb.storeWithResult({
                       text: textToStore,
@@ -555,7 +560,7 @@ export async function runCapture(
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
                     if (storeResult.skipped) {
-                      await ctx.walRemove(walEntryId, api.logger);
+                      if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
                       continue;
                     }
                     const newEntry = storeResult.entry;
@@ -626,7 +631,7 @@ export async function runCapture(
                       `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                     );
                     stored++;
-                    await ctx.walRemove(walEntryId, api.logger);
+                    if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
                     continue;
                   } // close if (oldFact) guard
                   // Validation failed: fall through to default ADD-style store path
@@ -670,6 +675,10 @@ export async function runCapture(
             },
             api.logger,
           );
+          if (isWalWriteFailure(ctx.wal, walEntryId)) {
+            api.logger.warn?.("memory-hybrid: auto-capture store aborted (WAL write failed)");
+            continue;
+          }
           const storeResult = ctx.factsDb.storeWithResult({
             text: textToStore,
             category,
@@ -767,7 +776,7 @@ export async function runCapture(
               context: { category, entity: extracted.entity, role: candidate.role },
             });
           }
-          await ctx.walRemove(walEntryId, api.logger);
+          if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
         }
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
       }

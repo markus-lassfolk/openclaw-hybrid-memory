@@ -58,6 +58,10 @@ export function parseReflectionConfig(cfg: Record<string, unknown>): ReflectionC
       typeof reflectionRaw?.minObservations === "number" && reflectionRaw.minObservations >= 1
         ? Math.floor(reflectionRaw.minObservations)
         : 2,
+    thinking:
+      reflectionRaw?.thinking === "adaptive" || reflectionRaw?.thinking === "disabled"
+        ? reflectionRaw.thinking
+        : undefined,
   };
 }
 

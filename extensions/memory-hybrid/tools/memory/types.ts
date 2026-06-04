@@ -7,6 +7,7 @@ import type { EventLog } from "../../backends/event-log.js";
 import type { FactsDB } from "../../backends/facts-db.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { VectorDB } from "../../backends/vector-db.js";
+import type { WriteAheadLog } from "../../backends/wal.js";
 import type { HybridMemoryConfig } from "../../config.js";
 import type { PendingLLMWarnings } from "../../services/chat.js";
 import type { VariantGenerationQueue } from "../../services/contextual-variants.js";
@@ -21,7 +22,7 @@ export type BoundWalWriteFn = (
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
   supersedeTargetId?: string,
-) => Promise<string>;
+) => Promise<string | null>;
 
 export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
 
@@ -64,6 +65,7 @@ export interface MemoryToolsContext {
   pendingLLMWarnings: PendingLLMWarnings;
   variantQueue?: VariantGenerationQueue | null;
   buildToolScopeFilter: BuildToolScopeFilterFn;
+  wal: WriteAheadLog | null;
   walWrite: BoundWalWriteFn;
   walRemove: BoundWalRemoveFn;
   findSimilarByEmbedding: FindSimilarByEmbeddingFn;

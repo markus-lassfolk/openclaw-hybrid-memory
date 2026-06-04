@@ -443,7 +443,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
 
     expect(res.analysed).toBe(0);
     expect(res.status).toBe("failed_parse");
-    expect(res.error).toBeDefined();
+    expect(res.error).toMatch(/could not be parsed/i);
   });
 
 

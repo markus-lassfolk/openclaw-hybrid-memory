@@ -241,7 +241,7 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
     if (fromReinf !== undefined) return fromReinf;
     const fromSc = scRaw ? parse(scRaw[scKey]) : undefined;
     if (fromSc !== undefined) {
-      if (reinforcementRaw && reinforcementRaw[reinfKey as string] === undefined && scRaw[scKey] !== undefined) {
+      if (reinforcementRaw && reinforcementRaw[reinfKey as string] === undefined && scRaw?.[scKey] !== undefined) {
         pluginLogger.warn(
           `memory-hybrid: selfCorrection.${scKey} is deprecated — use reinforcement.${String(reinfKey)} instead.`,
         );
@@ -331,6 +331,14 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
       (v) => (typeof v === "number" && v >= 1 ? Math.floor(v) : undefined),
       100,
     ),
+    model:
+      typeof reinforcementRaw?.model === "string" && reinforcementRaw.model.trim().length > 0
+        ? reinforcementRaw.model.trim()
+        : undefined,
+    thinking:
+      reinforcementRaw?.thinking === "adaptive" || reinforcementRaw?.thinking === "disabled"
+        ? reinforcementRaw.thinking
+        : undefined,
   };
 }
 

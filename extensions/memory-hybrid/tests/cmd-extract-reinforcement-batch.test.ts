@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import {
+  readReinforcementBatchState,
   resolveReinforcementBatchStateDir,
   runExtractReinforcementForCli,
 } from "../cli/cmd-extract-reinforcement.js";
@@ -29,7 +30,7 @@ let workspace: string;
 
 const incident = {
   userMessage: "great job",
-  precedingAssistant: "done",
+  agentBehavior: "done",
   precedingUserMessage: "go",
   sessionFile: "s.jsonl",
   timestamp: "2026-01-01",
@@ -60,23 +61,23 @@ function makeCtx(openai: unknown): HandlerContext {
     vectorDb: {
       hasDuplicate: vi.fn().mockResolvedValue(false),
       store: vi.fn().mockResolvedValue(undefined),
-    } as HandlerContext["vectorDb"],
+    } as unknown as HandlerContext["vectorDb"],
     embeddings: {
       embed: vi.fn().mockResolvedValue([0.1, 0.2]),
       modelName: "test",
-    } as HandlerContext["embeddings"],
+    } as unknown as HandlerContext["embeddings"],
     openai,
     proposalsDb: null,
     cfg: {
       procedures: { sessionsDir: tmpDir },
       distill: { extractionModelTier: "nano" },
+      llm: { maintenance: ["test-model"], nano: ["test-model"], _source: undefined },
       reinforcement: {
         reinforcementLLMAnalysis: true,
         maxIncidentsPerRun: 100,
         analysisBatchSize: 25,
       },
       selfCorrection: { semanticDedup: false },
-      llm: { nano: ["test-model"], _source: undefined },
     } as HandlerContext["cfg"],
     credentialsDb: null,
     aliasDb: null,
@@ -119,7 +120,14 @@ describe("extract-reinforcement batching", () => {
     });
 
     const create = vi.fn().mockResolvedValue({
-      choices: [{ message: { content: "[]" } }],
+      choices: [
+        {
+          message: {
+            content:
+              '[{"remediationType":"NO_ACTION","category":"technical","severity":"low","remediationContent":"ok","incidentIndex":0}]',
+          },
+        },
+      ],
       usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     });
     const ctx = makeCtx({ chat: { completions: { create } } });
@@ -136,5 +144,43 @@ describe("extract-reinforcement batching", () => {
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("truncated=true"));
     expect(create).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("readReinforcementBatchState", () => {
+  it("preserves all seven diagnostic counters on resume", () => {
+    const statePath = join(tmpdir(), `reinf-state-${Date.now()}.json`);
+    writeFileSync(
+      statePath,
+      JSON.stringify({
+        version: 1,
+        incidentsHash: "abc123",
+        batchSize: 5,
+        totalBatches: 2,
+        completedBatchIndexes: [0],
+        analysed: [],
+        diagnostics: {
+          parseFailures: 1,
+          fallbacks: 2,
+          parsedItems: 3,
+          batchSplits: 4,
+          truncations: 5,
+          retries: 6,
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+
+    const state = readReinforcementBatchState(statePath);
+    expect(state?.diagnostics).toEqual({
+      parseFailures: 1,
+      fallbacks: 2,
+      parsedItems: 3,
+      batchSplits: 4,
+      truncations: 5,
+      retries: 6,
+    });
+
+    rmSync(statePath, { force: true });
   });
 });

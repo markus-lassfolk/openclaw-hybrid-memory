@@ -7,8 +7,8 @@ import type { ReinforcementContext } from "../backends/facts-db.js";
 import {
   getCronModelConfig,
   getDefaultCronModel,
-  getLLMModelPreference,
   resolveReflectionModelAndFallbacks,
+  resolveReinforcementThinkingMode,
 } from "../config.js";
 import {
   appendUniqueRemediationsByIncidentIndex,
@@ -22,7 +22,9 @@ import { CostFeature } from "../services/cost-feature-labels.js";
 import {
   analyzeReinforcementIncidentBatchWithSplit,
   resolveReinforcementAnalysisBatchSize,
+  type ReinforcementRemediationItem,
 } from "../services/reinforcement-batch-analyze.js";
+import { resolveSelfCorrectionBatchDelayMs } from "../services/self-correction-batch-analyze.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   type AnnotationReasons,
@@ -39,7 +41,6 @@ import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
 import { parseStructuredItemsAcceptingEmpty } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { getMaxMtime, getSessionFilePathsSince } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
@@ -138,7 +139,19 @@ function pruneStaleReinforcementStateFiles(stateDir: string, keepPath: string): 
   }
 }
 
-function readReinforcementBatchState(statePath: string): ReinforcementBatchState | null {
+function emptyReinforcementDiagnostics(): ReinforcementBatchDiagnostics {
+  return {
+    parseFailures: 0,
+    fallbacks: 0,
+    parsedItems: 0,
+    batchSplits: 0,
+    truncations: 0,
+    retries: 0,
+  };
+}
+
+/** @internal Exported for unit tests. */
+export function readReinforcementBatchState(statePath: string): ReinforcementBatchState | null {
   try {
     if (!existsSync(statePath)) return null;
     const parsed = JSON.parse(readFileSync(statePath, "utf-8")) as Partial<ReinforcementBatchState>;
@@ -155,7 +168,7 @@ function readReinforcementBatchState(statePath: string): ReinforcementBatchState
     const completed = parsed.completedBatchIndexes
       .filter((n): n is number => Number.isInteger(n) && n >= 0 && n < (parsed.totalBatches ?? 0))
       .sort((a, b) => a - b);
-    const diagnostics = parsed.diagnostics ?? { parseFailures: 0, fallbacks: 0, parsedItems: 0 };
+    const diagnostics = parsed.diagnostics ?? emptyReinforcementDiagnostics();
     return {
       version: parsed.version,
       incidentsHash: parsed.incidentsHash,
@@ -167,6 +180,9 @@ function readReinforcementBatchState(statePath: string): ReinforcementBatchState
         parseFailures: Number.isFinite(diagnostics.parseFailures) ? diagnostics.parseFailures : 0,
         fallbacks: Number.isFinite(diagnostics.fallbacks) ? diagnostics.fallbacks : 0,
         parsedItems: Number.isFinite(diagnostics.parsedItems) ? diagnostics.parsedItems : 0,
+        batchSplits: Number.isFinite(diagnostics.batchSplits) ? diagnostics.batchSplits : 0,
+        truncations: Number.isFinite(diagnostics.truncations) ? diagnostics.truncations : 0,
+        retries: Number.isFinite(diagnostics.retries) ? diagnostics.retries : 0,
       },
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
     };
@@ -286,25 +302,18 @@ export async function runExtractReinforcementForCli(
       }
 
       let analysed: ReinforcementRemediation[] = [];
-      const diagnostics: ReinforcementBatchDiagnostics = {
-        parseFailures: 0,
-        fallbacks: 0,
-        parsedItems: 0,
-        batchSplits: 0,
-        truncations: 0,
-        retries: 0,
-      };
+      const diagnostics = emptyReinforcementDiagnostics();
       try {
-        const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
-        const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, extractionTier);
+        const analysisTier = "maintenance" as const;
+        const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, analysisTier);
         const cronCfg = getCronModelConfig(cfg);
-        const tierPref = getLLMModelPreference(cronCfg, extractionTier);
-        const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
-        const tierResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
-        const fallbackModels = tierResolved.fallbackModels ?? [];
+        const tierResolved = resolveReflectionModelAndFallbacks(cfg, analysisTier);
+        const model = tierResolved.defaultModel ?? getDefaultCronModel(cronCfg, analysisTier);
+        const fallbackModels = [...new Set((tierResolved.fallbackModels ?? []).filter((m) => m !== model))];
         const modelSource =
           tierPrefWithSources.models[0] === model ? (tierPrefWithSources.sources[0] ?? "built-in") : "built-in";
         const batchSize = resolveReinforcementAnalysisBatchSize(model, reinfCfg, scCfg);
+        const batchDelayMs = resolveSelfCorrectionBatchDelayMs(scCfg);
         const batches = chunkReinforcementIncidents(incidentsForAnalysis, batchSize);
         const runFingerprint = buildReinforcementRunFingerprint(incidentsForAnalysis, model, batchSize, false);
         const stateDir = resolveReinforcementBatchStateDir(workspaceRoot);
@@ -320,12 +329,7 @@ export async function runExtractReinforcementForCli(
           resumeState.totalBatches === batches.length
         ) {
           analysed = [...resumeState.analysed];
-          diagnostics.parseFailures = resumeState.diagnostics.parseFailures;
-          diagnostics.fallbacks = resumeState.diagnostics.fallbacks;
-          diagnostics.parsedItems = resumeState.diagnostics.parsedItems;
-          diagnostics.batchSplits = resumeState.diagnostics.batchSplits ?? 0;
-          diagnostics.truncations = resumeState.diagnostics.truncations ?? 0;
-          diagnostics.retries = resumeState.diagnostics.retries ?? 0;
+          Object.assign(diagnostics, resumeState.diagnostics);
           for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
           logger.info?.(
             `memory-hybrid: extract-reinforcement resume completed=${completedBatchIndexes.size}/${batches.length} state=${statePath}`,
@@ -350,9 +354,16 @@ export async function runExtractReinforcementForCli(
         };
 
         const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-        logger.info?.(`memory-hybrid: extract-reinforcement analysis tier = ${extractionTier}`);
+        const reinforcementThinkingMode = resolveReinforcementThinkingMode(ctx.cfg);
+        logger.info?.(`memory-hybrid: extract-reinforcement analysis tier = ${analysisTier}`);
         logger.info?.(
           `memory-hybrid: extract-reinforcement analysis starting with model ${model} (source=${modelSource})`,
+        );
+        logger.info?.(
+          `memory-hybrid: extract-reinforcement fallback chain = [${fallbackModels.length > 0 ? fallbackModels.join(", ") : ""}]`,
+        );
+        logger.info?.(
+          `memory-hybrid: extract-reinforcement batch mode: size=${batchSize} delayMs=${batchDelayMs} thinking=${reinforcementThinkingMode}`,
         );
 
         const attemptAnalysisJsonRepair = async (
@@ -384,7 +395,7 @@ export async function runExtractReinforcementForCli(
                 ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
                 : undefined,
             enabled: adaptiveEnabled,
-            thinkingMode: "disabled",
+            thinkingMode: reinforcementThinkingMode,
           });
           const repaired = parseStructuredItemsAcceptingEmpty(detail.content, (item) => {
             if (typeof item !== "object" || item === null) return false;
@@ -403,6 +414,7 @@ export async function runExtractReinforcementForCli(
           fallbackModels,
           maxTokens: maintenanceMaxOutputTokens(model),
           adaptiveEnabled,
+          thinkingMode: reinforcementThinkingMode,
           adaptiveStatePath:
             ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
               ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
@@ -416,7 +428,6 @@ export async function runExtractReinforcementForCli(
           },
         };
 
-        let failedBatchCount = 0;
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
           if (completedBatchIndexes.has(batchIndex)) continue;
           const batch = batches[batchIndex];
@@ -426,52 +437,55 @@ export async function runExtractReinforcementForCli(
             { ...analyzeDeps, batchLabel },
             batch,
           );
+
+          if (result.items === null) {
+            diagnostics.parseFailures++;
+            const excerpt = (result.rawContent ?? "").slice(0, 240);
+            const parseError = new Error(
+              `Reinforcement analysis: ${batchLabel} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+            );
+            (parseError as Error & { isParseFailure?: boolean }).isParseFailure = true;
+            throw parseError;
+          }
+
+          const ordered = orderBatchItemsByIncidentIndex(
+            batch.length,
+            result.items,
+            logger,
+            globalIncidentOffset,
+          );
+          if (ordered === null) {
+            diagnostics.parseFailures++;
+            const coverageError = new Error(
+              `Reinforcement analysis: ${batchLabel} incomplete (expected ${batch.length} remediation item(s), could not assign one per incident).`,
+            );
+            (coverageError as Error & { isParseFailure?: boolean }).isParseFailure = true;
+            throw coverageError;
+          }
+
           diagnostics.fallbacks += result.diagnostics.fallbacks;
           diagnostics.parseFailures += result.diagnostics.parseFailures;
           diagnostics.batchSplits += result.diagnostics.batchSplits;
           diagnostics.truncations += result.diagnostics.truncations;
           diagnostics.retries += result.diagnostics.retries;
 
-          if (result.items === null) {
-            llmAnalysisFailed = true;
-            failedBatchCount++;
-            logger.warn?.(
-              `memory-hybrid: extract-reinforcement ${batchLabel} parse/coverage failed`,
-            );
-            persistBatchState();
-            continue;
-          }
-
-          const ordered = orderBatchItemsByIncidentIndex(
-            batch.length,
-            result.items as Array<Record<string, unknown>>,
-            logger,
+          const attached = attachOrderedItemsToIncidents<ReinforcementIncident, ReinforcementRemediationItem>(
+            batch,
+            ordered,
+            globalIncidentOffset,
           );
-          if (ordered === null) {
-            diagnostics.parseFailures++;
-            llmAnalysisFailed = true;
-            failedBatchCount++;
-            logger.warn?.(
-              `memory-hybrid: extract-reinforcement ${batchLabel} incomplete (expected ${batch.length} item(s) per incident)`,
-            );
-            persistBatchState();
-            continue;
-          }
-
-          const attached = attachOrderedItemsToIncidents(batch, ordered, globalIncidentOffset);
           const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
           diagnostics.parsedItems += added;
           completedBatchIndexes.add(batchIndex);
           persistBatchState();
+
+          if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
+          }
         }
 
         if (completedBatchIndexes.size === batches.length) {
           removeReinforcementBatchState(statePath);
-        } else if (failedBatchCount > 0) {
-          logger.warn?.(
-            `memory-hybrid: extract-reinforcement partial batch failure: completed=${completedBatchIndexes.size}/${batches.length} failed=${failedBatchCount} analysed=${analysed.length}`,
-          );
-          result.partialBatchFailure = true;
         }
         if (incidentsForAnalysis.length > 0 && analysed.length === 0) {
           llmAnalysisFailed = true;
@@ -482,6 +496,9 @@ export async function runExtractReinforcementForCli(
         analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
       } catch (e) {
         llmAnalysisFailed = true;
+        if ((e as Error & { isParseFailure?: boolean }).isParseFailure) {
+          result.partialBatchFailure = true;
+        }
         capturePluginError(e as Error, {
           subsystem: "cli",
           operation: "runExtractReinforcementForCli:llm-analysis",
@@ -839,7 +856,7 @@ export async function runExtractReinforcementForCli(
     if (annotationStatus !== undefined) result.annotationStatus = annotationStatus;
     if (annotationDiagnostic) result.annotationDiagnostic = annotationDiagnostic;
 
-    if (!opts.dryRun) {
+    if (!opts.dryRun && !llmAnalysisFailed) {
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
     }

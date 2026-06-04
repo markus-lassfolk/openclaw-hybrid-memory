@@ -1216,6 +1216,11 @@
             "type": "string",
             "enum": ["nano", "maintenance", "default", "heavy"],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' saves cost; 'maintenance' isolates from llm.default; unset defaults to nano (same as CLI/runtime ?? \"nano\")."
+          },
+          "thinking": {
+            "type": "string",
+            "enum": ["disabled", "adaptive"],
+            "description": "MiniMax thinking mode for distill LLM calls (default: llm.minimax.thinking or disabled)"
           }
         }
       },
@@ -1256,6 +1261,11 @@
           "minObservations": {
             "type": "number",
             "description": "Min observations to support a pattern (default: 2)"
+          },
+          "thinking": {
+            "type": "string",
+            "enum": ["disabled", "adaptive"],
+            "description": "MiniMax thinking mode for reflection/consolidation (default: llm.minimax.thinking or disabled)"
           }
         }
       },
@@ -1665,6 +1675,15 @@
             "type": "number",
             "minimum": 1,
             "description": "Maximum number of incidents to analyze per run (default: 100)"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model override for self-correction LLM analysis (default: heavy tier)"
+          },
+          "thinking": {
+            "type": "string",
+            "enum": ["disabled", "adaptive"],
+            "description": "MiniMax thinking mode for self-correction analysis (default: llm.minimax.thinking or disabled)"
           }
         },
         "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"

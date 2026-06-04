@@ -4,7 +4,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import type { FindDuplicatesResult } from "../../cli/types.js";
-import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../../config.js";
+import { getMemoryCategories, resolveReflectionModelAndFallbacks, resolveReflectionThinkingMode } from "../../config.js";
 import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
 import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
@@ -61,7 +61,7 @@ interface CliContextServices {
     dryRun: boolean;
     model: string;
     verbose?: boolean;
-  }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  }) => Promise<{ metaExtracted: number; metaStored: number; diagnostics?: import("../../services/reflection.js").ReflectionMetaDiagnostics }>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -198,7 +198,16 @@ export function buildCliContextServices(
         return { clustersFound: 0, merged: 0, deleted: 0 };
       }
       await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
-      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
+      return runConsolidate(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        { ...opts, thinkingMode: resolveReflectionThinkingMode(cfg) },
+        api.logger,
+        aliasDb,
+        provenanceService,
+      );
     },
     runReflection: async (opts) => {
       const requestedModel = opts.model ?? cfg.reflection.model;
@@ -225,6 +234,7 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          thinkingMode: resolveReflectionThinkingMode(cfg),
         },
         logSink,
         provenanceService,
@@ -261,6 +271,7 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          thinkingMode: resolveReflectionThinkingMode(cfg),
         },
         logSink,
         provenanceService,
@@ -286,6 +297,7 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          thinkingMode: resolveReflectionThinkingMode(cfg),
         },
         logSink,
         provenanceService,

@@ -28,6 +28,7 @@ import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import { isWalWriteFailure } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
@@ -56,6 +57,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     pendingLLMWarnings,
     variantQueue,
     buildToolScopeFilter,
+    wal,
     walWrite,
     walRemove,
     findSimilarByEmbedding,
@@ -69,6 +71,16 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     isEdictWriteToolEnabled,
     sanitizeScopeParam,
   } = runtime;
+
+  const walWriteFailedResponse = () => ({
+    content: [
+      {
+        type: "text" as const,
+        text: "Store aborted: WAL durability write failed. Resolve WAL storage issues before storing.",
+      },
+    ],
+    details: { error: "wal_write_failed" },
+  });
 
   api.registerTool(
     {
@@ -558,6 +570,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger,
                     classification.targetId,
                   );
+                  if (isWalWriteFailure(wal, walEntryId)) {
+                    return walWriteFailedResponse();
+                  }
 
                   const nowSec = Math.floor(Date.now() / 1000);
                   const updateStoreResult = factsDb.storeWithResult({
@@ -650,7 +665,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
-                    await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemove(walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -670,7 +685,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     };
                   }
                   // WAL cleanup for skipped update path
-                  await walRemove(walEntryId, api.logger);
+                  if (walEntryId) await walRemove(walEntryId, api.logger);
                   return {
                     content: [
                       {
@@ -781,6 +796,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             },
             api.logger,
           );
+          if (isWalWriteFailure(wal, walEntryId)) {
+            return walWriteFailedResponse();
+          }
           const decayFreezeUntil =
             paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
               ? paramDecayFreezeUntil
@@ -1032,7 +1050,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
-            await walRemove(walEntryId, api.logger);
+            if (walEntryId) await walRemove(walEntryId, api.logger);
             return {
               content: [
                 {
@@ -1062,7 +1080,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
           // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
-          await walRemove(walEntryId, api.logger);
+          if (walEntryId) await walRemove(walEntryId, api.logger);
           return {
             content: [
               {

@@ -64,7 +64,7 @@ export function registerUtilityTools(
   runReflection: RunReflectionFn,
   runReflectionRules: RunReflectionRulesFn,
   runReflectionMeta: RunReflectionMetaFn,
-  _walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string>,
+  _walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string | null>,
   _walRemove: (id: string) => Promise<void>,
 ): void {
   const { factsDb, vectorDb, embeddings, openai, cfg, provenanceService } = ctx;

@@ -100,6 +100,14 @@ async function callBatchAnalyzeLlm<TIncident>(
         adaptiveStatePath: deps.adaptiveStatePath,
         enabled: deps.adaptiveEnabled,
         thinkingMode: deps.thinkingMode,
+        onRetry: (info) => {
+          diagnostics.retries++;
+          deps.onTransientRetry?.({
+            attempt: info.attempt,
+            delayMs: info.delayMs,
+            error: info.error,
+          });
+        },
       });
       return {
         content: detail.content,
@@ -128,6 +136,48 @@ function mergeBatchDiagnostics(target: IncidentBatchAnalyzeDiagnostics, source: 
   target.batchSplits += source.batchSplits;
   target.truncations += source.truncations;
   target.retries += source.retries;
+}
+
+function isOutputTruncated(finishReason: string | null | undefined): boolean {
+  if (!finishReason) return false;
+  const normalized = finishReason.toLowerCase();
+  return normalized === "length" || normalized === "max_tokens" || normalized === "max_output_tokens";
+}
+
+/** Heuristic for spawn/subprocess paths that lack provider finish_reason metadata. */
+export function inferFinishReasonFromLlmContent(content: string): "stop" | "length" {
+  const trimmed = content.trim();
+  if (!trimmed) return "length";
+
+  let body = trimmed;
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced) body = fenced[1]?.trim() ?? "";
+
+  if (body.startsWith("[") && !body.endsWith("]")) return "length";
+  if (body.startsWith("{") && !body.endsWith("}")) return "length";
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (const ch of body) {
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "[" || ch === "{") depth++;
+    else if (ch === "]" || ch === "}") depth--;
+  }
+  if (depth !== 0) return "length";
+  return "stop";
 }
 
 function rejectIncompleteBatch<TItem>(
@@ -181,12 +231,13 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
 
   let { items, finishReason, content } = await runOnce();
 
-  if (items === null) {
+  if (items === null && batch.length <= 1) {
     return { items: null, finishReason, rawContent: content, diagnostics };
   }
 
-  const isTruncated = finishReason === "length";
-  const underCoverage = batch.length > 0 && items.length > 0 && items.length < batch.length;
+  const isTruncated = isOutputTruncated(finishReason);
+  const parsedCount = items?.length ?? 0;
+  const underCoverage = batch.length > 0 && parsedCount > 0 && parsedCount < batch.length;
 
   if (isTruncated) diagnostics.truncations++;
 
@@ -194,7 +245,8 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
     allowBudgetBump &&
     isTruncated &&
     batch.length > 0 &&
-    (underCoverage || items.length < batch.length)
+    items !== null &&
+    (underCoverage || parsedCount < batch.length)
   ) {
     const catalogMax = maintenanceMaxOutputTokens(deps.model);
     const bumped = Math.min(catalogMax, Math.max(deps.maxTokens + 1, Math.ceil(deps.maxTokens * 1.5)));
@@ -215,15 +267,18 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
     }
   }
 
+  const effectiveTruncated = isOutputTruncated(finishReason);
+  const effectiveParsedCount = items?.length ?? 0;
+
   const needsSplit =
     allowSplit &&
     batch.length > 1 &&
-    (finishReason === "length" || items.length < batch.length);
+    (effectiveTruncated || items === null || effectiveParsedCount < batch.length);
 
   if (needsSplit) {
     diagnostics.batchSplits++;
     deps.logger.warn?.(
-      `memory-hybrid: incident-batch ${batchLabel}: auto-split expected=${batch.length} parsed=${items.length} finish=${finishReason ?? "stop"}`,
+      `memory-hybrid: incident-batch ${batchLabel}: auto-split expected=${batch.length} parsed=${effectiveParsedCount} finish=${finishReason ?? "stop"}`,
     );
     const [left, right] = splitIncidentsInHalf(batch);
     const leftResult = await analyzeIncidentBatchWithSplit(
@@ -248,6 +303,7 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
       leftResult.items as Array<Record<string, unknown>>,
       rightResult.items as Array<Record<string, unknown>>,
       left.length,
+      right.length,
     ) as TItem[];
     const rejected = rejectIncompleteBatch(batch.length, merged, finishReason, content, diagnostics, batchLabel, deps.logger);
     if (rejected) return rejected;

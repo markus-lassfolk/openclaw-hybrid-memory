@@ -57,6 +57,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { _testing } from "../index.js";
+import { WalReadCorruptionError } from "../backends/wal.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const { WriteAheadLog } = _testing;
@@ -187,12 +188,11 @@ describe("WriteAheadLog", () => {
       expect(entries).toEqual([]);
     });
 
-    it("handles corrupted JSON gracefully", async () => {
+    it("throws WalReadCorruptionError for corrupted entry lines", async () => {
       // Write invalid JSON directly to the file
       writeFileSync(walPath, "{ invalid json }", "utf-8");
 
-      const entries = await wal.readAll();
-      expect(entries).toEqual([]);
+      await expect(wal.readAll()).rejects.toBeInstanceOf(WalReadCorruptionError);
     });
 
     it("handles empty file", async () => {
@@ -740,7 +740,7 @@ describe("WriteAheadLog", () => {
       expect(entries[0]).toEqual(entry);
     });
 
-    it("handles partial file corruption by returning empty array", async () => {
+    it("throws WalReadCorruptionError for truncated/corrupt WAL files", async () => {
       // Write valid data first
       const entry = {
         id: randomUUID(),
@@ -757,10 +757,7 @@ describe("WriteAheadLog", () => {
       // Create new instance and try to read
       const recoveredWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
       await recoveredWal.init();
-      const entries = await recoveredWal.readAll();
-
-      // Should return empty array for corrupted data
-      expect(entries).toEqual([]);
+      await expect(recoveredWal.readAll()).rejects.toBeInstanceOf(WalReadCorruptionError);
     });
 
     it("preserves WAL file during crash recovery with multiple entries", async () => {

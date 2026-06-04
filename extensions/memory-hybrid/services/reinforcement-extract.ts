@@ -264,9 +264,9 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
         agentBehavior: truncate(precedingAssistant, MAX_AGENT_BEHAVIOR),
         precedingUserMessage: ctx.precedingUserMessage
           ? truncate(ctx.precedingUserMessage, MAX_PRECEDING_USER_MSG)
-          : undefined,
-        recalledMemoryIds: ctx.recalledMemoryIds.length > 0 ? ctx.recalledMemoryIds : undefined,
-        toolCallSequence: ctx.toolCallSequence.length > 0 ? ctx.toolCallSequence : undefined,
+          : "",
+        recalledMemoryIds: ctx.recalledMemoryIds.length > 0 ? ctx.recalledMemoryIds : [],
+        toolCallSequence: ctx.toolCallSequence.length > 0 ? ctx.toolCallSequence : [],
         confidence,
         timestamp: ts,
         sessionFile: sessionName,

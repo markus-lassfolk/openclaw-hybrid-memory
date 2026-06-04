@@ -82,7 +82,7 @@ describe("batch-incident-analysis", () => {
     expect(merged.map((i) => i.incidentIndex)).toEqual([1, 0, 3, 2]);
   });
 
-  it("appendUniqueRemediationsByIncidentIndex skips duplicate incidentIndex on resume", () => {
+  it("appendUniqueRemediationsByIncidentIndex upgrades NO_ACTION on resume retry", () => {
     const analysed: { incidentIndex: number; remediationType: string }[] = [
       { incidentIndex: 0, remediationType: "NO_ACTION" },
     ];
@@ -90,9 +90,21 @@ describe("batch-incident-analysis", () => {
       { incidentIndex: 0, remediationType: "TOOLS_RULE" },
       { incidentIndex: 1, remediationType: "NO_ACTION" },
     ]);
-    expect(added).toBe(1);
+    expect(added).toBe(2);
     expect(analysed.map((i) => i.incidentIndex)).toEqual([0, 1]);
+    expect(analysed[0].remediationType).toBe("TOOLS_RULE");
     expect(analysed[1].remediationType).toBe("NO_ACTION");
+  });
+
+  it("resolveIncidentIndexInBatch rejects global indices outside batch", () => {
+    expect(resolveIncidentIndexInBatch({ incidentIndex: 51 }, 0, 3)).toBe(-1);
+    expect(resolveIncidentIndexInBatch({ incidentIndex: 12 }, 0, 3, 10)).toBe(2);
+  });
+
+  it("orderBatchItemsByIncidentIndex rejects out-of-range incidentIndex", () => {
+    expect(
+      orderBatchItemsByIncidentIndex(3, [{ incidentIndex: 99, remediationType: "NO_ACTION" }]),
+    ).toBeNull();
   });
 
   it("attachOrderedItemsToIncidents applies global offset and strips metadata", () => {

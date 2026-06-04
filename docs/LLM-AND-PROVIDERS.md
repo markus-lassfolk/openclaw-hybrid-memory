@@ -312,6 +312,8 @@ The `baseURL` defaults to `https://api.minimax.io/v1` (global endpoint). Set it 
 
 **OAuth support:** MiniMax supports CLI OAuth via `minimax-portal:minimax-cli` in `auth.order`. When configured alongside an available gateway, requests route through the gateway automatically (same as Google and Anthropic).
 
+**Per-task thinking overrides:** Maintenance analyzers honor `selfCorrection.thinking`, `reinforcement.thinking`, `distill.thinking`, and `reflection.thinking` (each falls back to `llm.minimax.thinking`, default `disabled`). Use `disabled` for structured JSON extraction; try `adaptive` only on reasoning-heavy steps after A/B validation.
+
 ### Any other OpenAI-compatible provider
 
 For providers not auto-detected, add them to `llm.providers`:

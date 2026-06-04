@@ -51,6 +51,20 @@ export type WALEntry = {
 
 const WAL_REMOVE_PREFIX = '{"op":"remove","id":';
 
+export class WalReadCorruptionError extends Error {
+  readonly corruptLineCount: number;
+  readonly lineNumbers: number[];
+
+  constructor(corruptLineCount: number, lineNumbers: number[]) {
+    super(
+      `WAL readAll: ${corruptLineCount} corrupt entry line(s) at line(s) ${lineNumbers.join(", ")}; refusing partial replay`,
+    );
+    this.name = "WalReadCorruptionError";
+    this.corruptLineCount = corruptLineCount;
+    this.lineNumbers = lineNumbers;
+  }
+}
+
 export function isWalEntry(obj: unknown): obj is WALEntry {
   if (typeof obj !== "object" || obj === null || !("id" in obj) || !("timestamp" in obj) || !("operation" in obj)) {
     return false;
@@ -250,20 +264,30 @@ export class WriteAheadLog {
     }
 
     const entries: WALEntry[] = [];
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
+    const corruptLineNumbers: number[] = [];
+    const lines = content.split("\n");
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const trimmed = lines[lineIndex]?.trim();
       if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
       try {
         const obj = JSON.parse(trimmed) as unknown;
         if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
+        else if (!isWalEntry(obj)) {
+          corruptLineNumbers.push(lineIndex + 1);
+        }
       } catch (err) {
         capturePluginError(err as Error, {
           operation: "wal-parse-entry",
           severity: "info",
           subsystem: "wal",
         });
-        pluginLogger.warn(`WAL readAll: failed to parse WAL entry line, skipping: ${err}`);
+        pluginLogger.warn(`WAL readAll: failed to parse WAL entry line ${lineIndex + 1}, marking corrupt: ${err}`);
+        corruptLineNumbers.push(lineIndex + 1);
       }
+    }
+
+    if (corruptLineNumbers.length > 0) {
+      throw new WalReadCorruptionError(corruptLineNumbers.length, corruptLineNumbers);
     }
 
     return entries;

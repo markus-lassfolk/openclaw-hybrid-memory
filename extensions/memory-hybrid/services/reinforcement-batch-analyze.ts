@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 
+import type { SelfCorrectionBatchSettings } from "./self-correction-batch-analyze.js";
 import { serializeIncidentsForBatchPrompt } from "./batch-incident-analysis.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import {
@@ -8,8 +9,9 @@ import {
   type IncidentBatchLlmResult,
 } from "./incident-batch-analyze-core.js";
 import type { ReinforcementIncident } from "./reinforcement-extract.js";
-import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import type { MiniMaxThinkingMode } from "./chat.js";
 import { parseStructuredItemsAcceptingEmpty } from "../utils/llm-json-array.js";
+import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 
 export type ReinforcementRemediationItem = {
   category: string;
@@ -46,7 +48,7 @@ export const DEFAULT_MINIMAX_REINFORCEMENT_BATCH_SIZE = 1;
 export function resolveReinforcementAnalysisBatchSize(
   model: string,
   reinfCfg: { analysisBatchSize?: number },
-  scCfg?: { analysisBatchSize?: number },
+  scCfg?: SelfCorrectionBatchSettings,
 ): number {
   const configured = reinfCfg.analysisBatchSize ?? scCfg?.analysisBatchSize;
   if (typeof configured === "number" && configured >= 1) return Math.floor(configured);
@@ -68,6 +70,7 @@ type AnalyzeDeps = {
   adaptiveEnabled: boolean;
   adaptiveStatePath?: string;
   logger: { info?: (msg: string) => void; warn?: (msg: string) => void };
+  thinkingMode?: MiniMaxThinkingMode;
   onTransientRetry?: (info: { attempt: number; delayMs: number; error: Error }) => void;
   attemptAnalysisJsonRepair: (rawContent: string) => Promise<{
     items: ReinforcementRemediationItem[] | null;
@@ -92,6 +95,7 @@ async function parseBatchContent(
     diagnostics.fallbacks += repaired.fallbacks;
     if (repaired.items !== null) return repaired.items;
   } catch {
+    diagnostics.parseFailures++;
     return null;
   }
   diagnostics.parseFailures++;
@@ -112,7 +116,7 @@ export async function analyzeReinforcementIncidentBatchWithSplit(
     {
       ...deps,
       scFallbackModels: deps.fallbackModels,
-      thinkingMode: "disabled",
+      thinkingMode: deps.thinkingMode ?? "disabled",
       costFeature: CostFeature.extractReinforcement,
       costFeatureLabel: `memory-hybrid: reinforcement analyze (${deps.batchLabel ?? "batch"})`,
       parseBatchContent: (content, diagnostics) => parseBatchContent(deps, content, diagnostics),

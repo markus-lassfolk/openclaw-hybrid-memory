@@ -61,7 +61,9 @@ This document lists LLM-using (and related) features: what each does, which mode
 - **nano**: Auto-classify, classify-before-write, query expansion, summarize, reranking, contextual variants, language keywords, suggest categories, retrieval aliases, passive observer. Use for short, classification-style or lightweight generation tasks.
 - **maintenance**: Dream cycle (reflection parts), reflection commands, consolidation helpers, session-extraction analysis. Use for scheduled/manual maintenance where cost control matters.
 - **default (flash)**: General analysis and features that explicitly use the default tier. Use for extraction, synthesis, and multi-step reasoning that doesn’t need the largest context.
-- **heavy**: Self-correction. Use only where deep analysis and large context pay off.
+- **heavy**: Self-correction, distill (when `distill.modelTier=heavy`). Use only where deep analysis and large context pay off.
+
+Per-task MiniMax **thinking** overrides (`selfCorrection.thinking`, `reinforcement.thinking`, `distill.thinking`, `reflection.thinking`) fall back to `llm.minimax.thinking` (default `disabled`). See [CONFIGURATION.md](CONFIGURATION.md#minimax-maintenance-tuning).
 
 ---
 

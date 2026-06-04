@@ -30,6 +30,11 @@ import {
 } from "../utils/auth-failover.js";
 import { hasOAuthProfiles } from "../utils/auth.js";
 import { getEnv } from "../utils/env-manager.js";
+import {
+  applyOpenClawGatewayModelRequest,
+  isOpenClawGatewayBaseUrl,
+  OPENCLAW_GATEWAY_AGENT_MODEL,
+} from "../utils/openclaw-gateway-http.js";
 import { inferFeatureLabel } from "./cost-instrumentation.js";
 
 /** Minimal logger shape accepted by the log-once helpers. */
@@ -723,19 +728,24 @@ export function buildMultiProviderOpenAI(
     return Boolean(value && value.length >= 10);
   }
 
+  function routeViaGateway(baseURL: string | undefined): boolean {
+    return isOpenClawGatewayBaseUrl(baseURL, gatewayBaseUrl);
+  }
+
   function resolveClient(model: string): {
     client: OpenAI;
     bareModel: string;
     ollamaBaseUrl?: string;
     useFullModel?: boolean;
     authType?: "oauth";
+    viaGateway?: boolean;
   } {
     const normalized = normalizeModelId(model);
     const trimmed = normalized.trim();
     const slashIdx = trimmed.indexOf("/");
 
     if (slashIdx <= 0) {
-      return { client: defaultOpenAIClient(), bareModel: trimmed };
+      return { client: defaultOpenAIClient(), bareModel: trimmed, viaGateway: Boolean(gatewayBaseUrl) };
     }
 
     const prefix = trimmed.slice(0, slashIdx).toLowerCase();
@@ -757,6 +767,7 @@ export function buildMultiProviderOpenAI(
           bareModel,
           useFullModel: true,
           authType: "oauth",
+          viaGateway: true,
         };
       }
       // Fall through to use API client (OAuth in backoff or preferOAuthWhenBoth false).
@@ -788,6 +799,7 @@ export function buildMultiProviderOpenAI(
       return {
         client: getOrCreate(cacheKey, () => new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) })),
         bareModel,
+        viaGateway: routeViaGateway(baseURL),
       };
     }
 
@@ -994,6 +1006,26 @@ export function buildMultiProviderOpenAI(
     );
   }
 
+  /** When routed via OpenClaw gateway HTTP, swap provider model id for agent target + x-openclaw-model header. */
+  function finalizeHttpRequest(params: {
+    adjustedBody: Record<string, unknown>;
+    opts: unknown;
+    backendModel: string;
+    directModel: string;
+    viaGateway?: boolean;
+  }): { body: Record<string, unknown>; opts: unknown } {
+    if (!params.viaGateway) {
+      return { body: { ...params.adjustedBody, model: params.directModel }, opts: params.opts };
+    }
+    const applied = applyOpenClawGatewayModelRequest(
+      { ...params.adjustedBody, model: params.directModel },
+      params.backendModel,
+      params.opts,
+      OPENCLAW_GATEWAY_AGENT_MODEL,
+    );
+    return applied;
+  }
+
   // Proxy that intercepts chat.completions.create and responses.create, routing to the right provider client.
   // All other OpenAI methods (embeddings, etc.) are NOT proxied — embeddings use a separate client.
   // The proxy base is only accessed for non-chat methods (not used by this plugin directly).
@@ -1011,26 +1043,34 @@ export function buildMultiProviderOpenAI(
             ) {
               const rawModel: string = (body as { model?: string }).model ?? "";
               const model = normalizeModelId(rawModel);
-              const { client, bareModel, ollamaBaseUrl, useFullModel, authType } = resolveClient(model);
+              const { client, bareModel, ollamaBaseUrl, useFullModel, authType, viaGateway } = resolveClient(model);
               const prefix = model.trim().split("/")[0]?.toLowerCase();
-              // When gateway-routed for non-OpenAI providers (auth.order OAuth), send the full "provider/model"
-              // name so the gateway can route to the correct provider using the configured auth profile.
-              const modelForRequest = useFullModel ? model.trim() : bareModel;
-              const merged = { ...(body as object), model: modelForRequest } as Record<string, unknown>;
+              const backendModel = model.trim();
+              const directModel = useFullModel ? backendModel : bareModel;
+              const merged = { ...(body as object), model: directModel } as Record<string, unknown>;
               const adjustedBody = remapMaxTokensForOpenAI(merged);
+              const finalized = finalizeHttpRequest({
+                adjustedBody,
+                opts,
+                backendModel,
+                directModel,
+                viaGateway,
+              });
+              const requestBody = finalized.body;
+              let requestOpts = finalized.opts;
               const start = Date.now();
 
               // Responses-only models: route chat.completions.create → responses.create so direct SDK
               // call sites (classification, auto-classifier, etc.) work with azure-foundry-responses/* (#1043, Codex P1).
               if (resolveWireApi(model) === "responses") {
-                if ((adjustedBody as { stream?: boolean }).stream) {
+                if ((requestBody as { stream?: boolean }).stream) {
                   return Promise.reject(
                     new Error(
                       "memory-hybrid: stream=true is not supported for Responses API models (e.g. azure-foundry-responses/*); set stream: false.",
                     ),
                   );
                 }
-                const responsesBody = buildResponsesRequestFromChatBody(adjustedBody);
+                const responsesBody = buildResponsesRequestFromChatBody(requestBody);
                 const input = responsesBody.input;
                 if (!Array.isArray(input) || input.length === 0) {
                   return Promise.reject(new Error("memory-hybrid: Responses API request requires non-empty messages"));
@@ -1045,8 +1085,8 @@ export function buildMultiProviderOpenAI(
                     ),
                   );
                 }
-                const modelLabel = String(adjustedBody.model ?? modelForRequest);
-                let promise: Promise<unknown> = responsesNs.create(responsesBody, opts ?? {});
+                const modelLabel = backendModel;
+                let promise: Promise<unknown> = responsesNs.create(responsesBody, requestOpts ?? {});
                 if (authType === "oauth" && failoverOpts) {
                   promise = promise.catch((err: unknown) => {
                     recordOAuthFailure(prefix, failoverOpts);
@@ -1062,8 +1102,8 @@ export function buildMultiProviderOpenAI(
               // through to the next tier model quickly instead of waiting for a TCP timeout.
               const makeCall = () =>
                 client.chat.completions.create(
-                  adjustedBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0],
-                  opts,
+                  requestBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0],
+                  requestOpts as Parameters<OpenAI["chat"]["completions"]["create"]>[1],
                 );
               let promise: ReturnType<typeof makeCall> = ollamaBaseUrl
                 ? ((async () => {
@@ -1096,11 +1136,21 @@ export function buildMultiProviderOpenAI(
           create(body: Record<string, unknown>, opts?: { signal?: AbortSignal }) {
             const rawModel: string = String(body.model ?? "");
             const model = normalizeModelId(rawModel);
-            const { client, bareModel, useFullModel, authType } = resolveClient(model);
+            const { client, bareModel, useFullModel, authType, viaGateway } = resolveClient(model);
             const prefix = model.trim().split("/")[0]?.toLowerCase();
-            const modelForRequest = useFullModel ? model.trim() : bareModel;
-            const merged = { ...body, model: modelForRequest };
+            const backendModel = model.trim();
+            const directModel = useFullModel ? backendModel : bareModel;
+            const merged = { ...body, model: directModel };
             const adjustedBody = remapMaxTokensForOpenAI(merged);
+            const finalized = finalizeHttpRequest({
+              adjustedBody,
+              opts,
+              backendModel,
+              directModel,
+              viaGateway,
+            });
+            const requestBody = finalized.body;
+            const requestOpts = finalized.opts;
             const start = Date.now();
 
             const responsesNs = (
@@ -1114,7 +1164,7 @@ export function buildMultiProviderOpenAI(
               );
             }
 
-            let promise = responsesNs.create(adjustedBody, opts ?? {});
+            let promise = responsesNs.create(requestBody, requestOpts ?? {});
             if (authType === "oauth" && failoverOpts) {
               promise = promise.catch((err: unknown) => {
                 recordOAuthFailure(prefix, failoverOpts);

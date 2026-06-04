@@ -494,6 +494,10 @@ export type SelfCorrectionConfig = {
   analysisBatchSize?: number;
   /** Delay in ms between sequential analysis batches (default: 250). Helps respect MiniMax RPM/TPM. */
   batchDelayMs?: number;
+  /** Optional model override for self-correction LLM analysis (default: heavy tier). */
+  model?: string;
+  /** MiniMax thinking mode for self-correction analysis (default: llm.minimax.thinking or disabled). */
+  thinking?: "disabled" | "adaptive";
 };
 
 /**
@@ -694,6 +698,8 @@ export type HybridMemoryConfig = {
     modelTier?: "nano" | "maintenance" | "default" | "heavy";
     /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" saves cost; "maintenance" isolates from llm.default; unset defaults to "nano". */
     extractionModelTier?: "nano" | "maintenance" | "default" | "heavy";
+    /** MiniMax thinking mode for distill LLM calls (default: llm.minimax.thinking or disabled). */
+    thinking?: "disabled" | "adaptive";
   };
   /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
   languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };

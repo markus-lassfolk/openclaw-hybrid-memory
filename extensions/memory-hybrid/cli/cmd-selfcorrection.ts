@@ -14,7 +14,12 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, wr
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { getCronModelConfig, getDefaultCronModel, resolveReflectionModelAndFallbacks } from "../config.js";
+import {
+  getCronModelConfig,
+  getDefaultCronModel,
+  resolveReflectionModelAndFallbacks,
+  type SelfCorrectionConfig,
+} from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
@@ -26,11 +31,13 @@ import {
   orderBatchItemsByIncidentIndex,
   serializeIncidentsForBatchPrompt,
 } from "../services/batch-incident-analysis.js";
+import { inferFinishReasonFromLlmContent } from "../services/incident-batch-analyze-core.js";
 import {
   analyzeSelfCorrectionIncidentBatchWithSplit,
   resolveSelfCorrectionBatchDelayMs,
   resolveSelfCorrectionBatchSize,
   resolveSelfCorrectionThinkingMode,
+  type SelfCorrectionRemediationItem,
 } from "../services/self-correction-batch-analyze.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
@@ -94,10 +101,6 @@ export function resolveSelfCorrectionBatchStateDir(workspaceRoot: string): strin
 
 function isSelfCorrectionBatchStateFile(name: string): boolean {
   return name.startsWith(SELF_CORRECTION_BATCH_STATE_PREFIX) && name.endsWith(".json");
-}
-
-function resolveSelfCorrectionBatchSizeFromCfg(model: string, scCfg: { analysisBatchSize?: number }): number {
-  return resolveSelfCorrectionBatchSize(model, scCfg);
 }
 
 function buildSelfCorrectionRunFingerprint(
@@ -217,28 +220,8 @@ function chunkSelfCorrectionIncidents<T>(items: T[], batchSize: number): T[][] {
   return batches;
 }
 
-function isTransientSelfCorrectionLlmError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /request was aborted|operation was aborted|llm request timeout|timed out|timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|fetch failed|connection error/i.test(
-    msg,
-  );
-}
-
 async function sleepSelfCorrectionBackoff(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function mergeSelfCorrectionDiagnostics(
-  target: SelfCorrectionRunDiagnostics,
-  source: Partial<SelfCorrectionRunDiagnostics>,
-): void {
-  target.retries += source.retries ?? 0;
-  target.fallbacks += source.fallbacks ?? 0;
-  target.parseFailures += source.parseFailures ?? 0;
-  target.unparseableFailures += source.unparseableFailures ?? 0;
-  target.parsedItems += source.parsedItems ?? 0;
-  target.batchSplits += source.batchSplits ?? 0;
-  target.truncations += source.truncations ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +232,7 @@ function mergeSelfCorrectionDiagnostics(
 const SELF_CORRECTION_CAP = 5;
 
 /** Default self-correction configuration values. */
-const DEFAULT_SELF_CORRECTION = {
+const DEFAULT_SELF_CORRECTION: SelfCorrectionConfig = {
   semanticDedup: true,
   semanticDedupThreshold: 0.92,
   toolsSection: "Self-correction rules",
@@ -258,7 +241,7 @@ const DEFAULT_SELF_CORRECTION = {
   analyzeViaSpawn: false,
   spawnThreshold: 15,
   spawnModel: "",
-} as const;
+};
 
 function sanitizeLlmResponseExcerpt(content: string): string {
   return content
@@ -311,7 +294,7 @@ async function applySelfCorrectionRemediations(params: {
   analysed: SelfCorrectionRemediation[];
   incidents: CorrectionIncident[];
   workspaceRoot: string;
-  scCfg: typeof DEFAULT_SELF_CORRECTION;
+  scCfg: SelfCorrectionConfig;
   opts: {
     dryRun?: boolean;
     approve?: boolean;
@@ -403,7 +386,7 @@ async function applySelfCorrectionRemediations(params: {
         if (
           a.remediationType === "AGENTS_RULE" &&
           proposalsDb &&
-          (scCfg as { agentsRuleToProposals?: boolean }).agentsRuleToProposals !== false &&
+          scCfg.agentsRuleToProposals !== false &&
           !opts.dryRun
         ) {
           try {
@@ -507,7 +490,7 @@ function buildSelfCorrectionReportLines(params: {
   toolsSuggestions: string[];
   toolsApplied: number;
   diagnostics: SelfCorrectionRunDiagnostics;
-  scCfg: typeof DEFAULT_SELF_CORRECTION;
+  scCfg: SelfCorrectionConfig;
 }): string[] {
   const { today, incidentsCount, analysed, autoFixed, proposals, toolsSuggestions, toolsApplied, diagnostics, scCfg } =
     params;
@@ -616,7 +599,7 @@ export async function runSelfCorrectionRunForCli(
   },
 ): Promise<SelfCorrectionRunResult> {
   const { bypassScanCooldown } = resolveScanMaintenanceOverrides(opts);
-  const { factsDb, vectorDb, embeddings, openai, cfg, logger, proposalsDb } = ctx;
+  const { factsDb, openai, cfg, logger } = ctx;
   const SCAN_TYPE = "self-correction-run";
 
   // Startup guard + concurrency lock (skip if already ran within 23h and not forced)
@@ -723,7 +706,7 @@ export async function runSelfCorrectionRunForCli(
       : (heavyResolved.fallbackModels ?? []);
     const scFallbackModels = [...new Set(scFallbackCandidates.filter((m) => m !== model))];
     const maxTokens = maintenanceMaxOutputTokens(model);
-    const batchSize = resolveSelfCorrectionBatchSizeFromCfg(model, scCfg);
+    const batchSize = resolveSelfCorrectionBatchSize(model, scCfg);
     const batchDelayMs = resolveSelfCorrectionBatchDelayMs(scCfg);
     const thinkingMode = resolveSelfCorrectionThinkingMode(cfg);
     let analysed: SelfCorrectionRemediation[] = [];
@@ -747,7 +730,7 @@ export async function runSelfCorrectionRunForCli(
         resumeState.totalBatches === batches.length
       ) {
         analysed = [...resumeState.analysed];
-        mergeSelfCorrectionDiagnostics(diagnostics, resumeState.diagnostics);
+        Object.assign(diagnostics, resumeState.diagnostics);
         for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
         batchesStarted = completedBatchIndexes.size;
         logger.info?.(
@@ -924,18 +907,14 @@ export async function runSelfCorrectionRunForCli(
                       );
                     }
                     const content = await fetchSpawnBatchContent(prompt);
-                    return { content, fallbacks: 0, finishReason: "stop" };
+                    const finishReason = inferFinishReasonFromLlmContent(content);
+                    return { content, fallbacks: 0, finishReason };
                   },
                 }
               : {}),
           },
           batch,
         );
-        diagnostics.fallbacks += result.diagnostics.fallbacks;
-        diagnostics.parseFailures += result.diagnostics.parseFailures;
-        diagnostics.batchSplits += result.diagnostics.batchSplits;
-        diagnostics.truncations += result.diagnostics.truncations;
-        diagnostics.retries += result.diagnostics.retries;
         if (result.items === null) {
           diagnostics.unparseableFailures++;
           const excerpt = sanitizeLlmResponseExcerpt(result.rawContent ?? "");
@@ -947,8 +926,9 @@ export async function runSelfCorrectionRunForCli(
         }
         const ordered = orderBatchItemsByIncidentIndex(
           batch.length,
-          result.items as Array<Record<string, unknown>>,
+          result.items,
           logger,
+          globalIncidentOffset,
         );
         if (ordered === null) {
           diagnostics.unparseableFailures++;
@@ -959,7 +939,16 @@ export async function runSelfCorrectionRunForCli(
           throw coverageError;
         }
 
-        const attached = attachOrderedItemsToIncidents(batch, ordered, globalIncidentOffset);
+        diagnostics.fallbacks += result.diagnostics.fallbacks;
+        diagnostics.parseFailures += result.diagnostics.parseFailures;
+        diagnostics.batchSplits += result.diagnostics.batchSplits;
+        diagnostics.truncations += result.diagnostics.truncations;
+        diagnostics.retries += result.diagnostics.retries;
+
+        const attached = attachOrderedItemsToIncidents<
+          CorrectionIncident,
+          SelfCorrectionRemediationItem
+        >(batch, ordered, globalIncidentOffset);
         const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
         diagnostics.parsedItems += added;
         completedBatchIndexes.add(batchIndex);
@@ -1065,9 +1054,6 @@ export async function runSelfCorrectionRunForCli(
         status,
       };
     }
-    const totalBatchesCompleted = completedBatchIndexes.size;
-    const allBatchesSucceeded = totalBatchesCompleted === batches.length;
-    const diagnosticsIndicateFailure = diagnostics.unparseableFailures > 0 || diagnostics.parseFailures > 0;
     if (incidents.length > 0 && analysed.length === 0) {
       const error = `Self-correction analysis suspect: ${incidents.length} incident(s) found but zero parsed/analysed remediation items.`;
       logger.warn?.(`memory-hybrid: ${SCAN_TYPE} — ${error}`);

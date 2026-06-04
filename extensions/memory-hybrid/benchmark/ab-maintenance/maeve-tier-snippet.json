@@ -1,0 +1,37 @@
+{
+  "_comment": "Apply to Maeve openclaw.json with approval. From A/B run 2026-06-04T10-12-56 + timeout/thinking-fallback hardening.",
+  "llm": {
+    "nano": ["minimax/MiniMax-M2.7-highspeed"],
+    "maintenance": ["minimax/MiniMax-M3", "minimax/MiniMax-M2.7-highspeed"],
+    "default": ["minimax/MiniMax-M3"],
+    "heavy": ["minimax/MiniMax-M3"],
+    "minimax": {
+      "thinking": "disabled"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "models": {
+        "minimax/MiniMax-M3": { "alias": "minimax-m3" },
+        "minimax/MiniMax-M2.7-highspeed": { "alias": "minimax-fast" },
+        "minimax/MiniMax-M2.7": { "alias": "minimax" }
+      }
+    }
+  },
+  "selfCorrection": {
+    "model": "minimax/MiniMax-M3",
+    "thinking": "disabled"
+  },
+  "reinforcement": {
+    "model": "minimax/MiniMax-M2.7-highspeed",
+    "thinking": "disabled"
+  },
+  "distill": {
+    "modelTier": "heavy",
+    "thinking": "disabled"
+  },
+  "reflection": {
+    "model": "minimax/MiniMax-M2.7-highspeed",
+    "thinking": "adaptive"
+  }
+}

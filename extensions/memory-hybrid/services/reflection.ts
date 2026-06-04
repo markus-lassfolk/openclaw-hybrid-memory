@@ -80,6 +80,7 @@ interface ReflectionOptions {
   fallbackModels?: string[];
   modelSource?: string;
   adaptiveStatePath?: string;
+  thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
 }
 
 interface ReflectionResult {
@@ -657,6 +658,7 @@ export async function runReflection(
       logger,
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
+      thinkingMode: opts.thinkingMode,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflection — used fallback model ${detail.modelUsed}`);
@@ -1138,6 +1140,7 @@ export async function runReflectionRules(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -1201,6 +1204,7 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
+      thinkingMode: opts.thinkingMode,
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1801,6 +1805,7 @@ export async function runReflectionMeta(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -1840,6 +1845,7 @@ export async function runReflectionMeta(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
+      thinkingMode: opts.thinkingMode,
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {

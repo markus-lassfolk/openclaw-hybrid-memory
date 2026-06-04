@@ -11,6 +11,7 @@
  */
 
 import type OpenAI from "openai";
+import { applyOpenClawGatewayModelRequest, isOpenClawGatewayClient } from "../utils/openclaw-gateway-http.js";
 import { shouldOmitSamplingParams } from "./model-capabilities.js";
 
 export interface ResponsesCreateParams {
@@ -244,6 +245,13 @@ export async function callResponsesApi(
   requestOpts?: { signal?: AbortSignal },
 ): Promise<{ text: string; raw: ResponsesApiResponse }> {
   const body = buildResponsesRequestBody(params);
+  let requestBody: Record<string, unknown> = body as unknown as Record<string, unknown>;
+  let effectiveOpts: { signal?: AbortSignal; headers?: Record<string, string> } = requestOpts ?? {};
+  if (isOpenClawGatewayClient(client)) {
+    const applied = applyOpenClawGatewayModelRequest(body as unknown as Record<string, unknown>, params.model, effectiveOpts);
+    requestBody = applied.body;
+    effectiveOpts = applied.opts as typeof effectiveOpts;
+  }
 
   const responsesNamespace = (
     client as unknown as { responses?: { create: (body: unknown, opts?: unknown) => Promise<unknown> } }
@@ -254,7 +262,7 @@ export async function callResponsesApi(
     );
   }
 
-  const raw = (await responsesNamespace.create(body, requestOpts ?? {})) as ResponsesApiResponse;
+  const raw = (await responsesNamespace.create(requestBody, effectiveOpts)) as ResponsesApiResponse;
   const text = extractResponsesText(raw);
   return { text, raw };
 }

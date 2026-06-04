@@ -4,9 +4,15 @@
  */
 
 import type { OpenAI } from "openai";
-import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
+import {
+  DEFAULT_CHAT_TIMEOUT_MS,
+  MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS,
+  MAINTENANCE_M3_CHAT_TIMEOUT_MS,
+  MAINTENANCE_THINKING_CHAT_TIMEOUT_MS,
+} from "../utils/constants.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { pluginLogger } from "../utils/logger.js";
+import { applyOpenClawGatewayModelRequest, isOpenClawGatewayClient } from "../utils/openclaw-gateway-http.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
@@ -32,6 +38,27 @@ export { isMiniMaxModel, isMiniMaxM3Model } from "./model-capabilities.js";
 
 /** MiniMax M3 thinking mode: `adaptive` (provider default) or `disabled` (skip thinking blocks for JSON extraction). */
 export type MiniMaxThinkingMode = "disabled" | "adaptive";
+
+/** Whether thinking blocks are requested (adaptive maps to provider thinking; enabled is treated as adaptive at call sites). */
+export function isMiniMaxThinkingEnabled(thinkingMode?: MiniMaxThinkingMode | "enabled"): boolean {
+  return thinkingMode === "adaptive" || thinkingMode === "enabled";
+}
+
+/**
+ * Per-request timeout for maintenance-tier chat (self-correction, reflection, distill, etc.).
+ * Derived from A/B latencies on real Maeve fixtures (2026-06-04): M3+thinking often 40–90s+.
+ */
+export function resolveMaintenanceChatTimeoutMs(
+  model: string,
+  thinkingMode?: MiniMaxThinkingMode | "enabled",
+): number {
+  if (!isMiniMaxModel(model)) return DEFAULT_CHAT_TIMEOUT_MS;
+  const m3 = /MiniMax-M3/i.test(model);
+  if (isMiniMaxThinkingEnabled(thinkingMode)) {
+    return m3 ? MAINTENANCE_THINKING_CHAT_TIMEOUT_MS : MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS;
+  }
+  return m3 ? MAINTENANCE_M3_CHAT_TIMEOUT_MS : DEFAULT_CHAT_TIMEOUT_MS;
+}
 
 export type ChatCompletionUsageSummary = {
   promptTokens?: number;
@@ -531,10 +558,22 @@ export async function chatCompleteDetailed(opts: {
     if (thinkingMode && isMiniMaxModel(model)) {
       body.thinking = { type: thinkingMode };
     }
+    let requestBody: typeof body = body;
+    let createOpts: { signal: AbortSignal; headers?: Record<string, string> } = { signal: controller.signal };
+    if (isOpenClawGatewayClient(opts.openai)) {
+      const applied = applyOpenClawGatewayModelRequest(
+        body as unknown as Record<string, unknown>,
+        model,
+        createOpts,
+      );
+      requestBody = applied.body as unknown as typeof body;
+      createOpts = applied.opts as unknown as typeof createOpts;
+    }
     const doCreate = () =>
-      opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
-        signal: controller.signal,
-      });
+      opts.openai.chat.completions.create(
+        requestBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0],
+        createOpts,
+      );
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
     const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
@@ -961,8 +1000,10 @@ export async function chatCompleteWithRetryDetailed(opts: {
     const currentModel = modelsToTry[i];
     lastAttemptedModel = currentModel;
     const _isFallback = i > 0;
-    // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
-    const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
+    const modelCatalogCap = maxTokens != null
+      ? getMaintenanceMaxOutputTokensFromCatalog(currentModel)
+      : getDistillMaxOutputTokensFromCatalog(currentModel);
+    const effectiveMaxTokens = maxTokens != null ? Math.min(maxTokens, modelCatalogCap) : modelCatalogCap;
 
     try {
       const detail = await withLLMRetry(

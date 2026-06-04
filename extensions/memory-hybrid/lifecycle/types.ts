@@ -59,7 +59,7 @@ export interface LifecycleContext {
     data: Record<string, unknown>,
     logger: { warn: (msg: string) => void },
     supersedeTargetId?: string,
-  ) => Promise<string>;
+  ) => Promise<string | null>;
   walRemove: (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
   findSimilarByEmbedding: (
     vectorDb: VectorDB,
