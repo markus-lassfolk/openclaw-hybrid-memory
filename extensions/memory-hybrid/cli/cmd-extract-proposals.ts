@@ -14,7 +14,7 @@ import {
   promotePersonaStateFromReflections,
 } from "../services/persona-state-promotion.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { parseStructuredItems, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
+import { parseStructuredItemsAcceptingEmpty, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
@@ -201,6 +201,7 @@ export async function runGenerateProposalsForCli(
         fallbackModels: [],
         label: "memory-hybrid: generate-proposals",
         feature: CostFeature.generateProposals,
+        thinkingMode: "disabled",
         logger: {
           info: (msg) => ctx.logger.info?.(msg),
           warn: (msg) => ctx.logger.warn?.(msg),
@@ -220,8 +221,8 @@ export async function runGenerateProposalsForCli(
       continue;
     }
     try {
-      const parsed = parseStructuredItems(rawResponse, isGenerateProposalItem);
-      if (!parsed || parsed.length === 0) throw new SyntaxError("No valid proposal items parsed");
+      const parsed = parseStructuredItemsAcceptingEmpty(rawResponse, isGenerateProposalItem);
+      if (parsed === null) throw new SyntaxError("No valid proposal items parsed");
       items = parsed as typeof items;
       break;
     } catch (_err) {

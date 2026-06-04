@@ -19,6 +19,12 @@ import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-m
 import { distillMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import {
+  analyzeSelfCorrectionIncidentBatchWithSplit,
+  resolveSelfCorrectionBatchDelayMs,
+  resolveSelfCorrectionBatchSize,
+  resolveSelfCorrectionThinkingMode,
+} from "../services/self-correction-batch-analyze.js";
 import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
@@ -26,7 +32,7 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
-import { parseStructuredItems } from "../utils/llm-json-array.js";
+import { parseSelfCorrectionLLMResponse } from "../services/self-correction-llm-parser.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens } from "../utils/text.js";
@@ -44,6 +50,9 @@ type SelfCorrectionRemediation = {
   remediationType: string;
   remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[] };
   repeated?: boolean;
+  /** Set when merging batch output — ties remediation to a source incident. */
+  incidentIndex?: number;
+  sourceIncident?: CorrectionIncident;
 };
 
 type SelfCorrectionBatchState = {
@@ -63,18 +72,25 @@ type SelfCorrectionRunDiagnostics = {
   parseFailures: number;
   unparseableFailures: number;
   parsedItems: number;
+  batchSplits: number;
+  truncations: number;
 };
 
-const DEFAULT_SELF_CORRECTION_BATCH_SIZE = 25;
-const MINIMAX_SELF_CORRECTION_BATCH_SIZE = 1;
 const SELF_CORRECTION_BATCH_STATE_VERSION = 1;
 
-function resolveSelfCorrectionBatchSize(model: string, scCfg: { analysisBatchSize?: number }): number {
-  if (typeof scCfg.analysisBatchSize === "number" && scCfg.analysisBatchSize >= 1) {
-    return Math.floor(scCfg.analysisBatchSize);
-  }
-  if (/minimax|m3/i.test(model)) return MINIMAX_SELF_CORRECTION_BATCH_SIZE;
-  return DEFAULT_SELF_CORRECTION_BATCH_SIZE;
+/** Resume state files under `<workspace>/tmp/self-correction/`. */
+export const SELF_CORRECTION_BATCH_STATE_PREFIX = "m3-batches-";
+
+export function resolveSelfCorrectionBatchStateDir(workspaceRoot: string): string {
+  return join(workspaceRoot, "tmp", "self-correction");
+}
+
+function isSelfCorrectionBatchStateFile(name: string): boolean {
+  return name.startsWith(SELF_CORRECTION_BATCH_STATE_PREFIX) && name.endsWith(".json");
+}
+
+function resolveSelfCorrectionBatchSizeFromCfg(model: string, scCfg: { analysisBatchSize?: number }): number {
+  return resolveSelfCorrectionBatchSize(model, scCfg);
 }
 
 function buildSelfCorrectionRunFingerprint(
@@ -95,7 +111,7 @@ function buildSelfCorrectionRunFingerprint(
 }
 
 function ensureSelfCorrectionStateDir(workspaceRoot: string): string {
-  const dir = join(workspaceRoot, "tmp", "self-correction");
+  const dir = resolveSelfCorrectionBatchStateDir(workspaceRoot);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -103,7 +119,7 @@ function ensureSelfCorrectionStateDir(workspaceRoot: string): string {
 function pruneStaleSelfCorrectionStateFiles(stateDir: string, keepPath: string): void {
   try {
     for (const name of readdirSync(stateDir)) {
-      if (!name.startsWith("m3-batches-") || !name.endsWith(".json")) continue;
+      if (!isSelfCorrectionBatchStateFile(name)) continue;
       const fullPath = join(stateDir, name);
       if (fullPath === keepPath) continue;
       rmSync(fullPath, { force: true });
@@ -132,7 +148,15 @@ function stableSelfCorrectionHash(input: string): string {
 }
 
 function emptySelfCorrectionDiagnostics(): SelfCorrectionRunDiagnostics {
-  return { retries: 0, fallbacks: 0, parseFailures: 0, unparseableFailures: 0, parsedItems: 0 };
+  return {
+    retries: 0,
+    fallbacks: 0,
+    parseFailures: 0,
+    unparseableFailures: 0,
+    parsedItems: 0,
+    batchSplits: 0,
+    truncations: 0,
+  };
 }
 
 function readSelfCorrectionBatchState(statePath: string): SelfCorrectionBatchState | null {
@@ -166,6 +190,8 @@ function readSelfCorrectionBatchState(statePath: string): SelfCorrectionBatchSta
         parseFailures: Number.isFinite(diagnostics.parseFailures) ? diagnostics.parseFailures : 0,
         unparseableFailures: Number.isFinite(diagnostics.unparseableFailures) ? diagnostics.unparseableFailures : 0,
         parsedItems: Number.isFinite(diagnostics.parsedItems) ? diagnostics.parsedItems : 0,
+        batchSplits: Number.isFinite(diagnostics.batchSplits) ? diagnostics.batchSplits : 0,
+        truncations: Number.isFinite(diagnostics.truncations) ? diagnostics.truncations : 0,
       },
       updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
     };
@@ -204,6 +230,8 @@ function mergeSelfCorrectionDiagnostics(
   target.parseFailures += source.parseFailures ?? 0;
   target.unparseableFailures += source.unparseableFailures ?? 0;
   target.parsedItems += source.parsedItems ?? 0;
+  target.batchSplits += source.batchSplits ?? 0;
+  target.truncations += source.truncations ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,36 +290,242 @@ function sanitizeLlmResponseExcerpt(content: string): string {
  *   - **thinking prefix**: `<thinking>...</thinking>\n[...]` → thinking stripped, array parsed
  *   - **invalid JSON**: `[not valid]` / truncated → null returned, caller handles error
  */
-export function parseSelfCorrectionLLMResponse(content: string): unknown[] | null {
-  return parseStructuredItems(content, isSelfCorrectionRemediationItem, { acceptEmptyArray: true });
-}
+export { parseSelfCorrectionLLMResponse } from "../services/self-correction-llm-parser.js";
 
-function isSelfCorrectionRemediationItem(item: unknown): boolean {
-  if (typeof item !== "object" || item === null) return false;
-  const candidate = item as Record<string, unknown>;
-  const remediationType = candidate.remediationType;
-  if (typeof remediationType !== "string" || remediationType.trim().length === 0) return false;
+type SelfCorrectionApplyResult = {
+  autoFixed: number;
+  proposals: string[];
+  toolsSuggestions: string[];
+  toolsApplied: number;
+};
 
-  const isNoAction = remediationType.trim().toUpperCase() === "NO_ACTION";
-  if ("remediationContent" in candidate) {
-    const remediationContent = candidate.remediationContent;
-    if (
-      !(
-        typeof remediationContent === "string" ||
-        (typeof remediationContent === "object" && remediationContent !== null)
-      )
-    ) {
-      return false;
+async function applySelfCorrectionRemediations(params: {
+  ctx: HandlerContext;
+  analysed: SelfCorrectionRemediation[];
+  incidents: CorrectionIncident[];
+  workspaceRoot: string;
+  scCfg: typeof DEFAULT_SELF_CORRECTION;
+  opts: {
+    dryRun?: boolean;
+    approve?: boolean;
+    applyTools?: boolean;
+  };
+  model: string;
+  modelSource: string;
+  scFallbackModels: string[];
+}): Promise<SelfCorrectionApplyResult> {
+  const { ctx, analysed, incidents, workspaceRoot, scCfg, opts, model, modelSource, scFallbackModels } = params;
+  const { factsDb, vectorDb, embeddings, openai, proposalsDb, logger } = ctx;
+  const proposals: string[] = [];
+  const toolsSuggestions: string[] = [];
+  let autoFixed = 0;
+  let toolsApplied = 0;
+  const toApply = analysed
+    .filter((a) => a.remediationType !== "NO_ACTION" && !a.repeated)
+    .slice(0, SELF_CORRECTION_CAP);
+  const toolsPath = join(workspaceRoot, "TOOLS.md");
+  const toolsSection = scCfg.toolsSection;
+  const semanticThreshold = scCfg.semanticDedupThreshold ?? 0.92;
+
+  for (const a of toApply) {
+    if (a.remediationType === "MEMORY_STORE") {
+      const c = a.remediationContent;
+      const obj =
+        typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
+      const text = (obj.text ?? "").trim();
+      if (!text || factsDb.hasDuplicate(text, "self-correction")) continue;
+      let vector: number[] | null = null;
+      if (scCfg.semanticDedup || !opts.dryRun) {
+        try {
+          vector = await embeddings.embed(text);
+          if (scCfg.semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
+        } catch (err) {
+          logger.warn?.(`memory-hybrid: self-correction embed/semantic dedup failed: ${err}`);
+          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:embed-dedup" });
+          continue;
+        }
+      }
+      if (opts.dryRun) continue;
+      try {
+        const storeResult = factsDb.storeWithResult({
+          text,
+          category: "technical",
+          importance: CLI_STORE_IMPORTANCE,
+          entity: obj.entity ?? null,
+          key: typeof obj.key === "string" ? obj.key : null,
+          value: text.slice(0, 200),
+          source: "self-correction",
+          tags: Array.isArray(obj.tags) ? obj.tags : [],
+        });
+        if (storeResult.skipped) continue;
+        const entry = storeResult.entry;
+        await cleanupEvictedVector({
+          vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger,
+          context: "self-correction",
+        });
+        if (vector) {
+          await vectorDb.store({
+            text,
+            vector,
+            importance: CLI_STORE_IMPORTANCE,
+            category: "technical",
+            id: entry.id,
+          });
+          factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+        }
+        autoFixed++;
+      } catch (err) {
+        logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:memory-store" });
+      }
+    } else if (a.remediationType === "TOOLS_RULE") {
+      const line =
+        typeof a.remediationContent === "string"
+          ? a.remediationContent
+          : ((a.remediationContent as { text?: string })?.text ?? "");
+      if (line.trim()) toolsSuggestions.push(line.trim());
+    } else if (a.remediationType === "AGENTS_RULE" || a.remediationType === "SKILL_UPDATE") {
+      const line =
+        typeof a.remediationContent === "string"
+          ? a.remediationContent
+          : ((a.remediationContent as { text?: string })?.text ?? "");
+      if (line.trim()) {
+        proposals.push(`[${a.remediationType}] ${line.trim()}`);
+        if (
+          a.remediationType === "AGENTS_RULE" &&
+          proposalsDb &&
+          (scCfg as { agentsRuleToProposals?: boolean }).agentsRuleToProposals !== false &&
+          !opts.dryRun
+        ) {
+          try {
+            const targetFile = inferTargetFile(line);
+            const src =
+              a.sourceIncident ??
+              (typeof a.incidentIndex === "number" && incidents[a.incidentIndex]
+                ? incidents[a.incidentIndex]
+                : incidents[0]);
+            const incidentContext = src
+              ? `Correction incident: "${src.userMessage.slice(0, 200)}"`
+              : "Self-correction analysis";
+            const evidenceSessions = src
+              ? [src.sessionFile]
+              : incidents.map((inc) => inc.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx);
+            proposalsDb.create({
+              targetFile,
+              title: `Self-correction: ${a.category ?? "behavior"}`,
+              observation: incidentContext,
+              suggestedChange: line.trim(),
+              confidence: 0.7,
+              evidenceSessions,
+            });
+          } catch (err) {
+            capturePluginError(err as Error, {
+              subsystem: "cli",
+              operation: "runSelfCorrectionRunForCli:agents-rule-proposal",
+            });
+          }
+        }
+      }
     }
-  } else if (!isNoAction) {
-    return false;
   }
 
-  if ("category" in candidate && typeof candidate.category !== "string") return false;
-  if ("severity" in candidate && typeof candidate.severity !== "string") return false;
-  if ("repeated" in candidate && typeof candidate.repeated !== "boolean") return false;
+  const noApplyTools = opts.applyTools === false;
+  const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !noApplyTools;
+  if (toolsSuggestions.length > 0 && !opts.dryRun) {
+    if (scCfg.autoRewriteTools && shouldApplyTools && existsSync(toolsPath)) {
+      try {
+        const currentTools = readFileSync(toolsPath, "utf-8");
+        const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
+          current_tools: currentTools,
+          new_rules: toolsSuggestions.join("\n"),
+        });
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+          model,
+          modelSource,
+          content: rewritePrompt,
+          temperature: 0.2,
+          maxTokens: 16000,
+          openai,
+          fallbackModels: scFallbackModels,
+          label: "memory-hybrid: self-correction rewrite-tools",
+          feature: CostFeature.selfCorrectionRewriteTools,
+          logger,
+          adaptiveStatePath:
+            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+              : undefined,
+          enabled: adaptiveEnabled,
+        });
+        const cleaned = detail.content
+          .trim()
+          .replace(/^```\w*\n?|```\s*$/g, "")
+          .trim();
+        if (cleaned.length > 50) {
+          if (existsSync(toolsPath) && lstatSync(toolsPath).isSymbolicLink()) {
+            writeFileSync(toolsPath, cleaned, "utf-8");
+          } else {
+            atomicWriteFile(toolsPath, cleaned);
+          }
+          toolsApplied = 1;
+          autoFixed += 1;
+        }
+      } catch (err) {
+        logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:tools-rewrite" });
+      }
+    } else if (shouldApplyTools && existsSync(toolsPath)) {
+      try {
+        const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
+        toolsApplied = inserted;
+        autoFixed += inserted;
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
+      }
+    }
+  }
 
-  return true;
+  return { autoFixed, proposals, toolsSuggestions, toolsApplied };
+}
+
+function buildSelfCorrectionReportLines(params: {
+  today: string;
+  incidentsCount: number;
+  analysed: SelfCorrectionRemediation[];
+  autoFixed: number;
+  proposals: string[];
+  toolsSuggestions: string[];
+  toolsApplied: number;
+  diagnostics: SelfCorrectionRunDiagnostics;
+  scCfg: typeof DEFAULT_SELF_CORRECTION;
+}): string[] {
+  const { today, incidentsCount, analysed, autoFixed, proposals, toolsSuggestions, toolsApplied, diagnostics, scCfg } =
+    params;
+  return [
+    `# Self-Correction Analysis (${today})`,
+    "",
+    `Scanned: last 3 days. Incidents found: ${incidentsCount}.`,
+    `Parsed/analysed items: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
+    `Retries: ${diagnostics.retries}. Fallbacks: ${diagnostics.fallbacks}. Parse failures: ${diagnostics.parseFailures}. Unparseable failures: ${diagnostics.unparseableFailures}.`,
+    "",
+    ...(autoFixed > 0 ? ["## Auto-applied", "", `- ${autoFixed} memory store(s) and/or TOOLS.md rule(s).`, ""] : []),
+    ...(toolsSuggestions.length > 0 && toolsApplied === 0 && !scCfg.autoRewriteTools
+      ? [
+          "## Suggested TOOLS.md rules (not applied this run). To apply: config applyToolsByDefault is true by default, or use --approve. To skip applying: --no-apply-tools.",
+          "",
+          ...toolsSuggestions.map((s) => `- ${s}`),
+          "",
+        ]
+      : []),
+    ...(toolsApplied > 0
+      ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section "${scCfg.toolsSection}".`, ""]
+      : []),
+    ...(proposals.length > 0
+      ? ["## Proposed (review before applying)", "", ...proposals.map((p) => `- ${p}`), ""]
+      : []),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -442,13 +676,15 @@ export async function runSelfCorrectionRunForCli(
     }
     if (incidents.length === 0) {
       const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: 3 days.\nIncidents found: 0.\n`;
-      try {
-        atomicWriteFile(reportPath, emptyReport);
-      } catch (err) {
-        capturePluginError(err as Error, {
-          subsystem: "cli",
-          operation: "runSelfCorrectionRunForCli:write-empty-report",
-        });
+      if (!opts.dryRun) {
+        try {
+          atomicWriteFile(reportPath, emptyReport);
+        } catch (err) {
+          capturePluginError(err as Error, {
+            subsystem: "cli",
+            operation: "runSelfCorrectionRunForCli:write-empty-report",
+          });
+        }
       }
       if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
@@ -459,7 +695,7 @@ export async function runSelfCorrectionRunForCli(
         analysed: 0,
         autoFixed: 0,
         proposals: [],
-        reportPath,
+        reportPath: opts.dryRun ? null : reportPath,
         status: "success_no_incidents",
       };
     }
@@ -479,14 +715,19 @@ export async function runSelfCorrectionRunForCli(
       : (heavyResolved.fallbackModels ?? []);
     const scFallbackModels = [...new Set(scFallbackCandidates.filter((m) => m !== model))];
     const maxTokens = distillMaxOutputTokens(model);
-    const batchSize = resolveSelfCorrectionBatchSize(model, scCfg);
+    const batchSize = resolveSelfCorrectionBatchSizeFromCfg(model, scCfg);
+    const batchDelayMs = resolveSelfCorrectionBatchDelayMs(scCfg);
+    const thinkingMode = resolveSelfCorrectionThinkingMode(cfg);
     let analysed: SelfCorrectionRemediation[] = [];
     const diagnostics = emptySelfCorrectionDiagnostics();
     const batches = chunkSelfCorrectionIncidents(incidents, batchSize);
     const runFingerprint = buildSelfCorrectionRunFingerprint(incidents, model, batchSize, opts);
-    const stateDir = ensureSelfCorrectionStateDir(workspaceRoot);
-    const statePath = join(stateDir, `m3-batches-${runFingerprint}.json`);
-    if (!opts.dryRun) pruneStaleSelfCorrectionStateFiles(stateDir, statePath);
+    const stateDir = resolveSelfCorrectionBatchStateDir(workspaceRoot);
+    const statePath = join(stateDir, `${SELF_CORRECTION_BATCH_STATE_PREFIX}${runFingerprint}.json`);
+    if (!opts.dryRun) {
+      ensureSelfCorrectionStateDir(workspaceRoot);
+      pruneStaleSelfCorrectionStateFiles(stateDir, statePath);
+    }
     const completedBatchIndexes = new Set<number>();
     let batchesStarted = 0;
     if (!opts.dryRun) {
@@ -550,6 +791,12 @@ export async function runSelfCorrectionRunForCli(
     };
 
     try {
+      const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+      const adaptiveStatePath =
+        ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+          ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+          : undefined;
+
       const attemptAnalysisJsonRepair = async (
         rawContent: string,
       ): Promise<{ items: SelfCorrectionRemediation[] | null; fallbacks: number }> => {
@@ -562,7 +809,6 @@ export async function runSelfCorrectionRunForCli(
           rawContent,
           "MODEL_OUTPUT_END",
         ].join("\n");
-        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
         const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
           model,
           modelSource,
@@ -574,11 +820,9 @@ export async function runSelfCorrectionRunForCli(
           label: "memory-hybrid: self-correction analyze-repair",
           feature: CostFeature.selfCorrectionAnalyze,
           logger,
-          adaptiveStatePath:
-            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
-              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
-              : undefined,
+          adaptiveStatePath,
           enabled: adaptiveEnabled,
+          thinkingMode,
           onRetry: (info) => recordRetry(-1, info.attempt, info.delayMs, info.error),
         });
         const repaired = parseSelfCorrectionLLMResponse(detail.content);
@@ -588,56 +832,20 @@ export async function runSelfCorrectionRunForCli(
         };
       };
 
-      const analyzeBatch = async (
-        batchPrompt: string,
-        batchIndex: number,
-      ): Promise<{ content: string; fallbacks: number }> => {
-        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-        let lastError: unknown;
-        for (let attempt = 1; attempt <= 4; attempt++) {
-          try {
-            logger.info?.(
-              `memory-hybrid: ${SCAN_TYPE} analyze batch ${batchIndex + 1}/${batches.length}: attempt ${attempt}/4`,
-            );
-            logger.info?.(
-              `memory-hybrid: ${SCAN_TYPE} analyze batch ${batchIndex + 1}/${batches.length}: starting with model ${model} (source=${modelSource}; adaptive=${adaptiveEnabled ? "adaptive" : "disabled"}; inputTokens≈${estimateTokens(
-                batchPrompt,
-              )}; maxTokens=${maxTokens})`,
-            );
-            logger.info?.(
-              `memory-hybrid: ${SCAN_TYPE} analyze batch ${batchIndex + 1}/${batches.length}: fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
-            );
-            const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
-              model,
-              modelSource,
-              content: batchPrompt,
-              temperature: 0.2,
-              maxTokens,
-              openai,
-              fallbackModels: scFallbackModels,
-              label: "memory-hybrid: self-correction analyze",
-              feature: CostFeature.selfCorrectionAnalyze,
-              logger,
-              adaptiveStatePath:
-                ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
-                  ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
-                  : undefined,
-              enabled: adaptiveEnabled,
-              onRetry: (info) => recordRetry(batchIndex, info.attempt, info.delayMs, info.error),
-            });
-            return {
-              content: detail.content,
-              fallbacks: detail.modelUsed !== model ? 1 : 0,
-            };
-          } catch (err) {
-            lastError = err;
-            if (!isTransientSelfCorrectionLlmError(err) || attempt >= 4) throw err;
-            const delay = attempt === 1 ? 5000 : 1000 * 2 ** (attempt - 1);
-            recordRetry(batchIndex, attempt, delay, err);
-            await sleepSelfCorrectionBackoff(delay);
-          }
-        }
-        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+      const analyzeDeps = {
+        model,
+        modelSource,
+        openai,
+        scFallbackModels,
+        maxTokens,
+        thinkingMode,
+        adaptiveEnabled,
+        adaptiveStatePath,
+        logger,
+        onRetry: (info: { attempt: number; delayMs: number; error: Error }) => {
+          recordRetry(-1, info.attempt, info.delayMs, info.error);
+        },
+        attemptAnalysisJsonRepair,
       };
 
       const fetchSpawnBatchContent = async (prompt: string): Promise<string> => {
@@ -670,83 +878,91 @@ export async function runSelfCorrectionRunForCli(
         return content;
       };
 
-      const processBatchResponse = async (
-        batchIndex: number,
-        batchIncidentCount: number,
-        content: string,
-      ): Promise<void> => {
-        const parsedRemediations = parseSelfCorrectionLLMResponse(content);
-        let batchAnalysed: SelfCorrectionRemediation[] | null = null;
-        if (parsedRemediations !== null) {
-          batchAnalysed = parsedRemediations as SelfCorrectionRemediation[];
-        } else if (content.trim().length > 0) {
-          diagnostics.parseFailures++;
-          const excerpt = sanitizeLlmResponseExcerpt(content);
-          logger.warn?.(
-            `memory-hybrid: self-correction-run batch ${batchIndex + 1}/${batches.length} initial JSON parse failed; attempting repair pass. rawExcerpt="${excerpt}"`,
-          );
-          try {
-            const repaired = await attemptAnalysisJsonRepair(content);
-            diagnostics.fallbacks += repaired.fallbacks;
-            batchAnalysed = repaired.items;
-          } catch (repairErr) {
-            capturePluginError(repairErr as Error, {
-              subsystem: "cli",
-              operation: "runSelfCorrectionRunForCli:llm-analysis-repair",
-            });
+      const spawnInputTokenThreshold = 100_000;
+
+      const processBatchResult = async (batchIndex: number, batch: CorrectionIncident[]): Promise<void> => {
+        const batchLabel = `batch ${batchIndex + 1}/${batches.length}`;
+        const useSpawnForBatch =
+          scCfg.analyzeViaSpawn && estimateTokens(JSON.stringify(batch)) > spawnInputTokenThreshold;
+
+        let batchAnalysed: SelfCorrectionRemediation[];
+        if (useSpawnForBatch) {
+          const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+            incidents_json: JSON.stringify(batch),
+          });
+          const content = await fetchSpawnBatchContent(prompt);
+          const parsed = parseSelfCorrectionLLMResponse(content);
+          if (parsed === null) {
+            diagnostics.unparseableFailures++;
+            const parseError = new Error(
+              `Self-correction analysis: ${batchLabel} spawn response could not be parsed. excerpt="${sanitizeLlmResponseExcerpt(content)}"`,
+            );
+            (parseError as any).isParseFailure = true;
+            throw parseError;
           }
+          batchAnalysed = parsed as SelfCorrectionRemediation[];
         } else {
-          batchAnalysed = [];
-        }
-        if (batchAnalysed === null) {
-          diagnostics.unparseableFailures++;
-          const excerpt = sanitizeLlmResponseExcerpt(content);
-          const parseError = new Error(
-            `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+          const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+            { ...analyzeDeps, batchLabel },
+            batch,
           );
-          (parseError as any).isParseFailure = true;
-          throw parseError;
+          diagnostics.fallbacks += result.diagnostics.fallbacks;
+          diagnostics.parseFailures += result.diagnostics.parseFailures;
+          diagnostics.batchSplits += result.diagnostics.batchSplits;
+          diagnostics.truncations += result.diagnostics.truncations;
+          if (result.items === null) {
+            diagnostics.unparseableFailures++;
+            const excerpt = sanitizeLlmResponseExcerpt(result.rawContent ?? "");
+            const parseError = new Error(
+              `Self-correction analysis: ${batchLabel} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+            );
+            (parseError as any).isParseFailure = true;
+            throw parseError;
+          }
+          batchAnalysed = result.items;
+          if (batch.length > 0 && batchAnalysed.length > 0 && batchAnalysed.length < batch.length) {
+            logger.warn?.(
+              `memory-hybrid: ${SCAN_TYPE} ${batchLabel}: under_coverage expected=${batch.length} parsed=${batchAnalysed.length} (after auto-split)`,
+            );
+          }
         }
-        if (batchIncidentCount > 0 && batchAnalysed.length > 0 && batchAnalysed.length < batchIncidentCount) {
-          logger.warn?.(
-            `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length}: expected=${batchIncidentCount} parsed=${batchAnalysed.length}`,
-          );
-        }
+
         diagnostics.parsedItems += batchAnalysed.length;
-        analysed.push(...batchAnalysed);
+        for (let k = 0; k < batchAnalysed.length; k++) {
+          const idx = Math.min(k, batch.length - 1);
+          analysed.push({
+            ...batchAnalysed[k],
+            incidentIndex: idx,
+            sourceIncident: batch[idx],
+          });
+        }
         completedBatchIndexes.add(batchIndex);
         logger.info?.(
-          `memory-hybrid: ${SCAN_TYPE} analyze batch ${batchIndex + 1}/${batches.length}: parsed_items=${batchAnalysed.length}; raw_excerpt=[${sanitizeLlmResponseExcerpt(content)}]`,
+          `memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${batchAnalysed.length}`,
         );
         persistBatchState();
       };
 
-      const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
       logger.info?.("memory-hybrid: self-correction-run model tier = heavy");
       logger.info?.(`memory-hybrid: self-correction-run starting with model ${model} (source=${modelSource})`);
       logger.info?.(
         `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
       );
+      logger.info?.(
+        `memory-hybrid: self-correction-run batch mode: size=${batchSize} delayMs=${batchDelayMs} thinking=${thinkingMode} maxTokens=${maxTokens}`,
+      );
 
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         if (completedBatchIndexes.has(batchIndex)) continue;
         const batch = batches[batchIndex];
-        const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
-          incidents_json: JSON.stringify(batch),
-        });
         batchesStarted++;
         logger.info?.(
           `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} start incidents=${batch.length}`,
         );
-        let content: string;
-        if (useSpawn) {
-          content = await fetchSpawnBatchContent(prompt);
-        } else {
-          const detail = await analyzeBatch(prompt, batchIndex);
-          diagnostics.fallbacks += detail.fallbacks;
-          content = detail.content;
+        await processBatchResult(batchIndex, batch);
+        if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+          await sleepSelfCorrectionBackoff(batchDelayMs);
         }
-        await processBatchResponse(batchIndex, batch.length, content);
       }
 
       if (opts.verbose && analysed.length > 0) {
@@ -757,19 +973,71 @@ export async function runSelfCorrectionRunForCli(
     } catch (e) {
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
       const isParseFailure = (e as any).isParseFailure === true;
+      const batchesCompleted = completedBatchIndexes.size;
+      const isPartial =
+        !isParseFailure && analysed.length > 0 && batchesCompleted < batches.length;
+      let autoFixed = 0;
+      let proposals: string[] = [];
+      let toolsSuggestions: string[] | undefined;
+      let toolsApplied: number | undefined;
+      if (!opts.dryRun && analysed.length > 0 && !isParseFailure) {
+        const applied = await applySelfCorrectionRemediations({
+          ctx,
+          analysed,
+          incidents,
+          workspaceRoot,
+          scCfg,
+          opts,
+          model,
+          modelSource,
+          scFallbackModels,
+        });
+        autoFixed = applied.autoFixed;
+        proposals = applied.proposals;
+        toolsSuggestions = applied.toolsSuggestions.length > 0 ? applied.toolsSuggestions : undefined;
+        toolsApplied = applied.toolsApplied > 0 ? applied.toolsApplied : undefined;
+        if (!opts.dryRun && reportPath) {
+          const reportLines = buildSelfCorrectionReportLines({
+            today,
+            incidentsCount: incidents.length,
+            analysed,
+            autoFixed,
+            proposals,
+            toolsSuggestions: applied.toolsSuggestions,
+            toolsApplied: applied.toolsApplied,
+            diagnostics,
+            scCfg,
+          });
+          try {
+            atomicWriteFile(reportPath, reportLines.join("\n"));
+          } catch (writeErr) {
+            logger.warn?.(`memory-hybrid: could not write partial report: ${writeErr}`);
+          }
+        }
+      }
+      const status = isParseFailure ? "failed_parse" : isPartial ? "failed_partial" : undefined;
+      if (isPartial) {
+        logger.warn?.(
+          `memory-hybrid: ${SCAN_TYPE} — partial batch failure: batches_completed=${batchesCompleted}/${batches.length} analysed=${analysed.length}`,
+        );
+      }
       return {
         incidentsFound: incidents.length,
         analysed: analysed.length,
-        autoFixed: 0,
-        proposals: [],
-        reportPath: null,
+        autoFixed,
+        proposals,
+        reportPath: isPartial && !opts.dryRun ? reportPath : null,
+        toolsSuggestions,
+        toolsApplied,
         error: String(e),
         retryCount: diagnostics.retries,
         fallbackCount: diagnostics.fallbacks,
         parseFailures: diagnostics.parseFailures,
         unparseableFailures: diagnostics.unparseableFailures,
         batchesStarted,
-        status: isParseFailure ? "failed_parse" : undefined,
+        batchesCompleted,
+        totalBatches: batches.length,
+        status,
       };
     }
     if (incidents.length > 0 && analysed.length === 0) {
@@ -793,211 +1061,37 @@ export async function runSelfCorrectionRunForCli(
         status: "failed_suspect_zero_parsed",
       };
     }
-    const proposals: string[] = [];
-    const toolsSuggestions: string[] = [];
-    let autoFixed = 0;
-    let toolsApplied = 0;
-    const toApply = analysed
-      .filter((a) => a.remediationType !== "NO_ACTION" && !a.repeated)
-      .slice(0, SELF_CORRECTION_CAP);
-    const toolsPath = join(workspaceRoot, "TOOLS.md");
-    const toolsSection = scCfg.toolsSection;
-    const semanticThreshold = scCfg.semanticDedupThreshold ?? 0.92;
+    const applied = await applySelfCorrectionRemediations({
+      ctx,
+      analysed,
+      incidents,
+      workspaceRoot,
+      scCfg,
+      opts,
+      model,
+      modelSource,
+      scFallbackModels,
+    });
+    const { autoFixed, proposals, toolsSuggestions, toolsApplied } = applied;
 
-    for (const a of toApply) {
-      if (a.remediationType === "MEMORY_STORE") {
-        const c = a.remediationContent;
-        const obj =
-          typeof c === "object" && c && "text" in c ? c : { text: String(c), entity: "Fact", tags: [] as string[] };
-        const text = (obj.text ?? "").trim();
-        if (!text || factsDb.hasDuplicate(text, "self-correction")) continue;
-        let vector: number[] | null = null;
-        if (scCfg.semanticDedup || !opts.dryRun) {
-          try {
-            vector = await embeddings.embed(text);
-            if (scCfg.semanticDedup && (await vectorDb.hasDuplicate(vector, semanticThreshold))) continue;
-          } catch (err) {
-            logger.warn?.(`memory-hybrid: self-correction embed/semantic dedup failed: ${err}`);
-            capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:embed-dedup" });
-            continue;
-          }
-        }
-        if (opts.dryRun) continue;
-        try {
-          const storeResult = factsDb.storeWithResult({
-            text,
-            category: "technical",
-            importance: CLI_STORE_IMPORTANCE,
-            entity: obj.entity ?? null,
-            key: typeof obj.key === "string" ? obj.key : null,
-            value: text.slice(0, 200),
-            source: "self-correction",
-            tags: Array.isArray(obj.tags) ? obj.tags : [],
-          });
-          if (storeResult.skipped) {
-            continue;
-          }
-          const entry = storeResult.entry;
-          // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-          await cleanupEvictedVector({
-            vectorDb: vectorDb,
-            evictedFactId: storeResult.evictedFactId,
-            logger: logger,
-            context: "self-correction",
-          });
-          if (vector) {
-            await vectorDb.store({
-              text,
-              vector,
-              importance: CLI_STORE_IMPORTANCE,
-              category: "technical",
-              id: entry.id,
-            });
-            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-          }
-          autoFixed++;
-        } catch (err) {
-          logger.warn?.(`memory-hybrid: self-correction MEMORY_STORE failed: ${err}`);
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:memory-store" });
-        }
-      } else if (a.remediationType === "TOOLS_RULE") {
-        const line =
-          typeof a.remediationContent === "string"
-            ? a.remediationContent
-            : ((a.remediationContent as { text?: string })?.text ?? "");
-        if (line.trim()) toolsSuggestions.push(line.trim());
-      } else if (a.remediationType === "AGENTS_RULE" || a.remediationType === "SKILL_UPDATE") {
-        const line =
-          typeof a.remediationContent === "string"
-            ? a.remediationContent
-            : ((a.remediationContent as { text?: string })?.text ?? "");
-        if (line.trim()) {
-          proposals.push(`[${a.remediationType}] ${line.trim()}`);
-          // Wire AGENTS_RULE into proposals DB (#260) — closes the dead end
-          if (
-            a.remediationType === "AGENTS_RULE" &&
-            proposalsDb &&
-            (scCfg as { agentsRuleToProposals?: boolean }).agentsRuleToProposals !== false &&
-            !opts.dryRun
-          ) {
-            try {
-              const targetFile = inferTargetFile(line);
-              const incidentContext =
-                incidents.length > 0
-                  ? `Correction incident: "${incidents[0].userMessage.slice(0, 200)}"`
-                  : "Self-correction analysis";
-              proposalsDb.create({
-                targetFile,
-                title: `Self-correction: ${a.category ?? "behavior"}`,
-                observation: incidentContext,
-                suggestedChange: line.trim(),
-                confidence: 0.7,
-                evidenceSessions: incidents
-                  .map((inc) => inc.sessionFile)
-                  .filter((v, idx, arr) => arr.indexOf(v) === idx),
-              });
-            } catch (err) {
-              capturePluginError(err as Error, {
-                subsystem: "cli",
-                operation: "runSelfCorrectionRunForCli:agents-rule-proposal",
-              });
-            }
-          }
-        }
+    const reportLines = buildSelfCorrectionReportLines({
+      today,
+      incidentsCount: incidents.length,
+      analysed,
+      autoFixed,
+      proposals,
+      toolsSuggestions,
+      toolsApplied,
+      diagnostics,
+      scCfg,
+    });
+    if (!opts.dryRun) {
+      try {
+        atomicWriteFile(reportPath, reportLines.join("\n"));
+      } catch (e) {
+        logger.warn?.(`memory-hybrid: could not write report: ${e}`);
+        capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
       }
-    }
-
-    const noApplyTools = opts.applyTools === false;
-    const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !noApplyTools;
-    if (toolsSuggestions.length > 0 && !opts.dryRun) {
-      if (scCfg.autoRewriteTools && shouldApplyTools && existsSync(toolsPath)) {
-        try {
-          const currentTools = readFileSync(toolsPath, "utf-8");
-          const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
-            current_tools: currentTools,
-            new_rules: toolsSuggestions.join("\n"),
-          });
-          logger.info?.(
-            `memory-hybrid: self-correction-run rewrite-tools starting with model ${model} (source=${modelSource})`,
-          );
-          const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-          const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
-            model,
-            modelSource,
-            content: rewritePrompt,
-            temperature: 0.2,
-            maxTokens: 16000,
-            openai,
-            fallbackModels: scFallbackModels,
-            label: "memory-hybrid: self-correction rewrite-tools",
-            feature: CostFeature.selfCorrectionRewriteTools,
-            logger,
-            adaptiveStatePath:
-              ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
-                ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
-                : undefined,
-            enabled: adaptiveEnabled,
-          });
-          if (detail.modelUsed !== model) {
-            logger.info?.(`memory-hybrid: self-correction-run rewrite-tools used fallback model ${detail.modelUsed}`);
-          }
-          const cleaned = detail.content
-            .trim()
-            .replace(/^```\w*\n?|```\s*$/g, "")
-            .trim();
-          if (cleaned.length > 50) {
-            // Follow symlinks so shared TOOLS.md targets are updated, not replaced.
-            if (existsSync(toolsPath) && lstatSync(toolsPath).isSymbolicLink()) {
-              writeFileSync(toolsPath, cleaned, "utf-8");
-            } else {
-              atomicWriteFile(toolsPath, cleaned);
-            }
-            toolsApplied = toolsSuggestions.length;
-            autoFixed += toolsApplied;
-          }
-        } catch (err) {
-          logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:tools-rewrite" });
-        }
-      } else if (shouldApplyTools && existsSync(toolsPath)) {
-        try {
-          const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
-          toolsApplied = inserted;
-          autoFixed += inserted;
-        } catch (err) {
-          capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
-        }
-      }
-    }
-
-    const reportLines = [
-      `# Self-Correction Analysis (${today})`,
-      "",
-      `Scanned: last 3 days. Incidents found: ${incidents.length}.`,
-      `Parsed/analysed items: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
-      `Retries: ${diagnostics.retries}. Fallbacks: ${diagnostics.fallbacks}. Parse failures: ${diagnostics.parseFailures}. Unparseable failures: ${diagnostics.unparseableFailures}.`,
-      "",
-      ...(autoFixed > 0 ? ["## Auto-applied", "", `- ${autoFixed} memory store(s) and/or TOOLS.md rule(s).`, ""] : []),
-      ...(toolsSuggestions.length > 0 && toolsApplied === 0 && !scCfg.autoRewriteTools
-        ? [
-            "## Suggested TOOLS.md rules (not applied this run). To apply: config applyToolsByDefault is true by default, or use --approve. To skip applying: --no-apply-tools.",
-            "",
-            ...toolsSuggestions.map((s) => `- ${s}`),
-            "",
-          ]
-        : []),
-      ...(toolsApplied > 0
-        ? ["## TOOLS.md updated", "", `- ${toolsApplied} rule(s) inserted under section "${toolsSection}".`, ""]
-        : []),
-      ...(proposals.length > 0
-        ? ["## Proposed (review before applying)", "", ...proposals.map((p) => `- ${p}`), ""]
-        : []),
-    ];
-    try {
-      atomicWriteFile(reportPath, reportLines.join("\n"));
-    } catch (e) {
-      logger.warn?.(`memory-hybrid: could not write report: ${e}`);
-      capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:write-report" });
     }
     // Record savings: each auto-fixed incident avoided ~2 manual LLM round-trips
     if (autoFixed > 0 && ctx.costTracker && !opts?.dryRun) {
@@ -1023,7 +1117,7 @@ export async function runSelfCorrectionRunForCli(
       analysed: analysed.length,
       autoFixed,
       proposals,
-      reportPath,
+      reportPath: opts.dryRun ? null : reportPath,
       toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
       toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
       retryCount: diagnostics.retries,
@@ -1031,6 +1125,8 @@ export async function runSelfCorrectionRunForCli(
       parseFailures: diagnostics.parseFailures,
       unparseableFailures: diagnostics.unparseableFailures,
       batchesStarted,
+      batchesCompleted: completedBatchIndexes.size,
+      totalBatches: batches.length,
       status: "success_analyzed",
     };
   } finally {

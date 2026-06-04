@@ -252,6 +252,34 @@ export function tryParseFirstJsonObject(
   return null;
 }
 
+/**
+ * Parse the first balanced JSON object in assistant text and return it as a record.
+ * Unlike {@link tryParseFirstJsonObject}, this returns the object itself (not a filtered array).
+ */
+export function parseFirstJsonObjectValue(raw: string): Record<string, unknown> | null {
+  const normalized = stripThinkingWrapperBlocks(raw);
+  let searchFrom = 0;
+  while (searchFrom < normalized.length) {
+    const start = normalized.indexOf("{", searchFrom);
+    if (start === -1) return null;
+    const slice = extractBalancedObjectSlice(normalized, start);
+    if (!slice) {
+      searchFrom = start + 1;
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(slice);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* try next { */
+    }
+    searchFrom = start + slice.length;
+  }
+  return null;
+}
+
 export type ExtractItemArrayOptions = {
   envelopeKeys?: readonly string[];
 };
@@ -368,4 +396,20 @@ export function parseStructuredItems(
   if (singleObject) return singleObject;
 
   return emptyArrayCandidate;
+}
+
+/**
+ * Like {@link parseStructuredItems} but treats a valid empty JSON array (`[]`) as success.
+ *
+ * Use for LLM tasks where "no items" is a normal outcome (self-correction, reinforcement
+ * analysis, generate-proposals). Returns `null` only when output is missing or unparseable.
+ *
+ * Callers should branch on `parsed === null` (failure) vs `parsed.length === 0` (success, zero items).
+ */
+export function parseStructuredItemsAcceptingEmpty(
+  raw: string,
+  isValidItem: (item: unknown) => boolean,
+  opts?: ExtractItemArrayOptions,
+): unknown[] | null {
+  return parseStructuredItems(raw, isValidItem, { ...opts, acceptEmptyArray: true });
 }

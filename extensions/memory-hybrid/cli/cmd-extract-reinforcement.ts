@@ -1,6 +1,6 @@
 /** Reinforcement extraction CLI (`runExtractReinforcementForCli`). Split from cmd-extract.ts. */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ReinforcementContext } from "../backends/facts-db.js";
@@ -27,7 +27,7 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
-import { parseStructuredItems } from "../utils/llm-json-array.js";
+import { parseStructuredItemsAcceptingEmpty } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { getMaxMtime, getSessionFilePathsSince } from "./cmd-extract-sessions.js";
@@ -36,6 +36,162 @@ import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
+import type { ReinforcementIncident } from "../services/reinforcement-extract.js";
+
+const DEFAULT_REINFORCEMENT_BATCH_SIZE = 25;
+const MINIMAX_REINFORCEMENT_BATCH_SIZE = 1;
+const REINFORCEMENT_BATCH_STATE_VERSION = 1;
+
+/** Resume state files under `<workspace>/tmp/reinforcement-analysis/`. */
+export const REINFORCEMENT_BATCH_STATE_PREFIX = "reinforcement-batches-";
+
+export function resolveReinforcementBatchStateDir(workspaceRoot: string): string {
+  return join(workspaceRoot, "tmp", "reinforcement-analysis");
+}
+
+type ReinforcementRemediation = {
+  category: string;
+  severity: string;
+  remediationType: string;
+  remediationContent:
+    | string
+    | {
+        text?: string;
+        entity?: string;
+        key?: string;
+        tags?: string[];
+        taskPattern?: string;
+        targetFile?: string;
+        suggestedChange?: string;
+      };
+};
+
+type ReinforcementBatchDiagnostics = {
+  parseFailures: number;
+  fallbacks: number;
+  parsedItems: number;
+};
+
+type ReinforcementBatchState = {
+  version: number;
+  incidentsHash: string;
+  batchSize: number;
+  totalBatches: number;
+  completedBatchIndexes: number[];
+  analysed: ReinforcementRemediation[];
+  diagnostics: ReinforcementBatchDiagnostics;
+  updatedAt: string;
+};
+
+function isReinforcementBatchStateFile(name: string): boolean {
+  return name.startsWith(REINFORCEMENT_BATCH_STATE_PREFIX) && name.endsWith(".json");
+}
+
+function resolveReinforcementBatchSize(
+  model: string,
+  reinfCfg: { analysisBatchSize?: number },
+  scCfg?: { analysisBatchSize?: number },
+): number {
+  const configured = reinfCfg.analysisBatchSize ?? scCfg?.analysisBatchSize;
+  if (typeof configured === "number" && configured >= 1) return Math.floor(configured);
+  if (/minimax|m3/i.test(model)) return MINIMAX_REINFORCEMENT_BATCH_SIZE;
+  return DEFAULT_REINFORCEMENT_BATCH_SIZE;
+}
+
+function stableReinforcementHash(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function buildReinforcementRunFingerprint(
+  incidents: ReinforcementIncident[],
+  model: string,
+  batchSize: number,
+  dryRun: boolean,
+): string {
+  return stableReinforcementHash(JSON.stringify({ incidents, model, batchSize, dryRun }));
+}
+
+function ensureReinforcementStateDir(workspaceRoot: string): string {
+  const dir = resolveReinforcementBatchStateDir(workspaceRoot);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function pruneStaleReinforcementStateFiles(stateDir: string, keepPath: string): void {
+  try {
+    for (const name of readdirSync(stateDir)) {
+      if (!isReinforcementBatchStateFile(name)) continue;
+      const fullPath = join(stateDir, name);
+      if (fullPath === keepPath) continue;
+      rmSync(fullPath, { force: true });
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+function readReinforcementBatchState(statePath: string): ReinforcementBatchState | null {
+  try {
+    if (!existsSync(statePath)) return null;
+    const parsed = JSON.parse(readFileSync(statePath, "utf-8")) as Partial<ReinforcementBatchState>;
+    if (
+      parsed.version !== REINFORCEMENT_BATCH_STATE_VERSION ||
+      typeof parsed.incidentsHash !== "string" ||
+      typeof parsed.batchSize !== "number" ||
+      typeof parsed.totalBatches !== "number" ||
+      !Array.isArray(parsed.completedBatchIndexes) ||
+      !Array.isArray(parsed.analysed)
+    ) {
+      return null;
+    }
+    const completed = parsed.completedBatchIndexes
+      .filter((n): n is number => Number.isInteger(n) && n >= 0 && n < (parsed.totalBatches ?? 0))
+      .sort((a, b) => a - b);
+    const diagnostics = parsed.diagnostics ?? { parseFailures: 0, fallbacks: 0, parsedItems: 0 };
+    return {
+      version: parsed.version,
+      incidentsHash: parsed.incidentsHash,
+      batchSize: parsed.batchSize,
+      totalBatches: parsed.totalBatches,
+      completedBatchIndexes: [...new Set(completed)],
+      analysed: parsed.analysed as ReinforcementRemediation[],
+      diagnostics: {
+        parseFailures: Number.isFinite(diagnostics.parseFailures) ? diagnostics.parseFailures : 0,
+        fallbacks: Number.isFinite(diagnostics.fallbacks) ? diagnostics.fallbacks : 0,
+        parsedItems: Number.isFinite(diagnostics.parsedItems) ? diagnostics.parsedItems : 0,
+      },
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeReinforcementBatchState(statePath: string, state: ReinforcementBatchState): void {
+  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+}
+
+function removeReinforcementBatchState(statePath: string): void {
+  if (!existsSync(statePath)) return;
+  try {
+    rmSync(statePath, { force: true });
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runExtractReinforcementForCli:cleanup-state" });
+  }
+}
+
+function chunkReinforcementIncidents<T>(items: T[], batchSize: number): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < items.length; i += batchSize) batches.push(items.slice(i, i + batchSize));
+  return batches;
+}
+
 export async function runExtractReinforcementForCli(
   ctx: HandlerContext,
   opts: {
@@ -109,91 +265,138 @@ export async function runExtractReinforcementForCli(
     }
 
     let llmAnalysisFailed = false;
+    const reinfCfg = cfg.reinforcement ?? {};
     const scCfg = cfg.selfCorrection;
-    const runLLMAnalysis = scCfg?.reinforcementLLMAnalysis !== false && result.incidents.length > 0 && !opts.dryRun;
+    const llmEnabled =
+      (reinfCfg.reinforcementLLMAnalysis ?? scCfg?.reinforcementLLMAnalysis) !== false;
+    const runLLMAnalysis = llmEnabled && result.incidents.length > 0 && !opts.dryRun;
     let analysisCategory: string | undefined;
 
-    // LLM analysis step — mirrors self-correction pipeline (#260)
+    // LLM analysis step — batched with resume under workspace/tmp/reinforcement-analysis/
     if (runLLMAnalysis) {
-      type ReinforcementRemediation = {
-        category: string;
-        severity: string;
-        remediationType: string;
-        remediationContent:
-          | string
-          | {
-              text?: string;
-              entity?: string;
-              key?: string;
-              tags?: string[];
-              taskPattern?: string;
-              targetFile?: string;
-              suggestedChange?: string;
-            };
-      };
+      const maxPerRun = reinfCfg.maxIncidentsPerRun ?? 100;
+      let incidentsForAnalysis = result.incidents;
+      if (incidentsForAnalysis.length > maxPerRun) {
+        logger.warn?.(
+          `memory-hybrid: extract-reinforcement truncated=true incidents=${result.incidents.length} cap=${maxPerRun}`,
+        );
+        incidentsForAnalysis = incidentsForAnalysis.slice(0, maxPerRun);
+      }
+
       let analysed: ReinforcementRemediation[] = [];
+      const diagnostics: ReinforcementBatchDiagnostics = { parseFailures: 0, fallbacks: 0, parsedItems: 0 };
       try {
-        const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
-          incidents_json: JSON.stringify(result.incidents),
-        });
         const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
         const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, extractionTier);
         const cronCfg = getCronModelConfig(cfg);
         const tierPref = getLLMModelPreference(cronCfg, extractionTier);
         const model = tierPref[0] ?? getDefaultCronModel(cronCfg, extractionTier);
-        // Derive fallback chain from the full tier preference list; when only one model is
-        // configured, fall through to resolveReflectionModelAndFallbacks which picks up
-        // llm.fallbackModel and distill.fallbackModels (mirrors the distill/self-correction fix).
         const tierResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
         const fallbackModels = tierResolved.fallbackModels ?? [];
         const modelSource =
           tierPrefWithSources.models[0] === model ? (tierPrefWithSources.sources[0] ?? "built-in") : "built-in";
+        const batchSize = resolveReinforcementBatchSize(model, reinfCfg, scCfg);
+        const batches = chunkReinforcementIncidents(incidentsForAnalysis, batchSize);
+        const runFingerprint = buildReinforcementRunFingerprint(incidentsForAnalysis, model, batchSize, false);
+        const stateDir = resolveReinforcementBatchStateDir(workspaceRoot);
+        const statePath = join(stateDir, `${REINFORCEMENT_BATCH_STATE_PREFIX}${runFingerprint}.json`);
+        ensureReinforcementStateDir(workspaceRoot);
+        pruneStaleReinforcementStateFiles(stateDir, statePath);
+        const completedBatchIndexes = new Set<number>();
+        const resumeState = readReinforcementBatchState(statePath);
+        if (
+          resumeState &&
+          resumeState.incidentsHash === runFingerprint &&
+          resumeState.batchSize === batchSize &&
+          resumeState.totalBatches === batches.length
+        ) {
+          analysed = [...resumeState.analysed];
+          diagnostics.parseFailures = resumeState.diagnostics.parseFailures;
+          diagnostics.fallbacks = resumeState.diagnostics.fallbacks;
+          diagnostics.parsedItems = resumeState.diagnostics.parsedItems;
+          for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
+          logger.info?.(
+            `memory-hybrid: extract-reinforcement resume completed=${completedBatchIndexes.size}/${batches.length} state=${statePath}`,
+          );
+        } else {
+          logger.info?.(
+            `memory-hybrid: extract-reinforcement batch mode: ${batches.length} batch(es), size=${batchSize}`,
+          );
+        }
+
+        const persistBatchState = () => {
+          writeReinforcementBatchState(statePath, {
+            version: REINFORCEMENT_BATCH_STATE_VERSION,
+            incidentsHash: runFingerprint,
+            batchSize,
+            totalBatches: batches.length,
+            completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
+            analysed,
+            diagnostics,
+            updatedAt: new Date().toISOString(),
+          });
+        };
+
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
         logger.info?.(`memory-hybrid: extract-reinforcement analysis tier = ${extractionTier}`);
         logger.info?.(
           `memory-hybrid: extract-reinforcement analysis starting with model ${model} (source=${modelSource})`,
         );
-        logger.info?.(
-          `memory-hybrid: extract-reinforcement analysis fallback chain = [${
-            fallbackModels.length > 0 ? fallbackModels.join(", ") : ""
-          }]`,
-        );
-        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
-          model,
-          modelSource,
-          content: prompt,
-          temperature: 0.2,
-          maxTokens: distillMaxOutputTokens(model),
-          openai,
-          fallbackModels,
-          label: "memory-hybrid: reinforcement analyze",
-          feature: CostFeature.extractReinforcement,
-          logger,
-          adaptiveStatePath:
-            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
-              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
-              : undefined,
-          enabled: adaptiveEnabled,
-        });
-        if (detail.modelUsed !== model) {
-          logger.info?.(
-            `memory-hybrid: extract-reinforcement analysis succeeded with fallback model ${detail.modelUsed}`,
-          );
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          if (completedBatchIndexes.has(batchIndex)) continue;
+          const batch = batches[batchIndex];
+          const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
+            incidents_json: JSON.stringify(batch),
+          });
+          const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+            model,
+            modelSource,
+            content: prompt,
+            temperature: 0.2,
+            maxTokens: distillMaxOutputTokens(model),
+            openai,
+            fallbackModels,
+            label: "memory-hybrid: reinforcement analyze",
+            feature: CostFeature.extractReinforcement,
+            logger,
+            adaptiveStatePath:
+              ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+                ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+                : undefined,
+            enabled: adaptiveEnabled,
+            thinkingMode: "disabled",
+          });
+          if (detail.modelUsed !== model) {
+            diagnostics.fallbacks++;
+            logger.info?.(
+              `memory-hybrid: extract-reinforcement batch ${batchIndex + 1}/${batches.length} used fallback ${detail.modelUsed}`,
+            );
+          }
+          const parsed = parseStructuredItemsAcceptingEmpty(detail.content, (item) => {
+            if (typeof item !== "object" || item === null) return false;
+            return typeof (item as Record<string, unknown>).remediationType === "string";
+          });
+          if (parsed !== null) {
+            analysed.push(...(parsed as ReinforcementRemediation[]));
+            diagnostics.parsedItems += parsed.length;
+          } else if (detail.content.trim().length > 0) {
+            diagnostics.parseFailures++;
+            llmAnalysisFailed = true;
+            logger.warn?.(
+              `memory-hybrid: extract-reinforcement batch ${batchIndex + 1}/${batches.length} parse failed`,
+            );
+          } else {
+            llmAnalysisFailed = true;
+          }
+          completedBatchIndexes.add(batchIndex);
+          persistBatchState();
         }
-        const parsed = parseStructuredItems(detail.content, (item) => {
-          if (typeof item !== "object" || item === null) return false;
-          return typeof (item as Record<string, unknown>).remediationType === "string";
-        });
-        if (parsed && parsed.length > 0) {
-          analysed = parsed as ReinforcementRemediation[];
-          analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
-        } else if (detail.content.trim().length > 0) {
-          llmAnalysisFailed = true;
-          logger.warn?.("memory-hybrid: extract-reinforcement analysis produced no parseable structured items");
-        } else {
-          llmAnalysisFailed = true;
-          logger.warn?.("memory-hybrid: extract-reinforcement analysis returned empty model output");
+
+        if (completedBatchIndexes.size === batches.length) {
+          removeReinforcementBatchState(statePath);
         }
+        analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
       } catch (e) {
         llmAnalysisFailed = true;
         capturePluginError(e as Error, {
@@ -203,10 +406,11 @@ export async function runExtractReinforcementForCli(
       }
 
       const toolsPath = join(workspaceRoot, "TOOLS.md");
-      const positiveRulesSection = scCfg?.positiveRulesSection ?? "Positive Reinforcement Rules";
+      const positiveRulesSection =
+        reinfCfg.positiveRulesSection ?? scCfg?.positiveRulesSection ?? "Positive Reinforcement Rules";
       const semanticThreshold = scCfg?.semanticDedupThreshold ?? 0.92;
       const semanticDedup = scCfg?.semanticDedup !== false;
-      const toProposals = scCfg?.reinforcementToProposals !== false;
+      const toProposals = (reinfCfg.reinforcementToProposals ?? scCfg?.reinforcementToProposals) !== false;
 
       for (const a of analysed) {
         if (a.remediationType === "NO_ACTION") continue;
@@ -224,11 +428,9 @@ export async function runExtractReinforcementForCli(
               if (currentTools.includes(line.trim())) continue;
             }
 
-            // Semantic dedup: skip if a similar rule exists in the vector store (#260)
-            let ruleVec: number[] | null = null;
             if (semanticDedup) {
               try {
-                ruleVec = await embeddings.embed(line.trim());
+                const ruleVec = await embeddings.embed(line.trim());
                 if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
                   logger?.info?.(
                     `memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`,
@@ -240,29 +442,11 @@ export async function runExtractReinforcementForCli(
                   subsystem: "cli",
                   operation: "reinforcement:positive-rule-dedup",
                 });
-                // Fail open: still insert the rule if dedup check fails
               }
             }
 
             if (existsSync(toolsPath)) {
               insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
-              // Store the rule embedding in vector DB for future dedup (#260)
-              if (ruleVec) {
-                try {
-                  await vectorDb.store({
-                    text: line.trim(),
-                    vector: ruleVec,
-                    importance: CLI_STORE_IMPORTANCE,
-                    category: "technical",
-                    id: `rule-${Date.now()}-${Math.random()}`,
-                  });
-                } catch (err) {
-                  capturePluginError(err as Error, {
-                    subsystem: "cli",
-                    operation: "reinforcement:positive-rule-store",
-                  });
-                }
-              }
             }
           } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
             const c = a.remediationContent;

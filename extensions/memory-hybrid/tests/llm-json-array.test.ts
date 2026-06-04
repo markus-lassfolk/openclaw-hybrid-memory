@@ -3,6 +3,7 @@ import {
   extractBalancedArraySlice,
   extractFirstJsonArraySubstring,
   parseStructuredItems,
+  parseStructuredItemsAcceptingEmpty,
   stripBracketContextPreamble,
   stripMarkdownCodeFence,
   tryParseFirstJsonArray,
@@ -146,5 +147,25 @@ describe("parseStructuredItems", () => {
 
   it("returns empty array when acceptEmptyArray is set", () => {
     expect(parseStructuredItems("[]", isStringItem, { acceptEmptyArray: true })).toEqual([]);
+  });
+
+  it("returns null for empty array without acceptEmptyArray", () => {
+    expect(parseStructuredItems("[]", isStringItem)).toBeNull();
+  });
+});
+
+describe("parseStructuredItemsAcceptingEmpty", () => {
+  const isStringItem = (item: unknown): item is string => typeof item === "string";
+
+  it("returns [] for a valid empty array", () => {
+    expect(parseStructuredItemsAcceptingEmpty("[]", isStringItem)).toEqual([]);
+  });
+
+  it("returns null for unparseable output", () => {
+    expect(parseStructuredItemsAcceptingEmpty("not json", isStringItem)).toBeNull();
+  });
+
+  it("parses non-empty arrays like parseStructuredItems", () => {
+    expect(parseStructuredItemsAcceptingEmpty('["a"]', isStringItem)).toEqual(["a"]);
   });
 });

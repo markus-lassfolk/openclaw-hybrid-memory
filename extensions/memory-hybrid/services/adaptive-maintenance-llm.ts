@@ -19,6 +19,7 @@ import {
   is429OrWrapped,
   isContextLengthError,
   type ChatCompleteWithRetryDetails,
+  type MiniMaxThinkingMode,
 } from "./chat.js";
 import type { CostFeatureId } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -45,6 +46,8 @@ export type AdaptiveMaintenanceLlmOptions = {
   responseFormat?: { type: "json_object" };
   /** Called immediately before a retry backoff sleep. */
   onRetry?: (info: { attempt: number; delayMs: number; error: Error; model: string }) => void;
+  /** MiniMax-only: control deep thinking (`disabled` saves output budget for structured JSON). */
+  thinkingMode?: MiniMaxThinkingMode;
 };
 
 function emptyState(): AdaptiveModelLimitsStateV1 {
@@ -125,6 +128,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
       feature: opts.feature,
       responseFormat: opts.responseFormat,
       onRetry: opts.onRetry,
+      ...(opts.thinkingMode != null ? { thinkingMode: opts.thinkingMode } : {}),
     });
     if (enabled) {
       const usedModel = detail.modelUsed;

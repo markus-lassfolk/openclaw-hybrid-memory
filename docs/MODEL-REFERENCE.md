@@ -272,9 +272,12 @@ When using Claude via **Anthropic API** (not Azure Foundry). For **Foundry/Marke
 ### MiniMax
 
 
-| Model ID       | Context / output  | Notes                 |
-| -------------- | ----------------- | --------------------- |
-| `MiniMax-M2.5` | See provider docs | Used in nano/default. |
+| Model ID | Context window | Max output tokens | Batch input (distill) | Notes |
+| -------- | -------------- | ----------------- | --------------------- | ----- |
+| `MiniMax-M3` | 1,000,000 | 131,072 (recommended; hard max 524,288) | 700,000 | Agentic/coding; MSA architecture; `max_completion_tokens`; `thinking` param (`disabled` / `adaptive`). |
+| `MiniMax-M2.7`, `MiniMax-M2.7-highspeed` | 204,800 | 128,000 | 160,000 | Maintenance/nano tier. |
+| `MiniMax-M2.5`, `MiniMax-M2.5-highspeed` | 204,800 | 128,000 | 160,000 | Used in nano/default. |
+| `MiniMax-M2.1`, `MiniMax-M2`, `MiniMax-Text-01` | 204,800 | 128,000 | 160,000 | Legacy M2.x. |
 
 
 ### OpenAI (direct, non-Azure)
@@ -309,6 +312,7 @@ When using `openai` provider with `api.openai.com` (not Azure), same model names
 | 2026-03-19 | Initial version: Azure OpenAI (GPT-5.4–4, o-series, 4.1, 4o, embeddings), other Foundry providers summary, Anthropic/Google/MiniMax/Ollama placeholders.                                                                                                     |
 | 2026-03-19 | Added Foundry models from partners and community: Anthropic (Foundry), Cohere, Meta, Microsoft (Phi), Mistral AI, Stability AI; source [models-from-partners](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-from-partners). |
 | 2026-03-19 | Plugin: added `services/model-capabilities.ts` with per-model context window, max output tokens, and batch token limit for distill; `chat.ts` now uses it for `distillBatchTokenLimit` and `distillMaxOutputTokens`. Deploy: added `openclaw.model-tokens-snippet.json` for OpenClaw config. |
+| 2026-06-04 | MiniMax: added `MiniMax-M3` (1M ctx, 131k out, 700k batch) and M2.x (204.8k ctx, 128k out, 160k batch) to plugin catalog (`model-capabilities.ts`). |
 | 2026-03-20 | Google: default nano/fallback model switched from deprecated `gemini-2.0-flash-lite` (404) to `gemini-2.5-flash-lite`. See [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations). |
 
 

@@ -523,6 +523,7 @@ function collectMaintenanceTelemetryIssues(params: {
     /\bzero parsed\/analysed remediation items\b/i.test(logContent);
   const selfCorrectionParseFailed =
     /\bstatus=failed_parse\b/i.test(logContent) ||
+    /\bstatus=failed_partial\b/i.test(logContent) ||
     (/\bparse_success=false\b/i.test(logContent) && /\bself-correction-run\b/i.test(logContent));
   const selfCorrectionIncidents = parsePositiveMetric(logContent, "incidents found");
   const selfCorrectionParsed = parsePositiveMetric(logContent, "parsed_candidates") ?? parsePositiveMetric(logContent, "analysed");
@@ -541,9 +542,11 @@ function collectMaintenanceTelemetryIssues(params: {
         jobName,
         stepName: "self-correction-run",
         failureCategory: "semantic_failure",
-        failureClass: selfCorrectionParseFailed
-          ? "self_correction_parse_failure"
-          : "self_correction_zero_parsed",
+        failureClass: /\bstatus=failed_partial\b/i.test(logContent)
+          ? "self_correction_partial_batch_failure"
+          : selfCorrectionParseFailed
+            ? "self_correction_parse_failure"
+            : "self_correction_zero_parsed",
         message: `${jobName}:self-correction-run found incidents but produced no parsed analysed items`,
         semanticStatus: "semantic_fail",
       }),

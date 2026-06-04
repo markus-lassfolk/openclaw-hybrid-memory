@@ -160,6 +160,16 @@ export type ReinforcementConfig = {
   trackContext?: boolean;
   /** Base boost amount before diversity weighting is applied (default: 1.0). */
   boostAmount?: number;
+  /** TOOLS.md section for POSITIVE_RULE lines (default: "Positive Reinforcement Rules"). */
+  positiveRulesSection?: string;
+  /** Run LLM reinforcement analysis when incidents are found (default: true). */
+  reinforcementLLMAnalysis?: boolean;
+  /** Create proposals from reinforcement PROPOSAL remediations (default: true). */
+  reinforcementToProposals?: boolean;
+  /** Incidents per LLM analysis batch (default: 25; 1 for MiniMax/M3). */
+  analysisBatchSize?: number;
+  /** Max incidents passed to analysis per run; excess logged as truncated (default: 100). */
+  maxIncidentsPerRun?: number;
 };
 
 /** Future-date decay freeze protection (#144). */
@@ -282,6 +292,12 @@ export type ImplicitFeedbackConfig = {
   feedToReinforcement: boolean;
   /** Feed negative implicit signals into the self-correction pipeline (default: true). */
   feedToSelfCorrection: boolean;
+  /** After extract-implicit, optionally run self-correction-run on capped negative signals (default: false). */
+  triggerSelfCorrectionRun?: boolean;
+  /** Max incidents forwarded to self-correction bridge per run (default: 5). */
+  selfCorrectionBridgeMaxIncidents?: number;
+  /** Minimum signal confidence for bridge incidents (default: 0.7). */
+  selfCorrectionBridgeMinConfidence?: number;
   /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
   trajectoryLLMAnalysis: boolean;
   /** Maximum implicit-feedback lessons to store per UTC day (default: 50). */

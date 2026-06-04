@@ -199,6 +199,30 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
     },
   },
 
+  // ——— MiniMax M3 (1M context; recommended max_completion_tokens 131k) ———
+  {
+    match: (n) => n.includes("minimax-m3") || n === "m3" || n.endsWith("-m3"),
+    cap: {
+      contextWindow: 1_000_000,
+      maxOutputTokens: 131_072,
+      batchTokenLimitForDistill: 700_000,
+    },
+  },
+
+  // ——— MiniMax M2.x (204.8k context) ———
+  {
+    match: (n) =>
+      n.includes("minimax") ||
+      n.startsWith("m2") ||
+      n.includes("minimax-m2") ||
+      n.includes("minimax-text"),
+    cap: {
+      contextWindow: 204_800,
+      maxOutputTokens: 128_000,
+      batchTokenLimitForDistill: 160_000,
+    },
+  },
+
   // ——— Model router (Azure): conservative ———
   {
     match: (n) => n.includes("model-router"),
@@ -247,12 +271,26 @@ function _getContextWindow(model: string): number {
   return cap?.contextWindow ?? DEFAULT_CAPABILITIES.contextWindow;
 }
 
+/** True when the model id resolves to a MiniMax provider model (M3, M2.x, etc.). */
+export function isMiniMaxModel(model: string): boolean {
+  const normalized = normalizeModelId(model);
+  if (/minimax|minimax-m3|^m3$|minimax-m2|^m2/.test(normalized)) return true;
+  return modelPathSegments(model).some((seg) => seg === "minimax" || /^minimax-/i.test(seg) || seg === "m3");
+}
+
+/** True for MiniMax M3 specifically (1M context, thinking param supported). */
+export function isMiniMaxM3Model(model: string): boolean {
+  const normalized = normalizeModelId(model);
+  return normalized.includes("minimax-m3") || normalized === "m3" || normalized.endsWith("-m3");
+}
+
 /**
  * True for models that require `max_completion_tokens` instead of `max_tokens` in the API request
- * (e.g. GPT-5+, GPT-4.1*, o-series). Checks every `/`-segment so `azure-foundry/gpt-5.4-nano` matches.
+ * (e.g. GPT-5+, GPT-4.1*, o-series, MiniMax M3). Checks every `/`-segment so `azure-foundry/gpt-5.4-nano` matches.
  */
 export function requiresMaxCompletionTokens(model: string): boolean {
   if (isReasoningModel(model)) return true;
+  if (isMiniMaxM3Model(model)) return true;
   for (const seg of modelPathSegments(model)) {
     if (/^gpt-5/i.test(seg) || /^gpt-4\.1/i.test(seg)) return true;
   }

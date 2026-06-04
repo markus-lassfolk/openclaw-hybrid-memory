@@ -141,6 +141,18 @@ export type LLMConfig = {
    * Example: ["anthropic"] — Anthropic models are not tried even if listed in llm.nano/default/heavy.
    */
   disabledProviders?: string[];
+  /** MiniMax-specific LLM options (M3 thinking mode, etc.). */
+  minimax?: MiniMaxLLMConfig;
+};
+
+/** MiniMax provider options under `llm.minimax`. */
+export type MiniMaxLLMConfig = {
+  /**
+   * Default thinking mode for MiniMax M3 maintenance calls.
+   * `disabled` skips thinking blocks (recommended for structured JSON extraction).
+   * Default: `disabled`.
+   */
+  thinking?: "disabled" | "adaptive";
 };
 
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
@@ -478,8 +490,10 @@ export type SelfCorrectionConfig = {
   reinforcementToProposals?: boolean;
   /** When true, self-correction AGENTS_RULE remediations are written to proposals DB (default: true). */
   agentsRuleToProposals?: boolean;
-  /** Incidents per LLM analysis batch (default: 1 for MiniMax/M3, 25 otherwise). */
+  /** Incidents per LLM analysis batch (default: 5 for MiniMax/M3, 25 otherwise). */
   analysisBatchSize?: number;
+  /** Delay in ms between sequential analysis batches (default: 250). Helps respect MiniMax RPM/TPM. */
+  batchDelayMs?: number;
 };
 
 /**

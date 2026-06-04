@@ -18,6 +18,7 @@ import {
   resolveOpenclawJsonPathForWorkspace,
 } from "../cli/cmd-install.js";
 import { ensureWorkspaceBootstrap } from "../setup/workspace-bootstrap.js";
+import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 
 describe("workspace skill install", () => {
   const originalEnv = process.env.OPENCLAW_WORKSPACE;
@@ -194,8 +195,8 @@ describe("workspace skill install", () => {
       dryRun: false,
     });
     expect(r.error).toBeUndefined();
-    // No temp directories should remain in skills/
-    const leftover = readdirSync(skillsDir).filter((e) => e.startsWith(".hybrid-memory-tmp-"));
+    // No atomic-write scratch directories should remain in skills/
+    const leftover = readdirSync(skillsDir).filter((e) => isAtomicSkillWriteScratchDir(e));
     expect(leftover).toHaveLength(0);
     // The skill should be successfully installed
     expect(readFileSync(join(skillsDir, "hybrid-memory", "SKILL.md"), "utf-8")).toContain("memory_store");
@@ -208,9 +209,9 @@ describe("workspace skill install", () => {
       pluginRootDir: PLUGIN_ROOT,
     });
     expect(r.deployed).toBe(true);
-    // The temp dir must have been renamed to the final destination — no .hybrid-memory-tmp-* left.
+    // The temp dir must have been renamed to the final destination — no atomic-write scratch dirs left.
     const skillsDir = join(destRoot, "skills");
-    const leftover = readdirSync(skillsDir).filter((e) => e.startsWith(".hybrid-memory-tmp-"));
+    const leftover = readdirSync(skillsDir).filter((e) => isAtomicSkillWriteScratchDir(e));
     expect(leftover).toHaveLength(0);
     // Final destination should contain valid content
     expect(readFileSync(join(destRoot, "skills", "hybrid-memory", "SKILL.md"), "utf-8")).toContain("memory_store");

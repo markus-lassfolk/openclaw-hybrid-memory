@@ -56,6 +56,7 @@ describe("maintenance log analyzer", () => {
         "provider-auth",
         "infra",
         "plugin-bug",
+        "json-parse-failure",
         "smoke-only",
         "orchestration-bug",
       ]),

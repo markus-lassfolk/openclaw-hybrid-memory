@@ -8,8 +8,13 @@
 import { open } from "node:fs/promises";
 import { basename } from "node:path";
 import { getReinforcementCategoryRegexes } from "../utils/language-keywords.js";
-import { extractMessageText, timestampFromFilename, truncate } from "../utils/text.js";
+import { timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
+import {
+  buildSignalContext,
+  parseSessionMessagesFromLines,
+  testSignalRegex,
+} from "./session-signal-context.js";
 
 export type ReinforcementIncident = {
   userMessage: string;
@@ -105,54 +110,6 @@ function shouldSkipUserMessage(text: string): boolean {
     if (re.test(t)) return true;
   }
   return false;
-}
-
-/**
- * Extract memory_recall tool calls from assistant message content to identify which memories were used.
- */
-function extractRecalledMemoryIds(content: unknown): string[] {
-  if (!Array.isArray(content)) return [];
-  const ids: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object") {
-      const type = (block as { type?: string }).type;
-      if (type === "tool_result" || type === "result") {
-        // Look for memory IDs in tool result content
-        const resultContent = (block as { content?: unknown }).content;
-        if (typeof resultContent === "string") {
-          // Match UUIDs (memory IDs)
-          const uuidMatches = resultContent.matchAll(
-            /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-          );
-          for (const match of uuidMatches) {
-            ids.push(match[0]);
-          }
-        }
-      }
-    }
-  }
-  return [...new Set(ids)]; // dedupe
-}
-
-/**
- * Phase 2: Extract tool call sequence from assistant message content (for procedure matching).
- * Returns array of tool names in order (e.g. ["memory_recall", "exec", "write"]).
- */
-function extractToolCallSequence(content: unknown): string[] {
-  if (!Array.isArray(content)) return [];
-  const tools: string[] = [];
-  for (const block of content) {
-    if (block && typeof block === "object") {
-      const type = (block as { type?: string }).type;
-      if (type === "tool_use") {
-        const name = (block as { name?: string }).name;
-        if (typeof name === "string" && name.trim()) {
-          tools.push(name.trim());
-        }
-      }
-    }
-  }
-  return tools;
 }
 
 let reinforcementRegexCache: {
@@ -278,27 +235,7 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       continue;
     }
 
-    const messages: Array<{ role: string; text: string; content: unknown }> = [];
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: unknown } };
-        if (obj.type !== "message" || !obj.message) continue;
-        const msg = obj.message;
-        const role = msg.role === "user" || msg.role === "assistant" || msg.role === "tool" ? msg.role : null;
-        if (!role) continue;
-        const text = extractMessageText(msg.content);
-        messages.push({ role, text, content: msg.content });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "parse-session-line",
-          severity: "info",
-          subsystem: "reinforcement-extract",
-        });
-        // skip malformed lines
-      }
-    }
+    const messages = parseSessionMessagesFromLines(lines, "reinforcement-extract");
 
     const sessionName = basename(filePath);
     const ts = timestampFromFilename(sessionName);
@@ -306,34 +243,13 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
     for (let i = 0; i < messages.length; i++) {
       if (messages[i].role !== "user") continue;
       const userText = messages[i].text;
-      // Reset lastIndex to avoid statefulness with global/sticky regexes
-      reinforcementRegex.lastIndex = 0;
-      if (!reinforcementRegex.test(userText)) continue;
+      if (!testSignalRegex(reinforcementRegex, userText)) continue;
       if (shouldSkipUserMessage(userText)) continue;
 
-      // Look back for the most recent assistant message (expanded window to handle tool messages)
-      let precedingAssistant = "";
-      let precedingUserMsg = "";
-      let recalledMemoryIds: string[] = [];
-      const toolCallSequence: string[] = [];
-      for (let j = i - 1; j >= 0 && j >= Math.max(0, i - 20); j--) {
-        if (messages[j].role === "user") {
-          // This is the user message that prompted the praised agent response
-          if (!precedingUserMsg) precedingUserMsg = messages[j].text;
-          // Stop at previous user message to avoid crossing conversation turn boundaries
-          break;
-        }
-        if (messages[j].role === "assistant") {
-          if (!precedingAssistant) {
-            precedingAssistant = messages[j].text;
-            recalledMemoryIds = extractRecalledMemoryIds(messages[j].content);
-          }
-          const tools = extractToolCallSequence(messages[j].content);
-          toolCallSequence.unshift(...tools);
-        }
-      }
+      const ctx = buildSignalContext(messages, i, { lookback: 20 });
+      const precedingAssistant = ctx.precedingAssistant;
 
-      if (!precedingAssistant || precedingAssistant.length < 20) continue; // No substantial agent behavior to reinforce
+      if (!precedingAssistant || precedingAssistant.length < 20) continue;
 
       const confidence = calculateReinforcementConfidence(userText, precedingAssistant);
       if (confidence < 0.4) continue; // Filter out low-confidence noise
@@ -341,9 +257,9 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       incidents.push({
         userMessage: truncate(userText, MAX_USER_MSG),
         agentBehavior: truncate(precedingAssistant, MAX_AGENT_BEHAVIOR),
-        precedingUserMessage: truncate(precedingUserMsg, MAX_PRECEDING_USER_MSG),
-        recalledMemoryIds,
-        toolCallSequence,
+        precedingUserMessage: truncate(ctx.precedingUserMessage, MAX_PRECEDING_USER_MSG),
+        recalledMemoryIds: ctx.recalledMemoryIds,
+        toolCallSequence: ctx.toolCallSequence,
         confidence,
         timestamp: ts,
         sessionFile: sessionName,

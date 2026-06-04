@@ -126,12 +126,14 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         console.log(
           `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}${res.status ? ` status=${res.status}` : ""}`,
         );
-        if (res.batchesStarted != null || res.retryCount != null) {
+        if (res.batchesStarted != null || res.retryCount != null || res.batchesCompleted != null) {
           console.log(
-            `Batches started: ${res.batchesStarted ?? 0} | Parsed item lines: ${res.analysed ?? 0} | Retry lines: ${res.retryCount ?? 0} | Fallback lines: ${res.fallbackCount ?? 0} | Errors/unparseable/failure lines: ${(res.parseFailures ?? 0) + (res.unparseableFailures ?? 0)}`,
+            `Batches started: ${res.batchesStarted ?? 0} | Batches completed: ${res.batchesCompleted ?? 0}/${res.totalBatches ?? "?"} | Parsed item lines: ${res.analysed ?? 0} | Retry lines: ${res.retryCount ?? 0} | Fallback lines: ${res.fallbackCount ?? 0} | Errors/unparseable/failure lines: ${(res.parseFailures ?? 0) + (res.unparseableFailures ?? 0)}`,
           );
+          const parseSuccess =
+            res.status === "success_analyzed" || res.status === "success_no_incidents";
           console.log(
-            `parse_success=${res.status === "success_analyzed"} parsed_candidates=${res.analysed ?? 0} retry_count=${res.retryCount ?? 0} fallback_count=${res.fallbackCount ?? 0} parse_failures=${res.parseFailures ?? 0} unparseable_failures=${res.unparseableFailures ?? 0}`,
+            `parse_success=${parseSuccess} parsed_candidates=${res.analysed ?? 0} retry_count=${res.retryCount ?? 0} fallback_count=${res.fallbackCount ?? 0} parse_failures=${res.parseFailures ?? 0} unparseable_failures=${res.unparseableFailures ?? 0}${res.status === "failed_partial" ? " batches_completed=" + (res.batchesCompleted ?? 0) + "/" + (res.totalBatches ?? "?") : ""}`,
           );
         }
         if (res.proposals.length > 0) {

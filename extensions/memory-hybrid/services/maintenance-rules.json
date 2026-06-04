@@ -97,7 +97,7 @@
   },
   {
     "id": "self-correction-zero-parsed",
-    "pattern": "self-correction-run|failed_suspect_zero_parsed|zero parsed\\/analysed remediation items|status=failed_parse",
+    "pattern": "self-correction-run|failed_suspect_zero_parsed|failed_partial|zero parsed\\/analysed remediation items|status=failed_parse|status=failed_partial",
     "classification": "json-parse-failure",
     "defaultAction": "glitchtip+digest",
     "severity": "high",

@@ -549,6 +549,28 @@ error: unknown command 'bar'
       expect(second.reportableIssues[0]?.fingerprint.join(":")).toBe(first.reportableIssues[0]?.fingerprint.join(":"));
     });
 
+    it("detects self-correction failed_partial semantic failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "self-correction-partial.exit.txt");
+      const logPath = join(tmpDir, "self-correction-partial.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z self-correction-run exit=1\n");
+      writeFileSync(
+        logPath,
+        "self-correction-run status=failed_partial parse_success=false batches_completed=1/2 analysed=2\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["self-correction-run"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "self-correction-run",
+          failureClass: "self_correction_partial_batch_failure",
+        }),
+      );
+    });
+
     it("detects self-correction zero-parsed semantic failures", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "self-correction.exit.txt");

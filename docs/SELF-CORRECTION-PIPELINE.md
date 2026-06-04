@@ -47,7 +47,7 @@ openclaw hybrid-mem analyze-feedback-phrases --learn
 
 Discovered phrases are saved under `~/.openclaw/memory/.user-feedback-phrases.json` and are **merged** with the built-in correction and reinforcement lists when building the detection regexes. So after you run with `--learn`, both self-correction extract and reinforcement extract will match your (and anyone else on the same install’s) typical phrases. Run it periodically (e.g. in a weekly nightly) to keep the list up to date.
 
-**Malformed JSONL:** If a session file has a bad line (truncated write, partial copy), `analyze-feedback-phrases` logs a warning, still scans other session files, and sets **`error`** in the CLI result when any file had parse issues. Phrase extraction is skipped for that run (empty `reinforcement` / `correction` arrays) until the malformed file is repaired.
+**Malformed JSONL:** If a session file has a bad line (truncated write, partial copy), `analyze-feedback-phrases` logs a warning and continues with other files. The run aborts with **`error`** only when **no** session file could be read; otherwise `sessionsScanned` counts successfully read files and phrase extraction proceeds from valid lines.
 
 ---
 
@@ -67,7 +67,7 @@ openclaw hybrid-mem self-correction-extract --days 7 --output /path/to/incidents
 
 - **Sessions** are read from `~/.openclaw/agents/*/sessions/*.jsonl` (same as session distillation).
 - **Skip filters**: heartbeat prompts, cron job text, compaction messages, sub-agent announcements, very short messages.
-- **Output**: `{ incidents: [...], sessionsScanned }`. Each incident has `userMessage`, `precedingAssistant`, `followingAssistant`, `timestamp`, `sessionFile`.
+- **Output**: `{ incidents: [...], sessionsScanned }`. Each incident has `userMessage`, `precedingAssistant`, `followingAssistant`, `timestamp`, `sessionFile`, and optionally `precedingUserMessage`, `toolCallSequence`, and `recalledMemoryIds` (20-turn lookback via shared session-signal context).
 
 ### 2. Analyze + remediate + report (Phases 2–4)
 
@@ -115,9 +115,25 @@ Some models (notably **MiniMax M3**) return structured JSON in **`message.tool_c
 The pipeline handles this in two layers:
 
 1. **`extractAssistantMessageText`** (shared util, wired into `chatComplete` and direct OpenAI bypass sites) — extracts parseable text from string content, array text blocks, native `tool_calls`, or reasoning fallbacks (in that order).
-2. **`parseStructuredItems`** (shared util) — parses JSON arrays, M3-style envelopes, NDJSON lines, or single valid objects using a per-item validator.
+2. **`parseStructuredItems`** / **`parseStructuredItemsAcceptingEmpty`** (shared util in `utils/llm-json-array.ts`) — parses JSON arrays, M3-style envelopes, NDJSON lines, or single valid objects using a per-item validator.
 
 Self-correction analysis uses both when parsing remediation items from the LLM.
+
+### Empty arrays (`[]`) vs parse failure
+
+By default, `parseStructuredItems` returns `null` when the model emits a **valid but empty** array (`[]`), because it cannot distinguish “no items” from “keep scanning for another array span.” That is correct for callers that only care about non-empty results.
+
+For pipelines where **zero items is a successful LLM answer** (no remediations, no proposals, etc.), use **`parseStructuredItemsAcceptingEmpty`** instead (or pass `{ acceptEmptyArray: true }` to `parseStructuredItems`). Then:
+
+| Return value | Meaning |
+|--------------|---------|
+| `null` | Unparseable or empty model output — treat as parse/model failure (or retry/repair). |
+| `[]` | Parsed successfully; model explicitly returned no items. |
+| `[...]` | Parsed successfully with one or more valid items. |
+
+**Call sites today:** `parseSelfCorrectionLLMResponse` (self-correction-run), extract-reinforcement analysis, generate-proposals. All branch on `parsed === null` for failure; an empty list is handled by downstream logic (e.g. `semantic_empty`, `partial_no_matches`, or simply no stores applied).
+
+**Do not** combine `parseStructuredItemsAcceptingEmpty` with a failure check that treats empty arrays as errors (for example `!parsed || parsed.length === 0`) — that turns `[]` back into a false parse failure. Use `parsed === null` only for failure; use `parsed.length === 0` when empty output should trigger a separate semantic/policy error.
 
 ### Batch resume state
 
@@ -143,6 +159,7 @@ Configure batch size with `selfCorrection.analysisBatchSize` (default **1** for 
 | `success_no_incidents` | Scan/extract found zero correction incidents. |
 | `skipped_cooldown` | Run skipped due to scan cooldown (not a zero-incident success). |
 | `failed_parse` | LLM response could not be parsed into remediation items. |
+| `failed_partial` | One or more batches completed; a later batch failed. Partial remediations may have been applied; resume state is retained under `tmp/self-correction/`. Cron treats this as a semantic failure. |
 | `failed_suspect_zero_parsed` | Incidents were present but **zero** remediation items were parsed (suspect model/parser failure). Cron validation treats this as a semantic failure. |
 
 ### Verbose diagnostics
@@ -223,11 +240,23 @@ Example (in `openclaw.json` or plugin config):
 
 ---
 
-## Phase 2 via spawn (large incident batches)
+## Implicit-feedback bridge (optional)
 
-For very large incident batches, Phase 2 (LLM analysis) can be run via **`openclaw sessions spawn`** so the analysis uses a separate process and a model with a large context (e.g. Gemini).
+`extract-implicit` can optionally invoke **`self-correction-run`** on capped negative signals after storing implicit-feedback facts:
 
-- Set **`selfCorrection.analyzeViaSpawn: true`** and optionally **`spawnThreshold`** (default 15). When incident count exceeds the threshold, the plugin runs `openclaw sessions spawn --model <spawnModel> --message "..." --attach <prompt-file>` and parses the JSON array from stdout.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `implicitFeedback.triggerSelfCorrectionRun` | `false` | Run self-correction analysis on bridge incidents in the same extract-implicit pass. |
+| `implicitFeedback.selfCorrectionBridgeMaxIncidents` | `5` | Max incidents forwarded per run. |
+| `implicitFeedback.selfCorrectionBridgeMinConfidence` | `0.7` | Minimum negative-signal confidence for bridge incidents. |
+
+This is separate from the nightly `self-correction-run` cron job; use it when you want immediate analysis after implicit extraction.
+
+## Phase 2 via spawn (large batch prompts)
+
+For very large **per-batch** prompts, Phase 2 (LLM analysis) can be run via **`openclaw sessions spawn`** so the analysis uses a separate process and a model with a large context (e.g. Gemini).
+
+- Set **`selfCorrection.analyzeViaSpawn: true`**. Spawn is used per batch when estimated input tokens exceed ~100k (not only when total incident count exceeds `spawnThreshold`).
 - Requires the OpenClaw CLI and a working `sessions spawn` command. If spawn fails, the run returns an error.
 
 ---
@@ -263,5 +292,5 @@ Adjust `--days` and paths as needed. The report is still written to `memory/repo
 
 - [GitHub issue #34: Nightly Self-Correction Analysis](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/34)
 - **build-languages**: [CLI reference](CLI-REFERENCE.md) — run first for non-English correction detection.
-- **Reinforcement (positive signals)**: `openclaw hybrid-mem extract-reinforcement` — uses praise phrases and **positive emoji** (👍 ❤️ etc.) to reinforce facts and procedures; see cron job `extract-reinforcement` and [CLI-REFERENCE.md](CLI-REFERENCE.md).
+- **Reinforcement (positive signals)**: `openclaw hybrid-mem extract-reinforcement` — uses praise phrases and **positive emoji** (👍 ❤️ etc.) to reinforce facts and procedures. LLM analysis is batched with resume under `<workspace>/tmp/reinforcement-analysis/reinforcement-batches-<fingerprint>.json`. Config keys `reinforcementLLMAnalysis`, `positiveRulesSection`, `reinforcementToProposals`, `analysisBatchSize`, and `maxIncidentsPerRun` live under **`reinforcement`** (deprecated aliases under `selfCorrection` still work). See [CLI-REFERENCE.md](CLI-REFERENCE.md).
 - **Session distillation**: [SESSION-DISTILLATION.md](SESSION-DISTILLATION.md) — separate pipeline (fact extraction from sessions).

@@ -15,7 +15,7 @@ import {
   makeEntityMentionKey,
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
-import { stripThinkingWrapperBlocks, tryParseFirstJsonObject } from "../utils/llm-json-array.js";
+import { stripThinkingWrapperBlocks, parseFirstJsonObjectValue } from "../utils/llm-json-array.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import {
   is403QuotaOrRateLimitLike,
@@ -87,10 +87,10 @@ export type EntityExtractionPressureSignals = {
 
 function parseMentionJson(content: string): LlmMention[] {
   const stripped = stripThinkingWrapperBlocks(content);
-  const obj = tryParseFirstJsonObject(stripped);
-  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return [];
-  const mentions = (obj as { mentions?: LlmMention[] }).mentions;
-  return Array.isArray(mentions) ? mentions : [];
+  const obj = parseFirstJsonObjectValue(stripped);
+  if (!obj) return [];
+  const mentions = obj.mentions;
+  return Array.isArray(mentions) ? (mentions as LlmMention[]) : [];
 }
 
 function clampOffsets(text: string, surface: string, start: number, end: number): { start: number; end: number } {

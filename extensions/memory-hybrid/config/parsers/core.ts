@@ -509,6 +509,10 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
       typeof scRaw.analysisBatchSize === "number" && scRaw.analysisBatchSize >= 1
         ? Math.floor(scRaw.analysisBatchSize)
         : undefined,
+    batchDelayMs:
+      typeof scRaw.batchDelayMs === "number" && scRaw.batchDelayMs >= 0
+        ? Math.floor(scRaw.batchDelayMs)
+        : undefined,
   };
 }
 
@@ -629,6 +633,14 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
       `memory-hybrid: invalid llm.maintenanceFallbackPolicy ${JSON.stringify(maintenanceFallbackPolicyRaw)} — ignoring`,
     );
   }
+  const minimaxRaw = llmRaw?.minimax as Record<string, unknown> | undefined;
+  const minimaxThinkingRaw = minimaxRaw?.thinking;
+  const minimaxThinking =
+    minimaxThinkingRaw === "disabled" || minimaxThinkingRaw === "adaptive" ? minimaxThinkingRaw : undefined;
+  const minimax =
+    minimaxThinking !== undefined
+      ? { thinking: minimaxThinking }
+      : undefined;
   const llm: LLMConfig | undefined =
     maintenanceList.length > 0 ||
     defaultList.length > 0 ||
@@ -637,7 +649,8 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
     llmProviders !== undefined ||
     localAutoStart ||
     disabledProviders.length > 0 ||
-    maintenanceFallbackPolicy !== undefined
+    maintenanceFallbackPolicy !== undefined ||
+    minimax !== undefined
       ? {
           ...(maintenanceList.length > 0 ? { maintenance: maintenanceList } : {}),
           default: defaultList,
@@ -652,6 +665,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           localAutoStart,
           ...(disabledProviders.length > 0 ? { disabledProviders } : {}),
           ...(maintenanceFallbackPolicy !== undefined ? { maintenanceFallbackPolicy } : {}),
+          ...(minimax !== undefined ? { minimax } : {}),
         }
       : undefined;
   return llm;

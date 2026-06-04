@@ -13,12 +13,16 @@
  *  - Parse failure with incidents present does NOT update scan cursor as if analysis succeeded
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { runSelfCorrectionRunForCli } from "../cli/cmd-selfcorrection.js";
+import {
+  runSelfCorrectionRunForCli,
+  resolveSelfCorrectionBatchStateDir,
+  SELF_CORRECTION_BATCH_STATE_PREFIX,
+} from "../cli/cmd-selfcorrection.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import type { CorrectionIncident } from "../services/self-correction-extract.js";
 
@@ -43,6 +47,12 @@ const SAMPLE_REMEDIATION = {
   remediationType: "MEMORY_STORE",
   remediationContent: { text: "Always verify before running commands.", entity: "Fact", tags: ["workflow"] },
 };
+
+function listSelfCorrectionBatchStateFiles(workspace: string): string[] {
+  const stateDir = resolveSelfCorrectionBatchStateDir(workspace);
+  if (!existsSync(stateDir)) return [];
+  return readdirSync(stateDir).filter((name) => name.startsWith(SELF_CORRECTION_BATCH_STATE_PREFIX));
+}
 
 function makeOpenAIMock(responseText: string) {
   return {
@@ -473,11 +483,10 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
   });
 
   it("persists batch resume state and skips completed batches on rerun", async () => {
-    const manyIncidents = Array.from({ length: 26 }, (_, i) => ({
-      ...SAMPLE_INCIDENT,
-      userMessage: `${SAMPLE_INCIDENT.userMessage} #${i}`,
-      sessionFile: `2026-01-01-session-${i}.jsonl`,
-    }));
+    const manyIncidents = [
+      { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #0`, sessionFile: "2026-01-01-session-0.jsonl" },
+      { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #1`, sessionFile: "2026-01-01-session-1.jsonl" },
+    ];
     const firstBatchItem = { ...SAMPLE_REMEDIATION, remediationContent: { text: "first batch" } };
     const secondBatchItem = { ...SAMPLE_REMEDIATION, remediationContent: { text: "second batch" } };
     const openaiFirst = {
@@ -493,16 +502,20 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
         },
       },
     } as any;
-    const first = await runSelfCorrectionRunForCli(makeCtx(openaiFirst), {
+    const ctxFirst = makeCtx(openaiFirst);
+    (ctxFirst.cfg as any).selfCorrection = {
+      ...(ctxFirst.cfg as any).selfCorrection,
+      analysisBatchSize: 1,
+    };
+    const first = await runSelfCorrectionRunForCli(ctxFirst, {
       incidents: manyIncidents,
       workspace: tmpDir,
       applyTools: false,
     });
     expect(first.error).toBeDefined();
-    const stateDir = join(tmpDir, "tmp", "self-correction");
-    const stateFile = (await import("node:fs")).readdirSync(stateDir).find((name) => name.startsWith("m3-batches-"));
-    expect(stateFile).toBeDefined();
-    const statePath = join(stateDir, stateFile as string);
+    const stateFiles = listSelfCorrectionBatchStateFiles(tmpDir);
+    expect(stateFiles).toHaveLength(1);
+    const statePath = join(resolveSelfCorrectionBatchStateDir(tmpDir), stateFiles[0] as string);
     expect(existsSync(statePath)).toBe(true);
     expect(JSON.parse(readFileSync(statePath, "utf-8")).completedBatchIndexes).toEqual([0]);
 
@@ -516,7 +529,12 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
         },
       },
     } as any;
-    const second = await runSelfCorrectionRunForCli(makeCtx(openaiSecond), {
+    const ctxSecond = makeCtx(openaiSecond);
+    (ctxSecond.cfg as any).selfCorrection = {
+      ...(ctxSecond.cfg as any).selfCorrection,
+      analysisBatchSize: 1,
+    };
+    const second = await runSelfCorrectionRunForCli(ctxSecond, {
       incidents: manyIncidents,
       workspace: tmpDir,
       applyTools: false,
@@ -543,6 +561,10 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
               choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
               usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
             })
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            })
             .mockRejectedValueOnce(new Error("permanent failure after first batch")),
         },
       },
@@ -554,7 +576,22 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
       dryRun: true,
     });
 
-    expect(existsSync(join(tmpDir, "tmp", "self-correction"))).toBe(false);
+    expect(listSelfCorrectionBatchStateFiles(tmpDir)).toHaveLength(0);
+    expect(existsSync(join(tmpDir, "memory", "reports"))).toBe(false);
+  });
+
+  it("does not write analysis reports during dry-run", async () => {
+    const ctx = makeCtx(makeOpenAIMock(JSON.stringify([SAMPLE_REMEDIATION])));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.status).toBe("success_analyzed");
+    expect(res.reportPath).toBeNull();
+    expect(existsSync(join(tmpDir, "memory", "reports"))).toBe(false);
   });
 
   it("includes model in resume fingerprint so a different model does not reuse stale state", async () => {
@@ -562,6 +599,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
       SAMPLE_INCIDENT,
       { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #2` },
     ];
+    const failBatch2 = Object.assign(new Error("model not found for batch 2"), { status: 404 });
     const ctxPartial = makeCtx({
       chat: {
         completions: {
@@ -571,7 +609,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
               choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
               usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
             })
-            .mockRejectedValueOnce(new Error("fail batch 2")),
+            .mockRejectedValue(failBatch2),
         },
       },
     } as any);
@@ -584,11 +622,11 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
       incidents,
       workspace: tmpDir,
       model: "model-a",
+      applyTools: false,
     });
 
-    const stateDir = join(tmpDir, "tmp", "self-correction");
-    const stateFilesA = (await import("node:fs")).readdirSync(stateDir).filter((name) => name.startsWith("m3-batches-"));
-    expect(stateFilesA.length).toBe(1);
+    const stateFilesA = listSelfCorrectionBatchStateFiles(tmpDir);
+    expect(stateFilesA).toHaveLength(1);
 
     const openaiB = {
       chat: {
@@ -600,17 +638,23 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
         },
       },
     } as any;
+    const ctxB = makeCtx(openaiB);
+    (ctxB.cfg as any).selfCorrection = {
+      ...(ctxB.cfg as any).selfCorrection,
+      analysisBatchSize: 1,
+    };
 
-    await runSelfCorrectionRunForCli(makeCtx(openaiB), {
+    await runSelfCorrectionRunForCli(ctxB, {
       incidents,
       workspace: tmpDir,
       model: "model-b",
+      applyTools: false,
     });
 
     expect(openaiB.chat.completions.create).toHaveBeenCalledTimes(2);
-    const stateFilesB = (await import("node:fs")).readdirSync(stateDir).filter((name) => name.startsWith("m3-batches-"));
-    expect(stateFilesB.length).toBe(1);
-    expect(stateFilesB[0]).not.toBe(stateFilesA[0]);
+    const stateFilesB = listSelfCorrectionBatchStateFiles(tmpDir);
+    expect(stateFilesB).toHaveLength(0);
+    expect(stateFilesA[0]).toMatch(new RegExp(`^${SELF_CORRECTION_BATCH_STATE_PREFIX}`));
   });
 
   it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {
@@ -750,5 +794,82 @@ describe("self-correction-run — cooldown skip vs zero-incident status (#1637)"
     expect(skippedRes.status).toBe("skipped_cooldown");
     expect(noIncidentsRes.status).toBe("success_no_incidents");
     expect(skippedRes.status).not.toBe(noIncidentsRes.status);
+  });
+});
+
+describe("self-correction-run — partial batch failure and AGENTS_RULE mapping", () => {
+  it("returns failed_partial with partial apply when a later batch fails", async () => {
+    const incident2: CorrectionIncident = {
+      ...SAMPLE_INCIDENT,
+      userMessage: "Second incident correction",
+      sessionFile: "2026-01-02-session.jsonl",
+    };
+    let callCount = 0;
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockImplementation(async () => {
+            callCount++;
+            if (callCount === 1) {
+              return {
+                choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
+                usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+              };
+            }
+            throw new Error("simulated batch 2 LLM failure");
+          }),
+        },
+      },
+    } as any;
+    const ctx = makeCtx(openai);
+    (ctx.cfg as any).selfCorrection = {
+      ...(ctx.cfg as any).selfCorrection,
+      analysisBatchSize: 1,
+      semanticDedup: false,
+    };
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT, incident2],
+      workspace: tmpDir,
+    });
+
+    expect(res.status).toBe("failed_partial");
+    expect(res.batchesCompleted).toBe(1);
+    expect(res.totalBatches).toBe(2);
+    expect(res.analysed).toBeGreaterThan(0);
+    expect(listSelfCorrectionBatchStateFiles(tmpDir).length).toBeGreaterThan(0);
+  });
+
+  it("AGENTS_RULE proposal uses source incident from batch order", async () => {
+    const agentsRule = {
+      category: "behavior",
+      severity: "medium",
+      remediationType: "AGENTS_RULE",
+      remediationContent: "Always verify in AGENTS.md",
+    };
+    const openai = makeOpenAIMock(JSON.stringify([agentsRule]));
+    const create = vi.fn();
+    const proposalsDb = { create };
+    const ctx = makeCtx(openai);
+    (ctx as any).proposalsDb = proposalsDb;
+    (ctx.cfg as any).selfCorrection = {
+      ...(ctx.cfg as any).selfCorrection,
+      agentsRuleToProposals: true,
+      semanticDedup: false,
+    };
+
+    const incident: CorrectionIncident = {
+      ...SAMPLE_INCIDENT,
+      userMessage: "Unique incident text for proposal mapping",
+    };
+    await runSelfCorrectionRunForCli(ctx, {
+      incidents: [incident],
+      workspace: tmpDir,
+    });
+
+    expect(create).toHaveBeenCalled();
+    const arg = create.mock.calls[0][0];
+    expect(arg.observation).toContain("Unique incident text");
+    expect(arg.evidenceSessions).toEqual([incident.sessionFile]);
   });
 });

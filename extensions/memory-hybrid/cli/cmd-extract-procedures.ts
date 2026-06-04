@@ -1,6 +1,7 @@
 /** Procedure extraction and auto-skill CLI. Split from cmd-extract.ts. */
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
+import { auditAutoSkills, quarantineAutoSkills } from "../services/auto-skills-audit.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
@@ -113,7 +114,7 @@ export async function runGenerateAutoSkillsForCli(
   const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
   const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
   try {
-    return generateAutoSkills(
+    const result = await generateAutoSkills(
       factsDb,
       {
         skillsAutoPath: cfg.procedures.skillsAutoPath,
@@ -127,6 +128,24 @@ export async function runGenerateAutoSkillsForCli(
       },
       { info, warn },
     );
+    if (opts.apply && !opts.dryRun && result.generated > 0) {
+      const audit = auditAutoSkills(cfg.procedures.skillsAutoPath);
+      if (audit.quarantinable > 0) {
+        warn(
+          `memory-hybrid: auto-skills post-generate audit: ${audit.quarantinable} quarantinable of ${audit.scanned} scanned`,
+        );
+        const quarantineAfterGenerate =
+          (cfg.procedures as { quarantineAfterGenerate?: boolean }).quarantineAfterGenerate === true;
+        if (quarantineAfterGenerate) {
+          const toMove = audit.entries.filter(
+            (e) => !e.loadable || e.transcriptLike || e.secretLike || e.injectionLike,
+          );
+          quarantineAutoSkills(cfg.procedures.skillsAutoPath, toMove);
+        }
+      }
+      return { ...result, quarantinable: audit.quarantinable };
+    }
+    return result;
   } catch (err) {
     capturePluginError(err as Error, {
       subsystem: "cli",

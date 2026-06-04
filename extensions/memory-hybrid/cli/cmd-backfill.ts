@@ -395,12 +395,12 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       if (!firstSessionParseError) firstSessionParseError = `Failed to parse session file ${fp}: ${message}`;
     }
   }
-  if (firstSessionParseError) {
+  if (successfullyScannedSessions === 0 && sessionFiles.length > 0) {
     return {
       reinforcement: [],
       correction: [],
-      sessionsScanned: successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length,
-      error: firstSessionParseError,
+      sessionsScanned: 0,
+      error: firstSessionParseError ?? "No session files could be read",
     };
   }
   const unmatched = allTexts.filter((text) => {
@@ -448,7 +448,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   }
 
   if (toAnalyze.length === 0) {
-    return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length };
+    return { reinforcement: [], correction: [], sessionsScanned: successfullyScannedSessions };
   }
 
   const maxChars = 400_000;

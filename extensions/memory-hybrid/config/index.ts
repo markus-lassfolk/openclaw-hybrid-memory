@@ -366,3 +366,14 @@ export function resolveReflectionModelAndFallbacks(
 
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };
 }
+
+/** Resolve MiniMax M3 thinking mode from config (default: disabled for structured JSON maintenance). */
+export function resolveMiniMaxThinkingMode(
+  cfg: Pick<HybridMemoryConfig, "llm"> | undefined,
+  override?: "disabled" | "adaptive",
+): "disabled" | "adaptive" {
+  if (override === "disabled" || override === "adaptive") return override;
+  const fromCfg = cfg?.llm?.minimax?.thinking;
+  if (fromCfg === "disabled" || fromCfg === "adaptive") return fromCfg;
+  return "disabled";
+}

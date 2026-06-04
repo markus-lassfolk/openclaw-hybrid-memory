@@ -18,7 +18,7 @@ import {
   type LanguageExtractionTemplate,
   type LanguageKeywordsFile,
 } from "../utils/language-keywords.js";
-import { tryParseFirstJsonArray, tryParseFirstJsonObject } from "../utils/llm-json-array.js";
+import { parseFirstJsonObjectValue, tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { capturePluginError } from "./error-reporter.js";
 import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
@@ -261,7 +261,7 @@ async function generateIntentBasedLanguages(
       { maxRetries: 2 },
     );
     const content = extractAssistantMessageText(resp.choices[0]?.message).text;
-    const parsed = tryParseFirstJsonObject(content) as Record<
+    const parsed = parseFirstJsonObjectValue(content) as Record<
       string,
       Record<string, unknown> & { triggerStructures?: string[]; extraction?: unknown }
     > | null;
@@ -347,7 +347,7 @@ Each value must be an array of translated strings in the same order as the Engli
       { maxRetries: 2 },
     );
     const content = extractAssistantMessageText(resp.choices[0]?.message).text;
-    const parsed = tryParseFirstJsonObject(content) as Record<string, Record<string, string[]>> | null;
+    const parsed = parseFirstJsonObjectValue(content) as Record<string, Record<string, string[]>> | null;
     if (!parsed) return {};
     const result: Record<string, Record<KeywordGroup, string[]>> = {};
     for (const lang of toTranslate) {

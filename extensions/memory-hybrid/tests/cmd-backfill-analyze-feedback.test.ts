@@ -50,7 +50,7 @@ describe("runAnalyzeFeedbackPhrasesForCli session JSONL parsing", () => {
     expect(result.error).toContain("session.jsonl:1");
     expect(result.reinforcement).toEqual([]);
     expect(result.correction).toEqual([]);
-    expect(result.sessionsScanned).toBe(1);
+    expect(result.sessionsScanned).toBe(0);
   });
 
   it("keeps valid JSONL behavior unchanged", async () => {
@@ -81,8 +81,7 @@ describe("runAnalyzeFeedbackPhrasesForCli session JSONL parsing", () => {
 
     const result = await runAnalyzeFeedbackPhrasesForCli(makeContext(), { days: 30 });
 
-    expect(result.error).toContain("Malformed session JSONL at");
-    expect(result.error).toContain("bad.jsonl:1");
+    expect(result.error).toBeUndefined();
     expect(result.sessionsScanned).toBe(1);
   });
 });

@@ -18,6 +18,7 @@ import {
   type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
+  isMiniMaxModel,
   requiresMaxCompletionTokens,
   shouldOmitSamplingParams,
   resolveWireApi,
@@ -26,6 +27,22 @@ import { callResponsesApi } from "./responses-adapter.js";
 import { recordProviderHttpAttempt, formatRecentHttpAttemptsForRateLimitLog } from "./recent-http-attempts.js";
 
 export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
+export { isMiniMaxModel, isMiniMaxM3Model } from "./model-capabilities.js";
+
+/** MiniMax M3 thinking mode: `adaptive` (provider default) or `disabled` (skip thinking blocks for JSON extraction). */
+export type MiniMaxThinkingMode = "disabled" | "adaptive";
+
+export type ChatCompletionUsageSummary = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
+export type ChatCompleteDetailedResult = {
+  text: string;
+  finishReason?: string | null;
+  usage?: ChatCompletionUsageSummary;
+};
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -436,7 +453,7 @@ export function isOllamaOOM(err: unknown): boolean {
   );
 }
 
-export async function chatComplete(opts: {
+export async function chatCompleteDetailed(opts: {
   model: string;
   content: string;
   temperature?: number;
@@ -452,7 +469,9 @@ export async function chatComplete(opts: {
   wireApi?: WireApi;
   /** OpenAI chat.completions response_format (chat wire API only). */
   responseFormat?: { type: "json_object" };
-}): Promise<string> {
+  /** MiniMax-only: control deep thinking (`disabled` saves output budget for structured JSON). */
+  thinkingMode?: MiniMaxThinkingMode;
+}): Promise<ChatCompleteDetailedResult> {
   const {
     model,
     content,
@@ -463,6 +482,7 @@ export async function chatComplete(opts: {
     feature,
     wireApi: wireApiOverride,
     responseFormat,
+    thinkingMode,
   } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
   const controller = new AbortController();
@@ -489,12 +509,14 @@ export async function chatComplete(opts: {
       const { text } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener("abort", onAbort);
-      return text;
+      return { text };
     }
 
     // Standard chat.completions.create path
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-    const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
+    const body: OpenAI.ChatCompletionCreateParamsNonStreaming & {
+      thinking?: { type: MiniMaxThinkingMode };
+    } = {
       model,
       messages: [{ role: "user", content }],
       ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
@@ -505,6 +527,9 @@ export async function chatComplete(opts: {
     if (responseFormat) {
       body.response_format = responseFormat;
     }
+    if (thinkingMode && isMiniMaxModel(model)) {
+      body.thinking = { type: thinkingMode };
+    }
     const doCreate = () =>
       opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
         signal: controller.signal,
@@ -514,8 +539,20 @@ export async function chatComplete(opts: {
     const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    const msg = resp.choices?.[0]?.message;
-    return extractAssistantMessageText(msg).text;
+    const choice = resp.choices?.[0];
+    const msg = choice?.message;
+    const usageRaw = resp.usage;
+    return {
+      text: extractAssistantMessageText(msg).text,
+      finishReason: choice?.finish_reason ?? null,
+      usage: usageRaw
+        ? {
+            promptTokens: usageRaw.prompt_tokens,
+            completionTokens: usageRaw.completion_tokens,
+            totalTokens: usageRaw.total_tokens,
+          }
+        : undefined,
+    };
   } catch (err) {
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
@@ -563,6 +600,29 @@ export async function chatComplete(opts: {
     }
     throw error;
   }
+}
+
+export async function chatComplete(opts: {
+  model: string;
+  content: string;
+  temperature?: number;
+  maxTokens?: number;
+  openai: OpenAI;
+  /** Timeout in ms; after this the promise rejects. Prevents silent hang when gateway/LLM never responds. Default 45s. */
+  timeoutMs?: number;
+  /** When aborted (e.g. parent timeout), the request is cancelled and no retry is needed. */
+  signal?: AbortSignal;
+  /** Feature label for cost tracking. When set, the call is wrapped in withCostFeature() so the proxy records the correct label. */
+  feature?: string;
+  /** Force a specific wire API surface ("chat" or "responses"). When unset, resolved from the model's provider prefix. */
+  wireApi?: WireApi;
+  /** OpenAI chat.completions response_format (chat wire API only). */
+  responseFormat?: { type: "json_object" };
+  /** MiniMax-only: control deep thinking (`disabled` saves output budget for structured JSON). */
+  thinkingMode?: MiniMaxThinkingMode;
+}): Promise<string> {
+  const detail = await chatCompleteDetailed(opts);
+  return detail.text;
 }
 
 /** Max input tokens for one distill batch request. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
@@ -834,6 +894,8 @@ export type ChatCompleteWithRetryDetails = {
    * for attempts; some models may still have been skipped due to AbortSignal pre-checks.
    */
   attemptChain: string[];
+  finishReason?: string | null;
+  usage?: ChatCompletionUsageSummary;
 };
 
 /**
@@ -860,6 +922,8 @@ export async function chatCompleteWithRetryDetailed(opts: {
   responseFormat?: { type: "json_object" };
   /** Called immediately before a retry backoff sleep. */
   onRetry?: (info: { attempt: number; delayMs: number; error: Error; model: string }) => void;
+  /** MiniMax-only: control deep thinking (`disabled` saves output budget for structured JSON). */
+  thinkingMode?: MiniMaxThinkingMode;
 }): Promise<ChatCompleteWithRetryDetails> {
   const {
     fallbackModels = [],
@@ -870,6 +934,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
     pendingWarnings,
     feature,
     onRetry,
+    thinkingMode,
     ...chatOpts
   } = opts;
   const label = rawLabel ?? "LLM call";
@@ -894,15 +959,16 @@ export async function chatCompleteWithRetryDetailed(opts: {
     const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
 
     try {
-      const content = await withLLMRetry(
+      const detail = await withLLMRetry(
         () =>
-          chatComplete({
+          chatCompleteDetailed({
             ...chatOpts,
             model: currentModel,
             maxTokens: effectiveMaxTokens,
             ...(timeoutMs != null && { timeoutMs }),
             signal,
             ...(feature != null && { feature }),
+            ...(thinkingMode != null && { thinkingMode }),
           }),
         {
           maxRetries: 3,
@@ -911,7 +977,13 @@ export async function chatCompleteWithRetryDetailed(opts: {
           onRetry: (info) => onRetry?.({ ...info, model: currentModel }),
         },
       );
-      return { content, modelUsed: currentModel, attemptChain: modelsToTry };
+      return {
+        content: detail.text,
+        modelUsed: currentModel,
+        attemptChain: modelsToTry,
+        finishReason: detail.finishReason,
+        usage: detail.usage,
+      };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError

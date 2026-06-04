@@ -10,7 +10,7 @@ import { extractBalancedArraySlice, stripThinkingWrapperBlocks } from "../utils/
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
-import { requiresMaxCompletionTokens, shouldOmitSamplingParams } from "./model-capabilities.js";
+import { isMiniMaxModel, requiresMaxCompletionTokens, shouldOmitSamplingParams } from "./model-capabilities.js";
 
 /** Chat body for classify completions — mirrors `chatComplete` in `chat.ts` (#1008). */
 function buildClassifyChatBody(
@@ -19,13 +19,18 @@ function buildClassifyChatBody(
   maxOutputTokens: number,
 ): OpenAI.ChatCompletionCreateParamsNonStreaming {
   const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-  const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
+  const body: OpenAI.ChatCompletionCreateParamsNonStreaming & {
+    thinking?: { type: "disabled" | "adaptive" };
+  } = {
     model,
     messages: [{ role: "user", content: userContent }],
     ...(useMaxCompletionTokens ? { max_completion_tokens: maxOutputTokens } : { max_tokens: maxOutputTokens }),
   };
   if (!shouldOmitSamplingParams(model)) {
     body.temperature = 0;
+  }
+  if (isMiniMaxModel(model)) {
+    body.thinking = { type: "disabled" };
   }
   return body;
 }

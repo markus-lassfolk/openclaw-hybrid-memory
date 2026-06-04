@@ -30,6 +30,9 @@ import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } fr
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
+import type { CorrectionIncident } from "../services/self-correction-extract.js";
+import { getEnv } from "../utils/env-manager.js";
+import { runSelfCorrectionRunForCli } from "./cmd-selfcorrection.js";
 import { getSessionFilePathsSince } from "./cmd-extract.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
@@ -598,6 +601,8 @@ export async function runExtractImplicitFeedbackForCli(
     autoCleanup: true,
     cleanupLimit: 1000,
   };
+  const bridgeIncidents: CorrectionIncident[] = [];
+  const bridgeMinConfidence = implicitCfg.selfCorrectionBridgeMinConfidence ?? 0.7;
 
   if (implicitCfg.enabled === false) {
     progress.stage = "done";
@@ -955,6 +960,18 @@ export async function runExtractImplicitFeedbackForCli(
       const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
+        if (
+          implicitCfg.triggerSelfCorrectionRun &&
+          sig.confidence >= bridgeMinConfidence &&
+          bridgeIncidents.length < (implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5)
+        ) {
+          bridgeIncidents.push({
+            userMessage: sig.context.userMessage,
+            precedingAssistant: sig.context.agentMessage,
+            sessionFile: sig.context.sessionFile,
+            timestamp: new Date(sig.context.timestamp).toISOString(),
+          });
+        }
         if (wallClockLimitReached()) {
           markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
           break;
@@ -1358,6 +1375,24 @@ export async function runExtractImplicitFeedbackForCli(
 
   progress.stage = "done";
   emitProgress();
+
+  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+    const cap = implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5;
+    const incidents = bridgeIncidents.slice(0, cap);
+    const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    try {
+      const bridgeRes = await runSelfCorrectionRunForCli(ctx, { incidents, workspace, dryRun: false });
+      logger?.info?.(
+        `memory-hybrid: implicit-feedback self-correction bridge status=${bridgeRes.status ?? "unknown"} analysed=${bridgeRes.analysed} autoFixed=${bridgeRes.autoFixed}`,
+      );
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:self-correction-bridge",
+        severity: "warning",
+        subsystem: "implicit-feedback",
+      });
+    }
+  }
 
   // Update scan cursor with the last processed session
   if (!opts.dryRun && lastProcessedFilePath) {
