@@ -137,6 +137,16 @@ describe("parseStructuredItems", () => {
     expect(parseStructuredItems(raw, isStringItem)).toEqual(["from-tools"]);
   });
 
+  it("merges items from multiple tool_calls argument strings (#1876 envelope)", () => {
+    const raw = JSON.stringify({
+      tool_calls: [
+        JSON.stringify({ items: ["first"] }),
+        JSON.stringify({ items: ["second"] }),
+      ],
+    });
+    expect(parseStructuredItems(raw, isStringItem)).toEqual(["first", "second"]);
+  });
+
   it("accepts a single valid object", () => {
     expect(parseStructuredItems('{"a":"solo"}', (item) => typeof item === "object")).toEqual([{ a: "solo" }]);
   });

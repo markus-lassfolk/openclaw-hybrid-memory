@@ -7,6 +7,7 @@ import {
   createPendingLLMWarnings,
   distillBatchTokenLimit,
   distillMaxOutputTokens,
+  maintenanceMaxOutputTokens,
   is403Like,
   is403QuotaOrRateLimitLike,
   is404Like,
@@ -54,7 +55,18 @@ describe("distillMaxOutputTokens", () => {
     expect(distillMaxOutputTokens("gpt-4o-mini")).toBe(16_384);
     expect(distillMaxOutputTokens("gpt-4")).toBe(8000);
     expect(distillMaxOutputTokens("minimax/MiniMax-M3")).toBe(131_072);
-    expect(distillMaxOutputTokens("MiniMax-M2.7-highspeed")).toBe(128_000);
+    expect(distillMaxOutputTokens("MiniMax-M2.7-highspeed")).toBe(131_072);
+  });
+});
+
+describe("maintenanceMaxOutputTokens", () => {
+  it("returns lower maintenance caps for MiniMax models", () => {
+    expect(maintenanceMaxOutputTokens("minimax/MiniMax-M3")).toBe(32_768);
+    expect(maintenanceMaxOutputTokens("MiniMax-M2.7")).toBe(16_384);
+  });
+
+  it("falls back to distill max for models without maintenance cap", () => {
+    expect(maintenanceMaxOutputTokens("gpt-4o-mini")).toBe(16_384);
   });
 });
 
@@ -2287,6 +2299,30 @@ describe("chatComplete with wireApi='responses'", () => {
     });
     expect(result).toBe("Response from Responses API");
     expect(mockResponsesCreate).toHaveBeenCalled();
+  });
+
+  it("maps incomplete Responses status to finishReason length in chatCompleteDetailed", async () => {
+    mockResponsesCreate.mockResolvedValueOnce({
+      id: "resp_trunc",
+      status: "incomplete",
+      incomplete_details: { reason: "max_output_tokens" },
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "partial" }],
+        },
+      ],
+    });
+    const { chatCompleteDetailed } = await import("../services/chat.js");
+    const detail = await chatCompleteDetailed({
+      model: "azure-foundry-responses/o3-pro",
+      content: "test",
+      openai: mockOpenaiWithResponses,
+      wireApi: "responses",
+    });
+    expect(detail.text).toBe("partial");
+    expect(detail.finishReason).toBe("length");
   });
 
   it("still uses chat.completions.create for standard models", async () => {

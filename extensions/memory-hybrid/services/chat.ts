@@ -18,12 +18,13 @@ import {
   type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
+  getMaintenanceMaxOutputTokens as getMaintenanceMaxOutputTokensFromCatalog,
   isMiniMaxModel,
   requiresMaxCompletionTokens,
   shouldOmitSamplingParams,
   resolveWireApi,
 } from "./model-capabilities.js";
-import { callResponsesApi } from "./responses-adapter.js";
+import { callResponsesApi, mapResponsesFinishReason } from "./responses-adapter.js";
 import { recordProviderHttpAttempt, formatRecentHttpAttemptsForRateLimitLog } from "./recent-http-attempts.js";
 
 export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
@@ -506,10 +507,10 @@ export async function chatCompleteDetailed(opts: {
           { model, content, temperature, maxTokens: effectiveMaxTokens },
           { signal: controller.signal },
         );
-      const { text } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
+      const { text, raw } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener("abort", onAbort);
-      return { text };
+      return { text, finishReason: mapResponsesFinishReason(raw) };
     }
 
     // Standard chat.completions.create path
@@ -633,6 +634,11 @@ export function distillBatchTokenLimit(model: string): number {
 /** Max output tokens for distill/ingest LLM calls. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillMaxOutputTokens(model: string): number {
   return getDistillMaxOutputTokensFromCatalog(model);
+}
+
+/** Max output tokens for maintenance LLM calls (self-correction, reinforcement). From model-capabilities catalog. */
+export function maintenanceMaxOutputTokens(model: string): number {
+  return getMaintenanceMaxOutputTokensFromCatalog(model);
 }
 
 /**

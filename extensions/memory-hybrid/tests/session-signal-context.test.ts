@@ -33,6 +33,24 @@ describe("session-signal-context", () => {
     expect(extractRecalledMemoryIds(content)).toEqual([id]);
   });
 
+  it("buildSignalContext collects tools from consecutive assistant turns after preceding user", () => {
+    const messages = parseSessionMessagesFromLines(
+      [
+        msg("user", [{ type: "text", text: "Deploy the app" }]),
+        msg("assistant", [{ type: "tool_use", name: "memory_recall" }]),
+        msg("assistant", [{ type: "tool_use", name: "exec" }, { type: "text", text: "Deploy ran without verification." }]),
+        msg("user", [{ type: "text", text: "Wrong — verify logs before deploy." }]),
+        msg("assistant", [{ type: "text", text: "I will verify first." }]),
+      ],
+      "test",
+    );
+    const userIdx = messages.findIndex((m) => m.role === "user" && m.text.includes("Wrong"));
+    const ctx = buildSignalContext(messages, userIdx, { lookback: 20 });
+    expect(ctx.precedingAssistant).toContain("Deploy ran");
+    expect(ctx.toolCallSequence).toEqual(["memory_recall", "exec"]);
+    expect(ctx.precedingUserMessage).toContain("Deploy the app");
+  });
+
   it("buildSignalContext walks back past tool turns to find assistant", () => {
     const messages = parseSessionMessagesFromLines(
       [

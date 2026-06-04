@@ -297,6 +297,17 @@ export function extractItemArray(
 
   if (Array.isArray(parsed)) {
     if (parsed.length === 0) return parsed;
+    const jsonWrappedStrings = parsed.every(
+      (el) => typeof el === "string" && (el.trim().startsWith("{") || el.trim().startsWith("[")),
+    );
+    if (jsonWrappedStrings) {
+      const merged: unknown[] = [];
+      for (const el of parsed) {
+        const nested = extractItemArray(el, isValidItem, opts);
+        if (nested && nested.length > 0) merged.push(...nested);
+      }
+      if (merged.length > 0) return merged;
+    }
     if (parsed.every(isValidItem)) return parsed;
     for (const item of parsed) {
       const nested = extractItemArray(item, isValidItem, opts);
@@ -316,6 +327,14 @@ export function extractItemArray(
   }
 
   const toolCalls = obj.tool_calls ?? obj.toolCalls;
+  if (Array.isArray(toolCalls)) {
+    const merged: unknown[] = [];
+    for (const call of toolCalls) {
+      const nested = extractItemArray(call, isValidItem, opts);
+      if (nested && nested.length > 0) merged.push(...nested);
+    }
+    if (merged.length > 0) return merged;
+  }
   const toolResult = extractItemArray(toolCalls, isValidItem, opts);
   if (toolResult && toolResult.length > 0) return toolResult;
 

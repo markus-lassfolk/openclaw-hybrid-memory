@@ -1,7 +1,7 @@
 /**
  * Per-model capabilities: context window, max output tokens, and batch token limit for distillation.
  * Source: docs/MODEL-REFERENCE.md (Azure Foundry, partners, and other providers).
- * Used by chat.ts for distillBatchTokenLimit and distillMaxOutputTokens; can be used for context-audit or config hints.
+ * Used by chat.ts for distillBatchTokenLimit, distillMaxOutputTokens, and maintenanceMaxOutputTokens.
  */
 
 /**
@@ -12,10 +12,12 @@
 export type WireApi = "chat" | "responses";
 
 interface ModelCapabilities {
-  /** Context window (input + output) in tokens. */
+  /** Context window (input + output) in tokens. Conservative operational cap (may be below live API max). */
   contextWindow: number;
-  /** Max output tokens for a single completion (distill, reflection, etc.). */
+  /** Max output tokens for agent/distill completions. */
   maxOutputTokens: number;
+  /** Max output tokens for hybrid-memory maintenance (self-correction, reinforcement, etc.). Defaults to maxOutputTokens. */
+  maintenanceMaxOutputTokens?: number;
   /** Max input tokens to send in one distill batch request (conservative; leaves room for system + output). */
   batchTokenLimitForDistill: number;
 }
@@ -199,17 +201,18 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
     },
   },
 
-  // ——— MiniMax M3 (1M context; recommended max_completion_tokens 131k) ———
+  // ——— MiniMax M3 (520k operational ctx; live api.max ~524k prompt; 250k reliable distill batch) ———
   {
     match: (n) => n.includes("minimax-m3") || n === "m3" || n.endsWith("-m3"),
     cap: {
-      contextWindow: 1_000_000,
+      contextWindow: 520_000,
       maxOutputTokens: 131_072,
-      batchTokenLimitForDistill: 700_000,
+      maintenanceMaxOutputTokens: 32_768,
+      batchTokenLimitForDistill: 250_000,
     },
   },
 
-  // ——— MiniMax M2.x (204.8k context) ———
+  // ——— MiniMax M2.x (258k operational ctx; live api.max ~262k prompt on M2.7; 150k reliable distill batch) ———
   {
     match: (n) =>
       n.includes("minimax") ||
@@ -217,9 +220,10 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
       n.includes("minimax-m2") ||
       n.includes("minimax-text"),
     cap: {
-      contextWindow: 204_800,
-      maxOutputTokens: 128_000,
-      batchTokenLimitForDistill: 160_000,
+      contextWindow: 258_000,
+      maxOutputTokens: 131_072,
+      maintenanceMaxOutputTokens: 16_384,
+      batchTokenLimitForDistill: 150_000,
     },
   },
 
@@ -264,6 +268,16 @@ export function getDistillMaxOutputTokens(model: string): number {
 }
 
 /**
+ * Max output tokens for hybrid-memory maintenance LLM calls (self-correction, reinforcement, etc.).
+ * Uses model-specific maintenance cap when set; otherwise matches {@link getDistillMaxOutputTokens}.
+ */
+export function getMaintenanceMaxOutputTokens(model: string): number {
+  const cap = getModelCapabilities(model);
+  if (cap?.maintenanceMaxOutputTokens != null) return cap.maintenanceMaxOutputTokens;
+  return cap?.maxOutputTokens ?? DEFAULT_CAPABILITIES.maxOutputTokens;
+}
+
+/**
  * Context window in tokens (for hints or context-audit). Returns 128_000 for unknown models.
  */
 function _getContextWindow(model: string): number {
@@ -278,7 +292,7 @@ export function isMiniMaxModel(model: string): boolean {
   return modelPathSegments(model).some((seg) => seg === "minimax" || /^minimax-/i.test(seg) || seg === "m3");
 }
 
-/** True for MiniMax M3 specifically (1M context, thinking param supported). */
+/** True for MiniMax M3 specifically (520k operational ctx, thinking param supported). */
 export function isMiniMaxM3Model(model: string): boolean {
   const normalized = normalizeModelId(model);
   return normalized.includes("minimax-m3") || normalized === "m3" || normalized.endsWith("-m3");

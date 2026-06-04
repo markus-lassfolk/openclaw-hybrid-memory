@@ -42,6 +42,8 @@ interface ResponseOutputMessage {
 export interface ResponsesApiResponse {
   id: string;
   output: Array<ResponseOutputMessage | { type: string; [key: string]: unknown }>;
+  status?: string;
+  incomplete_details?: { reason?: string };
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -70,34 +72,41 @@ export function buildResponsesRequestBody(params: ResponsesCreateParams): Respon
 }
 
 /**
- * Extract the first assistant text from a Responses API response.
+ * Extract assistant text from a Responses API response (all output_text parts, then tool payloads).
  * Returns empty string if no text output is found.
  */
 export function extractResponsesText(response: ResponsesApiResponse): string {
+  const textParts: string[] = [];
   for (const item of response.output ?? []) {
     if (item.type === "message" && "content" in item) {
       const msg = item as ResponseOutputMessage;
       for (const part of msg.content) {
         if (part.type === "output_text" && typeof part.text === "string" && part.text.trim()) {
-          return part.text.trim();
+          textParts.push(part.text.trim());
         }
       }
+      continue;
     }
     // Function/tool call outputs (some providers emit structured payloads here).
     if (item.type === "function_call" || item.type === "tool_call") {
       const record = item as Record<string, unknown>;
       const args = record.arguments ?? record.input;
-      if (typeof args === "string" && args.trim()) return args.trim();
-      if (args && typeof args === "object") {
+      if (typeof args === "string" && args.trim()) textParts.push(args.trim());
+      else if (args && typeof args === "object") {
         try {
-          return JSON.stringify(args);
+          textParts.push(JSON.stringify(args));
         } catch {
           /* fall through */
         }
       }
     }
   }
-  return "";
+  return textParts.join("\n").trim();
+}
+
+/** Map Responses API status to chat.completions finish_reason. */
+export function mapResponsesFinishReason(response: ResponsesApiResponse): "stop" | "length" {
+  return response.status === "incomplete" ? "length" : "stop";
 }
 
 /**
@@ -206,7 +215,7 @@ export function responsesRawToChatCompletion(
       {
         index: 0,
         message: { role: "assistant", content: text },
-        finish_reason: "stop",
+        finish_reason: mapResponsesFinishReason(raw),
       },
     ],
     usage: u

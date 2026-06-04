@@ -14,7 +14,7 @@ import {
 import {
   chatCompleteWithRetryDetailed,
   distillBatchTokenLimit,
-  distillMaxOutputTokens,
+  maintenanceMaxOutputTokens,
   is403QuotaOrRateLimitLike,
   is429OrWrapped,
   isContextLengthError,
@@ -90,7 +90,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
   const adaptiveStatePath = envAdaptiveState || opts.adaptiveStatePath;
   const state = enabled && adaptiveStatePath ? loadAdaptiveModelLimits(adaptiveStatePath) : emptyState();
   const catalogBatchTokenLimit = distillBatchTokenLimit(opts.model);
-  const catalogMaxOutputTokens = distillMaxOutputTokens(opts.model);
+  const catalogMaxOutputTokens = maintenanceMaxOutputTokens(opts.model);
   const inputTokens = estimateTokens(opts.content);
   const effective = enabled
     ? getEffectiveModelLimits({
@@ -133,7 +133,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
     if (enabled) {
       const usedModel = detail.modelUsed;
       const usedCatalogBatch = distillBatchTokenLimit(usedModel);
-      const usedCatalogOutput = distillMaxOutputTokens(usedModel);
+      const usedCatalogOutput = maintenanceMaxOutputTokens(usedModel);
       recordAdaptiveSuccess({
         state,
         model: usedModel,
@@ -166,7 +166,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
           ? (error as Error & { lastAttemptedModel: string }).lastAttemptedModel
           : opts.model;
       const failureCatalogBatch = distillBatchTokenLimit(failureModel);
-      const failureCatalogMaxOut = distillMaxOutputTokens(failureModel);
+      const failureCatalogMaxOut = maintenanceMaxOutputTokens(failureModel);
       const failureEffective = getEffectiveModelLimits({
         state,
         model: failureModel,

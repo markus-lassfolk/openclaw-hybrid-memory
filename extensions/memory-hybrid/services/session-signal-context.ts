@@ -125,24 +125,31 @@ export function buildSignalContext(
   opts?: { lookback?: number },
 ): SignalContext {
   const lookback = opts?.lookback ?? DEFAULT_LOOKBACK;
-  let precedingAssistant = "";
-  let precedingUserMessage = "";
-  const toolCallSequence: string[] = [];
-  let recalledMemoryIds: string[] = [];
+  const scanStart = Math.max(0, userIndex - lookback);
 
-  for (let j = userIndex - 1; j >= 0 && j >= Math.max(0, userIndex - lookback); j--) {
-    const m = messages[j];
-    if (m.role === "user") {
-      if (!precedingUserMessage) precedingUserMessage = m.text;
+  let precedingUserIndex = -1;
+  let precedingUserMessage = "";
+  for (let j = userIndex - 1; j >= scanStart; j--) {
+    if (messages[j].role === "user") {
+      precedingUserIndex = j;
+      precedingUserMessage = messages[j].text;
       break;
     }
-    if (m.role === "assistant") {
-      if (!precedingAssistant) {
-        precedingAssistant = m.text;
-        recalledMemoryIds = extractRecalledMemoryIds(m.content);
-      }
-      toolCallSequence.unshift(...extractToolCallSequence(m.content));
+  }
+
+  let precedingAssistant = "";
+  const toolCallSequence: string[] = [];
+  let recalledMemoryIds: string[] = [];
+  const assistantScanStart = precedingUserIndex >= 0 ? precedingUserIndex + 1 : scanStart;
+
+  for (let j = userIndex - 1; j >= assistantScanStart; j--) {
+    const m = messages[j];
+    if (m.role !== "assistant") continue;
+    if (!precedingAssistant) {
+      precedingAssistant = m.text;
+      recalledMemoryIds = extractRecalledMemoryIds(m.content);
     }
+    toolCallSequence.unshift(...extractToolCallSequence(m.content));
   }
 
   let followingAssistant = "";

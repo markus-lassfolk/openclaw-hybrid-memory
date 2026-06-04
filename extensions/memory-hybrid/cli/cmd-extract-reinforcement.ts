@@ -10,9 +10,18 @@ import {
   getLLMModelPreference,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
+import {
+  attachOrderedItemsToIncidents,
+  globalIncidentOffsetForBatch,
+  orderBatchItemsByIncidentIndex,
+} from "../services/batch-incident-analysis.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
-import { distillMaxOutputTokens } from "../services/chat.js";
+import { maintenanceMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
+import {
+  analyzeReinforcementIncidentBatchWithSplit,
+  resolveReinforcementAnalysisBatchSize,
+} from "../services/reinforcement-batch-analyze.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
   type AnnotationReasons,
@@ -39,8 +48,6 @@ import { acquireScanSlot, clearScanLock } from "./shared.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import type { ReinforcementIncident } from "../services/reinforcement-extract.js";
 
-const DEFAULT_REINFORCEMENT_BATCH_SIZE = 25;
-const MINIMAX_REINFORCEMENT_BATCH_SIZE = 1;
 const REINFORCEMENT_BATCH_STATE_VERSION = 1;
 
 /** Resume state files under `<workspace>/tmp/reinforcement-analysis/`. */
@@ -65,12 +72,17 @@ type ReinforcementRemediation = {
         targetFile?: string;
         suggestedChange?: string;
       };
+  incidentIndex?: number;
+  sourceIncident?: ReinforcementIncident;
 };
 
 type ReinforcementBatchDiagnostics = {
   parseFailures: number;
   fallbacks: number;
   parsedItems: number;
+  batchSplits: number;
+  truncations: number;
+  retries: number;
 };
 
 type ReinforcementBatchState = {
@@ -86,17 +98,6 @@ type ReinforcementBatchState = {
 
 function isReinforcementBatchStateFile(name: string): boolean {
   return name.startsWith(REINFORCEMENT_BATCH_STATE_PREFIX) && name.endsWith(".json");
-}
-
-function resolveReinforcementBatchSize(
-  model: string,
-  reinfCfg: { analysisBatchSize?: number },
-  scCfg?: { analysisBatchSize?: number },
-): number {
-  const configured = reinfCfg.analysisBatchSize ?? scCfg?.analysisBatchSize;
-  if (typeof configured === "number" && configured >= 1) return Math.floor(configured);
-  if (/minimax|m3/i.test(model)) return MINIMAX_REINFORCEMENT_BATCH_SIZE;
-  return DEFAULT_REINFORCEMENT_BATCH_SIZE;
 }
 
 function stableReinforcementHash(input: string): string {
@@ -284,7 +285,14 @@ export async function runExtractReinforcementForCli(
       }
 
       let analysed: ReinforcementRemediation[] = [];
-      const diagnostics: ReinforcementBatchDiagnostics = { parseFailures: 0, fallbacks: 0, parsedItems: 0 };
+      const diagnostics: ReinforcementBatchDiagnostics = {
+        parseFailures: 0,
+        fallbacks: 0,
+        parsedItems: 0,
+        batchSplits: 0,
+        truncations: 0,
+        retries: 0,
+      };
       try {
         const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
         const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, extractionTier);
@@ -295,7 +303,7 @@ export async function runExtractReinforcementForCli(
         const fallbackModels = tierResolved.fallbackModels ?? [];
         const modelSource =
           tierPrefWithSources.models[0] === model ? (tierPrefWithSources.sources[0] ?? "built-in") : "built-in";
-        const batchSize = resolveReinforcementBatchSize(model, reinfCfg, scCfg);
+        const batchSize = resolveReinforcementAnalysisBatchSize(model, reinfCfg, scCfg);
         const batches = chunkReinforcementIncidents(incidentsForAnalysis, batchSize);
         const runFingerprint = buildReinforcementRunFingerprint(incidentsForAnalysis, model, batchSize, false);
         const stateDir = resolveReinforcementBatchStateDir(workspaceRoot);
@@ -314,6 +322,9 @@ export async function runExtractReinforcementForCli(
           diagnostics.parseFailures = resumeState.diagnostics.parseFailures;
           diagnostics.fallbacks = resumeState.diagnostics.fallbacks;
           diagnostics.parsedItems = resumeState.diagnostics.parsedItems;
+          diagnostics.batchSplits = resumeState.diagnostics.batchSplits ?? 0;
+          diagnostics.truncations = resumeState.diagnostics.truncations ?? 0;
+          diagnostics.retries = resumeState.diagnostics.retries ?? 0;
           for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
           logger.info?.(
             `memory-hybrid: extract-reinforcement resume completed=${completedBatchIndexes.size}/${batches.length} state=${statePath}`,
@@ -343,21 +354,28 @@ export async function runExtractReinforcementForCli(
           `memory-hybrid: extract-reinforcement analysis starting with model ${model} (source=${modelSource})`,
         );
 
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-          if (completedBatchIndexes.has(batchIndex)) continue;
-          const batch = batches[batchIndex];
-          const prompt = fillPrompt(loadPrompt("reinforcement-analyze"), {
-            incidents_json: JSON.stringify(batch),
-          });
+        const attemptAnalysisJsonRepair = async (
+          rawContent: string,
+        ): Promise<{ items: ReinforcementRemediation[] | null; fallbacks: number }> => {
+          const repairPrompt = [
+            "Convert the following model output into a valid JSON array.",
+            "Return ONLY JSON (no markdown, no prose).",
+            "Each item must include incidentIndex (0-based).",
+            "If incidents were present but none can be recovered, emit one NO_ACTION object per incident with incidentIndex.",
+            "",
+            "MODEL_OUTPUT_START",
+            rawContent,
+            "MODEL_OUTPUT_END",
+          ].join("\n");
           const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
             model,
             modelSource,
-            content: prompt,
-            temperature: 0.2,
-            maxTokens: distillMaxOutputTokens(model),
+            content: repairPrompt,
+            temperature: 0,
+            maxTokens: maintenanceMaxOutputTokens(model),
             openai,
             fallbackModels,
-            label: "memory-hybrid: reinforcement analyze",
+            label: "memory-hybrid: reinforcement analyze-repair",
             feature: CostFeature.extractReinforcement,
             logger,
             adaptiveStatePath:
@@ -367,31 +385,75 @@ export async function runExtractReinforcementForCli(
             enabled: adaptiveEnabled,
             thinkingMode: "disabled",
           });
-          if (detail.modelUsed !== model) {
-            diagnostics.fallbacks++;
-            logger.info?.(
-              `memory-hybrid: extract-reinforcement batch ${batchIndex + 1}/${batches.length} used fallback ${detail.modelUsed}`,
-            );
-          }
-          const parsed = parseStructuredItemsAcceptingEmpty(detail.content, (item) => {
+          const repaired = parseStructuredItemsAcceptingEmpty(detail.content, (item) => {
             if (typeof item !== "object" || item === null) return false;
             return typeof (item as Record<string, unknown>).remediationType === "string";
           });
-          if (parsed !== null) {
-            analysed.push(...(parsed as ReinforcementRemediation[]));
-            diagnostics.parsedItems += parsed.length;
-            completedBatchIndexes.add(batchIndex);
+          return {
+            items: repaired === null ? null : (repaired as ReinforcementRemediation[]),
+            fallbacks: detail.modelUsed !== model ? 1 : 0,
+          };
+        };
+
+        const analyzeDeps = {
+          model,
+          modelSource,
+          openai,
+          fallbackModels,
+          maxTokens: maintenanceMaxOutputTokens(model),
+          adaptiveEnabled,
+          adaptiveStatePath:
+            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+              : undefined,
+          logger,
+          attemptAnalysisJsonRepair,
+        };
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          if (completedBatchIndexes.has(batchIndex)) continue;
+          const batch = batches[batchIndex];
+          const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
+          const batchLabel = `batch ${batchIndex + 1}/${batches.length}`;
+          const result = await analyzeReinforcementIncidentBatchWithSplit(
+            { ...analyzeDeps, batchLabel },
+            batch,
+          );
+          diagnostics.fallbacks += result.diagnostics.fallbacks;
+          diagnostics.parseFailures += result.diagnostics.parseFailures;
+          diagnostics.batchSplits += result.diagnostics.batchSplits;
+          diagnostics.truncations += result.diagnostics.truncations;
+          diagnostics.retries += result.diagnostics.retries;
+
+          if (result.items === null) {
+            llmAnalysisFailed = true;
+            logger.warn?.(
+              `memory-hybrid: extract-reinforcement ${batchLabel} parse/coverage failed`,
+            );
             persistBatchState();
-          } else if (detail.content.trim().length === 0) {
-            completedBatchIndexes.add(batchIndex);
-            persistBatchState();
-          } else {
+            continue;
+          }
+
+          const ordered = orderBatchItemsByIncidentIndex(
+            batch.length,
+            result.items as Array<Record<string, unknown>>,
+            logger,
+          );
+          if (ordered === null) {
             diagnostics.parseFailures++;
             llmAnalysisFailed = true;
             logger.warn?.(
-              `memory-hybrid: extract-reinforcement batch ${batchIndex + 1}/${batches.length} parse failed`,
+              `memory-hybrid: extract-reinforcement ${batchLabel} incomplete (expected ${batch.length} item(s) per incident)`,
             );
+            persistBatchState();
+            continue;
           }
+
+          const attached = attachOrderedItemsToIncidents(batch, ordered, globalIncidentOffset);
+          analysed.push(...attached);
+          diagnostics.parsedItems += attached.length;
+          completedBatchIndexes.add(batchIndex);
+          persistBatchState();
         }
 
         if (completedBatchIndexes.size === batches.length) {

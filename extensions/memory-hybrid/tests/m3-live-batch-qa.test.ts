@@ -1,6 +1,6 @@
 /**
  * Live MiniMax M3 batch QA — gated by MINIMAX_API_KEY.
- * Validates batch-size tuning under thinking=disabled and 131k output budget.
+ * Validates batch-size tuning under thinking=disabled and 32k maintenance output budget.
  */
 import { describe, expect, it, vi } from "vitest";
 import OpenAI from "openai";
@@ -40,7 +40,7 @@ live("live MiniMax M3 batch QA", () => {
     modelSource: "live-test",
     openai,
     scFallbackModels: [],
-    maxTokens: 131_072,
+    maxTokens: 32_768,
     thinkingMode: "disabled" as const,
     adaptiveEnabled: false,
     logger: { info: () => {}, warn: () => {} },

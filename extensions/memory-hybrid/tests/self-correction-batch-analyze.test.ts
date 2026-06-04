@@ -52,9 +52,8 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
     call = 0;
     vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockImplementation(async () => {
       call++;
-      const count = call === 1 ? 2 : 2;
       return {
-        content: JSON.stringify(Array.from({ length: count }, () => SAMPLE_ITEM)),
+        content: JSON.stringify(Array.from({ length: 2 }, () => SAMPLE_ITEM)),
         modelUsed: "test-model",
         finishReason: "stop",
         attemptChain: ["test-model"],
@@ -64,6 +63,37 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("does not auto-split when a multi-incident batch parses as a valid empty array", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "[]",
+      modelUsed: "test-model",
+      finishReason: "stop",
+      attemptChain: ["test-model"],
+    });
+
+    const incidents = Array.from({ length: 4 }, (_, i) => ({
+      ...SAMPLE_INCIDENT,
+      userMessage: `#${i}`,
+      sessionFile: `s-${i}.jsonl`,
+    }));
+    const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+      {
+        model: "test-model",
+        modelSource: "test",
+        openai: {} as any,
+        scFallbackModels: [],
+        maxTokens: 8000,
+        thinkingMode: "disabled",
+        adaptiveEnabled: false,
+        logger: {},
+        attemptAnalysisJsonRepair: vi.fn(),
+      },
+      incidents,
+    );
+    expect(result.diagnostics.batchSplits).toBe(0);
+    expect(result.items).toBeNull();
   });
 
   it("auto-splits when parsed count is below incident count", async () => {
@@ -88,5 +118,101 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
     );
     expect(result.items?.length).toBe(4);
     expect(result.diagnostics.batchSplits).toBeGreaterThan(0);
+  });
+
+  it("treats blank LLM output as parse failure (not a successful empty array)", async () => {
+    const attemptAnalysisJsonRepair = vi.fn(async () => ({ items: null, fallbacks: 0 }));
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "   \n  ",
+      modelUsed: "test-model",
+      finishReason: "stop",
+      attemptChain: ["test-model"],
+    });
+
+    const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+      {
+        model: "test-model",
+        modelSource: "test",
+        openai: {} as any,
+        scFallbackModels: [],
+        maxTokens: 8000,
+        thinkingMode: "disabled",
+        adaptiveEnabled: false,
+        logger: {},
+        attemptAnalysisJsonRepair,
+      },
+      [SAMPLE_INCIDENT, { ...SAMPLE_INCIDENT, sessionFile: "b.jsonl" }],
+    );
+
+    expect(result.items).toBeNull();
+    expect(result.diagnostics.parseFailures).toBeGreaterThan(0);
+    expect(attemptAnalysisJsonRepair).toHaveBeenCalled();
+  });
+
+  it("uses llmCall override for split sub-batches", async () => {
+    const llmCalls: number[] = [];
+    const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+      {
+        model: "test-model",
+        modelSource: "test",
+        openai: {} as any,
+        scFallbackModels: [],
+        maxTokens: 8000,
+        thinkingMode: "disabled",
+        adaptiveEnabled: false,
+        logger: {},
+        attemptAnalysisJsonRepair: vi.fn(),
+        llmCall: async (batch) => {
+          llmCalls.push(batch.length);
+          if (batch.length > 1) {
+            return {
+              content: JSON.stringify(Array.from({ length: batch.length - 1 }, () => SAMPLE_ITEM)),
+              fallbacks: 0,
+              finishReason: "stop",
+            };
+          }
+          return {
+            content: JSON.stringify([SAMPLE_ITEM]),
+            fallbacks: 0,
+            finishReason: "stop",
+          };
+        },
+      },
+      Array.from({ length: 4 }, (_, i) => ({
+        ...SAMPLE_INCIDENT,
+        userMessage: `#${i}`,
+        sessionFile: `s-${i}.jsonl`,
+      })),
+    );
+
+    expect(llmCalls.length).toBeGreaterThan(1);
+    expect(result.items?.length).toBe(4);
+    expect(result.diagnostics.batchSplits).toBeGreaterThan(0);
+  });
+
+  it("rejects a single-incident batch that parses as an empty array", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "[]",
+      modelUsed: "test-model",
+      finishReason: "stop",
+      attemptChain: ["test-model"],
+    });
+
+    const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+      {
+        model: "test-model",
+        modelSource: "test",
+        openai: {} as any,
+        scFallbackModels: [],
+        maxTokens: 8000,
+        thinkingMode: "disabled",
+        adaptiveEnabled: false,
+        logger: {},
+        attemptAnalysisJsonRepair: vi.fn(),
+      },
+      [SAMPLE_INCIDENT],
+    );
+
+    expect(result.items).toBeNull();
   });
 });

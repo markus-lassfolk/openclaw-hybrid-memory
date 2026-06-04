@@ -38,14 +38,14 @@ For each incident, determine:
 
 5. **Extract the "why"**: For POSITIVE_RULE and PATTERN_FACT, capture *why* the user praised it — what need it fulfilled, not just what action was taken.
 
-Output ONLY a JSON array of objects. One object per incident. No markdown, no code fences. Each object must have: category, severity, remediationType, remediationContent (object or string as needed).
+Output ONLY a JSON array of objects. Exactly one object per incident, in any order. Each object MUST include incidentIndex (0-based integer matching the incidentIndex field in the input JSON). Never return a bare empty array when incidents are present — use remediationType NO_ACTION for acknowledgments. No markdown, no code fences. Each object must have: incidentIndex, category, severity, remediationType, remediationContent (object or string as needed).
 
 Example output (JSON array):
 [
-{"category":"workflow","severity":"strong","remediationType":"POSITIVE_RULE","remediationContent":"Break complex multi-step tasks into milestone-based sub-agents with clear scoped briefs — each focused on one deliverable."},
-{"category":"communication","severity":"moderate","remediationType":"PATTERN_FACT","remediationContent":{"text":"User consistently praises proactive CI fixes (lint, tests) done without being asked","tags":["reinforcement","behavioral","ci","proactive"]}},
-{"category":"technical","severity":"strong","remediationType":"MEMORY_STORE","remediationContent":{"text":"User values thorough inline code review comments as resolvable GitHub threads","entity":"Preferences","key":"code_review_style","tags":["reinforcement","code-review","preferences"]}},
-{"category":"behavior","severity":"mild","remediationType":"NO_ACTION","remediationContent":""}
+{"incidentIndex":0,"category":"workflow","severity":"strong","remediationType":"POSITIVE_RULE","remediationContent":"Break complex multi-step tasks into milestone-based sub-agents with clear scoped briefs — each focused on one deliverable."},
+{"incidentIndex":1,"category":"communication","severity":"moderate","remediationType":"PATTERN_FACT","remediationContent":{"text":"User consistently praises proactive CI fixes (lint, tests) done without being asked","tags":["reinforcement","behavioral","ci","proactive"]}},
+{"incidentIndex":2,"category":"technical","severity":"strong","remediationType":"MEMORY_STORE","remediationContent":{"text":"User values thorough inline code review comments as resolvable GitHub threads","entity":"Preferences","key":"code_review_style","tags":["reinforcement","code-review","preferences"]}},
+{"incidentIndex":3,"category":"behavior","severity":"mild","remediationType":"NO_ACTION","remediationContent":""}
 ]
 
 Incidents (JSON array):

@@ -257,9 +257,11 @@ export async function runReinforcementExtract(opts: RunReinforcementExtractOpts)
       incidents.push({
         userMessage: truncate(userText, MAX_USER_MSG),
         agentBehavior: truncate(precedingAssistant, MAX_AGENT_BEHAVIOR),
-        precedingUserMessage: truncate(ctx.precedingUserMessage, MAX_PRECEDING_USER_MSG),
-        recalledMemoryIds: ctx.recalledMemoryIds,
-        toolCallSequence: ctx.toolCallSequence,
+        precedingUserMessage: ctx.precedingUserMessage
+          ? truncate(ctx.precedingUserMessage, MAX_PRECEDING_USER_MSG)
+          : undefined,
+        recalledMemoryIds: ctx.recalledMemoryIds.length > 0 ? ctx.recalledMemoryIds : undefined,
+        toolCallSequence: ctx.toolCallSequence.length > 0 ? ctx.toolCallSequence : undefined,
         confidence,
         timestamp: ts,
         sessionFile: sessionName,

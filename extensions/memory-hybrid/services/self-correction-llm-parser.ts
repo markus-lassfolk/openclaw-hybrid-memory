@@ -24,6 +24,10 @@ function isSelfCorrectionRemediationItem(item: unknown): boolean {
   if ("category" in candidate && typeof candidate.category !== "string") return false;
   if ("severity" in candidate && typeof candidate.severity !== "string") return false;
   if ("repeated" in candidate && typeof candidate.repeated !== "boolean") return false;
+  if ("incidentIndex" in candidate) {
+    const idx = candidate.incidentIndex;
+    if (typeof idx !== "number" && typeof idx !== "string") return false;
+  }
 
   return true;
 }

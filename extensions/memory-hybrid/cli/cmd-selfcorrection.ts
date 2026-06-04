@@ -16,9 +16,15 @@ import { dirname, join } from "node:path";
 
 import { getCronModelConfig, getDefaultCronModel, resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
-import { distillMaxOutputTokens } from "../services/chat.js";
+import { maintenanceMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import {
+  attachOrderedItemsToIncidents,
+  globalIncidentOffsetForBatch,
+  orderBatchItemsByIncidentIndex,
+  serializeIncidentsForBatchPrompt,
+} from "../services/batch-incident-analysis.js";
 import {
   analyzeSelfCorrectionIncidentBatchWithSplit,
   resolveSelfCorrectionBatchDelayMs,
@@ -715,7 +721,7 @@ export async function runSelfCorrectionRunForCli(
       ? [heavyResolved.defaultModel, ...(heavyResolved.fallbackModels ?? [])]
       : (heavyResolved.fallbackModels ?? []);
     const scFallbackModels = [...new Set(scFallbackCandidates.filter((m) => m !== model))];
-    const maxTokens = distillMaxOutputTokens(model);
+    const maxTokens = maintenanceMaxOutputTokens(model);
     const batchSize = resolveSelfCorrectionBatchSizeFromCfg(model, scCfg);
     const batchDelayMs = resolveSelfCorrectionBatchDelayMs(scCfg);
     const thinkingMode = resolveSelfCorrectionThinkingMode(cfg);
@@ -780,10 +786,9 @@ export async function runSelfCorrectionRunForCli(
       });
     };
 
-    const recordRetry = (batchIndex: number, attempt: number, delayMs: number, err: unknown) => {
-      diagnostics.retries++;
+    const logTransientRetry = (batchIndex: number, attempt: number, delayMs: number, err: unknown) => {
       logger.warn?.(
-        `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} attempt ${attempt} failed: ${String(
+        `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex >= 0 ? `${batchIndex + 1}/${batches.length}` : "repair"} attempt ${attempt} failed: ${String(
           err,
         ).slice(0, 240)}; retrying in ${delayMs}ms without lowering maxTokens`,
       );
@@ -802,7 +807,8 @@ export async function runSelfCorrectionRunForCli(
         const repairPrompt = [
           "Convert the following model output into a valid JSON array.",
           "Return ONLY JSON (no markdown, no prose).",
-          "If no valid remediation items can be recovered, return [].",
+          "Each item must include incidentIndex (0-based) when incidents were batched.",
+            "If incidents were present but none can be recovered, emit one NO_ACTION object per incident with incidentIndex.",
           "",
           "MODEL_OUTPUT_START",
           rawContent,
@@ -822,7 +828,7 @@ export async function runSelfCorrectionRunForCli(
           adaptiveStatePath,
           enabled: adaptiveEnabled,
           thinkingMode,
-          onRetry: (info) => recordRetry(-1, info.attempt, info.delayMs, info.error),
+          onRetry: (info) => logTransientRetry(-1, info.attempt, info.delayMs, info.error),
         });
         const repaired = parseSelfCorrectionLLMResponse(detail.content);
         return {
@@ -841,8 +847,8 @@ export async function runSelfCorrectionRunForCli(
         adaptiveEnabled,
         adaptiveStatePath,
         logger,
-        onRetry: (info: { attempt: number; delayMs: number; error: Error }) => {
-          recordRetry(-1, info.attempt, info.delayMs, info.error);
+        onTransientRetry: (info: { attempt: number; delayMs: number; error: Error }) => {
+          logTransientRetry(-1, info.attempt, info.delayMs, info.error);
         },
         attemptAnalysisJsonRepair,
       };
@@ -879,61 +885,71 @@ export async function runSelfCorrectionRunForCli(
 
       const spawnInputTokenThreshold = 100_000;
 
-      const processBatchResult = async (batchIndex: number, batch: CorrectionIncident[]): Promise<void> => {
+      const processBatchResult = async (
+        batchIndex: number,
+        batch: CorrectionIncident[],
+        globalIncidentOffset: number,
+      ): Promise<void> => {
         const batchLabel = `batch ${batchIndex + 1}/${batches.length}`;
         const useSpawnForBatch =
           scCfg.analyzeViaSpawn && estimateTokens(JSON.stringify(batch)) > spawnInputTokenThreshold;
 
-        let batchAnalysed: SelfCorrectionRemediation[];
-        if (useSpawnForBatch) {
-          const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
-            incidents_json: JSON.stringify(batch),
-          });
-          const content = await fetchSpawnBatchContent(prompt);
-          const parsed = parseSelfCorrectionLLMResponse(content);
-          if (parsed === null) {
-            diagnostics.unparseableFailures++;
-            const parseError = new Error(
-              `Self-correction analysis: ${batchLabel} spawn response could not be parsed. excerpt="${sanitizeLlmResponseExcerpt(content)}"`,
-            );
-            (parseError as any).isParseFailure = true;
-            throw parseError;
-          }
-          batchAnalysed = parsed as SelfCorrectionRemediation[];
-        } else {
-          const result = await analyzeSelfCorrectionIncidentBatchWithSplit({ ...analyzeDeps, batchLabel }, batch);
-          diagnostics.fallbacks += result.diagnostics.fallbacks;
-          diagnostics.parseFailures += result.diagnostics.parseFailures;
-          diagnostics.batchSplits += result.diagnostics.batchSplits;
-          diagnostics.truncations += result.diagnostics.truncations;
-          if (result.items === null) {
-            diagnostics.unparseableFailures++;
-            const excerpt = sanitizeLlmResponseExcerpt(result.rawContent ?? "");
-            const parseError = new Error(
-              `Self-correction analysis: ${batchLabel} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
-            );
-            (parseError as any).isParseFailure = true;
-            throw parseError;
-          }
-          batchAnalysed = result.items;
-          if (batch.length > 0 && batchAnalysed.length > 0 && batchAnalysed.length < batch.length) {
-            logger.warn?.(
-              `memory-hybrid: ${SCAN_TYPE} ${batchLabel}: under_coverage expected=${batch.length} parsed=${batchAnalysed.length} (after auto-split)`,
-            );
-          }
+        const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+          {
+            ...analyzeDeps,
+            batchLabel,
+            ...(useSpawnForBatch
+              ? {
+                  llmCall: async (spawnBatch, _batchLabel, maxTokensOverride) => {
+                    const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+                      incidents_json: serializeIncidentsForBatchPrompt(spawnBatch),
+                    });
+                    if (maxTokensOverride != null && maxTokensOverride !== maxTokens) {
+                      logger.info?.(
+                        `memory-hybrid: ${SCAN_TYPE} spawn analyze: maxTokens bump ${maxTokens} → ${maxTokensOverride} (spawn path ignores token budget)`,
+                      );
+                    }
+                    const content = await fetchSpawnBatchContent(prompt);
+                    return { content, fallbacks: 0, finishReason: "stop" };
+                  },
+                }
+              : {}),
+          },
+          batch,
+        );
+        diagnostics.fallbacks += result.diagnostics.fallbacks;
+        diagnostics.parseFailures += result.diagnostics.parseFailures;
+        diagnostics.batchSplits += result.diagnostics.batchSplits;
+        diagnostics.truncations += result.diagnostics.truncations;
+        diagnostics.retries += result.diagnostics.retries;
+        if (result.items === null) {
+          diagnostics.unparseableFailures++;
+          const excerpt = sanitizeLlmResponseExcerpt(result.rawContent ?? "");
+          const parseError = new Error(
+            `Self-correction analysis: ${batchLabel} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+          );
+          (parseError as any).isParseFailure = true;
+          throw parseError;
+        }
+        const ordered = orderBatchItemsByIncidentIndex(
+          batch.length,
+          result.items as Array<Record<string, unknown>>,
+          logger,
+        );
+        if (ordered === null) {
+          diagnostics.unparseableFailures++;
+          const coverageError = new Error(
+            `Self-correction analysis: ${batchLabel} incomplete after auto-split (expected ${batch.length} remediation item(s), could not assign one per incident).`,
+          );
+          (coverageError as any).isParseFailure = true;
+          throw coverageError;
         }
 
-        diagnostics.parsedItems += batchAnalysed.length;
-        for (let k = 0; k < batchAnalysed.length; k++) {
-          const idx = k < batch.length ? k : batch.length - 1;
-          analysed.push({
-            ...batchAnalysed[k],
-            incidentIndex: idx,
-            sourceIncident: batch[idx],
-          });
-        }
+        const attached = attachOrderedItemsToIncidents(batch, ordered, globalIncidentOffset);
+        diagnostics.parsedItems += attached.length;
+        analysed.push(...attached);
         completedBatchIndexes.add(batchIndex);
-        logger.info?.(`memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${batchAnalysed.length}`);
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${attached.length}`);
         persistBatchState();
       };
 
@@ -949,11 +965,12 @@ export async function runSelfCorrectionRunForCli(
       for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
         if (completedBatchIndexes.has(batchIndex)) continue;
         const batch = batches[batchIndex];
+        const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
         batchesStarted++;
         logger.info?.(
           `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} start incidents=${batch.length}`,
         );
-        await processBatchResult(batchIndex, batch);
+        await processBatchResult(batchIndex, batch, globalIncidentOffset);
         if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
           await sleepSelfCorrectionBackoff(batchDelayMs);
         }
@@ -965,6 +982,7 @@ export async function runSelfCorrectionRunForCli(
         );
       }
     } catch (e) {
+      persistBatchState();
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
       const isParseFailure = (e as any).isParseFailure === true;
       const batchesCompleted = completedBatchIndexes.size;

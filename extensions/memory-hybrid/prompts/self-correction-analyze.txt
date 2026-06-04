@@ -28,11 +28,11 @@ For each incident, determine:
 
 When an incident includes `toolCallSequence` or `recalledMemoryIds`, use them to infer what the agent did wrong (tools used, memories recalled) before proposing remediations.
 
-Output ONLY a JSON array of objects. One object per incident. No markdown, no code fences, no wrapper object, and no tool-call/function arguments envelope. Each object must have: category, severity, remediationType, remediationContent (object or string as needed), repeated (boolean, optional).
+Output ONLY a JSON array of objects. Exactly one object per incident, in any order. Each object MUST include incidentIndex (0-based integer matching the incidentIndex field in the input JSON). Never return a bare empty array when incidents are present — use remediationType NO_ACTION for incidents that need no change. No markdown, no code fences, no wrapper object, and no tool-call/function arguments envelope. Each object must have: incidentIndex, category, severity, remediationType, remediationContent (object or string as needed), repeated (boolean, optional).
 
 Example:
-{"category":"FORGOT_INFO","severity":"MEDIUM","remediationType":"MEMORY_STORE","remediationContent":{"text":"SSH to server uses user@192.168.1.198","entity":"Credentials","key":"server_ssh","tags":["ssh","server"]},"repeated":false}
-{"category":"WRONG_APPROACH","severity":"LOW","remediationType":"TOOLS_RULE","remediationContent":"If CLI fails twice, fall back to cURL.","repeated":false}
+{"incidentIndex":0,"category":"FORGOT_INFO","severity":"MEDIUM","remediationType":"MEMORY_STORE","remediationContent":{"text":"SSH to server uses user@192.168.1.198","entity":"Credentials","key":"server_ssh","tags":["ssh","server"]},"repeated":false}
+{"incidentIndex":1,"category":"WRONG_APPROACH","severity":"LOW","remediationType":"TOOLS_RULE","remediationContent":"If CLI fails twice, fall back to cURL.","repeated":false}
 
 Incidents (JSON array):
 {{incidents_json}}

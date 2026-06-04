@@ -5,6 +5,7 @@ import {
   callResponsesApi,
   chatMessagesToResponsesInput,
   extractResponsesText,
+  mapResponsesFinishReason,
   extractResponsesUsage,
   responsesRawToChatCompletion,
 } from "../services/responses-adapter.js";
@@ -86,7 +87,26 @@ describe("extractResponsesText", () => {
     expect(extractResponsesText({ id: "resp_123", output: [] })).toBe("");
   });
 
-  it("handles multiple output items, takes first text", () => {
+  it("concatenates output_text across multiple message output items", () => {
+    const response = {
+      id: "resp_123",
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "line one" }],
+        },
+        {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "line two" }],
+        },
+      ],
+    };
+    expect(extractResponsesText(response as any)).toBe("line one\nline two");
+  });
+
+  it("handles multiple output items, takes first non-empty text in one message", () => {
     const response = {
       id: "resp_123",
       output: [
@@ -245,6 +265,16 @@ describe("buildResponsesRequestFromChatBody", () => {
   });
 });
 
+describe("mapResponsesFinishReason", () => {
+  it("maps incomplete status to length", () => {
+    expect(mapResponsesFinishReason({ id: "r", status: "incomplete", output: [] })).toBe("length");
+  });
+
+  it("maps completed status to stop", () => {
+    expect(mapResponsesFinishReason({ id: "r", status: "completed", output: [] })).toBe("stop");
+  });
+});
+
 describe("responsesRawToChatCompletion", () => {
   it("builds choices[0].message.content for chat completion consumers", () => {
     const cc = responsesRawToChatCompletion(
@@ -264,5 +294,24 @@ describe("responsesRawToChatCompletion", () => {
     expect(cc.choices?.[0]?.message?.content).toBe("classified: ADD");
     expect(cc.usage?.prompt_tokens).toBe(5);
     expect(cc.usage?.completion_tokens).toBe(3);
+  });
+
+  it("sets finish_reason to length when response status is incomplete", () => {
+    const cc = responsesRawToChatCompletion(
+      {
+        id: "resp_1",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "partial" }],
+          },
+        ],
+      },
+      "azure-foundry-responses/o3-pro",
+    );
+    expect(cc.choices?.[0]?.finish_reason).toBe("length");
   });
 });

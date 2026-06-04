@@ -43,13 +43,22 @@ describe("extractAssistantMessageText", () => {
     });
   });
 
-  it("serializes multiple tool_calls into a JSON envelope", () => {
+  it("serializes multiple tool_calls into a JSON envelope when none look structured", () => {
     const result = extractAssistantMessageText({
       content: null,
-      tool_calls: [{ function: { arguments: '{"a":1}' } }, { function: { arguments: '{"b":2}' } }],
+      tool_calls: [{ function: { arguments: "plain" } }, { function: { arguments: "text" } }],
     });
     expect(result.source).toBe("tool_calls");
-    expect(JSON.parse(result.text)).toEqual({ tool_calls: ['{"a":1}', '{"b":2}'] });
+    expect(JSON.parse(result.text)).toEqual({ tool_calls: ["plain", "text"] });
+  });
+
+  it("prefers the first structured tool_calls argument when multiple are present", () => {
+    const payload = JSON.stringify([{ remediationType: "NO_ACTION" }]);
+    const result = extractAssistantMessageText({
+      content: null,
+      tool_calls: [{ function: { arguments: payload } }, { function: { arguments: '{"other":true}' } }],
+    });
+    expect(result).toEqual({ text: payload, source: "tool_calls" });
   });
 
   it("falls back to reasoning_content then reasoning after empty content", () => {
