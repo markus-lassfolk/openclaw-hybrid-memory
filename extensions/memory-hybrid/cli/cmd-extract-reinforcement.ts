@@ -382,14 +382,15 @@ export async function runExtractReinforcementForCli(
             diagnostics.parsedItems += parsed.length;
             completedBatchIndexes.add(batchIndex);
             persistBatchState();
-          } else if (detail.content.trim().length > 0) {
+          } else if (detail.content.trim().length === 0) {
+            completedBatchIndexes.add(batchIndex);
+            persistBatchState();
+          } else {
             diagnostics.parseFailures++;
             llmAnalysisFailed = true;
             logger.warn?.(
               `memory-hybrid: extract-reinforcement batch ${batchIndex + 1}/${batches.length} parse failed`,
             );
-          } else {
-            llmAnalysisFailed = true;
           }
         }
 

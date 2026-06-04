@@ -458,7 +458,7 @@ async function applySelfCorrectionRemediations(params: {
               ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
               : undefined,
           enabled: adaptiveEnabled,
-          thinkingMode: resolveSelfCorrectionThinkingMode(cfg),
+          thinkingMode: resolveSelfCorrectionThinkingMode(ctx.cfg),
         });
         const cleaned = detail.content
           .trim()
