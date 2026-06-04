@@ -398,7 +398,9 @@ export function buildHeartbeatTaskHygieneBlock(
 ): string {
   const formatLabels = opts.formatLabelList ?? ((labels: string[]) => labels.map((l) => `[${l}]`).join(", "));
   const visibleTasks = tasks.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
-  const stale = visibleTasks.filter((t) => t.stale);
+  // Failed rows are terminal bookkeeping — not actionable heartbeat work.
+  const actionableTasks = visibleTasks.filter((t) => t.status !== "Failed");
+  const stale = actionableTasks.filter((t) => t.stale);
   const lines: string[] = [
     "<task-hygiene>",
     "**Heartbeat — active task review**",
@@ -413,7 +415,7 @@ export function buildHeartbeatTaskHygieneBlock(
 
   if (opts.suggestGoalAfterTaskAgeDays > 0) {
     const cutoff = Date.now() - opts.suggestGoalAfterTaskAgeDays * 86_400_000;
-    const longRunning = visibleTasks.filter((t) => {
+    const longRunning = actionableTasks.filter((t) => {
       const u = new Date(t.updated).getTime();
       return !Number.isNaN(u) && u < cutoff;
     });

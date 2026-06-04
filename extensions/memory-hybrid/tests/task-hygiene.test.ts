@@ -60,6 +60,22 @@ describe("task-hygiene", () => {
     expect(block).toContain("</task-hygiene>");
   });
 
+  it("buildHeartbeatTaskHygieneBlock excludes Failed tasks from stale and long-running lists", () => {
+    const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    const tasks = [
+      baseTask({ label: "failed-old", status: "Failed", stale: true, updated: old }),
+      baseTask({ label: "live-old", stale: false, updated: old }),
+    ];
+    const block = buildHeartbeatTaskHygieneBlock(tasks, {
+      maxChars: 2500,
+      suggestGoalAfterTaskAgeDays: 7,
+    });
+    expect(block).not.toContain("[failed-old]");
+    expect(block).toContain("No tasks flagged stale");
+    expect(block).toContain("Long-running");
+    expect(block).toContain("[live-old]");
+  });
+
   it("buildHeartbeatTaskHygieneBlock suggests goal when task is old enough", () => {
     const old = new Date(Date.now() - 10 * 86_400_000).toISOString();
     const tasks = [baseTask({ label: "long", updated: old })];

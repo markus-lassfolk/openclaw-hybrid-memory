@@ -172,12 +172,14 @@ async function consumePendingTaskSignals(
     active: ActiveTaskEntry[];
     completed: ActiveTaskEntry[];
     processedSignals: PendingTaskSignal[];
+    droppedTerminalSignals: PendingTaskSignal[];
     expiredSignals: PendingTaskSignal[];
     completedToFlush: ActiveTaskEntry[];
   } => {
     let updatedActive = [...activeEntries];
     const updatedCompleted = [...completedEntries];
     const processedSignals: PendingTaskSignal[] = [];
+    const droppedTerminalSignals: PendingTaskSignal[] = [];
     const expiredSignals: PendingTaskSignal[] = [];
     const completedToFlush: ActiveTaskEntry[] = [];
 
@@ -196,7 +198,7 @@ async function consumePendingTaskSignals(
         }
 
         if (isTerminalActiveTaskStatus(existing.status)) {
-          processedSignals.push(signal);
+          droppedTerminalSignals.push(signal);
           logger?.info?.(
             `memory-hybrid: dropped ${signal.signal} signal for terminal task [${existing.label}] (${existing.status})`,
           );
@@ -250,15 +252,16 @@ async function consumePendingTaskSignals(
       active: updatedActive,
       completed: updatedCompleted,
       processedSignals,
+      droppedTerminalSignals,
       expiredSignals,
       completedToFlush,
     };
   };
 
   let latestResult = applySignals(taskFile.active, taskFile.completed);
-  let { processedSignals, expiredSignals, completedToFlush } = latestResult;
+  let { processedSignals, droppedTerminalSignals, expiredSignals, completedToFlush } = latestResult;
 
-  if (processedSignals.length === 0) {
+  if (processedSignals.length === 0 && droppedTerminalSignals.length === 0) {
     if (expiredSignals.length > 0) {
       for (const signal of expiredSignals) await deleteSignal(signal._filePath).catch(() => {});
       logger?.info?.(`memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) with no matching task`);
@@ -267,24 +270,34 @@ async function consumePendingTaskSignals(
   }
 
   let wrote = false;
-  try {
-    wrote = await writeActiveTaskFileOptimistic(
-      activeTaskPath,
-      latestResult.active,
-      latestResult.completed,
-      knownMtime,
-      async (fresh) => {
-        latestResult = applySignals(fresh.active, fresh.completed);
-        processedSignals = latestResult.processedSignals;
-        expiredSignals = latestResult.expiredSignals;
-        completedToFlush = latestResult.completedToFlush;
-        return [latestResult.active, latestResult.completed];
-      },
-      3,
-      staleMinutes,
+  if (processedSignals.length > 0) {
+    try {
+      wrote = await writeActiveTaskFileOptimistic(
+        activeTaskPath,
+        latestResult.active,
+        latestResult.completed,
+        knownMtime,
+        async (fresh) => {
+          latestResult = applySignals(fresh.active, fresh.completed);
+          processedSignals = latestResult.processedSignals;
+          droppedTerminalSignals = latestResult.droppedTerminalSignals;
+          expiredSignals = latestResult.expiredSignals;
+          completedToFlush = latestResult.completedToFlush;
+          return [latestResult.active, latestResult.completed];
+        },
+        3,
+        staleMinutes,
+      );
+    } catch (err) {
+      logger?.warn?.(`memory-hybrid: failed to write ACTIVE-TASKS.md after signal consumption: ${err}`);
+    }
+  }
+
+  for (const signal of droppedTerminalSignals) await deleteSignal(signal._filePath).catch(() => {});
+  if (droppedTerminalSignals.length > 0) {
+    logger?.info?.(
+      `memory-hybrid: dropped ${droppedTerminalSignals.length} terminal task signal(s) without ledger mutation`,
     );
-  } catch (err) {
-    logger?.warn?.(`memory-hybrid: failed to write ACTIVE-TASKS.md after signal consumption: ${err}`);
   }
 
   if (wrote) {
@@ -555,9 +568,9 @@ export function registerCleanupHandlers(
 
       const now = new Date().toISOString();
       const newStatus = subagentEndedIsSuccess(ev) ? "Done" : "Failed";
-      if (newStatus === "Done" && isTerminalActiveTaskStatus(taskAfterSignals.status)) {
+      if (isTerminalActiveTaskStatus(taskAfterSignals.status)) {
         api.logger.debug?.(
-          `memory-hybrid: skipped Done auto-checkpoint for terminal task [${taskLabel}] (${taskAfterSignals.status})`,
+          `memory-hybrid: skipped ${newStatus} auto-checkpoint for terminal task [${taskLabel}] (${taskAfterSignals.status})`,
         );
         return;
       }

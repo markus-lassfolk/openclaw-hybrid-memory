@@ -158,7 +158,11 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
   }
 
   if (input.staleWarningEnabled && remainingChars > 40) {
-    const staleResult = buildStaleWarningInjection(input.ledgerTasks, input.staleMinutes, remainingChars);
+    const staleWarningTasks =
+      input.heartbeatHygiene != null
+        ? input.ledgerTasks.filter((t) => t.status !== "Failed")
+        : input.ledgerTasks;
+    const staleResult = buildStaleWarningInjection(staleWarningTasks, input.staleMinutes, remainingChars);
     if (staleResult.text) {
       parts.push(staleResult.text);
       staleWarningTokens = estimateTokens(staleResult.text);
