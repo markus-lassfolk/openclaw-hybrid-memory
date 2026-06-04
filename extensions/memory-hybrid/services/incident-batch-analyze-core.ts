@@ -273,7 +273,7 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
   const needsSplit =
     allowSplit &&
     batch.length > 1 &&
-    (effectiveTruncated || items === null || effectiveParsedCount < batch.length);
+    (effectiveTruncated || items === null || (effectiveParsedCount > 0 && effectiveParsedCount < batch.length));
 
   if (needsSplit) {
     diagnostics.batchSplits++;

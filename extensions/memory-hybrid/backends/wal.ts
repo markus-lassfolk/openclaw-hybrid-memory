@@ -328,11 +328,22 @@ export class WriteAheadLog {
       await this.fsyncAfterWrite();
       if (this.activeIds.size === 0) {
         if (this.initLoadFailed) {
-          const remaining = await this.readAll();
-          if (remaining.length === 0) {
-            await this._clearInternal();
-          } else {
-            for (const e of remaining) this.activeIds.add(e.id);
+          try {
+            const remaining = await this.readAll();
+            if (remaining.length === 0) {
+              await this._clearInternal();
+            } else {
+              for (const e of remaining) this.activeIds.add(e.id);
+            }
+          } catch (err) {
+            if (err instanceof WalReadCorruptionError) {
+              pluginLogger.warn(
+                `WAL remove: disk verification failed due to corruption (${err.corruptLineCount} corrupt lines), clearing WAL anyway since in-memory set is empty`,
+              );
+              await this._clearInternal();
+            } else {
+              throw err;
+            }
           }
         } else {
           await this._clearInternal();
