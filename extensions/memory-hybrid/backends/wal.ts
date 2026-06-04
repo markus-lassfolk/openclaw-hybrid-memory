@@ -339,8 +339,9 @@ export class WriteAheadLog {
     if (!content) return [];
 
     const removedIds = new Set<string>();
-    for (const line of content.split("\n")) {
-      const trimmed = line.trim();
+    const lines = content.split("\n");
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      const trimmed = lines[lineIndex]?.trim();
       if (!trimmed?.startsWith(WAL_REMOVE_PREFIX)) continue;
       try {
         const obj = JSON.parse(trimmed) as { op: string; id: string };
@@ -351,13 +352,13 @@ export class WriteAheadLog {
           severity: "info",
           subsystem: "wal",
         });
-        pluginLogger.warn(`WAL readAll: failed to parse remove line, skipping: ${err}`);
+        pluginLogger.warn(`WAL readAll: failed to parse remove line ${lineIndex + 1}, marking corrupt: ${err}`);
+        throw new WalReadCorruptionError(1, [lineIndex + 1]);
       }
     }
 
     const entries: WALEntry[] = [];
     const corruptLineNumbers: number[] = [];
-    const lines = content.split("\n");
 
     // Backward-compat: if first line is a JSON array, parse and validate it.
     if (content.startsWith("[")) {
