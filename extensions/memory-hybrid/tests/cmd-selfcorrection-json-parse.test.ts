@@ -13,7 +13,7 @@
  *  - Parse failure with incidents present does NOT update scan cursor as if analysis succeeded
  */
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,7 +57,7 @@ function makeOpenAIMock(responseText: string) {
   } as any;
 }
 
-function makeOpenAIFailoverMock(primaryModel: string, fallbackModel: string, responseText = "[]") {
+function makeOpenAIFailoverMock(primaryModel: string, fallbackModel: string, responseText = JSON.stringify([SAMPLE_REMEDIATION])) {
   return {
     chat: {
       completions: {
@@ -335,7 +335,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/excerpt=/);
   });
 
-  it("does not crash when the LLM returns empty content", async () => {
+  it("marks a zero-parsed result with incidents as suspect instead of clean success", async () => {
     const ctx = makeCtx(makeOpenAIMock(""));
 
     const res = await runSelfCorrectionRunForCli(ctx, {
@@ -344,9 +344,104 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
       dryRun: true,
     });
 
-    // Empty response: no remediations parsed, but not a hard failure
     expect(res.analysed).toBe(0);
+    expect(res.status).toBe("failed_suspect_zero_parsed");
+    expect(res.error).toMatch(/zero parsed\/analysed/i);
+  });
+
+
+
+  it("retries transient Request was aborted failures with backoff without lowering maxTokens", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockRejectedValueOnce(new Error("Request was aborted"))
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            }),
+        },
+      },
+    } as any;
+    const ctx = makeCtx(openai);
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
     expect(res.status).toBe("success_analyzed");
+    expect(res.retryCount).toBe(1);
+    expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+    const callBodies = ((openai.chat.completions.create as any).mock?.calls ?? []).map((args: unknown[]) =>
+      args[0] as { max_tokens?: number; max_completion_tokens?: number },
+    );
+    const tokenBudgets = callBodies.map(
+      (body: { max_tokens?: number; max_completion_tokens?: number }) => body.max_tokens ?? body.max_completion_tokens,
+    );
+    expect(tokenBudgets[0]).toBeDefined();
+    expect(tokenBudgets[1]).toBe(tokenBudgets[0]);
+  });
+
+  it("persists batch resume state and skips completed batches on rerun", async () => {
+    const manyIncidents = Array.from({ length: 26 }, (_, i) => ({
+      ...SAMPLE_INCIDENT,
+      userMessage: `${SAMPLE_INCIDENT.userMessage} #${i}`,
+      sessionFile: `2026-01-01-session-${i}.jsonl`,
+    }));
+    const firstBatchItem = { ...SAMPLE_REMEDIATION, remediationContent: { text: "first batch" } };
+    const secondBatchItem = { ...SAMPLE_REMEDIATION, remediationContent: { text: "second batch" } };
+    const openaiFirst = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: JSON.stringify([firstBatchItem]) } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            })
+            .mockRejectedValueOnce(new Error("permanent failure after first batch")),
+        },
+      },
+    } as any;
+    const first = await runSelfCorrectionRunForCli(makeCtx(openaiFirst), {
+      incidents: manyIncidents,
+      workspace: tmpDir,
+      dryRun: true,
+    });
+    expect(first.error).toBeDefined();
+    const reportsDir = join(tmpDir, "memory", "reports");
+    const stateFile = (await import("node:fs")).readdirSync(reportsDir).find((name) =>
+      name.startsWith("self-correction-run-state-"),
+    );
+    expect(stateFile).toBeDefined();
+    const statePath = join(reportsDir, stateFile as string);
+    expect(existsSync(statePath)).toBe(true);
+    expect(JSON.parse(readFileSync(statePath, "utf-8")).completedBatchIndexes).toEqual([0]);
+
+    const openaiSecond = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: JSON.stringify([secondBatchItem]) } }],
+            usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+          }),
+        },
+      },
+    } as any;
+    const second = await runSelfCorrectionRunForCli(makeCtx(openaiSecond), {
+      incidents: manyIncidents,
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(second.status).toBe("success_analyzed");
+    expect(second.analysed).toBe(2);
+    expect(openaiSecond.chat.completions.create).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(readFileSync(statePath, "utf-8")).completedBatchIndexes).toEqual([0, 1]);
   });
 
   it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {

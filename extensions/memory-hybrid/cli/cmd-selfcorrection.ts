@@ -29,6 +29,7 @@ import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
 import { stripThinkingWrapperBlocks, tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { estimateTokens } from "../utils/text.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
@@ -36,6 +37,121 @@ import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
+
+
+type SelfCorrectionRemediation = {
+  category: string;
+  severity: string;
+  remediationType: string;
+  remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[] };
+  repeated?: boolean;
+};
+
+type SelfCorrectionBatchState = {
+  version: number;
+  incidentsHash: string;
+  batchSize: number;
+  totalBatches: number;
+  completedBatchIndexes: number[];
+  analysed: SelfCorrectionRemediation[];
+  diagnostics: SelfCorrectionRunDiagnostics;
+  updatedAt: string;
+};
+
+type SelfCorrectionRunDiagnostics = {
+  retries: number;
+  fallbacks: number;
+  parseFailures: number;
+  unparseableFailures: number;
+  parsedItems: number;
+};
+
+const SELF_CORRECTION_BATCH_SIZE = 25;
+const SELF_CORRECTION_BATCH_STATE_VERSION = 1;
+
+function stableSelfCorrectionHash(input: string): string {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+function emptySelfCorrectionDiagnostics(): SelfCorrectionRunDiagnostics {
+  return { retries: 0, fallbacks: 0, parseFailures: 0, unparseableFailures: 0, parsedItems: 0 };
+}
+
+function readSelfCorrectionBatchState(statePath: string): SelfCorrectionBatchState | null {
+  try {
+    if (!existsSync(statePath)) return null;
+    const parsed = JSON.parse(readFileSync(statePath, "utf-8")) as Partial<SelfCorrectionBatchState>;
+    if (
+      parsed.version !== SELF_CORRECTION_BATCH_STATE_VERSION ||
+      typeof parsed.incidentsHash !== "string" ||
+      typeof parsed.batchSize !== "number" ||
+      typeof parsed.totalBatches !== "number" ||
+      !Array.isArray(parsed.completedBatchIndexes) ||
+      !Array.isArray(parsed.analysed)
+    ) {
+      return null;
+    }
+    const completed = parsed.completedBatchIndexes
+      .filter((n): n is number => Number.isInteger(n) && n >= 0 && n < (parsed.totalBatches ?? 0))
+      .sort((a, b) => a - b);
+    const diagnostics = parsed.diagnostics ?? emptySelfCorrectionDiagnostics();
+    return {
+      version: parsed.version,
+      incidentsHash: parsed.incidentsHash,
+      batchSize: parsed.batchSize,
+      totalBatches: parsed.totalBatches,
+      completedBatchIndexes: [...new Set(completed)],
+      analysed: parsed.analysed as SelfCorrectionRemediation[],
+      diagnostics: {
+        retries: Number.isFinite(diagnostics.retries) ? diagnostics.retries : 0,
+        fallbacks: Number.isFinite(diagnostics.fallbacks) ? diagnostics.fallbacks : 0,
+        parseFailures: Number.isFinite(diagnostics.parseFailures) ? diagnostics.parseFailures : 0,
+        unparseableFailures: Number.isFinite(diagnostics.unparseableFailures) ? diagnostics.unparseableFailures : 0,
+        parsedItems: Number.isFinite(diagnostics.parsedItems) ? diagnostics.parsedItems : 0,
+      },
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSelfCorrectionBatchState(statePath: string, state: SelfCorrectionBatchState): void {
+  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+}
+
+function chunkSelfCorrectionIncidents<T>(items: T[], batchSize = SELF_CORRECTION_BATCH_SIZE): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < items.length; i += batchSize) batches.push(items.slice(i, i + batchSize));
+  return batches;
+}
+
+function isTransientSelfCorrectionLlmError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /request was aborted|operation was aborted|llm request timeout|timed out|timeout|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|fetch failed|connection error/i.test(
+    msg,
+  );
+}
+
+async function sleepSelfCorrectionBackoff(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mergeSelfCorrectionDiagnostics(
+  target: SelfCorrectionRunDiagnostics,
+  source: Partial<SelfCorrectionRunDiagnostics>,
+): void {
+  target.retries += source.retries ?? 0;
+  target.fallbacks += source.fallbacks ?? 0;
+  target.parseFailures += source.parseFailures ?? 0;
+  target.unparseableFailures += source.unparseableFailures ?? 0;
+  target.parsedItems += source.parsedItems ?? 0;
+}
 
 // ---------------------------------------------------------------------------
 // Module-level constants (self-correction-specific)
@@ -312,9 +428,6 @@ export async function runSelfCorrectionRunForCli(
     if (opts.verbose) {
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} — ${incidents.length} incident(s); building LLM prompt…`);
     }
-    const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
-      incidents_json: JSON.stringify(incidents),
-    });
     const heavyResolved = resolveReflectionModelAndFallbacks(cfg, "heavy");
     const heavyPrefWithSources = resolveTierPreferenceWithSources(cfg, "heavy");
     const model = opts.model ?? heavyResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), "heavy");
@@ -327,16 +440,47 @@ export async function runSelfCorrectionRunForCli(
       ? [heavyResolved.defaultModel, ...(heavyResolved.fallbackModels ?? [])]
       : (heavyResolved.fallbackModels ?? []);
     const scFallbackModels = [...new Set(scFallbackCandidates.filter((m) => m !== model))];
-    let analysed: Array<{
-      category: string;
-      severity: string;
-      remediationType: string;
-      remediationContent: string | { text?: string; entity?: string; key?: string; tags?: string[] };
-      repeated?: boolean;
-    }> = [];
-    const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
+    const maxTokens = distillMaxOutputTokens(model);
+    let analysed: SelfCorrectionRemediation[] = [];
+    const diagnostics = emptySelfCorrectionDiagnostics();
+    const batches = chunkSelfCorrectionIncidents(incidents);
+    const incidentsHash = stableSelfCorrectionHash(JSON.stringify(incidents));
+    const statePath = join(reportDir, `self-correction-run-state-${incidentsHash}.json`);
+    const resumeState = readSelfCorrectionBatchState(statePath);
+    const completedBatchIndexes = new Set<number>();
+    if (
+      resumeState &&
+      resumeState.incidentsHash === incidentsHash &&
+      resumeState.batchSize === SELF_CORRECTION_BATCH_SIZE &&
+      resumeState.totalBatches === batches.length
+    ) {
+      analysed = [...resumeState.analysed];
+      mergeSelfCorrectionDiagnostics(diagnostics, resumeState.diagnostics);
+      for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
+      if (opts.verbose && completedBatchIndexes.size > 0) {
+        logger.info?.(
+          `memory-hybrid: ${SCAN_TYPE} resume state ${statePath}: skipping ${completedBatchIndexes.size}/${batches.length} completed batch(es)`,
+        );
+      }
+    }
+
+    const persistBatchState = () => {
+      writeSelfCorrectionBatchState(statePath, {
+        version: SELF_CORRECTION_BATCH_STATE_VERSION,
+        incidentsHash,
+        batchSize: SELF_CORRECTION_BATCH_SIZE,
+        totalBatches: batches.length,
+        completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
+        analysed,
+        diagnostics,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+
     try {
-      const attemptAnalysisJsonRepair = async (rawContent: string): Promise<typeof analysed | null> => {
+      const attemptAnalysisJsonRepair = async (
+        rawContent: string,
+      ): Promise<{ items: SelfCorrectionRemediation[] | null; retries: number; fallbacks: number }> => {
         const repairPrompt = [
           "Convert the following model output into a valid JSON array.",
           "Return ONLY JSON (no markdown, no prose).",
@@ -352,7 +496,7 @@ export async function runSelfCorrectionRunForCli(
           modelSource,
           content: repairPrompt,
           temperature: 0,
-          maxTokens: distillMaxOutputTokens(model),
+          maxTokens,
           openai,
           fallbackModels: scFallbackModels,
           label: "memory-hybrid: self-correction analyze-repair",
@@ -365,11 +509,78 @@ export async function runSelfCorrectionRunForCli(
           enabled: adaptiveEnabled,
         });
         const repaired = parseSelfCorrectionLLMResponse(detail.content);
-        return repaired === null ? null : (repaired as typeof analysed);
+        return {
+          items: repaired === null ? null : (repaired as SelfCorrectionRemediation[]),
+          retries: 0,
+          fallbacks: detail.modelUsed !== model ? 1 : 0,
+        };
       };
 
-      let content: string;
+      const analyzeBatch = async (
+        batchPrompt: string,
+        batchIndex: number,
+      ): Promise<{ content: string; retries: number; fallbacks: number }> => {
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        let transientRetries = 0;
+        let lastError: unknown;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            logger.info?.(
+              `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} attempt ${attempt} model=${model} inputTokens≈${estimateTokens(
+                batchPrompt,
+              )} maxTokens=${maxTokens} fallbackChain=[${scFallbackModels.join(", ")}]`,
+            );
+            const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+              model,
+              modelSource,
+              content: batchPrompt,
+              temperature: 0.2,
+              maxTokens,
+              openai,
+              fallbackModels: scFallbackModels,
+              label: "memory-hybrid: self-correction analyze",
+              feature: CostFeature.selfCorrectionAnalyze,
+              logger,
+              adaptiveStatePath:
+                ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
+                  ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
+                  : undefined,
+              enabled: adaptiveEnabled,
+              onRetry: (info) => {
+                diagnostics.retries++;
+                logger.warn?.(
+                  `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} transient LLM failure; retry attempt=${info.attempt} after ${info.delayMs}ms without lowering maxTokens. error=${String(
+                    info.error,
+                  ).slice(0, 240)}`,
+                );
+              },
+            });
+            return {
+              content: detail.content,
+              retries: transientRetries,
+              fallbacks: detail.modelUsed !== model ? 1 : 0,
+            };
+          } catch (err) {
+            lastError = err;
+            if (!isTransientSelfCorrectionLlmError(err) || attempt >= 3) throw err;
+            transientRetries++;
+            const delay = 1000 * 2 ** (attempt - 1);
+            logger.warn?.(
+              `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} transient LLM failure; retry ${attempt}/2 after ${delay}ms without lowering maxTokens. error=${String(
+                err,
+              ).slice(0, 240)}`,
+            );
+            await sleepSelfCorrectionBackoff(delay);
+          }
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+      };
+
+      const useSpawn = scCfg.analyzeViaSpawn && incidents.length > scCfg.spawnThreshold;
       if (useSpawn) {
+        const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+          incidents_json: JSON.stringify(incidents),
+        });
         const { spawnSync } = await import("node:child_process");
         const { tmpdir: osTmp } = await import("node:os");
         const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
@@ -394,67 +605,83 @@ export async function runSelfCorrectionRunForCli(
         } catch (err) {
           capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
         }
-        content = (r.stdout ?? "") + (r.stderr ?? "");
+        const content = (r.stdout ?? "") + (r.stderr ?? "");
         if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
+        const parsedRemediations = parseSelfCorrectionLLMResponse(content);
+        if (parsedRemediations !== null) {
+          analysed = parsedRemediations as SelfCorrectionRemediation[];
+          diagnostics.parsedItems += analysed.length;
+        } else {
+          diagnostics.parseFailures++;
+          diagnostics.unparseableFailures++;
+          const excerpt = sanitizeLlmResponseExcerpt(content);
+          throw Object.assign(
+            new Error(`Self-correction analysis: LLM response could not be parsed as a JSON array. excerpt="${excerpt}"`),
+            { isParseFailure: true },
+          );
+        }
       } else {
         logger.info?.("memory-hybrid: self-correction-run model tier = heavy");
         logger.info?.(`memory-hybrid: self-correction-run starting with model ${model} (source=${modelSource})`);
         logger.info?.(
           `memory-hybrid: self-correction-run fallback chain = [${scFallbackModels.length > 0 ? scFallbackModels.join(", ") : ""}]`,
         );
-        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
-        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
-          model,
-          modelSource,
-          content: prompt,
-          temperature: 0.2,
-          maxTokens: distillMaxOutputTokens(model),
-          openai,
-          fallbackModels: scFallbackModels,
-          label: "memory-hybrid: self-correction analyze",
-          feature: CostFeature.selfCorrectionAnalyze,
-          logger,
-          adaptiveStatePath:
-            ctx.resolvedSqlitePath && ctx.resolvedSqlitePath.length > 0
-              ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
-              : undefined,
-          enabled: adaptiveEnabled,
-        });
-        if (detail.modelUsed !== model) {
-          logger.info?.(`memory-hybrid: self-correction-run analysis used fallback model ${detail.modelUsed}`);
-        }
-        content = detail.content;
-      }
-      const parsedRemediations = parseSelfCorrectionLLMResponse(content);
-      if (parsedRemediations !== null) {
-        analysed = parsedRemediations as typeof analysed;
-      } else if (content.trim().length > 0) {
-        // Log a sanitized excerpt (no private session data) so operators can diagnose.
-        const excerpt = sanitizeLlmResponseExcerpt(content);
-        logger.warn?.(
-          `memory-hybrid: self-correction-run — initial JSON parse failed; attempting repair pass. excerpt: "${excerpt}"`,
-        );
-        let repaired: typeof analysed | null = null;
-        try {
-          repaired = await attemptAnalysisJsonRepair(content);
-        } catch (repairErr) {
-          capturePluginError(repairErr as Error, {
-            subsystem: "cli",
-            operation: "runSelfCorrectionRunForCli:llm-analysis-repair",
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          if (completedBatchIndexes.has(batchIndex)) continue;
+          const batch = batches[batchIndex];
+          const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
+            incidents_json: JSON.stringify(batch),
           });
-        }
-        if (repaired !== null) {
-          analysed = repaired;
-          logger.info?.(`memory-hybrid: self-correction-run — repair pass recovered ${analysed.length} item(s)`);
-        } else {
-          const parseError = new Error(
-            `Self-correction analysis: LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+          logger.info?.(
+            `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} start incidents=${batch.length}`,
           );
-          (parseError as any).isParseFailure = true;
-          throw parseError;
+          const detail = await analyzeBatch(prompt, batchIndex);
+          diagnostics.retries += detail.retries;
+          diagnostics.fallbacks += detail.fallbacks;
+          const parsedRemediations = parseSelfCorrectionLLMResponse(detail.content);
+          let batchAnalysed: SelfCorrectionRemediation[] | null = null;
+          if (parsedRemediations !== null) {
+            batchAnalysed = parsedRemediations as SelfCorrectionRemediation[];
+          } else if (detail.content.trim().length > 0) {
+            diagnostics.parseFailures++;
+            const excerpt = sanitizeLlmResponseExcerpt(detail.content);
+            logger.warn?.(
+              `memory-hybrid: self-correction-run batch ${batchIndex + 1}/${batches.length} initial JSON parse failed; attempting repair pass. rawExcerpt="${excerpt}"`,
+            );
+            try {
+              const repaired = await attemptAnalysisJsonRepair(detail.content);
+              diagnostics.retries += repaired.retries;
+              diagnostics.fallbacks += repaired.fallbacks;
+              batchAnalysed = repaired.items;
+            } catch (repairErr) {
+              capturePluginError(repairErr as Error, {
+                subsystem: "cli",
+                operation: "runSelfCorrectionRunForCli:llm-analysis-repair",
+              });
+            }
+          } else {
+            batchAnalysed = [];
+          }
+          if (batchAnalysed === null) {
+            diagnostics.unparseableFailures++;
+            const excerpt = sanitizeLlmResponseExcerpt(detail.content);
+            const parseError = new Error(
+              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} LLM response could not be parsed as a JSON array (repair failed). excerpt="${excerpt}"`,
+            );
+            (parseError as any).isParseFailure = true;
+            throw parseError;
+          }
+          diagnostics.parsedItems += batchAnalysed.length;
+          analysed.push(...batchAnalysed);
+          completedBatchIndexes.add(batchIndex);
+          logger.info?.(
+            `memory-hybrid: ${SCAN_TYPE} batch ${batchIndex + 1}/${batches.length} parsed item count=${batchAnalysed.length} rawExcerpt="${sanitizeLlmResponseExcerpt(
+              detail.content,
+            )}"`,
+          );
+          persistBatchState();
         }
-      } else {
-        analysed = [];
       }
       if (opts.verbose && analysed.length > 0) {
         logger.info?.(
@@ -471,7 +698,28 @@ export async function runSelfCorrectionRunForCli(
         proposals: [],
         reportPath: null,
         error: String(e),
+        retryCount: diagnostics.retries,
+        fallbackCount: diagnostics.fallbacks,
+        parseFailures: diagnostics.parseFailures,
+        unparseableFailures: diagnostics.unparseableFailures,
         status: isParseFailure ? "failed_parse" : undefined,
+      };
+    }
+    if (incidents.length > 0 && analysed.length === 0) {
+      const error = `Self-correction analysis suspect: ${incidents.length} incident(s) found but zero parsed/analysed remediation items.`;
+      logger.warn?.(`memory-hybrid: ${SCAN_TYPE} — ${error}`);
+      return {
+        incidentsFound: incidents.length,
+        analysed: 0,
+        autoFixed: 0,
+        proposals: [],
+        reportPath: null,
+        error,
+        retryCount: diagnostics.retries,
+        fallbackCount: diagnostics.fallbacks,
+        parseFailures: diagnostics.parseFailures,
+        unparseableFailures: diagnostics.unparseableFailures,
+        status: "failed_suspect_zero_parsed",
       };
     }
     const proposals: string[] = [];
@@ -655,7 +903,8 @@ export async function runSelfCorrectionRunForCli(
       `# Self-Correction Analysis (${today})`,
       "",
       `Scanned: last 3 days. Incidents found: ${incidents.length}.`,
-      `Analysed: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
+      `Parsed/analysed items: ${analysed.length}. Auto-fixed: ${autoFixed}. Needs review: ${proposals.length}.`,
+      `Retries: ${diagnostics.retries}. Fallbacks: ${diagnostics.fallbacks}. Parse failures: ${diagnostics.parseFailures}. Unparseable failures: ${diagnostics.unparseableFailures}.`,
       "",
       ...(autoFixed > 0 ? ["## Auto-applied", "", `- ${autoFixed} memory store(s) and/or TOOLS.md rule(s).`, ""] : []),
       ...(toolsSuggestions.length > 0 && toolsApplied === 0 && !scCfg.autoRewriteTools
@@ -702,6 +951,10 @@ export async function runSelfCorrectionRunForCli(
       reportPath,
       toolsSuggestions: toolsSuggestions.length > 0 ? toolsSuggestions : undefined,
       toolsApplied: toolsApplied > 0 ? toolsApplied : undefined,
+      retryCount: diagnostics.retries,
+      fallbackCount: diagnostics.fallbacks,
+      parseFailures: diagnostics.parseFailures,
+      unparseableFailures: diagnostics.unparseableFailures,
       status: "success_analyzed",
     };
   } finally {

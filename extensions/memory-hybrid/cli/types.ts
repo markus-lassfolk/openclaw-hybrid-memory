@@ -230,15 +230,26 @@ export type SelfCorrectionRunResult = {
   toolsApplied?: number;
   error?: string;
   skipped?: boolean;
+  retryCount?: number;
+  fallbackCount?: number;
+  parseFailures?: number;
+  unparseableFailures?: number;
   /**
    * Fine-grained outcome for cron/wrapper ledger reporting.
-   * - `success_analyzed`    — incidents found and LLM analysis completed
-   * - `success_no_incidents`— scan ran to completion, no incidents found
-   * - `skipped_cooldown`    — 23 h cooldown guard fired; no analysis performed
-   * - `skipped_concurrency` — scan already in progress; no analysis performed
-   * - `failed_parse`        — LLM responded but response could not be parsed as JSON
+   * - `success_analyzed`            — incidents found and LLM analysis completed
+   * - `success_no_incidents`        — scan ran to completion, no incidents found
+   * - `skipped_cooldown`            — 23 h cooldown guard fired; no analysis performed
+   * - `skipped_concurrency`         — scan already in progress; no analysis performed
+   * - `failed_parse`                — LLM responded but response could not be parsed as JSON
+   * - `failed_suspect_zero_parsed`  — incidents were found but analysis produced no parsed items
    */
-  status?: "success_analyzed" | "success_no_incidents" | "skipped_cooldown" | "skipped_concurrency" | "failed_parse";
+  status?:
+    | "success_analyzed"
+    | "success_no_incidents"
+    | "skipped_cooldown"
+    | "skipped_concurrency"
+    | "failed_parse"
+    | "failed_suspect_zero_parsed";
 };
 
 export type AnalyzeFeedbackPhrasesResult = {

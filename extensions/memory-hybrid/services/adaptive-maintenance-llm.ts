@@ -43,6 +43,8 @@ export type AdaptiveMaintenanceLlmOptions = {
   enabled?: boolean;
   /** OpenAI chat.completions response_format (chat wire API only). */
   responseFormat?: { type: "json_object" };
+  /** Called immediately before a retry backoff sleep. */
+  onRetry?: (info: { attempt: number; delayMs: number; error: Error; model: string }) => void;
 };
 
 function emptyState(): AdaptiveModelLimitsStateV1 {
@@ -122,6 +124,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
       label: opts.label,
       feature: opts.feature,
       responseFormat: opts.responseFormat,
+      onRetry: opts.onRetry,
     });
     if (enabled) {
       const usedModel = detail.modelUsed;

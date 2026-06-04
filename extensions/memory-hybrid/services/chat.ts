@@ -633,6 +633,8 @@ export async function withLLMRetry<T>(
     signal?: AbortSignal;
     /** Tags errors for triage when they surface at async boundaries (#1010, #1011). */
     llmContext?: { model?: string; operation?: string };
+    /** Called immediately before a retry backoff sleep. */
+    onRetry?: (info: { attempt: number; delayMs: number; error: Error }) => void;
   },
 ): Promise<T> {
   const maxRetries = opts?.maxRetries ?? 3;
@@ -778,6 +780,7 @@ export async function withLLMRetry<T>(
       } else {
         delay = 3 ** attempt * 1000; // 1s, 3s, 9s
       }
+      opts?.onRetry?.({ attempt: attempt + 1, delayMs: delay, error: lastError });
       // Abort-aware backoff sleep: if the signal fires while we are waiting, reject immediately
       // instead of sleeping through the full delay. The listener is removed on normal resolve to
       // prevent leaks; the { once: true } option is not relied on alone for cleanup.
@@ -864,6 +867,8 @@ export async function chatCompleteWithRetryDetailed(opts: {
   feature?: string;
   /** OpenAI chat.completions response_format (chat wire API only). */
   responseFormat?: { type: "json_object" };
+  /** Called immediately before a retry backoff sleep. */
+  onRetry?: (info: { attempt: number; delayMs: number; error: Error; model: string }) => void;
 }): Promise<ChatCompleteWithRetryDetails> {
   const {
     fallbackModels = [],
@@ -873,6 +878,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
     signal,
     pendingWarnings,
     feature,
+    onRetry,
     ...chatOpts
   } = opts;
   const label = rawLabel ?? "LLM call";
@@ -911,6 +917,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
           maxRetries: 3,
           signal,
           llmContext: { model: currentModel, operation: label },
+          onRetry: (info) => onRetry?.({ ...info, model: currentModel }),
         },
       );
       return { content, modelUsed: currentModel, attemptChain: modelsToTry };
