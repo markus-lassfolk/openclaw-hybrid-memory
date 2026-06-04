@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ActiveTaskEntry } from "../services/active-task.js";
+import { readActiveTaskFile, writeActiveTaskFile } from "../services/active-task.js";
+import type { ActiveTaskContext } from "../cli/types.js";
+import { runActiveTaskHygiene } from "../cli/active-tasks.js";
 import {
   buildLongRunningTaskDraft,
   buildLongRunningTaskRegistrationBlock,
@@ -386,6 +392,67 @@ describe("task-hygiene", () => {
       // No action: hygiene should NOT mark this task abandoned when live state is clean
       const action = plan.actions.find((a) => a.label === tasks[0].label);
       expect(action).toBeUndefined();
+    });
+  });
+
+  describe("runActiveTaskHygiene markdown apply", () => {
+    let tmpDir: string;
+    let ctx: ActiveTaskContext;
+
+    beforeEach(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), "task-hygiene-markdown-apply-"));
+      ctx = {
+        activeTaskFilePath: join(tmpDir, "ACTIVE-TASKS.md"),
+        staleMinutes: 1440,
+        flushOnComplete: false,
+        memoryDir: join(tmpDir, "memory"),
+        ledger: "markdown",
+        projection: {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+      };
+    });
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it("keeps pr-live-blocker tasks in Active instead of moving them to Completed", async () => {
+      fetchLivePrBlockerStatusMock.mockResolvedValueOnce("unresolved_review_threads");
+      const staleIso = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+      await writeActiveTaskFile(
+        ctx.activeTaskFilePath,
+        [
+          {
+            label: "markus-lassfolk/openclaw-hybrid-memory#1549",
+            description: "Drive PR #1549",
+            status: "Stalled",
+            subagent: "agent:forge:subagent:dead-pr-session",
+            started: staleIso,
+            updated: staleIso,
+          },
+        ],
+        [],
+      );
+
+      const report = await runActiveTaskHygiene(ctx, {
+        apply: true,
+        olderThanMinutes: 60,
+        openclawHome: join(tmpDir, "missing-openclaw-home"),
+        checkPrLiveBlocker: true,
+      });
+
+      expect(report.appliedCount).toBe(1);
+      const file = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+      expect(file?.active).toHaveLength(1);
+      expect(file?.active[0]?.label).toBe("markus-lassfolk/openclaw-hybrid-memory#1549");
+      expect(file?.active[0]?.status).toBe("Waiting");
+      expect(file?.active[0]?.subagent).toBeUndefined();
+      expect(file?.completed).toHaveLength(0);
     });
   });
 });

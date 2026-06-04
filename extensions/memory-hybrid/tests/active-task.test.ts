@@ -1112,6 +1112,43 @@ describe("runActiveTaskAdd", () => {
     expect(taskFile?.completed[0].subagent).toBeUndefined();
   });
 
+  it("clears stale next and subagent when reopening a Failed task", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [makeEntry({ label: "retry-me", subagent: "agent:forge:subagent:old", status: "Failed", next: "Fix: timeout" })],
+      [],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "retry-me",
+      description: "Retry work",
+      status: "In progress",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].status).toBe("In progress");
+    expect(taskFile?.active[0].next).toBeUndefined();
+    expect(taskFile?.active[0].subagent).toBeUndefined();
+  });
+
+  it("clears stale next when reopening from completed history", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [],
+      [makeEntry({ label: "revive-me", status: "Done", next: "Auto-reconciled: merged", subagent: "agent:old" })],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "revive-me",
+      description: "Pick up again",
+      status: "In progress",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].status).toBe("In progress");
+    expect(taskFile?.active[0].next).toBeUndefined();
+    expect(taskFile?.active[0].subagent).toBeUndefined();
+    expect(taskFile?.completed).toHaveLength(0);
+  });
+
   it("rejects invalid status gracefully (falls back to In progress)", async () => {
     await runActiveTaskAdd(ctx, {
       label: "bad-status",

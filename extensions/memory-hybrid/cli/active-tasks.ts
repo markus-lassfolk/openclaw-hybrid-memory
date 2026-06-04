@@ -16,6 +16,7 @@ import {
   type ActiveTaskStatus,
   completeTask,
   flushCompletedTaskToMemory,
+  isTerminalActiveTaskStatus,
   readActiveTaskFile,
   reconcileActiveTaskInProgressSessions,
   upsertTask,
@@ -32,6 +33,7 @@ import {
   reconcileActiveTaskInProgressSessionsFacts,
   reconcileActiveTaskLiveState,
   renderActiveTaskMarkdownFile,
+  subagentRefIfSessionPresent,
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { formatDuration, parseDuration } from "../utils/duration.js";
@@ -48,6 +50,16 @@ import type {
   ActiveTaskStaleResult,
 } from "./types.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
+
+function isReopeningActiveTaskEntry(
+  existing: ActiveTaskEntry | undefined,
+  newStatus: ActiveTaskStatus,
+  fromCompleted: boolean,
+): boolean {
+  if (!existing || newStatus === "Done") return false;
+  if (fromCompleted) return true;
+  return isTerminalActiveTaskStatus(existing.status) && newStatus !== existing.status;
+}
 import { ActiveTaskReconcileProgressReporter } from "../services/active-task-reconcile-progress.js";
 
 /** Context injected into all active-task CLI commands */
@@ -284,13 +296,15 @@ export async function runActiveTaskAdd(
       }
       return existing?.status ?? "In progress";
     })();
+    const existingInCompleted = completed.some((t) => t.label.toLowerCase() === normalizedLabel);
+    const reopening = isReopeningActiveTaskEntry(existing, status, existingInCompleted);
     const entry: ActiveTaskEntry = {
       label: opts.label.trim().toLowerCase(),
       description: opts.description,
       status,
       branch: opts.branch ?? existing?.branch,
-      subagent: opts.subagent ?? (status === "Done" ? "" : existing?.subagent),
-      next: opts.next ?? existing?.next,
+      subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
+      next: opts.next ?? (reopening ? "" : existing?.next),
       stashCommit: existing?.stashCommit,
       handoff: existing?.handoff,
       relatedGoal: existing?.relatedGoal,
@@ -323,13 +337,16 @@ export async function runActiveTaskAdd(
     return existing?.status ?? "In progress";
   })();
 
+  const existingInCompleted = existingCompleted.some((t) => t.label === opts.label);
+  const reopening = isReopeningActiveTaskEntry(existing, status, existingInCompleted);
+
   const entry: ActiveTaskEntry = {
     label: opts.label,
     description: opts.description,
     status,
     branch: opts.branch ?? existing?.branch,
-    subagent: opts.subagent ?? (status === "Done" ? "" : existing?.subagent),
-    next: opts.next ?? existing?.next,
+    subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
+    next: opts.next ?? (reopening ? "" : existing?.next),
     stashCommit: existing?.stashCommit,
     started: existing?.started ?? now,
     updated: now,
@@ -347,8 +364,12 @@ export async function runActiveTaskAdd(
       }
     }
   } else {
-    const updatedActive = upsertTask(existingActive, entry);
-    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, existingCompleted);
+    const updatedActive = upsertTask(
+      existingActive.filter((t) => t.label !== opts.label),
+      entry,
+    );
+    const updatedCompleted = existingCompleted.filter((t) => t.label !== opts.label);
+    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, updatedCompleted);
   }
 
   return { ok: true, label: opts.label, upserted: wasExisting };
@@ -390,6 +411,7 @@ export async function runActiveTaskHygiene(
     const applied = await applyActiveTaskHygieneFacts(factsDb, vectorDb, embeddings, plan, {
       flushOnComplete: ctx.flushOnComplete,
       memoryDir: ctx.memoryDir,
+      openclawHome: opts.openclawHome,
     });
     await renderActiveTaskMarkdownFile(
       factsDb,
@@ -449,10 +471,23 @@ export async function runActiveTaskHygiene(
   const newCompleted: ActiveTaskEntry[] = [...completed];
   const now = new Date().toISOString();
   const toFlush: ActiveTaskEntry[] = [];
+  let appliedCount = 0;
   for (const task of active) {
     const action = actionByLabel.get(task.label);
     if (!action) {
       newActive.push(task);
+      continue;
+    }
+    if (action.kind === "pr-live-blocker") {
+      const subagent = await subagentRefIfSessionPresent(task.subagent, opts.openclawHome);
+      newActive.push({
+        ...task,
+        status: "Waiting",
+        updated: now,
+        next: action.reason,
+        subagent,
+      });
+      appliedCount++;
       continue;
     }
     const completedEntry: ActiveTaskEntry = {
@@ -464,6 +499,7 @@ export async function runActiveTaskHygiene(
     };
     newCompleted.push(completedEntry);
     toFlush.push(completedEntry);
+    appliedCount++;
   }
   await writeActiveTaskFile(ctx.activeTaskFilePath, newActive, newCompleted);
   if (ctx.flushOnComplete) {
@@ -478,7 +514,7 @@ export async function runActiveTaskHygiene(
     duplicates: plan.duplicates,
     stale: plan.stale,
     actions: plan.actions,
-    appliedCount: toFlush.length,
+    appliedCount,
   };
 }
 

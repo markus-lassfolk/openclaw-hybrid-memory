@@ -575,6 +575,25 @@ export interface ActiveTaskHygienePlan {
   actions: ActiveTaskHygieneAction[];
 }
 
+const TASK_PR_REF_RE = /(?:^|[\s/])([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#(\d+)/;
+
+/** True when label/description references an external owner/repo#N PR or issue. */
+export function taskReferencesExternalPr(task: ActiveTaskEntry): boolean {
+  return TASK_PR_REF_RE.test(`${task.label} ${task.description}`);
+}
+
+/** Keep subagent ref only when the OpenClaw session transcript still exists; otherwise return "". */
+export async function subagentRefIfSessionPresent(
+  subagent: string | undefined,
+  openclawHome?: string,
+): Promise<string> {
+  const ref = subagent?.trim();
+  if (!ref) return "";
+  if (!looksLikeOpenClawSessionRef(ref)) return ref;
+  const present = await isOpenClawSessionLikelyPresent(ref, openclawHome);
+  return present ? ref : "";
+}
+
 function parseTaskUpdatedMs(updated: string): number | null {
   if (!updated || updated === UNKNOWN_ACTIVE_TASK_TIME) return null;
   const ms = Date.parse(updated);
@@ -741,7 +760,10 @@ export async function planActiveTaskHygiene(
   }
 
   const staleSessionCandidates = tasks
-    .filter((task) => task.status === "In progress")
+    .filter(
+      (task) => task.status === "In progress" || task.status === "Waiting" || task.status === "Stalled",
+    )
+    .filter((task) => !taskReferencesExternalPr(task))
     .map((task) => ({ task, sessionRef: task.subagent?.trim() ?? "" }))
     .filter(({ sessionRef }) => sessionRef.length > 0 && looksLikeOpenClawSessionRef(sessionRef))
     .map(({ task, sessionRef }) => ({ task, sessionRef, age: classifyAge(task) }))
@@ -757,7 +779,7 @@ export async function planActiveTaskHygiene(
   for (const { task, sessionRef, age } of staleSessionCandidates) {
     const present = sessionPresentByRef.get(sessionRef) ?? false;
     if (present) continue;
-    const reason = `In-progress task has missing session transcript (${sessionRef}) and is ${age.reasonQualifier}; marking abandoned.`;
+    const reason = `${task.status} task has missing session transcript (${sessionRef}) and is ${age.reasonQualifier}; marking abandoned.`;
     stale.push({
       label: task.label,
       status: task.status,
@@ -781,18 +803,17 @@ export async function planActiveTaskHygiene(
   // -----------------------------------------------------------------------------------------
   if (opts.checkPrLiveBlocker === true) {
     // Collect tasks that reference a PR (owner/repo#N pattern in label or description)
-    const PR_REF_RE = /(?:^|[\s/])([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)#(\d+)/;
     const prCandidateTasks = tasks.filter((t) => {
       if (t.status !== "In progress" && t.status !== "Waiting" && t.status !== "Stalled") return false;
       const text = `${t.label} ${t.description}`;
-      return PR_REF_RE.test(text);
+      return TASK_PR_REF_RE.test(text);
     });
 
     if (prCandidateTasks.length > 0) {
       // Group by owner/repo to avoid duplicate API calls for the same repo
       const prKeys = new Map<string, { tasks: ActiveTaskEntry[]; owner: string; repo: string; number: number }>();
       for (const task of prCandidateTasks) {
-        const m = PR_REF_RE.exec(`${task.label} ${task.description}`);
+        const m = TASK_PR_REF_RE.exec(`${task.label} ${task.description}`);
         if (!m) continue;
         const key = `${m[1]}#${m[2]}`;
         const existing = prKeys.get(key);
@@ -1279,6 +1300,7 @@ export async function applyActiveTaskHygieneFacts(
   opts: {
     flushOnComplete?: boolean;
     memoryDir?: string;
+    openclawHome?: string;
     log?: { warn?: (m: string) => void };
   } = {},
 ): Promise<ActiveTaskHygieneApplyResult> {
@@ -1309,20 +1331,21 @@ export async function applyActiveTaskHygieneFacts(
   const prBlockerTasks: ActiveTaskHygieneApplyResult["prBlockerTasks"] = [];
 
   for (const action of plan.actions) {
-    const task = byLabel.get(action.label);
+    const task =
+      byLabel.get(action.label) ?? active.find((candidate) => taskLabelsMatch(candidate.label, action.label));
     if (!task) continue;
 
     try {
       if (action.kind === "pr-live-blocker") {
         // Update task in-place: set status to "Waiting" and record the live blocker reason.
         // Do NOT complete the task — it is actively blocked and needs Forge attention.
+        const subagent = await subagentRefIfSessionPresent(task.subagent, opts.openclawHome);
         const updatedEntry: ActiveTaskEntry = {
           ...task,
           status: "Waiting",
           updated: runAt,
           next: action.reason,
-          // Keep subagent so we know who is working on it
-          subagent: task.subagent,
+          subagent,
         };
         await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, updatedEntry, opts.log, {
           statusOverride: displayStatusToFact("Waiting"),

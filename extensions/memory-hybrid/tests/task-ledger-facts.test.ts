@@ -12,6 +12,7 @@ import type { ActiveTaskProjectionConfig } from "../config.js";
 import { type ActiveTaskEntry, UNKNOWN_ACTIVE_TASK_TIME, readPendingSignals, writeTaskSignal } from "../services/active-task.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { initPluginLogger, resetPluginLogger } from "../utils/logger.js";
+import { taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 import {
   applyActiveTaskHygieneFacts,
   applyActiveTaskProjectionFilters,
@@ -509,6 +510,52 @@ describe("task-ledger-facts", () => {
 
       const audits = db.listFactsByCategory("episode", 1000).filter((row) => row.source === "active-task-hygiene");
       expect(audits.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("applyActiveTaskHygieneFacts keeps pr-live-blocker tasks active and clears dead subagent", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-hygiene-pr-blocker-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const updated = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+        label: "pr-blocker-task",
+        description: "Drive owner/repo pull request #99",
+        status: "Stalled",
+        subagent: "agent:forge:subagent:dead-pr-blocker",
+        started: updated,
+        updated,
+      });
+      const { active } = loadTaskLedgerFromFacts(db);
+      const stored = active.find((t) => t.description.includes("#99"));
+      expect(stored).toBeDefined();
+      const plan = {
+        olderThanMinutes: 60,
+        duplicates: [] as const,
+        stale: [] as const,
+        actions: [
+          {
+            label: stored!.label,
+            kind: "pr-live-blocker" as const,
+            toStatus: "stage-4-feedback" as const,
+            reason: "[PR hygiene #99] Live GitHub state: unresolved_review_threads — task updated to reflect actual PR state.",
+            prBlockerStatus: "unresolved_review_threads|owner:repo:99",
+          },
+        ],
+      };
+      const applied = await applyActiveTaskHygieneFacts(db, vectorDb, embeddings, plan, {
+        openclawHome: join(dir, "missing-openclaw-home"),
+      });
+      expect(applied.appliedCount).toBe(1);
+      const reloaded = loadTaskLedgerFromFacts(db);
+      const task = reloaded.active.find((t) => taskLabelsMatch(t.label, stored!.label));
+      expect(task?.status).toBe("Waiting");
+      expect(task?.subagent).toBeUndefined();
+      expect(reloaded.completed.some((t) => taskLabelsMatch(t.label, stored!.label))).toBe(false);
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
