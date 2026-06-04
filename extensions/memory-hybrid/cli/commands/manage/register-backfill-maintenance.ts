@@ -20,6 +20,7 @@ import {
 import {
   extractToolSequenceFromMessages,
   extractToolSequenceFromTrajectoryLines,
+  normalizeWorkflowToolSequence,
   readTrajectoryLines,
 } from "../../../services/session-v3-parser.js";
 import { readFileSync } from "node:fs";
@@ -51,13 +52,14 @@ function inferSessionOutcome(messages: Array<{ role: string; text: string }>): "
 }
 
 function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
-  const trajLines = readTrajectoryLines(filePath);
-  if (trajLines) {
-    return extractToolSequenceFromTrajectoryLines(trajLines, "backfill-workflow-traces");
-  }
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
-  return extractToolSequenceFromMessages(messages);
+  const tools = extractToolSequenceFromMessages(messages);
+  const trajLines = readTrajectoryLines(filePath);
+  if (trajLines) {
+    tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "backfill-workflow-traces"));
+  }
+  return normalizeWorkflowToolSequence(tools);
 }
 
 function backfillWorkflowTracesFromFile(
@@ -84,16 +86,18 @@ function backfillWorkflowTracesFromFile(
 
   let proceduresUpdated = 0;
   const taskPattern = tools.join(" -> ");
-  const normalizedPattern = redactMaintenancePrivateText(taskPattern);
-  const matches = factsDb.searchProcedures(normalizedPattern, 3);
-  for (const proc of matches) {
-    const updated = factsDb.procedureFeedback({
-      procedureId: proc.id,
-      success: outcome === "success",
-      sessionId,
-      context: `backfill-workflow-traces:${sessionId}`,
-    });
-    if (updated) proceduresUpdated++;
+  if (taskPattern.length <= 4000) {
+    const normalizedPattern = redactMaintenancePrivateText(taskPattern);
+    const matches = factsDb.searchProcedures(normalizedPattern, 3);
+    for (const proc of matches) {
+      const updated = factsDb.procedureFeedback({
+        procedureId: proc.id,
+        success: outcome === "success",
+        sessionId,
+        context: `backfill-workflow-traces:${sessionId}`,
+      });
+      if (updated) proceduresUpdated++;
+    }
   }
   return { traces: 1, proceduresUpdated };
 }

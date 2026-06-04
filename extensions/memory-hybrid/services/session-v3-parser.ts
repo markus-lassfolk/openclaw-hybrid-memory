@@ -214,4 +214,23 @@ export function readTrajectoryLines(sessionFilePath: string): string[] | null {
   }
 }
 
+export function collapseConsecutiveTools(tools: string[]): string[] {
+  const out: string[] = [];
+  for (const tool of tools) {
+    if (out.length === 0 || out[out.length - 1] !== tool) out.push(tool);
+  }
+  return out;
+}
+
+export function capToolSequence(tools: string[], maxLen = 40): string[] {
+  if (tools.length <= maxLen) return tools;
+  const head = tools.slice(0, Math.ceil(maxLen * 0.75));
+  const tail = tools.slice(-Math.floor(maxLen * 0.25));
+  return [...head, "…", ...tail];
+}
+
+export function normalizeWorkflowToolSequence(tools: string[]): string[] {
+  return capToolSequence(collapseConsecutiveTools(tools));
+}
+
 export { normalizeSessionRole };
