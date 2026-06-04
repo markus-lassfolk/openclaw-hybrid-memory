@@ -11,6 +11,7 @@
  *  - Cooldown skip → status: "skipped_cooldown", NOT "success_no_incidents"
  *  - Zero-incident run → status: "success_no_incidents", NOT "skipped_cooldown"
  *  - Parse failure with incidents present does NOT update scan cursor as if analysis succeeded
+ *  - First-batch non-parse LLM failure → status: "failed", zero batches completed
  */
 
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -360,7 +361,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toBeUndefined();
     expect(res.status).toBe("success_analyzed");
     expect(res.analysed).toBe(1);
-    expect(res.parseFailures).toBe(1);
+    expect(res.parseFailures).toBe(0);
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
   });
 
@@ -841,6 +842,30 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
     expect(res.batchesCompleted).toBe(1);
     expect(res.totalBatches).toBe(2);
     expect(res.analysed).toBeGreaterThan(0);
+    expect(listSelfCorrectionBatchStateFiles(tmpDir).length).toBeGreaterThan(0);
+  });
+
+  it("returns failed when the first batch hits a non-parse LLM error", async () => {
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockRejectedValue(new Error("simulated first-batch LLM API failure")),
+        },
+      },
+    } as any;
+    const ctx = makeCtx(openai);
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+    });
+
+    expect(res.status).toBe("failed");
+    expect(res.error).toContain("simulated first-batch LLM API failure");
+    expect(res.batchesCompleted).toBe(0);
+    expect(res.totalBatches).toBe(1);
+    expect(res.analysed).toBe(0);
+    expect(res.autoFixed).toBe(0);
     expect(listSelfCorrectionBatchStateFiles(tmpDir).length).toBeGreaterThan(0);
   });
 
