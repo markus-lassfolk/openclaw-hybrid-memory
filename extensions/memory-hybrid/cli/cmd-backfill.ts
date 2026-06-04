@@ -304,6 +304,11 @@ export async function runBackfillForCli(
       if (storeResult.skipped) {
         continue;
       }
+      if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+        skipped++;
+        processed++;
+        continue;
+      }
       const entry = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       await cleanupEvictedVector({
@@ -739,6 +744,10 @@ export async function runIngestFilesForCli(
         tags: fact.tags,
       });
       if (storeResult.skipped) {
+        continue;
+      }
+      if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+        skipped++;
         continue;
       }
       const entry = storeResult.entry;

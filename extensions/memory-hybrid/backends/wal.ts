@@ -89,6 +89,8 @@ export class WriteAheadLog {
   private writeLock: Promise<void> = Promise.resolve();
   private activeIds = new Set<string>();
   private initPromise: Promise<void> | null = null;
+  /** Set when init() could not load activeIds — remove/clear must verify disk before wiping. */
+  private initLoadFailed = false;
 
   constructor(walPath: string, maxAge: number = 5 * 60 * 1000) {
     this.walPath = walPath;
@@ -116,6 +118,7 @@ export class WriteAheadLog {
         await prevLock;
         const entries = await this.readAll();
         this.activeIds = new Set(entries.map((e) => e.id));
+        this.initLoadFailed = false;
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "wal-init",
@@ -125,6 +128,7 @@ export class WriteAheadLog {
           `WAL init: failed to load active IDs, continuing with empty in-memory set: ${err instanceof Error ? err.message : String(err)}`,
         );
         this.activeIds = new Set();
+        this.initLoadFailed = true;
       } finally {
         // biome-ignore lint/style/noNonNullAssertion: Synchronous
         releaseLock!();
@@ -192,6 +196,20 @@ export class WriteAheadLog {
     }
   }
 
+  private async syncActiveIdsFromDisk(): Promise<void> {
+    if (!this.initLoadFailed || this.activeIds.size > 0) return;
+    try {
+      const entries = await this.readAll();
+      this.activeIds = new Set(entries.map((e) => e.id));
+      this.initLoadFailed = false;
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "wal-sync-active-ids",
+        subsystem: "wal",
+      });
+    }
+  }
+
   async write(entry: WALEntry): Promise<void> {
     const prevLock = this.writeLock;
     let releaseLock: () => void;
@@ -201,6 +219,7 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
+      await this.syncActiveIdsFromDisk();
       const line = `${JSON.stringify(entry)}\n`;
       await appendFile(this.walPath, line, "utf-8");
       this.activeIds.add(entry.id);
@@ -308,7 +327,16 @@ export class WriteAheadLog {
       this.activeIds.delete(id);
       await this.fsyncAfterWrite();
       if (this.activeIds.size === 0) {
-        await this._clearInternal();
+        if (this.initLoadFailed) {
+          const remaining = await this.readAll();
+          if (remaining.length === 0) {
+            await this._clearInternal();
+          } else {
+            for (const e of remaining) this.activeIds.add(e.id);
+          }
+        } else {
+          await this._clearInternal();
+        }
       }
     } catch (err) {
       capturePluginError(err as Error, {
@@ -427,10 +455,10 @@ export class WriteAheadLog {
       // Size-triggered rewrite only — never age-prune pending entries (#1876).
       const entries = await this.readAll();
       await this.atomicRewriteEntries(entries);
-      return 0;
+      return 1;
     } catch (err) {
-      pluginLogger.info(
-        `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
+      pluginLogger.warn(
+        `memory-hybrid: WAL compactIfOversized failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
       );
       return 0;
     } finally {

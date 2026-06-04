@@ -29,6 +29,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import type { ProvenanceService } from "./provenance.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
 
 // ---------------------------------------------------------------------------
@@ -258,6 +259,62 @@ export function isIdentityFact(text: string, agentName?: string): boolean {
   return patterns.some((p) => p.test(text));
 }
 
+const OPENCLAW_AGENTS_MARKER = "/.openclaw/agents/";
+
+/** List session JSONL paths for passive observer (single configured dir or all agents). */
+export function listPassiveObserverSessionFilePaths(
+  sessionsDir: string | undefined,
+  proceduresSessionsDir: string | undefined,
+): { filePaths: string[]; multiAgentScan: boolean } {
+  const explicitDir = sessionsDir ?? proceduresSessionsDir;
+  if (explicitDir) {
+    if (!existsSync(explicitDir)) return { filePaths: [], multiAgentScan: false };
+    try {
+      const filePaths = readdirSync(explicitDir)
+        .filter(isPassiveObserverTranscriptCandidate)
+        .sort()
+        .map((f) => join(explicitDir, f));
+      return { filePaths, multiAgentScan: false };
+    } catch {
+      return { filePaths: [], multiAgentScan: false };
+    }
+  }
+
+  const agentsDir = join(homedir(), ".openclaw", "agents");
+  if (!existsSync(agentsDir)) return { filePaths: [], multiAgentScan: true };
+  const filePaths: string[] = [];
+  try {
+    for (const agentEntry of readdirSync(agentsDir, { withFileTypes: true })) {
+      if (!agentEntry.isDirectory()) continue;
+      const dir = join(agentsDir, agentEntry.name, "sessions");
+      if (!existsSync(dir)) continue;
+      for (const f of readdirSync(dir)) {
+        if (isPassiveObserverTranscriptCandidate(f)) {
+          filePaths.push(join(dir, f));
+        }
+      }
+    }
+  } catch {
+    return { filePaths: [], multiAgentScan: true };
+  }
+  filePaths.sort();
+  return { filePaths, multiAgentScan: true };
+}
+
+/** Stable cursor / scope key for a session file (agent-relative when scanning all agents). */
+export function deriveObserverSessionKey(filePath: string, multiAgentScan: boolean): string | null {
+  const normalized = filePath.replace(/\\/g, "/");
+  if (multiAgentScan) {
+    const markerIdx = normalized.indexOf(OPENCLAW_AGENTS_MARKER);
+    if (markerIdx >= 0) {
+      const rel = normalized.slice(markerIdx + OPENCLAW_AGENTS_MARKER.length);
+      return rel.replace(/\.jsonl$/, "");
+    }
+  }
+  const base = normalized.split("/").pop()?.replace(".jsonl", "");
+  return base ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Core run
 // ---------------------------------------------------------------------------
@@ -296,34 +353,34 @@ export async function runPassiveObserver(
     errors: 0,
   };
 
-  const sessionsDir =
-    config.sessionsDir ?? opts.proceduresSessionsDir ?? join(homedir(), ".openclaw", "agents", "main", "sessions");
+  const explicitSessionsDir = config.sessionsDir ?? opts.proceduresSessionsDir;
+  const { filePaths, multiAgentScan } = listPassiveObserverSessionFilePaths(
+    config.sessionsDir,
+    opts.proceduresSessionsDir,
+  );
 
-  if (!existsSync(sessionsDir)) {
-    logger.info(`memory-hybrid: passive-observer — sessions dir not found: ${sessionsDir}`);
+  if (filePaths.length === 0 && explicitSessionsDir && !existsSync(explicitSessionsDir)) {
+    logger.info(`memory-hybrid: passive-observer — sessions dir not found: ${explicitSessionsDir}`);
     return result;
   }
 
-  let filePaths: string[];
-  try {
-    filePaths = readdirSync(sessionsDir)
-      .filter(isPassiveObserverTranscriptCandidate)
-      .sort() // deterministic ordering across OS/filesystems
-      .map((f) => join(sessionsDir, f));
-  } catch (err) {
-    logger.warn(`memory-hybrid: passive-observer — failed to read sessions dir: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "passive-observer-readdir",
-      subsystem: "passive-observer",
-    });
-    result.errors++;
+  if (filePaths.length === 0 && !multiAgentScan) {
+    return result;
+  }
+
+  if (filePaths.length === 0 && multiAgentScan) {
+    logger.info("memory-hybrid: passive-observer — no session files found under ~/.openclaw/agents/*/sessions");
     return result;
   }
 
   // Prune stale consecutiveFailures entries before any early returns, so sessions that
   // disappear from disk (or when there are no session files at all) get cleaned up every tick.
   {
-    const activeIds = new Set(filePaths.map((fp) => fp.replace(/\\/g, "/").split("/").pop()?.replace(".jsonl", "")));
+    const activeIds = new Set(
+      filePaths
+        .map((fp) => deriveObserverSessionKey(fp, multiAgentScan))
+        .filter((id): id is string => id != null),
+    );
     for (const id of consecutiveFailures.keys()) {
       if (!activeIds.has(id)) consecutiveFailures.delete(id);
     }
@@ -354,7 +411,7 @@ export async function runPassiveObserver(
   let hasNewContent = false;
 
   for (const filePath of filePaths) {
-    const sessionId = filePath.replace(/\\/g, "/").split("/").pop()?.replace(".jsonl", "");
+    const sessionId = deriveObserverSessionKey(filePath, multiAgentScan);
     if (!sessionId) continue;
     activeSessionIds.add(sessionId);
     let fileBytelen: number;
@@ -485,10 +542,12 @@ export async function runPassiveObserver(
     // Chunk the text block
     const chunks = chunkTextByChars(textBlock, config.maxCharsPerChunk, Math.floor(config.maxCharsPerChunk * 0.05));
 
-    let anyChunkSucceeded = false;
+    let chunksAttempted = 0;
+    let chunksSucceeded = 0;
 
     for (const chunk of chunks) {
       if (!chunk.trim()) continue;
+      chunksAttempted++;
       result.chunksProcessed++;
 
       const filledPrompt = fillPrompt(prompt, {
@@ -520,7 +579,7 @@ export async function runPassiveObserver(
         continue;
       }
 
-      anyChunkSucceeded = true;
+      chunksSucceeded++;
 
       const facts = parseObserverResponse(rawResponse, allCategories);
       const filtered = facts.filter((f) => f.importance >= config.minImportance);
@@ -652,7 +711,7 @@ export async function runPassiveObserver(
         }
 
         // Store to SQLite — tag with session scope so facts can be scoped to session lifecycle
-        const stored = factsDb.store({
+        const storeResult = factsDb.storeWithResult({
           text: fact.text,
           category: fact.category as MemoryCategory,
           importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
@@ -669,8 +728,21 @@ export async function runPassiveObserver(
           extractionMethod: "passive",
           extractionConfidence: fact.importance,
         });
+        if (storeResult.skipped) {
+          continue;
+        }
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+          continue;
+        }
+        const stored = storeResult.entry;
+        await cleanupEvictedVector({
+          vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger,
+          context: "passive-observer",
+        });
 
-        if (opts.provenanceService) {
+        if (opts.provenanceService && storeResult.newlyStored) {
           try {
             opts.provenanceService.addEdge(stored.id, {
               edgeType: "DERIVED_FROM",
@@ -689,13 +761,18 @@ export async function runPassiveObserver(
 
         // Contradiction detection (Issue #142): check for same entity+key with different value.
         // For global/permanent identity facts, pass null scope so detection spans all scopes.
-        factsDb.detectContradictions(stored.id, null, null, null, stored.scope ?? null, stored.scopeTarget ?? null);
+        if (storeResult.newlyStored) {
+          factsDb.detectContradictions(stored.id, null, null, null, stored.scope ?? null, stored.scopeTarget ?? null);
+        }
 
         // Store to LanceDB (use normalized vector for consistent L2 distance metric)
         try {
+          const vectorText = storeResult.embeddingStale ? stored.text : fact.text;
+          const vectorForStore =
+            storeResult.embeddingStale ? await embeddings.embed(stored.text) : normalizedVec;
           await vectorDb.store({
-            text: fact.text,
-            vector: normalizedVec,
+            text: vectorText,
+            vector: vectorForStore,
             importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
             category: fact.category,
             id: stored.id,
@@ -712,19 +789,20 @@ export async function runPassiveObserver(
 
         // Track vector for intra-batch dedup: whether vectorDb.store() succeeded or failed,
         // add to recentVectors[] so subsequent identical facts in this batch are detected.
-        recentVectors.push({ vector: normalizedVec, factId: stored.id });
-
-        result.factsStored++;
+        if (storeResult.newlyStored) {
+          recentVectors.push({ vector: normalizedVec, factId: stored.id });
+          result.factsStored++;
+        }
       }
     }
 
-    // Advance cursor to end of file only if at least one chunk was successfully processed.
-    // Track consecutive failures to prevent infinite retry on permanently-bad session files.
-    if (anyChunkSucceeded) {
+    // Advance cursor only when every attempted chunk in this segment succeeded (or there were none).
+    // Partial success must not advance — failed chunks would be skipped permanently.
+    if (chunksAttempted === 0 || chunksSucceeded === chunksAttempted) {
       cursors[sessionId] = segmentEnd;
       consecutiveFailures.delete(sessionId);
       cursorsChanged = true;
-    } else {
+    } else if (chunksSucceeded === 0) {
       const failures = (consecutiveFailures.get(sessionId) ?? 0) + 1;
       consecutiveFailures.set(sessionId, failures);
       if (failures >= 3) {

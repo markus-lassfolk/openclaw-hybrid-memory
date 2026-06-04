@@ -192,12 +192,23 @@ home = os.path.expanduser("~")
 oc = os.path.join(home, ".openclaw", "openclaw.json")
 cfg = json.load(open(oc)) if os.path.isfile(oc) else {}
 plugins = cfg.get("plugins") or {}
-mem_key = next((k for k in plugins if "hybrid" in k and "memory" in k), None)
-mem_cfg = redact(plugins.get(mem_key, {})) if mem_key else {}
+entries = plugins.get("entries") if isinstance(plugins.get("entries"), dict) else {}
+mem_key = next((k for k in entries if "hybrid" in k.lower() and "memory" in k.lower()), None)
+if mem_key:
+    entry = entries.get(mem_key) or {}
+    mem_cfg = redact(entry.get("config") if isinstance(entry, dict) else entry)
+else:
+    mem_key = next((k for k in plugins if isinstance(k, str) and "hybrid" in k.lower() and "memory" in k.lower()), None)
+    mem_cfg = redact(plugins.get(mem_key, {})) if mem_key else {}
+gw_providers = {}
+models = cfg.get("models") or {}
+if isinstance(models, dict) and isinstance(models.get("providers"), dict):
+    gw_providers = redact(models["providers"])
 print(json.dumps({
     "openclawPath": oc,
     "pluginId": mem_key,
     "memoryHybrid": mem_cfg,
+    "modelsProviders": gw_providers,
     "llm": redact(cfg.get("llm") or {}),
     "agents": redact(cfg.get("agents") or {}),
 }, indent=2))
@@ -283,6 +294,9 @@ AB="$ROOT/.ab-fixtures"
 mkdir -p "$AB/sessions"
 rsync -a --delete "$SESSIONS/" "$AB/sessions/"
 cp -f "$RAW/facts-sample.json" "$AB/facts-sample.json"
+
+echo "==> [7/7] Maeve APIM secrets (gitignored)..."
+bash "$(dirname "$0")/fetch-maeve-secrets.sh" || echo "    (secrets fetch skipped — run fetch-maeve-secrets.sh manually)"
 
 echo ""
 echo "==> Done."

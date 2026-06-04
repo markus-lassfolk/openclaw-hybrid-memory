@@ -26,7 +26,7 @@ bash benchmark/offline-qa/fetch-maeve-offline-qa.sh
 bash benchmark/offline-qa/setup-sandbox.sh
 
 # 3. Run QA (dry-run by default — no DB writes)
-MINIMAX_API_KEY=... OPENAI_API_KEY=... npm run offline-qa
+MINIMAX_API_KEY=... AZURE_OPENAI_API_KEY=... npm run offline-qa
 ```
 
 ## Fetch options
@@ -113,7 +113,10 @@ After `npm run offline-qa:clone`:
 
 ```bash
 export HOME="$(pwd)/.offline-qa/sandbox-work"
-export MINIMAX_API_KEY=...
+export MINIMAX_API_KEY=...          # maintenance LLM (MiniMax-only)
+export AZURE_OPENAI_API_KEY=...     # embeddings via Azure Foundry (Maeve APIM gateway)
+# optional override if gateway URL differs from fetched Maeve config:
+# export AZURE_FOUNDRY_BASE_URL=https://rnd-api-gateway.azure-api.net/ai
 openclaw hybrid-mem run-all --dry-run -v
 openclaw hybrid-mem reflect --dry-run
 openclaw hybrid-mem distill --days 3 --dry-run

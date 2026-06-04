@@ -12,11 +12,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeTaskResult, renderTaskAnalysisMarkdown, type TaskAnalysis } from "./analyze.js";
+import { loadOfflineQaSecrets } from "./load-secrets.js";
 import { QA_PHASE_TIMEOUT_MS, QA_TASK_PLAN, type QaPhase, type QaTaskClassification } from "./qa-tasks.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, "../..");
 const QA_ROOT = join(PLUGIN_ROOT, ".offline-qa");
+loadOfflineQaSecrets(QA_ROOT);
 const SANDBOX_TEMPLATE = join(QA_ROOT, "sandbox");
 const SANDBOX_WORK = join(QA_ROOT, "sandbox-work");
 const STATE_PATH = join(QA_ROOT, "qa-state.json");
@@ -136,6 +138,17 @@ function writeReport(state: QaState): void {
 
   const needsFix = state.tasks.filter((t) => t.classification === "needs-fix" || t.status === "failed");
   const dataGaps = state.tasks.filter((t) => t.classification === "data-gap");
+  const skipped = state.tasks.filter((t) => t.status === "skipped");
+  const llmTasks = state.tasks.filter((t) => QA_TASK_PLAN.find((s) => s.id === t.id)?.llmTask);
+  const providerLeaks = llmTasks.filter((t) => t.analysis?.providerLeak);
+  lines.push(
+    "## Provider guard (MiniMax-only)",
+    "",
+    providerLeaks.length === 0
+      ? "**PASS** — no non-MiniMax LLM routing detected in maintenance task logs"
+      : `**FAIL** — possible leak in: ${providerLeaks.map((t) => t.id).join(", ")}`,
+    "",
+  );
   lines.push(
     "## Go / no-go",
     "",
@@ -147,6 +160,17 @@ function writeReport(state: QaState): void {
   if (dataGaps.length) {
     lines.push(`Data gaps (expected): ${dataGaps.map((t) => t.id).join(", ")}`, "");
   }
+  if (skipped.length) {
+    lines.push(`Skipped (by design): ${skipped.map((t) => t.id).join(", ")}`, "");
+  }
+  lines.push(
+    "## Remaining before live Maeve deploy",
+    "",
+    "- [ ] Set `AZURE_OPENAI_API_KEY` for embeddings via Azure Foundry (Maeve APIM gateway; optional `AZURE_FOUNDRY_BASE_URL` override)",
+    "- [ ] Apply `maeve-tier-snippet.json` to live config after approval (MiniMax-only + explicit-only fallback)",
+    "- [ ] `reflect-identity` CLI subcommand not registered — skip or wire if needed on live",
+    "",
+  );
 
   writeFileSync(REPORT_PATH, lines.join("\n"));
 }
@@ -276,6 +300,8 @@ async function main(): Promise<void> {
     if (result.timedOut) analysis.errors.push(`Wall timeout ${wallTimeoutMs}ms`);
     if (/unknown command|not a command|Cannot find/i.test(combined) && spec.skipIfCommandMissing) {
       analysis.classification = "skipped";
+      analysis.usefulness = "Command not registered — skip on live unless wired";
+      analysis.errors = analysis.errors.filter((e) => !e.startsWith("Process exit code"));
       taskState.status = "skipped";
     } else if (analysis.classification === "needs-fix" || analysis.classification === "test-bug") {
       taskState.status = "failed";

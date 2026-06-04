@@ -286,9 +286,21 @@ describe("Passive observer — reinforcement on similarity", () => {
 
   function makeFactsDb(existingFacts: Array<{ id: string; text: string; confidence: number }> = []) {
     const boostCalls: Array<{ id: string; delta: number }> = [];
+    const store = vi.fn().mockReturnValue({ id: "new-fact-id" });
     return {
       getRecentFacts: () => existingFacts.map((f) => ({ id: f.id, text: f.text })),
-      store: vi.fn().mockReturnValue({ id: "new-fact-id" }),
+      store,
+      storeWithResult: vi.fn((args: Record<string, unknown>) => {
+        const entry = store(args);
+        return {
+          skipped: false,
+          newlyStored: true,
+          embeddingStale: false,
+          evictedFactId: null,
+          preMergeText: null,
+          entry,
+        };
+      }),
       boostConfidence: vi.fn().mockImplementation((id: string, delta: number) => {
         boostCalls.push({ id, delta });
         return true;

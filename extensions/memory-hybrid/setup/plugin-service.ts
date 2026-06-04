@@ -392,7 +392,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         try {
           const compacted = await wal.compactIfOversized(cfg.wal?.maxSizeBytes ?? 16 * 1024 * 1024);
           if (compacted > 0) {
-            api.logger.info(`memory-hybrid: WAL compacted ${compacted} stale entries (size limit)`);
+            api.logger.info(`memory-hybrid: WAL size compaction rewrite completed (maxSizeBytes limit)`);
           }
         } catch (err) {
           api.logger.warn(`memory-hybrid: WAL compact failed: ${err}`);

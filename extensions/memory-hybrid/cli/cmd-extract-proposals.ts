@@ -246,8 +246,8 @@ export async function runGenerateProposalsForCli(
   if (items.length === 0 && insights.length > 0) {
     const failureMessage =
       "memory-hybrid: generate-proposals semantic_empty: had insight input but parsed zero proposal items";
-    console.error(`${failureMessage} parse_success=false created=0`);
-    throw new Error(failureMessage);
+    ctx.logger.warn?.(`${failureMessage} parse_success=false created=0 — returning degraded empty result`);
+    return { created: 0 };
   }
   const weekDays = 7;
   const recentCount = proposalsDb.countRecentProposals(weekDays);

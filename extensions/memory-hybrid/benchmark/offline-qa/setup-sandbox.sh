@@ -65,18 +65,56 @@ fi
 # Skills auto dir (generate-auto-skills writes here)
 mkdir -p "$OC/workspace/skills/auto"
 
-# openclaw.json — MiniMax-only QA config (no Maeve agent roster / absolute paths)
+# openclaw.json — MiniMax-only maintenance LLM; Azure Foundry embeddings (Maeve live parity)
 TIER_SNIPPET="$ROOT/benchmark/ab-maintenance/maeve-tier-snippet.json"
+REDACTED_CFG="$RAW/config/openclaw.redacted.json"
 MINIMAX_KEY="${MINIMAX_API_KEY:-}"
 python3 - <<PY
 import json, os
 
 tier_path = "$TIER_SNIPPET"
+redacted_path = "$REDACTED_CFG"
 snippet = {}
 if os.path.isfile(tier_path):
     with open(tier_path) as f:
         snippet = json.load(f)
 snippet.pop("_comment", None)
+
+def read_maeve_embedding():
+    """Reuse Maeve live embedding model + Azure gateway URL from fetched redacted config."""
+    embed = {"provider": "openai", "model": "text-embedding-3-large"}
+    af_base = os.environ.get("AZURE_FOUNDRY_BASE_URL", "").strip()
+    if not os.path.isfile(redacted_path):
+        return embed, af_base
+    red = json.load(open(redacted_path))
+    mh = red.get("memoryHybrid") or {}
+    if isinstance(mh, dict):
+        mh_embed = mh.get("embedding") if isinstance(mh.get("embedding"), dict) else {}
+        if mh_embed.get("provider") in ("openai", "ollama", "onnx", "google"):
+            embed["provider"] = mh_embed["provider"]
+        if isinstance(mh_embed.get("model"), str) and mh_embed["model"].strip():
+            embed["model"] = mh_embed["model"].strip()
+        if isinstance(mh_embed.get("deployment"), str) and mh_embed["deployment"].strip():
+            embed["deployment"] = mh_embed["deployment"].strip()
+        if isinstance(mh_embed.get("dimensions"), int):
+            embed["dimensions"] = mh_embed["dimensions"]
+    ms = ((red.get("agents") or {}).get("defaults") or {}).get("memorySearch") or {}
+    if isinstance(ms.get("model"), str) and ms["model"].strip() and "model" not in embed:
+        embed["model"] = ms["model"].strip()
+    remote = ms.get("remote") if isinstance(ms.get("remote"), dict) else {}
+    if not af_base:
+        af_base = (remote.get("baseUrl") or remote.get("baseURL") or "").strip()
+    gw = red.get("modelsProviders") or {}
+    af_gw = gw.get("azure-foundry") if isinstance(gw, dict) else {}
+    if isinstance(af_gw, dict):
+        if not af_base:
+            af_base = (af_gw.get("baseUrl") or af_gw.get("baseURL") or "").strip()
+    llm_red = red.get("llm") or {}
+    llm_prov = llm_red.get("providers") if isinstance(llm_red.get("providers"), dict) else {}
+    af_llm = llm_prov.get("azure-foundry") if isinstance(llm_prov, dict) else {}
+    if isinstance(af_llm, dict) and not af_base:
+        af_base = (af_llm.get("baseUrl") or af_llm.get("baseURL") or "").strip()
+    return embed, af_base
 
 agent_defaults = dict(snippet.get("agents") or {})
 agent_defaults.setdefault("defaults", {}).setdefault("models", {})
@@ -92,6 +130,9 @@ mem["verification"] = {"enabled": False}
 mem["nightlyCycle"] = {"enabled": False}
 
 minimax_key = os.environ.get("MINIMAX_API_KEY", "").strip()
+maeve_embed, maeve_af_base = read_maeve_embedding()
+if not maeve_af_base:
+    maeve_af_base = os.environ.get("AZURE_OPENAI_BASE_URL", "https://rnd-api-gateway.azure-api.net/ai").strip()
 
 llm = dict(snippet.get("llm") or {})
 llm["maintenance"] = ["minimax/MiniMax-M3", "minimax/MiniMax-M2.7-highspeed"]
@@ -99,19 +140,21 @@ llm["heavy"] = ["minimax/MiniMax-M3"]
 llm["default"] = ["minimax/MiniMax-M3"]
 llm["nano"] = ["minimax/MiniMax-M2.7-highspeed"]
 llm["maintenanceFallbackPolicy"] = "explicit-only"
+# Block Azure/OpenAI for maintenance LLM tiers — embeddings use llm.providers.azure-foundry separately.
 llm["disabledProviders"] = ["openai", "azure-foundry", "azure-foundry-responses", "google", "anthropic"]
-# API keys supplied via MINIMAX_API_KEY / OPENAI_API_KEY at runtime — not written to disk
 providers = dict(llm.get("providers") or {})
 if minimax_key:
     providers["minimax"] = {}
+# Azure Foundry: same APIM gateway as Maeve live (keys via AZURE_OPENAI_API_KEY at runtime).
+providers["azure-foundry"] = {
+    "apiKey": "env:AZURE_OPENAI_API_KEY",
+    "baseURL": maeve_af_base,
+}
 llm["providers"] = providers
 mem["llm"] = llm
 
-mem["embedding"] = {
-    "provider": "openai",
-    "model": "text-embedding-3-small",
-    "apiKey": "env:OPENAI_API_KEY",
-}
+# No embedding.apiKey — parser inherits azure-foundry provider (see docs/LLM-AND-PROVIDERS.md).
+mem["embedding"] = maeve_embed
 
 oc = {
     "plugins": {

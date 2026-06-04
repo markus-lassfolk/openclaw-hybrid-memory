@@ -457,6 +457,40 @@ export async function runExtractReinforcementForCli(
                 }
               })();
             if (emptyArrayResponse) {
+              if (batch.length === 0) {
+                completedBatchIndexes.add(batchIndex);
+                completedBatches = completedBatchIndexes.size;
+                persistBatchState();
+                if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+                  await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
+                }
+                continue;
+              }
+              const synthesized: ReinforcementRemediationItem[] = batch.map((_, localIdx) => ({
+                incidentIndex: localIdx,
+                remediationType: "NO_ACTION",
+                category: "",
+                severity: "",
+                remediationContent: "",
+              }));
+              const ordered = orderBatchItemsByIncidentIndex(
+                batch.length,
+                synthesized,
+                logger,
+                globalIncidentOffset,
+              );
+              if (ordered === null) {
+                diagnostics.parseFailures++;
+                throw new Error(
+                  `Reinforcement analysis: ${batchLabel} empty [] response could not be mapped to incidents.`,
+                );
+              }
+              const attached = attachOrderedItemsToIncidents<ReinforcementIncident, ReinforcementRemediationItem>(
+                batch,
+                ordered,
+                globalIncidentOffset,
+              );
+              appendUniqueRemediationsByIncidentIndex(analysed, attached);
               completedBatchIndexes.add(batchIndex);
               completedBatches = completedBatchIndexes.size;
               persistBatchState();
@@ -640,6 +674,9 @@ export async function runExtractReinforcementForCli(
               tags,
             });
             if (storeResult.skipped) {
+              continue;
+            }
+            if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
               continue;
             }
             const entry = storeResult.entry;

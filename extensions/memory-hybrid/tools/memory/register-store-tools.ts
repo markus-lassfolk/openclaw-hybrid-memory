@@ -404,6 +404,22 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     details: { action: "credential_rejected_artifact" },
                   };
                 }
+                if (!pointerStoreResult.skipped && pointerStoreResult.newlyStored === false && !pointerStoreResult.embeddingStale) {
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: `Credential pointer already in memory for ${parsed.service} (${parsed.type}).`,
+                      },
+                    ],
+                    details: {
+                      action: "credential_pointer_dedupe",
+                      id: pointerEntry.id,
+                      service: parsed.service,
+                      type: parsed.type,
+                    },
+                  };
+                }
                 await cleanupEvictedVector({
                   vectorDb,
                   evictedFactId: pointerStoreResult.evictedFactId,

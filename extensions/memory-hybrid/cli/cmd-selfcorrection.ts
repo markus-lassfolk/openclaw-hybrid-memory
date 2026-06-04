@@ -51,6 +51,7 @@ import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { estimateTokens } from "../utils/text.js";
 import { gatherSessionFiles } from "./cmd-distill.js";
+import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
@@ -348,6 +349,7 @@ async function applySelfCorrectionRemediations(params: {
           tags: Array.isArray(obj.tags) ? obj.tags : [],
         });
         if (storeResult.skipped) continue;
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) continue;
         const entry = storeResult.entry;
         await cleanupEvictedVector({
           vectorDb,
@@ -837,12 +839,16 @@ export async function runSelfCorrectionRunForCli(
         attemptAnalysisJsonRepair,
       };
 
-      const fetchSpawnBatchContent = async (prompt: string): Promise<string> => {
+      const fetchSpawnBatchContent = async (prompt: string, outputTokenBudget?: number): Promise<string> => {
         const { spawnSync } = await import("node:child_process");
         const { tmpdir: osTmp } = await import("node:os");
         const { extractAssistantMessageText } = await import("../utils/llm-message.js");
+        const budgetLine =
+          outputTokenBudget != null && Number.isFinite(outputTokenBudget)
+            ? `\n\nOUTPUT TOKEN BUDGET: Keep the JSON array response within approximately ${outputTokenBudget} output tokens.\n`
+            : "";
         const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
-        writeFileSync(promptPath, prompt, "utf-8");
+        writeFileSync(promptPath, prompt + budgetLine, "utf-8");
         const spawnModel = scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default");
         const r = spawnSync(
           "openclaw",
@@ -901,12 +907,13 @@ export async function runSelfCorrectionRunForCli(
                     const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
                       incidents_json: serializeIncidentsForBatchPrompt(spawnBatch),
                     });
+                    const outputBudget = maxTokensOverride ?? maxTokens;
                     if (maxTokensOverride != null && maxTokensOverride !== maxTokens) {
                       logger.info?.(
-                        `memory-hybrid: ${SCAN_TYPE} spawn analyze: maxTokens bump ${maxTokens} → ${maxTokensOverride} (spawn path ignores token budget)`,
+                        `memory-hybrid: ${SCAN_TYPE} spawn analyze: maxTokens bump ${maxTokens} → ${maxTokensOverride}`,
                       );
                     }
-                    const content = await fetchSpawnBatchContent(prompt);
+                    const content = await fetchSpawnBatchContent(prompt, outputBudget);
                     const finishReason = inferFinishReasonFromLlmContent(content);
                     return { content, fallbacks: 0, finishReason };
                   },
@@ -1125,10 +1132,13 @@ export async function runSelfCorrectionRunForCli(
     }
 
     const diagnosticsIndicateFailure =
-      diagnostics.parseFailures > 0 || diagnostics.unparseableFailures > 0;
+      diagnostics.parseFailures > 0 || diagnostics.unparseableFailures > 0 || diagnostics.truncations > 0;
 
     if (!opts.dryRun && !opts.incidents && !opts.extractPath && !diagnosticsIndicateFailure) {
-      factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
+      const sessionPaths = [...new Set(incidents.map((i) => i.sessionFile).filter(Boolean))];
+      const lastSessionTs =
+        sessionPaths.length > 0 ? (getMaxMtime(sessionPaths) ?? Date.now()) : Date.now();
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, incidents.length);
     }
 
     if (completedBatchIndexes.size === batches.length) {

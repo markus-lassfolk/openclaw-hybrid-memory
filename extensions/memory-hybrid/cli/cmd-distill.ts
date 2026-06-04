@@ -21,6 +21,7 @@ import {
 import {
   ADAPTIVE_MODEL_LIMITS_VERSION,
   adaptiveFailureShrinkRatios,
+  type AdaptiveFailureKind,
   getEffectiveModelLimits,
   loadAdaptiveModelLimits,
   recordAdaptiveFailure,
@@ -432,6 +433,27 @@ export async function runDistillForCli(
       }
     };
 
+    const shrinkForRetry = (kind: AdaptiveFailureKind, failureModel: string) => {
+      if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
+        const flimits = effectiveLimitsForModel(failureModel);
+        recordAdaptiveFailure({
+          state: adaptiveState,
+          model: failureModel,
+          kind,
+          catalogBatchTokenLimit: distillBatchTokenLimit(failureModel),
+          catalogMaxOutputTokens: distillMaxOutputTokens(failureModel),
+          usedBatchTokenLimit: flimits.batchTokenLimit,
+          usedMaxOutputTokens: flimits.maxOutputTokens,
+        });
+        persistAdaptiveLimitsToDisk();
+      }
+      if (!adaptiveEnabled) {
+        const { batch: bf, out: of } = adaptiveFailureShrinkRatios(kind);
+        nonAdaptiveBatchFactor *= bf;
+        nonAdaptiveOutFactor *= of;
+      }
+    };
+
     const buildBatch = (startIdx: number, batchTokenLimit: number): { text: string; count: number; tokens: number } => {
       let text = "";
       let tokens = promptTokens;
@@ -485,6 +507,7 @@ export async function runDistillForCli(
           model,
           content: userContent,
           temperature: 0.2,
+          maxTokens: limits.maxOutputTokens,
           openai,
           fallbackModels: compatibleFallbacks,
           label: `memory-hybrid: distill batch ${batchNum}`,
@@ -496,6 +519,14 @@ export async function runDistillForCli(
           logger.warn?.(
             `memory-hybrid: distill batch ${batchNum} output truncated (finish=length); extracted facts may be incomplete`,
           );
+          if (shrinkBudget > 0 && !opts.dryRun) {
+            shrinkBudget--;
+            shrinkForRetry("other", detail.modelUsed ?? model);
+            logger.warn?.(
+              `memory-hybrid: distill batch ${batchNum} truncated — shrinking and retrying (budget left=${shrinkBudget})`,
+            );
+            continue;
+          }
         }
         if (detail.modelUsed !== model) {
           const src = fallbackSources.get(detail.modelUsed) ?? "fallback";
@@ -569,28 +600,11 @@ export async function runDistillForCli(
               : isTimeout || isConn
                 ? "timeout"
                 : "other";
-        if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
-          const failureModel =
-            typeof (e as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
-              ? (e as Error & { lastAttemptedModel: string }).lastAttemptedModel
-              : model;
-          const flimits = effectiveLimitsForModel(failureModel);
-          recordAdaptiveFailure({
-            state: adaptiveState,
-            model: failureModel,
-            kind,
-            catalogBatchTokenLimit: distillBatchTokenLimit(failureModel),
-            catalogMaxOutputTokens: distillMaxOutputTokens(failureModel),
-            usedBatchTokenLimit: flimits.batchTokenLimit,
-            usedMaxOutputTokens: flimits.maxOutputTokens,
-          });
-          persistAdaptiveLimitsToDisk();
-        }
-        if (!adaptiveEnabled) {
-          const { batch: bf, out: of } = adaptiveFailureShrinkRatios(kind);
-          nonAdaptiveBatchFactor *= bf;
-          nonAdaptiveOutFactor *= of;
-        }
+        const failureModel =
+          typeof (e as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
+            ? (e as Error & { lastAttemptedModel: string }).lastAttemptedModel
+            : model;
+        shrinkForRetry(kind, failureModel);
         const retryAfterMs = parseRetryAfterMs(e);
         if ((isRateLimit || isQuota) && retryAfterMs != null && retryAfterMs > 0) {
           const delay = Math.min(retryAfterMs, 60_000);
@@ -626,6 +640,7 @@ export async function runDistillForCli(
       );
     }
     const runSucceeded = batchFailures === 0 && !semanticEmpty;
+    const shouldAdvanceCursor = batchFailures === 0;
     if (opts.dryRun) {
       sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
       return {
@@ -677,6 +692,32 @@ export async function runDistillForCli(
                   source: "distillation",
                   sourceDate: sourceDateSec(fact.source_date),
                 });
+                if (storeResult.skipped) {
+                  if (storedInVault) {
+                    try {
+                      credentialsDb.delete(parsed.service, parsed.type);
+                    } catch (cleanupErr) {
+                      capturePluginError(cleanupErr as Error, {
+                        subsystem: "cli",
+                        operation: "runDistillForCli:credential-compensating-delete",
+                      });
+                    }
+                  }
+                  continue;
+                }
+                if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+                  if (storedInVault) {
+                    try {
+                      credentialsDb.delete(parsed.service, parsed.type);
+                    } catch (cleanupErr) {
+                      capturePluginError(cleanupErr as Error, {
+                        subsystem: "cli",
+                        operation: "runDistillForCli:credential-compensating-delete",
+                      });
+                    }
+                  }
+                  continue;
+                }
                 const entry = storeResult.entry;
                 // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
                 await cleanupEvictedVector({
@@ -752,6 +793,10 @@ export async function runDistillForCli(
         if (storeResult.skipped) {
           continue;
         }
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+          skipped++;
+          continue;
+        }
         const entry = storeResult.entry;
         // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
         await cleanupEvictedVector({
@@ -788,7 +833,7 @@ export async function runDistillForCli(
       sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
     }
-    if (!opts.dryRun && runSucceeded) {
+    if (!opts.dryRun && shouldAdvanceCursor) {
       // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
       const lastSessionTs = getMaxMtime(allCandidatePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);

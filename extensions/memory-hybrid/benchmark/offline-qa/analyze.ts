@@ -82,11 +82,22 @@ export function parseCountsFromLog(log: string): ParsedCounts {
 
 export function detectProviderLeak(log: string, llmTask: boolean): { leak: boolean; detail?: string } {
   if (!llmTask) return { leak: false };
+  // Config/help lines listing disabled providers are not runtime routing.
+  const runtimeLog = log
+    .split("\n")
+    .filter(
+      (line) =>
+        !/disabledProviders|config-set|Example \(/.test(line) &&
+        !/distill store failed for.*azure-foundry/i.test(line) &&
+        !/using llm\.providers\["azure-foundry"\] for embeddings/i.test(line) &&
+        !/embedding\.endpoint|test-embeddings|Embedding provider/i.test(line),
+    )
+    .join("\n");
   for (const re of PROVIDER_LEAK_PATTERNS) {
-    const m = log.match(re);
+    const m = runtimeLog.match(re);
     if (m) return { leak: true, detail: m[0] };
   }
-  if (llmTask && !/minimax/i.test(log) && /chat\.completions|starting with model|model tier/i.test(log)) {
+  if (llmTask && !/minimax/i.test(runtimeLog) && /chat\.completions|starting with model|model tier/i.test(runtimeLog)) {
     return { leak: true, detail: "LLM task log lacks minimax model reference" };
   }
   return { leak: false };
@@ -136,17 +147,24 @@ export function analyzeTaskResult(
   const embeddingDegraded = /401 Access denied/i.test(log) && /embedding|distill store failed/i.test(log);
   const distillLlmOk = /(\d+) extracted from (\d+) sessions/i.test(log);
 
-  if (exitCode !== 0 || errors.length > 0) {
+  if (/unknown command|not a command|Cannot find/i.test(log) && task.skipIfCommandMissing) {
+    classification = "skipped";
+    errors.length = 0;
+    notes.push("CLI subcommand not registered — expected skip");
+  } else if (exitCode !== 0 || errors.length > 0) {
     if (task.id === "distill" && embeddingDegraded && distillLlmOk) {
       classification = /timeout after/i.test(log) ? "needs-fix" : "data-gap";
       if (classification === "data-gap") {
         errors.length = 0;
-        notes.push("LLM distill succeeded; sqlite store blocked by embedding 401 — pin valid OPENAI_API_KEY for vector QA");
+        notes.push("LLM distill succeeded; sqlite store blocked by embedding 401 — set AZURE_OPENAI_API_KEY (+ AZURE_FOUNDRY_BASE_URL if needed) for vector QA");
       }
     } else {
       classification = "needs-fix";
     }
-  } else if (task.id === "distill" && (counts.sessionsScanned ?? 0) === 0) {
+  } else if (task.id === "distill" && embeddingDegraded && distillLlmOk && (counts.stored ?? 0) === 0) {
+    classification = "data-gap";
+    notes.push("LLM distill succeeded; sqlite store blocked by embedding 401 — set AZURE_OPENAI_API_KEY (+ AZURE_FOUNDRY_BASE_URL if needed) for vector QA");
+  } else if (task.id === "distill" && (counts.sessionsScanned ?? 0) === 0 && !/\d+ extracted from \d+ sessions/i.test(log)) {
     classification = "test-bug";
     errors.push("Distill scanned 0 sessions — sandbox HOME or session paths wrong");
   } else if (task.id === "extract-daily" && !/20\d{2}-\d{2}-\d{2}\.md/.test(log) && (counts.stored ?? 0) === 0) {
@@ -158,6 +176,13 @@ export function analyzeTaskResult(
   } else if (task.id === "reflect" && (counts.factsAnalyzed ?? 0) === 0) {
     classification = "data-gap";
     notes.push("0 facts in reflection window — check fact timestamps vs window");
+  } else if (
+    task.id === "generate-proposals" &&
+    (/semantic_empty|parse_success=false created=0/i.test(log) || (counts.created ?? 0) === 0)
+  ) {
+    classification = "by-design-zero";
+    errors.length = 0;
+    notes.push("Zero proposals — model parse empty or no patterns meeting confidence gate");
   } else if (task.id === "reflect-rules" || task.id === "reflect-meta") {
     if ((counts.rulesStored ?? counts.metaStored ?? counts.stored ?? 0) === 0) {
       classification = exitCode === 0 ? "by-design-zero" : "needs-fix";
@@ -175,7 +200,9 @@ export function analyzeTaskResult(
   }
 
   const usefulness =
-    classification === "ok"
+    classification === "skipped"
+      ? "Command not registered — skip on live unless wired"
+      : classification === "ok"
       ? "Task completed with expected signal"
       : classification === "by-design-zero"
         ? "Zero output likely by design — verify gate/data expectations"

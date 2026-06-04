@@ -3,7 +3,7 @@
  * Offline QA orchestrator — run maintenance tasks against copied Maeve data.
  *
  * Usage:
- *   MINIMAX_API_KEY=... OPENAI_API_KEY=... npm run offline-qa
+ *   MINIMAX_API_KEY=... AZURE_OPENAI_API_KEY=... npm run offline-qa
  *   npm run offline-qa -- --skip-ab          # skip A/B matrix (LLM cost)
  *   npm run offline-qa -- --live             # write to work-copy DB (not raw)
  *   npm run offline-qa -- --setup            # re-run setup-sandbox.sh first
@@ -43,10 +43,12 @@ import { buildDecisionReport } from "../ab-maintenance/decide.js";
 import type { AbRunResult } from "../ab-maintenance/types.js";
 import { setEnv, getEnv } from "../../utils/env-manager.js";
 import type { QaPhaseResult, QaReport } from "./types.js";
+import { loadOfflineQaSecrets } from "./load-secrets.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = join(__dirname, "../..");
 const QA_ROOT = join(PLUGIN_ROOT, ".offline-qa");
+loadOfflineQaSecrets(QA_ROOT);
 const RAW = join(QA_ROOT, "raw");
 const SANDBOX_TEMPLATE = join(QA_ROOT, "sandbox");
 const SANDBOX_WORK_DEFAULT = join(QA_ROOT, "sandbox-work");
@@ -146,9 +148,9 @@ async function main(): Promise<void> {
       if (!getEnv("MINIMAX_API_KEY")?.trim()) {
         report.warnings.push("MINIMAX_API_KEY unset — A/B matrix and live LLM maintenance will be skipped.");
       }
-      const embedKey = getEnv("OPENAI_API_KEY")?.trim() || getEnv("MINIMAX_API_KEY")?.trim();
+      const embedKey = getEnv("AZURE_OPENAI_API_KEY")?.trim();
       if (!embedKey) {
-        report.warnings.push("No embedding API key — full DB bootstrap may fail.");
+        report.warnings.push("AZURE_OPENAI_API_KEY unset — embedding / vector store steps may fail.");
       }
       return {
         name: "preflight",
@@ -211,8 +213,9 @@ async function main(): Promise<void> {
   }
 
   // --- Full maintenance tasks on work-copy DB ---
-  const embedKey = getEnv("OPENAI_API_KEY")?.trim() || getEnv("MINIMAX_API_KEY")?.trim();
-  if (embedKey) {
+  const azureEmbedKey = getEnv("AZURE_OPENAI_API_KEY")?.trim();
+  const minimaxKey = getEnv("MINIMAX_API_KEY")?.trim();
+  if (azureEmbedKey || minimaxKey) {
     report.phases.push(
       await phase("maintenance-tasks", async () => {
         const memoryDir = join(activeHome, ".openclaw/memory");
@@ -395,14 +398,17 @@ function buildQaConfig(workFacts: string, lancePath: string) {
     ? (JSON.parse(readFileSync(TIER_SNIPPET, "utf-8")) as Record<string, unknown>)
     : {};
   const { _comment: _, ...tierFields } = snippet;
-  const embedKey =
-    getEnv("OPENAI_API_KEY")?.trim() ||
-    getEnv("MINIMAX_API_KEY")?.trim() ||
-    "sk-offline-qa-placeholder-key-0000000000";
+  const azureKey =
+    getEnv("AZURE_OPENAI_API_KEY")?.trim() ||
+    "azure-offline-qa-placeholder-key-000000000000";
+  const afBase =
+    getEnv("AZURE_FOUNDRY_BASE_URL")?.trim() ||
+    getEnv("AZURE_OPENAI_BASE_URL")?.trim() ||
+    "https://rnd-api-gateway.azure-api.net/ai";
   return hybridConfigSchema.parse({
     embedding: {
-      apiKey: embedKey,
-      model: "text-embedding-3-small",
+      provider: "openai",
+      model: "text-embedding-3-large",
     },
     sqlitePath: workFacts,
     lanceDbPath: lancePath,
@@ -416,7 +422,8 @@ function buildQaConfig(workFacts: string, lancePath: string) {
     llm: {
       ...(tierFields.llm as object | undefined),
       providers: {
-        minimax: { apiKey: getEnv("MINIMAX_API_KEY")?.trim() ?? embedKey },
+        minimax: { apiKey: getEnv("MINIMAX_API_KEY")?.trim() ?? azureKey },
+        "azure-foundry": { apiKey: azureKey, baseURL: afBase },
       },
     },
   });

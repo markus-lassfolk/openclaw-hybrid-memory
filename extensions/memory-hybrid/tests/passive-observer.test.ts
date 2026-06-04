@@ -19,9 +19,33 @@ import {
   isPassiveObserverTranscriptCandidate,
   loadCursors,
   parseObserverResponse,
+  deriveObserverSessionKey,
+  listPassiveObserverSessionFilePaths,
   runPassiveObserver,
   saveCursors,
 } from "../services/passive-observer.js";
+
+/** Mock factsDb.storeWithResult wired to an optional store spy (passive-observer uses storeWithResult). */
+function mockFactsDbStore(overrides: Record<string, unknown> = {}) {
+  const store =
+    (overrides.store as ReturnType<typeof vi.fn> | undefined) ??
+    vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` });
+  const storeWithResult =
+    (overrides.storeWithResult as ReturnType<typeof vi.fn> | undefined) ??
+    vi.fn((args: Record<string, unknown>) => {
+      const entry = store(args);
+      return {
+        skipped: false,
+        newlyStored: true,
+        embeddingStale: false,
+        evictedFactId: null,
+        preMergeText: null,
+        entry,
+      };
+    });
+  const { store: _s, storeWithResult: _swr, ...rest } = overrides;
+  return { store, storeWithResult, ...rest };
+}
 
 // ---------------------------------------------------------------------------
 // 0. Session file eligibility (OpenClaw checkpoint sidecars)
@@ -47,6 +71,43 @@ describe("isPassiveObserverTranscriptCandidate", () => {
 
   it("rejects non-jsonl", () => {
     expect(isPassiveObserverTranscriptCandidate("readme.txt")).toBe(false);
+  });
+});
+
+describe("listPassiveObserverSessionFilePaths", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = join(tmpdir(), `observer-list-test-${randomUUID()}`);
+    mkdirSync(join(tmpDir, "agents", "main", "sessions"), { recursive: true });
+    mkdirSync(join(tmpDir, "agents", "worker", "sessions"), { recursive: true });
+    writeFileSync(join(tmpDir, "agents", "main", "sessions", "main-sess.jsonl"), "{}\n");
+    writeFileSync(join(tmpDir, "agents", "worker", "sessions", "worker-sess.jsonl"), "{}\n");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("scans a single configured sessions dir only", () => {
+    const dir = join(tmpDir, "agents", "main", "sessions");
+    const { filePaths, multiAgentScan } = listPassiveObserverSessionFilePaths(dir, undefined);
+    expect(multiAgentScan).toBe(false);
+    expect(filePaths).toHaveLength(1);
+    expect(filePaths[0]).toContain("main-sess.jsonl");
+  });
+
+  it("derives agent-relative session keys when multi-agent scanning", () => {
+    const key = deriveObserverSessionKey(
+      join(tmpDir, ".openclaw", "agents", "worker", "sessions", "abc.jsonl"),
+      true,
+    );
+    expect(key).toBe("worker/sessions/abc");
+  });
+
+  it("derives basename session keys for single-dir scanning", () => {
+    const key = deriveObserverSessionKey(join(tmpDir, "agents", "main", "sessions", "abc.jsonl"), false);
+    expect(key).toBe("abc");
   });
 });
 
@@ -305,8 +366,7 @@ describe("runPassiveObserver", () => {
 
   const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
     getRecentFacts: vi.fn().mockReturnValue([]),
-    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
-    ...overrides,
+    ...mockFactsDbStore(overrides),
   });
 
   const makeVectorDb = (searchResults: unknown[] = []) => ({
@@ -436,7 +496,7 @@ describe("runPassiveObserver", () => {
     // Fact was extracted but deduplicated — not stored
     expect(result.factsExtracted).toBe(1);
     expect(result.factsStored).toBe(0);
-    expect(factsDb.store).not.toHaveBeenCalled();
+    expect(factsDb.storeWithResult).not.toHaveBeenCalled();
     // vectorDb.search was called once for the candidate fact
     expect(vectorDb.search).toHaveBeenCalledTimes(1);
     expect(vectorDb.search).toHaveBeenCalledWith(expect.any(Array), 1, expect.any(Number));
@@ -462,7 +522,7 @@ describe("runPassiveObserver", () => {
     expect(before["cursor-test"]).toBeUndefined();
   });
 
-  it("dryRun mode does not call factsDb.store", async () => {
+  it("dryRun mode does not call factsDb.storeWithResult", async () => {
     const sessionContent = `${JSON.stringify({
       message: { role: "user", content: "The system is built with TypeScript and Node.js" },
     })}\n`;
@@ -476,8 +536,8 @@ describe("runPassiveObserver", () => {
     // here we confirm the opts interface accepts dryRun flag
     const opts = { model: "test-model", dbDir: tmpDir, dryRun: true };
     expect(opts.dryRun).toBe(true);
-    // factsDb.store should not be called in dry-run mode (tested by service)
-    expect(factsDb.store).not.toHaveBeenCalled();
+    // factsDb.storeWithResult should not be called in dry-run mode (tested by service)
+    expect(factsDb.storeWithResult).not.toHaveBeenCalled();
   });
 
   it("stores extracted facts end-to-end with mocked LLM + DBs", async () => {
@@ -515,7 +575,7 @@ describe("runPassiveObserver", () => {
 
     expect(result.factsExtracted).toBe(1);
     expect(result.factsStored).toBe(1);
-    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    expect(factsDb.storeWithResult).toHaveBeenCalledTimes(1);
     expect(vectorDb.store).toHaveBeenCalledTimes(1);
 
     chatSpy.mockRestore();
@@ -543,11 +603,10 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
 
   const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
     getRecentFacts: vi.fn().mockReturnValue([]),
-    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
     detectContradictions: vi.fn(),
     setEmbeddingModel: vi.fn(),
     boostConfidence: vi.fn().mockReturnValue(false),
-    ...overrides,
+    ...mockFactsDbStore(overrides),
   });
 
   const makeVectorDb = (searchResults: unknown[] = []) => ({
@@ -722,7 +781,7 @@ describe("runPassiveObserver — LanceDB dedup (Issue #499)", () => {
 
     // Fact stored despite search failure (graceful fallback)
     expect(result.factsStored).toBe(1);
-    expect(factsDb.store).toHaveBeenCalledTimes(1);
+    expect(factsDb.storeWithResult).toHaveBeenCalledTimes(1);
 
     chatSpy.mockRestore();
   });
@@ -779,10 +838,9 @@ describe("runPassiveObserver event_log integration", () => {
 
   const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
     getRecentFacts: vi.fn().mockReturnValue([]),
-    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
     detectContradictions: vi.fn(),
     setEmbeddingModel: vi.fn(),
-    ...overrides,
+    ...mockFactsDbStore(overrides),
   });
 
   const makeVectorDb = () => ({
@@ -898,7 +956,7 @@ describe("runPassiveObserver event_log integration", () => {
     chatSpy.mockRestore();
   });
 
-  it("writes to event_log before factsDb.store (Layer 1 write order)", async () => {
+  it("writes to event_log before factsDb.storeWithResult (Layer 1 write order)", async () => {
     const sessionContent = `${JSON.stringify({ message: { role: "user", content: "We use Postgres as our primary database." } })}\n`;
     writeFileSync(join(sessionsDir, "sess-order.jsonl"), sessionContent);
 
@@ -917,9 +975,11 @@ describe("runPassiveObserver event_log integration", () => {
     };
     const factsDb = {
       getRecentFacts: vi.fn().mockReturnValue([]),
-      store: vi.fn().mockImplementation(() => {
-        callOrder.push("factsDb.store");
-        return { id: "fact-1" };
+      ...mockFactsDbStore({
+        store: vi.fn().mockImplementation(() => {
+          callOrder.push("factsDb.storeWithResult");
+          return { id: "fact-1" };
+        }),
       }),
       detectContradictions: vi.fn(),
       setEmbeddingModel: vi.fn(),
@@ -938,8 +998,8 @@ describe("runPassiveObserver event_log integration", () => {
     );
 
     expect(eventLog.append).toHaveBeenCalledTimes(1);
-    expect(factsDb.store).toHaveBeenCalledTimes(1);
-    expect(callOrder).toEqual(["eventLog.append", "factsDb.store"]);
+    expect(factsDb.storeWithResult).toHaveBeenCalledTimes(1);
+    expect(callOrder).toEqual(["eventLog.append", "factsDb.storeWithResult"]);
 
     chatSpy.mockRestore();
   });
@@ -1191,10 +1251,9 @@ describe("runPassiveObserver identity fact promotion", () => {
 
   const makeFactsDb = (overrides: Record<string, unknown> = {}) => ({
     getRecentFacts: vi.fn().mockReturnValue([]),
-    store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
     detectContradictions: vi.fn(),
     setEmbeddingModel: vi.fn(),
-    ...overrides,
+    ...mockFactsDbStore(overrides),
   });
 
   const makeVectorDb = () => ({
@@ -1243,8 +1302,8 @@ describe("runPassiveObserver identity fact promotion", () => {
       logger,
     );
 
-    expect(factsDb.store).toHaveBeenCalledTimes(1);
-    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(factsDb.storeWithResult).toHaveBeenCalledTimes(1);
+    const stored = factsDb.storeWithResult.mock.calls[0][0] as Record<string, unknown>;
     expect(stored.scope).toBe("global");
     expect(stored.decayClass).toBe("permanent");
     expect(stored.importance).toBeGreaterThanOrEqual(0.9);
@@ -1281,8 +1340,8 @@ describe("runPassiveObserver identity fact promotion", () => {
       makeLogger(),
     );
 
-    expect(factsDb.store).toHaveBeenCalledTimes(1);
-    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(factsDb.storeWithResult).toHaveBeenCalledTimes(1);
+    const stored = factsDb.storeWithResult.mock.calls[0][0] as Record<string, unknown>;
     expect(stored.scope).toBe("session");
     expect(stored.decayClass).toBe("session");
     expect(stored.scopeTarget).toBeDefined();
@@ -1314,8 +1373,8 @@ describe("runPassiveObserver identity fact promotion", () => {
       makeLogger(),
     );
 
-    expect(factsDb.store).toHaveBeenCalledTimes(1);
-    const stored = factsDb.store.mock.calls[0][0] as Record<string, unknown>;
+    expect(factsDb.storeWithResult).toHaveBeenCalledTimes(1);
+    const stored = factsDb.storeWithResult.mock.calls[0][0] as Record<string, unknown>;
     expect(stored.scope).toBe("global");
     expect(stored.decayClass).toBe("permanent");
 

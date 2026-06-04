@@ -224,44 +224,64 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
   const prepared = prepareMaintenanceCall(opts);
   const thinkingOn = isMiniMaxThinkingEnabled(opts.thinkingMode);
 
+  // Skip primary when input exceeds its context window — fallbacks are already filtered for fit.
+  let callModel = opts.model;
+  let callFallbacks = prepared.fallbackModels;
+  const primaryLimit = distillBatchTokenLimit(opts.model);
+  if (prepared.inputTokens > primaryLimit) {
+    if (callFallbacks.length === 0) {
+      throw new Error(
+        `${opts.label}: input (~${prepared.inputTokens} tokens) exceeds primary model limit (${primaryLimit}) and no compatible fallbacks remain`,
+      );
+    }
+    callModel = callFallbacks[0];
+    callFallbacks = callFallbacks.slice(1);
+    opts.logger.warn?.(
+      `${opts.label}: primary ${opts.model} cannot fit ~${prepared.inputTokens} input tokens (limit ${primaryLimit}); using ${callModel} first`,
+    );
+  }
+
   opts.logger.info?.(
-    `${opts.label}: starting with model ${opts.model} (source=${opts.modelSource ?? "configured"}; adaptive=${prepared.enabled ? prepared.effective.source : "disabled"}; inputTokens≈${prepared.inputTokens}; maxTokens=${prepared.maxTokens}; thinking=${opts.thinkingMode ?? "default"}; timeoutMs=${resolveMaintenanceChatTimeoutMs(opts.model, opts.thinkingMode)})`,
+    `${opts.label}: starting with model ${callModel}${callModel !== opts.model ? ` (promoted from fallback; configured=${opts.model})` : ""} (source=${opts.modelSource ?? "configured"}; adaptive=${prepared.enabled ? prepared.effective.source : "disabled"}; inputTokens≈${prepared.inputTokens}; maxTokens=${prepared.maxTokens}; thinking=${opts.thinkingMode ?? "default"}; timeoutMs=${resolveMaintenanceChatTimeoutMs(callModel, opts.thinkingMode)})`,
   );
   opts.logger.info?.(
-    `${opts.label}: fallback chain = [${prepared.fallbackModels.length > 0 ? prepared.fallbackModels.join(", ") : ""}]`,
+    `${opts.label}: fallback chain = [${callFallbacks.length > 0 ? callFallbacks.join(", ") : ""}]`,
   );
+
+  const callOpts = callModel === opts.model ? opts : { ...opts, model: callModel };
 
   try {
     if (thinkingOn) {
       try {
-        const detail = await callMaintenanceDetailed(opts, prepared, opts.thinkingMode, []);
+        const detail = await callMaintenanceDetailed(callOpts, prepared, opts.thinkingMode, []);
         recordMaintenanceSuccess(opts, prepared, detail);
-        if (detail.modelUsed !== opts.model) {
+        if (detail.modelUsed !== callModel) {
           opts.logger.info?.(`${opts.label}: succeeded with fallback model ${detail.modelUsed}`);
         }
         return detail;
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
-        if (classifyAdaptiveFailure(error) !== "timeout") {
-          const detail = await callMaintenanceDetailed(opts, prepared, opts.thinkingMode, prepared.fallbackModels);
+        const failureKind = classifyAdaptiveFailure(error);
+        if (failureKind !== "timeout" && failureKind !== "context_length") {
+          const detail = await callMaintenanceDetailed(callOpts, prepared, opts.thinkingMode, callFallbacks);
           recordMaintenanceSuccess(opts, prepared, detail);
-          if (detail.modelUsed !== opts.model) {
+          if (detail.modelUsed !== callModel) {
             opts.logger.info?.(`${opts.label}: succeeded with fallback model ${detail.modelUsed}`);
           }
           return detail;
         }
         opts.logger.warn?.(
-          `${opts.label}: thinking=${opts.thinkingMode} timed out on ${opts.model}, retrying with thinking=disabled`,
+          `${opts.label}: thinking=${opts.thinkingMode} failed (${failureKind}) on ${callModel}, retrying with thinking=disabled`,
         );
         try {
-          const detail = await callMaintenanceDetailed(opts, prepared, "disabled", []);
+          const detail = await callMaintenanceDetailed(callOpts, prepared, "disabled", []);
           recordMaintenanceSuccess(opts, prepared, detail);
           opts.logger.info?.(`${opts.label}: succeeded after thinking downgrade (disabled)`);
           return detail;
         } catch (disabledErr) {
-          const detail = await callMaintenanceDetailed(opts, prepared, "disabled", prepared.fallbackModels);
+          const detail = await callMaintenanceDetailed(callOpts, prepared, "disabled", callFallbacks);
           recordMaintenanceSuccess(opts, prepared, detail);
-          if (detail.modelUsed !== opts.model) {
+          if (detail.modelUsed !== callModel) {
             opts.logger.info?.(`${opts.label}: succeeded with fallback model ${detail.modelUsed} after thinking downgrade`);
           }
           return detail;
@@ -269,9 +289,9 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
       }
     }
 
-    const detail = await callMaintenanceDetailed(opts, prepared, opts.thinkingMode, prepared.fallbackModels);
+    const detail = await callMaintenanceDetailed(callOpts, prepared, opts.thinkingMode, callFallbacks);
     recordMaintenanceSuccess(opts, prepared, detail);
-    if (detail.modelUsed !== opts.model) {
+    if (detail.modelUsed !== callModel) {
       opts.logger.info?.(`${opts.label}: succeeded with fallback model ${detail.modelUsed}`);
     }
     return detail;

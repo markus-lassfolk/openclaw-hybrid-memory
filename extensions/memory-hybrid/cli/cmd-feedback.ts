@@ -1006,6 +1006,9 @@ export async function runExtractImplicitFeedbackForCli(
           if (storeResult.skipped) {
             continue;
           }
+          if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+            continue;
+          }
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
           await cleanupEvictedVector({
             vectorDb: vectorDb,
@@ -1180,6 +1183,9 @@ export async function runExtractImplicitFeedbackForCli(
                     decayClass: "normal",
                   });
                   if (storeResult.skipped) {
+                    continue;
+                  }
+                  if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
                     continue;
                   }
                   if (storeResult.evictedFactId) {
