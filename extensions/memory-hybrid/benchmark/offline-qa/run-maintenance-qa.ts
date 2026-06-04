@@ -7,10 +7,10 @@
  *   npm run offline-qa:maintenance -- --phase full --resume
  *   npm run offline-qa:maintenance -- --redo distill --phase full
  */
-import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { spawn, spawnSync } from "../../utils/process-runner.js";
 import { analyzeTaskResult, renderTaskAnalysisMarkdown, type TaskAnalysis } from "./analyze.js";
 import { loadOfflineQaSecrets } from "./load-secrets.js";
 import { QA_PHASE_TIMEOUT_MS, QA_TASK_PLAN, type QaPhase, type QaTaskClassification } from "./qa-tasks.js";
