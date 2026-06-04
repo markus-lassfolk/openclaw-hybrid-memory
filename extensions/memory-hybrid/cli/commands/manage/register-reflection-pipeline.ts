@@ -1182,9 +1182,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 details: "openclaw hybrid-mem resolve-contradictions --auto --details",
                 projectStateLwwDryRun: "openclaw hybrid-mem resolve-contradictions --project-state-lww --dry-run",
                 autoApply:
-                  autoResolvedCount > 0
-                    ? "openclaw hybrid-mem resolve-contradictions --auto --apply"
-                    : undefined,
+                  autoResolvedCount > 0 ? "openclaw hybrid-mem resolve-contradictions --auto --apply" : undefined,
                 exportReview:
                   ambiguousCount > 0
                     ? "openclaw hybrid-mem resolve-contradictions --auto --dry-run --export-review <path>"

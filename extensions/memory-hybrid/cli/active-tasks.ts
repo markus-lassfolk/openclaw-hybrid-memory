@@ -514,19 +514,13 @@ export async function runActiveTaskReconcile(
 
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
-    const result = await reconcileActiveTaskInProgressSessionsFacts(
-      factsDb,
-      vectorDb,
-      embeddings,
-      ctx.staleMinutes,
-      {
-        flushOnComplete: ctx.flushOnComplete,
-        memoryDir: ctx.memoryDir,
-        dryRun,
-        openclawHome: opts.openclawHome,
-        progress,
-      },
-    );
+    const result = await reconcileActiveTaskInProgressSessionsFacts(factsDb, vectorDb, embeddings, ctx.staleMinutes, {
+      flushOnComplete: ctx.flushOnComplete,
+      memoryDir: ctx.memoryDir,
+      dryRun,
+      openclawHome: opts.openclawHome,
+      progress,
+    });
 
     let liveState: ActiveTaskReconcileResult["liveState"];
     if (!dryRun && cfg.activeTask.liveStateReconcile.enabled) {
@@ -579,7 +573,7 @@ export async function runActiveTaskReconcile(
     ledger: "markdown",
     reconciledLabels: result.reconciledLabels,
     candidates: result.candidates,
-    reconciled: dryRun ? result.candidates : (result.wrote ? result.reconciledLabels.length : 0),
+    reconciled: dryRun ? result.candidates : result.wrote ? result.reconciledLabels.length : 0,
     skipped: result.skipped,
     failed: result.failed,
     scanned: result.scanned,
@@ -622,13 +616,10 @@ function printActiveTaskReconcile(result: ActiveTaskReconcileResult, log: (msg: 
         `✅ Live-state reconcile: marked ${updatedCount} task(s) done (checked ${checkedCount}, skipped ${skippedCount})`,
       );
     } else {
-      log(
-        `✅ Live-state reconcile: no terminal states found (checked ${checkedCount}, skipped ${skippedCount})`,
-      );
+      log(`✅ Live-state reconcile: no terminal states found (checked ${checkedCount}, skipped ${skippedCount})`);
     }
   }
 }
-
 
 function createMaintainLineEmitter(jsonMode?: boolean): (line: string) => void {
   const target = jsonMode ? process.stderr : process.stdout;
@@ -685,7 +676,11 @@ export async function runActiveTaskRender(
   };
 }
 
-function printActiveTaskStaleSummary(result: ActiveTaskStaleResult, log: (msg: string) => void = console.log, headingPrefix = ""): void {
+function printActiveTaskStaleSummary(
+  result: ActiveTaskStaleResult,
+  log: (msg: string) => void = console.log,
+  headingPrefix = "",
+): void {
   if (result.total === 0) {
     log("✅ No stale tasks.");
     return;
@@ -705,7 +700,9 @@ function summarizeReconcileLine(result: ActiveTaskReconcileResult): string {
 function summarizeHygieneLine(result: ActiveTaskHygieneResult): string {
   const audit = result.auditFactId ? ` auditFact=${result.auditFactId}` : "";
   const failed = result.dryRun ? 0 : Math.max(0, result.actions.length - result.appliedCount);
-  const skipped = result.dryRun ? result.actions.length : Math.max(0, result.actions.length - result.appliedCount - failed);
+  const skipped = result.dryRun
+    ? result.actions.length
+    : Math.max(0, result.actions.length - result.appliedCount - failed);
   return `active-tasks hygiene: actions=${result.actions.length} applied=${result.appliedCount} skipped=${skipped} failed=${failed}${audit}`;
 }
 
@@ -1088,15 +1085,10 @@ export function registerActiveTaskCommands(
 
   activeTasks
     .command("maintain")
-    .description(
-      "Run reconcile + hygiene (+ optional render/stale summary) in one plugin process (#1865)",
-    )
+    .description("Run reconcile + hygiene (+ optional render/stale summary) in one plugin process (#1865)")
     .option("--apply", "Apply reconcile/hygiene mutations (default: dry-run/report only)")
     .option("--dry-run", "Report planned reconcile/hygiene actions without mutations")
-    .option(
-      "--qa",
-      "Operator QA: before-stale + dry-run summaries + apply + render + final stale summary",
-    )
+    .option("--qa", "Operator QA: before-stale + dry-run summaries + apply + render + final stale summary")
     .option("--render", "Write ACTIVE-TASKS.md projection after apply (facts ledger)")
     .option("--stale-summary", "Print stale task summary after maintenance")
     .option("--before-stale", "Print stale task summary before mutations")

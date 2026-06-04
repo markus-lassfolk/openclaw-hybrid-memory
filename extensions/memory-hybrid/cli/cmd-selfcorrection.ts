@@ -243,10 +243,12 @@ function extractSelfCorrectionRemediationArray(value: unknown): unknown[] | null
   if (Array.isArray(parsed)) {
     if (parsed.length === 0) return parsed;
     if (isSelfCorrectionRemediationArray(parsed)) return parsed;
+    const accumulated: unknown[] = [];
     for (const item of parsed) {
       const nested = extractSelfCorrectionRemediationArray(item);
-      if (nested && nested.length > 0) return nested;
+      if (nested && nested.length > 0) accumulated.push(...nested);
     }
+    if (accumulated.length > 0) return accumulated;
     return null;
   }
   if (!parsed || typeof parsed !== "object") return null;
@@ -780,6 +782,15 @@ export async function runSelfCorrectionRunForCli(
             (parseError as any).isParseFailure = true;
             throw parseError;
           }
+          if (batchAnalysed.length === 0 && batch.length > 0) {
+            diagnostics.parseFailures++;
+            const excerpt = sanitizeLlmResponseExcerpt(content);
+            const emptyError = new Error(
+              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} returned zero items for ${batch.length} incident(s). excerpt="${excerpt}"`,
+            );
+            (emptyError as any).isParseFailure = true;
+            throw emptyError;
+          }
           diagnostics.parsedItems += batchAnalysed.length;
           analysed.push(...batchAnalysed);
           completedBatchIndexes.add(batchIndex);
@@ -841,6 +852,15 @@ export async function runSelfCorrectionRunForCli(
             );
             (parseError as any).isParseFailure = true;
             throw parseError;
+          }
+          if (batchAnalysed.length === 0 && batch.length > 0) {
+            diagnostics.parseFailures++;
+            const excerpt = sanitizeLlmResponseExcerpt(detail.content);
+            const emptyError = new Error(
+              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} returned zero items for ${batch.length} incident(s). excerpt="${excerpt}"`,
+            );
+            (emptyError as any).isParseFailure = true;
+            throw emptyError;
           }
           diagnostics.parsedItems += batchAnalysed.length;
           analysed.push(...batchAnalysed);

@@ -874,13 +874,7 @@ describe("maintenance log analyzer", () => {
     mkdirSync(day, { recursive: true });
     const exitPath = join(day, "nightly-distill-20260601T060000Z-123.exit.txt");
     const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
-    writeFileSync(
-      exitPath,
-      [
-        "2026-06-01T06:00:01Z distill exit=1",
-        "2026-06-01T06:00:02Z distill exit=1",
-      ].join("\n"),
-    );
+    writeFileSync(exitPath, ["2026-06-01T06:00:01Z distill exit=1", "2026-06-01T06:00:02Z distill exit=1"].join("\n"));
     writeFileSync(logPath, "TypeError: Cannot read properties of undefined\n");
 
     const outPath = join(root, "report.json");

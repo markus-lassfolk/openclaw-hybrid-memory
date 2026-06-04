@@ -185,10 +185,7 @@ describe("task-ledger-facts", () => {
       const valid = new Map<string, MemoryEntry>();
       valid.set("status", fact({ id: "s1", entity: "task-valid", key: "status", value: "in_progress", createdAt: 1 }));
       valid.set("title", fact({ id: "t1", entity: "task-valid", key: "title", value: "Valid handoff", createdAt: 1 }));
-      valid.set(
-        "handoff",
-        fact({ id: "h1", entity: "task-valid", key: "handoff", value: validHandoff, createdAt: 1 }),
-      );
+      valid.set("handoff", fact({ id: "h1", entity: "task-valid", key: "handoff", value: validHandoff, createdAt: 1 }));
 
       const invalid = new Map<string, MemoryEntry>();
       invalid.set(
@@ -215,7 +212,9 @@ describe("task-ledger-facts", () => {
         signal: "completed",
       });
       expect(active.find((task) => task.label === "task-invalid")?.handoff).toBeUndefined();
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to parse active-task handoff JSON for task-invalid"));
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to parse active-task handoff JSON for task-invalid"),
+      );
     } finally {
       resetPluginLogger();
     }

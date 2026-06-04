@@ -161,7 +161,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const db = new FactsDB(":memory:");
     const proposalsDb = new ProposalsDB(":memory:");
     insertScopedPattern(db, "global", null, "global pattern");
-    const chatSpy = vi.spyOn(chatService, "chatCompleteWithRetryDetailed").mockRejectedValue(new Error("forced failure"));
+    const chatSpy = vi
+      .spyOn(chatService, "chatCompleteWithRetryDetailed")
+      .mockRejectedValue(new Error("forced failure"));
 
     const ctx = makeCtx(db, proposalsDb, {
       configOverrides: {
@@ -187,7 +189,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const db = new FactsDB(":memory:");
     const proposalsDb = new ProposalsDB(":memory:");
     insertScopedPattern(db, "global", null, "global pattern");
-    const chatSpy = vi.spyOn(chatService, "chatCompleteWithRetryDetailed").mockRejectedValue(new Error("forced failure"));
+    const chatSpy = vi
+      .spyOn(chatService, "chatCompleteWithRetryDetailed")
+      .mockRejectedValue(new Error("forced failure"));
 
     const ctx = makeCtx(db, proposalsDb, {
       configOverrides: {

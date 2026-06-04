@@ -57,7 +57,11 @@ function makeOpenAIMock(responseText: string) {
   } as any;
 }
 
-function makeOpenAIFailoverMock(primaryModel: string, fallbackModel: string, responseText = JSON.stringify([SAMPLE_REMEDIATION])) {
+function makeOpenAIFailoverMock(
+  primaryModel: string,
+  fallbackModel: string,
+  responseText = JSON.stringify([SAMPLE_REMEDIATION]),
+) {
   return {
     chat: {
       completions: {
@@ -335,8 +339,6 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/excerpt=/);
   });
 
-
-
   it("accepts MiniMax M3-style nested arguments payload without losing analysed items", async () => {
     const llmContent = JSON.stringify({ arguments: { items: [SAMPLE_REMEDIATION] } });
     const ctx = makeCtx(makeOpenAIMock(llmContent));
@@ -391,8 +393,6 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/zero parsed\/analysed/i);
   });
 
-
-
   it("retries transient Request was aborted failures with backoff without lowering maxTokens", async () => {
     const openai = {
       chat: {
@@ -418,8 +418,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.status).toBe("success_analyzed");
     expect(res.retryCount).toBe(1);
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
-    const callBodies = ((openai.chat.completions.create as any).mock?.calls ?? []).map((args: unknown[]) =>
-      args[0] as { max_tokens?: number; max_completion_tokens?: number },
+    const callBodies = ((openai.chat.completions.create as any).mock?.calls ?? []).map(
+      (args: unknown[]) => args[0] as { max_tokens?: number; max_completion_tokens?: number },
     );
     const tokenBudgets = callBodies.map(
       (body: { max_tokens?: number; max_completion_tokens?: number }) => body.max_tokens ?? body.max_completion_tokens,
@@ -456,9 +456,9 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     });
     expect(first.error).toBeDefined();
     const reportsDir = join(tmpDir, "memory", "reports");
-    const stateFile = (await import("node:fs")).readdirSync(reportsDir).find((name) =>
-      name.startsWith("self-correction-run-state-"),
-    );
+    const stateFile = (await import("node:fs"))
+      .readdirSync(reportsDir)
+      .find((name) => name.startsWith("self-correction-run-state-"));
     expect(stateFile).toBeDefined();
     const statePath = join(reportsDir, stateFile as string);
     expect(existsSync(statePath)).toBe(true);

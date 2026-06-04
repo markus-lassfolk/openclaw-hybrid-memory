@@ -196,8 +196,6 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).toBeNull();
   });
 
-
-
   it("extracts remediation items from MiniMax M3-style object.items payload", () => {
     const input = JSON.stringify({ items: [sampleItem] });
     const result = parseSelfCorrectionLLMResponse(input);

@@ -99,8 +99,7 @@ export function evaluateContradictionProgress(
   const noProgress = totalConsidered > 0 && metrics.autoResolved === 0;
   const degradedThresholdEnabled = degradedAmbiguousThreshold > 0;
   const thresholdExceeded = degradedThresholdEnabled && metrics.ambiguous >= degradedAmbiguousThreshold;
-  const consecutiveNoProgressRuns =
-    noProgress && thresholdExceeded ? previousConsecutiveNoProgressRuns + 1 : 0;
+  const consecutiveNoProgressRuns = noProgress && thresholdExceeded ? previousConsecutiveNoProgressRuns + 1 : 0;
   const consecutiveRequired = degradedConsecutiveThreshold > 0 ? degradedConsecutiveThreshold : 1;
   const degraded = thresholdExceeded && noProgress && consecutiveNoProgressRuns >= consecutiveRequired;
   const exitCode = degraded ? 2 : 0;

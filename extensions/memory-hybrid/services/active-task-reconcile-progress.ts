@@ -81,9 +81,7 @@ export class ActiveTaskReconcileProgressReporter {
   }
 
   start(): void {
-    this.emit(
-      `active-tasks reconcile: start mode=${this.opts.mode} ledger=${this.opts.ledger}`,
-    );
+    this.emit(`active-tasks reconcile: start mode=${this.opts.mode} ledger=${this.opts.ledger}`);
     this.startHeartbeat();
   }
 
@@ -150,7 +148,14 @@ export class ActiveTaskReconcileProgressReporter {
   complete(): ActiveTaskReconcileCompleteEvent {
     this.stopHeartbeat();
     const elapsedMs = Date.now() - this.startedAt;
-    const reconciled = this.opts.mode === "dry-run" ? this.scanMarked : (this.opts.ledger === "markdown" ? (this.failed > 0 ? 0 : this.scanMarked) : this.factsWritten);
+    const reconciled =
+      this.opts.mode === "dry-run"
+        ? this.scanMarked
+        : this.opts.ledger === "markdown"
+          ? this.failed > 0
+            ? 0
+            : this.scanMarked
+          : this.factsWritten;
     const summary: ActiveTaskReconcileCompleteEvent = {
       event: "active_tasks_reconcile_complete",
       mode: this.opts.mode,
@@ -183,8 +188,7 @@ export class ActiveTaskReconcileProgressReporter {
     this.lastHeartbeatAt = now;
     const phase = this.currentPhase ?? "idle";
     const total = phase === "fact-write" || phase === "file-write" ? this.writeTotal : this.scanTotal;
-    const processed =
-      phase === "fact-write" || phase === "file-write" ? this.factsWritten + this.failed : this.scanned;
+    const processed = phase === "fact-write" || phase === "file-write" ? this.factsWritten + this.failed : this.scanned;
     this.emitProgress(phase, processed, Math.max(total, processed, 1));
   }
 
