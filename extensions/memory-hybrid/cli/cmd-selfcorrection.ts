@@ -213,19 +213,148 @@ export function parseSelfCorrectionLLMResponse(content: string): unknown[] | nul
   let emptyArrayCandidate: unknown[] | null = null;
   const normalized = stripThinkingWrapperBlocks(content);
 
-  const result = tryParseFirstJsonArray(normalized, (parsed) => {
-    if (parsed.length === 0) {
-      emptyArrayCandidate = parsed;
+  const arrayResult = tryParseFirstJsonArray(normalized, (parsed) => {
+    const extracted = extractSelfCorrectionRemediationArray(parsed);
+    if (extracted && extracted.length === 0) {
+      emptyArrayCandidate = extracted;
       return null;
     }
-    return isSelfCorrectionRemediationArray(parsed) ? parsed : null;
+    return extracted && extracted.length > 0 ? extracted : null;
+  });
+  if (arrayResult) return arrayResult;
+
+  const objectResult = tryParseFirstJsonObject(normalized, (parsed) => {
+    const extracted = extractSelfCorrectionRemediationArray(parsed);
+    if (extracted && extracted.length === 0) {
+      emptyArrayCandidate = extracted;
+      return null;
+    }
+    return extracted && extracted.length > 0 ? extracted : null;
   });
 
-  return result ?? emptyArrayCandidate;
+  return objectResult ?? emptyArrayCandidate;
 }
 
 function isSelfCorrectionRemediationArray(items: unknown[]): boolean {
   return items.every((item) => isSelfCorrectionRemediationItem(item));
+}
+
+function extractSelfCorrectionRemediationArray(value: unknown): unknown[] | null {
+  const parsed = parseJsonValueIfString(value);
+  if (Array.isArray(parsed)) {
+    if (parsed.length === 0) return parsed;
+    if (isSelfCorrectionRemediationArray(parsed)) return parsed;
+    for (const item of parsed) {
+      const nested = extractSelfCorrectionRemediationArray(item);
+      if (nested && nested.length > 0) return nested;
+    }
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  if (isSelfCorrectionRemediationItem(parsed)) return [parsed];
+
+  const obj = parsed as Record<string, unknown>;
+  const priorityKeys = [
+    "items",
+    "remediations",
+    "remediationItems",
+    "analysisItems",
+    "analysedItems",
+    "analyzedItems",
+    "results",
+    "analysis",
+    "analyses",
+    "output",
+    "data",
+    "arguments",
+  ];
+  for (const key of priorityKeys) {
+    if (!(key in obj)) continue;
+    const nested = extractSelfCorrectionRemediationArray(obj[key]);
+    if (nested) return nested;
+  }
+
+  const toolCalls = obj.tool_calls ?? obj.toolCalls;
+  const toolResult = extractSelfCorrectionRemediationArray(toolCalls);
+  if (toolResult) return toolResult;
+
+  const fn = obj.function;
+  if (fn && typeof fn === "object") {
+    const args = (fn as Record<string, unknown>).arguments;
+    const nested = extractSelfCorrectionRemediationArray(args);
+    if (nested) return nested;
+  }
+
+  return null;
+}
+
+function parseJsonValueIfString(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function tryParseFirstJsonObject(
+  raw: string,
+  filter: (parsed: unknown) => unknown[] | null | undefined,
+): unknown[] | null {
+  let searchFrom = 0;
+  while (searchFrom < raw.length) {
+    const start = raw.indexOf("{", searchFrom);
+    if (start === -1) return null;
+    const slice = extractBalancedObjectSlice(raw, start);
+    if (!slice) {
+      searchFrom = start + 1;
+      continue;
+    }
+    try {
+      const parsed: unknown = JSON.parse(slice);
+      const result = filter(parsed);
+      if (result !== null && result !== undefined) return result;
+    } catch {
+      // Continue scanning: prose or partial objects before the real payload are common LLM failures.
+    }
+    searchFrom = start + slice.length;
+  }
+  return null;
+}
+
+function extractBalancedObjectSlice(s: string, start: number): string | null {
+  if (s[start] !== "{") return null;
+  let depth = 0;
+  let inString = false;
+  let afterBackslash = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s.charAt(i);
+    if (inString) {
+      if (afterBackslash) {
+        afterBackslash = false;
+        continue;
+      }
+      if (c === "\\") {
+        afterBackslash = true;
+        continue;
+      }
+      if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') {
+      inString = true;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
 }
 
 function isSelfCorrectionRemediationItem(item: unknown): boolean {

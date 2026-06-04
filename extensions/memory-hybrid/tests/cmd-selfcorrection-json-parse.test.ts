@@ -335,6 +335,48 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/excerpt=/);
   });
 
+
+
+  it("accepts MiniMax M3-style nested arguments payload without losing analysed items", async () => {
+    const llmContent = JSON.stringify({ arguments: { items: [SAMPLE_REMEDIATION] } });
+    const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.status).toBe("success_analyzed");
+    expect(res.analysed).toBe(1);
+  });
+
+  it("accepts MiniMax M3-style tool_calls function.arguments payload", async () => {
+    const llmContent = JSON.stringify({
+      tool_calls: [
+        {
+          type: "function",
+          function: {
+            name: "self_correction_result",
+            arguments: JSON.stringify({ items: [SAMPLE_REMEDIATION] }),
+          },
+        },
+      ],
+    });
+    const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.status).toBe("success_analyzed");
+    expect(res.analysed).toBe(1);
+  });
+
   it("marks a zero-parsed result with incidents as suspect instead of clean success", async () => {
     const ctx = makeCtx(makeOpenAIMock(""));
 

@@ -26,7 +26,7 @@ For each incident, determine:
 
 5. **Dedup**: Is this correcting the same thing as another incident in this list? If so, set "repeated": true and consider raising severity.
 
-Output ONLY a JSON array of objects. One object per incident. No markdown, no code fences. Each object must have: category, severity, remediationType, remediationContent (object or string as needed), repeated (boolean, optional).
+Output ONLY a JSON array of objects. One object per incident. No markdown, no code fences, no wrapper object, and no tool-call/function arguments envelope. Each object must have: category, severity, remediationType, remediationContent (object or string as needed), repeated (boolean, optional).
 
 Example:
 {"category":"FORGOT_INFO","severity":"MEDIUM","remediationType":"MEMORY_STORE","remediationContent":{"text":"SSH to server uses user@192.168.1.198","entity":"Credentials","key":"server_ssh","tags":["ssh","server"]},"repeated":false}
