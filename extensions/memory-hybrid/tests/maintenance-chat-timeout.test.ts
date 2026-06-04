@@ -1,10 +1,12 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import {
   DEFAULT_CHAT_TIMEOUT_MS,
+  MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV,
   MAINTENANCE_M3_CHAT_TIMEOUT_MS,
   MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS,
   MAINTENANCE_THINKING_CHAT_TIMEOUT_MS,
 } from "../utils/constants.js";
+import { setEnv } from "../utils/env-manager.js";
 import { resolveMaintenanceChatTimeoutMs } from "../services/chat.js";
 import * as chat from "../services/chat.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
@@ -27,6 +29,18 @@ describe("resolveMaintenanceChatTimeoutMs", () => {
 
   it("uses default for non-MiniMax", () => {
     expect(resolveMaintenanceChatTimeoutMs("gpt-4o", "adaptive")).toBe(DEFAULT_CHAT_TIMEOUT_MS);
+  });
+
+  it("honors OPENCLAW_HYBRID_MEM_MAINTENANCE_TIMEOUT_MS override", () => {
+    setEnv(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV, "90000");
+    expect(resolveMaintenanceChatTimeoutMs("minimax/MiniMax-M3", "adaptive")).toBe(90_000);
+    setEnv(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV, undefined);
+  });
+
+  it("clamps override to 30 minutes max", () => {
+    setEnv(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV, "999999999");
+    expect(resolveMaintenanceChatTimeoutMs("minimax/MiniMax-M3", "disabled")).toBe(30 * 60 * 1000);
+    setEnv(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV, undefined);
   });
 });
 

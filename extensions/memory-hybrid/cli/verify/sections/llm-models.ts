@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import OpenAI from "openai";
 
 import {
+  effectiveDistillMainModelTier,
   getCronModelConfig,
   getLLMModelPreference,
   getLLMModelPreferenceUnfiltered,
@@ -121,12 +122,10 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
   tableLog(
     `    First choice per tier: nano=${tierNano[0] ?? "—"} | maintenance=${tierMaintenance[0] ?? "—"} | default=${tierDefault[0] ?? "—"} | heavy=${tierHeavy[0] ?? "—"}`,
   );
-  const distillMainTier = cfg.distill?.modelTier ?? "maintenance";
-  const distillMainTierRaw = (cfg.distill as { modelTier?: string } | undefined)?.modelTier ?? "maintenance";
+  const distillMainTierRaw = cfg.distill?.modelTier ?? "maintenance";
   const distillMainRequestedHeavy = distillMainTierRaw === "heavy";
-  // Show the actual effective tier after clamping (cmd-distill.ts clamps "heavy" to "maintenance")
-  const effectiveDistillMainTier = distillMainRequestedHeavy ? "maintenance" : distillMainTier;
-  const distillMainEffective = getLLMModelPreference(cronCfg, effectiveDistillMainTier)[0] ?? "—";
+  const effectiveDistillMainTierValue = effectiveDistillMainModelTier(distillMainTierRaw);
+  const distillMainEffective = getLLMModelPreference(cronCfg, effectiveDistillMainTierValue)[0] ?? "—";
   tableLog(
     `    Distill main pass: distill.modelTier=${distillMainTierRaw}${distillMainRequestedHeavy ? " (clamped to maintenance)" : ""} -> ${distillMainEffective}; --model overrides one run.`,
   );
@@ -207,7 +206,7 @@ export async function runVerifyLlmModelsSection(state: VerifyRunState): Promise<
   // NOTE: cmd-distill.ts now clamps distill.modelTier=heavy to maintenance, so this check uses effectiveDistillMainTier.
   if (distillMainEffective !== "—" && isHeavyModel(distillMainEffective)) {
     state.warnings.push(
-      `distill.modelTier=${distillMainTier} routes the main distill pass to a heavy/expensive first-choice model (${distillMainEffective}); configure llm.maintenance with a cheap-first list or set distill.modelTier=nano`,
+      `distill.modelTier=${distillMainTierRaw} routes the main distill pass to a heavy/expensive first-choice model (${distillMainEffective}); configure llm.maintenance with a cheap-first list or set distill.modelTier=nano`,
     );
   }
   if (distillMainRequestedHeavy) {

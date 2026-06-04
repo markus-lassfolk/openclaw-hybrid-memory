@@ -984,7 +984,7 @@ export async function upsertProjectTaskKey(
     previous = same[0];
   }
   const text = `Task [${normalizedEntity}] ${key}: ${value}`;
-  const entry = factsDb.store({
+  const storeResult = factsDb.storeWithResult({
     text,
     category: TASK_LEDGER_CATEGORY,
     importance: CLI_STORE_IMPORTANCE,
@@ -995,7 +995,23 @@ export async function upsertProjectTaskKey(
     decayClass: "permanent",
     provenanceJson: activeTaskProvenance(canonical),
   });
-  if (previous) {
+  if (storeResult.skipped) {
+    return;
+  }
+  const entry = storeResult.entry;
+  if (storeResult.evictedFactId) {
+    await cleanupEvictedVector({
+      vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger: log,
+      context: "active-task-ledger-upsert",
+    });
+  }
+  if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+    opts?.latestByEntityKey?.set(cacheKey, entry);
+    return;
+  }
+  if (previous && storeResult.newlyStored) {
     factsDb.supersede(previous.id, entry.id);
   }
   opts?.latestByEntityKey?.set(cacheKey, entry);

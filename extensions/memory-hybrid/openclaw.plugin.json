@@ -1182,7 +1182,7 @@
       "distill": {
         "type": "object",
         "additionalProperties": false,
-        "description": "Session distillation via llm.heavy tier (default: azure-foundry/gpt-5.4-pro). No separate API key required.",
+        "description": "Session distillation via distill.modelTier (default: maintenance / llm.maintenance). No separate API key required when llm is configured.",
         "properties": {
           "apiKey": {
             "type": "string",
@@ -1190,7 +1190,7 @@
           },
           "defaultModel": {
             "type": "string",
-            "description": "Model override for distill (default: azure-foundry/gpt-5.4-pro or llm.heavy tier)"
+            "description": "Model override for distill (default: first model in distill.modelTier / llm.maintenance)"
           },
           "extractDirectives": {
             "type": "boolean",
@@ -1216,6 +1216,11 @@
             "type": "string",
             "enum": ["nano", "maintenance", "default", "heavy"],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' saves cost; 'maintenance' isolates from llm.default; unset defaults to nano (same as CLI/runtime ?? \"nano\")."
+          },
+          "modelTier": {
+            "type": "string",
+            "enum": ["nano", "maintenance", "default", "heavy"],
+            "description": "Model tier for main session distill pass (default: maintenance / llm.maintenance)."
           },
           "thinking": {
             "type": "string",
@@ -2002,6 +2007,11 @@
             "items": {
               "type": "string"
             }
+          },
+          "maintenanceFallbackPolicy": {
+            "type": "string",
+            "enum": ["default", "cheap-only", "explicit-only", "allow-heavy"],
+            "description": "How maintenance-tier commands build automatic fallback chains (#1226)."
           },
           "default": {
             "type": "array",

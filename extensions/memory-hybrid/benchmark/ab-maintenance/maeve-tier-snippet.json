@@ -1,5 +1,5 @@
 {
-  "_comment": "Apply to Maeve openclaw.json with approval. From A/B run 2026-06-04T10-12-56 + timeout/thinking-fallback hardening.",
+  "_comment": "Quality-first policy (validated run 2026-06-04T10-42-51). Richness/reliability trump latency for scheduled maintenance.",
   "llm": {
     "nano": ["minimax/MiniMax-M2.7-highspeed"],
     "maintenance": ["minimax/MiniMax-M3", "minimax/MiniMax-M2.7-highspeed"],
@@ -27,11 +27,11 @@
     "thinking": "disabled"
   },
   "distill": {
-    "modelTier": "heavy",
+    "modelTier": "maintenance",
     "thinking": "disabled"
   },
   "reflection": {
-    "model": "minimax/MiniMax-M2.7-highspeed",
+    "model": "minimax/MiniMax-M3",
     "thinking": "adaptive"
   }
 }

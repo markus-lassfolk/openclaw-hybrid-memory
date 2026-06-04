@@ -6,6 +6,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import {
   _resetWalCircuitBreakerForTesting,
   getWalDisabledSentinelPath,
+  isWalWriteFailure,
   walRemove,
   walWrite,
 } from "../services/wal-helpers.js";
@@ -34,6 +35,19 @@ function makeWal(
 
 beforeEach(() => {
   _resetWalCircuitBreakerForTesting();
+});
+
+describe("isWalWriteFailure", () => {
+  it("returns false when WAL is disabled (null/undefined)", () => {
+    expect(isWalWriteFailure(null, null)).toBe(false);
+    expect(isWalWriteFailure(undefined, null)).toBe(false);
+  });
+
+  it("returns true only when WAL is configured but write id is missing", () => {
+    const wal = makeWal();
+    expect(isWalWriteFailure(wal, null)).toBe(true);
+    expect(isWalWriteFailure(wal, "entry-id")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

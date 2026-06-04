@@ -349,8 +349,8 @@ export const resolvers: GraphQLResolvers = {
         },
         { allowPreStoreGuardBypass: true },
       );
-      // Skip supersede if store was rejected (artifact text)
-      if (result.entry.id !== "") {
+      // Skip supersede if store was rejected (artifact text) or deduped to an existing row
+      if (result.entry.id !== "" && result.newlyStored) {
         context.factsDb.supersede(existing.id, result.entry.id);
       }
       await cleanupGraphqlEviction(context, result.evictedFactId);

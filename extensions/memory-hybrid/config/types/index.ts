@@ -694,7 +694,7 @@ export type HybridMemoryConfig = {
     reinforcementProcedureBoost?: number;
     /** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
     reinforcementPromotionThreshold?: number;
-    /** Model tier for main session distill pass. "maintenance" is the safe default; "heavy" is opt-in. */
+    /** Model tier for main session distill pass. "maintenance" is the default. Legacy `"heavy"` is accepted but clamped to maintenance at runtime (#1205/#1216). */
     modelTier?: "nano" | "maintenance" | "default" | "heavy";
     /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" saves cost; "maintenance" isolates from llm.default; unset defaults to "nano". */
     extractionModelTier?: "nano" | "maintenance" | "default" | "heavy";

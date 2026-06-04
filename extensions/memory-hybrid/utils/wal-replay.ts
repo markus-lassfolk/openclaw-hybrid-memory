@@ -10,6 +10,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 
 export interface WalReplayResult {
   committed: number;
@@ -58,7 +59,11 @@ function invalidScopeMessage(
   operation: string,
   scope: "global" | "user" | "agent" | "session" | null,
   scopeTarget: string | null,
+  rawScope: string | null,
 ): string | null {
+  if (rawScope && !scope) {
+    return `WAL replay skipped "${operation}" entry ${entryId}: invalid scope="${rawScope}"; refusing to globalize a scoped fact.`;
+  }
   if (scope && scope !== "global" && !scopeTarget) {
     return `WAL replay skipped "${operation}" entry ${entryId}: scope="${scope}" but scopeTarget is missing; refusing to globalize a scoped fact.`;
   }
@@ -174,9 +179,9 @@ export async function replayWalEntries(
   let committed = 0;
   let skipped = 0;
 
-  // Only replay entries within the WAL's maxAge window.
-  // Older entries are handled by WAL prune routines and should not be resurrected.
-  const walEntries = await wal.getValidEntries();
+  // Replay all pending entries regardless of age — time-based filtering caused silent
+  // data loss when restart happened after the default maxAge window (#1876).
+  const walEntries = await wal.readAll();
   const nowSec = Math.floor(Date.now() / 1000);
 
   for (const entry of walEntries) {
@@ -194,6 +199,7 @@ export async function replayWalEntries(
         const category = (safeString(entry.data.category) ?? "other") as import("../config.js").MemoryCategory;
         const importance = safeNumber(entry.data.importance) ?? 0.5;
         const why = safeString(entry.data.why);
+        const rawScope = safeString(entry.data.scope);
         const scope = safeScope(entry.data.scope);
         const scopeTarget = safeString(entry.data.scopeTarget);
         const summary = safeString(entry.data.summary);
@@ -216,7 +222,7 @@ export async function replayWalEntries(
         // Guard: a non-global scope without a scopeTarget cannot be safely replayed — storing it
         // would silently change the intended scope to global (issue #1574). Skip with a diagnostic
         // so that scoped facts are never accidentally promoted to global during crash recovery.
-        const storeInvalidMsg = invalidScopeMessage(entry.id, "store", scope, scopeTarget);
+        const storeInvalidMsg = invalidScopeMessage(entry.id, "store", scope, scopeTarget, rawScope);
         if (storeInvalidMsg) {
           capturePluginError(new Error(storeInvalidMsg), {
             subsystem: "wal-replay",
@@ -260,7 +266,7 @@ export async function replayWalEntries(
           continue;
         }
 
-        const stored = factsDb.store({
+        const storeResult = factsDb.storeWithResult({
           text,
           why,
           category,
@@ -285,23 +291,53 @@ export async function replayWalEntries(
           provenanceJson: provenanceJson ?? undefined,
         });
 
-        // Skip vector operations if the store was rejected (artifact text)
-        if (stored.id !== "") {
+        if (storeResult.skipped) {
+          skipped++;
+          await wal.remove(entry.id);
+          continue;
+        }
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+          skipped++;
+          await wal.remove(entry.id);
+          continue;
+        }
+        if (storeResult.newlyStored === false && storeResult.embeddingStale) {
           await ensureVectorAndEmbeddingMeta({
-            factId: stored.id,
-            text: stored.text,
-            category: stored.category,
-            importance: stored.importance,
+            factId: storeResult.entry.id,
+            text: storeResult.entry.text,
+            category: storeResult.entry.category,
+            importance: storeResult.entry.importance,
             vector: precomputedVector,
             embeddingModelName,
             vectorDb,
             embeddings,
             factsDb,
           });
-          committed++;
-        } else {
           skipped++;
+          await wal.remove(entry.id);
+          continue;
         }
+
+        await cleanupEvictedVector({
+          vectorDb,
+          evictedFactId: storeResult.evictedFactId,
+          logger,
+          context: "wal-replay-store",
+        });
+
+        const stored = storeResult.entry;
+        await ensureVectorAndEmbeddingMeta({
+          factId: stored.id,
+          text: stored.text,
+          category: stored.category,
+          importance: stored.importance,
+          vector: precomputedVector,
+          embeddingModelName,
+          vectorDb,
+          embeddings,
+          factsDb,
+        });
+        committed++;
         await wal.remove(entry.id);
       } else if (entry.operation === "update" && entry.targetId && isSafeWalText(entry.data?.text)) {
         const targetId = entry.targetId;
@@ -311,6 +347,7 @@ export async function replayWalEntries(
         const category = (safeString(entry.data.category) ?? "other") as import("../config.js").MemoryCategory;
         const importance = safeNumber(entry.data.importance) ?? 0.5;
         const why = safeString(entry.data.why);
+        const rawScope = safeString(entry.data.scope);
         const scope = safeScope(entry.data.scope);
         const scopeTarget = safeString(entry.data.scopeTarget);
         const summary = safeString(entry.data.summary);
@@ -331,7 +368,7 @@ export async function replayWalEntries(
         const embeddingModelName = safeString(entry.data.embeddingModelName);
 
         // Guard: same as "store" path — do not replay a non-global scoped update without a scopeTarget.
-        const updateInvalidMsg = invalidScopeMessage(entry.id, "update", scope, scopeTarget);
+        const updateInvalidMsg = invalidScopeMessage(entry.id, "update", scope, scopeTarget, rawScope);
         if (updateInvalidMsg) {
           capturePluginError(new Error(updateInvalidMsg), {
             subsystem: "wal-replay",
@@ -377,13 +414,13 @@ export async function replayWalEntries(
           }
         }
 
-        if (factsDb.hasDuplicate(text)) {
+        if (hasReplayDuplicateForWal(factsDb, text, source)) {
           skipped++;
           await wal.remove(entry.id);
           continue;
         }
 
-        const stored = factsDb.store({
+        const updateStoreResult = factsDb.storeWithResult({
           text,
           why,
           category,
@@ -410,26 +447,56 @@ export async function replayWalEntries(
           provenanceJson: provenanceJson ?? undefined,
         });
 
-        // Skip supersede and vector operations if store was rejected (artifact text)
-        if (stored.id !== "") {
-          factsDb.supersede(targetId, stored.id);
-
+        if (updateStoreResult.skipped) {
+          skipped++;
+          await wal.remove(entry.id);
+          continue;
+        }
+        if (updateStoreResult.newlyStored === false && !updateStoreResult.embeddingStale) {
+          skipped++;
+          await wal.remove(entry.id);
+          continue;
+        }
+        if (updateStoreResult.newlyStored === false && updateStoreResult.embeddingStale) {
           await ensureVectorAndEmbeddingMeta({
-            factId: stored.id,
-            text: stored.text,
-            category: stored.category,
-            importance: stored.importance,
+            factId: updateStoreResult.entry.id,
+            text: updateStoreResult.entry.text,
+            category: updateStoreResult.entry.category,
+            importance: updateStoreResult.entry.importance,
             vector: precomputedVector,
             embeddingModelName,
             vectorDb,
             embeddings,
             factsDb,
           });
-
-          committed++;
-        } else {
           skipped++;
+          await wal.remove(entry.id);
+          continue;
         }
+
+        await cleanupEvictedVector({
+          vectorDb,
+          evictedFactId: updateStoreResult.evictedFactId,
+          logger,
+          context: "wal-replay-update",
+        });
+
+        const stored = updateStoreResult.entry;
+        factsDb.supersede(targetId, stored.id);
+
+        await ensureVectorAndEmbeddingMeta({
+          factId: stored.id,
+          text: stored.text,
+          category: stored.category,
+          importance: stored.importance,
+          vector: precomputedVector,
+          embeddingModelName,
+          vectorDb,
+          embeddings,
+          factsDb,
+        });
+
+        committed++;
         await wal.remove(entry.id);
       } else if ((entry.operation === "store" || entry.operation === "update") && !isSafeWalText(entry.data?.text)) {
         // Empty or whitespace-only text cannot ever be replayed into FactsDB.

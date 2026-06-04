@@ -23,7 +23,7 @@ openclaw hybrid-mem distill --max-sessions 10  # Limit for cost control
 openclaw hybrid-mem distill --max-session-tokens 20000  # Chunk oversized sessions (default: batch limit)
 ```
 
-**Model choice:** All distillation LLM calls go through the **OpenClaw gateway**; any provider the gateway supports works. The main distill pass uses `distill.modelTier` (unset → **maintenance**) and then the corresponding `llm.<tier>` preference list. Pass `--model M` to override for a single run, or set `distill.defaultModel` for legacy global override compatibility. Set `distill.modelTier="heavy"` only when you explicitly want heavy/expensive distill. Long-context models use larger batches; smaller maintenance models use safer batches/fallback filtering.
+**Model choice:** All distillation LLM calls go through the **OpenClaw gateway**; any provider the gateway supports works. The main distill pass uses `distill.modelTier` (unset → **maintenance**; allowed: `nano`, `maintenance`, `default`) and then the corresponding `llm.<tier>` preference list. Legacy `distill.modelTier="heavy"` is accepted in config but **clamped to maintenance** at runtime to avoid routing nightly distill to `llm.heavy[0]` by mistake. Pass `--model M` to override for a single run, or set `distill.defaultModel` for legacy global override compatibility. Long-context models use larger batches; smaller maintenance models use safer batches/fallback filtering.
 
 This command scans `~/.openclaw/agents/*/sessions/*.jsonl`, extracts text, sends it to the LLM for fact extraction, deduplicates by embedding similarity, stores net-new facts, and records the run automatically. Cron-friendly: `openclaw hybrid-mem distill` via exec — no complex agent prompts needed.
 

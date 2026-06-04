@@ -6,10 +6,14 @@
 import type { OpenAI } from "openai";
 import {
   DEFAULT_CHAT_TIMEOUT_MS,
+  MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV,
+  MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MAX_MS,
+  MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MIN_MS,
   MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS,
   MAINTENANCE_M3_CHAT_TIMEOUT_MS,
   MAINTENANCE_THINKING_CHAT_TIMEOUT_MS,
 } from "../utils/constants.js";
+import { getEnv } from "../utils/env-manager.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { pluginLogger } from "../utils/logger.js";
 import { applyOpenClawGatewayModelRequest, isOpenClawGatewayClient } from "../utils/openclaw-gateway-http.js";
@@ -52,6 +56,16 @@ export function resolveMaintenanceChatTimeoutMs(
   model: string,
   thinkingMode?: MiniMaxThinkingMode | "enabled",
 ): number {
+  const overrideRaw = getEnv(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV)?.trim();
+  if (overrideRaw) {
+    const parsed = Number.parseInt(overrideRaw, 10);
+    if (Number.isFinite(parsed)) {
+      return Math.min(
+        MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MAX_MS,
+        Math.max(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MIN_MS, parsed),
+      );
+    }
+  }
   if (!isMiniMaxModel(model)) return DEFAULT_CHAT_TIMEOUT_MS;
   const m3 = /MiniMax-M3/i.test(model);
   if (isMiniMaxThinkingEnabled(thinkingMode)) {
@@ -957,6 +971,8 @@ export async function chatCompleteWithRetryDetailed(opts: {
   label?: string;
   /** Timeout per model attempt (passed to chatComplete). Default 45s. */
   timeoutMs?: number;
+  /** When set, overrides timeoutMs per model in the fallback chain. */
+  timeoutMsPerModel?: (model: string) => number;
   /** When aborted (e.g. parent step timeout), the request is cancelled and no fallback models are tried. */
   signal?: AbortSignal;
   /** Optional per-instance warning queue for missing provider keys. */
@@ -975,6 +991,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
     label: rawLabel,
     maxTokens,
     timeoutMs,
+    timeoutMsPerModel,
     signal,
     pendingWarnings,
     feature,
@@ -1004,6 +1021,8 @@ export async function chatCompleteWithRetryDetailed(opts: {
       ? getMaintenanceMaxOutputTokensFromCatalog(currentModel)
       : getDistillMaxOutputTokensFromCatalog(currentModel);
     const effectiveMaxTokens = maxTokens != null ? Math.min(maxTokens, modelCatalogCap) : modelCatalogCap;
+    const attemptTimeoutMs =
+      timeoutMsPerModel?.(currentModel) ?? timeoutMs;
 
     try {
       const detail = await withLLMRetry(
@@ -1012,7 +1031,7 @@ export async function chatCompleteWithRetryDetailed(opts: {
             ...chatOpts,
             model: currentModel,
             maxTokens: effectiveMaxTokens,
-            ...(timeoutMs != null && { timeoutMs }),
+            ...(attemptTimeoutMs != null && { timeoutMs: attemptTimeoutMs }),
             signal,
             ...(feature != null && { feature }),
             ...(thinkingMode != null && { thinkingMode }),

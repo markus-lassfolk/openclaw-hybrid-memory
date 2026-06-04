@@ -206,6 +206,9 @@ export type DistillCliResult = {
   dedupSkipped: number;
   dryRun: boolean;
   skipped?: boolean;
+  semanticEmpty?: boolean;
+  partialFailure?: boolean;
+  batchFailures?: number;
 };
 export type DistillCliSink = {
   log: (s: string) => void;

@@ -109,6 +109,9 @@ export async function runExtractDailyForCli(
             if (storeResult.skipped) {
               continue;
             }
+            if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+              continue;
+            }
             const newEntry = storeResult.entry;
             // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
             await cleanupEvictedVector({
@@ -117,14 +120,16 @@ export async function runExtractDailyForCli(
               logger: sink,
               context: "extract-daily-update",
             });
-            factsDb.supersede(classification.targetId, newEntry.id);
-            aliasDb?.deleteByFactId(classification.targetId);
-            await deleteVectorForFactId({
-              vectorDb,
-              factId: classification.targetId,
-              logger: sink,
-              context: "extract-daily-update-superseded",
-            });
+            if (storeResult.newlyStored) {
+              factsDb.supersede(classification.targetId, newEntry.id);
+              aliasDb?.deleteByFactId(classification.targetId);
+              await deleteVectorForFactId({
+                vectorDb,
+                factId: classification.targetId,
+                logger: sink,
+                context: "extract-daily-update-superseded",
+              });
+            }
             try {
               factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
               if (!(await vectorDb.hasDuplicate(vecForStore))) {
@@ -149,6 +154,9 @@ export async function runExtractDailyForCli(
         }
         const storeResult = factsDb.storeWithResult(storePayload);
         if (storeResult.skipped) {
+          continue;
+        }
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
           continue;
         }
         const entry = storeResult.entry;
@@ -369,6 +377,9 @@ export async function runExtractDailyForCli(
       await flushPendingExtractClassify();
       const storeResult = factsDb.storeWithResult(storePayload);
       if (storeResult.skipped) {
+        continue;
+      }
+      if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
         continue;
       }
       const entry = storeResult.entry;

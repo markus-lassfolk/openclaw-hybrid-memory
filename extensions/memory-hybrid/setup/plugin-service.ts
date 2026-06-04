@@ -14,7 +14,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
-import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
+import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import type { DashboardServer } from "../routes/dashboard-server.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
@@ -39,16 +39,11 @@ import {
   renderActiveTaskMarkdownFile,
 } from "../services/task-ledger-facts.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
-import {
-  cleanupEvictedVector,
-  deleteVectorsForFactIds,
-  storeCanonicalVectorForFact,
-} from "../services/vector-maintenance.js";
+import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
-import { walRemove } from "../services/wal-helpers.js";
+import { replayWalEntries } from "../utils/wal-replay.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
-import { persistCanonicalFactEmbedding } from "../utils/fact-embeddings.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { findPluginRoot } from "../utils/plugin-root.js";
 import {
@@ -356,9 +351,13 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       // WAL Recovery: replay uncommitted operations from previous session
       if (wal) {
-        let pendingEntries: Awaited<ReturnType<typeof wal.getValidEntries>> = [];
         try {
-          pendingEntries = await wal.getValidEntries();
+          const replayResult = await replayWalEntries(wal, factsDb, vectorDb, embeddings, api.logger);
+          if (replayResult.committed > 0 || replayResult.skipped > 0) {
+            api.logger.info(
+              `memory-hybrid: WAL recovery completed — committed ${replayResult.committed}, skipped ${replayResult.skipped}`,
+            );
+          }
         } catch (err) {
           if (err instanceof Error && err.name === "WalReadCorruptionError") {
             api.logger.warn(
@@ -381,201 +380,26 @@ export function createPluginService(ctx: PluginServiceContext) {
               });
             }
           } else {
-            api.logger.warn(
-              `memory-hybrid: WAL recovery failed with unexpected error: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            api.logger.warn?.(`memory-hybrid: WAL recovery failed: ${err}`);
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "plugin-service",
-              operation: "wal-recovery-unexpected-error",
+              operation: "wal-recovery",
             });
           }
         }
-        if (pendingEntries.length > 0) {
-          api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
-          let recovered = 0;
-          let failed = 0;
 
-          for (const entry of pendingEntries) {
-            try {
-              // Skip diagnostic probe entries (e.g., doctor command durability tests).
-              if (entry.data.probe) {
-                await walRemove(wal, entry.id, api.logger);
-                continue;
-              }
-              // Skip update operations without a targetId (cannot be replayed safely).
-              if (entry.operation === "update" && !entry.targetId) {
-                await walRemove(wal, entry.id, api.logger);
-                continue;
-              }
-              if (entry.operation === "store" || entry.operation === "update") {
-                const { text, category, importance, entity, key, value, source, decayClass, summary, tags } =
-                  entry.data;
-                const walEmbeddingModel =
-                  typeof entry.data.embeddingModelName === "string" && entry.data.embeddingModelName.trim().length > 0
-                    ? entry.data.embeddingModelName.trim()
-                    : null;
-
-                // Check if already stored (idempotency)
-                if (!factsDb.hasDuplicate(text)) {
-                  // Store to SQLite
-                  const storeResult = factsDb.storeWithResult({
-                    text,
-                    category: (category as MemoryCategory) || "other",
-                    importance: importance ?? 0.5,
-                    entity: entity || null,
-                    key: key || null,
-                    value: value || null,
-                    source: source || "wal-recovery",
-                    decayClass,
-                    summary,
-                    tags,
-                  });
-                  if (storeResult.skipped) {
-                    continue;
-                  }
-                  const stored = storeResult.entry;
-                  await cleanupEvictedVector({
-                    vectorDb,
-                    evictedFactId: storeResult.evictedFactId,
-                    logger: api.logger,
-                    context: "wal-recovery",
-                  });
-
-                  // Store to LanceDB with same fact id for classification before clearing WAL.
-                  if (entry.data.vector) {
-                    try {
-                      const effectiveModel = walEmbeddingModel ?? embeddings.modelName;
-                      await storeCanonicalVectorForFact({
-                        vectorDb,
-                        factsDb,
-                        factId: stored.id,
-                        text,
-                        vector: entry.data.vector,
-                        importance: importance ?? 0.5,
-                        category: category || "other",
-                        embeddingModel: effectiveModel,
-                      });
-                      persistCanonicalFactEmbedding(
-                        factsDb,
-                        stored.id,
-                        effectiveModel,
-                        entry.data.vector,
-                        "wal-recovery-fact-embeddings",
-                        "plugin-service",
-                        api.logger.warn?.bind(api.logger),
-                      );
-                    } catch (err) {
-                      api.logger.warn(`memory-hybrid: WAL recovery vector store failed for entry ${entry.id}: ${err}`);
-                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                        subsystem: "plugin-service",
-                        operation: "wal-recovery-vector-store",
-                      });
-                    }
-                  }
-
-                  recovered++;
-                } else if (entry.data.vector) {
-                  // SQLite fact already exists (crash after SQL write, before vector write).
-                  // Re-attempt the vector store so the fact is searchable via semantics.
-                  const sourceForLookup = String(source || "wal-recovery").trim() || "wal-recovery";
-                  let existingId =
-                    (
-                      factsDb
-                        .getRawDb()
-                        .prepare(
-                          "SELECT id FROM facts WHERE text = ? AND source = ? AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 1",
-                        )
-                        .get(text, sourceForLookup) as { id: string } | undefined
-                    )?.id ?? null;
-                  if (!existingId) existingId = factsDb.getDuplicateIdByNormalizedHash(text);
-                  if (existingId) {
-                    try {
-                      const effectiveModel = walEmbeddingModel ?? embeddings.modelName;
-                      await vectorDb.store({
-                        text,
-                        vector: entry.data.vector,
-                        importance: importance ?? 0.5,
-                        category: category || "other",
-                        id: existingId,
-                      });
-                      factsDb.setEmbeddingModel(existingId, effectiveModel);
-                      persistCanonicalFactEmbedding(
-                        factsDb,
-                        existingId,
-                        effectiveModel,
-                        entry.data.vector,
-                        "wal-recovery-existing-fact-embeddings",
-                        "plugin-service",
-                        api.logger.warn?.bind(api.logger),
-                      );
-                      api.logger.info(
-                        `memory-hybrid: WAL recovery — re-stored missing vector for already-stored fact ${existingId.slice(0, 8)}`,
-                      );
-                    } catch (err) {
-                      api.logger.warn(
-                        `memory-hybrid: WAL recovery vector re-store failed for existing fact ${existingId.slice(0, 8)}: ${err}`,
-                      );
-                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                        subsystem: "plugin-service",
-                        operation: "wal-recovery-existing-vector-store",
-                      });
-                      throw err;
-                    }
-                  } else {
-                    api.logger.warn(
-                      `memory-hybrid: WAL recovery could not resolve duplicate fact id for entry ${entry.id}; skipping vector re-store`,
-                    );
-                  }
-                }
-              } else {
-                // Known but unhandled operation type (e.g., "delete")
-                api.logger.warn(
-                  `memory-hybrid: WAL recovery skipping unsupported operation "${entry.operation}" (entry ${entry.id})`,
-                );
-              }
-
-              await walRemove(wal, entry.id, api.logger);
-            } catch (err) {
-              api.logger.warn(`memory-hybrid: WAL recovery failed for entry ${entry.id}: ${err}`);
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "plugin-service",
-                operation: "wal-recovery-entry",
-              });
-              failed++;
-            }
+        // Size-based compaction only — do not time-prune pending entries (data loss risk).
+        try {
+          const compacted = await wal.compactIfOversized(cfg.wal?.maxSizeBytes ?? 16 * 1024 * 1024);
+          if (compacted > 0) {
+            api.logger.info(`memory-hybrid: WAL compacted ${compacted} stale entries (size limit)`);
           }
-
-          if (recovered > 0 || failed > 0) {
-            api.logger.info(
-              `memory-hybrid: WAL recovery completed — recovered ${recovered} operation(s), ${failed} failed`,
-            );
-          }
-
-          // Prune any remaining stale entries
-          try {
-            const pruned = await wal.pruneStale();
-            if (pruned > 0) {
-              api.logger.info(`memory-hybrid: WAL pruned ${pruned} stale entries`);
-            }
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: WAL prune failed: ${err}`);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "plugin-service",
-              operation: "wal-prune-stale",
-            });
-          }
-          try {
-            const compacted = await wal.compactIfOversized(16 * 1024 * 1024);
-            if (compacted > 0) {
-              api.logger.info(`memory-hybrid: WAL compacted ${compacted} stale entries (oversized file, issue #903)`);
-            }
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: WAL compactIfOversized failed: ${err}`);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "plugin-service",
-              operation: "wal-compact-oversized",
-            });
-          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: WAL compact failed: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "wal-compact",
+          });
         }
       }
 

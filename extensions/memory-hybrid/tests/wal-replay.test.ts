@@ -198,7 +198,10 @@ describe("replayWalEntries", () => {
     expect(await wal.readAll()).toHaveLength(0);
   });
 
-  it("ignores invalid WAL scopes instead of passing them into FactsDB.store", async () => {
+  it("skips invalid WAL scopes instead of passing them into FactsDB.store", async () => {
+    const warnSpy = vi.fn();
+    const logger = { warn: warnSpy };
+
     await wal.write(
       walEntry({
         data: {
@@ -211,19 +214,14 @@ describe("replayWalEntries", () => {
       }),
     );
 
-    const result = await replayWalEntries(wal, factsDb);
+    const result = await replayWalEntries(wal, factsDb, undefined, undefined, logger);
 
-    expect(result.committed).toBe(1);
-    const stored = factsDb
-      .getRawDb()
-      .prepare("SELECT scope, scope_target FROM facts WHERE text = ?")
-      .get("Scoped replay fact") as {
-      scope: string;
-      scope_target: string | null;
-    };
-    expect(stored.scope).toBe("global");
-    expect(stored.scope_target).toBeNull();
+    expect(result).toEqual({ committed: 0, skipped: 1 });
+    const row = factsDb.getRawDb().prepare("SELECT id FROM facts WHERE text = ?").get("Scoped replay fact");
+    expect(row).toBeUndefined();
     expect(await wal.readAll()).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0]).toContain("invalid scope");
   });
 
   it("uses WAL embedding model metadata for precomputed vectors", async () => {

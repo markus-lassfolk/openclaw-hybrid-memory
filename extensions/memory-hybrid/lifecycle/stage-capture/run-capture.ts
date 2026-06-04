@@ -530,6 +530,8 @@ export async function runCapture(
                         extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                         vector,
                         embeddingModelName: vector ? ctx.embeddings.modelName : undefined,
+                        scope: preservedScope,
+                        scopeTarget: preservedScopeTarget,
                       },
                       api.logger,
                       classification.targetId,
@@ -560,6 +562,48 @@ export async function runCapture(
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
                     if (storeResult.skipped) {
+                      if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+                      continue;
+                    }
+                    if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+                      if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+                      api.logger.info?.(
+                        `memory-hybrid: auto-capture UPDATE dedupe — skipped supersede of ${classification.targetId}`,
+                      );
+                      continue;
+                    }
+                    if (storeResult.newlyStored === false && storeResult.embeddingStale) {
+                      const mergedEntry = storeResult.entry;
+                      await cleanupEvictedVector({
+                        vectorDb: ctx.vectorDb,
+                        evictedFactId: storeResult.evictedFactId,
+                        logger: api.logger,
+                        context: "stage-capture-update-merge",
+                      });
+                      try {
+                        const mergedVector = await ctx.embeddings.embed(mergedEntry.text);
+                        ctx.factsDb.setEmbeddingModel(mergedEntry.id, ctx.embeddings.modelName);
+                        await ctx.vectorDb.store({
+                          text: mergedEntry.text,
+                          vector: mergedVector,
+                          importance: finalImportance,
+                          category,
+                          id: mergedEntry.id,
+                        });
+                        persistCanonicalFactEmbedding(
+                          ctx.factsDb,
+                          mergedEntry.id,
+                          ctx.embeddings.modelName,
+                          mergedVector,
+                          "auto-capture-fact-embeddings",
+                          "auto-capture",
+                          api.logger.warn?.bind(api.logger),
+                        );
+                      } catch (vecErr) {
+                        api.logger.warn(
+                          `memory-hybrid: auto-capture UPDATE merge vector refresh failed for ${mergedEntry.id.slice(0, 8)}: ${vecErr}`,
+                        );
+                      }
                       if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
                       continue;
                     }
@@ -694,6 +738,14 @@ export async function runCapture(
             extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
             extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
           });
+          if (storeResult.skipped) {
+            if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+            continue;
+          }
+          if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+            if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+            continue;
+          }
           const storedEntry = storeResult.entry;
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
@@ -1047,6 +1099,9 @@ export async function runCapture(
                 tags: ["auth", "credential"],
               });
               if (storeResult.skipped) {
+                continue;
+              }
+              if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
                 continue;
               }
               const entry = storeResult.entry;

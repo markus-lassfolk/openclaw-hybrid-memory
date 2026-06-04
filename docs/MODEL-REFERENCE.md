@@ -299,7 +299,7 @@ When using `openai` provider with `api.openai.com` (not Azure), same model names
 
 ## 6. How we use this in the plugin
 
-- **Tier choice:** [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) recommend models by tier (nano / default / heavy). Use this reference to check context and max output when you need long context (e.g. distillation → heavy with 200k+ or 1M context).
+- **Tier choice:** [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) recommend models by tier (nano / maintenance / default / heavy). Use this reference to check context and max output when you need long context (e.g. distillation → configure `llm.maintenance` with a large-context model, or pass `distill --model`).
 - **Config:** OpenClaw gateway or plugin can set per-model `contextWindow` and `maxTokens` in provider/model config; this doc is the source of truth for Azure where the API does not expose them.
 - **Plugin catalog:** The memory-hybrid plugin uses `extensions/memory-hybrid/services/model-capabilities.ts` for `distillBatchTokenLimit`, `distillMaxOutputTokens`, and `maintenanceMaxOutputTokens`. That catalog is kept in sync with this doc; add new models there when you add them here.
 - **Embeddings:** When switching embedding model (e.g. `text-embedding-3-small` → `text-embedding-3-large`), dimensions change (1,536 → 3,072); re-embed and re-index. See [Embedding providers](LLM-AND-PROVIDERS.md#embedding-providers) and config for `embedding.dimensions`.

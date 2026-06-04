@@ -272,6 +272,55 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
 
+          // Resolve final scope before classify-before-write and WAL so scoped metadata is complete (issue #1574).
+          if (paramScope) {
+            scope = paramScope;
+            scopeTarget = scope === "global" ? null : (paramScopeTarget?.trim() ?? null);
+          } else {
+            const agentId = currentAgentIdRef.value || cfg.multiAgent.orchestratorId;
+            const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
+
+            if (
+              cfg.multiAgent.strictAgentScoping &&
+              !currentAgentIdRef.value &&
+              (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")
+            ) {
+              throw new Error(
+                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`,
+              );
+            }
+
+            if (cfg.multiAgent.defaultStoreScope === "global") {
+              scope = "global";
+              scopeTarget = null;
+            } else if (cfg.multiAgent.defaultStoreScope === "agent") {
+              scope = "agent";
+              scopeTarget = agentId;
+            } else if (isOrchestrator) {
+              scope = "global";
+              scopeTarget = null;
+            } else {
+              scope = "agent";
+              scopeTarget = agentId;
+            }
+          }
+
+          if (scope !== "global" && !scopeTarget) {
+            if (paramScope) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId). Provide scopeTarget parameter or use scope="global".`,
+                  },
+                ],
+                details: { error: "scope_target_required" },
+              };
+            }
+            scope = "global";
+            scopeTarget = null;
+          }
+
           const explicitVerificationTier = (verificationTier ?? "").trim().toLowerCase();
 
           const maybeAutoVerify = (
@@ -598,7 +647,51 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   });
                   const newEntry = updateStoreResult.entry;
                   // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-                  if (!updateStoreResult.skipped) {
+                  if (!updateStoreResult.skipped && updateStoreResult.newlyStored === false && !updateStoreResult.embeddingStale) {
+                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [
+                        {
+                          type: "text",
+                          text: `Update deduplicated to existing fact — target ${classification.targetId.slice(0, 8)} not superseded.`,
+                        },
+                      ],
+                      details: { action: "noop", reason: "dedupe-update", id: newEntry.id },
+                    };
+                  }
+                  if (!updateStoreResult.skipped && updateStoreResult.newlyStored === false && updateStoreResult.embeddingStale) {
+                    await cleanupEvictedVector({
+                      vectorDb,
+                      evictedFactId: updateStoreResult.evictedFactId,
+                      logger: api.logger,
+                      context: "memory-store-update-merge",
+                    });
+                    try {
+                      const mergedVector = await embeddings.embed(newEntry.text);
+                      factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                      await storeActiveCanonicalVector({
+                        factId: newEntry.id,
+                        text: newEntry.text,
+                        why,
+                        vector: mergedVector,
+                        importance: Math.max(importance, oldFact.importance),
+                        category,
+                      });
+                    } catch (err) {
+                      api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
+                    }
+                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [
+                        {
+                          type: "text",
+                          text: `Update merged into existing fact ${newEntry.id.slice(0, 8)} — target not superseded.`,
+                        },
+                      ],
+                      details: { action: "noop", reason: "dedupe-merge", id: newEntry.id },
+                    };
+                  }
+                  if (!updateStoreResult.skipped && updateStoreResult.newlyStored) {
                     await cleanupEvictedVector({
                       vectorDb,
                       evictedFactId: updateStoreResult.evictedFactId,
@@ -710,70 +803,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
           }
 
-          // Resolve final scope before WAL write so the WAL entry captures the complete scope
-          // metadata. Without this, a crash between WAL write and DB commit would cause replay
-          // to default scoped facts to global scope (issue #1574).
-          // Smart default scope based on agent identity and config (FR-006: overwrite for normal path when not explicit)
-          if (paramScope) {
-            // Explicit scope parameter always takes precedence
-            scope = paramScope;
-            scopeTarget = scope === "global" ? null : (paramScopeTarget?.trim() ?? null);
-          } else {
-            // Auto-determine scope based on multiAgent config
-            const agentId = currentAgentIdRef.value || cfg.multiAgent.orchestratorId;
-            const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
-
-            // Strict agent scoping: throw if agent detection failed in agent/auto mode
-            if (
-              cfg.multiAgent.strictAgentScoping &&
-              !currentAgentIdRef.value &&
-              (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")
-            ) {
-              throw new Error(
-                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`,
-              );
-            }
-
-            if (cfg.multiAgent.defaultStoreScope === "global") {
-              // Backward compatible: always global
-              scope = "global";
-              scopeTarget = null;
-            } else if (cfg.multiAgent.defaultStoreScope === "agent") {
-              // Always agent-scoped (for fully isolated setups)
-              scope = "agent";
-              scopeTarget = agentId;
-            } else {
-              // "auto" mode: orchestrator → global, specialists → agent
-              if (isOrchestrator) {
-                scope = "global";
-                scopeTarget = null;
-              } else {
-                scope = "agent";
-                scopeTarget = agentId;
-              }
-            }
-          }
-
-          // Final validation: if scope requires a target but none is available, fall back to global
-          // (unless strictAgentScoping already threw above)
-          if (scope !== "global" && !scopeTarget) {
-            if (paramScope) {
-              // User explicitly requested non-global scope but didn't provide target
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId). Provide scopeTarget parameter or use scope="global".`,
-                  },
-                ],
-                details: { error: "scope_target_required" },
-              };
-            }
-            // Auto-determined scope ended up without target (shouldn't happen with current logic,
-            // but handle gracefully by falling back to global)
-            scope = "global";
-            scopeTarget = null;
-          }
+          // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
           const walEntryId = await walWrite(
             "store",
@@ -828,6 +858,18 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
           const entry = storeResult.entry;
+          if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
+            if (walEntryId) await walRemove(walEntryId, api.logger);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Deduped to existing fact ${entry.id.slice(0, 8)} — no new store.`,
+                },
+              ],
+              details: { action: "noop", reason: "dedupe", id: entry.id },
+            };
+          }
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
             await cleanupEvictedVector({
@@ -836,8 +878,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               logger: api.logger,
               context: "memory-store",
             });
-            recordActiveStoreProvenance(entry.id, textToStore);
-            if (supersedes?.trim()) {
+            if (storeResult.newlyStored) {
+              recordActiveStoreProvenance(entry.id, textToStore);
+            }
+            if (supersedes?.trim() && storeResult.newlyStored) {
               const supersededId = supersedes.trim();
               factsDb.supersede(supersededId, entry.id);
               aliasDb?.deleteByFactId(supersededId);

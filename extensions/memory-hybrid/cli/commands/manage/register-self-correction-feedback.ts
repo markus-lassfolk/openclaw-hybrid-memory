@@ -109,8 +109,12 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         }
         if (res.error) {
           console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
-          process.exitCode = res.status === "failed_partial" ? 2 : 1;
+          process.exitCode =
+            res.status === "failed_partial" || res.status === "failed_suspect_zero_parsed" ? 2 : 1;
           return;
+        }
+        if (res.status === "failed_partial" || res.status === "failed_suspect_zero_parsed") {
+          process.exitCode = 2;
         }
         if (res.skipped) {
           const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);

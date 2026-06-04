@@ -174,7 +174,7 @@ Each LLM-backed feature is assigned a **tier** (nano, default, or heavy). The fe
 |---------|------|--------------------------|
 | Auto-classify, classify-before-write, query expansion, summarize (recall), reranking, contextual variants, language keywords, retrieval aliases, passive observer | **nano** | `cfg.autoClassify.model` (or equivalent per feature) or `getDefaultCronModel(cronCfg, "nano")`. |
 | Reflection, reflect-rules, reflect-meta, **consolidate**, extract-procedures, persona proposals, dream cycle (reflection steps), ingest, cross-agent learning | **default** | Feature-specific config (e.g. `cfg.reflection.model`) or `getDefaultCronModel(cronCfg, "default")`. CLI `--model` overrides when present (e.g. `consolidate --model …`). |
-| Distill main pass | **maintenance** by default | `distill.modelTier` (unset → maintenance), `distill.defaultModel`, or CLI `distill --model`. Use `heavy` only by opting into `distill.modelTier="heavy"`. |
+| Distill main pass | **maintenance** by default | `distill.modelTier` (`nano` \| `maintenance` \| `default`; unset → maintenance), `distill.defaultModel`, or CLI `distill --model`. Legacy `distill.modelTier="heavy"` is clamped to maintenance (#1205/#1216). |
 
 So: **identification** = config + `getCronModelConfig` + `getLLMModelPreference` (and optionally `getProvidersWithKeys`). **Usage** = pick the tier for the feature, then take the first working model from that tier’s list. The full feature–tier matrix is in [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md).
 

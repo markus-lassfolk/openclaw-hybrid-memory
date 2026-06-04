@@ -195,6 +195,9 @@ export function buildCliContextServices(
     runConsolidate: async (opts) => {
       // Skip if OpenAI provider is configured but API key is missing
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
+        api.logger.warn?.(
+          "memory-hybrid: consolidate skipped — embedding.provider is openai but embedding.apiKey is missing",
+        );
         return { clustersFound: 0, merged: 0, deleted: 0 };
       }
       await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");

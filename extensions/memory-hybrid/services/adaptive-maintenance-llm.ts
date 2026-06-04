@@ -72,13 +72,18 @@ function compatibleFallbacks(
 ): string[] {
   if (fallbackModels.length === 0) return fallbackModels;
   const inputTokens = estimateTokens(content);
-  const possiblyIncompatible = fallbackModels.filter((fb) => inputTokens > distillBatchTokenLimit(fb));
-  if (possiblyIncompatible.length > 0) {
+  const compatible: string[] = [];
+  const skipped: string[] = [];
+  for (const fb of fallbackModels) {
+    if (inputTokens <= distillBatchTokenLimit(fb)) compatible.push(fb);
+    else skipped.push(fb);
+  }
+  if (skipped.length > 0) {
     logger.info?.(
-      `${label}: fallbacks may hit context limits on retry (${inputTokens} input tokens): ${possiblyIncompatible.join(", ")}`,
+      `${label}: skipping context-incompatible fallbacks (${inputTokens} input tokens): ${skipped.join(", ")}`,
     );
   }
-  return fallbackModels;
+  return compatible;
 }
 
 type PreparedMaintenanceCall = {
@@ -114,7 +119,7 @@ function prepareMaintenanceCall(opts: AdaptiveMaintenanceLlmOptions): PreparedMa
         maxOutputTokens: catalogMaxOutputTokens,
         source: "catalog" as const,
       };
-  const maxTokens = Math.max(128, Math.min(opts.maxTokens, catalogMaxOutputTokens));
+  const maxTokens = Math.max(128, Math.min(opts.maxTokens, catalogMaxOutputTokens, effective.maxOutputTokens));
   const fallbackModels = compatibleFallbacks(opts.content, opts.fallbackModels ?? [], opts.logger, opts.label);
   return { maxTokens, fallbackModels, enabled, adaptiveStatePath, state, effective, inputTokens };
 }
@@ -136,7 +141,7 @@ async function callMaintenanceDetailed(
     feature: opts.feature,
     responseFormat: opts.responseFormat,
     onRetry: opts.onRetry,
-    timeoutMs: resolveMaintenanceChatTimeoutMs(opts.model, thinkingMode),
+    timeoutMsPerModel: (m) => resolveMaintenanceChatTimeoutMs(m, thinkingMode),
     ...(thinkingMode != null ? { thinkingMode } : {}),
   });
 }

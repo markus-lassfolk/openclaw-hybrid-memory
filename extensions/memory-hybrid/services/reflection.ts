@@ -1204,7 +1204,8 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
-      thinkingMode: opts.thinkingMode,
+      // Structured JSON extraction: disable M3 thinking blocks (adaptive breaks json_object parsing).
+      thinkingMode: "disabled",
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1280,7 +1281,9 @@ export async function runReflectionRules(
       }
     }
     if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
-      throw new Error(`memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}`);
+      logger.warn(
+        `memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}; returning 0 stored (degraded)`,
+      );
     }
     return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
   }
@@ -1845,7 +1848,8 @@ export async function runReflectionMeta(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
-      thinkingMode: opts.thinkingMode,
+      // Structured JSON extraction: disable M3 thinking blocks (adaptive breaks json_object parsing).
+      thinkingMode: "disabled",
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1914,7 +1918,9 @@ export async function runReflectionMeta(
       }
     }
     if (zeroMetasReason === "invalid_response_format" || zeroMetasReason === "empty_model_response") {
-      throw new Error(`memory-hybrid: reflect-meta — model=${modelUsed} failure_type=${zeroMetasReason}`);
+      logger.warn(
+        `memory-hybrid: reflect-meta — model=${modelUsed} failure_type=${zeroMetasReason}; returning 0 stored (degraded)`,
+      );
     }
     return { metaExtracted: uniqueMetas.length, metaStored: 0, diagnostics };
   }

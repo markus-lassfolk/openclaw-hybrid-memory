@@ -89,6 +89,11 @@ export const MAINTENANCE_THINKING_CHAT_TIMEOUT_MS = 180_000;
 /** Maintenance LLM timeout for MiniMax M2.x with thinking enabled. */
 export const MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS = 120_000;
 
+/** Env override for maintenance chat timeout (ms). Clamped to [10s, 30min]. */
+export const MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV = "OPENCLAW_HYBRID_MEM_MAINTENANCE_TIMEOUT_MS";
+export const MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MIN_MS = 10_000;
+export const MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MAX_MS = 30 * 60 * 1000;
+
 /** Daily narrative prompts aggregate many events — allow longer than default chat timeout (#935, #936). */
 export const NARRATIVE_CHAT_TIMEOUT_MS = 120_000;
 

@@ -247,6 +247,13 @@ export async function runStoreForCli(
               if (storeResult.skipped) {
                 return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
               }
+              if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+                return {
+                  outcome: "noop",
+                  reason: "dedupe-update",
+                  id: storeResult.entry.id,
+                };
+              }
               const newEntry = storeResult.entry;
               // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
               await cleanupEvictedVector({
@@ -255,14 +262,16 @@ export async function runStoreForCli(
                 logger: log,
                 context: "cli-store",
               });
-              factsDb.supersede(classification.targetId, newEntry.id);
-              aliasDb?.deleteByFactId(classification.targetId);
-              await deleteVectorForFactId({
-                vectorDb: vectorDb,
-                factId: classification.targetId,
-                logger: log,
-                context: "cli-store-update-superseded",
-              });
+              if (storeResult.newlyStored) {
+                factsDb.supersede(classification.targetId, newEntry.id);
+                aliasDb?.deleteByFactId(classification.targetId);
+                await deleteVectorForFactId({
+                  vectorDb: vectorDb,
+                  factId: classification.targetId,
+                  logger: log,
+                  context: "cli-store-update-superseded",
+                });
+              }
               try {
                 if (storeResult.embeddingStale) {
                   const mergedVector = await embeddings.embed(newEntry.text);
@@ -319,12 +328,18 @@ export async function runStoreForCli(
                     : "runStoreForCli:vector-store-update",
                 });
               }
-              return {
-                outcome: "updated",
-                id: newEntry.id,
-                supersededId: classification.targetId,
-                reason: classification.reason ?? "",
-              };
+              return storeResult.newlyStored
+                ? {
+                    outcome: "updated",
+                    id: newEntry.id,
+                    supersededId: classification.targetId,
+                    reason: classification.reason ?? "",
+                  }
+                : {
+                    outcome: "noop",
+                    reason: storeResult.embeddingStale ? "dedupe-merge" : "dedupe-update",
+                    id: newEntry.id,
+                  };
             }
             return {
               outcome: "noop",
@@ -360,6 +375,9 @@ export async function runStoreForCli(
     if (storeResult.skipped) {
       return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
     }
+    if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+      return { outcome: "noop", reason: "dedupe", id: storeResult.entry.id };
+    }
     const entry = storeResult.entry;
     // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
     await cleanupEvictedVector({
@@ -368,7 +386,7 @@ export async function runStoreForCli(
       logger: log,
       context: "cli-store",
     });
-    if (supersedesId) {
+    if (supersedesId && storeResult.newlyStored) {
       factsDb.supersede(supersedesId, entry.id);
       aliasDb?.deleteByFactId(supersedesId);
     }

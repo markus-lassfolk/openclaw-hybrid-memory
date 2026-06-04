@@ -989,7 +989,7 @@ export async function runSelfCorrectionRunForCli(
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
       const isParseFailure = (e as any).isParseFailure === true;
       const batchesCompleted = completedBatchIndexes.size;
-      const isPartial = analysed.length > 0 && batchesCompleted < batches.length;
+      const isPartial = batchesCompleted > 0 && batchesCompleted < batches.length;
       let autoFixed = 0;
       let proposals: string[] = [];
       let toolsSuggestions: string[] | undefined;
@@ -1029,7 +1029,13 @@ export async function runSelfCorrectionRunForCli(
           }
         }
       }
-      const status = isParseFailure ? "failed_parse" : isPartial ? "failed_partial" : undefined;
+      const status = isPartial
+        ? "failed_partial"
+        : isParseFailure
+          ? "failed_parse"
+          : batchesCompleted < batches.length
+            ? "failed"
+            : undefined;
       if (isPartial) {
         logger.warn?.(
           `memory-hybrid: ${SCAN_TYPE} — partial batch failure: batches_completed=${batchesCompleted}/${batches.length} analysed=${analysed.length}`,
@@ -1118,7 +1124,10 @@ export async function runSelfCorrectionRunForCli(
       });
     }
 
-    if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
+    const diagnosticsIndicateFailure =
+      diagnostics.parseFailures > 0 || diagnostics.unparseableFailures > 0;
+
+    if (!opts.dryRun && !opts.incidents && !opts.extractPath && !diagnosticsIndicateFailure) {
       factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
     }
 

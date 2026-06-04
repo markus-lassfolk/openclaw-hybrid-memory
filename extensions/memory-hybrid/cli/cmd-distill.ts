@@ -11,6 +11,7 @@ import { basename, dirname, join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import {
   describeMaintenanceFallbackPolicy,
+  effectiveDistillMainModelTier,
   getCronModelConfig,
   getDefaultCronModel,
   isValidCategory,
@@ -36,6 +37,7 @@ import {
   isConnectionErrorLike,
   isContextLengthError,
   parseRetryAfterMs,
+  resolveMaintenanceChatTimeoutMs,
 } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -253,7 +255,7 @@ export async function runDistillForCli(
     // Operators who want heavy tier for distill must pass --model explicitly; distill.modelTier
     // is now clamped to maintenance/default/nano.
     const configuredDistillTier = cfg.distill?.modelTier ?? "maintenance";
-    const distillMainTier = configuredDistillTier === "heavy" ? "maintenance" : configuredDistillTier;
+    const distillMainTier = effectiveDistillMainModelTier(configuredDistillTier);
     if (configuredDistillTier === "heavy") {
       logger.warn?.(
         "memory-hybrid: distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance). Use --model to override for a single run.",
@@ -447,6 +449,8 @@ export async function runDistillForCli(
       return { text, count, tokens };
     };
 
+    let batchFailures = 0;
+
     while (cursorBlock < blocks.length) {
       batchNum++;
       const limits = effectiveLimitsForModel(model);
@@ -486,7 +490,13 @@ export async function runDistillForCli(
           label: `memory-hybrid: distill batch ${batchNum}`,
           feature: CostFeature.distillCli,
           thinkingMode: resolveDistillThinkingMode(cfg),
+          timeoutMsPerModel: (m) => resolveMaintenanceChatTimeoutMs(m, resolveDistillThinkingMode(cfg)),
         });
+        if (detail.finishReason?.toLowerCase() === "length") {
+          logger.warn?.(
+            `memory-hybrid: distill batch ${batchNum} output truncated (finish=length); extracted facts may be incomplete`,
+          );
+        }
         if (detail.modelUsed !== model) {
           const src = fallbackSources.get(detail.modelUsed) ?? "fallback";
           logger.info?.(
@@ -600,21 +610,22 @@ export async function runDistillForCli(
         }
         sink.warn(`memory-hybrid: distill batch ${batchNum} failed: ${e}`);
         capturePluginError(e, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
+        batchFailures++;
         if (!adaptiveEnabled) {
           nonAdaptiveBatchFactor = 1;
           nonAdaptiveOutFactor = 1;
         }
-        cursorBlock += batch.count;
-        processedBlocks += batch.count;
-        progress.update(processedBlocks);
+        break;
       }
     }
     progress.done();
-    if (filesToProcess.length > 0 && allFacts.length === 0) {
+    const semanticEmpty = filesToProcess.length > 0 && allFacts.length === 0;
+    if (semanticEmpty) {
       sink.warn(
         `memory-hybrid: distill semantic_empty: processed ${filesToProcess.length} session(s) but parsed zero facts`,
       );
     }
+    const runSucceeded = batchFailures === 0 && !semanticEmpty;
     if (opts.dryRun) {
       sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
       return {
@@ -770,15 +781,19 @@ export async function runDistillForCli(
       }
     }
     try {
-      runRecordDistillForCli(ctx);
+      if (runSucceeded) {
+        runRecordDistillForCli(ctx);
+      }
     } catch (err) {
       sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
     }
-    if (!opts.dryRun) {
+    if (!opts.dryRun && runSucceeded) {
       // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
       const lastSessionTs = getMaxMtime(allCandidatePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
+    } else if (batchFailures > 0) {
+      sink.warn(`memory-hybrid: distill partial failure: ${batchFailures} batch(es) failed; scan cursor not advanced`);
     }
     return {
       sessionsScanned: filesToProcess.length,
@@ -786,6 +801,9 @@ export async function runDistillForCli(
       stored,
       dedupSkipped: skipped,
       dryRun: false,
+      semanticEmpty,
+      partialFailure: batchFailures > 0,
+      batchFailures,
     };
   } finally {
     if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);

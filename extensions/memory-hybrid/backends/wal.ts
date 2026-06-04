@@ -4,7 +4,7 @@
  */
 
 import { existsSync, mkdirSync, statSync } from "node:fs";
-import { appendFile, open, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { DecayClass } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -357,6 +357,37 @@ export class WriteAheadLog {
     return entries.filter((e) => now - e.timestamp < this.maxAge);
   }
 
+  private async atomicRewriteEntries(valid: WALEntry[]): Promise<void> {
+    if (valid.length === 0) {
+      await this._clearInternal();
+      return;
+    }
+    const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + "\n";
+    const tmpPath = `${this.walPath}.prune.${process.pid}.tmp`;
+    await writeFile(tmpPath, ndjson, "utf-8");
+    let fh: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      fh = await open(tmpPath, "r+");
+      try {
+        await fh.datasync();
+      } catch (datasyncErr) {
+        const code = (datasyncErr as NodeJS.ErrnoException).code;
+        if (code !== "EPERM" && code !== "EINVAL") throw datasyncErr;
+        await fh.close().catch(() => {});
+        fh = await open(tmpPath, "r+");
+        await fh.sync();
+      }
+    } finally {
+      await fh?.close().catch(() => {});
+    }
+    await rename(tmpPath, this.walPath);
+    this.activeIds.clear();
+    for (const e of valid) {
+      this.activeIds.add(e.id);
+    }
+    await this.fsyncAfterWrite();
+  }
+
   async pruneStale(): Promise<number> {
     const prevLock = this.writeLock;
     let releaseLock: () => void;
@@ -372,17 +403,7 @@ export class WriteAheadLog {
       const pruned = entries.length - valid.length;
 
       if (pruned > 0) {
-        if (valid.length === 0) {
-          await this._clearInternal();
-        } else {
-          const ndjson = valid.map((e) => JSON.stringify(e)).join("\n") + (valid.length ? "\n" : "");
-          await writeFile(this.walPath, ndjson, "utf-8");
-          await this.fsyncAfterWrite();
-          this.activeIds.clear();
-          for (const e of valid) {
-            this.activeIds.add(e.id);
-          }
-        }
+        await this.atomicRewriteEntries(valid);
       }
       return pruned;
     } finally {
@@ -392,16 +413,29 @@ export class WriteAheadLog {
   }
 
   async compactIfOversized(maxBytes: number): Promise<number> {
+    const prevLock = this.writeLock;
+    let releaseLock: () => void;
+    this.writeLock = new Promise((resolve) => {
+      releaseLock = resolve;
+    });
+
     try {
+      await prevLock;
       if (!existsSync(this.walPath)) return 0;
       const st = statSync(this.walPath);
       if (st.size <= maxBytes) return 0;
-      return await this.pruneStale();
+      // Size-triggered rewrite only — never age-prune pending entries (#1876).
+      const entries = await this.readAll();
+      await this.atomicRewriteEntries(entries);
+      return 0;
     } catch (err) {
       pluginLogger.info(
         `memory-hybrid: WAL compactIfOversized size check failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
       );
       return 0;
+    } finally {
+      // biome-ignore lint/style/noNonNullAssertion: Synchronous
+      releaseLock!();
     }
   }
 }

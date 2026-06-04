@@ -24,10 +24,17 @@ function makeEntry(overrides: Partial<MemoryEntry> = {}): MemoryEntry {
 
 function makeFactsDb(entries: MemoryEntry[]) {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const mergedEntry = makeEntry({ id: "merged-fact", text: "Merged fact" });
   return {
     getFactsForConsolidation: vi.fn().mockReturnValue(entries),
     getById: vi.fn((id: string) => byId.get(id) ?? null),
-    store: vi.fn().mockReturnValue({ id: "merged-fact" }),
+    storeWithResult: vi.fn((_input, _options) => ({
+      skipped: false,
+      entry: mergedEntry,
+      evictedFactId: null,
+      newlyStored: true,
+      embeddingStale: false,
+    })),
     createLink: vi.fn(),
     delete: vi.fn(),
     setEmbeddingModel: vi.fn(),
@@ -68,7 +75,7 @@ describe("runConsolidate", () => {
       { info: () => undefined, warn: () => undefined },
     );
 
-    expect(factsDb.store).toHaveBeenCalledWith(
+    expect(factsDb.storeWithResult).toHaveBeenCalledWith(
       expect.objectContaining({ key: "language", value: "Rust" }),
       expect.objectContaining({ warnContext: "consolidation", suppressVectorFallbackWarning: true }),
     );
@@ -98,7 +105,7 @@ describe("runConsolidate", () => {
       { info: () => undefined, warn: () => undefined },
     );
 
-    expect(factsDb.store).toHaveBeenCalledWith(
+    expect(factsDb.storeWithResult).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "consolidation",
         decayClass: "durable",
@@ -157,7 +164,7 @@ describe("runConsolidate", () => {
     );
 
     expect(result.merged).toBe(0);
-    expect(factsDb.store).not.toHaveBeenCalled();
+    expect(factsDb.storeWithResult).not.toHaveBeenCalled();
   });
 
   it("LLM call is attributed to 'consolidation' feature", async () => {
@@ -187,5 +194,41 @@ describe("runConsolidate", () => {
     );
 
     expect(capturedFeature).toBe("consolidation");
+  });
+
+  it("does not delete cluster facts when store dedupes to an existing row", async () => {
+    const entries = [makeEntry({ id: "a", text: "Fact A" }), makeEntry({ id: "b", text: "Fact B" })];
+    const factsDb = makeFactsDb(entries);
+    factsDb.storeWithResult.mockReturnValueOnce({
+      skipped: false,
+      entry: makeEntry({ id: "existing-dedupe", text: "Merged fact" }),
+      evictedFactId: null,
+      newlyStored: false,
+      embeddingStale: false,
+    });
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    const embeddings = makeEmbeddings({
+      "Fact A": [1, 0],
+      "Fact B": [1, 0],
+      "Merged fact": [1, 0],
+    });
+    const openai = {
+      chat: {
+        completions: { create: vi.fn().mockResolvedValue({ choices: [{ message: { content: "Merged fact" } }] }) },
+      },
+    } as never;
+
+    const result = await runConsolidate(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai,
+      { threshold: 0.9, includeStructured: true, dryRun: false, limit: 10, model: "test-model" },
+      { info: () => undefined, warn: () => undefined },
+    );
+
+    expect(result.merged).toBe(0);
+    expect(result.deleted).toBe(0);
+    expect(factsDb.delete).not.toHaveBeenCalled();
   });
 });

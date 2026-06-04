@@ -283,6 +283,7 @@ export async function runExtractReinforcementForCli(
     }
 
     let llmAnalysisFailed = false;
+    let incidentsTruncatedForAnalysis = false;
     const reinfCfg = cfg.reinforcement ?? {};
     const scCfg = cfg.selfCorrection;
     const llmEnabled =
@@ -295,6 +296,7 @@ export async function runExtractReinforcementForCli(
       const maxPerRun = reinfCfg.maxIncidentsPerRun ?? 100;
       let incidentsForAnalysis = result.incidents;
       if (incidentsForAnalysis.length > maxPerRun) {
+        incidentsTruncatedForAnalysis = true;
         logger.warn?.(
           `memory-hybrid: extract-reinforcement truncated=true incidents=${result.incidents.length} cap=${maxPerRun}`,
         );
@@ -303,6 +305,8 @@ export async function runExtractReinforcementForCli(
 
       let analysed: ReinforcementRemediation[] = [];
       const diagnostics = emptyReinforcementDiagnostics();
+      let totalBatches = 0;
+      let completedBatches = 0;
       try {
         const analysisTier = "maintenance" as const;
         const tierPrefWithSources = resolveTierPreferenceWithSources(cfg, analysisTier);
@@ -315,6 +319,7 @@ export async function runExtractReinforcementForCli(
         const batchSize = resolveReinforcementAnalysisBatchSize(model, reinfCfg, scCfg);
         const batchDelayMs = resolveSelfCorrectionBatchDelayMs(scCfg);
         const batches = chunkReinforcementIncidents(incidentsForAnalysis, batchSize);
+        totalBatches = batches.length;
         const runFingerprint = buildReinforcementRunFingerprint(incidentsForAnalysis, model, batchSize, false);
         const stateDir = resolveReinforcementBatchStateDir(workspaceRoot);
         const statePath = join(stateDir, `${REINFORCEMENT_BATCH_STATE_PREFIX}${runFingerprint}.json`);
@@ -331,6 +336,7 @@ export async function runExtractReinforcementForCli(
           analysed = [...resumeState.analysed];
           Object.assign(diagnostics, resumeState.diagnostics);
           for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
+          completedBatches = completedBatchIndexes.size;
           logger.info?.(
             `memory-hybrid: extract-reinforcement resume completed=${completedBatchIndexes.size}/${batches.length} state=${statePath}`,
           );
@@ -439,6 +445,26 @@ export async function runExtractReinforcementForCli(
           );
 
           if (result.items === null) {
+            const trimmedRaw = (result.rawContent ?? "").trim();
+            const emptyArrayResponse =
+              trimmedRaw === "[]" ||
+              (() => {
+                try {
+                  const parsed = JSON.parse(trimmedRaw);
+                  return Array.isArray(parsed) && parsed.length === 0;
+                } catch {
+                  return false;
+                }
+              })();
+            if (emptyArrayResponse) {
+              completedBatchIndexes.add(batchIndex);
+              completedBatches = completedBatchIndexes.size;
+              persistBatchState();
+              if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
+                await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
+              }
+              continue;
+            }
             diagnostics.parseFailures++;
             const excerpt = (result.rawContent ?? "").slice(0, 240);
             const parseError = new Error(
@@ -477,6 +503,7 @@ export async function runExtractReinforcementForCli(
           const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
           diagnostics.parsedItems += added;
           completedBatchIndexes.add(batchIndex);
+          completedBatches = completedBatchIndexes.size;
           persistBatchState();
 
           if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
@@ -486,17 +513,25 @@ export async function runExtractReinforcementForCli(
 
         if (completedBatchIndexes.size === batches.length) {
           removeReinforcementBatchState(statePath);
+        } else if (completedBatchIndexes.size > 0 && completedBatchIndexes.size < batches.length) {
+          result.partialBatchFailure = true;
+          logger.warn?.(
+            `memory-hybrid: extract-reinforcement partial batch failure: completed=${completedBatchIndexes.size}/${batches.length} analysed=${analysed.length}`,
+          );
         }
+        completedBatches = completedBatchIndexes.size;
         if (incidentsForAnalysis.length > 0 && analysed.length === 0) {
-          llmAnalysisFailed = true;
           logger.warn?.(
             `memory-hybrid: extract-reinforcement suspect: ${incidentsForAnalysis.length} incident(s) but zero parsed remediations`,
           );
         }
         analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
       } catch (e) {
-        llmAnalysisFailed = true;
-        if ((e as Error & { isParseFailure?: boolean }).isParseFailure) {
+        llmAnalysisFailed = completedBatches === 0;
+        if (
+          (e as Error & { isParseFailure?: boolean }).isParseFailure ||
+          (completedBatches > 0 && totalBatches > 0 && completedBatches < totalBatches)
+        ) {
           result.partialBatchFailure = true;
         }
         capturePluginError(e as Error, {
@@ -856,7 +891,7 @@ export async function runExtractReinforcementForCli(
     if (annotationStatus !== undefined) result.annotationStatus = annotationStatus;
     if (annotationDiagnostic) result.annotationDiagnostic = annotationDiagnostic;
 
-    if (!opts.dryRun && !llmAnalysisFailed) {
+    if (!opts.dryRun && !llmAnalysisFailed && !result.partialBatchFailure && !incidentsTruncatedForAnalysis) {
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
     }

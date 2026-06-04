@@ -24,7 +24,7 @@ import { isMiniMaxModel } from "./chat.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
-import { deleteVectorsForFactIds } from "./vector-maintenance.js";
+import { deleteVectorsForFactIds, cleanupEvictedVector } from "./vector-maintenance.js";
 
 interface ConsolidateOptions {
   threshold: number;
@@ -246,7 +246,7 @@ export async function runConsolidate(
     }
 
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store(
+    const storeResult = factsDb.storeWithResult(
       {
         text: mergedText,
         category,
@@ -277,6 +277,25 @@ export async function runConsolidate(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      logger.warn(
+        `memory-hybrid: consolidate skipped merge store (pre-store guard blocked): "${mergedText.slice(0, 80)}..."`,
+      );
+      continue;
+    }
+    if (storeResult.newlyStored === false) {
+      logger.warn(
+        `memory-hybrid: consolidate skipped merge store (dedupe resolved to existing fact ${storeResult.entry.id.slice(0, 8)}): "${mergedText.slice(0, 80)}..."`,
+      );
+      continue;
+    }
+    const entry = storeResult.entry;
+    await cleanupEvictedVector({
+      vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger,
+      context: "consolidation",
+    });
     if (provenanceService && consolidationRunId) {
       try {
         provenanceService.addEdge(entry.id, {

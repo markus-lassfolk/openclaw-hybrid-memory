@@ -155,7 +155,7 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
     expect(attemptAnalysisJsonRepair).toHaveBeenCalled();
   });
 
-  it("does not increment parseFailures when JSON repair succeeds", async () => {
+  it("increments parseFailures once when JSON repair succeeds after initial parse failure", async () => {
     const attemptAnalysisJsonRepair = vi.fn(async () => ({
       items: [
         { ...SAMPLE_ITEM, incidentIndex: 0 },
@@ -186,7 +186,7 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
     );
 
     expect(result.items?.length).toBe(2);
-    expect(result.diagnostics.parseFailures).toBe(0);
+    expect(result.diagnostics.parseFailures).toBe(1);
     expect(attemptAnalysisJsonRepair).toHaveBeenCalled();
   });
 

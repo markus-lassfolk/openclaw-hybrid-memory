@@ -305,6 +305,17 @@ function appendUniqueFallbackList(chain: string[], candidates: string[] | undefi
 }
 
 /**
+ * Effective tier for the main distill pass. Config may still store `"heavy"` for backward
+ * compatibility, but runtime always uses maintenance (#1205/#1216).
+ */
+export function effectiveDistillMainModelTier(
+  configured: "nano" | "maintenance" | "default" | "heavy" | undefined,
+): "nano" | "maintenance" | "default" {
+  const tier = configured ?? "maintenance";
+  return tier === "heavy" ? "maintenance" : tier;
+}
+
+/**
  * Resolve default model and fallback list for reflection/cron (default or heavy tier).
  * Single place for getCronModelConfig + getLLMModelPreference + cfg.llm fallback logic.
  *

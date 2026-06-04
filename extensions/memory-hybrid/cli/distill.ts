@@ -178,6 +178,11 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             `\nDistill done: ${result.stored} stored, ${result.dedupSkipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
           );
         }
+        if (result.semanticEmpty) {
+          process.exitCode = 1;
+        } else if (result.partialFailure) {
+          process.exitCode = 2;
+        }
       },
     ),
   );
