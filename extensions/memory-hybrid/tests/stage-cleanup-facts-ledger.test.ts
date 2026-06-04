@@ -291,6 +291,62 @@ describe("stage-cleanup facts ledger subagent hooks", () => {
     expect(task?.subagent).toBe("agent:main:subagent:retry-child");
   });
 
+  it("clears related_session when subagent_ended marks task Done", async () => {
+    await api.emitAll(
+      "subagent_spawned",
+      {
+        label: "done-clears-session",
+        childSessionKey: "agent:main:subagent:done-child",
+        task: "Completable work",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    await api.emitAll(
+      "subagent_ended",
+      {
+        label: "done-clears-session",
+        targetSessionKey: "agent:main:subagent:done-child",
+        success: true,
+        outcome: "success",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    const { completed } = loadTaskLedgerFromFacts(factsDb);
+    const task = completed.find((t) => t.label === "done-clears-session");
+    expect(task?.status).toBe("Done");
+    expect(task?.subagent).toBeUndefined();
+  });
+
+  it("clears related_session when subagent_ended marks task Failed", async () => {
+    await api.emitAll(
+      "subagent_spawned",
+      {
+        label: "failed-clears-session",
+        childSessionKey: "agent:main:subagent:failed-child",
+        task: "Failing work",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    await api.emitAll(
+      "subagent_ended",
+      {
+        label: "failed-clears-session",
+        targetSessionKey: "agent:main:subagent:failed-child",
+        success: false,
+        outcome: "error",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    const { active } = loadTaskLedgerFromFacts(factsDb);
+    const task = active.find((t) => t.label === "failed-clears-session");
+    expect(task?.status).toBe("Failed");
+    expect(task?.subagent).toBeUndefined();
+  });
+
   it("subagent_ended does not auto-complete when success is ambiguous", async () => {
     await api.emitAll(
       "subagent_spawned",

@@ -216,4 +216,36 @@ describe("stage-goal-subagent facts ledger linking", () => {
     expect(task?.subagent).toBe("agent:main:subagent:retry-2");
     expect(task?.relatedGoal).toBe(goal.id);
   });
+
+  it("clears stale failure next on successful re-dispatch", async () => {
+    const goal = await createGoal(
+      goalsDir,
+      { label: "retry-next", description: "Deploy API", acceptanceCriteria: ["live"] },
+      {
+        maxDispatches: 20,
+        maxAssessments: 50,
+        cooldownMinutes: 10,
+        escalateAfterFailures: 3,
+        priority: "normal",
+      },
+    );
+
+    await api.emitAll("subagent_spawned", {
+      goalId: goal.id,
+      label: "retry-next-task",
+      task: "Missing session metadata",
+    });
+
+    await api.emitAll("subagent_spawned", {
+      goalId: goal.id,
+      label: "retry-next-task",
+      childSessionKey: "agent:main:subagent:retry-next-2",
+      task: "Retry with session",
+    });
+
+    const { active } = loadTaskLedgerFromFacts(factsDb);
+    const task = active.find((t) => t.label === "retry-next-task");
+    expect(task?.status).toBe("In progress");
+    expect(task?.next ?? "").not.toContain("missing ACP session metadata");
+  });
 });

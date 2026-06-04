@@ -394,6 +394,7 @@ export function registerCleanupHandlers(
           description,
           status: "In progress",
           subagent: childOrSession,
+          next: existing?.status === "Failed" ? "" : existing?.next,
           started: existing?.started ?? now,
           updated: now,
         };
@@ -418,6 +419,7 @@ export function registerCleanupHandlers(
         description,
         status: "In progress",
         subagent: childOrSession,
+        next: existing?.status === "Failed" ? "" : existing?.next,
         started: existing?.started ?? now,
         updated: now,
       };
@@ -554,7 +556,7 @@ export function registerCleanupHandlers(
         const { updated, completed } = completeTask(taskFile.active, taskLabel);
         if (completed) {
           if (ctx.cfg.activeTask.ledger === "facts") {
-            const doneEntry: ActiveTaskEntry = { ...completed, status: "Done", updated: now };
+            const doneEntry: ActiveTaskEntry = { ...completed, status: "Done", updated: now, subagent: "" };
             await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, doneEntry, api.logger);
             if (ctx.cfg.activeTask.flushOnComplete) {
               const memoryDir = join(workspaceRoot, "memory");
@@ -599,6 +601,7 @@ export function registerCleanupHandlers(
           status: "Failed",
           updated: now,
           next: errHint ? `Fix: ${String(errHint).slice(0, 100)}` : taskAfterSignals.next,
+          subagent: "",
         };
         if (ctx.cfg.activeTask.ledger === "facts") {
           await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, updatedEntry, api.logger);

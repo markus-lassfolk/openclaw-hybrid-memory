@@ -3,7 +3,7 @@
  */
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
-import type { ActiveTaskEntry } from "../services/active-task.js";
+import { isTerminalActiveTaskStatus, type ActiveTaskEntry } from "../services/active-task.js";
 import {
   markGoalDispatchFailure,
   type GoalSubagentSpawnEvent,
@@ -28,6 +28,8 @@ async function syncGoalLinkedTaskToFactsLedger(
   const { active } = loadTaskLedgerFromFacts(ctx.factsDb);
   const existing = active.find((t) => taskLabelsMatch(t.label, label));
   const now = new Date().toISOString();
+  const reopeningFromTerminal =
+    !!childOrSession && !overrides?.status && !!existing && isTerminalActiveTaskStatus(existing.status);
   await syncActiveTaskEntryToFacts(
     ctx.factsDb,
     ctx.vectorDb,
@@ -40,7 +42,7 @@ async function syncGoalLinkedTaskToFactsLedger(
       status: overrides?.status ?? "In progress",
       subagent: childOrSession === null ? "" : (childOrSession ?? existing?.subagent),
       relatedGoal: goalId,
-      next: overrides?.next ?? existing?.next,
+      next: overrides?.next ?? (reopeningFromTerminal ? "" : existing?.next),
       started: existing?.started ?? now,
       updated: now,
     },
