@@ -364,89 +364,60 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
               });
               if (parsed) {
-                const stored = credentialsDb.storeIfNew({
-                  service: parsed.service,
-                  type: parsed.type,
-                  value: parsed.secretValue,
-                  url: parsed.url,
-                  notes: parsed.notes,
-                });
-                if (!stored) {
+                let storedInVault = false;
+                try {
+                  storedInVault = credentialsDb.storeIfNew({
+                    service: parsed.service,
+                    type: parsed.type,
+                    value: parsed.secretValue,
+                    url: parsed.url,
+                    notes: parsed.notes,
+                  });
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    subsystem: "memory-tools",
+                    operation: "memory-store:credential-vault-store",
+                  });
                   return {
-                    content: [
-                      { type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` },
-                    ],
-                    details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
+                    content: [{ type: "text", text: "Credential vault store failed." }],
+                    details: { action: "credential_vault_error" },
                   };
                 }
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
-                const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-                const pointerStoreResult = factsDb.storeWithResult({
-                  text: pointerText,
-                  why,
-                  category: "technical" as MemoryCategory,
-                  importance,
-                  entity: "Credentials",
-                  key: parsed.service,
-                  value: pointerValue,
-                  source: "conversation",
-                  decayClass: paramDecayClass ?? "permanent",
-                  tags: ["auth", ...extractTags(pointerText, "Credentials")],
-                  provenanceSession: provenanceSessionId,
-                  extractionMethod: "active",
-                  extractionConfidence: importance,
-                });
-                const pointerEntry = pointerStoreResult.entry;
-                // Guard: if the pointer was rejected by the pre-store guard, undo the vault store and return rejected artifact
-                if (pointerStoreResult.rejected) {
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type as any);
-                  } catch (_cleanupErr) {
-                    // best-effort cleanup
+
+                const pointer = ensureCredentialVaultPointer(
+                  factsDb,
+                  parsed.service,
+                  parsed.type,
+                  "conversation",
+                  {
+                    why,
+                    importance,
+                    decayClass: paramDecayClass ?? "permanent",
+                    provenanceSession: provenanceSessionId,
+                    extractionMethod: "active",
+                    extractionConfidence: importance,
+                  },
+                );
+                if (!pointer.ok) {
+                  if (storedInVault) {
+                    rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
                   }
                   return {
                     content: [{ type: "text", text: "Credential-like content rejected by pre-store guard." }],
                     details: { action: "credential_rejected_artifact" },
                   };
                 }
-                if (pointerStoreResult.skipped) {
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type as any);
-                  } catch (cleanupErr) {
-                    api.logger.warn?.(
-                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
-                    );
-                    capturePluginError(cleanupErr as Error, {
-                      subsystem: "memory-tools",
-                      operation: "memory-store:credential-compensating-delete-skip",
-                    });
-                  }
-                  return {
-                    content: [{ type: "text", text: "Credential-like content rejected by pre-store guard." }],
-                    details: { action: "credential_rejected_artifact" },
-                  };
-                }
-                if (pointerStoreResult.newlyStored === false && !pointerStoreResult.embeddingStale) {
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type as any);
-                  } catch (cleanupErr) {
-                    api.logger.warn?.(
-                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
-                    );
-                    capturePluginError(cleanupErr as Error, {
-                      subsystem: "memory-tools",
-                      operation: "memory-store:credential-compensating-delete-dedupe",
-                    });
-                  }
+                const pointerEntry = pointer.entry;
+                if (!storedInVault && !pointer.newlyStored && !pointer.embeddingStale) {
                   return {
                     content: [
                       {
                         type: "text",
-                        text: `Credential pointer already in memory for ${parsed.service} (${parsed.type}).`,
+                        text: `Credential already in vault for ${parsed.service} (${parsed.type}).`,
                       },
                     ],
                     details: {
-                      action: "credential_pointer_dedupe",
+                      action: "credential_skipped_duplicate",
                       id: pointerEntry.id,
                       service: parsed.service,
                       type: parsed.type,
@@ -455,46 +426,50 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 }
                 await cleanupEvictedVector({
                   vectorDb,
-                  evictedFactId: pointerStoreResult.evictedFactId,
+                  evictedFactId: pointer.evictedFactId,
                   logger: api.logger,
                   context: "memory-store-credential-pointer",
                 });
-                recordActiveStoreProvenance(pointerEntry.id, pointerText);
-                try {
-                  addOperationBreadcrumb("vector", "store-credential-pointer");
-                  const vector = await embedCallWithTimeoutAndRetry(
-                    () => embeddings.embed(pointerText),
-                    "memory-tools:store-credential-pointer",
-                  );
-                  await storeActiveCanonicalVector({
-                    factId: pointerEntry.id,
-                    text: pointerText,
-                    why,
-                    vector,
-                    importance,
-                    category: "technical",
-                  });
-                  await storeRegistryEmbeddings({
-                    factsDb,
-                    embeddingRegistry,
-                    embeddings,
-                    factId: pointerEntry.id,
-                    text: pointerText,
-                    vector,
-                    logger: api.logger,
-                    operation: "store-credential-pointer",
-                  });
-                } catch (err) {
-                  // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
-                  if (!(err instanceof AllEmbeddingProvidersFailed)) {
-                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                      subsystem: "vector",
-                      operation: "store-credential-pointer",
-                      phase: "runtime",
-                      backend: "lancedb",
+                const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
+                if (pointer.newlyStored) {
+                  recordActiveStoreProvenance(pointerEntry.id, pointerText);
+                }
+                if (pointer.newlyStored || pointer.embeddingStale) {
+                  try {
+                    addOperationBreadcrumb("vector", "store-credential-pointer");
+                    const vector = await embedCallWithTimeoutAndRetry(
+                      () => embeddings.embed(pointerText),
+                      "memory-tools:store-credential-pointer",
+                    );
+                    await storeActiveCanonicalVector({
+                      factId: pointerEntry.id,
+                      text: pointerText,
+                      why,
+                      vector,
+                      importance,
+                      category: "technical",
                     });
+                    await storeRegistryEmbeddings({
+                      factsDb,
+                      embeddingRegistry,
+                      embeddings,
+                      factId: pointerEntry.id,
+                      text: pointerText,
+                      vector,
+                      logger: api.logger,
+                      operation: "store-credential-pointer",
+                    });
+                  } catch (err) {
+                    if (!(err instanceof AllEmbeddingProvidersFailed)) {
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "vector",
+                        operation: "store-credential-pointer",
+                        phase: "runtime",
+                        backend: "lancedb",
+                      });
+                    }
+                    api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                   }
-                  api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                 }
                 return {
                   content: [
