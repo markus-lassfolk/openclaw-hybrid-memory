@@ -193,7 +193,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       registerCredentialHint(api, ctx);
     }
 
-    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
     registerGoalStewardshipInjection(
       api,
@@ -201,6 +200,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       resolvedGoalsDir,
       ctx.cfg.activeTask.enabled ? resolvedActiveTaskPath : undefined,
     );
+
+    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering

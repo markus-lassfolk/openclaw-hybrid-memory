@@ -12,6 +12,7 @@ import type { ActiveTaskProjectionConfig } from "../config.js";
 import {
   type ActiveTaskEntry,
   UNKNOWN_ACTIVE_TASK_TIME,
+  clearActiveTaskHandoff,
   readPendingSignals,
   writeTaskSignal,
 } from "../services/active-task.js";
@@ -1699,6 +1700,76 @@ it("syncActiveTaskEntryToFacts fails fast when a required key is blocked by pre-
     const rows = db.listFactsByCategory("project", 20).filter((f) => f.entity === "guard-task");
     expect(rows.some((f) => f.key === "status")).toBe(false);
     expect(rows.some((f) => f.key === "title")).toBe(false);
+  } finally {
+    vi.restoreAllMocks();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("syncActiveTaskEntryToFacts rolls back handoff retire when a later key fails", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-handoff-rollback-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+  const originalStoreWithResult = FactsDB.prototype.storeWithResult;
+  const handoff = {
+    schema: "octave/task-handoff@v1",
+    artifactId: "artifact-rollback",
+    signal: "update" as const,
+    agent: "worker",
+    timestamp: now,
+    checksum: "abc123",
+  };
+
+  try {
+    await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+      label: "handoff-task",
+      description: "Task with handoff",
+      status: "In progress",
+      started: now,
+      updated: now,
+      handoff,
+    });
+
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+      if (input.source === "active-task" && input.entity === "handoff-task" && input.key === "related_goal") {
+        return {
+          skipped: true,
+          rejected: true,
+          evictedFactId: null,
+          embeddingStale: false,
+          newlyStored: false,
+          preMergeText: null,
+          entry: {
+            id: "blocked-related-goal",
+            text: input.text ?? "",
+            category: "project",
+            importance: 0.7,
+            source: "active-task",
+            createdAt: 1,
+            decayClass: "permanent",
+          },
+        };
+      }
+      return originalStoreWithResult.call(this, input);
+    });
+
+    const failingEntry: ActiveTaskEntry = {
+      label: "handoff-task",
+      description: "Task with handoff",
+      status: "In progress",
+      started: now,
+      updated: now,
+      relatedGoal: "goal-rollback-test",
+    };
+    clearActiveTaskHandoff(failingEntry);
+
+    await expect(syncActiveTaskEntryToFacts(db, vectorDb, embeddings, failingEntry)).rejects.toThrow(/pre-store guard/);
+
+    const { active } = loadTaskLedgerFromFacts(db);
+    const task = active.find((t) => t.label === "handoff-task");
+    expect(task?.handoff?.artifactId).toBe("artifact-rollback");
   } finally {
     vi.restoreAllMocks();
     db.close();

@@ -9,9 +9,9 @@ import { hybridConfigSchema } from "../config.js";
 import { registerActiveTaskInjection } from "../lifecycle/stage-active-task.js";
 import { registerGoalStewardshipInjection } from "../lifecycle/stage-goal-stewardship.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
-import { createGoal } from "../services/goal-registry.js";
+import { createGoal, updateGoal } from "../services/goal-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
-import { resolveGoalsDir } from "../services/goal-stewardship.js";
+import { resolveGoalsDir, listGoals } from "../services/goal-stewardship.js";
 import { syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
 import { setEnv } from "../utils/env-manager.js";
 import { createMockPluginApi } from "./harness/mock-plugin-api.js";
@@ -209,5 +209,71 @@ describe("heartbeat active-task + goal stewardship (facts ledger)", () => {
 
     expect(result).toBeUndefined();
     expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining("goal stewardship bundle"));
+  });
+
+  it("merged heartbeat prepend places goal stewardship before active tasks", async () => {
+    const handlers: Array<(event: unknown, hookCtx?: unknown) => Promise<{ prependContext?: string } | undefined>> =
+      [];
+    const api = createMockPluginApi();
+    const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
+    const apiWithLogger = {
+      ...api,
+      on(name: string, fn: (event: unknown, hookCtx?: unknown) => Promise<{ prependContext?: string } | undefined>) {
+        if (name === "before_agent_start") handlers.push(fn);
+        api.on(name, fn);
+      },
+      logger,
+      context: { sessionKey: "agent:main:main" },
+    } as unknown as ClawdbotPluginApi;
+
+    registerGoalStewardshipInjection(apiWithLogger, ctx, goalsDir, activeTaskPath);
+    registerActiveTaskInjection(apiWithLogger, ctx, activeTaskPath, workspaceRoot);
+
+    await createGoal(
+      goalsDir,
+      { label: "deploy-api", description: "Deploy API service", acceptanceCriteria: ["live"] },
+      {
+        maxDispatches: 20,
+        maxAssessments: 50,
+        cooldownMinutes: 1,
+        escalateAfterFailures: 3,
+        priority: "normal",
+      },
+    );
+    const goals = await listGoals(goalsDir);
+    const goal = goals[0];
+    expect(goal).toBeDefined();
+    if (!goal) throw new Error("fixture: expected one goal");
+    await updateGoal(
+      goalsDir,
+      goal.id,
+      { lastAssessedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() },
+      { timestamp: new Date().toISOString(), action: "test", detail: "cooldown", actor: "user" },
+    );
+
+    const now = new Date().toISOString();
+    await syncActiveTaskEntryToFacts(factsDb, ctx.vectorDb, ctx.embeddings, {
+      label: "deploy-api-queue",
+      description: "Process deploy-api PR queue",
+      status: "In progress",
+      started: now,
+      updated: now,
+    });
+
+    const event = { messages: [{ role: "user", content: "Scheduled heartbeat ping" }] };
+    const hookCtx = { sessionKey: "agent:main:main" };
+    let merged = "";
+    for (const handler of handlers) {
+      const result = await handler(event, hookCtx);
+      if (result?.prependContext) {
+        merged = merged ? `${merged}\n\n${result.prependContext}` : result.prependContext;
+      }
+    }
+
+    const goalIdx = merged.indexOf("<goal-stewardship");
+    const taskIdx = merged.indexOf("<active-tasks>");
+    expect(goalIdx).toBeGreaterThanOrEqual(0);
+    expect(taskIdx).toBeGreaterThanOrEqual(0);
+    expect(goalIdx).toBeLessThan(taskIdx);
   });
 });

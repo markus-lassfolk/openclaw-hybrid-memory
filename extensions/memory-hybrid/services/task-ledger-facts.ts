@@ -992,6 +992,33 @@ export function taskEntityKey(entity: string, key: string): string {
   return `${canonicalLabel(entity)}\u0000${key.trim()}`;
 }
 
+/** Latest non-superseded active-task fact for entity+key (projection-aligned). */
+export function findLatestActiveTaskKeyFact(
+  factsDb: FactsDB,
+  entity: string,
+  key: string,
+  latestByEntityKey?: Map<string, MemoryEntry>,
+): MemoryEntry | undefined {
+  const normalizedEntity = entity.trim().toLowerCase();
+  const cacheKey = taskEntityKey(normalizedEntity, key);
+  const cached = latestByEntityKey?.get(cacheKey);
+  if (cached?.source === "active-task") return cached;
+
+  const canonical = canonicalLabel(normalizedEntity);
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const same = facts.filter(
+    (f) =>
+      f.source === "active-task" &&
+      canonicalLabel(f.entity ?? "") === canonical &&
+      (f.key ?? "") === key &&
+      !(typeof f.supersededAt === "number" && Number.isFinite(f.supersededAt)) &&
+      !(typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec),
+  );
+  same.sort((a, b) => b.createdAt - a.createdAt);
+  return same[0];
+}
+
 /** Retire all active-task facts for entity+key (explicit handoff wipe without empty tombstones). */
 export function retireProjectTaskKeyFacts(factsDb: FactsDB, entity: string, key: string): number {
   const normalizedEntity = entity.trim().toLowerCase();
@@ -1039,20 +1066,7 @@ export async function upsertProjectTaskKey(
     // Query database if: (a) no cache was provided, or (b) cache had a non-active-task
     // entry (which we must not supersede, but an active-task row may still exist), or
     // (c) this is a status write and cache missed (status must not become append-only).
-    const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-    const nowSec = Math.floor(Date.now() / 1000);
-    // Supersede by canonical label to match grouping logic (strips suffixes, normalizes separators).
-    // Only supersede facts from the active-task ledger (source:"active-task"), not memory_store.
-    // Exclude expired facts to match projection logic (groupProjectFactsByEntity).
-    const same = facts.filter(
-      (f) =>
-        f.source === "active-task" &&
-        canonicalLabel(f.entity ?? "") === canonical &&
-        (f.key ?? "") === key &&
-        !(typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec),
-    );
-    same.sort((a, b) => b.createdAt - a.createdAt);
-    previous = same[0];
+    previous = findLatestActiveTaskKeyFact(factsDb, entity, key);
   }
   const text = `Task [${normalizedEntity}] ${key}: ${value}`;
   const storeResult = factsDb.storeWithResult({
@@ -1108,39 +1122,51 @@ export async function upsertProjectTaskKey(
   };
 }
 
-type ActiveTaskFactsSyncWrite = {
-  key: string;
-  previous?: MemoryEntry;
-  newEntry: MemoryEntry;
-};
+type ActiveTaskFactsSyncMutation =
+  | { kind: "upsert"; key: string; previous?: MemoryEntry; newEntry: MemoryEntry }
+  | { kind: "retire"; key: string; previous: MemoryEntry };
 
 async function rollbackActiveTaskFactsSync(
   factsDb: FactsDB,
   vectorDb: VectorDB,
   embeddings: EmbeddingProvider,
   entity: string,
-  writes: ActiveTaskFactsSyncWrite[],
+  mutations: ActiveTaskFactsSyncMutation[],
   log?: { warn?: (m: string) => void },
 ): Promise<void> {
-  for (const write of [...writes].reverse()) {
+  for (const mutation of [...mutations].reverse()) {
     try {
-      if (write.previous?.value != null) {
+      if (mutation.kind === "retire") {
+        if (mutation.previous.value != null) {
+          await upsertProjectTaskKey(
+            factsDb,
+            vectorDb,
+            embeddings,
+            entity,
+            mutation.key,
+            mutation.previous.value,
+            log,
+          );
+        }
+        continue;
+      }
+      if (mutation.previous?.value != null) {
         await upsertProjectTaskKey(
           factsDb,
           vectorDb,
           embeddings,
           entity,
-          write.key,
-          write.previous.value,
+          mutation.key,
+          mutation.previous.value,
           log,
         );
       } else {
-        factsDb.supersede(write.newEntry.id, null);
-        retireProjectTaskKeyFacts(factsDb, entity, write.key);
+        factsDb.supersede(mutation.newEntry.id, null);
+        retireProjectTaskKeyFacts(factsDb, entity, mutation.key);
       }
     } catch (rollbackErr) {
       log?.warn?.(
-        `memory-hybrid: active-task sync rollback failed for [${entity}] ${write.key}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
+        `memory-hybrid: active-task sync rollback failed for [${entity}] ${mutation.key}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
       );
     }
   }
@@ -1160,12 +1186,20 @@ export async function syncActiveTaskEntryToFacts(
 ): Promise<void> {
   const entity = entry.label;
   const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey };
-  const pendingWrites: ActiveTaskFactsSyncWrite[] = [];
+  const pendingMutations: ActiveTaskFactsSyncMutation[] = [];
   const upsertKey = async (key: string, value: string): Promise<void> => {
     const result = await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, key, value, log, upsertOpts);
     if (result.changed) {
-      pendingWrites.push({ key, previous: result.previous, newEntry: result.entry });
+      pendingMutations.push({ kind: "upsert", key, previous: result.previous, newEntry: result.entry });
     }
+  };
+  const retireKey = (key: string): void => {
+    const previous = findLatestActiveTaskKeyFact(factsDb, entity, key, upsertOpts.latestByEntityKey);
+    const retired = retireProjectTaskKeyFacts(factsDb, entity, key);
+    if (retired > 0 && previous) {
+      pendingMutations.push({ kind: "retire", key, previous });
+    }
+    upsertOpts.latestByEntityKey?.delete(taskEntityKey(entity, key));
   };
 
   try {
@@ -1193,15 +1227,15 @@ export async function syncActiveTaskEntryToFacts(
       if (entry.handoff) {
         await upsertKey("handoff", JSON.stringify(entry.handoff));
       } else {
-        retireProjectTaskKeyFacts(factsDb, entity, "handoff");
+        retireKey("handoff");
       }
     }
     if (entry.relatedGoal !== undefined) {
       await upsertKey("related_goal", entry.relatedGoal.trim());
     }
   } catch (err) {
-    if (pendingWrites.length > 0) {
-      await rollbackActiveTaskFactsSync(factsDb, vectorDb, embeddings, entity, pendingWrites, log);
+    if (pendingMutations.length > 0) {
+      await rollbackActiveTaskFactsSync(factsDb, vectorDb, embeddings, entity, pendingMutations, log);
     }
     throw err;
   }
@@ -1375,6 +1409,7 @@ export async function applyActiveTaskHygieneFacts(
     }
   }
   let appliedCount = 0;
+  const appliedLabels: string[] = [];
   const prBlockerTasks: ActiveTaskHygieneApplyResult["prBlockerTasks"] = [];
 
   for (const action of plan.actions) {
@@ -1413,6 +1448,7 @@ export async function applyActiveTaskHygieneFacts(
           reason: action.reason,
         });
         appliedCount++;
+        appliedLabels.push(task.label);
         continue;
       }
 
@@ -1444,6 +1480,7 @@ export async function applyActiveTaskHygieneFacts(
         await flushCompletedTaskToMemory(doneEntry, opts.memoryDir).catch(() => {});
       }
       appliedCount++;
+      appliedLabels.push(task.label);
     } catch (err) {
       opts.log?.warn?.(
         `memory-hybrid: active-task hygiene apply failed for [${action.label}] (${action.kind}): ${err instanceof Error ? err.message : String(err)}`,
@@ -1457,8 +1494,12 @@ export async function applyActiveTaskHygieneFacts(
     duplicates: plan.duplicates,
     stale: plan.stale,
     actions: plan.actions,
+    appliedLabels,
     appliedCount,
   };
+  if (appliedCount === 0) {
+    return { appliedCount, auditFactId: undefined, prBlockerTasks };
+  }
   const auditFactResult = factsDb.storeWithResult({
     text: `Active-task hygiene audit ${runAt}: ${plan.actions.length} action(s), ${plan.duplicates.length} duplicate group(s), ${appliedCount} applied.`,
     category: "episode",
