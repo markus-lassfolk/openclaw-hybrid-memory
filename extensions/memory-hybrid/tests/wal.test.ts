@@ -682,6 +682,31 @@ describe("WriteAheadLog", () => {
       expect(hadCorruption).toBe(true);
       warnSpy.mockRestore();
     });
+
+    it("recovers JSON array lines during lenient fallback", async () => {
+      const entry1 = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Line entry", category: "general", importance: 0.8, source: "test" },
+      };
+      const entry2 = {
+        id: randomUUID(),
+        timestamp: Date.now() + 1,
+        operation: "store" as const,
+        data: { text: "Array entry", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(entry1);
+      appendFileSync(walPath, `${JSON.stringify([entry2])}\n`, "utf-8");
+      appendFileSync(walPath, "{not valid wal json}\n", "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const { entries, hadCorruption } = await wal.readAllRecoverable();
+
+      expect(hadCorruption).toBe(true);
+      expect(entries.map((e) => e.id).sort()).toEqual([entry1.id, entry2.id].sort());
+      warnSpy.mockRestore();
+    });
   });
 
   describe("error handling", () => {

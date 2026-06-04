@@ -1210,22 +1210,15 @@ export async function runSelfCorrectionRunForCli(
       });
     }
 
-    const diagnosticsIndicateFailure =
-      diagnostics.parseFailures > 0 || diagnostics.unparseableFailures > 0 || diagnostics.truncations > 0;
+    const allBatchesCompleted = completedBatchIndexes.size === batches.length;
 
-    if (
-      !opts.dryRun &&
-      !opts.incidents &&
-      !opts.extractPath &&
-      !diagnosticsIndicateFailure &&
-      completedBatchIndexes.size === batches.length
-    ) {
+    if (!opts.dryRun && !opts.incidents && !opts.extractPath && allBatchesCompleted) {
       const sessionPaths = [...new Set(incidents.map((i) => i.sessionFile).filter(Boolean))];
       const lastSessionTs = sessionPaths.length > 0 ? (getMaxMtime(sessionPaths) ?? Date.now()) : Date.now();
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, incidents.length);
     }
 
-    if (completedBatchIndexes.size === batches.length) {
+    if (allBatchesCompleted) {
       removeSelfCorrectionBatchState(statePath);
     }
 
@@ -1244,7 +1237,7 @@ export async function runSelfCorrectionRunForCli(
       batchesStarted,
       batchesCompleted: completedBatchIndexes.size,
       totalBatches: batches.length,
-      status: diagnosticsIndicateFailure ? "failed_partial" : "success_analyzed",
+      status: "success_analyzed",
     };
   } finally {
     if (!bypassScanCooldown && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);

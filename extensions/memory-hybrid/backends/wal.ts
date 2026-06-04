@@ -82,6 +82,16 @@ export function isWalEntry(obj: unknown): obj is WALEntry {
   return true;
 }
 
+function appendWalEntriesFromParsed(obj: unknown, removedIds: Set<string>, entries: WALEntry[]): void {
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      if (isWalEntry(item) && !removedIds.has(item.id)) entries.push(item);
+    }
+    return;
+  }
+  if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
+}
+
 export class WriteAheadLog {
   private walPath: string;
   private maxAge: number;
@@ -234,13 +244,7 @@ export class WriteAheadLog {
       if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
       try {
         const obj = JSON.parse(trimmed) as unknown;
-        if (Array.isArray(obj)) {
-          for (const item of obj) {
-            if (isWalEntry(item) && !removedIds.has(item.id)) entries.push(item);
-          }
-        } else if (isWalEntry(obj) && !removedIds.has(obj.id)) {
-          entries.push(obj);
-        }
+        appendWalEntriesFromParsed(obj, removedIds, entries);
       } catch {
         // Skip corrupt lines during lenient read.
       }
@@ -393,8 +397,13 @@ export class WriteAheadLog {
       if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
       try {
         const obj = JSON.parse(trimmed) as unknown;
-        if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
-        else if (!isWalEntry(obj)) {
+        if (Array.isArray(obj)) {
+          const before = entries.length;
+          appendWalEntriesFromParsed(obj, removedIds, entries);
+          if (entries.length === before) corruptLineNumbers.push(lineIndex + 1);
+        } else if (isWalEntry(obj) && !removedIds.has(obj.id)) {
+          entries.push(obj);
+        } else if (!isWalEntry(obj)) {
           corruptLineNumbers.push(lineIndex + 1);
         }
       } catch (err) {

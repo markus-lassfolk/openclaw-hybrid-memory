@@ -251,6 +251,7 @@ export type SelfCorrectionRunResult = {
    * - `failed_parse`                — LLM responded but response could not be parsed as JSON
    * - `failed_suspect_zero_parsed`  — incidents were found but analysis produced no parsed items
    * - `failed_partial`              — some batches completed; apply may have run for partial analysed items
+   * - `failed`                      — analysis failed before any batch completed (non-parse error)
    */
   status?:
     | "success_analyzed"
@@ -259,7 +260,8 @@ export type SelfCorrectionRunResult = {
     | "skipped_concurrency"
     | "failed_parse"
     | "failed_suspect_zero_parsed"
-    | "failed_partial";
+    | "failed_partial"
+    | "failed";
   /** Batches fully completed in the last run (for resume / HM_EXIT). */
   batchesCompleted?: number;
   totalBatches?: number;

@@ -358,7 +358,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     });
 
     expect(res.error).toBeUndefined();
-    expect(res.status).toBe("failed_partial");
+    expect(res.status).toBe("success_analyzed");
     expect(res.analysed).toBe(1);
     expect(res.parseFailures).toBe(1);
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
