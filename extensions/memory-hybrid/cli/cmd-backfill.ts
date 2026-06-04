@@ -705,6 +705,11 @@ export async function runIngestFilesForCli(
   }
 
   if (opts.dryRun) {
+    if (files.length > 0 && allFacts.length === 0) {
+      sink.warn(
+        `memory-hybrid: ingest-files semantic_empty: processed ${files.length} file(s) but parsed zero facts`,
+      );
+    }
     sink.log(`Would extract ${allFacts.length} facts from ${files.length} files`);
     return { stored: 0, skipped: 0, extracted: allFacts.length, files: files.length, dryRun: true };
   }
@@ -762,6 +767,9 @@ export async function runIngestFilesForCli(
       sink.warn(`memory-hybrid: ingest-files store failed for "${fact.text.slice(0, 40)}...": ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:store-fact" });
     }
+  }
+  if (files.length > 0 && allFacts.length === 0) {
+    sink.warn(`memory-hybrid: ingest-files semantic_empty: processed ${files.length} file(s) but parsed zero facts`);
   }
   return { stored, skipped, extracted: allFacts.length, files: files.length, dryRun: false };
 }

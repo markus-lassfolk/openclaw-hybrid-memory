@@ -83,6 +83,19 @@ export function extractResponsesText(response: ResponsesApiResponse): string {
         }
       }
     }
+    // Function/tool call outputs (some providers emit structured payloads here).
+    if (item.type === "function_call" || item.type === "tool_call") {
+      const record = item as Record<string, unknown>;
+      const args = record.arguments ?? record.input;
+      if (typeof args === "string" && args.trim()) return args.trim();
+      if (args && typeof args === "object") {
+        try {
+          return JSON.stringify(args);
+        } catch {
+          /* fall through */
+        }
+      }
+    }
   }
   return "";
 }

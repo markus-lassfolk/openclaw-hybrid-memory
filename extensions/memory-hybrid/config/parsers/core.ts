@@ -505,6 +505,10 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
     reinforcementLLMAnalysis: scRaw.reinforcementLLMAnalysis !== false,
     reinforcementToProposals: scRaw.reinforcementToProposals !== false,
     agentsRuleToProposals: scRaw.agentsRuleToProposals !== false,
+    analysisBatchSize:
+      typeof scRaw.analysisBatchSize === "number" && scRaw.analysisBatchSize >= 1
+        ? Math.floor(scRaw.analysisBatchSize)
+        : undefined,
   };
 }
 

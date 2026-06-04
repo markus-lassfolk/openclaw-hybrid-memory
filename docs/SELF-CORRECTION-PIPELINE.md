@@ -108,6 +108,57 @@ openclaw hybrid-mem self-correction-run --workspace /path/to/project --model gem
 
 ---
 
+## M3 / MiniMax output envelopes and parsing (#1876)
+
+Some models (notably **MiniMax M3**) return structured JSON in **`message.tool_calls[].function.arguments`** with an **empty** `message.content` string, or wrap payloads in envelopes such as `{ "items": [...] }` or `{ "tool_calls": [...] }`.
+
+The pipeline handles this in two layers:
+
+1. **`extractAssistantMessageText`** (shared util, wired into `chatComplete` and direct OpenAI bypass sites) — extracts parseable text from string content, array text blocks, native `tool_calls`, or reasoning fallbacks (in that order).
+2. **`parseStructuredItems`** (shared util) — parses JSON arrays, M3-style envelopes, NDJSON lines, or single valid objects using a per-item validator.
+
+Self-correction analysis uses both when parsing remediation items from the LLM.
+
+### Batch resume state
+
+Long runs persist progress under the workspace temp dir (not `memory/reports/`):
+
+```
+<workspace>/tmp/self-correction/m3-batches-<fingerprint>.json
+```
+
+The fingerprint includes **incidents**, **model**, **batch size**, **dry-run**, and **apply-tools** flags. Changing `--model` or batch options starts a fresh run instead of reusing stale analysed items.
+
+- State is **not written** during `--dry-run`.
+- State is **removed on successful completion** (including suspect zero-parsed exits that finish the run).
+- Stale state files in the same directory are pruned when a new run starts.
+
+Configure batch size with `selfCorrection.analysisBatchSize` (default **1** for MiniMax/M3 models, **25** otherwise).
+
+### Run status values
+
+| Status | Meaning |
+|--------|---------|
+| `success_analyzed` | Incidents were analysed and remediations parsed/applied normally. |
+| `success_no_incidents` | Scan/extract found zero correction incidents. |
+| `skipped_cooldown` | Run skipped due to scan cooldown (not a zero-incident success). |
+| `failed_parse` | LLM response could not be parsed into remediation items. |
+| `failed_suspect_zero_parsed` | Incidents were present but **zero** remediation items were parsed (suspect model/parser failure). Cron validation treats this as a semantic failure. |
+
+### Verbose diagnostics
+
+When `--verbose` is set (or diagnostics are logged at info level), the run prints counters such as:
+
+- Batches started
+- Parsed item lines
+- Retry / fallback lines
+- Parse failures / unparseable failures
+- `parse_success=true|false` summary line
+
+These align with verified M3 batch logs (`expected=N parsed=M` warnings per batch when counts diverge).
+
+---
+
 ## Nightly cron job (optional)
 
 To run the full pipeline nightly (e.g. 02:30 Europe/Stockholm):
@@ -154,6 +205,7 @@ Under `plugins.entries["openclaw-hybrid-memory"].config.selfCorrection`:
 | `analyzeViaSpawn` | `false` | When `true` and incident count > `spawnThreshold`, run Phase 2 (analyze) via `openclaw sessions spawn --model <spawnModel>` for large context (e.g. Gemini). |
 | `spawnThreshold` | `15` | Use spawn for Phase 2 when incidents exceed this count. |
 | `spawnModel` | `"gemini"` | Model for spawn when `analyzeViaSpawn` is true. |
+| `analysisBatchSize` | `1` (MiniMax/M3) / `25` (others) | Incidents per LLM analysis batch. Smaller batches improve M3 parse visibility (`expected` vs `parsed` per batch). |
 
 Example (in `openclaw.json` or plugin config):
 

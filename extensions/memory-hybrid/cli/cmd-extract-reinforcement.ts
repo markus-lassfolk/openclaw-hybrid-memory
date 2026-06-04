@@ -27,6 +27,7 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
+import { parseStructuredItems } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { getMaxMtime, getSessionFilePathsSince } from "./cmd-extract-sessions.js";
@@ -179,19 +180,19 @@ export async function runExtractReinforcementForCli(
             `memory-hybrid: extract-reinforcement analysis succeeded with fallback model ${detail.modelUsed}`,
           );
         }
-        const jsonMatch = detail.content.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (Array.isArray(parsed)) {
-            analysed = parsed as ReinforcementRemediation[];
-            analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
-          } else {
-            llmAnalysisFailed = true;
-            logger.warn?.("memory-hybrid: extract-reinforcement analysis produced non-array JSON");
-          }
+        const parsed = parseStructuredItems(detail.content, (item) => {
+          if (typeof item !== "object" || item === null) return false;
+          return typeof (item as Record<string, unknown>).remediationType === "string";
+        });
+        if (parsed && parsed.length > 0) {
+          analysed = parsed as ReinforcementRemediation[];
+          analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
+        } else if (detail.content.trim().length > 0) {
+          llmAnalysisFailed = true;
+          logger.warn?.("memory-hybrid: extract-reinforcement analysis produced no parseable structured items");
         } else {
           llmAnalysisFailed = true;
-          logger.warn?.("memory-hybrid: extract-reinforcement analysis produced no parseable JSON array");
+          logger.warn?.("memory-hybrid: extract-reinforcement analysis returned empty model output");
         }
       } catch (e) {
         llmAnalysisFailed = true;
@@ -462,7 +463,7 @@ export async function runExtractReinforcementForCli(
     let annotationStatus: ReinforcementAnnotationStatus | undefined;
     let annotationDiagnostic: ReinforcementAnnotationDiagnostic | undefined;
     if (!opts.dryRun && result.incidents.length > 0 && annotated === 0) {
-      if (llmAnalysisFailed && annotationReasons.noRecalledIds === result.incidents.length) {
+      if (llmAnalysisFailed) {
         annotationStatus = "degraded_model_or_parser";
       } else if (annotationReasons.errors > 0) {
         annotationStatus = "failed_annotation";

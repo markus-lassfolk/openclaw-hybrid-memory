@@ -20,6 +20,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
 import { deleteVectorsForFactIds } from "./vector-maintenance.js";
@@ -209,7 +210,7 @@ export async function runConsolidate(
           { maxRetries: 2 },
         ),
       );
-      mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
+      mergedText = extractAssistantMessageText(resp.choices[0]?.message).text.slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

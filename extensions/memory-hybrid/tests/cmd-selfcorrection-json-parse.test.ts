@@ -57,11 +57,35 @@ function makeOpenAIMock(responseText: string) {
   } as any;
 }
 
-function makeOpenAIFailoverMock(
-  primaryModel: string,
-  fallbackModel: string,
-  responseText = JSON.stringify([SAMPLE_REMEDIATION]),
-) {
+function makeOpenAINativeToolCallsMock(argumentsJson: string) {
+  return {
+    chat: {
+      completions: {
+        create: vi.fn().mockResolvedValue({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: {
+                      name: "self_correction_result",
+                      arguments: argumentsJson,
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+        }),
+      },
+    },
+  } as any;
+}
+
+function makeOpenAIFailoverMock(primaryModel: string, fallbackModel: string, responseText = JSON.stringify([SAMPLE_REMEDIATION])) {
   return {
     chat: {
       completions: {
@@ -339,9 +363,27 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/excerpt=/);
   });
 
+
+
   it("accepts MiniMax M3-style nested arguments payload without losing analysed items", async () => {
     const llmContent = JSON.stringify({ arguments: { items: [SAMPLE_REMEDIATION] } });
     const ctx = makeCtx(makeOpenAIMock(llmContent));
+
+    const res = await runSelfCorrectionRunForCli(ctx, {
+      incidents: [SAMPLE_INCIDENT],
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.status).toBe("success_analyzed");
+    expect(res.analysed).toBe(1);
+  });
+
+  it("accepts native message.tool_calls with empty content (#1876)", async () => {
+    const ctx = makeCtx(
+      makeOpenAINativeToolCallsMock(JSON.stringify({ items: [SAMPLE_REMEDIATION] })),
+    );
 
     const res = await runSelfCorrectionRunForCli(ctx, {
       incidents: [SAMPLE_INCIDENT],
@@ -393,6 +435,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/zero parsed\/analysed/i);
   });
 
+
+
   it("retries transient Request was aborted failures with backoff without lowering maxTokens", async () => {
     const openai = {
       chat: {
@@ -418,8 +462,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.status).toBe("success_analyzed");
     expect(res.retryCount).toBe(1);
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
-    const callBodies = ((openai.chat.completions.create as any).mock?.calls ?? []).map(
-      (args: unknown[]) => args[0] as { max_tokens?: number; max_completion_tokens?: number },
+    const callBodies = ((openai.chat.completions.create as any).mock?.calls ?? []).map((args: unknown[]) =>
+      args[0] as { max_tokens?: number; max_completion_tokens?: number },
     );
     const tokenBudgets = callBodies.map(
       (body: { max_tokens?: number; max_completion_tokens?: number }) => body.max_tokens ?? body.max_completion_tokens,
@@ -455,12 +499,10 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
       applyTools: false,
     });
     expect(first.error).toBeDefined();
-    const reportsDir = join(tmpDir, "memory", "reports");
-    const stateFile = (await import("node:fs"))
-      .readdirSync(reportsDir)
-      .find((name) => name.startsWith("self-correction-run-state-"));
+    const stateDir = join(tmpDir, "tmp", "self-correction");
+    const stateFile = (await import("node:fs")).readdirSync(stateDir).find((name) => name.startsWith("m3-batches-"));
     expect(stateFile).toBeDefined();
-    const statePath = join(reportsDir, stateFile as string);
+    const statePath = join(stateDir, stateFile as string);
     expect(existsSync(statePath)).toBe(true);
     expect(JSON.parse(readFileSync(statePath, "utf-8")).completedBatchIndexes).toEqual([0]);
 
@@ -484,6 +526,91 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(second.analysed).toBe(2);
     expect(openaiSecond.chat.completions.create).toHaveBeenCalledTimes(1);
     expect(existsSync(statePath)).toBe(false);
+  });
+
+  it("does not persist resume state during dry-run", async () => {
+    const manyIncidents = Array.from({ length: 26 }, (_, i) => ({
+      ...SAMPLE_INCIDENT,
+      userMessage: `${SAMPLE_INCIDENT.userMessage} #${i}`,
+      sessionFile: `2026-01-01-session-${i}.jsonl`,
+    }));
+    const openaiFirst = {
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            })
+            .mockRejectedValueOnce(new Error("permanent failure after first batch")),
+        },
+      },
+    } as any;
+
+    await runSelfCorrectionRunForCli(makeCtx(openaiFirst), {
+      incidents: manyIncidents,
+      workspace: tmpDir,
+      dryRun: true,
+    });
+
+    expect(existsSync(join(tmpDir, "tmp", "self-correction"))).toBe(false);
+  });
+
+  it("includes model in resume fingerprint so a different model does not reuse stale state", async () => {
+    const incidents = [
+      SAMPLE_INCIDENT,
+      { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #2` },
+    ];
+    const ctxPartial = makeCtx({
+      chat: {
+        completions: {
+          create: vi
+            .fn()
+            .mockResolvedValueOnce({
+              choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
+              usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+            })
+            .mockRejectedValueOnce(new Error("fail batch 2")),
+        },
+      },
+    } as any);
+    (ctxPartial.cfg as any).selfCorrection = {
+      ...(ctxPartial.cfg as any).selfCorrection,
+      analysisBatchSize: 1,
+    };
+
+    await runSelfCorrectionRunForCli(ctxPartial, {
+      incidents,
+      workspace: tmpDir,
+      model: "model-a",
+    });
+
+    const stateDir = join(tmpDir, "tmp", "self-correction");
+    const stateFilesA = (await import("node:fs")).readdirSync(stateDir).filter((name) => name.startsWith("m3-batches-"));
+    expect(stateFilesA.length).toBe(1);
+
+    const openaiB = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [{ message: { content: JSON.stringify([SAMPLE_REMEDIATION]) } }],
+            usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+          }),
+        },
+      },
+    } as any;
+
+    await runSelfCorrectionRunForCli(makeCtx(openaiB), {
+      incidents,
+      workspace: tmpDir,
+      model: "model-b",
+    });
+
+    expect(openaiB.chat.completions.create).toHaveBeenCalledTimes(2);
+    const stateFilesB = (await import("node:fs")).readdirSync(stateDir).filter((name) => name.startsWith("m3-batches-"));
+    expect(stateFilesB.length).toBe(1);
+    expect(stateFilesB[0]).not.toBe(stateFilesA[0]);
   });
 
   it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {

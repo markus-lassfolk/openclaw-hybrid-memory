@@ -5,6 +5,7 @@
 
 import type { OpenAI } from "openai";
 import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -514,17 +515,7 @@ export async function chatComplete(opts: {
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
     const msg = resp.choices?.[0]?.message;
-    const msgContent = msg?.content?.trim();
-    if (msgContent) return msgContent;
-    // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
-    // message.reasoning_content (current standard, May 2025+) or message.reasoning (legacy).
-    // Fall back to these fields when enable_thinking=true so agents don't see an empty reply (#314).
-    const msgRecord = msg as unknown as Record<string, unknown> | undefined;
-    const reasoningContent = msgRecord?.reasoning_content;
-    if (typeof reasoningContent === "string" && reasoningContent.trim()) return reasoningContent.trim();
-    const reasoning = msgRecord?.reasoning;
-    if (typeof reasoning === "string" && reasoning.trim()) return reasoning.trim();
-    return msgContent ?? "";
+    return extractAssistantMessageText(msg).text;
   } catch (err) {
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);

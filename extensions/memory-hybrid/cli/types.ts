@@ -234,6 +234,7 @@ export type SelfCorrectionRunResult = {
   fallbackCount?: number;
   parseFailures?: number;
   unparseableFailures?: number;
+  batchesStarted?: number;
   /**
    * Fine-grained outcome for cron/wrapper ledger reporting.
    * - `success_analyzed`            — incidents found and LLM analysis completed

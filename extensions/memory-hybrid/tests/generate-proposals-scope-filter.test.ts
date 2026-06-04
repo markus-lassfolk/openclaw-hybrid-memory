@@ -323,6 +323,34 @@ describe("generate-proposals — JSON retry (#1824)", () => {
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
   });
 
+  it("throws semantic_empty when insights exist but parsed items are zero", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: "[]" } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
+
+    await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
+      /semantic_empty/,
+    );
+  });
+
   it("does not leak raw LLM response snippets in thrown/default error when verbose=false", async () => {
     const db = new FactsDB(":memory:");
     const proposalsDb = new ProposalsDB(":memory:");

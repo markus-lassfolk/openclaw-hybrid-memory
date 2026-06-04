@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   extractBalancedArraySlice,
   extractFirstJsonArraySubstring,
+  parseStructuredItems,
   stripBracketContextPreamble,
   stripMarkdownCodeFence,
   tryParseFirstJsonArray,
+  tryParseFirstJsonObject,
 } from "../utils/llm-json-array.js";
 
 describe("stripMarkdownCodeFence", () => {
@@ -99,5 +101,50 @@ describe("tryParseFirstJsonArray", () => {
   it("strips [Context: …] preamble before JSON array (#1166)", () => {
     expect(stripBracketContextPreamble(`[Context: Tool]\n["a"]`)).toBe(`["a"]`);
     expect(tryParseFirstJsonArray(`[Context: Topics]\n["fact","entity"]`)).toEqual(["fact", "entity"]);
+  });
+});
+
+describe("tryParseFirstJsonObject", () => {
+  it("returns filtered items from the first valid object", () => {
+    expect(
+      tryParseFirstJsonObject('{"items":["x"]}', (parsed) =>
+        Array.isArray((parsed as { items?: unknown }).items) ? (parsed as { items: string[] }).items : null,
+      ),
+    ).toEqual(["x"]);
+  });
+
+  it("returns null when filter rejects parsed object", () => {
+    expect(tryParseFirstJsonObject('{"a":1}', () => null)).toBeNull();
+  });
+});
+
+describe("parseStructuredItems", () => {
+  const isStringItem = (item: unknown): item is string => typeof item === "string";
+
+  it("parses a JSON array of valid items", () => {
+    expect(parseStructuredItems('["alpha","beta"]', isStringItem)).toEqual(["alpha", "beta"]);
+  });
+
+  it("unwraps {items:[...]} envelopes", () => {
+    expect(parseStructuredItems(JSON.stringify({ items: ["x"] }), isStringItem)).toEqual(["x"]);
+  });
+
+  it("unwraps tool_calls.function.arguments payloads", () => {
+    const raw = JSON.stringify({
+      tool_calls: [{ function: { arguments: JSON.stringify({ items: ["from-tools"] }) } }],
+    });
+    expect(parseStructuredItems(raw, isStringItem)).toEqual(["from-tools"]);
+  });
+
+  it("accepts a single valid object", () => {
+    expect(parseStructuredItems('{"a":"solo"}', (item) => typeof item === "object")).toEqual([{ a: "solo" }]);
+  });
+
+  it("returns null for invalid items", () => {
+    expect(parseStructuredItems('{"not":"valid"}', isStringItem)).toBeNull();
+  });
+
+  it("returns empty array when acceptEmptyArray is set", () => {
+    expect(parseStructuredItems("[]", isStringItem, { acceptEmptyArray: true })).toEqual([]);
   });
 });

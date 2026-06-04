@@ -10,6 +10,7 @@ import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
 import "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { sanitizePromptInjection, RECALLED_CONTEXT_BOUNDARY } from "../services/skill-prompt-injection.js";
 import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
@@ -442,7 +443,7 @@ async function runInjection(
           }),
         { maxRetries: 2 },
       );
-      const summary = (resp.choices[0]?.message?.content ?? "").trim();
+      const summary = extractAssistantMessageText(resp.choices[0]?.message).text;
       if (summary) {
         memoryContext = summary;
         usedTokens = estimateTokens(header + memoryContext + footer);

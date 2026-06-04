@@ -6,10 +6,11 @@
 
 import type OpenAI from "openai";
 import type { MemoryEntry } from "../types/memory.js";
+import { extractBalancedArraySlice, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { capturePluginError } from "./error-reporter.js";
 import { requiresMaxCompletionTokens, shouldOmitSamplingParams } from "./model-capabilities.js";
-import { extractBalancedArraySlice } from "../utils/llm-json-array.js";
 
 /** Chat body for classify completions — mirrors `chatComplete` in `chat.ts` (#1008). */
 function buildClassifyChatBody(
@@ -147,7 +148,7 @@ export async function classifyMemoryOperation(
         ),
       { maxRetries: 2 },
     )) as OpenAI.Chat.ChatCompletion;
-    const content = (resp.choices?.[0]?.message?.content ?? "").trim();
+    const content = extractAssistantMessageText(resp.choices?.[0]?.message).text;
     return parseClassificationResponse(content, existingFacts);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -167,17 +168,6 @@ export type ClassifyMemoryOperationInput = {
   candidateKey: string | null;
   existingFacts: MemoryEntry[];
 };
-
-/**
- * Remove common model "thinking" wrappers that appear before JSON (#1007).
- */
-function stripThinkingWrapperBlocks(s: string): string {
-  return s
-    .replace(/<redacted_thinking>[\s\S]*?<\/redacted_thinking>/gi, "")
-    .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
-    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, "")
-    .trim();
-}
 
 /**
  * Prefer JSON-looking content inside ``` / ```json fences when the model wraps output (#1007).
@@ -409,7 +399,7 @@ For UPDATE or DELETE, targetId must be one of the existing fact ids listed under
         ),
       { maxRetries: 2 },
     )) as OpenAI.Chat.ChatCompletion;
-    const raw = (resp.choices?.[0]?.message?.content ?? "").trim();
+    const raw = extractAssistantMessageText(resp.choices?.[0]?.message).text;
     const parsed = parseBatchClassifyResponseContent(raw);
     if (!Array.isArray(parsed) || parsed.length !== items.length) {
       logger.warn(

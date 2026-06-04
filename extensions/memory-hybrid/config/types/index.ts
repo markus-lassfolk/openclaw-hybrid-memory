@@ -478,6 +478,8 @@ export type SelfCorrectionConfig = {
   reinforcementToProposals?: boolean;
   /** When true, self-correction AGENTS_RULE remediations are written to proposals DB (default: true). */
   agentsRuleToProposals?: boolean;
+  /** Incidents per LLM analysis batch (default: 1 for MiniMax/M3, 25 otherwise). */
+  analysisBatchSize?: number;
 };
 
 /**

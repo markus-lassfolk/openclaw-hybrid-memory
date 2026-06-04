@@ -5,6 +5,8 @@
 import type OpenAI from "openai";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getLLMModelPreference } from "../config.js";
+import { tryParseFirstJsonObject } from "../utils/llm-json-array.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export async function llmTriageNeedsHeavy(
@@ -30,9 +32,10 @@ ${goalSummaries.slice(0, 6000)}`,
       max_tokens: 60,
       temperature: 0,
     });
-    const text = (res.choices[0]?.message?.content ?? "").trim();
+    const text = extractAssistantMessageText(res.choices[0]?.message).text;
     const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-    const j = JSON.parse(cleaned) as { needsHeavy?: boolean };
+    const j = tryParseFirstJsonObject(cleaned) as { needsHeavy?: boolean } | null;
+    if (!j) return null;
     return j.needsHeavy === true;
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

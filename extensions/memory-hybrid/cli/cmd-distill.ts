@@ -608,6 +608,11 @@ export async function runDistillForCli(
       }
     }
     progress.done();
+    if (filesToProcess.length > 0 && allFacts.length === 0) {
+      sink.warn(
+        `memory-hybrid: distill semantic_empty: processed ${filesToProcess.length} session(s) but parsed zero facts`,
+      );
+    }
     if (opts.dryRun) {
       sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
       return {

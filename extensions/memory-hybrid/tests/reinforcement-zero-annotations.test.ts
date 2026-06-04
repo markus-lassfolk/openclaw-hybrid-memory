@@ -371,6 +371,37 @@ describe("LLM failure → degraded_model_or_parser (#1639)", () => {
     expect(result.annotationStatus).toBe("degraded_model_or_parser");
     expect(result.annotationReasons?.noRecalledIds).toBe(result.incidents.length);
   });
+
+  it("annotationStatus is degraded_model_or_parser when native tool_calls payload is unparseable", async () => {
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeSessionWithoutMemoryRecall(sessionFile);
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue({
+            choices: [
+              {
+                message: {
+                  content: "",
+                  tool_calls: [
+                    {
+                      type: "function",
+                      function: { name: "annotate", arguments: "not json" },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+        },
+      },
+    } as any;
+    const ctx = makeCtx(openai);
+    const result = await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    expect(result.annotationStatus).toBe("degraded_model_or_parser");
+  });
 });
 
 describe("procedure boost errors are surfaced (#1639)", () => {

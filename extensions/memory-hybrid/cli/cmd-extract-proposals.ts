@@ -14,10 +14,16 @@ import {
   promotePersonaStateFromReflections,
 } from "../services/persona-state-promotion.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
+import { parseStructuredItems, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
+
+function isGenerateProposalItem(item: unknown): boolean {
+  if (typeof item !== "object" || item === null) return false;
+  const candidate = item as Record<string, unknown>;
+  return typeof candidate.targetFile === "string" && typeof candidate.suggestedChange === "string";
+}
 
 export async function runGenerateProposalsForCli(
   ctx: HandlerContext,
@@ -214,16 +220,9 @@ export async function runGenerateProposalsForCli(
       continue;
     }
     try {
-      const strippedResponse = stripThinkingWrapperBlocks(rawResponse);
-      const firstBracket = strippedResponse.indexOf("[");
-      const lastBracket = strippedResponse.lastIndexOf("]");
-      const trimmed =
-        firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
-          ? strippedResponse.substring(firstBracket, lastBracket + 1)
-          : strippedResponse;
-      const parsed = JSON.parse(trimmed);
-      if (!Array.isArray(parsed)) throw new SyntaxError("Not an array");
-      items = parsed;
+      const parsed = parseStructuredItems(rawResponse, isGenerateProposalItem);
+      if (!parsed || parsed.length === 0) throw new SyntaxError("No valid proposal items parsed");
+      items = parsed as typeof items;
       break;
     } catch (_err) {
       const responseSnippet = rawResponse.slice(0, 200);
@@ -240,7 +239,13 @@ export async function runGenerateProposalsForCli(
   }
   if (items === undefined) {
     const failureMessage = `memory-hybrid: generate-proposals — all models failed: ${lastFailReason} (models tried: ${allModels.join(", ")})`;
-    console.error(failureMessage);
+    console.error(`${failureMessage} parse_success=false`);
+    throw new Error(failureMessage);
+  }
+  if (items.length === 0 && insights.length > 0) {
+    const failureMessage =
+      "memory-hybrid: generate-proposals semantic_empty: had insight input but parsed zero proposal items";
+    console.error(`${failureMessage} parse_success=false created=0`);
     throw new Error(failureMessage);
   }
   const weekDays = 7;
