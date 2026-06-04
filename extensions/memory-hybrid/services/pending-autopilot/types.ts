@@ -47,6 +47,7 @@ export const AUTOPILOT_REASON_CODES = [
   "policy-threshold-not-met",
   "duplicate-applied-proposal",
   "duplicate-pending-proposal",
+  "already-in-file",
   "stale-target-context",
   "low-confidence",
   "non-actionable",

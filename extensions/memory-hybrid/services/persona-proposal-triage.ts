@@ -598,6 +598,17 @@ function analyzePersonaProposal(
       1,
     );
   }
+  const alreadyInFile = isAlreadyInTargetFile(p, item);
+  if (alreadyInFile) {
+    return rejectOrDefer(
+      policy,
+      "low",
+      "already-in-file",
+      "Proposed text already present (or substantially covered) in the target file.",
+      evidence,
+      1,
+    );
+  }
   if (isStaleTarget(item)) {
     return rejectOrDefer(
       policy,
@@ -1132,6 +1143,35 @@ function isMutationDecision(decision: PendingDecision): boolean {
 
 function isStaleTarget(item: PersonaProposalPendingItem): boolean {
   return Boolean(item.proposal.targetHash && item.targetHash && item.proposal.targetHash !== item.targetHash);
+}
+
+/**
+ * Check whether the proposed text is substantially already present in the target file.
+ * Splits the suggestion into sentences and checks how many already appear verbatim
+ * (case-insensitive, whitespace-normalised) in the live file content.
+ * Returns true when >60% of non-trivial sentences are already covered.
+ */
+function isAlreadyInTargetFile(proposal: ProposalEntry, item: PersonaProposalPendingItem): boolean {
+  if (!item.targetValid) return false;
+  let fileContent: string;
+  try {
+    if (!existsSync(item.targetPath)) return false;
+    fileContent = readFileSync(item.targetPath, "utf-8");
+  } catch {
+    return false;
+  }
+  const normalizedFile = fileContent.toLowerCase().replace(/\s+/g, " ");
+  const change = proposal.suggestedChange;
+  // Split into sentences / bullet lines; filter out trivial ones
+  const sentences = change
+    .split(/[.\n•\-]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 30);
+  if (sentences.length === 0) return false;
+  const covered = sentences.filter((s) =>
+    normalizedFile.includes(s.toLowerCase().replace(/\s+/g, " ")),
+  ).length;
+  return covered / sentences.length >= 0.6;
 }
 
 function hasReliableTargetSnapshot(proposal: Pick<ProposalEntry, "targetHash" | "targetMtimeMs">): boolean {

@@ -31,11 +31,22 @@ import type { MemoryEntry } from "../types/memory.js";
 /**
  * Infer which identity file a rule or suggestion should target (#260).
  */
+/**
+ * Infer the persona target file for a self-correction AGENTS_RULE line.
+ *
+ * Rules:
+ * - SOUL.md is the default for behavioural guidance — how the agent acts.
+ * - USER.md only gets facts explicitly about the human operator (name, preferences,
+ *   personal context). Behavioural rules that mention "workflow" or "working" describe
+ *   Maeve's working style, not the user's, so they must NOT go to USER.md.
+ * - IDENTITY.md is for identity/persona declarations (name, role, creature type).
+ */
 export function inferTargetFile(content: string): string {
   const lower = content.toLowerCase();
   if (/\b(identity|creature|persona)\b/.test(lower)) return "IDENTITY.md";
   if (/\b(my (name|role)|agent (name|role|identity)|who (i am|you are))\b/.test(lower)) return "IDENTITY.md";
-  if (/\b(preference|style|workflow|working|setup|tooling)\b/.test(lower)) return "USER.md";
+  // USER.md only for explicit user/operator facts — not agent behavioural style
+  if (/\bthe (user|operator|human|markus)\b.*\b(prefers?|likes?|wants?|expects?|needs?)\b/.test(lower)) return "USER.md";
   return "SOUL.md";
 }
 
