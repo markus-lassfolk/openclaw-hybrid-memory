@@ -106,8 +106,7 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
         continue;
       }
       const pointerEntry = pointerResult.entry;
-      const pointerAlreadyExists =
-        pointerResult.newlyStored === false && !pointerResult.embeddingStale;
+      const pointerAlreadyExists = pointerResult.newlyStored === false && !pointerResult.embeddingStale;
 
       // Only remove the plaintext fact after vault + pointer path is confirmed.
       factsDb.delete(entry.id);

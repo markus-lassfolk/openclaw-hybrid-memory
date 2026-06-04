@@ -5,7 +5,12 @@ import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { buildCredentialPointerText, ensureCredentialVaultPointer, abortCredentialVaultWriteOnPointerDedupe, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
+import {
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  abortCredentialVaultWriteOnPointerDedupe,
+  rollbackVaultCredentialWrite,
+} from "../services/credential-vault-pointer.js";
 import { classifyMemoryOperationsBatch, type MemoryClassification } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -224,10 +229,16 @@ export async function runExtractDailyForCli(
                   notes: parsed.notes,
                 });
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
-                const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, `daily-scan:${dateStr}`, {
-                  importance: BATCH_STORE_IMPORTANCE,
-                  sourceDate: sourceDateSec,
-                });
+                const pointer = ensureCredentialVaultPointer(
+                  factsDb,
+                  parsed.service,
+                  parsed.type,
+                  `daily-scan:${dateStr}`,
+                  {
+                    importance: BATCH_STORE_IMPORTANCE,
+                    sourceDate: sourceDateSec,
+                  },
+                );
                 if (!pointer.ok) {
                   if (storedInVault) {
                     rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);

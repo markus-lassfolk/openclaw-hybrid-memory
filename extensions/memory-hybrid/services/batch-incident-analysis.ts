@@ -92,9 +92,7 @@ export function orderBatchItemsByIncidentIndex<T extends Record<string, unknown>
   if (items.length === 0) return null;
 
   if (items.length > batchLength) {
-    logger?.warn?.(
-      `memory-hybrid: batch analysis too many items: expected=${batchLength} parsed=${items.length}`,
-    );
+    logger?.warn?.(`memory-hybrid: batch analysis too many items: expected=${batchLength} parsed=${items.length}`);
     return null;
   }
 
@@ -110,9 +108,7 @@ export function orderBatchItemsByIncidentIndex<T extends Record<string, unknown>
       return null;
     }
     if (slots[idx] !== null) {
-      logger?.warn?.(
-        `memory-hybrid: batch analysis duplicate incidentIndex=${idx}; rejecting batch`,
-      );
+      logger?.warn?.(`memory-hybrid: batch analysis duplicate incidentIndex=${idx}; rejecting batch`);
       return null;
     }
     slots[idx] = item;
@@ -144,13 +140,12 @@ export function mergeSplitBatchItemsWithOffset<T extends Record<string, unknown>
       const localIdx = resolveIncidentIndexInBatch(item, position, subBatchSize);
       return { ...item, [INCIDENT_INDEX_FIELD]: baseOffset + localIdx };
     });
-  return [
-    ...normalize(leftItems, 0, leftBatchSize),
-    ...normalize(rightItems, leftBatchSize, rightBatchSize),
-  ];
+  return [...normalize(leftItems, 0, leftBatchSize), ...normalize(rightItems, leftBatchSize, rightBatchSize)];
 }
 
-export function stripBatchMetadataFromItem<T extends Record<string, unknown>>(item: T): Omit<T, "incidentIndex" | "incident_index" | "_batchIndex"> {
+export function stripBatchMetadataFromItem<T extends Record<string, unknown>>(
+  item: T,
+): Omit<T, "incidentIndex" | "incident_index" | "_batchIndex"> {
   const { [INCIDENT_INDEX_FIELD]: _a, incident_index: _b, _batchIndex: _c, ...rest } = item;
   return rest as Omit<T, "incidentIndex" | "incident_index" | "_batchIndex">;
 }
@@ -159,10 +154,7 @@ export function stripBatchMetadataFromItem<T extends Record<string, unknown>>(it
 export function appendUniqueRemediationsByIncidentIndex<
   TTarget extends { incidentIndex?: number; remediationType?: string },
   TIncoming extends { incidentIndex?: number; remediationType?: string },
->(
-  target: TTarget[],
-  incoming: TIncoming[],
-): number {
+>(target: TTarget[], incoming: TIncoming[]): number {
   const seen = new Set(
     target.map((item) => item.incidentIndex).filter((idx): idx is number => typeof idx === "number"),
   );
@@ -173,11 +165,7 @@ export function appendUniqueRemediationsByIncidentIndex<
       if (seen.has(idx)) {
         const existingIndex = target.findIndex((t) => t.incidentIndex === idx);
         const existing = existingIndex >= 0 ? target[existingIndex] : undefined;
-        if (
-          existing &&
-          existing.remediationType === "NO_ACTION" &&
-          item.remediationType !== "NO_ACTION"
-        ) {
+        if (existing && existing.remediationType === "NO_ACTION" && item.remediationType !== "NO_ACTION") {
           target[existingIndex] = item as unknown as TTarget;
           added++;
         }
@@ -195,7 +183,9 @@ export function attachOrderedItemsToIncidents<TIncident, TItem extends Record<st
   batch: TIncident[],
   ordered: OrderedBatchItems<TItem>,
   globalIncidentOffset: number,
-): Array<Omit<TItem, "incidentIndex" | "incident_index" | "_batchIndex"> & { incidentIndex: number; sourceIncident: TIncident }> {
+): Array<
+  Omit<TItem, "incidentIndex" | "incident_index" | "_batchIndex"> & { incidentIndex: number; sourceIncident: TIncident }
+> {
   return ordered.items.map((item, i) => {
     const batchIdx = ordered.batchIndices[i] ?? i;
     return {

@@ -102,11 +102,7 @@ export type ManageContext = {
       status: "ok" | "partial" | "degraded";
     };
   }>;
-  runReflectionMeta: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     metaExtracted: number;
     metaStored: number;
     diagnostics?: import("../services/reflection.js").ReflectionMetaDiagnostics;

@@ -61,13 +61,7 @@ describe("credential-vault-pointer helpers", () => {
     expect(pointer.ok).toBe(true);
     if (!pointer.ok) return;
 
-    const shouldSkip = abortCredentialVaultWriteOnPointerDedupe(
-      true,
-      pointer,
-      credentialsDb,
-      "orphan",
-      "api_key",
-    );
+    const shouldSkip = abortCredentialVaultWriteOnPointerDedupe(true, pointer, credentialsDb, "orphan", "api_key");
     expect(shouldSkip).toBe(true);
     expect(credentialsDb.get("orphan", "api_key")).toBeNull();
   });

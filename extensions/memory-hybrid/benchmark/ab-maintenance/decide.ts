@@ -68,10 +68,7 @@ export function scoreCell(cell: AbRunResult["cells"][number]): number {
   return Math.max(0, richness * 10 - penalty - latencyTieBreak);
 }
 
-export function compareCells(
-  a: AbRunResult["cells"][number],
-  b: AbRunResult["cells"][number],
-): number {
+export function compareCells(a: AbRunResult["cells"][number], b: AbRunResult["cells"][number]): number {
   if (a.ok !== b.ok) return a.ok ? -1 : 1;
   const richnessDiff = qualityRichness(b) - qualityRichness(a);
   if (richnessDiff !== 0) return richnessDiff > 0 ? 1 : -1;
@@ -149,7 +146,9 @@ export function buildDecisionReport(result: AbRunResult): {
         rationale: `Quality-first winner among ${cells.length} cells (${formatRichness(winner)}, ok=${winner.ok}, latency=${winner.latencyMs}ms). Human spot-check recommended.`,
       });
       lines.push("");
-      lines.push(`**Recommended:** \`${winner.model}\` with thinking=\`${winner.thinking}\` (score ${scoreCell(winner)})`);
+      lines.push(
+        `**Recommended:** \`${winner.model}\` with thinking=\`${winner.thinking}\` (score ${scoreCell(winner)})`,
+      );
       lines.push("");
     }
   }

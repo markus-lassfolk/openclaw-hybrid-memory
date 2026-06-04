@@ -49,9 +49,7 @@ type MockEmbeddings = {
 const TOKEN_VALUE = `ghp_${"A".repeat(36)}`;
 
 function makeFactsDB(overrides: Partial<MockFactsDB> = {}): MockFactsDB {
-  const store =
-    overrides.store ??
-    vi.fn().mockReturnValue({ id: "pointer-id-1", text: "", category: "technical" });
+  const store = overrides.store ?? vi.fn().mockReturnValue({ id: "pointer-id-1", text: "", category: "technical" });
   const { store: _s, storeWithResult: _swr, ...rest } = overrides;
   return {
     lookup: vi.fn().mockReturnValue([]),

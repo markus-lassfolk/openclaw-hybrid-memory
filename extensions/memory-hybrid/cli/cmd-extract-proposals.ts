@@ -146,17 +146,11 @@ export async function runGenerateProposalsForCli(
   }
   if (selfCorrectionInsights.length) {
     insights.push(
-      `Self-correction lessons:\n${selfCorrectionInsights
-        .map((f) => `- ${f.text.slice(0, 300)}`)
-        .join("\n")}`,
+      `Self-correction lessons:\n${selfCorrectionInsights.map((f) => `- ${f.text.slice(0, 300)}`).join("\n")}`,
     );
   }
   if (implicitInsights.length) {
-    insights.push(
-      `Implicit feedback lessons:\n${implicitInsights
-        .map((f) => `- ${f.text.slice(0, 300)}`)
-        .join("\n")}`,
-    );
+    insights.push(`Implicit feedback lessons:\n${implicitInsights.map((f) => `- ${f.text.slice(0, 300)}`).join("\n")}`);
   }
   if (personaStateBlock) {
     insights.push(`Durable persona state:\n${personaStateBlock}`);

@@ -2,10 +2,7 @@ import { readdirSync, readFileSync, statSync, existsSync, writeFileSync } from "
 import { join } from "node:path";
 import { runSelfCorrectionExtract } from "../../services/self-correction-extract.js";
 import { runReinforcementExtract } from "../../services/reinforcement-extract.js";
-import {
-  getCorrectionSignalRegex,
-  getReinforcementSignalRegex,
-} from "../../utils/language-keywords.js";
+import { getCorrectionSignalRegex, getReinforcementSignalRegex } from "../../utils/language-keywords.js";
 import type { CorrectionIncident } from "../../services/self-correction-extract.js";
 import type { ReinforcementIncident } from "../../services/reinforcement-extract.js";
 import type { AbCorpusMeta } from "./types.js";
@@ -18,9 +15,7 @@ export type FactsSample = {
     entity?: string | null;
     key?: string | null;
   }>;
-  consolidationClusters: Array<
-    Array<{ id: string; text: string; category: string }>
-  >;
+  consolidationClusters: Array<Array<{ id: string; text: string; category: string }>>;
 };
 
 export type AbCorpus = {

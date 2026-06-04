@@ -102,9 +102,7 @@ describe("batch-incident-analysis", () => {
   });
 
   it("orderBatchItemsByIncidentIndex rejects out-of-range incidentIndex", () => {
-    expect(
-      orderBatchItemsByIncidentIndex(3, [{ incidentIndex: 99, remediationType: "NO_ACTION" }]),
-    ).toBeNull();
+    expect(orderBatchItemsByIncidentIndex(3, [{ incidentIndex: 99, remediationType: "NO_ACTION" }])).toBeNull();
   });
 
   it("attachOrderedItemsToIncidents applies global offset and strips metadata", () => {

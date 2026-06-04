@@ -10,11 +10,7 @@ import { basename } from "node:path";
 import { getReinforcementCategoryRegexes } from "../utils/language-keywords.js";
 import { timestampFromFilename, truncate } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
-import {
-  buildSignalContext,
-  parseSessionMessagesFromLines,
-  testSignalRegex,
-} from "./session-signal-context.js";
+import { buildSignalContext, parseSessionMessagesFromLines, testSignalRegex } from "./session-signal-context.js";
 
 export type ReinforcementIncident = {
   userMessage: string;

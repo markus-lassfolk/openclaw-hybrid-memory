@@ -69,10 +69,6 @@ export async function writeThinkingProbeReport(
   const m27 = await probeThinkingLevels(apiKey, "MiniMax-M2.7-highspeed");
   const sweep = [...new Set<AbThinkingMode>(["disabled", ...m3.accepted.filter((m) => m27.accepted.includes(m))])];
   const { writeFileSync } = await import("node:fs");
-  writeFileSync(
-    outPath,
-    JSON.stringify({ m3, m27, sweep }, null, 2),
-    "utf-8",
-  );
+  writeFileSync(outPath, JSON.stringify({ m3, m27, sweep }, null, 2), "utf-8");
   return { m3, m27, sweep };
 }

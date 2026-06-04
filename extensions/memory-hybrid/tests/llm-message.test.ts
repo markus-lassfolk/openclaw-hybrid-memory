@@ -84,6 +84,30 @@ describe("extractAssistantMessageText", () => {
     });
   });
 
+  it("uses tool_calls when content is placeholder empty array", () => {
+    expect(
+      extractAssistantMessageText({
+        content: "[]",
+        tool_calls: [{ function: { arguments: '[{"remediationType":"NO_ACTION"}]' } }],
+      }),
+    ).toEqual({
+      text: '[{"remediationType":"NO_ACTION"}]',
+      source: "tool_calls",
+    });
+  });
+
+  it("uses tool_calls when content is placeholder empty object", () => {
+    expect(
+      extractAssistantMessageText({
+        content: "{}",
+        tool_calls: [{ function: { arguments: '{"items":[{"id":1}]}' } }],
+      }),
+    ).toEqual({
+      text: '{"items":[{"id":1}]}',
+      source: "tool_calls",
+    });
+  });
+
   it("returns empty for missing message", () => {
     expect(extractAssistantMessageText(null)).toEqual({ text: "", source: "empty" });
     expect(extractAssistantMessageText(undefined)).toEqual({ text: "", source: "empty" });

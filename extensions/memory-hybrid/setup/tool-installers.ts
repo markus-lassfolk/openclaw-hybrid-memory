@@ -172,7 +172,12 @@ function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPl
   }
 }
 
-function selectCredentialToolsContext({ credentialsDb, factsDb, vectorDb, cfg }: ToolsContext): CredentialInstallerContext {
+function selectCredentialToolsContext({
+  credentialsDb,
+  factsDb,
+  vectorDb,
+  cfg,
+}: ToolsContext): CredentialInstallerContext {
   return { credentialsDb, factsDb, vectorDb, cfg };
 }
 
@@ -337,9 +342,7 @@ function selectPublicApiRoutesContext({
 }: ToolsContext): PublicApiRoutesContext {
   const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
   const goalsDir =
-    cfg.goalStewardship?.enabled === true
-      ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir)
-      : undefined;
+    cfg.goalStewardship?.enabled === true ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir) : undefined;
   return {
     cfg,
     factsDb,

@@ -98,10 +98,7 @@ describe("listPassiveObserverSessionFilePaths", () => {
   });
 
   it("derives agent-relative session keys when multi-agent scanning", () => {
-    const key = deriveObserverSessionKey(
-      join(tmpDir, ".openclaw", "agents", "worker", "sessions", "abc.jsonl"),
-      true,
-    );
+    const key = deriveObserverSessionKey(join(tmpDir, ".openclaw", "agents", "worker", "sessions", "abc.jsonl"), true);
     expect(key).toBe("worker/sessions/abc");
   });
 

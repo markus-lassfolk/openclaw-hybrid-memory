@@ -1,5 +1,9 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { TASK_LEDGER_CATEGORY, activeTaskRenderGoalsOpts, refreshActiveTaskProjectionBestEffort } from "../../services/task-ledger-facts.js";
+import {
+  TASK_LEDGER_CATEGORY,
+  activeTaskRenderGoalsOpts,
+  refreshActiveTaskProjectionBestEffort,
+} from "../../services/task-ledger-facts.js";
 import { storeCanonicalVectorForFact } from "../../services/vector-maintenance.js";
 import { parseDuration } from "../../utils/duration.js";
 import { getEnv } from "../../utils/env-manager.js";

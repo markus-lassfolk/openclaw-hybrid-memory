@@ -269,23 +269,28 @@ async function main(): Promise<void> {
   console.log(`    State:  ${STATE_PATH}`);
 
   // Preflight: config view
-  const preflight = spawnSync(
-    "node",
-    [NODE_WRAPPER, "openclaw", "hybrid-mem", "config"],
-    { env: taskEnv(workHome, timeoutMs), encoding: "utf-8", cwd: PLUGIN_ROOT, maxBuffer: 5 * 1024 * 1024 },
-  );
+  const preflight = spawnSync("node", [NODE_WRAPPER, "openclaw", "hybrid-mem", "config"], {
+    env: taskEnv(workHome, timeoutMs),
+    encoding: "utf-8",
+    cwd: PLUGIN_ROOT,
+    maxBuffer: 5 * 1024 * 1024,
+  });
   writeFileSync(join(outTasksDir, "00-preflight-config.txt"), preflight.stdout + preflight.stderr);
-  const embedPreflight = spawnSync(
-    "node",
-    [NODE_WRAPPER, "openclaw", "hybrid-mem", "verify"],
-    { env: taskEnv(workHome, timeoutMs), encoding: "utf-8", cwd: PLUGIN_ROOT, maxBuffer: 8 * 1024 * 1024 },
-  );
+  const embedPreflight = spawnSync("node", [NODE_WRAPPER, "openclaw", "hybrid-mem", "verify"], {
+    env: taskEnv(workHome, timeoutMs),
+    encoding: "utf-8",
+    cwd: PLUGIN_ROOT,
+    maxBuffer: 8 * 1024 * 1024,
+  });
   writeFileSync(join(outTasksDir, "00-preflight-verify.txt"), embedPreflight.stdout + embedPreflight.stderr);
   if (/401 status code|EMBEDDING CHECK FAILED/i.test(embedPreflight.stdout + embedPreflight.stderr)) {
     state.todos.push("Preflight: embedding auth failed — run npm run offline-qa:fetch-secrets and rebuild sandbox");
     saveState(state);
   }
-  if (/azure-foundry|openai\/gpt/i.test(preflight.stdout + preflight.stderr) && /maintenance.*minimax/i.test(preflight.stdout + preflight.stderr)) {
+  if (
+    /azure-foundry|openai\/gpt/i.test(preflight.stdout + preflight.stderr) &&
+    /maintenance.*minimax/i.test(preflight.stdout + preflight.stderr)
+  ) {
     // Help text mentions azure examples; resolved chains show minimax — ok
   } else if (/azure-foundry\/|openai\/gpt-[45]/i.test(preflight.stdout + preflight.stderr)) {
     state.todos.push("Preflight: config still references non-MiniMax providers — check sandbox openclaw.json");

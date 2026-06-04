@@ -1,6 +1,9 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { CostFeature } from "../services/cost-feature-labels.js";
-import { analyzeIncidentBatchWithSplit, inferFinishReasonFromLlmContent } from "../services/incident-batch-analyze-core.js";
+import {
+  analyzeIncidentBatchWithSplit,
+  inferFinishReasonFromLlmContent,
+} from "../services/incident-batch-analyze-core.js";
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
 
 const SAMPLE_ITEM = { remediationType: "TOOLS_RULE", category: "X", severity: "LOW" };
@@ -17,7 +20,7 @@ const baseDeps = {
   logger: { info: vi.fn(), warn: vi.fn() },
   parseBatchContent: async (content: string) => {
     try {
-      return JSON.parse(content) as typeof SAMPLE_ITEM[];
+      return JSON.parse(content) as (typeof SAMPLE_ITEM)[];
     } catch {
       return null;
     }

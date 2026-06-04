@@ -37,8 +37,7 @@ async function syncGoalLinkedTaskToFactsLedger(
     {
       ...(existing ?? {}),
       label: existing?.label ?? label,
-      description:
-        description ?? existing?.description ?? `Subagent task (session: ${childOrSession ?? "unknown"})`,
+      description: description ?? existing?.description ?? `Subagent task (session: ${childOrSession ?? "unknown"})`,
       status: overrides?.status ?? "In progress",
       subagent: childOrSession === null ? "" : (childOrSession ?? existing?.subagent),
       relatedGoal: goalId,

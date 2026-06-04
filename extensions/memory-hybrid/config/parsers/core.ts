@@ -510,9 +510,7 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
         ? Math.floor(scRaw.analysisBatchSize)
         : undefined,
     batchDelayMs:
-      typeof scRaw.batchDelayMs === "number" && scRaw.batchDelayMs >= 0
-        ? Math.floor(scRaw.batchDelayMs)
-        : undefined,
+      typeof scRaw.batchDelayMs === "number" && scRaw.batchDelayMs >= 0 ? Math.floor(scRaw.batchDelayMs) : undefined,
     model: typeof scRaw.model === "string" && scRaw.model.trim().length > 0 ? scRaw.model.trim() : undefined,
     thinking: scRaw.thinking === "adaptive" || scRaw.thinking === "disabled" ? scRaw.thinking : undefined,
   };
@@ -639,10 +637,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
   const minimaxThinkingRaw = minimaxRaw?.thinking;
   const minimaxThinking: "disabled" | "adaptive" | undefined =
     minimaxThinkingRaw === "disabled" || minimaxThinkingRaw === "adaptive" ? minimaxThinkingRaw : undefined;
-  const minimax =
-    minimaxThinking !== undefined
-      ? { thinking: minimaxThinking }
-      : undefined;
+  const minimax = minimaxThinking !== undefined ? { thinking: minimaxThinking } : undefined;
   const llm: LLMConfig | undefined =
     maintenanceList.length > 0 ||
     defaultList.length > 0 ||

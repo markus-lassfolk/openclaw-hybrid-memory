@@ -385,20 +385,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   };
                 }
 
-                const pointer = ensureCredentialVaultPointer(
-                  factsDb,
-                  parsed.service,
-                  parsed.type,
-                  "conversation",
-                  {
-                    why,
-                    importance,
-                    decayClass: paramDecayClass ?? "permanent",
-                    provenanceSession: provenanceSessionId,
-                    extractionMethod: "active",
-                    extractionConfidence: importance,
-                  },
-                );
+                const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "conversation", {
+                  why,
+                  importance,
+                  decayClass: paramDecayClass ?? "permanent",
+                  provenanceSession: provenanceSessionId,
+                  extractionMethod: "active",
+                  extractionConfidence: importance,
+                });
                 if (!pointer.ok) {
                   if (storedInVault) {
                     rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
@@ -680,7 +674,11 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   });
                   const newEntry = updateStoreResult.entry;
                   // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-                  if (!updateStoreResult.skipped && updateStoreResult.newlyStored === false && !updateStoreResult.embeddingStale) {
+                  if (
+                    !updateStoreResult.skipped &&
+                    updateStoreResult.newlyStored === false &&
+                    !updateStoreResult.embeddingStale
+                  ) {
                     if (walEntryId) await walRemove(walEntryId, api.logger);
                     return {
                       content: [
@@ -692,7 +690,11 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       details: { action: "noop", reason: "dedupe-update", id: newEntry.id },
                     };
                   }
-                  if (!updateStoreResult.skipped && updateStoreResult.newlyStored === false && updateStoreResult.embeddingStale) {
+                  if (
+                    !updateStoreResult.skipped &&
+                    updateStoreResult.newlyStored === false &&
+                    updateStoreResult.embeddingStale
+                  ) {
                     await cleanupEvictedVector({
                       vectorDb,
                       evictedFactId: updateStoreResult.evictedFactId,

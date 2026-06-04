@@ -98,10 +98,7 @@ function main(): void {
       continue;
     }
     const raw = existsPath(RAW, spec.rawPath);
-    const sandbox =
-      checkSandbox && spec.sandboxPath
-        ? existsPath(SANDBOX, spec.sandboxPath)
-        : undefined;
+    const sandbox = checkSandbox && spec.sandboxPath ? existsPath(SANDBOX, spec.sandboxPath) : undefined;
     results.push({
       spec,
       present: raw.ok,
@@ -117,12 +114,7 @@ function main(): void {
     for (const r of items) {
       const icon = r.spec.tier === "forbidden" ? (r.present ? "⛔ LEAK" : "✓ absent") : r.present ? "✓" : "✗";
       const size = r.bytes !== undefined ? ` (${formatBytes(r.bytes)})` : "";
-      const sb =
-        checkSandbox && r.spec.sandboxPath
-          ? r.sandboxPresent
-            ? " [sandbox ✓]"
-            : " [sandbox ✗]"
-          : "";
+      const sb = checkSandbox && r.spec.sandboxPath ? (r.sandboxPresent ? " [sandbox ✓]" : " [sandbox ✗]") : "";
       console.log(`${icon} ${r.spec.id}${size}${sb}`);
       console.log(`    path: raw/${r.spec.rawPath}`);
       console.log(`    used by: ${r.spec.usedBy.join(", ")}`);
@@ -169,7 +161,9 @@ function main(): void {
     existsSync(join(SANDBOX, ".openclaw/memory")) &&
     readdirSync(join(SANDBOX, ".openclaw/memory")).some((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f));
   if (!dailyInMemory && checkSandbox) {
-    console.log("⚠ extract-daily: no YYYY-MM-DD.md in sandbox .openclaw/memory/ (needs setup copy from workspace/memory)");
+    console.log(
+      "⚠ extract-daily: no YYYY-MM-DD.md in sandbox .openclaw/memory/ (needs setup copy from workspace/memory)",
+    );
   }
 
   process.exit(requiredMissing.length > 0 || forbiddenPresent.length > 0 ? 1 : 0);

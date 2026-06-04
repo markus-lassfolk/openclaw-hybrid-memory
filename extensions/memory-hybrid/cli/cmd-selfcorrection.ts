@@ -797,7 +797,7 @@ export async function runSelfCorrectionRunForCli(
           "Convert the following model output into a valid JSON array.",
           "Return ONLY JSON (no markdown, no prose).",
           "Each item must include incidentIndex (0-based) when incidents were batched.",
-            "If incidents were present but none can be recovered, emit one NO_ACTION object per incident with incidentIndex.",
+          "If incidents were present but none can be recovered, emit one NO_ACTION object per incident with incidentIndex.",
           "",
           "MODEL_OUTPUT_START",
           rawContent,
@@ -934,12 +934,7 @@ export async function runSelfCorrectionRunForCli(
           (parseError as any).isParseFailure = true;
           throw parseError;
         }
-        const ordered = orderBatchItemsByIncidentIndex(
-          batch.length,
-          result.items,
-          logger,
-          globalIncidentOffset,
-        );
+        const ordered = orderBatchItemsByIncidentIndex(batch.length, result.items, logger, globalIncidentOffset);
         if (ordered === null) {
           diagnostics.unparseableFailures++;
           const coverageError = new Error(
@@ -955,10 +950,11 @@ export async function runSelfCorrectionRunForCli(
         diagnostics.truncations += result.diagnostics.truncations;
         diagnostics.retries += result.diagnostics.retries;
 
-        const attached = attachOrderedItemsToIncidents<
-          CorrectionIncident,
-          SelfCorrectionRemediationItem
-        >(batch, ordered, globalIncidentOffset);
+        const attached = attachOrderedItemsToIncidents<CorrectionIncident, SelfCorrectionRemediationItem>(
+          batch,
+          ordered,
+          globalIncidentOffset,
+        );
         const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
         diagnostics.parsedItems += added;
         completedBatchIndexes.add(batchIndex);
@@ -1145,8 +1141,7 @@ export async function runSelfCorrectionRunForCli(
       completedBatchIndexes.size === batches.length
     ) {
       const sessionPaths = [...new Set(incidents.map((i) => i.sessionFile).filter(Boolean))];
-      const lastSessionTs =
-        sessionPaths.length > 0 ? (getMaxMtime(sessionPaths) ?? Date.now()) : Date.now();
+      const lastSessionTs = sessionPaths.length > 0 ? (getMaxMtime(sessionPaths) ?? Date.now()) : Date.now();
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, incidents.length);
     }
 

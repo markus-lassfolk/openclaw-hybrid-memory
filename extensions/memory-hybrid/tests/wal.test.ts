@@ -525,9 +525,7 @@ describe("WriteAheadLog", () => {
       expect(pruned).toBe(0);
       expect(await wal.readAll()).toHaveLength(1);
       expect((await wal.readAll())[0].id).toBe(recentEntry.id);
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("WAL pruneStale detected corruption"),
-      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL pruneStale detected corruption"));
       warnSpy.mockRestore();
     });
   });
@@ -608,9 +606,7 @@ describe("WriteAheadLog", () => {
 
       expect(validEntries).toHaveLength(1);
       expect(validEntries[0].id).toBe(recentEntry.id);
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining("falling back to lenient read"),
-      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("falling back to lenient read"));
       warnSpy.mockRestore();
     });
   });

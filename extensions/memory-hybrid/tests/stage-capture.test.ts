@@ -794,8 +794,6 @@ describe("runCaptureStage", () => {
     );
 
     expect(storeWithResult).not.toHaveBeenCalled();
-    expect(api.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("vault disabled or unavailable"),
-    );
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("vault disabled or unavailable"));
   });
 });

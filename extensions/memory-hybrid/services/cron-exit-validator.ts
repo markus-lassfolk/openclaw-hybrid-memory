@@ -526,14 +526,13 @@ function collectMaintenanceTelemetryIssues(params: {
     /\bstatus=failed_partial\b/i.test(logContent) ||
     (/\bparse_success=false\b/i.test(logContent) && /\bself-correction-run\b/i.test(logContent));
   const selfCorrectionIncidents = parsePositiveMetric(logContent, "incidents found");
-  const selfCorrectionParsed = parsePositiveMetric(logContent, "parsed_candidates") ?? parsePositiveMetric(logContent, "analysed");
+  const selfCorrectionParsed =
+    parsePositiveMetric(logContent, "parsed_candidates") ?? parsePositiveMetric(logContent, "analysed");
   if (
     selfCorrectionDetected &&
     (selfCorrectionSuspect ||
       selfCorrectionParseFailed ||
-      (typeof selfCorrectionIncidents === "number" &&
-        selfCorrectionIncidents > 0 &&
-        selfCorrectionParsed === 0))
+      (typeof selfCorrectionIncidents === "number" && selfCorrectionIncidents > 0 && selfCorrectionParsed === 0))
   ) {
     addMaintenanceIssue(
       issues,
@@ -579,8 +578,7 @@ function collectMaintenanceTelemetryIssues(params: {
   const reinforcementDetected =
     requiredSteps.includes("extract-reinforcement") || /\bextract-reinforcement\b/i.test(logContent);
   const reinforcementDegraded =
-    /\bdegraded_model_or_parser\b/i.test(logContent) ||
-    /\bstatus=degraded_model_or_parser\b/i.test(logContent);
+    /\bdegraded_model_or_parser\b/i.test(logContent) || /\bstatus=degraded_model_or_parser\b/i.test(logContent);
   if (reinforcementDetected && reinforcementDegraded) {
     addMaintenanceIssue(
       issues,

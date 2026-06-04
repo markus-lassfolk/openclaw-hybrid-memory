@@ -40,16 +40,9 @@ type IncidentBatchAnalyzeDeps<TItem, TIncident> = {
   costFeatureLabel: string;
   logger: { info?: (msg: string) => void; warn?: (msg: string) => void };
   onTransientRetry?: (info: { attempt: number; delayMs: number; error: Error }) => void;
-  parseBatchContent: (
-    content: string,
-    diagnostics: IncidentBatchAnalyzeDiagnostics,
-  ) => Promise<TItem[] | null>;
+  parseBatchContent: (content: string, diagnostics: IncidentBatchAnalyzeDiagnostics) => Promise<TItem[] | null>;
   buildPrompt: (batch: TIncident[]) => string;
-  llmCall?: (
-    batch: TIncident[],
-    batchLabel: string,
-    maxTokensOverride?: number,
-  ) => Promise<IncidentBatchLlmResult>;
+  llmCall?: (batch: TIncident[], batchLabel: string, maxTokensOverride?: number) => Promise<IncidentBatchLlmResult>;
 };
 
 function splitIncidentsInHalf<T>(items: T[]): [T[], T[]] {
@@ -305,7 +298,15 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
       left.length,
       right.length,
     ) as TItem[];
-    const rejected = rejectIncompleteBatch(batch.length, merged, finishReason, content, diagnostics, batchLabel, deps.logger);
+    const rejected = rejectIncompleteBatch(
+      batch.length,
+      merged,
+      finishReason,
+      content,
+      diagnostics,
+      batchLabel,
+      deps.logger,
+    );
     if (rejected) return rejected;
     return {
       items: merged,
@@ -315,7 +316,15 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
     };
   }
 
-  const rejected = rejectIncompleteBatch(batch.length, items, finishReason, content, diagnostics, batchLabel, deps.logger);
+  const rejected = rejectIncompleteBatch(
+    batch.length,
+    items,
+    finishReason,
+    content,
+    diagnostics,
+    batchLabel,
+    deps.logger,
+  );
   if (rejected) return rejected;
 
   return { items, finishReason, rawContent: content, diagnostics };

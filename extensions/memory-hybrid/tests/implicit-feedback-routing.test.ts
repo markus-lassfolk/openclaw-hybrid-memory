@@ -1661,7 +1661,7 @@ describe("implicit feedback routing — self-correction bridge", () => {
     expect(spy).toHaveBeenCalled();
     const call = spy.mock.calls[0]?.[1];
     expect(call?.incidents?.length).toBeGreaterThan(0);
-    expect((call?.incidents?.length ?? 0)).toBeLessThanOrEqual(5);
+    expect(call?.incidents?.length ?? 0).toBeLessThanOrEqual(5);
     spy.mockRestore();
   });
 

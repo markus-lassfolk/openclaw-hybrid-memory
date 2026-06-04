@@ -211,7 +211,7 @@ export function extractBalancedObjectSlice(s: string, start: number): string | n
 /**
  * Find the first balanced `{...}` in the response that passes the filter callback.
  * When no filter is provided, returns the first successfully parsed object.
- * 
+ *
  * @param raw - The raw string to parse
  * @param filter - Optional filter callback to validate parsed objects; receives the parsed object
  *                 and should return an array to accept or null/undefined to continue searching.
@@ -374,7 +374,10 @@ export function extractItemArray(
 }
 
 function tryParseNdjsonItems(raw: string, isValidItem: (item: unknown) => boolean): unknown[] | null {
-  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
   if (lines.length < 2) return null;
   const items: unknown[] = [];
   for (const line of lines) {

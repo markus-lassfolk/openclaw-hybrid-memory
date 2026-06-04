@@ -93,8 +93,7 @@ function requireFacts(ctx: ActiveTaskContext): { factsDb: FactsDB; vectorDb: Vec
 }
 
 function renderProjectionOpts(ctx: ActiveTaskContext, extra: { includeCompleted?: boolean } = {}) {
-  const goals =
-    ctx.cfg && ctx.workspaceRoot ? activeTaskRenderGoalsOpts(ctx.cfg, ctx.workspaceRoot) : {};
+  const goals = ctx.cfg && ctx.workspaceRoot ? activeTaskRenderGoalsOpts(ctx.cfg, ctx.workspaceRoot) : {};
   return { ...goals, ...extra };
 }
 
@@ -592,13 +591,13 @@ export async function runActiveTaskReconcile(
         };
         if (liveResult.updatedCount > 0) {
           await renderActiveTaskMarkdownFile(
-      factsDb,
-      ctx.staleMinutes,
-      ctx.activeTaskFilePath,
-      ctx.projection,
-      undefined,
-      renderProjectionOpts(ctx),
-    );
+            factsDb,
+            ctx.staleMinutes,
+            ctx.activeTaskFilePath,
+            ctx.projection,
+            undefined,
+            renderProjectionOpts(ctx),
+          );
         }
       } catch (liveErr) {
         userLog.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
@@ -1270,13 +1269,13 @@ export function registerActiveTaskCommands(
           liveSkippedCount = liveResult.skippedCount;
           if (liveResult.updatedCount > 0) {
             await renderActiveTaskMarkdownFile(
-      factsDb,
-      ctx.staleMinutes,
-      ctx.activeTaskFilePath,
-      ctx.projection,
-      undefined,
-      renderProjectionOpts(ctx),
-    );
+              factsDb,
+              ctx.staleMinutes,
+              ctx.activeTaskFilePath,
+              ctx.projection,
+              undefined,
+              renderProjectionOpts(ctx),
+            );
           }
         } catch (liveErr) {
           console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
@@ -1336,13 +1335,13 @@ export function registerActiveTaskCommands(
       }
       if (!opts.dryRun) {
         await renderActiveTaskMarkdownFile(
-      factsDb,
-      ctx.staleMinutes,
-      ctx.activeTaskFilePath,
-      ctx.projection,
-      undefined,
-      renderProjectionOpts(ctx),
-    );
+          factsDb,
+          ctx.staleMinutes,
+          ctx.activeTaskFilePath,
+          ctx.projection,
+          undefined,
+          renderProjectionOpts(ctx),
+        );
         console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
       }
     });

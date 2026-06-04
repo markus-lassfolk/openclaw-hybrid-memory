@@ -90,13 +90,7 @@ export async function runStoreForCli(
           }
           pointerEntry = pointer.entry;
           if (
-            abortCredentialVaultWriteOnPointerDedupe(
-              storedInVault,
-              pointer,
-              credentialsDb,
-              parsed.service,
-              parsed.type,
-            )
+            abortCredentialVaultWriteOnPointerDedupe(storedInVault, pointer, credentialsDb, parsed.service, parsed.type)
           ) {
             return {
               outcome: "credential_skipped_duplicate",

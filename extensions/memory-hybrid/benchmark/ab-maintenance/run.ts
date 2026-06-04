@@ -11,13 +11,7 @@ import { buildDecisionReport, maeveTierSnippet } from "./decide.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_ROOT = join(__dirname, "../../.ab-fixtures");
 
-const TASKS: AbTaskId[] = [
-  "self-correction",
-  "reinforcement",
-  "distill",
-  "reflection",
-  "consolidation",
-];
+const TASKS: AbTaskId[] = ["self-correction", "reinforcement", "distill", "reflection", "consolidation"];
 
 const MODELS_LIST = [MODELS.m27Highspeed, MODELS.m3] as const;
 

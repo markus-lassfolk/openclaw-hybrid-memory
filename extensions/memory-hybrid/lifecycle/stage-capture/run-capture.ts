@@ -1102,13 +1102,9 @@ export async function runCapture(
                 }
                 continue;
               }
-              const pointer = ensureCredentialVaultPointer(
-                ctx.factsDb,
-                cred.service,
-                cred.type,
-                "conversation",
-                { decayClass: "permanent" },
-              );
+              const pointer = ensureCredentialVaultPointer(ctx.factsDb, cred.service, cred.type, "conversation", {
+                decayClass: "permanent",
+              });
               if (!pointer.ok) {
                 if (storedInVault) {
                   rollbackVaultCredentialWrite(ctx.credentialsDb, cred.service, cred.type);
@@ -1133,7 +1129,10 @@ export async function runCapture(
                 logger: api.logger,
                 context: "stage-capture-credential-pointer",
               });
-              if (ctx.cfg.retrieval.strategies.includes("semantic") && (pointer.newlyStored || pointer.embeddingStale)) {
+              if (
+                ctx.cfg.retrieval.strategies.includes("semantic") &&
+                (pointer.newlyStored || pointer.embeddingStale)
+              ) {
                 const pointerText = buildCredentialPointerText(cred.service, cred.type);
                 try {
                   const vector = await ctx.embeddings.embed(pointer.embeddingStale ? entry.text : pointerText);

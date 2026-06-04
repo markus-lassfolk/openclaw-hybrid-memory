@@ -4,7 +4,11 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import type { FindDuplicatesResult } from "../../cli/types.js";
-import { getMemoryCategories, resolveReflectionModelAndFallbacks, resolveReflectionThinkingMode } from "../../config.js";
+import {
+  getMemoryCategories,
+  resolveReflectionModelAndFallbacks,
+  resolveReflectionThinkingMode,
+} from "../../config.js";
 import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
 import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
@@ -62,7 +66,11 @@ interface CliContextServices {
     dryRun: boolean;
     model: string;
     verbose?: boolean;
-  }) => Promise<{ metaExtracted: number; metaStored: number; diagnostics?: import("../../services/reflection.js").ReflectionMetaDiagnostics }>;
+  }) => Promise<{
+    metaExtracted: number;
+    metaStored: number;
+    diagnostics?: import("../../services/reflection.js").ReflectionMetaDiagnostics;
+  }>;
   runReflectIdentity: (opts: {
     dryRun: boolean;
     model?: string;

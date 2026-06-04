@@ -94,7 +94,10 @@ export function getWalCircuitBreakerState(wal: WriteAheadLog | null): WalCircuit
 }
 
 /** True when WAL is configured but the write did not durably land (fail closed). */
-export function isWalWriteFailure(wal: WriteAheadLog | null | undefined, walEntryId: string | null): walEntryId is null {
+export function isWalWriteFailure(
+  wal: WriteAheadLog | null | undefined,
+  walEntryId: string | null,
+): walEntryId is null {
   if (wal == null) return false;
   return walEntryId === null;
 }

@@ -10,15 +10,7 @@
  *   npm run offline-qa -- --reuse-work       # skip clone; use sandbox-work
  *   npm run offline-qa -- --work-home PATH   # clone template to PATH for this run
  */
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hybridConfigSchema, resolveReflectionModelAndFallbacks, resolveReflectionThinkingMode } from "../../config.js";
@@ -89,12 +81,14 @@ function runScript(script: string): void {
 }
 
 function phase(name: string, fn: () => Promise<QaPhaseResult>): Promise<QaPhaseResult> {
-  return fn().catch((err): QaPhaseResult => ({
-    name,
-    ok: false,
-    error: String(err),
-    details: {},
-  }));
+  return fn().catch(
+    (err): QaPhaseResult => ({
+      name,
+      ok: false,
+      error: String(err),
+      details: {},
+    }),
+  );
 }
 
 async function main(): Promise<void> {
@@ -132,9 +126,7 @@ async function main(): Promise<void> {
     await phase("preflight", async () => {
       const manifestPath = join(QA_ROOT, "manifest.json");
       if (!existsSync(manifestPath)) {
-        throw new Error(
-          `Missing ${manifestPath}. Run: bash benchmark/offline-qa/fetch-maeve-offline-qa.sh`,
-        );
+        throw new Error(`Missing ${manifestPath}. Run: bash benchmark/offline-qa/fetch-maeve-offline-qa.sh`);
       }
       const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>;
       const factsPath = join(activeHome, ".openclaw/memory/facts.db");
@@ -168,8 +160,7 @@ async function main(): Promise<void> {
       const snapshotPath = join(AB_FIXTURES, "corpus-snapshot.json");
       writeCorpusSnapshot(corpus, snapshotPath);
       writeFileSync(join(outDir, "corpus-meta.json"), JSON.stringify(corpus.meta, null, 2));
-      const lowSignal =
-        corpus.meta.selfCorrectionIncidents < 3 && corpus.meta.reinforcementIncidents === 0;
+      const lowSignal = corpus.meta.selfCorrectionIncidents < 3 && corpus.meta.reinforcementIncidents === 0;
       if (lowSignal) {
         report.warnings.push(
           `Low incident signal: SC=${corpus.meta.selfCorrectionIncidents} RE=${corpus.meta.reinforcementIncidents}. Consider fetching more session days.`,
@@ -238,8 +229,7 @@ async function main(): Promise<void> {
         try {
           const cfg = buildQaConfig(workFacts, workLance);
           const api = {
-            resolvePath: (p: string) =>
-              p.startsWith("/") ? p : join(activeHome, p.replace(/^\.\//, "")),
+            resolvePath: (p: string) => (p.startsWith("/") ? p : join(activeHome, p.replace(/^\.\//, ""))),
             logger: { info: console.log, warn: console.warn, debug: () => {}, error: console.error },
             registerTool: () => {},
             registerService: () => {},
@@ -297,8 +287,7 @@ async function main(): Promise<void> {
             verbose: args.verbose,
           });
 
-          const reflectionModel =
-            cfg.reflection?.model ?? cfg.llm?.default?.[0] ?? "minimax/MiniMax-M3";
+          const reflectionModel = cfg.reflection?.model ?? cfg.llm?.default?.[0] ?? "minimax/MiniMax-M3";
           const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
             cfg,
             "maintenance",
@@ -398,9 +387,7 @@ function buildQaConfig(workFacts: string, lancePath: string) {
     ? (JSON.parse(readFileSync(TIER_SNIPPET, "utf-8")) as Record<string, unknown>)
     : {};
   const { _comment: _, ...tierFields } = snippet;
-  const azureKey =
-    getEnv("AZURE_OPENAI_API_KEY")?.trim() ||
-    "azure-offline-qa-placeholder-key-000000000000";
+  const azureKey = getEnv("AZURE_OPENAI_API_KEY")?.trim() || "azure-offline-qa-placeholder-key-000000000000";
   const afBase =
     getEnv("AZURE_FOUNDRY_BASE_URL")?.trim() ||
     getEnv("AZURE_OPENAI_BASE_URL")?.trim() ||
@@ -507,9 +494,7 @@ function writeReport(outDir: string, report: QaReport): void {
     "",
     "## Phases",
     "",
-    ...report.phases.map(
-      (p) => `- **${p.name}**: ${p.ok ? "OK" : "FAIL"}${p.error ? ` — ${p.error}` : ""}`,
-    ),
+    ...report.phases.map((p) => `- **${p.name}**: ${p.ok ? "OK" : "FAIL"}${p.error ? ` — ${p.error}` : ""}`),
     "",
   ];
   if (report.warnings.length > 0) {

@@ -214,11 +214,7 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
 
   // ——— MiniMax M2.x (258k operational ctx; live api.max ~262k prompt on M2.7; 150k reliable distill batch) ———
   {
-    match: (n) =>
-      n.includes("minimax") ||
-      n.startsWith("m2") ||
-      n.includes("minimax-m2") ||
-      n.includes("minimax-text"),
+    match: (n) => n.includes("minimax") || n.startsWith("m2") || n.includes("minimax-m2") || n.includes("minimax-text"),
     cap: {
       contextWindow: 258_000,
       maxOutputTokens: 131_072,

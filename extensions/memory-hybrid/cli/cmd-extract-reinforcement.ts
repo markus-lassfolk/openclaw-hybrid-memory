@@ -287,8 +287,7 @@ export async function runExtractReinforcementForCli(
     let incidentsTruncatedForAnalysis = false;
     const reinfCfg = cfg.reinforcement ?? {};
     const scCfg = cfg.selfCorrection;
-    const llmEnabled =
-      (reinfCfg.reinforcementLLMAnalysis ?? scCfg?.reinforcementLLMAnalysis) !== false;
+    const llmEnabled = (reinfCfg.reinforcementLLMAnalysis ?? scCfg?.reinforcementLLMAnalysis) !== false;
     const runLLMAnalysis = llmEnabled && result.incidents.length > 0 && !opts.dryRun;
     let analysisCategory: string | undefined;
 
@@ -440,10 +439,7 @@ export async function runExtractReinforcementForCli(
           const batch = batches[batchIndex];
           const globalIncidentOffset = globalIncidentOffsetForBatch(batches, batchIndex);
           const batchLabel = `batch ${batchIndex + 1}/${batches.length}`;
-          const result = await analyzeReinforcementIncidentBatchWithSplit(
-            { ...analyzeDeps, batchLabel },
-            batch,
-          );
+          const result = await analyzeReinforcementIncidentBatchWithSplit({ ...analyzeDeps, batchLabel }, batch);
 
           if (result.items === null) {
             const trimmedRaw = (result.rawContent ?? "").trim();
@@ -474,12 +470,7 @@ export async function runExtractReinforcementForCli(
                 severity: "",
                 remediationContent: "",
               }));
-              const ordered = orderBatchItemsByIncidentIndex(
-                batch.length,
-                synthesized,
-                logger,
-                globalIncidentOffset,
-              );
+              const ordered = orderBatchItemsByIncidentIndex(batch.length, synthesized, logger, globalIncidentOffset);
               if (ordered === null) {
                 diagnostics.parseFailures++;
                 throw new Error(
@@ -509,12 +500,7 @@ export async function runExtractReinforcementForCli(
             throw parseError;
           }
 
-          const ordered = orderBatchItemsByIncidentIndex(
-            batch.length,
-            result.items,
-            logger,
-            globalIncidentOffset,
-          );
+          const ordered = orderBatchItemsByIncidentIndex(batch.length, result.items, logger, globalIncidentOffset);
           if (ordered === null) {
             diagnostics.parseFailures++;
             const coverageError = new Error(
@@ -618,7 +604,7 @@ export async function runExtractReinforcementForCli(
 
             if (existsSync(toolsPath)) {
               insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
-              
+
               if (ruleVec) {
                 try {
                   await vectorDb.store({

@@ -113,8 +113,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         }
         if (res.error) {
           console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
-          process.exitCode =
-            res.status === "failed_partial" || res.status === "failed_suspect_zero_parsed" ? 2 : 1;
+          process.exitCode = res.status === "failed_partial" || res.status === "failed_suspect_zero_parsed" ? 2 : 1;
           return;
         }
         if (res.status === "failed_partial" || res.status === "failed_suspect_zero_parsed") {
@@ -138,8 +137,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           console.log(
             `Batches started: ${res.batchesStarted ?? 0} | Batches completed: ${res.batchesCompleted ?? 0}/${res.totalBatches ?? "?"} | Parsed item lines: ${res.analysed ?? 0} | Retry lines: ${res.retryCount ?? 0} | Fallback lines: ${res.fallbackCount ?? 0} | Errors/unparseable/failure lines: ${(res.parseFailures ?? 0) + (res.unparseableFailures ?? 0)}`,
           );
-          const parseSuccess =
-            res.status === "success_analyzed" || res.status === "success_no_incidents";
+          const parseSuccess = res.status === "success_analyzed" || res.status === "success_no_incidents";
           console.log(
             `parse_success=${parseSuccess} parsed_candidates=${res.analysed ?? 0} retry_count=${res.retryCount ?? 0} fallback_count=${res.fallbackCount ?? 0} parse_failures=${res.parseFailures ?? 0} unparseable_failures=${res.unparseableFailures ?? 0}${res.status === "failed_partial" ? " batches_completed=" + (res.batchesCompleted ?? 0) + "/" + (res.totalBatches ?? "?") : ""}`,
           );

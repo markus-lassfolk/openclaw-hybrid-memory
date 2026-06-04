@@ -1044,9 +1044,7 @@ export async function upsertProjectTaskKey(
     provenanceJson: activeTaskProvenance(canonical),
   });
   if (storeResult.skipped) {
-    throw new Error(
-      `memory-hybrid: active-task ledger upsert blocked by pre-store guard (${normalizedEntity}/${key})`,
-    );
+    throw new Error(`memory-hybrid: active-task ledger upsert blocked by pre-store guard (${normalizedEntity}/${key})`);
   }
   const entry = storeResult.entry;
   if (storeResult.evictedFactId) {
@@ -1529,10 +1527,7 @@ export async function renderActiveTaskMarkdownFile(
 }
 
 /** Pass to `renderActiveTaskMarkdownFile` when goal stewardship is enabled. */
-export function activeTaskRenderGoalsOpts(
-  cfg: HybridMemoryConfig,
-  workspaceRoot: string,
-): { goalsDir?: string } {
+export function activeTaskRenderGoalsOpts(cfg: HybridMemoryConfig, workspaceRoot: string): { goalsDir?: string } {
   if (!cfg.goalStewardship?.enabled) return {};
   return { goalsDir: resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir) };
 }

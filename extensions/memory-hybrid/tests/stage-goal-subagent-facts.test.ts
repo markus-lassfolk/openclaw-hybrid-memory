@@ -79,13 +79,7 @@ describe("stage-goal-subagent facts ledger linking", () => {
     const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
     const apiWithLogger = { ...api, logger, context: {} } as unknown as ClawdbotPluginApi;
     registerGoalSubagentHandlers(apiWithLogger, ctx, goalsDir);
-    registerCleanupHandlers(
-      apiWithLogger,
-      ctx,
-      {} as never,
-      join(workspaceRoot, "ACTIVE-TASKS.md"),
-      workspaceRoot,
-    );
+    registerCleanupHandlers(apiWithLogger, ctx, {} as never, join(workspaceRoot, "ACTIVE-TASKS.md"), workspaceRoot);
   });
 
   afterEach(async () => {

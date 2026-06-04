@@ -62,9 +62,7 @@ export type ReflectionMetaParseResult = {
 };
 
 function tryParseJsonObject(raw: string): Record<string, unknown> | null {
-  const stripped = stripBracketContextPreamble(
-    stripThinkingWrapperBlocks(stripMarkdownCodeFence(raw.trim())),
-  );
+  const stripped = stripBracketContextPreamble(stripThinkingWrapperBlocks(stripMarkdownCodeFence(raw.trim())));
   return parseFirstJsonObjectValue(stripped) ?? repairLooseJsonObject(stripped);
 }
 

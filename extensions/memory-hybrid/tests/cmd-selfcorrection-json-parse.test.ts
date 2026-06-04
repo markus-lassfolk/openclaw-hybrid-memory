@@ -95,7 +95,11 @@ function makeOpenAINativeToolCallsMock(argumentsJson: string) {
   } as any;
 }
 
-function makeOpenAIFailoverMock(primaryModel: string, fallbackModel: string, responseText = JSON.stringify([SAMPLE_REMEDIATION])) {
+function makeOpenAIFailoverMock(
+  primaryModel: string,
+  fallbackModel: string,
+  responseText = JSON.stringify([SAMPLE_REMEDIATION]),
+) {
   return {
     chat: {
       completions: {
@@ -374,8 +378,6 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/excerpt=/);
   });
 
-
-
   it("accepts MiniMax M3-style nested arguments payload without losing analysed items", async () => {
     const llmContent = JSON.stringify({ arguments: { items: [SAMPLE_REMEDIATION] } });
     const ctx = makeCtx(makeOpenAIMock(llmContent));
@@ -392,9 +394,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
   });
 
   it("accepts native message.tool_calls with empty content (#1876)", async () => {
-    const ctx = makeCtx(
-      makeOpenAINativeToolCallsMock(JSON.stringify({ items: [SAMPLE_REMEDIATION] })),
-    );
+    const ctx = makeCtx(makeOpenAINativeToolCallsMock(JSON.stringify({ items: [SAMPLE_REMEDIATION] })));
 
     const res = await runSelfCorrectionRunForCli(ctx, {
       incidents: [SAMPLE_INCIDENT],
@@ -446,8 +446,6 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.error).toMatch(/could not be parsed/i);
   });
 
-
-
   it("retries transient Request was aborted failures with backoff without lowering maxTokens", async () => {
     const openai = {
       chat: {
@@ -473,8 +471,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.status).toBe("success_analyzed");
     expect(res.retryCount).toBe(1);
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
-    const callBodies = ((openai.chat.completions.create as any).mock?.calls ?? []).map((args: unknown[]) =>
-      args[0] as { max_tokens?: number; max_completion_tokens?: number },
+    const callBodies = ((openai.chat.completions.create as any).mock?.calls ?? []).map(
+      (args: unknown[]) => args[0] as { max_tokens?: number; max_completion_tokens?: number },
     );
     const tokenBudgets = callBodies.map(
       (body: { max_tokens?: number; max_completion_tokens?: number }) => body.max_tokens ?? body.max_completion_tokens,
@@ -485,8 +483,16 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
 
   it("persists batch resume state and skips completed batches on rerun", async () => {
     const manyIncidents = [
-      { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #0`, sessionFile: "2026-01-01-session-0.jsonl" },
-      { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #1`, sessionFile: "2026-01-01-session-1.jsonl" },
+      {
+        ...SAMPLE_INCIDENT,
+        userMessage: `${SAMPLE_INCIDENT.userMessage} #0`,
+        sessionFile: "2026-01-01-session-0.jsonl",
+      },
+      {
+        ...SAMPLE_INCIDENT,
+        userMessage: `${SAMPLE_INCIDENT.userMessage} #1`,
+        sessionFile: "2026-01-01-session-1.jsonl",
+      },
     ];
     const firstBatchItem = { ...SAMPLE_REMEDIATION, remediationContent: { text: "first batch" } };
     const secondBatchItem = { ...SAMPLE_REMEDIATION, remediationContent: { text: "second batch" } };
@@ -596,10 +602,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
   });
 
   it("includes model in resume fingerprint so a different model does not reuse stale state", async () => {
-    const incidents = [
-      SAMPLE_INCIDENT,
-      { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #2` },
-    ];
+    const incidents = [SAMPLE_INCIDENT, { ...SAMPLE_INCIDENT, userMessage: `${SAMPLE_INCIDENT.userMessage} #2` }];
     const failBatch2 = Object.assign(new Error("model not found for batch 2"), { status: 404 });
     const ctxPartial = makeCtx({
       chat: {

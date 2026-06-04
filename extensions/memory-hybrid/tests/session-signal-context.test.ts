@@ -38,7 +38,10 @@ describe("session-signal-context", () => {
       [
         msg("user", [{ type: "text", text: "Deploy the app" }]),
         msg("assistant", [{ type: "tool_use", name: "memory_recall" }]),
-        msg("assistant", [{ type: "tool_use", name: "exec" }, { type: "text", text: "Deploy ran without verification." }]),
+        msg("assistant", [
+          { type: "tool_use", name: "exec" },
+          { type: "text", text: "Deploy ran without verification." },
+        ]),
         msg("user", [{ type: "text", text: "Wrong — verify logs before deploy." }]),
         msg("assistant", [{ type: "text", text: "I will verify first." }]),
       ],

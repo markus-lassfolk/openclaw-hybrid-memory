@@ -113,12 +113,7 @@ export function detectProviderLeak(log: string, llmTask: boolean): { leak: boole
   return { leak: false };
 }
 
-export function analyzeTaskResult(
-  task: QaTaskSpec,
-  log: string,
-  exitCode: number,
-  durationMs: number,
-): TaskAnalysis {
+export function analyzeTaskResult(task: QaTaskSpec, log: string, exitCode: number, durationMs: number): TaskAnalysis {
   const counts = parseCountsFromLog(log);
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -187,17 +182,23 @@ export function analyzeTaskResult(
   } else if (task.id === "reflect" && (counts.stored ?? 0) > 0) {
     classification = "ok";
     notes.push(`Stored ${counts.stored} reflection patterns`);
-  } else if (task.id === "distill" && (counts.sessionsScanned ?? 0) === 0 && !/\d+ extracted from \d+ sessions/i.test(log)) {
+  } else if (
+    task.id === "distill" &&
+    (counts.sessionsScanned ?? 0) === 0 &&
+    !/\d+ extracted from \d+ sessions/i.test(log)
+  ) {
     classification = "test-bug";
     errors.push("Distill scanned 0 sessions — sandbox HOME or session paths wrong");
-  } else if (task.id === "extract-daily" && !/20\d{2}-\d{2}-\d{2}\.md/.test(log) && (counts.stored ?? 0) === 0 && (counts.factsExtracted ?? 0) === 0) {
+  } else if (
+    task.id === "extract-daily" &&
+    !/20\d{2}-\d{2}-\d{2}\.md/.test(log) &&
+    (counts.stored ?? 0) === 0 &&
+    (counts.factsExtracted ?? 0) === 0
+  ) {
     classification = "data-gap";
     notes.push("No daily log activity — check memory/YYYY-MM-DD.md copies");
   } else if (task.id === "extract-reinforcement") {
-    const incidentsFound = Number.parseInt(
-      log.match(/reinforcement incidents found:\s*(\d+)/i)?.[1] ?? "0",
-      10,
-    );
+    const incidentsFound = Number.parseInt(log.match(/reinforcement incidents found:\s*(\d+)/i)?.[1] ?? "0", 10);
     const annotated = Number.parseInt(log.match(/Annotated (\d+) facts/i)?.[1] ?? "0", 10);
     if (incidentsFound > 0) {
       classification = annotated > 0 ? "ok" : "by-design-zero";
@@ -253,14 +254,14 @@ export function analyzeTaskResult(
     classification === "skipped"
       ? "Command not registered — skip on live unless wired"
       : classification === "ok"
-      ? "Task completed with expected signal"
-      : classification === "by-design-zero"
-        ? "Zero output likely by design — verify gate/data expectations"
-        : classification === "data-gap"
-          ? "Tooling ran but corpus lacks signal — not a code bug"
-          : classification === "needs-fix"
-            ? "Fix errors before live deploy"
-            : "Investigate harness or plugin";
+        ? "Task completed with expected signal"
+        : classification === "by-design-zero"
+          ? "Zero output likely by design — verify gate/data expectations"
+          : classification === "data-gap"
+            ? "Tooling ran but corpus lacks signal — not a code bug"
+            : classification === "needs-fix"
+              ? "Fix errors before live deploy"
+              : "Investigate harness or plugin";
 
   return {
     classification,

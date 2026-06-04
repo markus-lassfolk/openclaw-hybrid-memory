@@ -8,12 +8,7 @@ export type AbModelId = (typeof MODELS)[keyof typeof MODELS];
 
 export type AbThinkingMode = "disabled" | "adaptive" | "enabled";
 
-export type AbTaskId =
-  | "self-correction"
-  | "reinforcement"
-  | "distill"
-  | "reflection"
-  | "consolidation";
+export type AbTaskId = "self-correction" | "reinforcement" | "distill" | "reflection" | "consolidation";
 
 export type AbCellMetrics = {
   task: AbTaskId;

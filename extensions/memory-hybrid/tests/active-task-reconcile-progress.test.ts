@@ -52,7 +52,9 @@ describe("ActiveTaskReconcileProgressReporter", () => {
     expect(lines.some((line) => line.includes("active-tasks reconcile: start mode=apply"))).toBe(true);
     expect(lines.some((line) => line.includes("phase=session-index start"))).toBe(true);
     expect(lines.some((line) => line.includes("phase=session-index complete"))).toBe(true);
-    expect(lines.some((line) => line.includes("entity=task-a action=mark_abandoned reason=session_missing"))).toBe(true);
+    expect(lines.some((line) => line.includes("entity=task-a action=mark_abandoned reason=session_missing"))).toBe(
+      true,
+    );
     expect(lines.some((line) => line.includes("active-tasks reconcile: complete reconciled=1"))).toBe(true);
     expect(summary.event).toBe("active_tasks_reconcile_complete");
     expect(summary.reconciled).toBe(1);

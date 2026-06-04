@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildDecisionReport,
-  compareCells,
-  qualityRichness,
-  scoreCell,
-} from "../benchmark/ab-maintenance/decide.js";
+import { buildDecisionReport, compareCells, qualityRichness, scoreCell } from "../benchmark/ab-maintenance/decide.js";
 import type { AbRunResult } from "../benchmark/ab-maintenance/types.js";
 
 describe("quality-first decide scoring", () => {

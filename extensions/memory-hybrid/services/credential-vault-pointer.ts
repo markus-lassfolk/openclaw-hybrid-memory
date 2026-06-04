@@ -80,11 +80,7 @@ export function rollbackVaultCredentialWrite(
   }
 }
 
-export function findCredentialPointerFactIds(
-  factsDb: FactsDB,
-  service: string,
-  type?: CredentialType,
-): string[] {
+export function findCredentialPointerFactIds(factsDb: FactsDB, service: string, type?: CredentialType): string[] {
   const ids: string[] = [];
   for (const { entry } of factsDb.lookup("Credentials")) {
     if ((entry.key ?? "") !== service) continue;

@@ -18,10 +18,7 @@ import type { FactsDB as FactsDBType } from "../backends/facts-db.js";
 import type { CredentialsConfig, HybridMemoryConfig } from "../config/types/index.js";
 import type { PluginContext } from "../tools/credential-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
-import {
-  ensureCredentialVaultPointer,
-  findCredentialPointerFactIds,
-} from "../services/credential-vault-pointer.js";
+import { ensureCredentialVaultPointer, findCredentialPointerFactIds } from "../services/credential-vault-pointer.js";
 
 const TEST_KEY = "test-encryption-key-for-unit-tests-32chars";
 const FAKE_SECRET = "ghp_FAKE_DO_NOT_LEAK_1234567890abcdef";
@@ -67,7 +64,12 @@ function makeMinimalCfg(overrides: Partial<CredentialsConfig> = {}): HybridMemor
   return { credentials } as HybridMemoryConfig;
 }
 
-function makeCtx(db: CredentialsDB, cfg: HybridMemoryConfig, api: MockApi, factsDb: FactsDBType | null = null): PluginContext {
+function makeCtx(
+  db: CredentialsDB,
+  cfg: HybridMemoryConfig,
+  api: MockApi,
+  factsDb: FactsDBType | null = null,
+): PluginContext {
   return { credentialsDb: db, factsDb, cfg, api: api as unknown as PluginContext["api"] };
 }
 
@@ -273,7 +275,9 @@ describe("credential_store — vault pointer fact", () => {
 
     const api = makeMockApi();
     const cfg = makeMinimalCfg();
-    const vectorDb = { delete: vi.fn().mockResolvedValue(undefined) } as unknown as import("../backends/vector-db.js").VectorDB;
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../backends/vector-db.js").VectorDB;
 
     registerCredentialTools(
       { credentialsDb: db, factsDb, vectorDb, cfg, api: api as unknown as PluginContext["api"] },

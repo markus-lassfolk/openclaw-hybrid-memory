@@ -244,9 +244,7 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
   opts.logger.info?.(
     `${opts.label}: starting with model ${callModel}${callModel !== opts.model ? ` (promoted from fallback; configured=${opts.model})` : ""} (source=${opts.modelSource ?? "configured"}; adaptive=${prepared.enabled ? prepared.effective.source : "disabled"}; inputTokens≈${prepared.inputTokens}; maxTokens=${prepared.maxTokens}; thinking=${opts.thinkingMode ?? "default"}; timeoutMs=${resolveMaintenanceChatTimeoutMs(callModel, opts.thinkingMode)})`,
   );
-  opts.logger.info?.(
-    `${opts.label}: fallback chain = [${callFallbacks.length > 0 ? callFallbacks.join(", ") : ""}]`,
-  );
+  opts.logger.info?.(`${opts.label}: fallback chain = [${callFallbacks.length > 0 ? callFallbacks.join(", ") : ""}]`);
 
   const callOpts = callModel === opts.model ? opts : { ...opts, model: callModel };
 
@@ -282,7 +280,9 @@ export async function chatCompleteWithAdaptiveMaintenanceRetry(
           const detail = await callMaintenanceDetailed(callOpts, prepared, "disabled", callFallbacks);
           recordMaintenanceSuccess(opts, prepared, detail);
           if (detail.modelUsed !== callModel) {
-            opts.logger.info?.(`${opts.label}: succeeded with fallback model ${detail.modelUsed} after thinking downgrade`);
+            opts.logger.info?.(
+              `${opts.label}: succeeded with fallback model ${detail.modelUsed} after thinking downgrade`,
+            );
           }
           return detail;
         }

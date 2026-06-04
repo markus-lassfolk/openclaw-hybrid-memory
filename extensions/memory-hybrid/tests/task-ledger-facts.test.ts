@@ -9,7 +9,12 @@ vi.mock("../utils/process-runner.js", () => ({ execFile: execFileMock }));
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
-import { type ActiveTaskEntry, UNKNOWN_ACTIVE_TASK_TIME, readPendingSignals, writeTaskSignal } from "../services/active-task.js";
+import {
+  type ActiveTaskEntry,
+  UNKNOWN_ACTIVE_TASK_TIME,
+  readPendingSignals,
+  writeTaskSignal,
+} from "../services/active-task.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { initPluginLogger, resetPluginLogger } from "../utils/logger.js";
 import { taskLabelsMatch } from "../utils/subagent-ended-utils.js";
@@ -481,13 +486,7 @@ describe("task-ledger-facts", () => {
       );
       storeTask("proj-1273-b", "Issue 1273 Active Task Hygiene", "waiting", freshIso);
       storeTask("proj-1273-copy", "Issue 1273 active task hygiene", "waiting", freshIso);
-      storeTask(
-        "stale-failure",
-        "Failed run",
-        "failed",
-        staleIso,
-        "agent:forge:subagent:stale-fail",
-      );
+      storeTask("stale-failure", "Failed run", "failed", staleIso, "agent:forge:subagent:stale-fail");
 
       const plan = await planActiveTaskHygiene(loadTaskLedgerFromFacts(db).active, {
         olderThanMinutes: 60,

@@ -208,9 +208,7 @@ export async function runConsolidate(
               messages: [{ role: "user", content: prompt }],
               temperature: 0,
               ...chatCompletionTokenParams(opts.model, 300),
-              ...(opts.thinkingMode && isMiniMaxModel(opts.model)
-                ? { thinking: { type: opts.thinkingMode } }
-                : {}),
+              ...(opts.thinkingMode && isMiniMaxModel(opts.model) ? { thinking: { type: opts.thinkingMode } } : {}),
             }),
           { maxRetries: 2 },
         ),

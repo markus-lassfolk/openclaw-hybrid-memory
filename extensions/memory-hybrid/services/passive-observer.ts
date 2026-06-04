@@ -377,9 +377,7 @@ export async function runPassiveObserver(
   // disappear from disk (or when there are no session files at all) get cleaned up every tick.
   {
     const activeIds = new Set(
-      filePaths
-        .map((fp) => deriveObserverSessionKey(fp, multiAgentScan))
-        .filter((id): id is string => id != null),
+      filePaths.map((fp) => deriveObserverSessionKey(fp, multiAgentScan)).filter((id): id is string => id != null),
     );
     for (const id of consecutiveFailures.keys()) {
       if (!activeIds.has(id)) consecutiveFailures.delete(id);
@@ -768,8 +766,7 @@ export async function runPassiveObserver(
         // Store to LanceDB (use normalized vector for consistent L2 distance metric)
         try {
           const vectorText = storeResult.embeddingStale ? stored.text : fact.text;
-          const vectorForStore =
-            storeResult.embeddingStale ? await embeddings.embed(stored.text) : normalizedVec;
+          const vectorForStore = storeResult.embeddingStale ? await embeddings.embed(stored.text) : normalizedVec;
           await vectorDb.store({
             text: vectorText,
             vector: vectorForStore,

@@ -1689,7 +1689,10 @@ describe("hybridConfigSchema.parse", () => {
       expect(cfg.distill?.modelTier).toBe("heavy");
       expect(effectiveDistillMainModelTier(cfg.distill?.modelTier)).toBe("maintenance");
       // But when resolving for "maintenance" tier (after clamping), we get cheap model
-      const maintenance = resolveReflectionModelAndFallbacks(cfg, effectiveDistillMainModelTier(cfg.distill?.modelTier));
+      const maintenance = resolveReflectionModelAndFallbacks(
+        cfg,
+        effectiveDistillMainModelTier(cfg.distill?.modelTier),
+      );
       expect(maintenance.defaultModel).toBe("gpt-4.1-mini");
       // Direct "heavy" tier resolution would give expensive model (what we want to avoid)
       const heavy = resolveReflectionModelAndFallbacks(cfg, "heavy");

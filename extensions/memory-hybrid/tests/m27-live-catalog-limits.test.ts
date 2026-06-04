@@ -85,7 +85,9 @@ live("live MiniMax M2.7 catalog limits", () => {
         thinking: { type: "disabled" },
       });
       expect(fail.status).toBe(400);
-      expect(fail.json.error?.message ?? fail.json.base_resp?.status_msg ?? "").toMatch(/context window exceeds limit/i);
+      expect(fail.json.error?.message ?? fail.json.base_resp?.status_msg ?? "").toMatch(
+        /context window exceeds limit/i,
+      );
     }
   }, 300_000);
 

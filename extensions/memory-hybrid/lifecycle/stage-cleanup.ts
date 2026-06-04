@@ -134,10 +134,7 @@ async function consumePendingTaskSignals(
 
   const knownMtime = taskFile.mtime;
 
-  const findMatchingTaskInList = (
-    entries: ActiveTaskEntry[],
-    signal: PendingTaskSignal,
-  ): ActiveTaskEntry | null => {
+  const findMatchingTaskInList = (entries: ActiveTaskEntry[], signal: PendingTaskSignal): ActiveTaskEntry | null => {
     const byLabel = entries.filter((t) => taskLabelsMatch(t.label, signal.taskRef));
     if (byLabel.length === 1) return byLabel[0];
     if (byLabel.length > 1) {

@@ -61,6 +61,12 @@ function toolCallsToString(toolCalls: unknown): string | null {
   return JSON.stringify({ tool_calls: argumentStrings });
 }
 
+function isPlaceholderContent(content: string): boolean {
+  const trimmed = content.trim();
+  if (trimmed === "[]" || trimmed === "{}") return true;
+  return false;
+}
+
 /**
  * Extract assistant text from a chat completion message for downstream JSON/structured parsing.
  * Priority: string content → array text blocks → tool_calls arguments → reasoning fields.
@@ -72,7 +78,9 @@ export function extractAssistantMessageText(message: unknown): AssistantMessageT
   const msg = message as Record<string, unknown>;
 
   const stringContent = trimNonEmpty(msg.content);
-  if (stringContent) return { text: stringContent, source: "content" };
+  if (stringContent && !isPlaceholderContent(stringContent)) {
+    return { text: stringContent, source: "content" };
+  }
 
   const blockContent = contentBlocksToString(msg.content);
   if (blockContent) return { text: blockContent, source: "content_blocks" };

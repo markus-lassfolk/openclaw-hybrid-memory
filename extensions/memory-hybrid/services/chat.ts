@@ -52,10 +52,7 @@ export function isMiniMaxThinkingEnabled(thinkingMode?: MiniMaxThinkingMode | "e
  * Per-request timeout for maintenance-tier chat (self-correction, reflection, distill, etc.).
  * Derived from A/B latencies on real Maeve fixtures (2026-06-04): M3+thinking often 40–90s+.
  */
-export function resolveMaintenanceChatTimeoutMs(
-  model: string,
-  thinkingMode?: MiniMaxThinkingMode | "enabled",
-): number {
+export function resolveMaintenanceChatTimeoutMs(model: string, thinkingMode?: MiniMaxThinkingMode | "enabled"): number {
   const overrideRaw = getEnv(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV)?.trim();
   if (overrideRaw) {
     const parsed = Number.parseInt(overrideRaw, 10);
@@ -575,11 +572,7 @@ export async function chatCompleteDetailed(opts: {
     let requestBody: typeof body = body;
     let createOpts: { signal: AbortSignal; headers?: Record<string, string> } = { signal: controller.signal };
     if (isOpenClawGatewayClient(opts.openai)) {
-      const applied = applyOpenClawGatewayModelRequest(
-        body as unknown as Record<string, unknown>,
-        model,
-        createOpts,
-      );
+      const applied = applyOpenClawGatewayModelRequest(body as unknown as Record<string, unknown>, model, createOpts);
       requestBody = applied.body as unknown as typeof body;
       createOpts = applied.opts as unknown as typeof createOpts;
     }
@@ -1017,12 +1010,12 @@ export async function chatCompleteWithRetryDetailed(opts: {
     const currentModel = modelsToTry[i];
     lastAttemptedModel = currentModel;
     const _isFallback = i > 0;
-    const modelCatalogCap = maxTokens != null
-      ? getMaintenanceMaxOutputTokensFromCatalog(currentModel)
-      : getDistillMaxOutputTokensFromCatalog(currentModel);
+    const modelCatalogCap =
+      maxTokens != null
+        ? getMaintenanceMaxOutputTokensFromCatalog(currentModel)
+        : getDistillMaxOutputTokensFromCatalog(currentModel);
     const effectiveMaxTokens = maxTokens != null ? Math.min(maxTokens, modelCatalogCap) : modelCatalogCap;
-    const attemptTimeoutMs =
-      timeoutMsPerModel?.(currentModel) ?? timeoutMs;
+    const attemptTimeoutMs = timeoutMsPerModel?.(currentModel) ?? timeoutMs;
 
     try {
       const detail = await withLLMRetry(

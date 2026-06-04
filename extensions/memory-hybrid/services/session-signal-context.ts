@@ -32,10 +32,7 @@ export function testSignalRegex(regex: RegExp, text: string): boolean {
 /**
  * Parse session JSONL lines into role/text/content messages.
  */
-export function parseSessionMessagesFromLines(
-  lines: string[],
-  subsystem: string,
-): SessionMessage[] {
+export function parseSessionMessagesFromLines(lines: string[], subsystem: string): SessionMessage[] {
   const messages: SessionMessage[] = [];
   for (const line of lines) {
     const trimmed = line.trim();
@@ -44,8 +41,7 @@ export function parseSessionMessagesFromLines(
       const obj = JSON.parse(trimmed) as { type?: string; message?: { role?: string; content?: unknown } };
       if (obj.type !== "message" || !obj.message) continue;
       const msg = obj.message;
-      const role =
-        msg.role === "user" || msg.role === "assistant" || msg.role === "tool" ? msg.role : null;
+      const role = msg.role === "user" || msg.role === "assistant" || msg.role === "tool" ? msg.role : null;
       if (!role) continue;
       messages.push({
         role,

@@ -10,7 +10,12 @@ import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.j
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { escapeRegExp } from "../utils/text.js";
-import { renderActiveTaskMarkdownFile, taskEntityKey, upsertProjectTaskKey, activeTaskRenderGoalsOpts } from "./task-ledger-facts.js";
+import {
+  renderActiveTaskMarkdownFile,
+  taskEntityKey,
+  upsertProjectTaskKey,
+  activeTaskRenderGoalsOpts,
+} from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 

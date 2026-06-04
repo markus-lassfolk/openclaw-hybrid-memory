@@ -6,11 +6,7 @@
 
 import { basename } from "node:path";
 import { timestampFromFilename, truncate } from "../utils/text.js";
-import {
-  buildSignalContext,
-  parseSessionMessagesSync,
-  testSignalRegex,
-} from "./session-signal-context.js";
+import { buildSignalContext, parseSessionMessagesSync, testSignalRegex } from "./session-signal-context.js";
 
 export type CorrectionIncident = {
   userMessage: string;

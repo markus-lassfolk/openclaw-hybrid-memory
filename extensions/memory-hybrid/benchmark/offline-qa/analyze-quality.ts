@@ -133,7 +133,8 @@ function reviewReflection(taskId: string, log: string, kind: "reflect" | "meta" 
   const zeroMetasReason = log.match(/zero_metas_reason=(\w+)/i)?.[1];
   const parsedCandidates = Number.parseInt(log.match(/parsed_candidates=(\d+)/i)?.[1] ?? "0", 10);
 
-  if (disabled && analyzedN === 0) findings.push("Reflection skipped (disabled, unchanged input, or below minObservations)");
+  if (disabled && analyzedN === 0)
+    findings.push("Reflection skipped (disabled, unchanged input, or below minObservations)");
   if (kind === "rules" && zeroRulesReason) findings.push(`zero_rules_reason=${zeroRulesReason}`);
   if (kind === "meta" && zeroMetasReason) findings.push(`zero_metas_reason=${zeroMetasReason}`);
   if (embedFail && storeN === 0 && (metaLines.length > 0 || patternLines.length > 0)) {
@@ -191,7 +192,8 @@ function reviewIdentity(log: string): TaskQualityReview {
   return {
     taskId: "reflect-identity",
     verdict: stored >= 3 ? "good" : stored > 0 ? "acceptable" : "weak",
-    summary: stored > 0 ? `${stored} durable persona insights stored across question keys` : "No identity reflection output",
+    summary:
+      stored > 0 ? `${stored} durable persona insights stored across question keys` : "No identity reflection output",
     findings,
     samples,
   };
@@ -204,8 +206,10 @@ function reviewSkills(workHome: string, log: string): TaskQualityReview {
   const drafted = Number.parseInt(log.match(/drafted=(\d+)/)?.[1] ?? "0", 10);
   const eligible = Number.parseInt(log.match(/eligible=(\d+)/)?.[1] ?? "0", 10);
 
-  if (deferred.length) findings.push(`${deferred.length} procedure(s) deferred (expected for Maeve-local paths): ${deferred.join(", ")}`);
-  if (eligible === 0 && drafted === 0) findings.push("No procedures passed promotion gates — skills correctly withheld");
+  if (deferred.length)
+    findings.push(`${deferred.length} procedure(s) deferred (expected for Maeve-local paths): ${deferred.join(", ")}`);
+  if (eligible === 0 && drafted === 0)
+    findings.push("No procedures passed promotion gates — skills correctly withheld");
 
   const skillsDir = join(workHome, ".openclaw/workspace/skills/auto");
   const validator = new SkillValidator();
@@ -219,7 +223,10 @@ function reviewSkills(workHome: string, log: string): TaskQualityReview {
       const full = validator.validate(content);
       samples.push(`${name}: quick=${quick.valid} full=${full.valid}`);
       if (quick.valid && full.valid) validCount++;
-      else findings.push(`${name}: ${[...quick.violations.map((v) => v.message), ...full.violations].slice(0, 2).join("; ")}`);
+      else
+        findings.push(
+          `${name}: ${[...quick.violations.map((v) => v.message), ...full.violations].slice(0, 2).join("; ")}`,
+        );
     }
   }
 
@@ -242,7 +249,8 @@ function reviewExtractDaily(log: string): TaskQualityReview {
   const findings: string[] = [];
   const extracted = Number.parseInt(log.match(/Extracted (\d+) new facts/i)?.[1] ?? "0", 10);
   const embed401 = /extract-daily vector store failed|401 status code/i.test(log);
-  if (extracted > 0 && embed401) findings.push(`${extracted} facts parsed from daily logs but vector store failed (401)`);
+  if (extracted > 0 && embed401)
+    findings.push(`${extracted} facts parsed from daily logs but vector store failed (401)`);
   if (/Scanning 20\d{2}-\d{2}-\d{2}/.test(log)) findings.push("Daily log files found and scanned");
   else findings.push("No daily log scan lines in output");
 
@@ -274,7 +282,8 @@ function reviewDirectives(workHome: string, log: string): TaskQualityReview {
   const rejected = Number.parseInt(log.match(/Rejected (\d+) non-durable/i)?.[1] ?? "0", 10);
   const breakdown = log.match(/rejection breakdown:\s*([^\n]+)/i)?.[1];
   if (breakdown) findings.push(`Rejection breakdown: ${breakdown}`);
-  if (found > 0 && stored === 0) findings.push(`${found} incidents found but 0 stored — likely dedupe or store failure`);
+  if (found > 0 && stored === 0)
+    findings.push(`${found} incidents found but 0 stored — likely dedupe or store failure`);
   if (found === 0 && rejected > 0) findings.push(`${rejected} regex hits rejected as non-durable/untrusted`);
 
   const db = join(workHome, ".openclaw/memory/facts.db");
@@ -379,18 +388,16 @@ function reviewSelfCorrection(log: string): TaskQualityReview {
   if (incidents > 0 && analysed === 0) findings.push(`${incidents} incidents but zero analysed — parser or gate issue`);
 
   const actionable = analysed > 0 || autoFixed > 0 || proposals.length > 0;
-  const verdict: QualityVerdict =
-    incidents >= 1 && actionable ? "good" : incidents > 0 ? "weak" : "n/a";
+  const verdict: QualityVerdict = incidents >= 1 && actionable ? "good" : incidents > 0 ? "weak" : "n/a";
 
   return {
     taskId: "self-correction-run",
     verdict,
-    summary:
-      actionable
-        ? `${incidents} incident(s); ${analysed} analysed, ${autoFixed} auto-fixed`
-        : incidents > 0
-          ? `${incidents} incident(s) found but no actionable output`
-          : "No correction incidents in window",
+    summary: actionable
+      ? `${incidents} incident(s); ${analysed} analysed, ${autoFixed} auto-fixed`
+      : incidents > 0
+        ? `${incidents} incident(s) found but no actionable output`
+        : "No correction incidents in window",
     findings,
     samples,
   };
@@ -448,7 +455,9 @@ function reviewProposals(workHome: string, log: string): TaskQualityReview {
     if (!(change ?? "").trim()) findings.push(`Empty suggestedChange: ${title}`);
   }
 
-  const goodRows = rows.filter(([, conf, change]) => Number.parseFloat(conf ?? "0") >= 0.7 && (change ?? "").trim().length >= 20);
+  const goodRows = rows.filter(
+    ([, conf, change]) => Number.parseFloat(conf ?? "0") >= 0.7 && (change ?? "").trim().length >= 20,
+  );
   const verdict: QualityVerdict =
     createdThisRun >= 1
       ? "good"
@@ -480,26 +489,28 @@ function reviewProposals(workHome: string, log: string): TaskQualityReview {
 
 function reviewBuildLanguages(log: string): TaskQualityReview {
   const findings: string[] = [];
-  const added = Number.parseInt(log.match(/languagesAdded[=:\s]+(\d+)/i)?.[1] ?? log.match(/added=(\d+)/i)?.[1] ?? "0", 10);
+  const added = Number.parseInt(
+    log.match(/languagesAdded[=:\s]+(\d+)/i)?.[1] ?? log.match(/added=(\d+)/i)?.[1] ?? "0",
+    10,
+  );
   const topLang = log.match(/top languages=\[([^\]]+)\]/i)?.[1];
   if (/skip/i.test(log)) findings.push("Skipped — keywords file recently updated or lang hash unchanged");
   if (topLang) findings.push(`Top languages: ${topLang}`);
 
-  const verdict: QualityVerdict = added >= 1 ? "good" : /skip|added=0|languagesAdded=0/i.test(log) ? "acceptable" : "n/a";
+  const verdict: QualityVerdict =
+    added >= 1 ? "good" : /skip|added=0|languagesAdded=0/i.test(log) ? "acceptable" : "n/a";
 
   return {
     taskId: "build-languages",
     verdict,
-    summary: added >= 1 ? `Added ${added} language keyword group(s)` : "No new language keywords (skip or English-only)",
+    summary:
+      added >= 1 ? `Added ${added} language keyword group(s)` : "No new language keywords (skip or English-only)",
     findings,
     samples: [],
   };
 }
 
-export function buildQualityReport(
-  workHome: string,
-  taskLogs: Record<string, string | undefined>,
-): QualityReport {
+export function buildQualityReport(workHome: string, taskLogs: Record<string, string | undefined>): QualityReport {
   const tasks: TaskQualityReview[] = [
     reviewDistill(workHome, readLog(taskLogs.distill)),
     reviewExtractDaily(readLog(taskLogs["extract-daily"])),
@@ -516,9 +527,7 @@ export function buildQualityReport(
     reviewBuildLanguages(readLog(taskLogs["build-languages"])),
   ];
 
-  const blockers = tasks
-    .filter((t) => t.verdict === "failed")
-    .map((t) => `${t.taskId}: ${t.summary}`);
+  const blockers = tasks.filter((t) => t.verdict === "failed").map((t) => `${t.taskId}: ${t.summary}`);
 
   return {
     generatedAt: new Date().toISOString(),

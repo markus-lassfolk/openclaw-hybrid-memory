@@ -120,9 +120,7 @@ export class WriteAheadLog {
         this.activeIds = new Set(entries.map((e) => e.id));
         this.initLoadFailed = false;
         if (hadCorruption) {
-          pluginLogger.warn(
-            `WAL init: recovered ${entries.length} active ID(s) from lenient read after corruption`,
-          );
+          pluginLogger.warn(`WAL init: recovered ${entries.length} active ID(s) from lenient read after corruption`);
         }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {

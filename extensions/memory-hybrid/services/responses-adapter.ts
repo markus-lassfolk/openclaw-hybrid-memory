@@ -248,7 +248,11 @@ export async function callResponsesApi(
   let requestBody: Record<string, unknown> = body as unknown as Record<string, unknown>;
   let effectiveOpts: { signal?: AbortSignal; headers?: Record<string, string> } = requestOpts ?? {};
   if (isOpenClawGatewayClient(client)) {
-    const applied = applyOpenClawGatewayModelRequest(body as unknown as Record<string, unknown>, params.model, effectiveOpts);
+    const applied = applyOpenClawGatewayModelRequest(
+      body as unknown as Record<string, unknown>,
+      params.model,
+      effectiveOpts,
+    );
     requestBody = applied.body;
     effectiveOpts = applied.opts as typeof effectiveOpts;
   }

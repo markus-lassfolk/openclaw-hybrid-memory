@@ -95,7 +95,11 @@ describe("heartbeat active-task + goal stewardship (facts ledger)", () => {
   it("heartbeat renders facts projection with goals mirror on ACTIVE-TASKS.md", async () => {
     const api = createMockPluginApi();
     const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
-    const apiWithLogger = { ...api, logger, context: { sessionKey: "agent:main:main" } } as unknown as ClawdbotPluginApi;
+    const apiWithLogger = {
+      ...api,
+      logger,
+      context: { sessionKey: "agent:main:main" },
+    } as unknown as ClawdbotPluginApi;
 
     registerGoalStewardshipInjection(apiWithLogger, ctx, goalsDir, activeTaskPath);
 
@@ -132,7 +136,11 @@ describe("heartbeat active-task + goal stewardship (facts ledger)", () => {
   it("active-task injection includes goal-linked tasks on heartbeat", async () => {
     const api = createMockPluginApi();
     const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
-    const apiWithLogger = { ...api, logger, context: { sessionKey: "agent:main:main" } } as unknown as ClawdbotPluginApi;
+    const apiWithLogger = {
+      ...api,
+      logger,
+      context: { sessionKey: "agent:main:main" },
+    } as unknown as ClawdbotPluginApi;
 
     registerActiveTaskInjection(apiWithLogger, ctx, activeTaskPath, workspaceRoot);
 

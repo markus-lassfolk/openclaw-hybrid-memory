@@ -31,7 +31,17 @@ describe("per-task thinking resolvers", () => {
     expect(
       resolveSelfCorrectionThinkingMode({
         ...baseCfg,
-        selfCorrection: { semanticDedup: true, semanticDedupThreshold: 0.9, toolsSection: "x", applyToolsByDefault: true, autoRewriteTools: false, analyzeViaSpawn: false, spawnThreshold: 15, spawnModel: "", thinking: "disabled" },
+        selfCorrection: {
+          semanticDedup: true,
+          semanticDedupThreshold: 0.9,
+          toolsSection: "x",
+          applyToolsByDefault: true,
+          autoRewriteTools: false,
+          analyzeViaSpawn: false,
+          spawnThreshold: 15,
+          spawnModel: "",
+          thinking: "disabled",
+        },
       }),
     ).toBe("disabled");
   });
@@ -40,7 +50,13 @@ describe("per-task thinking resolvers", () => {
     expect(
       resolveReinforcementThinkingMode({
         ...baseCfg,
-        reinforcement: { enabled: true, passiveBoost: 0.1, activeBoost: 0.05, maxConfidence: 1, similarityThreshold: 0.85 },
+        reinforcement: {
+          enabled: true,
+          passiveBoost: 0.1,
+          activeBoost: 0.05,
+          maxConfidence: 1,
+          similarityThreshold: 0.85,
+        },
       }),
     ).toBe("adaptive");
   });

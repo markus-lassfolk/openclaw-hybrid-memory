@@ -29,7 +29,12 @@ import {
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
 import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { buildCredentialPointerText, ensureCredentialVaultPointer, abortCredentialVaultWriteOnPointerDedupe, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
+import {
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  abortCredentialVaultWriteOnPointerDedupe,
+  rollbackVaultCredentialWrite,
+} from "../services/credential-vault-pointer.js";
 import {
   chatCompleteWithRetryDetailed,
   distillBatchTokenLimit,

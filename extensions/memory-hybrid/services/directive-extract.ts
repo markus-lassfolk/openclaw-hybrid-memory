@@ -97,7 +97,6 @@ function shouldSkipUserMessage(text: string): boolean {
   return false;
 }
 
-
 const UNTRUSTED_METADATA_MARKERS = [/conversation info\s*\(untrusted metadata\)/i, /sender\s*\(untrusted metadata\)/i];
 const UNTRUSTED_METADATA_KEYS_RE = /\b(chat_id|message_id|sender_id|inbound_event_kind|conversation_id)\b/i;
 const UNTRUSTED_METADATA_ENVELOPE_BLOCK_RE =
