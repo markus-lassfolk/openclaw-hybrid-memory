@@ -767,6 +767,12 @@ export function isSubagentSession(sessionKey?: string): boolean {
   return sessionKey.includes("subagent:");
 }
 
+/** Signal facts sync to wipe stored handoff JSON (`'handoff' in entry`). */
+export function clearActiveTaskHandoff(entry: ActiveTaskEntry): ActiveTaskEntry {
+  entry.handoff = undefined;
+  return entry;
+}
+
 export function normalizePlaceholderTaskNext(
   next: string | undefined,
   refs: Array<string | undefined> = [],
@@ -1310,6 +1316,7 @@ export async function reconcileActiveTaskInProgressSessions(
       next: `Auto-reconciled: session transcript not found for ${ref} (subagent bookkeeping cleanup).`,
       subagent: "",
     };
+    clearActiveTaskHandoff(completedEntry);
     newCompleted.push(completedEntry);
     reconciledLabels.push(task.label);
     toFlush.push(completedEntry);

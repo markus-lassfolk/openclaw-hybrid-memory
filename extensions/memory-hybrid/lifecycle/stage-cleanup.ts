@@ -12,6 +12,7 @@ import {
   completeTask,
   deleteSignal,
   flushCompletedTaskToMemory,
+  clearActiveTaskHandoff,
   isSubagentSession,
   isTerminalActiveTaskStatus,
   readActiveTaskFile,
@@ -393,10 +394,11 @@ export function registerCleanupHandlers(
           status: "In progress",
           subagent: childOrSession,
           next: reopeningFromTerminal ? "" : existing?.next,
-          ...(reopeningFromTerminal ? { handoff: undefined } : {}),
           started: existing?.started ?? now,
           updated: now,
         };
+        if (reopeningFromTerminal) clearActiveTaskHandoff(entry);
+        else delete entry.handoff;
         await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, entry, api.logger);
         api.logger.info?.(`memory-hybrid: auto-checkpoint — facts ledger task [${label}] for subagent spawn`);
         return;
@@ -420,10 +422,11 @@ export function registerCleanupHandlers(
         status: "In progress",
         subagent: childOrSession,
         next: reopeningFromTerminal ? "" : existing?.next,
-        ...(reopeningFromTerminal ? { handoff: undefined } : {}),
         started: existing?.started ?? now,
         updated: now,
       };
+      if (reopeningFromTerminal) clearActiveTaskHandoff(entry);
+      else delete entry.handoff;
       const updated = upsertTask(existingActive, entry);
       const writeResult = await writeActiveTaskFileGuarded(
         resolvedActiveTaskPath,
@@ -604,6 +607,7 @@ export function registerCleanupHandlers(
           next: errHint ? `Fix: ${String(errHint).slice(0, 100)}` : taskAfterSignals.next,
           subagent: "",
         };
+        clearActiveTaskHandoff(updatedEntry);
         if (ctx.cfg.activeTask.ledger === "facts") {
           await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, updatedEntry, api.logger);
           api.logger.info?.(

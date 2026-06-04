@@ -146,6 +146,60 @@ describe("stage-goal-subagent facts ledger linking", () => {
     expect(task?.subagent).toBeUndefined();
   });
 
+  it("clears stale handoff when dispatch metadata is missing", async () => {
+    const goal = await createGoal(
+      goalsDir,
+      { label: "deploy-metadata", description: "Deploy API", acceptanceCriteria: ["live"] },
+      {
+        maxDispatches: 20,
+        maxAssessments: 50,
+        cooldownMinutes: 10,
+        escalateAfterFailures: 3,
+        priority: "normal",
+      },
+    );
+
+    await api.emitAll("subagent_spawned", {
+      goalId: goal.id,
+      label: "deploy-metadata-task",
+      childSessionKey: "agent:main:subagent:meta-1",
+      task: "First dispatch",
+    });
+
+    const seededAt = new Date().toISOString();
+    const handoff = JSON.stringify({
+      schema: "octave/task-handoff@v1",
+      artifactId: "meta-artifact",
+      signal: "update",
+      agent: "worker",
+      timestamp: seededAt,
+      checksum: "abc123",
+    });
+    factsDb.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "deploy-metadata-task",
+      key: "handoff",
+      value: handoff,
+      text: `Task [deploy-metadata-task] handoff: ${handoff}`,
+    });
+
+    await api.emitAll("subagent_spawned", {
+      goalId: goal.id,
+      label: "deploy-metadata-task",
+      task: "Missing session metadata",
+    });
+
+    const { active } = loadTaskLedgerFromFacts(factsDb);
+    const task = active.find((t) => t.label === "deploy-metadata-task");
+    expect(task?.status).toBe("Failed");
+    expect(task?.next).toContain("missing ACP session metadata");
+    expect(task?.subagent).toBeUndefined();
+    expect(task?.handoff).toBeUndefined();
+  });
+
   it("clears stale subagent when dispatch metadata is missing on retry", async () => {
     const goal = await createGoal(
       goalsDir,

@@ -3,7 +3,7 @@
  */
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
-import { isTerminalActiveTaskStatus, type ActiveTaskEntry } from "../services/active-task.js";
+import { isTerminalActiveTaskStatus, clearActiveTaskHandoff, type ActiveTaskEntry } from "../services/active-task.js";
 import {
   markGoalDispatchFailure,
   type GoalSubagentSpawnEvent,
@@ -30,24 +30,21 @@ async function syncGoalLinkedTaskToFactsLedger(
   const now = new Date().toISOString();
   const reopeningFromTerminal =
     !!childOrSession && !overrides?.status && !!existing && isTerminalActiveTaskStatus(existing.status);
-  await syncActiveTaskEntryToFacts(
-    ctx.factsDb,
-    ctx.vectorDb,
-    ctx.embeddings,
-    {
-      ...(existing ?? {}),
-      label: existing?.label ?? label,
-      description: description ?? existing?.description ?? `Subagent task (session: ${childOrSession ?? "unknown"})`,
-      status: overrides?.status ?? "In progress",
-      subagent: childOrSession === null ? "" : (childOrSession ?? existing?.subagent),
-      relatedGoal: goalId,
-      next: overrides?.next ?? (reopeningFromTerminal ? "" : existing?.next),
-      ...(reopeningFromTerminal ? { handoff: undefined } : {}),
-      started: existing?.started ?? now,
-      updated: now,
-    },
-    logger,
-  );
+  const markingFailed = overrides?.status === "Failed";
+  const entry: ActiveTaskEntry = {
+    ...(existing ?? {}),
+    label: existing?.label ?? label,
+    description: description ?? existing?.description ?? `Subagent task (session: ${childOrSession ?? "unknown"})`,
+    status: overrides?.status ?? "In progress",
+    subagent: childOrSession === null ? "" : (childOrSession ?? existing?.subagent),
+    relatedGoal: goalId,
+    next: overrides?.next ?? (reopeningFromTerminal ? "" : existing?.next),
+    started: existing?.started ?? now,
+    updated: now,
+  };
+  if (reopeningFromTerminal || markingFailed) clearActiveTaskHandoff(entry);
+  else delete entry.handoff;
+  await syncActiveTaskEntryToFacts(ctx.factsDb, ctx.vectorDb, ctx.embeddings, entry, logger);
 }
 
 function getEventStringField(event: unknown, key: string): string | null {

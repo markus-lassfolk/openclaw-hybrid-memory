@@ -15,6 +15,7 @@ import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
   completeTask,
+  clearActiveTaskHandoff,
   flushCompletedTaskToMemory,
   isTerminalActiveTaskStatus,
   readActiveTaskFile,
@@ -305,11 +306,12 @@ export async function runActiveTaskAdd(
       subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
       next: opts.next ?? (reopening ? "" : existing?.next),
       stashCommit: existing?.stashCommit,
-      ...(reopening ? { handoff: undefined } : existing?.handoff ? { handoff: existing.handoff } : {}),
+      ...(existing?.handoff ? { handoff: existing.handoff } : {}),
       relatedGoal: existing?.relatedGoal,
       started: existing?.started ?? now,
       updated: now,
     };
+    if (reopening) clearActiveTaskHandoff(entry);
     await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry);
     if (status === "Done" && ctx.flushOnComplete) {
       try {
@@ -347,10 +349,11 @@ export async function runActiveTaskAdd(
     subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
     next: opts.next ?? (reopening ? "" : existing?.next),
     stashCommit: existing?.stashCommit,
-    ...(reopening ? { handoff: undefined } : existing?.handoff ? { handoff: existing.handoff } : {}),
+    ...(existing?.handoff ? { handoff: existing.handoff } : {}),
     started: existing?.started ?? now,
     updated: now,
   };
+  if (reopening) clearActiveTaskHandoff(entry);
 
   if (status === "Done") {
     const updatedActive = existingActive.filter((t) => t.label !== opts.label);

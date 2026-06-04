@@ -671,6 +671,24 @@ describe("task-ledger-facts", () => {
         value: "agent:main:subagent:dead-1",
         text: "Task [agent:main:subagent:dead-1] related_session: agent:main:subagent:dead-1",
       });
+      const handoff = JSON.stringify({
+        schema: "octave/task-handoff@v1",
+        artifactId: "dead-artifact",
+        signal: "update",
+        agent: "worker",
+        timestamp: staleIso,
+        checksum: "abc123",
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "agent:main:subagent:dead-1",
+        key: "handoff",
+        value: handoff,
+        text: `Task [agent:main:subagent:dead-1] handoff: ${handoff}`,
+      });
 
       const result = await reconcileActiveTaskInProgressSessionsFacts(db, vectorDb, embeddings, 60, {
         openclawHome: dir,
@@ -682,6 +700,7 @@ describe("task-ledger-facts", () => {
       const { active, completed } = loadTaskLedgerFromFacts(db);
       expect(active.some((task) => task.label === "agent:main:subagent:dead-1")).toBe(false);
       expect(completed.some((task) => task.label === "agent:main:subagent:dead-1")).toBe(true);
+      expect(completed.find((task) => task.label === "agent:main:subagent:dead-1")?.handoff).toBeUndefined();
 
       const audits = db
         .listFactsByCategory("episode", 1000)

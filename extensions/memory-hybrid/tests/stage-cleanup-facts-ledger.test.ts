@@ -375,6 +375,26 @@ describe("stage-cleanup facts ledger subagent hooks", () => {
       { sessionKey: "agent:main:subagent:worker-1" },
     );
 
+    const failedAt = new Date().toISOString();
+    const handoff = JSON.stringify({
+      schema: "octave/task-handoff@v1",
+      artifactId: "failed-artifact",
+      signal: "update",
+      agent: "worker",
+      timestamp: failedAt,
+      checksum: "abc123",
+    });
+    factsDb.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "failed-clears-session",
+      key: "handoff",
+      value: handoff,
+      text: `Task [failed-clears-session] handoff: ${handoff}`,
+    });
+
     await api.emitAll(
       "subagent_ended",
       {
@@ -390,6 +410,7 @@ describe("stage-cleanup facts ledger subagent hooks", () => {
     const task = active.find((t) => t.label === "failed-clears-session");
     expect(task?.status).toBe("Failed");
     expect(task?.subagent).toBeUndefined();
+    expect(task?.handoff).toBeUndefined();
   });
 
   it("subagent_ended does not auto-complete when success is ambiguous", async () => {

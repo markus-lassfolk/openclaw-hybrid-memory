@@ -24,6 +24,7 @@ import { execFile } from "../utils/process-runner.js";
 import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
+  clearActiveTaskHandoff,
   completeTask,
   deleteSignal,
   detectStaleTasks,
@@ -205,7 +206,7 @@ export function buildTaskEntriesFromGroupedFacts(byEntity: Map<string, Map<strin
       relatedGoal: f.related_goal?.trim() || f.goal_id?.trim() || undefined,
       started,
       updated,
-      handoff,
+      ...(handoff ? { handoff } : {}),
     };
     if (isTerminalFactStatus(statusRaw) || disp === "Done") {
       completed.push({ ...entry, status: "Done" });
@@ -991,6 +992,28 @@ export function taskEntityKey(entity: string, key: string): string {
   return `${canonicalLabel(entity)}\u0000${key.trim()}`;
 }
 
+/** Retire all active-task facts for entity+key (explicit handoff wipe without empty tombstones). */
+export function retireProjectTaskKeyFacts(factsDb: FactsDB, entity: string, key: string): number {
+  const normalizedEntity = entity.trim().toLowerCase();
+  const canonical = canonicalLabel(normalizedEntity);
+  const facts = factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
+  const nowSec = Math.floor(Date.now() / 1000);
+  let retired = 0;
+  for (const f of facts) {
+    if (
+      f.source !== "active-task" ||
+      canonicalLabel(f.entity ?? "") !== canonical ||
+      (f.key ?? "") !== key ||
+      (typeof f.supersededAt === "number" && Number.isFinite(f.supersededAt)) ||
+      (typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt) && f.expiresAt <= nowSec)
+    ) {
+      continue;
+    }
+    if (factsDb.supersede(f.id, null)) retired += 1;
+  }
+  return retired;
+}
+
 export async function upsertProjectTaskKey(
   factsDb: FactsDB,
   vectorDb: VectorDB,
@@ -1133,16 +1156,20 @@ export async function syncActiveTaskEntryToFacts(
     );
   }
   if ('handoff' in entry) {
-    await upsertProjectTaskKey(
-      factsDb,
-      vectorDb,
-      embeddings,
-      entity,
-      "handoff",
-      entry.handoff ? JSON.stringify(entry.handoff) : "",
-      log,
-      upsertOpts,
-    );
+    if (entry.handoff) {
+      await upsertProjectTaskKey(
+        factsDb,
+        vectorDb,
+        embeddings,
+        entity,
+        "handoff",
+        JSON.stringify(entry.handoff),
+        log,
+        upsertOpts,
+      );
+    } else {
+      retireProjectTaskKeyFacts(factsDb, entity, "handoff");
+    }
   }
   if (entry.relatedGoal !== undefined) {
     await upsertProjectTaskKey(
@@ -1820,6 +1847,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
       next: `Auto-reconciled: session transcript not found for ${ref} (subagent bookkeeping cleanup).`,
       subagent: "",
     };
+    clearActiveTaskHandoff(doneEntry);
     reconciledLabels.push(task.label);
     toFlush.push(doneEntry);
     toAudit.push(task);
