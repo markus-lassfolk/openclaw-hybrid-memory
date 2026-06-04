@@ -582,7 +582,8 @@ export async function runSelfCorrectionRunForCli(
       resumeState &&
       resumeState.incidentsHash === incidentsHash &&
       resumeState.batchSize === SELF_CORRECTION_BATCH_SIZE &&
-      resumeState.totalBatches === batches.length
+      resumeState.totalBatches === batches.length &&
+      resumeState.analysed.length >= resumeState.completedBatchIndexes.length
     ) {
       analysed = [...resumeState.analysed];
       mergeSelfCorrectionDiagnostics(diagnostics, resumeState.diagnostics);
@@ -782,14 +783,14 @@ export async function runSelfCorrectionRunForCli(
             (parseError as any).isParseFailure = true;
             throw parseError;
           }
-          if (batchAnalysed.length === 0 && batch.length > 0) {
+          if (batchAnalysed.length < batch.length * 0.8) {
             diagnostics.parseFailures++;
             const excerpt = sanitizeLlmResponseExcerpt(content);
-            const emptyError = new Error(
-              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} returned zero items for ${batch.length} incident(s). excerpt="${excerpt}"`,
+            const partialError = new Error(
+              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} returned ${batchAnalysed.length} items for ${batch.length} incident(s) (below 80% threshold). excerpt="${excerpt}"`,
             );
-            (emptyError as any).isParseFailure = true;
-            throw emptyError;
+            (partialError as any).isParseFailure = true;
+            throw partialError;
           }
           diagnostics.parsedItems += batchAnalysed.length;
           analysed.push(...batchAnalysed);
@@ -853,14 +854,14 @@ export async function runSelfCorrectionRunForCli(
             (parseError as any).isParseFailure = true;
             throw parseError;
           }
-          if (batchAnalysed.length === 0 && batch.length > 0) {
+          if (batchAnalysed.length < batch.length * 0.8) {
             diagnostics.parseFailures++;
             const excerpt = sanitizeLlmResponseExcerpt(detail.content);
-            const emptyError = new Error(
-              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} returned zero items for ${batch.length} incident(s). excerpt="${excerpt}"`,
+            const partialError = new Error(
+              `Self-correction analysis: batch ${batchIndex + 1}/${batches.length} returned ${batchAnalysed.length} items for ${batch.length} incident(s) (below 80% threshold). excerpt="${excerpt}"`,
             );
-            (emptyError as any).isParseFailure = true;
-            throw emptyError;
+            (partialError as any).isParseFailure = true;
+            throw partialError;
           }
           diagnostics.parsedItems += batchAnalysed.length;
           analysed.push(...batchAnalysed);
