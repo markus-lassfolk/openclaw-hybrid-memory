@@ -10,7 +10,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
-import { detectCredentialPatterns } from "../../services/auto-capture.js";
+import { detectCredentialPatterns, VAULT_POINTER_PREFIX } from "../../services/auto-capture.js";
 import {
   getAutoCaptureExtractionConfidence,
   getAutoCaptureExtractionMethod,
@@ -1075,14 +1075,145 @@ export async function runCapture(
           const creds = extractCredentialsFromToolCalls(argsToScan || args);
           for (const cred of creds) {
             if (ctx.credentialsDb) {
-              const stored = ctx.credentialsDb.storeIfNew({
-                service: cred.service,
-                type: cred.type,
-                value: cred.value,
-                url: cred.url,
-                notes: cred.notes,
+              let storedInVault = false;
+              try {
+                storedInVault = ctx.credentialsDb.storeIfNew({
+                  service: cred.service,
+                  type: cred.type,
+                  value: cred.value,
+                  url: cred.url,
+                  notes: cred.notes,
+                });
+              } catch (err) {
+                if (!suppressCaptureStageError(ctx, api, err)) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "tool-call-credential-vault-store",
+                    subsystem: "credentials",
+                  });
+                  api.logger.warn?.(
+                    `memory-hybrid: tool-call credential vault store failed for ${cred.service}: ${err}`,
+                  );
+                }
+                continue;
+              }
+              const pointerText = `Credential for ${cred.service} (${cred.type}) — stored in secure vault. Use credential_get(service="${cred.service}", type="${cred.type}") to retrieve.`;
+              const pointerValue = `${VAULT_POINTER_PREFIX}${cred.service}:${cred.type}`;
+              const pointerStoreResult = ctx.factsDb.storeWithResult({
+                text: pointerText,
+                category: "technical" as MemoryCategory,
+                importance: 0.9,
+                entity: "Credentials",
+                key: cred.service,
+                value: pointerValue,
+                source: "conversation",
+                decayClass: "permanent",
+                tags: ["auth", ...extractTags(pointerText, "Credentials")],
               });
-              if (stored && logCaptures) {
+              if (pointerStoreResult.skipped) {
+                if (storedInVault) {
+                  try {
+                    ctx.credentialsDb.delete(cred.service, cred.type as any);
+                  } catch (cleanupErr) {
+                    if (!suppressCaptureStageError(ctx, api, cleanupErr)) {
+                      capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+                        operation: "tool-call-credential-compensating-delete-skip",
+                        subsystem: "credentials",
+                      });
+                    }
+                  }
+                }
+                continue;
+              }
+              if (pointerStoreResult.newlyStored === false && !pointerStoreResult.embeddingStale) {
+                if (storedInVault) {
+                  try {
+                    ctx.credentialsDb.delete(cred.service, cred.type as any);
+                  } catch (cleanupErr) {
+                    if (!suppressCaptureStageError(ctx, api, cleanupErr)) {
+                      capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+                        operation: "tool-call-credential-compensating-delete-dedupe",
+                        subsystem: "credentials",
+                      });
+                    }
+                  }
+                }
+                if (logCaptures) {
+                  api.logger.info(
+                    `memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`,
+                  );
+                }
+                continue;
+              }
+              const entry = pointerStoreResult.entry;
+              await cleanupEvictedVector({
+                vectorDb: ctx.vectorDb,
+                evictedFactId: pointerStoreResult.evictedFactId,
+                logger: api.logger,
+                context: "stage-capture-credential-pointer",
+              });
+              if (ctx.cfg.retrieval.strategies.includes("semantic")) {
+                try {
+                  if (pointerStoreResult.embeddingStale) {
+                    const mergedVector = await ctx.embeddings.embed(entry.text);
+                    ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
+                    await ctx.vectorDb.store({
+                      text: entry.text,
+                      vector: mergedVector,
+                      importance: 0.9,
+                      category: "technical",
+                      id: entry.id,
+                    });
+                    persistCanonicalFactEmbedding(
+                      ctx.factsDb,
+                      entry.id,
+                      ctx.embeddings.modelName,
+                      mergedVector,
+                      "auto-capture-credential-pointer-embeddings",
+                      "auto-capture",
+                      api.logger.warn?.bind(api.logger),
+                    );
+                  } else {
+                    const vector = await ctx.embeddings.embed(pointerText);
+                    ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
+                    if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                      await ctx.vectorDb.store({
+                        text: pointerText,
+                        vector,
+                        importance: 0.9,
+                        category: "technical",
+                        id: entry.id,
+                      });
+                      persistCanonicalFactEmbedding(
+                        ctx.factsDb,
+                        entry.id,
+                        ctx.embeddings.modelName,
+                        vector,
+                        "auto-capture-credential-pointer-embeddings",
+                        "auto-capture",
+                        api.logger.warn?.bind(api.logger),
+                      );
+                    }
+                  }
+                } catch (err) {
+                  const asErr = err instanceof Error ? err : new Error(String(err));
+                  if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+                    capturePluginError(asErr, {
+                      operation: pointerStoreResult.embeddingStale
+                        ? "tool-call-credential-pointer-stale-vector-update"
+                        : "tool-call-credential-pointer-vector-store",
+                      subsystem: "credentials",
+                    });
+                  }
+                  if (!suppressCaptureStageError(ctx, api, asErr)) {
+                    api.logger.warn(
+                      pointerStoreResult.embeddingStale
+                        ? `memory-hybrid: stale vector re-embed failed for credential pointer ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
+                        : `memory-hybrid: vector store for credential pointer failed: ${err}`,
+                    );
+                  }
+                }
+              }
+              if (logCaptures) {
                 api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
               }
             } else {

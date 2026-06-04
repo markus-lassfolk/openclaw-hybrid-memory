@@ -287,5 +287,23 @@ describe("procedure-extractor", () => {
       expect(recordProcedureSuccess).toHaveBeenCalledTimes(1);
       expect(upsertProcedure).not.toHaveBeenCalled();
     });
+
+    it("reports readFailures when a session file cannot be read", async () => {
+      const factsDb = {
+        findProcedureByTaskPattern: vi.fn(() => []),
+        upsertProcedure: vi.fn(),
+        recordProcedureSuccess: vi.fn(() => true),
+        recordProcedureFailure: vi.fn(() => true),
+      } as unknown as FactsDB;
+
+      const result = await extractProceduresFromSessions(
+        factsDb,
+        { filePaths: ["/nonexistent/session-missing.jsonl"] },
+        { info: vi.fn(), warn: vi.fn() },
+      );
+
+      expect(result.readFailures).toBe(1);
+      expect(result.proceduresStored).toBe(0);
+    });
   });
 });

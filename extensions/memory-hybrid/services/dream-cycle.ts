@@ -476,6 +476,7 @@ export async function runEpisodicConsolidation(
     // Historical DERIVED_FROM rows are left untouched by this forward migration;
     // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact: MemoryEntry | null = null;
+    let factNewlyStored = false;
     try {
       const storeResult = factsDb.storeWithResult({
         text: mergedText.slice(0, 500),
@@ -498,18 +499,17 @@ export async function runEpisodicConsolidation(
       if (storeResult.skipped) {
         continue;
       }
-      if (storeResult.newlyStored === false) {
-        continue;
-      }
       consolidatedFact = storeResult.entry;
-      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-      if (vectorDb) {
-        await cleanupEvictedVector({
-          vectorDb,
-          evictedFactId: storeResult.evictedFactId,
-          logger,
-          context: "dream-cycle",
-        });
+      factNewlyStored = storeResult.newlyStored === true;
+      if (storeResult.newlyStored || storeResult.embeddingStale) {
+        if (vectorDb) {
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger,
+            context: "dream-cycle",
+          });
+        }
       }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
@@ -526,7 +526,9 @@ export async function runEpisodicConsolidation(
         cappedGroupEvents.map((e) => e.id),
         consolidatedFact.id,
       );
-      factsCreated++;
+      if (factNewlyStored) {
+        factsCreated++;
+      }
 
       if (excessEvents.length > 0) {
         try {
@@ -552,7 +554,7 @@ export async function runEpisodicConsolidation(
         subsystem: "event-log",
       });
       try {
-        if (consolidatedFact) factsDb.delete(consolidatedFact.id);
+        if (consolidatedFact && factNewlyStored) factsDb.delete(consolidatedFact.id);
       } catch (cleanupErr) {
         logger.warn(
           `memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`,

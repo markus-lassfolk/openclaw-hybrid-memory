@@ -10,18 +10,22 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
 import type { CredentialsDB } from "../backends/credentials-db.js";
-import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "../config.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig, type MemoryCategory } from "../config.js";
+import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { CREDENTIAL_NOTES_MAX_CHARS, CREDENTIAL_URL_MAX_CHARS, SECONDS_PER_DAY } from "../utils/constants.js";
+import { extractTags } from "../utils/tags.js";
 
 export interface PluginContext {
   credentialsDb: CredentialsDB | null;
+  factsDb: FactsDB | null;
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;
 }
 
 export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, cfg } = ctx;
+  const { credentialsDb, factsDb, cfg } = ctx;
 
   if (cfg.credentials.enabled && credentialsDb) {
     api.registerTool(
@@ -66,6 +70,35 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               backend: "sqlite",
             });
             throw err;
+          }
+          if (factsDb) {
+            const pointerText = `Credential for ${service} (${type}) — stored in secure vault. Use credential_get(service="${service}", type="${type}") to retrieve.`;
+            const pointerValue = `${VAULT_POINTER_PREFIX}${service}:${type}`;
+            const pointerResult = factsDb.storeWithResult({
+              text: pointerText,
+              category: "technical" as MemoryCategory,
+              importance: 0.9,
+              entity: "Credentials",
+              key: service,
+              value: pointerValue,
+              source: "credential-tool",
+              decayClass: "permanent",
+              tags: ["auth", ...extractTags(pointerText, "Credentials")],
+            });
+            if (pointerResult.skipped) {
+              try {
+                credentialsDb.delete(service, type);
+              } catch (cleanupErr) {
+                capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+                  subsystem: "credentials",
+                  operation: "credential-store-compensating-delete-skip",
+                });
+              }
+              throw new Error("Credential pointer rejected by pre-store guard");
+            }
+            if (pointerResult.newlyStored === false && !pointerResult.embeddingStale) {
+              // Pointer already exists — vault write succeeded; no further action needed.
+            }
           }
           return {
             content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],

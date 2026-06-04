@@ -139,6 +139,8 @@ export type ExtractProceduresResult = {
   negativeCount: number;
   dryRun: boolean;
   skipped?: boolean;
+  /** Session files that could not be read; cursor must not advance while > 0. */
+  readFailures?: number;
 };
 
 export type GenerateAutoSkillsResult = {

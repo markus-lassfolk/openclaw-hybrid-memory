@@ -1134,7 +1134,13 @@ export async function runSelfCorrectionRunForCli(
     const diagnosticsIndicateFailure =
       diagnostics.parseFailures > 0 || diagnostics.unparseableFailures > 0 || diagnostics.truncations > 0;
 
-    if (!opts.dryRun && !opts.incidents && !opts.extractPath && !diagnosticsIndicateFailure) {
+    if (
+      !opts.dryRun &&
+      !opts.incidents &&
+      !opts.extractPath &&
+      !diagnosticsIndicateFailure &&
+      completedBatchIndexes.size === batches.length
+    ) {
       const sessionPaths = [...new Set(incidents.map((i) => i.sessionFile).filter(Boolean))];
       const lastSessionTs =
         sessionPaths.length > 0 ? (getMaxMtime(sessionPaths) ?? Date.now()) : Date.now();

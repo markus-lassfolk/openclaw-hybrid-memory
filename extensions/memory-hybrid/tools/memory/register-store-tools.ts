@@ -18,7 +18,12 @@ import {
   getMemoryCategories,
   isCompactVerbosity,
 } from "../../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault } from "../../services/auto-capture.js";
+import {
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  rollbackVaultCredentialWrite,
+} from "../../services/credential-vault-pointer.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
@@ -404,7 +409,35 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     details: { action: "credential_rejected_artifact" },
                   };
                 }
-                if (!pointerStoreResult.skipped && pointerStoreResult.newlyStored === false && !pointerStoreResult.embeddingStale) {
+                if (pointerStoreResult.skipped) {
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (cleanupErr) {
+                    api.logger.warn?.(
+                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
+                    );
+                    capturePluginError(cleanupErr as Error, {
+                      subsystem: "memory-tools",
+                      operation: "memory-store:credential-compensating-delete-skip",
+                    });
+                  }
+                  return {
+                    content: [{ type: "text", text: "Credential-like content rejected by pre-store guard." }],
+                    details: { action: "credential_rejected_artifact" },
+                  };
+                }
+                if (pointerStoreResult.newlyStored === false && !pointerStoreResult.embeddingStale) {
+                  try {
+                    credentialsDb.delete(parsed.service, parsed.type as any);
+                  } catch (cleanupErr) {
+                    api.logger.warn?.(
+                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
+                    );
+                    capturePluginError(cleanupErr as Error, {
+                      subsystem: "memory-tools",
+                      operation: "memory-store:credential-compensating-delete-dedupe",
+                    });
+                  }
                   return {
                     content: [
                       {

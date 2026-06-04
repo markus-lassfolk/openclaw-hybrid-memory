@@ -73,7 +73,7 @@ export async function runExtractProceduresForCli(
         warn: (s) => logger.warn?.(s) ?? console.warn(s),
       },
     );
-    if (!opts.dryRun) {
+    if (!opts.dryRun && (result.readFailures ?? 0) === 0) {
       let lastSessionTs: number | undefined;
       if (filePaths) {
         lastSessionTs = getMaxMtime(filePaths);
@@ -82,6 +82,10 @@ export async function runExtractProceduresForCli(
         lastSessionTs = getMaxMtime(allFiles);
       }
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
+    } else if ((result.readFailures ?? 0) > 0) {
+      logger.warn?.(
+        `memory-hybrid: ${SCAN_TYPE} — ${result.readFailures} session read failure(s); scan cursor not advanced`,
+      );
     }
     return result;
   } catch (err) {

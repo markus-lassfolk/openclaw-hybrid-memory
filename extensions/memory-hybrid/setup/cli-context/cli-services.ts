@@ -16,6 +16,7 @@ import { runBuildLanguageKeywords } from "../../services/language-keywords-build
 import { mergeResults } from "../../services/merge-results.js";
 import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
 import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
+import { runIdentityReflection } from "../../services/identity-reflection.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
 import { parseSourceDate } from "../../utils/dates.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -62,6 +63,12 @@ interface CliContextServices {
     model: string;
     verbose?: boolean;
   }) => Promise<{ metaExtracted: number; metaStored: number; diagnostics?: import("../../services/reflection.js").ReflectionMetaDiagnostics }>;
+  runReflectIdentity: (opts: {
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+    window?: number;
+  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -304,6 +311,28 @@ export function buildCliContextServices(
         },
         logSink,
         provenanceService,
+      );
+    },
+    runReflectIdentity: async (opts) => {
+      if (!ctx.identityReflectionStore) {
+        return { insightsExtracted: 0, insightsStored: 0, questionsAsked: 0 };
+      }
+      const requestedModel = opts.model ?? cfg.identityReflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
+      const effectiveModel = requestedModel ?? defaultModel;
+      return runIdentityReflection(
+        factsDb,
+        ctx.identityReflectionStore,
+        openai,
+        cfg.identityReflection,
+        {
+          dryRun: opts.dryRun,
+          model: effectiveModel,
+          fallbackModels,
+          verbose: opts.verbose,
+          window: opts.window,
+        },
+        logSink,
       );
     },
     runClassify: async (opts) => {

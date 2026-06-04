@@ -254,6 +254,22 @@ export async function runExtractDailyForCli(
                   }
                   continue;
                 }
+                if (pointerStoreResult.newlyStored === false && !pointerStoreResult.embeddingStale) {
+                  if (storedInVault) {
+                    try {
+                      credentialsDb.delete(parsed.service, parsed.type as any);
+                    } catch (cleanupErr) {
+                      sink.warn(
+                        `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
+                      );
+                      capturePluginError(cleanupErr as Error, {
+                        subsystem: "cli",
+                        operation: "runExtractDailyForCli:credential-compensating-delete-dedupe",
+                      });
+                    }
+                  }
+                  continue;
+                }
                 const pointerEntry = pointerStoreResult.entry;
                 await cleanupEvictedVector({
                   vectorDb,

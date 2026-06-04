@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { CredentialsConfig, HybridMemoryConfig } from "../config/types/index.js";
 import type { PluginContext } from "../tools/credential-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
@@ -61,8 +62,8 @@ function makeMinimalCfg(overrides: Partial<CredentialsConfig> = {}): HybridMemor
   return { credentials } as HybridMemoryConfig;
 }
 
-function makeCtx(db: CredentialsDB, cfg: HybridMemoryConfig, api: MockApi): PluginContext {
-  return { credentialsDb: db, cfg, api: api as unknown as PluginContext["api"] };
+function makeCtx(db: CredentialsDB, cfg: HybridMemoryConfig, api: MockApi, factsDb: FactsDB | null = null): PluginContext {
+  return { credentialsDb: db, factsDb, cfg, api: api as unknown as PluginContext["api"] };
 }
 
 let tmpDir: string;
@@ -171,5 +172,70 @@ describe("credential_get — revealInContent opt-in path", () => {
 
     const text = result.content[0]?.text ?? "";
     expect(text.toLowerCase()).toContain("production");
+  });
+});
+
+describe("credential_store — vault pointer fact", () => {
+  it("writes a vault pointer to factsDb after storing in vault", async () => {
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const storeWithResult = vi.fn().mockReturnValue({
+      skipped: false,
+      newlyStored: true,
+      embeddingStale: false,
+      evictedFactId: null,
+      entry: { id: "pointer-1", text: "pointer", category: "technical" },
+    });
+    const factsDb = { storeWithResult } as unknown as FactsDB;
+
+    registerCredentialTools(makeCtx(db, cfg, api, factsDb), api as unknown as PluginContext["api"]);
+
+    const tool = api.getTool("credential_store");
+    if (!tool) throw new Error("credential_store tool was not registered");
+
+    await tool.execute("call-store", {
+      service: "openai",
+      type: "api_key",
+      value: "sk-new-secret-value-12345678",
+    });
+
+    expect(storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: "Credentials",
+        key: "openai",
+        value: expect.stringMatching(/^vault:openai:api_key/),
+      }),
+    );
+  });
+
+  it("rolls back vault when pointer store is skipped", async () => {
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const deleteSpy = vi.spyOn(db, "delete");
+    const factsDb = {
+      storeWithResult: vi.fn().mockReturnValue({
+        skipped: true,
+        newlyStored: false,
+        embeddingStale: false,
+        evictedFactId: null,
+        entry: { id: "", text: "" },
+      }),
+    } as unknown as FactsDB;
+
+    registerCredentialTools(makeCtx(db, cfg, api, factsDb), api as unknown as PluginContext["api"]);
+
+    const tool = api.getTool("credential_store");
+    if (!tool) throw new Error("credential_store tool was not registered");
+
+    await expect(
+      tool.execute("call-store-fail", {
+        service: "anthropic",
+        type: "api_key",
+        value: "sk-rollback-test-value-123456",
+      }),
+    ).rejects.toThrow(/pre-store guard/);
+
+    expect(deleteSpy).toHaveBeenCalledWith("anthropic", "api_key");
+    deleteSpy.mockRestore();
   });
 });

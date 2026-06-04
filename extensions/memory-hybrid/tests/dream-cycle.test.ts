@@ -339,6 +339,35 @@ describe("runEpisodicConsolidation", () => {
     expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle").length).toBe(dreamFactsBefore);
   });
 
+  it("marks events consolidated when store dedupes to an existing fact", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    const eventText = "Dedupe marker event for dream-cycle";
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: eventText },
+    });
+
+    factsDb.store({
+      text: eventText,
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: "consolidated",
+      value: null,
+      source: "dream-cycle",
+      decayClass: "durable",
+      tags: ["dream-cycle", "consolidated"],
+    });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(result.eventsConsolidated).toBe(1);
+    expect(result.factsCreated).toBe(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(1);
+  });
+
   it("stores JSON provenance instead of DERIVED_FROM links for consolidated events", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     eventLog.append({

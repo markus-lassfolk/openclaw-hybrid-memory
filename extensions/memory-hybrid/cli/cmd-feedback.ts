@@ -1406,14 +1406,21 @@ export async function runExtractImplicitFeedbackForCli(
     }
   }
 
-  // Update scan cursor with the last processed session
-  if (!opts.dryRun && lastProcessedFilePath) {
-    const stat = statSync(lastProcessedFilePath);
-    const lastSessionTs = stat.mtimeMs;
-    const lastSessionFile = basename(lastProcessedFilePath);
-    // BUG FIX: Use sessionsVisited instead of sessionsProcessed for cursor advancement
-    // so that skipped sessions (read errors, too short) also advance the watermark
-    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
+  // Update scan cursor with the last fully processed session
+  if (!opts.dryRun && lastProcessedFilePath && progress.sessionsProcessed > 0) {
+    const shouldAdvanceCursor =
+      !partial ||
+      partialReason === "maxSessions" ||
+      partialReason === "maxSignals" ||
+      partialReason === "maxTrajectories" ||
+      partialReason === "maxWallClock" ||
+      (partialReason === "reinforcementError" && progress.sessionsProcessed > 0);
+    if (shouldAdvanceCursor) {
+      const stat = statSync(lastProcessedFilePath);
+      const lastSessionTs = stat.mtimeMs;
+      const lastSessionFile = basename(lastProcessedFilePath);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
+    }
   }
 
   // Calculate backlog estimates

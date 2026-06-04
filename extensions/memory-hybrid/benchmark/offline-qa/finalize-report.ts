@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyzeTaskResult, renderTaskAnalysisMarkdown } from "./analyze.js";
+import { buildQualityReport, renderQualityMarkdown } from "./analyze-quality.js";
 import { QA_TASK_PLAN } from "./qa-tasks.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -111,12 +112,15 @@ lines.push(
 );
 if (dataGaps.length) lines.push(`Data gaps (expected): ${dataGaps.map((t) => t.id).join(", ")}`, "");
 if (skipped.length) lines.push(`Skipped (by design): ${skipped.map((t) => t.id).join(", ")}`, "");
+
+const taskLogs = Object.fromEntries(state.tasks.map((t) => [t.id, t.logPath]));
+lines.push(renderQualityMarkdown(buildQualityReport(state.workHome, taskLogs)));
+
 lines.push(
   "## Remaining before live Maeve deploy",
   "",
-  "- [ ] Set `AZURE_OPENAI_API_KEY` for embeddings via Azure Foundry (Maeve APIM gateway; optional `AZURE_FOUNDRY_BASE_URL` override)",
+  "- [ ] Ensure `.offline-qa/secrets.env` is fresh (`npm run offline-qa:fetch-secrets`) — embeddings use Maeve APIM key",
   "- [ ] Apply `maeve-tier-snippet.json` to live config after approval (MiniMax-only + explicit-only fallback)",
-  "- [ ] `reflect-identity` CLI subcommand not registered — skip or wire if needed on live",
   "",
 );
 

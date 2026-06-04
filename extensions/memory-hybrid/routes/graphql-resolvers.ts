@@ -408,7 +408,7 @@ export const resolvers: GraphQLResolvers = {
       const stored: MemoryEntry[] = [];
       for (const input of inputs) {
         const result = context.factsDb.storeWithResult(input);
-        if (result.entry.id !== "") {
+        if (result.entry.id !== "" && result.newlyStored) {
           stored.push(result.entry);
         }
         await cleanupGraphqlEviction(context, result.evictedFactId);

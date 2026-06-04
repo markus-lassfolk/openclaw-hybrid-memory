@@ -502,14 +502,31 @@ export async function runDistillForCli(
       }
 
       logger.info?.(`memory-hybrid: distill batch ${batchNum} starting with model ${model} (source=${modelSource})`);
+      let callModel = model;
+      let callFallbacks = compatibleFallbacks;
+      const primaryInputLimit = distillBatchTokenLimit(model);
+      if (inputTokens > primaryInputLimit) {
+        if (callFallbacks.length === 0) {
+          sink.warn(
+            `memory-hybrid: distill batch ${batchNum} input (~${inputTokens} tokens) exceeds primary limit (${primaryInputLimit}) with no compatible fallbacks`,
+          );
+          batchFailures++;
+          break;
+        }
+        callModel = callFallbacks[0];
+        callFallbacks = callFallbacks.slice(1);
+        logger.warn?.(
+          `memory-hybrid: distill batch ${batchNum} primary ${model} cannot fit ~${inputTokens} tokens (limit ${primaryInputLimit}); using ${callModel} first`,
+        );
+      }
       try {
         const detail = await chatCompleteWithRetryDetailed({
-          model,
+          model: callModel,
           content: userContent,
           temperature: 0.2,
           maxTokens: limits.maxOutputTokens,
           openai,
-          fallbackModels: compatibleFallbacks,
+          fallbackModels: callFallbacks,
           label: `memory-hybrid: distill batch ${batchNum}`,
           feature: CostFeature.distillCli,
           thinkingMode: resolveDistillThinkingMode(cfg),

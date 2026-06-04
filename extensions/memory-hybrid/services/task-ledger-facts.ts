@@ -1335,7 +1335,7 @@ export async function applyActiveTaskHygieneFacts(
     actions: plan.actions,
     appliedCount,
   };
-  const auditFact = factsDb.store({
+  const auditFactResult = factsDb.storeWithResult({
     text: `Active-task hygiene audit ${runAt}: ${plan.actions.length} action(s), ${plan.duplicates.length} duplicate group(s), ${appliedCount} applied.`,
     category: "episode",
     importance: CLI_STORE_IMPORTANCE,
@@ -1345,8 +1345,20 @@ export async function applyActiveTaskHygieneFacts(
     key: "report",
     value: JSON.stringify(audit),
   });
+  if (auditFactResult.evictedFactId) {
+    await cleanupEvictedVector({
+      vectorDb,
+      evictedFactId: auditFactResult.evictedFactId,
+      logger: opts.log,
+      context: "active-task-hygiene-audit",
+    });
+  }
+  const auditFactId =
+    !auditFactResult.skipped && auditFactResult.newlyStored !== false
+      ? auditFactResult.entry.id
+      : undefined;
 
-  return { appliedCount, auditFactId: auditFact.id, prBlockerTasks };
+  return { appliedCount, auditFactId, prBlockerTasks };
 }
 
 export async function renderActiveTaskMarkdownFile(

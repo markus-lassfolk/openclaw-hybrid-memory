@@ -589,6 +589,9 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
         if (storeResult.skipped) {
           continue;
         }
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+          continue;
+        }
         entry = storeResult.entry;
         await cleanupEvictedVector({
           vectorDb,

@@ -50,6 +50,11 @@ const ERROR_PATTERNS = [
   /ECONNREFUSED/i,
 ];
 
+function parseEmbedFailureCount(log: string): number {
+  const m = log.match(/(\d+) embed failure\(s\)/i);
+  return m ? Number.parseInt(m[1], 10) : 0;
+}
+
 export function parseCountsFromLog(log: string): ParsedCounts {
   const counts: ParsedCounts = {};
   const patterns: Array<[keyof ParsedCounts, RegExp]> = [
@@ -71,6 +76,7 @@ export function parseCountsFromLog(log: string): ParsedCounts {
     ["languagesAdded", /languagesAdded[=:\s]+(\d+)/i],
     ["languagesAdded", /(\d+)\s+languages?\s+added/i],
     ["signalsExtracted", /signalsExtracted[=:\s]+(\d+)/i],
+    ["factsAnalyzed", /analyzed (\d+) facts/i],
     ["factsAnalyzed", /factsAnalyzed[=:\s]+(\d+)/i],
   ];
   for (const [key, re] of patterns) {
@@ -144,8 +150,9 @@ export function analyzeTaskResult(
   }
 
   let classification: QaTaskClassification = "ok";
-  const embeddingDegraded = /401 Access denied/i.test(log) && /embedding|distill store failed/i.test(log);
+  const embeddingDegraded = /401 Access denied|401 status code|distill store failed|embed failure/i.test(log);
   const distillLlmOk = /(\d+) extracted from (\d+) sessions/i.test(log);
+  const distillExtracted = Number.parseInt(log.match(/(\d+) extracted from (\d+) sessions/i)?.[1] ?? "0", 10);
 
   if (/unknown command|not a command|Cannot find/i.test(log) && task.skipIfCommandMissing) {
     classification = "skipped";
@@ -153,29 +160,46 @@ export function analyzeTaskResult(
     notes.push("CLI subcommand not registered — expected skip");
   } else if (exitCode !== 0 || errors.length > 0) {
     if (task.id === "distill" && embeddingDegraded && distillLlmOk) {
-      classification = /timeout after/i.test(log) ? "needs-fix" : "data-gap";
-      if (classification === "data-gap") {
+      classification = /timeout after/i.test(log) ? "needs-fix" : "needs-fix";
+      if (classification === "needs-fix") {
         errors.length = 0;
-        notes.push("LLM distill succeeded; sqlite store blocked by embedding 401 — set AZURE_OPENAI_API_KEY (+ AZURE_FOUNDRY_BASE_URL if needed) for vector QA");
+        errors.push("Distill LLM succeeded but embedding store failed — check AZURE_OPENAI_API_KEY / secrets.env");
       }
     } else {
       classification = "needs-fix";
     }
+  } else if (task.id === "distill" && embeddingDegraded && distillExtracted > 0 && (counts.stored ?? 0) === 0) {
+    classification = "needs-fix";
+    errors.push("Distill extracted facts but stored 0 — embedding auth or store path failure");
   } else if (task.id === "distill" && embeddingDegraded && distillLlmOk && (counts.stored ?? 0) === 0) {
-    classification = "data-gap";
-    notes.push("LLM distill succeeded; sqlite store blocked by embedding 401 — set AZURE_OPENAI_API_KEY (+ AZURE_FOUNDRY_BASE_URL if needed) for vector QA");
+    classification = "needs-fix";
+    errors.push("Distill LLM succeeded; sqlite store blocked by embedding failure");
+  } else if (task.id === "extract-daily" && /401|vector store failed/i.test(log) && (counts.factsExtracted ?? 0) > 0) {
+    classification = "needs-fix";
+    errors.push("Daily facts extracted but vector store failed");
+  } else if (task.id === "reflect-meta" && parseEmbedFailureCount(log) > 0 && (counts.stored ?? 0) === 0) {
+    classification = "needs-fix";
+    errors.push("Meta-patterns parsed but embedding failures prevented storage");
+  } else if (task.id === "reflect" && (counts.stored ?? 0) > 0) {
+    classification = "ok";
+    notes.push(`Stored ${counts.stored} reflection patterns`);
   } else if (task.id === "distill" && (counts.sessionsScanned ?? 0) === 0 && !/\d+ extracted from \d+ sessions/i.test(log)) {
     classification = "test-bug";
     errors.push("Distill scanned 0 sessions — sandbox HOME or session paths wrong");
-  } else if (task.id === "extract-daily" && !/20\d{2}-\d{2}-\d{2}\.md/.test(log) && (counts.stored ?? 0) === 0) {
+  } else if (task.id === "extract-daily" && !/20\d{2}-\d{2}-\d{2}\.md/.test(log) && (counts.stored ?? 0) === 0 && (counts.factsExtracted ?? 0) === 0) {
     classification = "data-gap";
     notes.push("No daily log activity — check memory/YYYY-MM-DD.md copies");
   } else if (task.id === "extract-reinforcement" && (counts.stored ?? 0) === 0 && (counts.sessionsScanned ?? 0) === 0) {
     classification = "data-gap";
     notes.push("RE=0 in corpus — known Maeve data gap");
-  } else if (task.id === "reflect" && (counts.factsAnalyzed ?? 0) === 0) {
-    classification = "data-gap";
-    notes.push("0 facts in reflection window — check fact timestamps vs window");
+  } else if (task.id === "reflect" && (counts.factsAnalyzed ?? 0) === 0 && (counts.stored ?? 0) === 0) {
+    if (/analyzed 0 facts, extracted 0/i.test(log) && !/facts in window/i.test(log)) {
+      classification = "needs-fix";
+      errors.push("Reflection disabled or misconfigured — sandbox should use mode=enhanced with reflection.enabled");
+    } else {
+      classification = "data-gap";
+      notes.push("0 facts in reflection window — check fact timestamps vs window");
+    }
   } else if (
     task.id === "generate-proposals" &&
     (/semantic_empty|parse_success=false created=0/i.test(log) || (counts.created ?? 0) === 0)
@@ -187,6 +211,8 @@ export function analyzeTaskResult(
     if ((counts.rulesStored ?? counts.metaStored ?? counts.stored ?? 0) === 0) {
       classification = exitCode === 0 ? "by-design-zero" : "needs-fix";
       notes.push(task.runAllGate ?? "Pattern gate may block output");
+    } else {
+      classification = "ok";
     }
   } else if (task.id === "build-languages" && /skip/i.test(log)) {
     classification = "by-design-zero";

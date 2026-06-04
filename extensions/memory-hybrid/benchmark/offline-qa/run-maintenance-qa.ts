@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "../../utils/process-runner.js";
 import { analyzeTaskResult, renderTaskAnalysisMarkdown, type TaskAnalysis } from "./analyze.js";
+import { buildQualityReport, renderQualityMarkdown } from "./analyze-quality.js";
 import { loadOfflineQaSecrets } from "./load-secrets.js";
 import { QA_PHASE_TIMEOUT_MS, QA_TASK_PLAN, type QaPhase, type QaTaskClassification } from "./qa-tasks.js";
 
@@ -163,12 +164,19 @@ function writeReport(state: QaState): void {
   if (skipped.length) {
     lines.push(`Skipped (by design): ${skipped.map((t) => t.id).join(", ")}`, "");
   }
+
+  const taskLogs = Object.fromEntries(state.tasks.map((t) => [t.id, t.logPath]));
+  const quality = buildQualityReport(state.workHome, taskLogs);
+  lines.push(renderQualityMarkdown(quality));
+  if (quality.blockers.length) {
+    lines.push("Quality review flagged storage failures — fix embeddings before trusting memory output.", "");
+  }
+
   lines.push(
     "## Remaining before live Maeve deploy",
     "",
-    "- [ ] Set `AZURE_OPENAI_API_KEY` for embeddings via Azure Foundry (Maeve APIM gateway; optional `AZURE_FOUNDRY_BASE_URL` override)",
+    "- [ ] Ensure `.offline-qa/secrets.env` is fresh (`npm run offline-qa:fetch-secrets`) — embeddings use Maeve APIM key",
     "- [ ] Apply `maeve-tier-snippet.json` to live config after approval (MiniMax-only + explicit-only fallback)",
-    "- [ ] `reflect-identity` CLI subcommand not registered — skip or wire if needed on live",
     "",
   );
 
@@ -267,6 +275,16 @@ async function main(): Promise<void> {
     { env: taskEnv(workHome, timeoutMs), encoding: "utf-8", cwd: PLUGIN_ROOT, maxBuffer: 5 * 1024 * 1024 },
   );
   writeFileSync(join(outTasksDir, "00-preflight-config.txt"), preflight.stdout + preflight.stderr);
+  const embedPreflight = spawnSync(
+    "node",
+    [NODE_WRAPPER, "openclaw", "hybrid-mem", "verify"],
+    { env: taskEnv(workHome, timeoutMs), encoding: "utf-8", cwd: PLUGIN_ROOT, maxBuffer: 8 * 1024 * 1024 },
+  );
+  writeFileSync(join(outTasksDir, "00-preflight-verify.txt"), embedPreflight.stdout + embedPreflight.stderr);
+  if (/401 status code|EMBEDDING CHECK FAILED/i.test(embedPreflight.stdout + embedPreflight.stderr)) {
+    state.todos.push("Preflight: embedding auth failed — run npm run offline-qa:fetch-secrets and rebuild sandbox");
+    saveState(state);
+  }
   if (/azure-foundry|openai\/gpt/i.test(preflight.stdout + preflight.stderr) && /maintenance.*minimax/i.test(preflight.stdout + preflight.stderr)) {
     // Help text mentions azure examples; resolved chains show minimax — ok
   } else if (/azure-foundry\/|openai\/gpt-[45]/i.test(preflight.stdout + preflight.stderr)) {

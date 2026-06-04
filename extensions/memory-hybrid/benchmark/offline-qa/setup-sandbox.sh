@@ -123,11 +123,30 @@ agent_defaults["defaults"]["models"].setdefault("minimax/MiniMax-M2.7-highspeed"
 
 mem = {k: v for k, v in snippet.items() if k not in ("llm", "agents")}
 # Omit sqlitePath/lanceDbPath — defaults use homedir()/.openclaw/memory/* (correct when HOME=sandbox-work)
+# Use enhanced mode so reflection/procedures/self-correction are enabled (local preset disables them).
+mem["mode"] = "enhanced"
 mem["credentials"] = {"enabled": False}
 mem["personaProposals"] = {"enabled": True}
 mem["wal"] = {"enabled": False}
 mem["verification"] = {"enabled": False}
 mem["nightlyCycle"] = {"enabled": False}
+mem["reflection"] = {
+    **(mem.get("reflection") or {}),
+    "enabled": True,
+    "defaultWindow": 14,
+    "minObservations": 5,
+}
+mem["procedures"] = {"enabled": True, "requireApprovalForPromote": False}
+mem["identityReflection"] = {"enabled": True}
+mem["selfCorrection"] = {
+    **(mem.get("selfCorrection") or {}),
+    "enabled": True,
+}
+mem["distill"] = {
+    **(mem.get("distill") or {}),
+    "extractReinforcement": True,
+    "extractDirectives": True,
+}
 
 minimax_key = os.environ.get("MINIMAX_API_KEY", "").strip()
 maeve_embed, maeve_af_base = read_maeve_embedding()
