@@ -26,6 +26,7 @@ import {
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { redactMaintenancePrivateText } from "../../../utils/maintenance-privacy.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -63,7 +64,7 @@ function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
 }
 
 function backfillWorkflowTracesFromFile(
-  factsDb: FactsDB,
+  _factsDb: FactsDB,
   workflowStore: WorkflowStore,
   filePath: string,
 ): { traces: number; proceduresUpdated: number } {
@@ -77,29 +78,24 @@ function backfillWorkflowTracesFromFile(
   const goal =
     messages.find((m) => m.role === "user" && m.text.trim())?.text.trim().slice(0, 200) ?? "session workflow";
   const outcome = inferSessionOutcome(messages);
-  workflowStore.record({
-    goal: redactMaintenancePrivateText(goal),
-    toolSequence: tools,
-    outcome,
-    sessionId,
-  });
-
-  let proceduresUpdated = 0;
-  const taskPattern = tools.join(" -> ");
-  if (taskPattern.length <= 4000) {
-    const normalizedPattern = redactMaintenancePrivateText(taskPattern);
-    const matches = factsDb.searchProcedures(normalizedPattern, 3);
-    for (const proc of matches) {
-      const updated = factsDb.procedureFeedback({
-        procedureId: proc.id,
-        success: outcome === "success",
-        sessionId,
-        context: `backfill-workflow-traces:${sessionId}`,
-      });
-      if (updated) proceduresUpdated++;
-    }
+  try {
+    workflowStore.record({
+      goal: redactMaintenancePrivateText(goal),
+      toolSequence: tools,
+      outcome,
+      sessionId,
+    });
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "backfill-workflow-traces:record",
+      severity: "warn",
+      subsystem: "maintenance",
+      context: sessionId,
+    });
+    return { traces: 0, proceduresUpdated: 0 };
   }
-  return { traces: 1, proceduresUpdated };
+
+  return { traces: 1, proceduresUpdated: 0 };
 }
 
 export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBindings): void {
