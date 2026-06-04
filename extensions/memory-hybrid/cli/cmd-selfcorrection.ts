@@ -38,7 +38,6 @@ import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { SelfCorrectionExtractResult, SelfCorrectionRunResult } from "./types.js";
 
-
 type SelfCorrectionRemediation = {
   category: string;
   severity: string;
@@ -1112,6 +1111,14 @@ export async function runSelfCorrectionRunForCli(
 
     if (!opts.dryRun && !opts.incidents && !opts.extractPath) {
       factsDb.updateScanCursor(SCAN_TYPE, Date.now(), incidents.length);
+    }
+
+    if (completedBatchIndexes.size === batches.length && existsSync(statePath)) {
+      try {
+        rmSync(statePath, { force: true });
+      } catch (err) {
+        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-state" });
+      }
     }
 
     return {
