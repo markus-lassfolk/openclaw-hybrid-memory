@@ -1534,6 +1534,52 @@ it("syncActiveTaskEntryToFacts preserves optional fields when omitted from entry
   }
 });
 
+it("syncActiveTaskEntryToFacts clears handoff when handoff is explicitly set undefined", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-handoff-clear-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+  const handoff = {
+    schema: "octave/task-handoff@v1",
+    artifactId: "artifact-1",
+    signal: "update",
+    agent: "worker",
+    timestamp: now,
+    checksum: "abc123",
+  };
+
+  try {
+    await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+      label: "handoff-task",
+      description: "Task with handoff",
+      status: "Failed",
+      handoff,
+      next: "Fix: stale",
+      started: now,
+      updated: now,
+    });
+
+    await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+      label: "handoff-task",
+      description: "Task reopened",
+      status: "In progress",
+      handoff: undefined,
+      next: "",
+      subagent: "agent:main:subagent:new",
+      started: now,
+      updated: new Date(Date.now() + 1000).toISOString(),
+    });
+
+    const { active } = loadTaskLedgerFromFacts(db);
+    expect(active).toHaveLength(1);
+    expect(active[0].handoff).toBeUndefined();
+    expect(active[0].next).toBeUndefined();
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 it("syncActiveTaskEntryToFacts writes related_goal when provided", async () => {
   const dir = await mkdtemp(join(tmpdir(), "task-related-goal-"));
   const db = new FactsDB(join(dir, "facts.db"));

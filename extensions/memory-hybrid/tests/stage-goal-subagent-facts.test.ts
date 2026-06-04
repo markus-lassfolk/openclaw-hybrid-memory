@@ -242,4 +242,56 @@ describe("stage-goal-subagent facts ledger linking", () => {
     expect(task?.status).toBe("In progress");
     expect(task?.next ?? "").not.toContain("missing ACP session metadata");
   });
+
+  it("clears stale handoff on successful re-dispatch after failure", async () => {
+    const goal = await createGoal(
+      goalsDir,
+      { label: "retry-handoff", description: "Deploy API", acceptanceCriteria: ["live"] },
+      {
+        maxDispatches: 20,
+        maxAssessments: 50,
+        cooldownMinutes: 10,
+        escalateAfterFailures: 3,
+        priority: "normal",
+      },
+    );
+
+    await api.emitAll("subagent_spawned", {
+      goalId: goal.id,
+      label: "retry-handoff-task",
+      task: "Missing session metadata",
+    });
+
+    const failedAt = new Date().toISOString();
+    const handoff = JSON.stringify({
+      schema: "octave/task-handoff@v1",
+      artifactId: "stale-artifact",
+      signal: "update",
+      agent: "worker",
+      timestamp: failedAt,
+      checksum: "abc123",
+    });
+    factsDb.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "retry-handoff-task",
+      key: "handoff",
+      value: handoff,
+      text: `Task [retry-handoff-task] handoff: ${handoff}`,
+    });
+
+    await api.emitAll("subagent_spawned", {
+      goalId: goal.id,
+      label: "retry-handoff-task",
+      childSessionKey: "agent:main:subagent:retry-handoff-2",
+      task: "Retry with session",
+    });
+
+    const { active } = loadTaskLedgerFromFacts(factsDb);
+    const task = active.find((t) => t.label === "retry-handoff-task");
+    expect(task?.status).toBe("In progress");
+    expect(task?.handoff).toBeUndefined();
+  });
 });

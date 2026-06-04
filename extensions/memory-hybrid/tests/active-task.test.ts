@@ -1149,6 +1149,35 @@ describe("runActiveTaskAdd", () => {
     expect(taskFile?.completed).toHaveLength(0);
   });
 
+  it("clears stale handoff when reopening from completed history", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [],
+      [
+        makeEntry({
+          label: "revive-handoff",
+          status: "Done",
+          handoff: {
+            schema: "octave/task-handoff@v1",
+            artifactId: "artifact-done",
+            signal: "completed",
+            agent: "worker",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            checksum: "abc123",
+          },
+        }),
+      ],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "revive-handoff",
+      description: "Pick up again",
+      status: "In progress",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].handoff).toBeUndefined();
+  });
+
   it("rejects invalid status gracefully (falls back to In progress)", async () => {
     await runActiveTaskAdd(ctx, {
       label: "bad-status",

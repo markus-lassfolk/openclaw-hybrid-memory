@@ -385,13 +385,15 @@ export function registerCleanupHandlers(
           );
           return;
         }
+        const reopeningFromTerminal = !!existing && isTerminalActiveTaskStatus(existing.status);
         const entry: ActiveTaskEntry = {
           ...(existing ?? {}),
           label: existing?.label ?? label.trim().toLowerCase(),
           description,
           status: "In progress",
           subagent: childOrSession,
-          next: existing?.status === "Failed" ? "" : existing?.next,
+          next: reopeningFromTerminal ? "" : existing?.next,
+          ...(reopeningFromTerminal ? { handoff: undefined } : {}),
           started: existing?.started ?? now,
           updated: now,
         };
@@ -410,13 +412,15 @@ export function registerCleanupHandlers(
         );
         return;
       }
+      const reopeningFromTerminal = !!existing && isTerminalActiveTaskStatus(existing.status);
       const entry: ActiveTaskEntry = {
         ...(existing ?? {}),
         label: existing?.label ?? label,
         description,
         status: "In progress",
         subagent: childOrSession,
-        next: existing?.status === "Failed" ? "" : existing?.next,
+        next: reopeningFromTerminal ? "" : existing?.next,
+        ...(reopeningFromTerminal ? { handoff: undefined } : {}),
         started: existing?.started ?? now,
         updated: now,
       };

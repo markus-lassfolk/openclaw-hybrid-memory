@@ -291,6 +291,51 @@ describe("stage-cleanup facts ledger subagent hooks", () => {
     expect(task?.subagent).toBe("agent:main:subagent:retry-child");
   });
 
+  it("subagent_spawned clears stale handoff when reopening Failed tasks", async () => {
+    const now = new Date().toISOString();
+    const handoff = JSON.stringify({
+      schema: "octave/task-handoff@v1",
+      artifactId: "artifact-failed",
+      signal: "update",
+      agent: "worker",
+      timestamp: now,
+      checksum: "deadbeef",
+    });
+    for (const [key, value] of [
+      ["title", "Previously failed"],
+      ["status", "failed"],
+      ["task_updated", now],
+      ["started", now],
+      ["handoff", handoff],
+    ] as const) {
+      factsDb.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "failed-handoff-task",
+        key,
+        value,
+        text: `Task [failed-handoff-task] ${key}: ${value}`,
+      });
+    }
+
+    await api.emitAll(
+      "subagent_spawned",
+      {
+        label: "failed-handoff-task",
+        childSessionKey: "agent:main:subagent:retry-handoff",
+        task: "Retry after failure",
+      },
+      { sessionKey: "agent:main:subagent:worker-1" },
+    );
+
+    const { active } = loadTaskLedgerFromFacts(factsDb);
+    const task = active.find((t) => t.label === "failed-handoff-task");
+    expect(task?.status).toBe("In progress");
+    expect(task?.handoff).toBeUndefined();
+  });
+
   it("clears related_session when subagent_ended marks task Done", async () => {
     await api.emitAll(
       "subagent_spawned",

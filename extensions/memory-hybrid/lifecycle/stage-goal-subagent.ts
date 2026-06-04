@@ -42,6 +42,7 @@ async function syncGoalLinkedTaskToFactsLedger(
       subagent: childOrSession === null ? "" : (childOrSession ?? existing?.subagent),
       relatedGoal: goalId,
       next: overrides?.next ?? (reopeningFromTerminal ? "" : existing?.next),
+      ...(reopeningFromTerminal ? { handoff: undefined } : {}),
       started: existing?.started ?? now,
       updated: now,
     },

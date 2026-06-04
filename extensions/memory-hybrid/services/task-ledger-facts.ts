@@ -1132,7 +1132,7 @@ export async function syncActiveTaskEntryToFacts(
       upsertOpts,
     );
   }
-  if (entry.handoff !== undefined) {
+  if ('handoff' in entry) {
     await upsertProjectTaskKey(
       factsDb,
       vectorDb,

@@ -305,7 +305,7 @@ export async function runActiveTaskAdd(
       subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
       next: opts.next ?? (reopening ? "" : existing?.next),
       stashCommit: existing?.stashCommit,
-      handoff: existing?.handoff,
+      ...(reopening ? { handoff: undefined } : existing?.handoff ? { handoff: existing.handoff } : {}),
       relatedGoal: existing?.relatedGoal,
       started: existing?.started ?? now,
       updated: now,
@@ -347,6 +347,7 @@ export async function runActiveTaskAdd(
     subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
     next: opts.next ?? (reopening ? "" : existing?.next),
     stashCommit: existing?.stashCommit,
+    ...(reopening ? { handoff: undefined } : existing?.handoff ? { handoff: existing.handoff } : {}),
     started: existing?.started ?? now,
     updated: now,
   };
