@@ -477,6 +477,7 @@ export async function runEpisodicConsolidation(
     // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact: MemoryEntry | null = null;
     let factNewlyStored = false;
+    let factEmbeddingStale = false;
     try {
       const storeResult = factsDb.storeWithResult({
         text: mergedText.slice(0, 500),
@@ -497,10 +498,23 @@ export async function runEpisodicConsolidation(
         }),
       });
       if (storeResult.skipped) {
+        try {
+          eventsConsolidated += eventLog.markConsolidated(
+            cappedGroupEvents.map((e) => e.id),
+            "SKIP:pre_store_guard",
+          );
+        } catch (err) {
+          logger.warn(`memory-hybrid: dream-cycle — failed to mark pre-store-guard skipped events: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "dream-cycle-mark-pre-store-skip",
+            subsystem: "event-log",
+          });
+        }
         continue;
       }
       consolidatedFact = storeResult.entry;
       factNewlyStored = storeResult.newlyStored === true;
+      factEmbeddingStale = storeResult.embeddingStale === true;
       if (storeResult.newlyStored || storeResult.embeddingStale) {
         if (vectorDb) {
           await cleanupEvictedVector({
@@ -517,6 +531,18 @@ export async function runEpisodicConsolidation(
         operation: "dream-cycle-consolidate",
         subsystem: "facts-db",
       });
+      try {
+        eventsConsolidated += eventLog.markConsolidated(
+          cappedGroupEvents.map((e) => e.id),
+          "SKIP:store_failed",
+        );
+      } catch (markErr) {
+        logger.warn(`memory-hybrid: dream-cycle — failed to mark store-failed events as skipped: ${markErr}`);
+        capturePluginError(markErr instanceof Error ? markErr : new Error(String(markErr)), {
+          operation: "dream-cycle-mark-store-failed-skip",
+          subsystem: "event-log",
+        });
+      }
       continue;
     }
 
@@ -571,7 +597,7 @@ export async function runEpisodicConsolidation(
     // semantic search.  This is non-fatal: the fact is already safely in SQLite.
     // Use the same truncated text for both the embedding call and the store payload
     // so the embedding always matches the text that will be returned by search.
-    if (vectorDb && embeddings) {
+    if (vectorDb && embeddings && (factNewlyStored || factEmbeddingStale)) {
       const persistedText =
         typeof consolidatedFact.text === "string" && consolidatedFact.text.trim().length > 0
           ? consolidatedFact.text.slice(0, 500)
@@ -970,11 +996,17 @@ export async function runDreamCycle(
   // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
   if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
     eventLogPhase = "archive-old";
+    const archiveAgeDays = Math.max(config.maxUnconsolidatedAgeDays, config.consolidateAfterDays);
+    if (archiveAgeDays !== config.maxUnconsolidatedAgeDays && v) {
+      logger.info(
+        `memory-hybrid: dream-cycle — clamping maxUnconsolidatedAgeDays from ${config.maxUnconsolidatedAgeDays} to ${archiveAgeDays} (must be ≥ consolidateAfterDays=${config.consolidateAfterDays})`,
+      );
+    }
     try {
-      const deleted = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
+      const deleted = eventLog.archiveOld(archiveAgeDays, true);
       if (deleted > 0) {
         logger.info(
-          `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${config.maxUnconsolidatedAgeDays} days`,
+          `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${archiveAgeDays} days`,
         );
       }
     } catch (err) {

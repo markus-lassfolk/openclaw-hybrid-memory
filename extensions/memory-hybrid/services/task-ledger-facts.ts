@@ -1049,49 +1049,65 @@ export async function syncActiveTaskEntryToFacts(
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log, upsertOpts);
   const statusValue = opts?.statusOverride?.trim() || displayStatusToFact(entry.status);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", statusValue, log, upsertOpts);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next?.trim() || "", log, upsertOpts);
-  await upsertProjectTaskKey(
-    factsDb,
-    vectorDb,
-    embeddings,
-    entity,
-    "related_session",
-    entry.subagent?.trim() || "",
-    log,
-    upsertOpts,
-  );
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log, upsertOpts);
   await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log, upsertOpts);
-  await upsertProjectTaskKey(
-    factsDb,
-    vectorDb,
-    embeddings,
-    entity,
-    "branch",
-    entry.branch?.trim() || "",
-    log,
-    upsertOpts,
-  );
-  await upsertProjectTaskKey(
-    factsDb,
-    vectorDb,
-    embeddings,
-    entity,
-    "stash_commit",
-    entry.stashCommit?.trim() || "",
-    log,
-    upsertOpts,
-  );
-  await upsertProjectTaskKey(
-    factsDb,
-    vectorDb,
-    embeddings,
-    entity,
-    "handoff",
-    entry.handoff ? JSON.stringify(entry.handoff) : "",
-    log,
-    upsertOpts,
-  );
+
+  // Optional fields: only upsert when explicitly provided on the entry so partial syncs
+  // (e.g. subagent_spawned auto-checkpoint) do not wipe existing next/branch/goal links.
+  if (entry.next !== undefined) {
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next.trim(), log, upsertOpts);
+  }
+  if (entry.subagent !== undefined) {
+    await upsertProjectTaskKey(
+      factsDb,
+      vectorDb,
+      embeddings,
+      entity,
+      "related_session",
+      entry.subagent.trim(),
+      log,
+      upsertOpts,
+    );
+  }
+  if (entry.branch !== undefined) {
+    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch.trim(), log, upsertOpts);
+  }
+  if (entry.stashCommit !== undefined) {
+    await upsertProjectTaskKey(
+      factsDb,
+      vectorDb,
+      embeddings,
+      entity,
+      "stash_commit",
+      entry.stashCommit.trim(),
+      log,
+      upsertOpts,
+    );
+  }
+  if (entry.handoff !== undefined) {
+    await upsertProjectTaskKey(
+      factsDb,
+      vectorDb,
+      embeddings,
+      entity,
+      "handoff",
+      entry.handoff ? JSON.stringify(entry.handoff) : "",
+      log,
+      upsertOpts,
+    );
+  }
+  if (entry.relatedGoal !== undefined) {
+    await upsertProjectTaskKey(
+      factsDb,
+      vectorDb,
+      embeddings,
+      entity,
+      "related_goal",
+      entry.relatedGoal.trim(),
+      log,
+      upsertOpts,
+    );
+  }
 }
 
 export interface ActiveTaskHygieneApplyResult {

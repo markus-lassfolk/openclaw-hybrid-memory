@@ -359,6 +359,7 @@ export function registerCleanupHandlers(
         const { active: existingActive } = loadTaskLedgerFromFacts(ctx.factsDb);
         const existing = existingActive.find((t) => t.label === label);
         const entry: ActiveTaskEntry = {
+          ...(existing ?? {}),
           label,
           description,
           status: "In progress",

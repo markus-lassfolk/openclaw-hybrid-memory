@@ -43,7 +43,7 @@ type UtilityInstallerContext = {
 };
 
 type ProvenanceInstallerContext = Pick<ToolsContext, "factsDb" | "eventLog" | "provenanceService" | "cfg">;
-type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "cfg">;
+type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "vectorDb" | "cfg">;
 type DocumentInstallerContext = Pick<
   ToolsContext,
   "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
@@ -172,14 +172,14 @@ function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPl
   }
 }
 
-function selectCredentialToolsContext({ credentialsDb, factsDb, cfg }: ToolsContext): CredentialInstallerContext {
-  return { credentialsDb, factsDb, cfg };
+function selectCredentialToolsContext({ credentialsDb, factsDb, vectorDb, cfg }: ToolsContext): CredentialInstallerContext {
+  return { credentialsDb, factsDb, vectorDb, cfg };
 }
 
 function installCredentialTools(ctx: CredentialInstallerContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, factsDb, cfg } = ctx;
+  const { credentialsDb, factsDb, vectorDb, cfg } = ctx;
   if (cfg.credentials.enabled && credentialsDb) {
-    registerCredentialTools({ credentialsDb, factsDb, cfg, api }, api);
+    registerCredentialTools({ credentialsDb, factsDb, vectorDb, cfg, api }, api);
   }
 }
 

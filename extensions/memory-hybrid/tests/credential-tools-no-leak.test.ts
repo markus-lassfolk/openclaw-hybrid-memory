@@ -13,10 +13,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
-import type { FactsDB } from "../backends/facts-db.js";
+import { FactsDB } from "../backends/facts-db.js";
+import type { FactsDB as FactsDBType } from "../backends/facts-db.js";
 import type { CredentialsConfig, HybridMemoryConfig } from "../config/types/index.js";
 import type { PluginContext } from "../tools/credential-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
+import {
+  ensureCredentialVaultPointer,
+  findCredentialPointerFactIds,
+} from "../services/credential-vault-pointer.js";
 
 const TEST_KEY = "test-encryption-key-for-unit-tests-32chars";
 const FAKE_SECRET = "ghp_FAKE_DO_NOT_LEAK_1234567890abcdef";
@@ -62,7 +67,7 @@ function makeMinimalCfg(overrides: Partial<CredentialsConfig> = {}): HybridMemor
   return { credentials } as HybridMemoryConfig;
 }
 
-function makeCtx(db: CredentialsDB, cfg: HybridMemoryConfig, api: MockApi, factsDb: FactsDB | null = null): PluginContext {
+function makeCtx(db: CredentialsDB, cfg: HybridMemoryConfig, api: MockApi, factsDb: FactsDBType | null = null): PluginContext {
   return { credentialsDb: db, factsDb, cfg, api: api as unknown as PluginContext["api"] };
 }
 
@@ -186,7 +191,7 @@ describe("credential_store — vault pointer fact", () => {
       evictedFactId: null,
       entry: { id: "pointer-1", text: "pointer", category: "technical" },
     });
-    const factsDb = { storeWithResult } as unknown as FactsDB;
+    const factsDb = { storeWithResult } as unknown as FactsDBType;
 
     registerCredentialTools(makeCtx(db, cfg, api, factsDb), api as unknown as PluginContext["api"]);
 
@@ -220,7 +225,7 @@ describe("credential_store — vault pointer fact", () => {
         evictedFactId: null,
         entry: { id: "", text: "" },
       }),
-    } as unknown as FactsDB;
+    } as unknown as FactsDBType;
 
     registerCredentialTools(makeCtx(db, cfg, api, factsDb), api as unknown as PluginContext["api"]);
 
@@ -237,5 +242,30 @@ describe("credential_store — vault pointer fact", () => {
 
     expect(deleteSpy).toHaveBeenCalledWith("anthropic", "api_key");
     deleteSpy.mockRestore();
+  });
+
+  it("removes memory pointers when credential_delete succeeds", async () => {
+    const factsDb = new FactsDB(join(tmpDir, "facts-del.db"));
+    ensureCredentialVaultPointer(factsDb, "github", "api_key", "test");
+    expect(findCredentialPointerFactIds(factsDb, "github", "api_key")).toHaveLength(1);
+
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const vectorDb = { delete: vi.fn().mockResolvedValue(undefined) } as unknown as import("../backends/vector-db.js").VectorDB;
+
+    registerCredentialTools(
+      { credentialsDb: db, factsDb, vectorDb, cfg, api: api as unknown as PluginContext["api"] },
+      api as unknown as PluginContext["api"],
+    );
+
+    const tool = api.getTool("credential_delete");
+    if (!tool) throw new Error("credential_delete tool was not registered");
+
+    const result = await tool.execute("call-del", { service: "github", type: "api_key" });
+    expect(result.details?.deleted).toBe(true);
+    expect(result.details?.pointersRemoved).toBe(1);
+    expect(findCredentialPointerFactIds(factsDb, "github", "api_key")).toHaveLength(0);
+
+    factsDb.close();
   });
 });

@@ -300,6 +300,39 @@ describe("runStoreForCli credential_skipped_duplicate", () => {
     const pointerFacts = allFacts.filter((f: any) => f.value?.startsWith("vault:"));
     expect(pointerFacts.length).toBe(1);
   });
+
+  it("repairs missing pointer when vault already has the credential", async () => {
+    const secret = "sk-testAbCdEfGh1234IjKlMnOpQrSt";
+    credentialsDb.store({ service: "openai", type: "api_key", value: secret });
+
+    const opts: StoreCliOpts = {
+      text: `OpenAI API Key: ${secret}`,
+      category: "technical",
+    };
+
+    const result = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(result.outcome).toBe("credential");
+    if (result.outcome !== "credential") return;
+
+    expect(credentialsDb.get("openai", "api_key")?.value).toBe(secret);
+    const pointerEntry = factsDb.getById(result.id);
+    expect(pointerEntry?.value).toBe("vault:openai:api_key");
+  });
+
+  it("keeps vault secret when pointer dedupes on duplicate store", async () => {
+    const opts: StoreCliOpts = {
+      text: "OpenAI API Key: sk-testAbCdEfGh1234IjKlMnOpQrSt",
+      category: "technical",
+    };
+
+    const first = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(first.outcome).toBe("credential");
+
+    const second = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(second.outcome).toBe("credential_skipped_duplicate");
+
+    expect(credentialsDb.get("openai", "api_key")?.value).toBe("sk-testAbCdEfGh1234IjKlMnOpQrSt");
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -81,7 +81,9 @@ export async function runStoreForCli(
           });
           if (!pointer.ok) {
             if (storedInVault) {
-              rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
+              rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (msg, err) =>
+                log.warn(`memory-hybrid: ${msg}: ${err}`),
+              );
             }
             return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
           }
@@ -129,7 +131,9 @@ export async function runStoreForCli(
           }
         } catch (err) {
           if (storedInVault) {
-            rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
+            rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (msg, cleanupErr) =>
+              log.warn(`memory-hybrid: ${msg}: ${cleanupErr}`),
+            );
           }
           capturePluginError(err as Error, { subsystem: "cli", operation: "runStoreForCli:credential-db-store" });
           return { outcome: "credential_db_error" };

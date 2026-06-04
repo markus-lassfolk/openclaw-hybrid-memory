@@ -56,11 +56,12 @@ export function rollbackVaultCredentialWrite(
   credentialsDb: CredentialsDB,
   service: string,
   type: CredentialType,
+  onFailure?: (message: string, err: unknown) => void,
 ): void {
   try {
     credentialsDb.delete(service, type);
-  } catch {
-    // best-effort compensating delete
+  } catch (err) {
+    onFailure?.(`Failed to clean up orphaned credential for ${service}`, err);
   }
 }
 

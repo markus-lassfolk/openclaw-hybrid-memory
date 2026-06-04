@@ -281,6 +281,8 @@ export async function runActiveTaskAdd(
       subagent: opts.subagent ?? existing?.subagent,
       next: opts.next ?? existing?.next,
       stashCommit: existing?.stashCommit,
+      handoff: existing?.handoff,
+      relatedGoal: existing?.relatedGoal,
       started: existing?.started ?? now,
       updated: now,
     };

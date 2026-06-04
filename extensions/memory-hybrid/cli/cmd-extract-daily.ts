@@ -4,7 +4,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { buildCredentialPointerText, ensureCredentialVaultPointer, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
 import { classifyMemoryOperationsBatch, type MemoryClassification } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -215,101 +216,60 @@ export async function runExtractDailyForCli(
             if (!opts.dryRun) {
               let storedInVault = false;
               try {
-                const stored = credentialsDb.storeIfNew({
+                storedInVault = credentialsDb.storeIfNew({
                   service: parsed.service,
                   type: parsed.type,
                   value: parsed.secretValue,
                   url: parsed.url,
                   notes: parsed.notes,
                 });
-                if (!stored) {
-                  continue;
-                }
-                storedInVault = true;
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
                 const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
-                const pointerStoreResult = factsDb.storeWithResult({
-                  text: pointerText,
-                  category: "technical",
+                const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, `daily-scan:${dateStr}`, {
                   importance: BATCH_STORE_IMPORTANCE,
-                  entity: "Credentials",
-                  key: parsed.service,
-                  value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
-                  source: `daily-scan:${dateStr}`,
                   sourceDate: sourceDateSec,
-                  tags: ["auth", ...extractTags(pointerText, "Credentials")],
                 });
-                if (pointerStoreResult.skipped) {
-                  // Compensating delete: vault write succeeded but pointer rejected
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type as any);
-                  } catch (cleanupErr) {
-                    sink.warn(
-                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
-                    );
-                    capturePluginError(cleanupErr as Error, {
-                      subsystem: "cli",
-                      operation: "runExtractDailyForCli:credential-compensating-delete-skip",
-                    });
-                  }
-                  continue;
-                }
-                if (pointerStoreResult.newlyStored === false && !pointerStoreResult.embeddingStale) {
+                if (!pointer.ok) {
                   if (storedInVault) {
-                    try {
-                      credentialsDb.delete(parsed.service, parsed.type as any);
-                    } catch (cleanupErr) {
-                      sink.warn(
-                        `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
-                      );
-                      capturePluginError(cleanupErr as Error, {
-                        subsystem: "cli",
-                        operation: "runExtractDailyForCli:credential-compensating-delete-dedupe",
-                      });
-                    }
+                    rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
                   }
                   continue;
                 }
-                const pointerEntry = pointerStoreResult.entry;
+                if (!storedInVault && !pointer.newlyStored && !pointer.embeddingStale) {
+                  continue;
+                }
+                const pointerEntry = pointer.entry;
                 await cleanupEvictedVector({
                   vectorDb,
-                  evictedFactId: pointerStoreResult.evictedFactId,
+                  evictedFactId: pointer.evictedFactId,
                   logger: sink,
                   context: "extract-daily-credential-pointer",
                 });
-                try {
-                  const vector = await embeddings.embed(pointerText);
-                  factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
-                  if (!(await vectorDb.hasDuplicate(vector))) {
-                    await vectorDb.store({
-                      text: pointerText,
-                      vector,
-                      importance: BATCH_STORE_IMPORTANCE,
-                      category: "technical",
-                      id: pointerEntry.id,
+                if (pointer.newlyStored || pointer.embeddingStale) {
+                  const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
+                  try {
+                    const vector = await embeddings.embed(pointerText);
+                    factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
+                    if (!(await vectorDb.hasDuplicate(vector))) {
+                      await vectorDb.store({
+                        text: pointerText,
+                        vector,
+                        importance: BATCH_STORE_IMPORTANCE,
+                        category: "technical",
+                        id: pointerEntry.id,
+                      });
+                    }
+                  } catch (err) {
+                    sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+                    capturePluginError(err as Error, {
+                      subsystem: "cli",
+                      operation: "runExtractDailyForCli:vector-store",
                     });
                   }
-                } catch (err) {
-                  sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                  capturePluginError(err as Error, {
-                    subsystem: "cli",
-                    operation: "runExtractDailyForCli:vector-store",
-                  });
                 }
                 totalStored++;
               } catch (err) {
                 if (storedInVault) {
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type);
-                  } catch (cleanupErr) {
-                    sink.warn(
-                      `memory-hybrid: Failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`,
-                    );
-                    capturePluginError(cleanupErr as Error, {
-                      subsystem: "cli",
-                      operation: "runExtractDailyForCli:credential-compensating-delete",
-                    });
-                  }
+                  rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
                 }
                 capturePluginError(err as Error, {
                   subsystem: "cli",

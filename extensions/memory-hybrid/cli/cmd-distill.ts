@@ -28,7 +28,8 @@ import {
   recordAdaptiveSuccess,
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { buildCredentialPointerText, ensureCredentialVaultPointer, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
 import {
   chatCompleteWithRetryDetailed,
   distillBatchTokenLimit,
@@ -694,72 +695,48 @@ export async function runDistillForCli(
                   url: parsed.url,
                   notes: parsed.notes,
                 });
-                if (!credStoreResult) {
-                  continue;
-                }
-                storedInVault = true;
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
-                const storeResult = factsDb.storeWithResult({
-                  text: pointerText,
-                  category: "technical",
+                storedInVault = credStoreResult;
+                const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "distillation", {
                   importance: BATCH_STORE_IMPORTANCE,
-                  entity: "Credentials",
-                  key: parsed.service,
-                  value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
-                  source: "distillation",
                   sourceDate: sourceDateSec(fact.source_date),
                 });
-                if (storeResult.skipped) {
+                if (!pointer.ok) {
                   if (storedInVault) {
-                    try {
-                      credentialsDb.delete(parsed.service, parsed.type);
-                    } catch (cleanupErr) {
-                      capturePluginError(cleanupErr as Error, {
-                        subsystem: "cli",
-                        operation: "runDistillForCli:credential-compensating-delete",
-                      });
-                    }
+                    rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
                   }
                   continue;
                 }
-                if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
-                  if (storedInVault) {
-                    try {
-                      credentialsDb.delete(parsed.service, parsed.type);
-                    } catch (cleanupErr) {
-                      capturePluginError(cleanupErr as Error, {
-                        subsystem: "cli",
-                        operation: "runDistillForCli:credential-compensating-delete",
-                      });
-                    }
-                  }
+                if (!storedInVault && !pointer.newlyStored && !pointer.embeddingStale) {
                   continue;
                 }
-                const entry = storeResult.entry;
+                const entry = pointer.entry;
+                const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
                 // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
                 await cleanupEvictedVector({
                   vectorDb: vectorDb,
-                  evictedFactId: storeResult.evictedFactId,
+                  evictedFactId: pointer.evictedFactId,
                   logger: sink,
                   context: "distill",
                 });
-                try {
-                  const vector = await embeddings.embed(pointerText);
-                  factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-                  if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
-                    await vectorDb.store({
-                      text: pointerText,
-                      vector,
-                      importance: BATCH_STORE_IMPORTANCE,
-                      category: "technical",
-                      id: entry.id,
+                if (pointer.newlyStored || pointer.embeddingStale) {
+                  try {
+                    const vector = await embeddings.embed(pointerText);
+                    factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+                    if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+                      await vectorDb.store({
+                        text: pointerText,
+                        vector,
+                        importance: BATCH_STORE_IMPORTANCE,
+                        category: "technical",
+                        id: entry.id,
+                      });
+                    }
+                  } catch (err) {
+                    capturePluginError(err as Error, {
+                      subsystem: "cli",
+                      operation: "runDistillForCli:credential-vector-store",
                     });
                   }
-                } catch (err) {
-                  capturePluginError(err as Error, {
-                    subsystem: "cli",
-                    operation: "runDistillForCli:credential-vector-store",
-                  });
                 }
                 stored++;
                 if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);

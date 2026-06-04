@@ -142,6 +142,14 @@ mem["selfCorrection"] = {
     **(mem.get("selfCorrection") or {}),
     "enabled": True,
 }
+mem["implicitFeedback"] = {
+    **(mem.get("implicitFeedback") or {}),
+    "enabled": True,
+}
+mem["languageKeywords"] = {
+    **(mem.get("languageKeywords") or {}),
+    "autoBuild": True,
+}
 mem["distill"] = {
     **(mem.get("distill") or {}),
     "extractReinforcement": True,

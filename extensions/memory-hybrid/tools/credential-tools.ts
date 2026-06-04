@@ -77,32 +77,10 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             throw err;
           }
           if (factsDb) {
-            const pointerText = `Credential for ${service} (${type}) — stored in secure vault. Use credential_get(service="${service}", type="${type}") to retrieve.`;
-            const pointerValue = `${VAULT_POINTER_PREFIX}${service}:${type}`;
-            const pointerResult = factsDb.storeWithResult({
-              text: pointerText,
-              category: "technical" as MemoryCategory,
-              importance: 0.9,
-              entity: "Credentials",
-              key: service,
-              value: pointerValue,
-              source: "credential-tool",
-              decayClass: "permanent",
-              tags: ["auth", ...extractTags(pointerText, "Credentials")],
-            });
-            if (pointerResult.skipped) {
-              try {
-                credentialsDb.delete(service, type);
-              } catch (cleanupErr) {
-                capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
-                  subsystem: "credentials",
-                  operation: "credential-store-compensating-delete-skip",
-                });
-              }
+            const pointer = ensureCredentialVaultPointer(factsDb, service, type, "credential-tool");
+            if (!pointer.ok) {
+              rollbackVaultCredentialWrite(credentialsDb, service, type);
               throw new Error("Credential pointer rejected by pre-store guard");
-            }
-            if (pointerResult.newlyStored === false && !pointerResult.embeddingStale) {
-              // Pointer already exists — vault write succeeded; no further action needed.
             }
           }
           return {
@@ -263,9 +241,25 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               details: { deleted: false },
             };
           }
+          let pointersRemoved = 0;
+          if (factsDb) {
+            try {
+              pointersRemoved = await deleteCredentialPointerFacts(factsDb, vectorDb, service, type);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-delete-pointer-cleanup",
+              });
+            }
+          }
           return {
-            content: [{ type: "text", text: `Deleted credential for ${service}${type ? ` (${type})` : ""}.` }],
-            details: { deleted: true, service, type },
+            content: [
+              {
+                type: "text",
+                text: `Deleted credential for ${service}${type ? ` (${type})` : ""}${pointersRemoved > 0 ? ` and ${pointersRemoved} memory pointer(s).` : "."}`,
+              },
+            ],
+            details: { deleted: true, service, type, pointersRemoved },
           };
         },
       },

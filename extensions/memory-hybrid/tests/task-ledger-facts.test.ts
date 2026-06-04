@@ -1330,6 +1330,73 @@ it("terminal status supersession does not supersede title fact created in same s
   }
 });
 
+it("syncActiveTaskEntryToFacts preserves optional fields when omitted from entry", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-partial-sync-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+
+  try {
+    await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+      label: "forge-task",
+      description: "Implement feature",
+      status: "In progress",
+      next: "Write tests",
+      branch: "feature/forge",
+      relatedGoal: "goal-abc",
+      started: now,
+      updated: now,
+    });
+
+    await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+      label: "forge-task",
+      description: "Implement feature (spawn refresh)",
+      status: "In progress",
+      subagent: "agent:main:subagent:abc",
+      started: now,
+      updated: new Date(Date.now() + 1000).toISOString(),
+    });
+
+    const { active } = loadTaskLedgerFromFacts(db);
+    expect(active).toHaveLength(1);
+    expect(active[0].next).toBe("Write tests");
+    expect(active[0].branch).toBe("feature/forge");
+    expect(active[0].relatedGoal).toBe("goal-abc");
+    expect(active[0].subagent).toBe("agent:main:subagent:abc");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("syncActiveTaskEntryToFacts writes related_goal when provided", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-related-goal-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+
+  try {
+    await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+      label: "goal-backed-task",
+      description: "Work tied to a goal",
+      status: "In progress",
+      relatedGoal: "goal-1271",
+      started: now,
+      updated: now,
+    });
+
+    const { active } = loadTaskLedgerFromFacts(db);
+    expect(active[0]?.relatedGoal).toBe("goal-1271");
+    const row = db
+      .listFactsByCategory("project", 20)
+      .find((f) => f.entity === "goal-backed-task" && f.key === "related_goal");
+    expect(row?.value).toBe("goal-1271");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 describe("reconcileActiveTaskLiveState", () => {
   it("parses PR/issue refs correctly and defaults bare owner/repo#N to issue", async () => {
     const dir = await mkdtemp(join(tmpdir(), "task-live-state-parse-"));
