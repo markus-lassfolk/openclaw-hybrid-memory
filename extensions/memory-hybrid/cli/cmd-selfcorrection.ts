@@ -270,18 +270,18 @@ function extractSelfCorrectionRemediationArray(value: unknown): unknown[] | null
   for (const key of priorityKeys) {
     if (!(key in obj)) continue;
     const nested = extractSelfCorrectionRemediationArray(obj[key]);
-    if (nested) return nested;
+    if (nested && nested.length > 0) return nested;
   }
 
   const toolCalls = obj.tool_calls ?? obj.toolCalls;
   const toolResult = extractSelfCorrectionRemediationArray(toolCalls);
-  if (toolResult) return toolResult;
+  if (toolResult && toolResult.length > 0) return toolResult;
 
   const fn = obj.function;
   if (fn && typeof fn === "object") {
     const args = (fn as Record<string, unknown>).arguments;
     const nested = extractSelfCorrectionRemediationArray(args);
-    if (nested) return nested;
+    if (nested && nested.length > 0) return nested;
   }
 
   return null;
