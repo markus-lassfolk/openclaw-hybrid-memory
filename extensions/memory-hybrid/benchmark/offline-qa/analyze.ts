@@ -160,8 +160,8 @@ export function analyzeTaskResult(task: QaTaskSpec, log: string, exitCode: numbe
     notes.push("CLI subcommand not registered — expected skip");
   } else if (exitCode !== 0 || errors.length > 0) {
     if (task.id === "distill" && embeddingDegraded && distillLlmOk) {
-      classification = /timeout after/i.test(log) ? "needs-fix" : "needs-fix";
-      if (classification === "needs-fix") {
+      classification = /timeout after/i.test(log) ? "needs-fix" : "data-gap";
+      if (classification === "data-gap") {
         errors.length = 0;
         errors.push("Distill LLM succeeded but embedding store failed — check AZURE_OPENAI_API_KEY / secrets.env");
       }

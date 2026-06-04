@@ -2,7 +2,7 @@
  * CLI commands for distillation and extraction (distill, extract-*, generate-auto-skills, record-distill).
  */
 
-import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
+import { type CommanderOptsParent, resolveHybridMemVerbose } from "./global-verbose.js";
 import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "./maintenance-overrides.js";
 import { type Chainable, withExit } from "./shared.js";
 import type { ReinforcementExtractResult } from "../services/reinforcement-extract.js";
@@ -164,7 +164,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             days: Number.isFinite(days) ? days : undefined,
             since: opts.since?.trim() || undefined,
             model: opts.model,
-            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            verbose: resolveHybridMemVerbose(opts, cmd),
             maxSessions: maxSessions > 0 ? maxSessions : undefined,
             maxSessionTokens: maxSessionTokens > 0 ? maxSessionTokens : undefined,
             ...overrides,
@@ -239,7 +239,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           {
             days: daysBack,
             dryRun: !!opts.dryRun,
-            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            verbose: resolveHybridMemVerbose(opts, cmd),
             ...scanMaintenanceOverridePayload(opts),
           },
           { log: (s) => console.log(s), warn: (s) => console.warn(s) },
@@ -283,7 +283,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           sessionDir: opts.dir,
           days: Number.isFinite(days) ? days : undefined,
           dryRun: !!opts.dryRun,
-          verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+          verbose: resolveHybridMemVerbose(opts, cmd),
           ...scanMaintenanceOverridePayload(opts),
         });
         if (result.dryRun) {
@@ -339,7 +339,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             max,
             policy: opts.policy,
             json: opts.json,
-            verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+            verbose: resolveHybridMemVerbose(opts, cmd),
             bypassDuplicateSkillCache: opts.bypassSkillDuplicateCache === true,
           });
           if (opts.json) {
@@ -373,7 +373,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         }
         const result = await runGenerateProposals({
           dryRun: !!opts?.dryRun,
-          verbose: !!opts?.verbose || readHybridMemVerbose(cmd),
+          verbose: resolveHybridMemVerbose(opts, cmd),
         });
         if (opts?.dryRun) {
           console.log(`\n[dry-run] Would create ${result.created} proposal(s).`);
@@ -405,7 +405,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         const days = Number.parseInt(opts.days ?? "3", 10);
         const result = await runExtractDirectives({
           days,
-          verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+          verbose: resolveHybridMemVerbose(opts, cmd),
           dryRun: opts.dryRun,
           ...scanMaintenanceOverridePayload(opts),
         });
@@ -470,7 +470,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         const days = Number.parseInt(opts.days ?? "3", 10);
         const result = await runExtractReinforcement({
           days,
-          verbose: !!opts.verbose || readHybridMemVerbose(cmd),
+          verbose: resolveHybridMemVerbose(opts, cmd),
           dryRun: opts.dryRun,
           ...scanMaintenanceOverridePayload(opts),
         });

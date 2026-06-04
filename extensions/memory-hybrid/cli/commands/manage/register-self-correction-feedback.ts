@@ -2,7 +2,19 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "../../maintenance-overrides.js";
 import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
+import type { SelfCorrectionRunResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
+
+function isSelfCorrectionDegradedStatus(status: SelfCorrectionRunResult["status"]): boolean {
+  return status === "failed_partial" || status === "failed_suspect_zero_parsed";
+}
+
+function selfCorrectionBatchProgressSuffix(res: SelfCorrectionRunResult): string {
+  if (res.status === "failed_partial" || res.status === "failed" || res.status === "failed_parse") {
+    return ` batches_completed=${res.batchesCompleted ?? 0}/${res.totalBatches ?? "?"}`;
+  }
+  return "";
+}
 
 export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBindings): void {
   const {
@@ -113,10 +125,10 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         }
         if (res.error) {
           console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
-          process.exitCode = res.status === "failed_partial" || res.status === "failed_suspect_zero_parsed" ? 2 : 1;
+          process.exitCode = isSelfCorrectionDegradedStatus(res.status) ? 2 : 1;
           return;
         }
-        if (res.status === "failed_partial" || res.status === "failed_suspect_zero_parsed") {
+        if (isSelfCorrectionDegradedStatus(res.status)) {
           process.exitCode = 2;
         }
         if (res.skipped) {
@@ -139,7 +151,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           );
           const parseSuccess = res.status === "success_analyzed" || res.status === "success_no_incidents";
           console.log(
-            `parse_success=${parseSuccess} parsed_candidates=${res.analysed ?? 0} retry_count=${res.retryCount ?? 0} fallback_count=${res.fallbackCount ?? 0} parse_failures=${res.parseFailures ?? 0} unparseable_failures=${res.unparseableFailures ?? 0}${res.status === "failed_partial" ? " batches_completed=" + (res.batchesCompleted ?? 0) + "/" + (res.totalBatches ?? "?") : ""}`,
+            `parse_success=${parseSuccess} parsed_candidates=${res.analysed ?? 0} retry_count=${res.retryCount ?? 0} fallback_count=${res.fallbackCount ?? 0} parse_failures=${res.parseFailures ?? 0} unparseable_failures=${res.unparseableFailures ?? 0}${selfCorrectionBatchProgressSuffix(res)}`,
           );
         }
         if (res.proposals.length > 0) {

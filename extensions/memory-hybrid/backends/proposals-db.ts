@@ -237,11 +237,13 @@ export class ProposalsDB extends BaseSqliteStore {
     return this.get(id);
   }
 
-  countRecentProposals(daysBack: number): number {
+  countRecentProposals(daysBack: number, opts?: { excludeSelfCorrection?: boolean }): number {
     const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
-    const row = this.liveDb
-      .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
-      .get(cutoff) as unknown as CountRow | undefined;
+    const excludeSC = opts?.excludeSelfCorrection === true;
+    const sql = excludeSC
+      ? "SELECT COUNT(*) as count FROM proposals WHERE created_at >= ? AND title NOT LIKE 'Self-correction: %'"
+      : "SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?";
+    const row = this.liveDb.prepare(sql).get(cutoff) as unknown as CountRow | undefined;
     return row?.count ?? 0;
   }
 

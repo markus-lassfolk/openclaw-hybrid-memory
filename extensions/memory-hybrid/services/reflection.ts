@@ -1451,6 +1451,10 @@ export async function runReflectionRules(
       }
       continue;
     }
+    if (/^<[^>]+>$/i.test(ruleText) || /^<imperative\s+one-line\s+rule>/i.test(ruleText)) {
+      logger.warn(`memory-hybrid: reflect-rules — rejected template placeholder at store gate: ${ruleText.slice(0, 60)}`);
+      continue;
+    }
     if (opts.dryRun) {
       logger.info(`memory-hybrid: reflect-rules [dry-run] would store: ${ruleText.slice(0, 50)}...`);
       stored++;

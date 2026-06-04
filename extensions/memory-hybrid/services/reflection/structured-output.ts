@@ -88,7 +88,10 @@ function normalizeRuleCandidate(text: string): {
   if (LOW_CONFIDENCE_PREFIX_PATTERN.test(candidate)) {
     return { text: candidate, rejectedLowConfidence: true, rejectedLength: false };
   }
-  if (/^<imperative one-line rule>$/i.test(candidate) || /^<\w+[^>]*>$/.test(candidate)) {
+  if (
+    /^<[^>]+>$/i.test(candidate) ||
+    /^<imperative\s+one-line\s+rule>/i.test(candidate)
+  ) {
     return { text: candidate, rejectedLowConfidence: false, rejectedLength: true };
   }
   const confidencePrefix = candidate.match(EXPLICIT_CONFIDENCE_PREFIX_PATTERN);

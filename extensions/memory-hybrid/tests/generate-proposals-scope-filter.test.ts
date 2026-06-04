@@ -323,7 +323,7 @@ describe("generate-proposals — JSON retry (#1824)", () => {
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
   });
 
-  it("throws semantic_empty when insights exist but parsed items are zero", async () => {
+  it("returns semantic_empty when insights exist but parsed items are zero", async () => {
     const db = new FactsDB(":memory:");
     const proposalsDb = new ProposalsDB(":memory:");
     insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
@@ -346,8 +346,38 @@ describe("generate-proposals — JSON retry (#1824)", () => {
 
     const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
 
-    await expect(runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f })).rejects.toThrow(
-      /semantic_empty/,
+    const result = await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+    expect(result.created).toBe(0);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/semantic_empty.*identity_gap_score=/),
+    );
+  });
+
+  it("logs pre-flight identity_gap_score when verbose is present only in argv", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: "[]" } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
+    await runGenerateProposalsForCli(
+      ctx,
+      { dryRun: false, verbose: false },
+      { resolvePath: (f) => f },
+      ["node", "openclaw", "hybrid-mem", "generate-proposals", "--verbose"],
+    );
+
+    expect(ctx.logger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/identity_gap_score=.*pending=/),
     );
   });
 

@@ -973,14 +973,14 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
   const text = `${p.title}
 ${p.observation}
 ${p.suggestedChange}`.toLowerCase();
-  if (/\b(destructive|credential)\b|approval boundary|bypass approval|disable safeguard/.test(text)) return "critical";
+  if (/\b(destructive|credential)\b|approval boundary|bypass approval|disable safeguard|bypass.*policy|bypass.*safety/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
     if (SENSITIVE_PERSONA_FILES.has(p.targetFile)) {
       if (!isMechanicallyVerifiedSensitiveFormatting(item, p.suggestedChange)) return "high";
       return "low";
     }
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
-    if (/\b(privacy|security|approval|credential|destructive|safeguard)\b/.test(text)) return "high";
+    if (/\b(privacy|security|credential|destructive|safeguard)\b|bypass approval|approval boundary/.test(text)) return "high";
     if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
     return "medium";
   }
@@ -1117,7 +1117,7 @@ ${applied}`;
 function highRiskReason(p: ProposalEntry): PendingDecision["reasonCode"] {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
   if (/privacy/.test(text)) return "privacy-boundary-change";
-  if (/security|credential|approval|destructive|safeguard/.test(text)) return "security-boundary-change";
+  if (/bypass.*approval|approval boundary|bypass.*policy|bypass.*safety|\bcredential\b|\bdestructive\b|disable safeguard/.test(text)) return "security-boundary-change";
   if (/preference|profile|personal fact|user preference/.test(text)) return "user-preference-change-requires-approval";
   return "identity-boundary-change";
 }

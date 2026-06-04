@@ -118,7 +118,7 @@ export function buildHybridMemCronBashBody(
     '  local hm_reason=""',
     '  local reported_status=""',
     '  local strict_semantic_reason=""',
-    '  reported_status="$(grep -Eo \'status=(success_[A-Za-z0-9_-]+|skipped_[A-Za-z0-9_-]+|failed_[A-Za-z0-9_-]+)\' "$step_output" | tail -n1 | cut -d= -f2 || true)"',
+    '  reported_status="$(grep -Eo \'status=(success_[A-Za-z0-9_-]+|skipped_[A-Za-z0-9_-]+|failed(?:_[A-Za-z0-9_-]+)?)\' "$step_output" | tail -n1 | cut -d= -f2 || true)"',
     '  if [ "$step_ec" -eq 0 ] && [ "${HYBRID_MEM_STRICT_SEMANTICS:-0}" = "1" ]; then',
     '    strict_semantic_reason="$(grep -Eo \'status=(no_candidates|no_changes|degraded)\' "$step_output" | tail -n1 | cut -d= -f2 || true)"',
     '    if [ -z "$strict_semantic_reason" ] && grep -Eq \'Status:[[:space:]]+cursorAdvanced=false\' "$step_output"; then',

@@ -593,6 +593,29 @@ error: unknown command 'bar'
       );
     });
 
+    it("detects self-correction analysis failure (status=failed)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "self-correction-analysis.exit.txt");
+      const logPath = join(tmpDir, "self-correction-analysis.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z self-correction-run exit=1\n");
+      writeFileSync(
+        logPath,
+        "Error: simulated first-batch LLM API failure status=failed\nself-correction-run 2 incidents found, 0 analysed parse_success=false batches_completed=0/1\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["self-correction-run"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "self-correction-run",
+          failureCategory: "semantic_failure",
+          failureClass: "self_correction_analysis_failure",
+        }),
+      );
+    });
+
     it("detects generate-proposals semantic_empty failures", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "generate-proposals.exit.txt");

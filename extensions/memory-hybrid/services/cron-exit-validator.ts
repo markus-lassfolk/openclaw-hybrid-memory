@@ -530,6 +530,7 @@ function collectMaintenanceTelemetryIssues(params: {
   const selfCorrectionSuspect =
     /\bstatus=failed_suspect_zero_parsed\b/i.test(logContent) ||
     /\bzero parsed\/analysed remediation items\b/i.test(logContent);
+  const selfCorrectionAnalysisFailed = /\bstatus=failed\b/i.test(logContent);
   const selfCorrectionParseFailed =
     /\bstatus=failed_parse\b/i.test(logContent) ||
     /\bstatus=failed_partial\b/i.test(logContent) ||
@@ -540,6 +541,7 @@ function collectMaintenanceTelemetryIssues(params: {
   if (
     selfCorrectionDetected &&
     (selfCorrectionSuspect ||
+      selfCorrectionAnalysisFailed ||
       selfCorrectionParseFailed ||
       (typeof selfCorrectionIncidents === "number" && selfCorrectionIncidents > 0 && selfCorrectionParsed === 0))
   ) {
@@ -552,10 +554,15 @@ function collectMaintenanceTelemetryIssues(params: {
         failureCategory: "semantic_failure",
         failureClass: /\bstatus=failed_partial\b/i.test(logContent)
           ? "self_correction_partial_batch_failure"
-          : selfCorrectionParseFailed
-            ? "self_correction_parse_failure"
-            : "self_correction_zero_parsed",
-        message: `${jobName}:self-correction-run found incidents but produced no parsed analysed items`,
+          : selfCorrectionAnalysisFailed
+            ? "self_correction_analysis_failure"
+            : /\bstatus=failed_parse\b/i.test(logContent) ||
+                (/\bparse_success=false\b/i.test(logContent) && /\bself-correction-run\b/i.test(logContent))
+              ? "self_correction_parse_failure"
+              : "self_correction_zero_parsed",
+        message: selfCorrectionAnalysisFailed
+          ? `${jobName}:self-correction-run analysis failed before completing batches`
+          : `${jobName}:self-correction-run found incidents but produced no parsed analysed items`,
         semanticStatus: "semantic_fail",
       }),
     );

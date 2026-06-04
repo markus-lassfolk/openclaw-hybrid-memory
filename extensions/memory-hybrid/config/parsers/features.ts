@@ -422,6 +422,7 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
         ? Math.floor(proposalsRaw.minSessionEvidence)
         : 10,
     requireScopeFilter: proposalsRaw?.requireScopeFilter === true,
+    separateSelfCorrectionQuota: proposalsRaw?.separateSelfCorrectionQuota !== false,
   };
 }
 

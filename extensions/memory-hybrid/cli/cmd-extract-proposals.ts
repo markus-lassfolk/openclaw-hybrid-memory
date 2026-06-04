@@ -1,4 +1,4 @@
-/** Persona proposal generation CLI (`runGenerateProposalsForCli`). Split from cmd-extract.ts. */
+import { resolveHybridMemVerbose } from "./global-verbose.js";
 import { getEnv } from "../utils/env-manager.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -64,7 +64,9 @@ export async function runGenerateProposalsForCli(
   ctx: HandlerContext,
   opts: { dryRun: boolean; verbose?: boolean },
   api: { resolvePath: (file: string) => string },
+  argv: readonly string[] = process.argv,
 ): Promise<{ created: number }> {
+  const verbose = resolveHybridMemVerbose(opts, undefined, argv);
   const { factsDb, proposalsDb, cfg, openai } = ctx;
   if (!cfg.personaProposals.enabled || !proposalsDb) {
     return { created: 0 };
@@ -121,7 +123,7 @@ export async function runGenerateProposalsForCli(
             dryRun: opts.dryRun,
             model: cfg.identityReflection.model ?? defaultModel,
             fallbackModels,
-            verbose: opts.verbose,
+            verbose,
             scopeFilter,
           },
           {
@@ -141,7 +143,7 @@ export async function runGenerateProposalsForCli(
         for (const entry of promotion.entries) {
           personaStateEntries.set(entry.stateKey, entry);
         }
-        if (opts.verbose && promotion.candidatesFound > 0) {
+        if (verbose && promotion.candidatesFound > 0) {
           ctx.logger.info?.(
             `memory-hybrid: persona-state promotion — ${promotion.promoted} created, ${promotion.updated} updated, ${promotion.unchanged} unchanged`,
           );
@@ -189,7 +191,7 @@ export async function runGenerateProposalsForCli(
     insights.push(`Durable persona state:\n${personaStateBlock}`);
   }
   if (insights.length === 0) {
-    if (opts.verbose)
+    if (verbose)
       ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
     return { created: 0 };
   }
@@ -233,7 +235,7 @@ export async function runGenerateProposalsForCli(
     }
   }
   const identityFilesBlock = identityFilesContent.join("\n");
-  if (opts.verbose) {
+  if (verbose) {
     ctx.logger.info?.(
       `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} pending=${pendingProposals.length}`,
     );
@@ -289,7 +291,7 @@ export async function runGenerateProposalsForCli(
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       lastFailReason = `model=${tryModel} failure_type=llm_call_failed`;
-      if (opts.verbose) {
+      if (verbose) {
         ctx.logger.warn?.(`memory-hybrid: generate-proposals — ${tryModel} LLM call failed: ${errMsg.slice(0, 200)}`);
       }
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -310,7 +312,7 @@ export async function runGenerateProposalsForCli(
         ctx.logger.warn?.(
           `memory-hybrid: generate-proposals — ${tryModel} returned invalid JSON, retrying with fallback model`,
         );
-      } else if (opts.verbose) {
+      } else if (verbose) {
         ctx.logger.warn?.(`memory-hybrid: generate-proposals — LLM output was not valid JSON: ${responseSnippet}`);
       }
       continue;
@@ -382,11 +384,14 @@ export async function runGenerateProposalsForCli(
     return { created: 0 };
   }
   const weekDays = 7;
-  const recentCount = proposalsDb.countRecentProposals(weekDays);
+  const separateSCQuota = cfg.personaProposals.separateSelfCorrectionQuota !== false;
+  const recentCount = proposalsDb.countRecentProposals(weekDays, {
+    excludeSelfCorrection: separateSCQuota,
+  });
   const limit = cfg.personaProposals.maxProposalsPerWeek;
   if (recentCount >= limit) {
     ctx.logger.warn?.(
-      `memory-hybrid: generate-proposals weekly cap reached (${recentCount}/${limit} in last ${weekDays}d); skipping creation`,
+      `memory-hybrid: generate-proposals weekly cap reached (${recentCount}/${limit} in last ${weekDays}d${separateSCQuota ? ", excluding self-correction" : ""}); skipping creation`,
     );
   }
   const minConf = cfg.personaProposals.minConfidence;
@@ -428,7 +433,7 @@ export async function runGenerateProposalsForCli(
     const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
     if (!suggestedChange.trim()) continue;
     if (opts.dryRun) {
-      if (opts.verbose) ctx.logger.info?.(`memory-hybrid: [dry-run] would create proposal: ${title} -> ${targetFile}`);
+      if (verbose) ctx.logger.info?.(`memory-hybrid: [dry-run] would create proposal: ${title} -> ${targetFile}`);
       created++;
       continue;
     }
@@ -445,7 +450,7 @@ export async function runGenerateProposalsForCli(
         targetHash: snapshot?.hash ?? null,
       });
       created++;
-      if (opts.verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
+      if (verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "cli",
@@ -463,7 +468,7 @@ export async function runGenerateProposalsForCli(
       model: allModels[0] ?? null,
       zeroReason: created === 0 ? (items.length === 0 ? "semantic_empty" : "filtered_or_capped") : null,
     });
-    if (opts.verbose) {
+    if (verbose) {
       ctx.logger.info?.(
         `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} created=${created}`,
       );

@@ -387,8 +387,8 @@ function reviewSelfCorrection(log: string): TaskQualityReview {
     .filter((l) => l.length > 10 && !/Batches|parse_success|Report:/.test(l))
     .slice(0, 3);
   samples.push(...proposals);
-  if (/failed_suspect_zero_parsed|failed_partial/i.test(log)) {
-    findings.push("Self-correction LLM parse failed or partial batch failure");
+  if (/failed_suspect_zero_parsed|failed_partial|failed_parse|\bstatus=failed\b/i.test(log)) {
+    findings.push("Self-correction analysis failed (parse, batch, or LLM error)");
   }
   if (incidents > 0 && analysed === 0) findings.push(`${incidents} incidents but zero analysed — parser or gate issue`);
 
