@@ -36,10 +36,7 @@ export const DEFAULT_MINIMAX_SELF_CORRECTION_BATCH_SIZE = 5;
 export const DEFAULT_SELF_CORRECTION_BATCH_SIZE = 25;
 export const DEFAULT_SELF_CORRECTION_BATCH_DELAY_MS = 250;
 
-export function resolveSelfCorrectionBatchSize(
-  model: string,
-  scCfg: { analysisBatchSize?: number },
-): number {
+export function resolveSelfCorrectionBatchSize(model: string, scCfg: { analysisBatchSize?: number }): number {
   if (typeof scCfg.analysisBatchSize === "number" && scCfg.analysisBatchSize >= 1) {
     return Math.floor(scCfg.analysisBatchSize);
   }
@@ -151,7 +148,6 @@ async function parseBatchContent(
 ): Promise<SelfCorrectionRemediationItem[] | null> {
   const parsed = parseSelfCorrectionLLMResponse(content);
   if (parsed !== null) return parsed as SelfCorrectionRemediationItem[];
-  if (content.trim().length === 0) return [];
   diagnostics.parseFailures++;
   try {
     const repaired = await deps.attemptAnalysisJsonRepair(content);
@@ -227,9 +223,7 @@ export async function analyzeSelfCorrectionIncidentBatchWithSplit(
   }
 
   const needsSplit =
-    allowSplit &&
-    batch.length > 1 &&
-    (finishReason === "length" || (batch.length > 0 && items.length < batch.length));
+    allowSplit && batch.length > 1 && (finishReason === "length" || (items.length > 0 && items.length < batch.length));
 
   if (needsSplit) {
     diagnostics.batchSplits++;
@@ -257,7 +251,8 @@ export async function analyzeSelfCorrectionIncidentBatchWithSplit(
     }
     return {
       items: [...leftResult.items, ...rightResult.items],
-      finishReason: leftResult.finishReason === "length" || rightResult.finishReason === "length" ? "length" : finishReason,
+      finishReason:
+        leftResult.finishReason === "length" || rightResult.finishReason === "length" ? "length" : finishReason,
       diagnostics,
     };
   }
