@@ -32,7 +32,7 @@ export type SelfCorrectionBatchAnalyzeResult = {
   diagnostics: SelfCorrectionBatchAnalyzeDiagnostics;
 };
 
-export const DEFAULT_MINIMAX_SELF_CORRECTION_BATCH_SIZE = 5;
+export const DEFAULT_MINIMAX_SELF_CORRECTION_BATCH_SIZE = 1;
 export const DEFAULT_SELF_CORRECTION_BATCH_SIZE = 25;
 export const DEFAULT_SELF_CORRECTION_BATCH_DELAY_MS = 250;
 

@@ -974,13 +974,12 @@ export async function runSelfCorrectionRunForCli(
       capturePluginError(e as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:llm-analysis" });
       const isParseFailure = (e as any).isParseFailure === true;
       const batchesCompleted = completedBatchIndexes.size;
-      const isPartial =
-        !isParseFailure && analysed.length > 0 && batchesCompleted < batches.length;
+      const isPartial = analysed.length > 0 && batchesCompleted < batches.length;
       let autoFixed = 0;
       let proposals: string[] = [];
       let toolsSuggestions: string[] | undefined;
       let toolsApplied: number | undefined;
-      if (!opts.dryRun && analysed.length > 0 && !isParseFailure) {
+      if (!opts.dryRun && analysed.length > 0) {
         const applied = await applySelfCorrectionRemediations({
           ctx,
           analysed,

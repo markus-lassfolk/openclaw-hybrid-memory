@@ -1646,6 +1646,16 @@
           "agentsRuleToProposals": {
             "type": "boolean",
             "description": "Write AGENTS_RULE remediations from self-correction to proposalsDB (default: true)"
+          },
+          "analysisBatchSize": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Number of incidents per LLM analysis batch (default: 1 for MiniMax/M3, 25 otherwise)"
+          },
+          "batchDelayMs": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Delay in milliseconds between analysis batches (default: 250)"
           }
         },
         "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
@@ -2001,6 +2011,18 @@
               "type": "string"
             },
             "description": "Provider ids to exclude from automatic LLM selection (e.g. openai, anthropic, google). Same as parseLLMConfig / hybrid-mem config-set."
+          },
+          "minimax": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "thinking": {
+                "type": "string",
+                "enum": ["disabled", "adaptive"],
+                "description": "MiniMax M3 thinking mode: 'adaptive' (provider default) or 'disabled' (skip thinking blocks for JSON extraction, default: disabled)"
+              }
+            },
+            "description": "MiniMax-specific LLM options (M3 thinking mode)"
           }
         },
         "description": "LLM model preference lists per tier (maintenance, default, heavy, nano)"
@@ -2070,6 +2092,22 @@
           "maxWallClockSeconds": {
             "type": "number",
             "description": "Maximum wall-clock seconds to spend in one run before deferring backlog (default: 300, 0 disables)"
+          },
+          "triggerSelfCorrectionRun": {
+            "type": "boolean",
+            "description": "Bridge negative implicit signals to self-correction (default: false)"
+          },
+          "selfCorrectionBridgeMaxIncidents": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Maximum implicit signals to bridge to self-correction per run (default: 5)"
+          },
+          "selfCorrectionBridgeMinConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum confidence threshold for bridging signals to self-correction (default: 0.7)"
           }
         },
         "description": "Implicit feedback detection and routing"

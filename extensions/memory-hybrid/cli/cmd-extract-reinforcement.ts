@@ -380,6 +380,8 @@ export async function runExtractReinforcementForCli(
           if (parsed !== null) {
             analysed.push(...(parsed as ReinforcementRemediation[]));
             diagnostics.parsedItems += parsed.length;
+            completedBatchIndexes.add(batchIndex);
+            persistBatchState();
           } else if (detail.content.trim().length > 0) {
             diagnostics.parseFailures++;
             llmAnalysisFailed = true;
@@ -389,12 +391,16 @@ export async function runExtractReinforcementForCli(
           } else {
             llmAnalysisFailed = true;
           }
-          completedBatchIndexes.add(batchIndex);
-          persistBatchState();
         }
 
         if (completedBatchIndexes.size === batches.length) {
           removeReinforcementBatchState(statePath);
+        }
+        if (incidentsForAnalysis.length > 0 && analysed.length === 0) {
+          llmAnalysisFailed = true;
+          logger.warn?.(
+            `memory-hybrid: extract-reinforcement suspect: ${incidentsForAnalysis.length} incident(s) but zero parsed remediations`,
+          );
         }
         analysisCategory = analysed.find((a) => a.category && a.remediationType !== "NO_ACTION")?.category;
       } catch (e) {
