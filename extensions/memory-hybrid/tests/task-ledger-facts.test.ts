@@ -1900,6 +1900,70 @@ it("consumePendingTaskSignalsFacts drops signals for terminal Failed tasks witho
   }
 });
 
+it("consumePendingTaskSignalsFacts replaces stale handoff with completed signal handoff", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-signal-complete-handoff-"));
+  const workspaceRoot = join(dir, "workspace");
+  const memoryDir = join(workspaceRoot, "memory");
+  await mkdir(memoryDir, { recursive: true });
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+  const handoff = JSON.stringify({
+    schema: "octave/task-handoff@v1",
+    artifactId: "complete-artifact",
+    signal: "update",
+    agent: "worker",
+    timestamp: now,
+    checksum: "abc123",
+  });
+
+  for (const [key, value] of [
+    ["title", "Completing task"],
+    ["status", "in_progress"],
+    ["task_updated", now],
+    ["started", now],
+    ["handoff", handoff],
+  ] as const) {
+    db.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "complete-handoff-task",
+      key,
+      value,
+      text: `Task [complete-handoff-task] ${key}: ${value}`,
+    });
+  }
+
+  try {
+    await writeTaskSignal(
+      "complete-handoff-task",
+      {
+        agent: "sub-1",
+        taskRef: "complete-handoff-task",
+        signal: "completed",
+        summary: "all done",
+        timestamp: now,
+      },
+      memoryDir,
+    );
+
+    await consumePendingTaskSignalsFacts(workspaceRoot, 60, false, db, vectorDb, embeddings);
+
+    const { active, completed } = loadTaskLedgerFromFacts(db);
+    expect(active.some((t) => t.label === "complete-handoff-task")).toBe(false);
+    const task = completed.find((t) => t.label === "complete-handoff-task");
+    expect(task?.status).toBe("Done");
+    expect(task?.handoff?.signal).toBe("completed");
+    expect(task?.handoff?.artifactId).not.toBe("complete-artifact");
+    expect(await readPendingSignals(memoryDir)).toHaveLength(0);
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 it("consumePendingTaskSignalsFacts drops completed signals for Done tasks in completed list", async () => {
   const dir = await mkdtemp(join(tmpdir(), "task-signal-done-"));
   const workspaceRoot = join(dir, "workspace");

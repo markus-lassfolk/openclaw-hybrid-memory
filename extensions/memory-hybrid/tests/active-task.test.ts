@@ -705,6 +705,25 @@ describe("completeTask", () => {
     const { completed } = completeTask(active, "task");
     expect(completed?.subagent).toBe("");
   });
+
+  it("clears stale handoff when marking Done", () => {
+    const active = [
+      makeEntry({
+        label: "task",
+        handoff: {
+          schema: "octave/task-handoff@v1",
+          artifactId: "artifact-1",
+          signal: "update",
+          agent: "worker",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          checksum: "abc123",
+        },
+      }),
+    ];
+    const { completed } = completeTask(active, "task");
+    expect(completed?.handoff).toBeUndefined();
+    expect("handoff" in (completed ?? {})).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

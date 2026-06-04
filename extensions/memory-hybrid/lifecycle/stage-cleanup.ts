@@ -207,17 +207,15 @@ async function consumePendingTaskSignals(
           const { updated, completed } = completeTask(updatedActive, existing.label);
           if (completed) {
             updatedActive = updated;
-            updatedCompleted.push({
+            const completedEntry: ActiveTaskEntry = {
               ...completed,
               updated: updatedTimestamp,
-              handoff: signal._handoff ?? completed.handoff,
-            });
+            };
+            if (signal._handoff) completedEntry.handoff = signal._handoff;
+            else clearActiveTaskHandoff(completedEntry);
+            updatedCompleted.push(completedEntry);
             processedSignals.push(signal);
-            completedToFlush.push({
-              ...completed,
-              updated: updatedTimestamp,
-              handoff: signal._handoff ?? completed.handoff,
-            });
+            completedToFlush.push(completedEntry);
           }
           continue;
         }

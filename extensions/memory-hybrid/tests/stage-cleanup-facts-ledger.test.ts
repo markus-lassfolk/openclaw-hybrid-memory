@@ -347,6 +347,26 @@ describe("stage-cleanup facts ledger subagent hooks", () => {
       { sessionKey: "agent:main:subagent:worker-1" },
     );
 
+    const doneAt = new Date().toISOString();
+    const handoff = JSON.stringify({
+      schema: "octave/task-handoff@v1",
+      artifactId: "done-artifact",
+      signal: "update",
+      agent: "worker",
+      timestamp: doneAt,
+      checksum: "abc123",
+    });
+    factsDb.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "done-clears-session",
+      key: "handoff",
+      value: handoff,
+      text: `Task [done-clears-session] handoff: ${handoff}`,
+    });
+
     await api.emitAll(
       "subagent_ended",
       {
@@ -362,6 +382,7 @@ describe("stage-cleanup facts ledger subagent hooks", () => {
     const task = completed.find((t) => t.label === "done-clears-session");
     expect(task?.status).toBe("Done");
     expect(task?.subagent).toBeUndefined();
+    expect(task?.handoff).toBeUndefined();
   });
 
   it("clears related_session when subagent_ended marks task Failed", async () => {

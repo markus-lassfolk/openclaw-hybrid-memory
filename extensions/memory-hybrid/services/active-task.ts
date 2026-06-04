@@ -564,6 +564,7 @@ export function completeTask(
     subagent: "",
     updated: new Date().toISOString(),
   };
+  clearActiveTaskHandoff(task);
   const updated = active.filter((_, i) => i !== idx);
   return { updated, completed: task };
 }
