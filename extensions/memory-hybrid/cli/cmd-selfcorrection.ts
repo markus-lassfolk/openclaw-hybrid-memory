@@ -350,6 +350,7 @@ async function applySelfCorrectionRemediations(params: {
           value: text.slice(0, 200),
           source: "self-correction",
           tags: Array.isArray(obj.tags) ? obj.tags : [],
+          suppressVectorFallbackWarning: true,
         });
         if (storeResult.skipped) continue;
         if (storeResult.newlyStored === false && !storeResult.embeddingStale) continue;

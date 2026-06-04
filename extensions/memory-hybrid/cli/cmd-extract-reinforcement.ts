@@ -659,6 +659,7 @@ export async function runExtractReinforcementForCli(
               value: text.slice(0, 200),
               source: "reinforcement-analysis",
               tags,
+              suppressVectorFallbackWarning: true,
             });
             if (storeResult.skipped) {
               continue;
@@ -751,6 +752,7 @@ export async function runExtractReinforcementForCli(
                   confidence: incident.confidence,
                   tags: ["reinforcement", "praise", "no-recall-ids"],
                   decayClass: "normal",
+                  suppressVectorFallbackWarning: true,
                 });
                 if (!storeResult.skipped && (storeResult.newlyStored || storeResult.embeddingStale)) {
                   annotated++;

@@ -77,7 +77,12 @@ const isEnoent = (err: unknown): boolean => (err as NodeJS.ErrnoException).code 
  * and `.deleted*` tombstones (same convention as procedure-extractor).
  */
 export function isPassiveObserverTranscriptCandidate(basename: string): boolean {
-  return basename.endsWith(".jsonl") && !basename.startsWith(".deleted") && !basename.includes(".checkpoint.");
+  return (
+    basename.endsWith(".jsonl") &&
+    !basename.startsWith(".deleted") &&
+    !basename.includes(".checkpoint.") &&
+    !basename.includes(".trajectory.")
+  );
 }
 
 // ---------------------------------------------------------------------------

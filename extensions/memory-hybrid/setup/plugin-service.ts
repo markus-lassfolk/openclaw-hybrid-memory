@@ -788,23 +788,49 @@ export function createPluginService(ctx: PluginServiceContext) {
           try {
             const { spawn } = await import("node:child_process");
 
+            const openclawBin = process.env.OPENCLAW_BIN?.trim() || "openclaw";
+            const postUpgradeCliTimeoutMs = 600_000;
+
+            const summarizeCliFailure = (stderr: string, stdout: string): string => {
+              const lines = `${stdout}\n${stderr}`
+                .split("\n")
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .filter(
+                  (l) =>
+                    !l.includes("Credentials vault is in plaintext mode") &&
+                    !l.includes("credentials vault enabled (plaintext") &&
+                    !l.includes("duplicate plugin id detected") &&
+                    !l.includes("registerContextEngine not found"),
+                );
+              const tail = lines.slice(-3).join(" | ");
+              return tail || "(no actionable output; see gateway logs)";
+            };
+
             // Helper to run CLI commands asynchronously (non-blocking)
             const runCli = async (args: string[]): Promise<boolean> => {
               return new Promise((resolve) => {
-                const child = spawn("openclaw", ["hybrid-mem", ...args], {
+                const child = spawn(openclawBin, ["hybrid-mem", ...args], {
                   cwd: homedir(),
                   stdio: ["ignore", "pipe", "pipe"],
-                  timeout: 120_000,
+                  timeout: postUpgradeCliTimeoutMs,
+                  env: process.env,
                 });
 
                 let stderr = "";
+                let stdout = "";
                 child.stderr?.on("data", (chunk) => {
                   stderr += chunk.toString();
                 });
+                child.stdout?.on("data", (chunk) => {
+                  stdout += chunk.toString();
+                });
 
                 child.on("close", (code) => {
-                  if (code !== 0 && stderr) {
-                    api.logger.warn?.(`memory-hybrid: post-upgrade ${args[0]} failed: ${stderr.slice(0, 200)}`);
+                  if (code !== 0) {
+                    api.logger.warn?.(
+                      `memory-hybrid: post-upgrade ${args[0]} failed (exit ${code ?? "?"}): ${summarizeCliFailure(stderr, stdout)}`,
+                    );
                   }
                   resolve(code === 0);
                 });
@@ -818,12 +844,12 @@ export function createPluginService(ctx: PluginServiceContext) {
 
             const langPath = getLanguageKeywordsFilePath();
             if (langPath && !existsSync(langPath)) await runCli(["build-languages"]);
-            await runCli(["self-correction-run"]);
+            await runCli(["self-correction-run", "--force"]);
             if (cfg.reflection.enabled) {
-              await runCli(["reflect", "--window", String(cfg.reflection.defaultWindow)]);
-              await runCli(["reflect-rules"]);
+              await runCli(["reflect", "--window", String(cfg.reflection.defaultWindow), "--force"]);
+              await runCli(["reflect-rules", "--force"]);
             }
-            await runCli(["extract-procedures"]);
+            await runCli(["extract-procedures", "--force"]);
             await runCli(["generate-auto-skills"]);
             writeFileSync(versionFile, versionInfo.pluginVersion, "utf-8");
             api.logger.info("memory-hybrid: post-upgrade pipeline done.");
