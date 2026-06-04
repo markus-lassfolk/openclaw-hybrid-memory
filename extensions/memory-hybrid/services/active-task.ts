@@ -561,6 +561,7 @@ export function completeTask(
   const task: ActiveTaskEntry = {
     ...active[idx],
     status: "Done",
+    subagent: "",
     updated: new Date().toISOString(),
   };
   const updated = active.filter((_, i) => i !== idx);

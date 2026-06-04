@@ -1349,7 +1349,7 @@ export async function applyActiveTaskHygieneFacts(
         status: "Done",
         updated: runAt,
         next: action.reason,
-        subagent: action.kind === "dead-session" ? "" : task.subagent,
+        subagent: "",
       };
       await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log, {
         statusOverride: action.toStatus,

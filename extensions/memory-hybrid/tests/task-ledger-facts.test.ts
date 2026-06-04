@@ -480,7 +480,13 @@ describe("task-ledger-facts", () => {
       );
       storeTask("proj-1273-b", "Issue 1273 Active Task Hygiene", "waiting", freshIso);
       storeTask("proj-1273-copy", "Issue 1273 active task hygiene", "waiting", freshIso);
-      storeTask("stale-failure", "Failed run", "failed", staleIso);
+      storeTask(
+        "stale-failure",
+        "Failed run",
+        "failed",
+        staleIso,
+        "agent:forge:subagent:stale-fail",
+      );
 
       const plan = await planActiveTaskHygiene(loadTaskLedgerFromFacts(db).active, {
         olderThanMinutes: 60,
@@ -494,6 +500,7 @@ describe("task-ledger-facts", () => {
       expect(active.some((t) => t.label === "proj-1273-copy")).toBe(false);
       expect(completed.some((t) => t.label === "proj-1273-copy")).toBe(true);
       expect(completed.some((t) => t.label === "stale-failure")).toBe(true);
+      expect(completed.find((t) => t.label === "stale-failure")?.subagent).toBeUndefined();
 
       const projectRows = groupProjectFactsByEntity(db.listFactsByCategory("project", 1000));
       expect(projectRows.get("proj-1273-copy")?.get("status")?.value).toBe("superseded");

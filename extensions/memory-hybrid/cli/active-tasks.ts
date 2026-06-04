@@ -289,7 +289,7 @@ export async function runActiveTaskAdd(
       description: opts.description,
       status,
       branch: opts.branch ?? existing?.branch,
-      subagent: opts.subagent ?? existing?.subagent,
+      subagent: opts.subagent ?? (status === "Done" ? "" : existing?.subagent),
       next: opts.next ?? existing?.next,
       stashCommit: existing?.stashCommit,
       handoff: existing?.handoff,
@@ -328,7 +328,7 @@ export async function runActiveTaskAdd(
     description: opts.description,
     status,
     branch: opts.branch ?? existing?.branch,
-    subagent: opts.subagent ?? existing?.subagent,
+    subagent: opts.subagent ?? (status === "Done" ? "" : existing?.subagent),
     next: opts.next ?? existing?.next,
     stashCommit: existing?.stashCommit,
     started: existing?.started ?? now,
@@ -460,7 +460,7 @@ export async function runActiveTaskHygiene(
       status: "Done",
       updated: now,
       next: action.reason,
-      subagent: action.kind === "dead-session" ? "" : task.subagent,
+      subagent: "",
     };
     newCompleted.push(completedEntry);
     toFlush.push(completedEntry);

@@ -699,6 +699,12 @@ describe("completeTask", () => {
     const { completed } = completeTask(active, "task");
     expect(completed?.updated >= before).toBe(true);
   });
+
+  it("clears subagent session ref when marking Done", () => {
+    const active = [makeEntry({ label: "task", subagent: "agent:forge:subagent:abc" })];
+    const { completed } = completeTask(active, "task");
+    expect(completed?.subagent).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1087,6 +1093,23 @@ describe("runActiveTaskAdd", () => {
     expect(taskFile?.active).toHaveLength(1);
     expect(taskFile?.active[0].description).toBe("Updated description");
     expect(taskFile?.active[0].next).toBe("new next");
+  });
+
+  it("clears subagent when upserting status to Done", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [makeEntry({ label: "finish-me", subagent: "agent:forge:subagent:old", status: "In progress" })],
+      [],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "finish-me",
+      description: "Finished work",
+      status: "Done",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(0);
+    expect(taskFile?.completed).toHaveLength(1);
+    expect(taskFile?.completed[0].subagent).toBeUndefined();
   });
 
   it("rejects invalid status gracefully (falls back to In progress)", async () => {
