@@ -323,6 +323,97 @@ describe("MiniMax provider routing — direct API key", () => {
     expect((minimaxCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-cp-bare-prefix-test");
   });
 
+
+  it("records bare MiniMax alias costs under minimax instead of bogus openai/minimax on failure", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["minimax"],
+        heavy: ["minimax"],
+        providers: {
+          minimax: { apiKey: "sk-cp-cost-bare-minimax" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "minimax",
+      messages: [{ role: "user", content: "create MiniMax client" }],
+    });
+
+    const minimaxClientIdx = MockOpenAI.mock.calls.findIndex(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === MINIMAX_BASE_URL,
+    );
+    expect(minimaxClientIdx).toBeGreaterThanOrEqual(0);
+    const minimaxInstance = MockOpenAI.mock.results[minimaxClientIdx];
+    expect(minimaxInstance?.type).toBe("return");
+    const instance = minimaxInstance?.value as { chat: { completions: { create: ReturnType<typeof vi.fn> } } };
+    instance.chat.completions.create.mockRejectedValueOnce(new Error("simulated MiniMax failure"));
+
+    await expect(
+      ctx.openai.chat.completions.create({
+        model: "minimax",
+        messages: [{ role: "user", content: "cost failure regression" }],
+      }),
+    ).rejects.toThrow("simulated MiniMax failure");
+
+    const row = ctx.factsDb
+      .getRawDb()
+      .prepare("SELECT model, success FROM llm_cost_log ORDER BY id DESC LIMIT 1")
+      .get() as { model: string; success: number } | undefined;
+    expect(row).toEqual({ model: "minimax/MiniMax-M2.7", success: 0 });
+  });
+
+  it("canonicalizes MiniMax and OpenAI model labels for cost tracking", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        default: ["minimax/MiniMax-M2.7"],
+        heavy: ["minimax/MiniMax-M2.7"],
+        providers: {
+          minimax: { apiKey: "sk-cp-cost-canonical-minimax" },
+          openai: { apiKey: "sk-cp-cost-canonical-openai" },
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "minimax-M2.7",
+      messages: [{ role: "user", content: "bare prefixed MiniMax" }],
+    });
+    await ctx.openai.chat.completions.create({
+      model: "minimax/MiniMax-M2.7",
+      messages: [{ role: "user", content: "explicit MiniMax" }],
+    });
+    await ctx.openai.chat.completions.create({
+      model: "gpt-4.1-mini",
+      messages: [{ role: "user", content: "bare OpenAI gpt" }],
+    });
+    await ctx.openai.chat.completions.create({
+      model: "o3-mini",
+      messages: [{ role: "user", content: "bare OpenAI o-series" }],
+    });
+
+    const rows = ctx.factsDb
+      .getRawDb()
+      .prepare("SELECT model FROM llm_cost_log ORDER BY id ASC")
+      .all() as Array<{ model: string }> | undefined;
+    expect(rows?.map((r) => r.model)).toEqual([
+      "minimax/MiniMax-M2.7",
+      "minimax/MiniMax-M2.7",
+      "openai/gpt-4.1-mini",
+      "openai/o3-mini",
+    ]);
+  });
+
   it("normalizes Ollama-style 'minimax-m2.5:cloud' to MiniMax-M2.5 and routes to MINIMAX_BASE_URL (issue #400)", async () => {
     // Users may inadvertently configure an Ollama-style model tag (e.g. "minimax-m2.5:cloud")
     // when setting up MiniMax. The normalizeModelId / canonicalizeMiniMaxModelId helpers must

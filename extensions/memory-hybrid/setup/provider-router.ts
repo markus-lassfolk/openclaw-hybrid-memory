@@ -457,6 +457,8 @@ export const MINIMAX_BASE_URL = "https://api.minimax.io/v1";
  * and that would otherwise produce a 404 from the MiniMax API (issue #400).
  */
 const MINIMAX_MODEL_ALIASES: Record<string, string> = {
+  minimax: "MiniMax-M2.7",
+  "minimax-m2.7": "MiniMax-M2.7",
   "minimax-m2.5": "MiniMax-M2.5",
   "minimax-text-01": "MiniMax-Text-01",
 };
@@ -675,7 +677,7 @@ export function buildMultiProviderOpenAI(
     if (lower.startsWith("gemini-")) return `google/${trimmed}`;
     if (lower.startsWith("claude-")) return `anthropic/${trimmed}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${trimmed}`;
-    if (lower.startsWith("minimax-")) return `minimax/${canonicalizeMiniMaxModelId(trimmed)}`;
+    if (lower === "minimax" || lower.startsWith("minimax-")) return `minimax/${canonicalizeMiniMaxModelId(trimmed)}`;
     return trimmed;
   }
 
@@ -691,7 +693,7 @@ export function buildMultiProviderOpenAI(
     if (lower.startsWith("gemini-")) return `google/${bare}`;
     if (lower.startsWith("claude-")) return `anthropic/${bare}`;
     if (lower.startsWith("gpt-") || /^o[0-9]+/.test(lower)) return `openai/${bare}`;
-    if (lower.startsWith("minimax-")) return `minimax/${canonicalizeMiniMaxModelId(bare)}`;
+    if (lower === "minimax" || lower.startsWith("minimax-")) return `minimax/${canonicalizeMiniMaxModelId(bare)}`;
     return trimmed.includes("/") ? trimmed : `openai/${trimmed}`;
   }
 
@@ -947,7 +949,7 @@ export function buildMultiProviderOpenAI(
   function trackCost(promise: Promise<unknown>, body: Record<string, unknown>, model: string, start: number): void {
     if (!costTracker) return;
     const feature = inferFeatureLabel(body, model);
-    const normalizedModel = canonicalModelIdForCost(model.includes("/") ? model : `openai/${model.trim()}`);
+    const normalizedModel = canonicalModelIdForCost(model);
     void Promise.resolve(promise).then(
       (resp: unknown) => {
         try {
