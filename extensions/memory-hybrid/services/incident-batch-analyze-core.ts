@@ -2,7 +2,7 @@ import type OpenAI from "openai";
 
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
 import { maintenanceMaxOutputTokens, type MiniMaxThinkingMode } from "./chat.js";
-import { checkBatchRemediationCoverage } from "./batch-incident-analysis.js";
+import { checkBatchRemediationCoverage, mergeSplitBatchItemsWithOffset } from "./batch-incident-analysis.js";
 import type { CostFeature } from "./cost-feature-labels.js";
 import { estimateTokens } from "../utils/text.js";
 
@@ -75,14 +75,14 @@ async function callBatchAnalyzeLlm<TIncident>(
   maxTokensOverride: number | undefined,
   diagnostics: IncidentBatchAnalyzeDiagnostics,
 ): Promise<IncidentBatchLlmResult> {
-  if (deps.llmCall) {
-    return deps.llmCall(batch, batchLabel, maxTokensOverride);
-  }
-  const prompt = deps.buildPrompt(batch);
-  const effectiveMaxTokens = maxTokensOverride ?? deps.maxTokens;
   let lastError: unknown;
   for (let attempt = 1; attempt <= 4; attempt++) {
     try {
+      if (deps.llmCall) {
+        return await deps.llmCall(batch, batchLabel, maxTokensOverride);
+      }
+      const prompt = deps.buildPrompt(batch);
+      const effectiveMaxTokens = maxTokensOverride ?? deps.maxTokens;
       deps.logger.info?.(
         `memory-hybrid: incident-batch ${batchLabel}: attempt ${attempt}/4 model=${deps.model} inputTokens≈${estimateTokens(prompt)} maxTokens=${effectiveMaxTokens} thinking=${deps.thinkingMode}`,
       );
@@ -148,7 +148,8 @@ function rejectIncompleteBatch<TItem>(
 }
 
 /**
- * Analyze a batch of incidents with auto-split on under-coverage, zero parse, or output truncation.
+ * Analyze a batch of incidents with auto-split on under-coverage or output truncation.
+ * Multi-incident batches that parse as [] are auto-split; leaf under-coverage is rejected.
  */
 export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
   deps: IncidentBatchAnalyzeDeps<TItem, TIncident> & {
@@ -207,13 +208,17 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
         finishReason = retried.finishReason;
         content = retried.content;
       }
+    } else if (isTruncated) {
+      deps.logger.info?.(
+        `memory-hybrid: incident-batch ${batchLabel}: output truncated at maintenance catalog cap (maxTokens=${deps.maxTokens}); will auto-split if needed`,
+      );
     }
   }
 
   const needsSplit =
     allowSplit &&
     batch.length > 1 &&
-    (finishReason === "length" || (items.length > 0 && items.length < batch.length));
+    (finishReason === "length" || items.length < batch.length);
 
   if (needsSplit) {
     diagnostics.batchSplits++;
@@ -239,7 +244,11 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
         diagnostics,
       };
     }
-    const merged = [...leftResult.items, ...rightResult.items];
+    const merged = mergeSplitBatchItemsWithOffset(
+      leftResult.items as Array<Record<string, unknown>>,
+      rightResult.items as Array<Record<string, unknown>>,
+      left.length,
+    ) as TItem[];
     const rejected = rejectIncompleteBatch(batch.length, merged, finishReason, content, diagnostics, batchLabel, deps.logger);
     if (rejected) return rejected;
     return {

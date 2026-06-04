@@ -73,6 +73,11 @@ type AnalyzeDeps = {
     items: ReinforcementRemediationItem[] | null;
     fallbacks: number;
   }>;
+  llmCall?: (
+    batch: ReinforcementIncident[],
+    batchLabel: string,
+    maxTokensOverride?: number,
+  ) => Promise<ReinforcementBatchLlmResult>;
 };
 
 async function parseBatchContent(
@@ -82,14 +87,15 @@ async function parseBatchContent(
 ): Promise<ReinforcementRemediationItem[] | null> {
   const parsed = parseStructuredItemsAcceptingEmpty(content, isReinforcementRemediationItem);
   if (parsed !== null) return parsed as ReinforcementRemediationItem[];
-  diagnostics.parseFailures++;
   try {
     const repaired = await deps.attemptAnalysisJsonRepair(content);
     diagnostics.fallbacks += repaired.fallbacks;
-    return repaired.items;
+    if (repaired.items !== null) return repaired.items;
   } catch {
     return null;
   }
+  diagnostics.parseFailures++;
+  return null;
 }
 
 export async function analyzeReinforcementIncidentBatchWithSplit(
@@ -98,6 +104,7 @@ export async function analyzeReinforcementIncidentBatchWithSplit(
     allowBudgetBump?: boolean;
     depth?: number;
     batchLabel?: string;
+    llmCall?: AnalyzeDeps["llmCall"];
   },
   batch: ReinforcementIncident[],
 ): Promise<ReinforcementBatchAnalyzeResult> {

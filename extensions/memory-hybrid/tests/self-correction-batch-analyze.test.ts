@@ -65,14 +65,8 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
     vi.restoreAllMocks();
   });
 
-  it("does not auto-split when a multi-incident batch parses as a valid empty array", async () => {
-    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
-      content: "[]",
-      modelUsed: "test-model",
-      finishReason: "stop",
-      attemptChain: ["test-model"],
-    });
-
+  it("auto-splits when a multi-incident batch parses as a valid empty array", async () => {
+    const llmCalls: number[] = [];
     const incidents = Array.from({ length: 4 }, (_, i) => ({
       ...SAMPLE_INCIDENT,
       userMessage: `#${i}`,
@@ -89,11 +83,23 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
         adaptiveEnabled: false,
         logger: {},
         attemptAnalysisJsonRepair: vi.fn(),
+        llmCall: async (batch) => {
+          llmCalls.push(batch.length);
+          if (batch.length > 1) {
+            return { content: "[]", fallbacks: 0, finishReason: "stop" };
+          }
+          return {
+            content: JSON.stringify([{ ...SAMPLE_ITEM, incidentIndex: 0 }]),
+            fallbacks: 0,
+            finishReason: "stop",
+          };
+        },
       },
       incidents,
     );
-    expect(result.diagnostics.batchSplits).toBe(0);
-    expect(result.items).toBeNull();
+    expect(llmCalls.length).toBeGreaterThan(1);
+    expect(result.diagnostics.batchSplits).toBeGreaterThan(0);
+    expect(result.items?.length).toBe(4);
   });
 
   it("auto-splits when parsed count is below incident count", async () => {
@@ -147,6 +153,80 @@ describe("analyzeSelfCorrectionIncidentBatchWithSplit", () => {
     expect(result.items).toBeNull();
     expect(result.diagnostics.parseFailures).toBeGreaterThan(0);
     expect(attemptAnalysisJsonRepair).toHaveBeenCalled();
+  });
+
+  it("does not increment parseFailures when JSON repair succeeds", async () => {
+    const attemptAnalysisJsonRepair = vi.fn(async () => ({
+      items: [
+        { ...SAMPLE_ITEM, incidentIndex: 0 },
+        { ...SAMPLE_ITEM, incidentIndex: 1 },
+      ],
+      fallbacks: 0,
+    }));
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "not valid json",
+      modelUsed: "test-model",
+      finishReason: "stop",
+      attemptChain: ["test-model"],
+    });
+
+    const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+      {
+        model: "test-model",
+        modelSource: "test",
+        openai: {} as any,
+        scFallbackModels: [],
+        maxTokens: 8000,
+        thinkingMode: "disabled",
+        adaptiveEnabled: false,
+        logger: {},
+        attemptAnalysisJsonRepair,
+      },
+      [SAMPLE_INCIDENT, { ...SAMPLE_INCIDENT, sessionFile: "b.jsonl" }],
+    );
+
+    expect(result.items?.length).toBe(2);
+    expect(result.diagnostics.parseFailures).toBe(0);
+    expect(attemptAnalysisJsonRepair).toHaveBeenCalled();
+  });
+
+  it("normalizes incidentIndex after auto-split merge", async () => {
+    const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
+      {
+        model: "test-model",
+        modelSource: "test",
+        openai: {} as any,
+        scFallbackModels: [],
+        maxTokens: 8000,
+        thinkingMode: "disabled",
+        adaptiveEnabled: false,
+        logger: {},
+        attemptAnalysisJsonRepair: vi.fn(),
+        llmCall: async (batch) => {
+          if (batch.length > 1) {
+            return {
+              content: JSON.stringify([{ ...SAMPLE_ITEM, incidentIndex: 0 }]),
+              fallbacks: 0,
+              finishReason: "length",
+            };
+          }
+          return {
+            content: JSON.stringify([{ ...SAMPLE_ITEM, incidentIndex: 0 }]),
+            fallbacks: 0,
+            finishReason: "stop",
+          };
+        },
+      },
+      Array.from({ length: 4 }, (_, i) => ({
+        ...SAMPLE_INCIDENT,
+        userMessage: `#${i}`,
+        sessionFile: `s-${i}.jsonl`,
+      })),
+    );
+
+    expect(result.diagnostics.batchSplits).toBeGreaterThan(0);
+    expect(result.items?.length).toBe(4);
+    expect(result.items?.map((item) => item.incidentIndex).sort()).toEqual([0, 1, 2, 3]);
   });
 
   it("uses llmCall override for split sub-batches", async () => {

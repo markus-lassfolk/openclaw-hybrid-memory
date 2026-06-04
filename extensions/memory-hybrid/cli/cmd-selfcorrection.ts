@@ -20,6 +20,7 @@ import { maintenanceMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import {
+  appendUniqueRemediationsByIncidentIndex,
   attachOrderedItemsToIncidents,
   globalIncidentOffsetForBatch,
   orderBatchItemsByIncidentIndex,
@@ -946,8 +947,8 @@ export async function runSelfCorrectionRunForCli(
         }
 
         const attached = attachOrderedItemsToIncidents(batch, ordered, globalIncidentOffset);
-        diagnostics.parsedItems += attached.length;
-        analysed.push(...attached);
+        const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
+        diagnostics.parsedItems += added;
         completedBatchIndexes.add(batchIndex);
         logger.info?.(`memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${attached.length}`);
         persistBatchState();

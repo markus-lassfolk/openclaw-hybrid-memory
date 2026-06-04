@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  appendUniqueRemediationsByIncidentIndex,
   attachOrderedItemsToIncidents,
   globalIncidentOffsetForBatch,
+  mergeSplitBatchItemsWithOffset,
   orderBatchItemsByIncidentIndex,
   resolveIncidentIndexInBatch,
   serializeIncidentsForBatchPrompt,
@@ -42,6 +44,55 @@ describe("batch-incident-analysis", () => {
         { incidentIndex: 2, remediationType: "NO_ACTION" },
       ]),
     ).toBeNull();
+  });
+
+  it("orderBatchItemsByIncidentIndex returns null on duplicate incidentIndex", () => {
+    expect(
+      orderBatchItemsByIncidentIndex(4, [
+        { incidentIndex: 0, remediationType: "NO_ACTION" },
+        { incidentIndex: 0, remediationType: "TOOLS_RULE" },
+        { incidentIndex: 1, remediationType: "NO_ACTION" },
+        { incidentIndex: 2, remediationType: "NO_ACTION" },
+      ]),
+    ).toBeNull();
+  });
+
+  it("orderBatchItemsByIncidentIndex returns null when too many items are returned", () => {
+    expect(
+      orderBatchItemsByIncidentIndex(2, [
+        { incidentIndex: 0, remediationType: "NO_ACTION" },
+        { incidentIndex: 1, remediationType: "NO_ACTION" },
+        { incidentIndex: 0, remediationType: "TOOLS_RULE" },
+      ]),
+    ).toBeNull();
+  });
+
+  it("mergeSplitBatchItemsWithOffset re-bases sub-batch indices to parent coordinates", () => {
+    const merged = mergeSplitBatchItemsWithOffset(
+      [
+        { incidentIndex: 1, remediationType: "A" },
+        { incidentIndex: 0, remediationType: "B" },
+      ],
+      [
+        { incidentIndex: 1, remediationType: "C" },
+        { incidentIndex: 0, remediationType: "D" },
+      ],
+      2,
+    );
+    expect(merged.map((i) => i.incidentIndex)).toEqual([1, 0, 3, 2]);
+  });
+
+  it("appendUniqueRemediationsByIncidentIndex skips duplicate incidentIndex on resume", () => {
+    const analysed: { incidentIndex: number; remediationType: string }[] = [
+      { incidentIndex: 0, remediationType: "NO_ACTION" },
+    ];
+    const added = appendUniqueRemediationsByIncidentIndex(analysed, [
+      { incidentIndex: 0, remediationType: "TOOLS_RULE" },
+      { incidentIndex: 1, remediationType: "NO_ACTION" },
+    ]);
+    expect(added).toBe(1);
+    expect(analysed.map((i) => i.incidentIndex)).toEqual([0, 1]);
+    expect(analysed[1].remediationType).toBe("NO_ACTION");
   });
 
   it("attachOrderedItemsToIncidents applies global offset and strips metadata", () => {

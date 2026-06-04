@@ -4,20 +4,13 @@
 
 const INCIDENT_INDEX_FIELD = "incidentIndex";
 
-export type BatchCoverageFailureReason = "zero_parsed" | "under_coverage";
+export type BatchCoverageFailureReason = "zero_parsed" | "under_coverage" | "over_coverage";
 
 export type BatchCoverageResult =
   | { ok: true }
   | { ok: false; reason: BatchCoverageFailureReason; expected: number; parsed: number };
 
 /** Serialize incidents for the analyze prompt with stable 0-based indices. */
-/** Sum incident counts for all batches before `batchIndex` (stable on resume). */
-export function globalIncidentOffsetForBatch(batches: { length: number }[], batchIndex: number): number {
-  let offset = 0;
-  for (let i = 0; i < batchIndex; i++) offset += batches[i]?.length ?? 0;
-  return offset;
-}
-
 export function serializeIncidentsForBatchPrompt<T extends Record<string, unknown>>(batch: T[]): string {
   return JSON.stringify(
     batch.map((incident, incidentIndex) => ({
@@ -27,7 +20,14 @@ export function serializeIncidentsForBatchPrompt<T extends Record<string, unknow
   );
 }
 
-/** Resolve 0-based incident index from model output; falls back to array position. */
+/** Sum incident counts for all batches before `batchIndex` (stable on resume). */
+export function globalIncidentOffsetForBatch(batches: { length: number }[], batchIndex: number): number {
+  let offset = 0;
+  for (let i = 0; i < batchIndex; i++) offset += batches[i]?.length ?? 0;
+  return offset;
+}
+
+/** Resolve 0-based incident index from model output; falls back to array position when absent. */
 export function resolveIncidentIndexInBatch(
   item: Record<string, unknown>,
   itemPosition: number,
@@ -57,6 +57,9 @@ export function checkBatchRemediationCoverage(batchLength: number, parsedCount: 
   if (parsedCount < batchLength) {
     return { ok: false, reason: "under_coverage", expected: batchLength, parsed: parsedCount };
   }
+  if (parsedCount > batchLength) {
+    return { ok: false, reason: "over_coverage", expected: batchLength, parsed: parsedCount };
+  }
   return { ok: true };
 }
 
@@ -67,7 +70,8 @@ export type OrderedBatchItems<T> = {
 };
 
 /**
- * Place items into incident slots using incidentIndex; drop extras; fail if any slot stays empty.
+ * Place items into incident slots using incidentIndex.
+ * Fails when any slot is missing, indices collide, or item count exceeds batch length.
  */
 export function orderBatchItemsByIncidentIndex<T extends Record<string, unknown>>(
   batchLength: number,
@@ -77,31 +81,25 @@ export function orderBatchItemsByIncidentIndex<T extends Record<string, unknown>
   if (batchLength === 0) return { items: [], batchIndices: [] };
   if (items.length === 0) return null;
 
-  const slots: Array<T | null> = Array.from({ length: batchLength }, () => null);
-  const overflow: T[] = [];
-
-  items.forEach((item, position) => {
-    const idx = resolveIncidentIndexInBatch(item, position, batchLength);
-    if (slots[idx] === null) {
-      slots[idx] = item;
-    } else {
-      overflow.push(item);
-    }
-  });
-
-  for (const item of overflow) {
-    const emptySlot = slots.findIndex((slot) => slot === null);
-    if (emptySlot < 0) break;
-    logger?.warn?.(
-      `memory-hybrid: batch analysis duplicate incidentIndex; assigning overflow item to slot ${emptySlot}`,
-    );
-    slots[emptySlot] = item;
-  }
-
   if (items.length > batchLength) {
     logger?.warn?.(
-      `memory-hybrid: batch analysis dropping ${items.length - batchLength} extra item(s) beyond incident count`,
+      `memory-hybrid: batch analysis too many items: expected=${batchLength} parsed=${items.length}`,
     );
+    return null;
+  }
+
+  const slots: Array<T | null> = Array.from({ length: batchLength }, () => null);
+
+  for (let position = 0; position < items.length; position++) {
+    const item = items[position]!;
+    const idx = resolveIncidentIndexInBatch(item, position, batchLength);
+    if (slots[idx] !== null) {
+      logger?.warn?.(
+        `memory-hybrid: batch analysis duplicate incidentIndex=${idx}; rejecting batch`,
+      );
+      return null;
+    }
+    slots[idx] = item;
   }
 
   const emptySlots = slots.map((slot, i) => (slot === null ? i : -1)).filter((i) => i >= 0);
@@ -116,9 +114,49 @@ export function orderBatchItemsByIncidentIndex<T extends Record<string, unknown>
   return { items: ordered, batchIndices };
 }
 
+/**
+ * Merge split sub-batch results with incidentIndex re-based to parent batch coordinates.
+ */
+export function mergeSplitBatchItemsWithOffset<T extends Record<string, unknown>>(
+  leftItems: T[],
+  rightItems: T[],
+  leftBatchSize: number,
+): T[] {
+  const normalize = (batchItems: T[], baseOffset: number, subBatchSize: number) =>
+    batchItems.map((item, position) => {
+      const localIdx = resolveIncidentIndexInBatch(item, position, subBatchSize);
+      return { ...item, [INCIDENT_INDEX_FIELD]: baseOffset + localIdx };
+    });
+  return [
+    ...normalize(leftItems, 0, leftBatchSize),
+    ...normalize(rightItems, leftBatchSize, rightItems.length),
+  ];
+}
+
 export function stripBatchMetadataFromItem<T extends Record<string, unknown>>(item: T): Omit<T, "incidentIndex" | "incident_index" | "_batchIndex"> {
   const { [INCIDENT_INDEX_FIELD]: _a, incident_index: _b, _batchIndex: _c, ...rest } = item;
   return rest as Omit<T, "incidentIndex" | "incident_index" | "_batchIndex">;
+}
+
+/** Append remediations, skipping duplicate global incidentIndex values (safe on batch resume). */
+export function appendUniqueRemediationsByIncidentIndex<T extends { incidentIndex?: number }>(
+  target: T[],
+  incoming: T[],
+): number {
+  const seen = new Set(
+    target.map((item) => item.incidentIndex).filter((idx): idx is number => typeof idx === "number"),
+  );
+  let added = 0;
+  for (const item of incoming) {
+    const idx = item.incidentIndex;
+    if (typeof idx === "number") {
+      if (seen.has(idx)) continue;
+      seen.add(idx);
+    }
+    target.push(item);
+    added++;
+  }
+  return added;
 }
 
 export function attachOrderedItemsToIncidents<TIncident, TItem extends Record<string, unknown>>(

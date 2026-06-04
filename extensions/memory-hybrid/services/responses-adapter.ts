@@ -152,6 +152,7 @@ export function chatMessagesToResponsesInput(messages: unknown): ResponsesInputI
     const msg = m as { role?: string; content?: unknown };
     const rawRole = (msg.role ?? "user").toLowerCase();
     const text = chatMessageContentToString(msg.content);
+    if (!text.trim()) continue;
     if (rawRole === "tool") {
       out.push({ role: "user", content: `[tool result]\n${text}` });
       continue;

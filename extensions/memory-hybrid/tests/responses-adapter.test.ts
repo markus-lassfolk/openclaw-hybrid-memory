@@ -241,6 +241,16 @@ describe("chatMessagesToResponsesInput", () => {
       { role: "user", content: "[tool result]\nresult" },
     ]);
   });
+
+  it("omits messages whose string content is empty or whitespace-only", () => {
+    expect(
+      chatMessagesToResponsesInput([
+        { role: "system", content: "   " },
+        { role: "user", content: "Hi" },
+        { role: "assistant", content: "" },
+      ]),
+    ).toEqual([{ role: "user", content: "Hi" }]);
+  });
 });
 
 describe("buildResponsesRequestFromChatBody", () => {

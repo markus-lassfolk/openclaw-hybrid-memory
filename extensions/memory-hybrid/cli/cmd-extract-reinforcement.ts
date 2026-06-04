@@ -11,6 +11,7 @@ import {
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import {
+  appendUniqueRemediationsByIncidentIndex,
   attachOrderedItemsToIncidents,
   globalIncidentOffsetForBatch,
   orderBatchItemsByIncidentIndex,
@@ -408,8 +409,14 @@ export async function runExtractReinforcementForCli(
               : undefined,
           logger,
           attemptAnalysisJsonRepair,
+          onTransientRetry: (info: { attempt: number; delayMs: number; error: Error }) => {
+            logger.warn?.(
+              `memory-hybrid: extract-reinforcement batch attempt ${info.attempt} failed: ${String(info.error).slice(0, 240)}; retrying in ${info.delayMs}ms`,
+            );
+          },
         };
 
+        let failedBatchCount = 0;
         for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
           if (completedBatchIndexes.has(batchIndex)) continue;
           const batch = batches[batchIndex];
@@ -427,6 +434,7 @@ export async function runExtractReinforcementForCli(
 
           if (result.items === null) {
             llmAnalysisFailed = true;
+            failedBatchCount++;
             logger.warn?.(
               `memory-hybrid: extract-reinforcement ${batchLabel} parse/coverage failed`,
             );
@@ -442,6 +450,7 @@ export async function runExtractReinforcementForCli(
           if (ordered === null) {
             diagnostics.parseFailures++;
             llmAnalysisFailed = true;
+            failedBatchCount++;
             logger.warn?.(
               `memory-hybrid: extract-reinforcement ${batchLabel} incomplete (expected ${batch.length} item(s) per incident)`,
             );
@@ -450,14 +459,18 @@ export async function runExtractReinforcementForCli(
           }
 
           const attached = attachOrderedItemsToIncidents(batch, ordered, globalIncidentOffset);
-          analysed.push(...attached);
-          diagnostics.parsedItems += attached.length;
+          const added = appendUniqueRemediationsByIncidentIndex(analysed, attached);
+          diagnostics.parsedItems += added;
           completedBatchIndexes.add(batchIndex);
           persistBatchState();
         }
 
         if (completedBatchIndexes.size === batches.length) {
           removeReinforcementBatchState(statePath);
+        } else if (failedBatchCount > 0) {
+          logger.warn?.(
+            `memory-hybrid: extract-reinforcement partial batch failure: completed=${completedBatchIndexes.size}/${batches.length} failed=${failedBatchCount} analysed=${analysed.length}`,
+          );
         }
         if (incidentsForAnalysis.length > 0 && analysed.length === 0) {
           llmAnalysisFailed = true;
