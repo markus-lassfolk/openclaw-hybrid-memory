@@ -483,7 +483,7 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(second.status).toBe("success_analyzed");
     expect(second.analysed).toBe(2);
     expect(openaiSecond.chat.completions.create).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(readFileSync(statePath, "utf-8")).completedBatchIndexes).toEqual([0, 1]);
+    expect(existsSync(statePath)).toBe(false);
   });
 
   it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {
