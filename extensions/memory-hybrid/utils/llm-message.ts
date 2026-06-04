@@ -54,10 +54,6 @@ function toolCallsToString(toolCalls: unknown): string | null {
   }
   if (argumentStrings.length === 0) return null;
   if (argumentStrings.length === 1) return argumentStrings[0]!;
-  for (const arg of argumentStrings) {
-    const trimmed = arg.trim();
-    if (trimmed.startsWith("[") || trimmed.startsWith("{")) return arg;
-  }
   return JSON.stringify({ tool_calls: argumentStrings });
 }
 

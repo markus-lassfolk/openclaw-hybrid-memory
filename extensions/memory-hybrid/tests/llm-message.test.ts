@@ -52,13 +52,15 @@ describe("extractAssistantMessageText", () => {
     expect(JSON.parse(result.text)).toEqual({ tool_calls: ["plain", "text"] });
   });
 
-  it("prefers the first structured tool_calls argument when multiple are present", () => {
-    const payload = JSON.stringify([{ remediationType: "NO_ACTION" }]);
+  it("wraps multiple structured tool_calls in envelope format", () => {
+    const payload1 = JSON.stringify([{ remediationType: "NO_ACTION" }]);
+    const payload2 = '{"other":true}';
     const result = extractAssistantMessageText({
       content: null,
-      tool_calls: [{ function: { arguments: payload } }, { function: { arguments: '{"other":true}' } }],
+      tool_calls: [{ function: { arguments: payload1 } }, { function: { arguments: payload2 } }],
     });
-    expect(result).toEqual({ text: payload, source: "tool_calls" });
+    expect(result.source).toBe("tool_calls");
+    expect(JSON.parse(result.text)).toEqual({ tool_calls: [payload1, payload2] });
   });
 
   it("falls back to reasoning_content then reasoning after empty content", () => {
