@@ -323,7 +323,7 @@ export function extractItemArray(
   for (const key of envelopeKeys) {
     if (!(key in obj)) continue;
     const nested = extractItemArray(obj[key], isValidItem, opts);
-    if (nested && nested.length > 0) return nested;
+    if (nested !== null) return nested;
   }
 
   const toolCalls = obj.tool_calls ?? obj.toolCalls;
