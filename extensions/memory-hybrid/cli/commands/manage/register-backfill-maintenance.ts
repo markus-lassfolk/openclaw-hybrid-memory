@@ -14,9 +14,7 @@ import {
   defaultWorkflowDbPath,
   formatMaintenanceCoverageReport,
 } from "../../../services/maintenance-coverage.js";
-import {
-  parseSessionMessagesFromLines,
-} from "../../../services/session-signal-context.js";
+import { parseSessionMessagesFromLines } from "../../../services/session-signal-context.js";
 import {
   extractToolSequenceFromMessages,
   extractToolSequenceFromTrajectoryLines,
@@ -63,20 +61,19 @@ function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
   return normalizeWorkflowToolSequence(tools);
 }
 
-function backfillWorkflowTracesFromFile(
-  _factsDb: FactsDB,
-  workflowStore: WorkflowStore,
-  filePath: string,
-): { traces: number; proceduresUpdated: number } {
+function backfillWorkflowTracesFromFile(_factsDb: FactsDB, workflowStore: WorkflowStore, filePath: string): number {
   const tools = collectWorkflowToolsFromSessionFile(filePath);
-  if (tools.length < 2) return { traces: 0, proceduresUpdated: 0 };
+  if (tools.length < 2) return 0;
 
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
 
   const sessionId = basename(filePath);
   const goal =
-    messages.find((m) => m.role === "user" && m.text.trim())?.text.trim().slice(0, 200) ?? "session workflow";
+    messages
+      .find((m) => m.role === "user" && m.text.trim())
+      ?.text.trim()
+      .slice(0, 200) ?? "session workflow";
   const outcome = inferSessionOutcome(messages);
   try {
     workflowStore.record({
@@ -92,10 +89,10 @@ function backfillWorkflowTracesFromFile(
       subsystem: "maintenance",
       context: sessionId,
     });
-    return { traces: 0, proceduresUpdated: 0 };
+    return 0;
   }
 
-  return { traces: 1, proceduresUpdated: 0 };
+  return 1;
 }
 
 export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBindings): void {
@@ -148,7 +145,10 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
         }
         const report = { files: paths.length, dailyLogsWritten: written, days };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else console.log(`backfill-daily-logs: wrote/updated ${written} daily log section(s) from ${paths.length} session(s)`);
+        else
+          console.log(
+            `backfill-daily-logs: wrote/updated ${written} daily log section(s) from ${paths.length} session(s)`,
+          );
       }),
     );
 
@@ -173,7 +173,7 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
 
   mem
     .command("backfill-workflow-traces")
-    .description("Extract tool sequences from session JSONL into workflow-traces.db and update procedure outcomes")
+    .description("Extract tool sequences from session JSONL into workflow-traces.db")
     .option("--days <n>", "Scan sessions modified in the last N days", "60")
     .option("--json", "Emit JSON")
     .action(
@@ -181,19 +181,13 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
         const days = Number.parseInt(opts?.days ?? "60", 10);
         const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
         let traces = 0;
-        let proceduresUpdated = 0;
         const paths = resolveExtractSessionFilePaths(cfg, days);
         for (const filePath of paths) {
-          const result = backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath);
-          traces += result.traces;
-          proceduresUpdated += result.proceduresUpdated;
+          traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath);
         }
-        const report = { files: paths.length, workflowTraces: traces, proceduresUpdated, days };
+        const report = { files: paths.length, workflowTraces: traces, days };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else
-          console.log(
-            `backfill-workflow-traces: recorded ${traces} trace(s), updated ${proceduresUpdated} procedure(s) from ${paths.length} session(s)`,
-          );
+        else console.log(`backfill-workflow-traces: recorded ${traces} trace(s) from ${paths.length} session(s)`);
       }),
     );
 
