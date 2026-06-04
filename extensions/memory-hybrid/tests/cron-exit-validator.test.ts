@@ -549,6 +549,116 @@ error: unknown command 'bar'
       expect(second.reportableIssues[0]?.fingerprint.join(":")).toBe(first.reportableIssues[0]?.fingerprint.join(":"));
     });
 
+    it("detects self-correction failed_partial semantic failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "self-correction-partial.exit.txt");
+      const logPath = join(tmpDir, "self-correction-partial.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z self-correction-run exit=1\n");
+      writeFileSync(
+        logPath,
+        "self-correction-run status=failed_partial parse_success=false batches_completed=1/2 analysed=2\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["self-correction-run"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "self-correction-run",
+          failureClass: "self_correction_partial_batch_failure",
+        }),
+      );
+    });
+
+    it("detects self-correction zero-parsed semantic failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "self-correction.exit.txt");
+      const logPath = join(tmpDir, "self-correction.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z self-correction-run exit=1\n");
+      writeFileSync(
+        logPath,
+        "self-correction-run status=failed_suspect_zero_parsed parse_success=false analysed=0 incidents=3\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["self-correction-run"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "self-correction-run",
+          failureCategory: "semantic_failure",
+        }),
+      );
+    });
+
+    it("detects self-correction analysis failure (status=failed)", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "self-correction-analysis.exit.txt");
+      const logPath = join(tmpDir, "self-correction-analysis.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z self-correction-run exit=1\n");
+      writeFileSync(
+        logPath,
+        "Error: simulated first-batch LLM API failure status=failed\nself-correction-run 2 incidents found, 0 analysed parse_success=false batches_completed=0/1\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["self-correction-run"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "self-correction-run",
+          failureCategory: "semantic_failure",
+          failureClass: "self_correction_analysis_failure",
+        }),
+      );
+    });
+
+    it("detects generate-proposals semantic_empty failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "generate-proposals.exit.txt");
+      const logPath = join(tmpDir, "generate-proposals.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z generate-proposals exit=1\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: generate-proposals semantic_empty: had insight input but parsed zero proposal items parse_success=false\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["generate-proposals"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "generate-proposals",
+          failureCategory: "semantic_failure",
+        }),
+      );
+    });
+
+    it("detects extract-reinforcement degraded_model_or_parser", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "extract-reinforcement.exit.txt");
+      const logPath = join(tmpDir, "extract-reinforcement.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z extract-reinforcement exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-reinforcement annotationStatus=degraded_model_or_parser incidents=4 annotated=0\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["extract-reinforcement"]);
+
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "extract-reinforcement",
+          failureCategory: "semantic_failure",
+        }),
+      );
+    });
+
     it("detects degraded implicit-feedback collapse backlogs that change nothing", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "weekly-implicit-feedback-collapse-20260508T021500Z-111.exit.txt");

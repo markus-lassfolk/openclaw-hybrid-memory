@@ -139,6 +139,8 @@ export type ExtractProceduresResult = {
   negativeCount: number;
   dryRun: boolean;
   skipped?: boolean;
+  /** Session files that could not be read; cursor must not advance while > 0. */
+  readFailures?: number;
 };
 
 export type GenerateAutoSkillsResult = {
@@ -146,6 +148,8 @@ export type GenerateAutoSkillsResult = {
   skipped: number;
   dryRun: boolean;
   paths: string[];
+  /** Post-generate audit quarantinable count (when apply && !dryRun). */
+  quarantinable?: number;
   summary?: {
     candidates: number;
     eligible: number;
@@ -204,6 +208,9 @@ export type DistillCliResult = {
   dedupSkipped: number;
   dryRun: boolean;
   skipped?: boolean;
+  semanticEmpty?: boolean;
+  partialFailure?: boolean;
+  batchFailures?: number;
 };
 export type DistillCliSink = {
   log: (s: string) => void;
@@ -230,15 +237,34 @@ export type SelfCorrectionRunResult = {
   toolsApplied?: number;
   error?: string;
   skipped?: boolean;
+  retryCount?: number;
+  fallbackCount?: number;
+  parseFailures?: number;
+  unparseableFailures?: number;
+  batchesStarted?: number;
   /**
    * Fine-grained outcome for cron/wrapper ledger reporting.
-   * - `success_analyzed`    — incidents found and LLM analysis completed
-   * - `success_no_incidents`— scan ran to completion, no incidents found
-   * - `skipped_cooldown`    — 23 h cooldown guard fired; no analysis performed
-   * - `skipped_concurrency` — scan already in progress; no analysis performed
-   * - `failed_parse`        — LLM responded but response could not be parsed as JSON
+   * - `success_analyzed`            — incidents found and LLM analysis completed
+   * - `success_no_incidents`        — scan ran to completion, no incidents found
+   * - `skipped_cooldown`            — 23 h cooldown guard fired; no analysis performed
+   * - `skipped_concurrency`         — scan already in progress; no analysis performed
+   * - `failed_parse`                — LLM responded but response could not be parsed as JSON
+   * - `failed_suspect_zero_parsed`  — incidents were found but analysis produced no parsed items
+   * - `failed_partial`              — some batches completed; apply may have run for partial analysed items
+   * - `failed`                      — analysis failed before any batch completed (non-parse error)
    */
-  status?: "success_analyzed" | "success_no_incidents" | "skipped_cooldown" | "skipped_concurrency" | "failed_parse";
+  status?:
+    | "success_analyzed"
+    | "success_no_incidents"
+    | "skipped_cooldown"
+    | "skipped_concurrency"
+    | "failed_parse"
+    | "failed_suspect_zero_parsed"
+    | "failed_partial"
+    | "failed";
+  /** Batches fully completed in the last run (for resume / HM_EXIT). */
+  batchesCompleted?: number;
+  totalBatches?: number;
 };
 
 export type AnalyzeFeedbackPhrasesResult = {

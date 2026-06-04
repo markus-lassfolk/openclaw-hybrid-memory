@@ -115,7 +115,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getCredentialsCount: () => (credentialsDb ? credentialsDb.list().length : 0),
     getProposalsPending: () => (proposalsDb ? proposalsDb.list({ status: "pending" }).length : 0),
     getProposalsAvailable: () => !!proposalsDb,
-    getWalPending: async () => (wal ? (await wal.getValidEntries()).length : 0),
+    getWalPending: async () => (wal ? (await wal.readAllRecoverable()).entries.length : 0),
     getLastRunTimestamps: () => {
       const out: { distill?: string; reflect?: string; compact?: string; vectordbOptimize?: string } = {};
       for (const [key, file] of [
@@ -470,6 +470,8 @@ function buildActiveTaskCliContext(handlerCtx: HandlerContext): ActiveTaskContex
   const memoryDir = join(workspaceRoot, "memory");
   return {
     activeTaskFilePath,
+    workspaceRoot,
+    cfg: handlerCtx.cfg,
     staleMinutes: parseDuration(activeTask.staleThreshold),
     flushOnComplete: activeTask.flushOnComplete,
     memoryDir,
@@ -533,6 +535,7 @@ export function createHybridMemCliContext(
     runReflection: services.runReflection,
     runReflectionRules: services.runReflectionRules,
     runReflectionMeta: services.runReflectionMeta,
+    runReflectIdentity: services.runReflectIdentity,
     runDreamCycle: services.runDreamCycle,
     runContinuousVerification: services.runContinuousVerification,
     runResolveContradictions: services.runResolveContradictions,

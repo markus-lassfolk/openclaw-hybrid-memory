@@ -707,7 +707,7 @@ export async function generateMonthlyReport(store: ToolEffectivenessStore, facts
 
     const summary = summaryLines.join(" ");
 
-    factsDb.store({
+    const storeResult = factsDb.storeWithResult({
       text: summary,
       category: "pattern",
       entity: null,
@@ -720,6 +720,9 @@ export async function generateMonthlyReport(store: ToolEffectivenessStore, facts
       tags: ["tool-effectiveness", "monthly-report"],
       summary: `Tool effectiveness summary for ${month}`,
     });
+    if (storeResult.skipped || storeResult.newlyStored === false) {
+      return;
+    }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "tool-effectiveness-monthly-report",

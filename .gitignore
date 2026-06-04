@@ -47,5 +47,11 @@ extensions/memory-hybrid/MEMORY_INDEX.md
 MEMORY_INDEX.hash
 extensions/memory-hybrid/MEMORY_INDEX.hash
 
+# A/B maintenance fixtures (real Maeve data; never commit)
+extensions/memory-hybrid/.ab-fixtures/
+
+# Offline QA sandbox (full Maeve memory copy; never commit)
+extensions/memory-hybrid/.offline-qa/
+
 # Local git purge archives (patches + recovery notes; see wip/archive/README.md)
 wip/archive/

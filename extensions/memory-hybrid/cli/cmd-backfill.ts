@@ -304,6 +304,11 @@ export async function runBackfillForCli(
       if (storeResult.skipped) {
         continue;
       }
+      if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+        skipped++;
+        processed++;
+        continue;
+      }
       const entry = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       await cleanupEvictedVector({
@@ -382,7 +387,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
         if (!firstSessionParseError) {
           firstSessionParseError = `Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}`;
         }
-      } else {
+      }
+      if (texts.length > 0) {
         successfullyScannedSessions++;
       }
       allTexts.push(...texts);
@@ -395,12 +401,12 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       if (!firstSessionParseError) firstSessionParseError = `Failed to parse session file ${fp}: ${message}`;
     }
   }
-  if (firstSessionParseError) {
+  if (successfullyScannedSessions === 0 && sessionFiles.length > 0) {
     return {
       reinforcement: [],
       correction: [],
-      sessionsScanned: successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length,
-      error: firstSessionParseError,
+      sessionsScanned: 0,
+      error: firstSessionParseError ?? "No session files could be read",
     };
   }
   const unmatched = allTexts.filter((text) => {
@@ -448,7 +454,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   }
 
   if (toAnalyze.length === 0) {
-    return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length };
+    return { reinforcement: [], correction: [], sessionsScanned: successfullyScannedSessions };
   }
 
   const maxChars = 400_000;
@@ -705,6 +711,9 @@ export async function runIngestFilesForCli(
   }
 
   if (opts.dryRun) {
+    if (files.length > 0 && allFacts.length === 0) {
+      sink.warn(`memory-hybrid: ingest-files semantic_empty: processed ${files.length} file(s) but parsed zero facts`);
+    }
     sink.log(`Would extract ${allFacts.length} facts from ${files.length} files`);
     return { stored: 0, skipped: 0, extracted: allFacts.length, files: files.length, dryRun: true };
   }
@@ -736,6 +745,10 @@ export async function runIngestFilesForCli(
       if (storeResult.skipped) {
         continue;
       }
+      if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+        skipped++;
+        continue;
+      }
       const entry = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       await cleanupEvictedVector({
@@ -762,6 +775,9 @@ export async function runIngestFilesForCli(
       sink.warn(`memory-hybrid: ingest-files store failed for "${fact.text.slice(0, 40)}...": ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:store-fact" });
     }
+  }
+  if (files.length > 0 && allFacts.length === 0) {
+    sink.warn(`memory-hybrid: ingest-files semantic_empty: processed ${files.length} file(s) but parsed zero facts`);
   }
   return { stored, skipped, extracted: allFacts.length, files: files.length, dryRun: false };
 }

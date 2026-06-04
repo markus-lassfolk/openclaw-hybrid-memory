@@ -229,6 +229,7 @@ export type HybridMemCliContext = {
   runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     metaExtracted: number;
     metaStored: number;
+    diagnostics?: import("../services/reflection.js").ReflectionMetaDiagnostics;
   }>;
   reflectionConfig: {
     enabled: boolean;
@@ -330,6 +331,7 @@ export type HybridMemCliContext = {
     }>;
     workspace?: string;
     dryRun?: boolean;
+    days?: number;
     model?: string;
     approve?: boolean;
     applyTools?: boolean;

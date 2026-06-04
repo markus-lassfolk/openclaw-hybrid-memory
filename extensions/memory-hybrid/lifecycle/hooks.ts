@@ -187,7 +187,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
+    // Register before active-task injection so credential hints prepend ahead of task blocks
+    // when OpenClaw merges before_agent_start prependContext (left-to-right concat).
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
+      registerCredentialHint(api, ctx);
+    }
+
     const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
     registerGoalStewardshipInjection(
       api,
@@ -195,19 +200,14 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       resolvedGoalsDir,
       ctx.cfg.activeTask.enabled ? resolvedActiveTaskPath : undefined,
     );
+
+    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering
     // event listeners whose bodies immediately return when disabled (#581).
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       registerAuthFailureRecall(api, ctx, sessionState);
-    }
-    // Note: credential hints are gated on verbosity !== "silent" because their output
-    // (a prepended hint block) is meaningless in silent mode. This is intentional:
-    // the feature adds context only when the agent can surface it. If credential detection
-    // without output injection is ever needed, split the guard accordingly.
-    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
-      registerCredentialHint(api, ctx);
     }
   };
 
@@ -359,7 +359,18 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             guard.reason === "missing_checkpoint_block" || guard.reason === "missing_checkpoint_warn";
           if (requiresProjectFacts) {
             const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId });
+            let goalAliases: Array<{ id: string; label: string }> | undefined;
+            if (ctx.cfg.goalStewardship?.enabled) {
+              try {
+                const { listActiveGoals, resolveGoalsDir } = await import("../services/goal-stewardship.js");
+                const gDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+                const activeGoals = await listActiveGoals(gDir);
+                goalAliases = activeGoals.map((g) => ({ id: g.id, label: g.label }));
+              } catch {
+                goalAliases = undefined;
+              }
+            }
+            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId, goalAliases });
           }
           const guardMessage = formatPreFinalizationGuardMessage(guard);
           if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {

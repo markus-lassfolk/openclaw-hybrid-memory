@@ -18,6 +18,7 @@ type MockFactsDB = {
   lookup: ReturnType<typeof vi.fn>;
   delete: ReturnType<typeof vi.fn>;
   store: ReturnType<typeof vi.fn>;
+  storeWithResult: ReturnType<typeof vi.fn>;
   setEmbeddingModel: ReturnType<typeof vi.fn>;
 };
 
@@ -30,6 +31,7 @@ type MockVectorDB = {
 type MockCredentialsDB = {
   store: ReturnType<typeof vi.fn>;
   get: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
 };
 
 type MockEmbeddings = {
@@ -47,12 +49,27 @@ type MockEmbeddings = {
 const TOKEN_VALUE = `ghp_${"A".repeat(36)}`;
 
 function makeFactsDB(overrides: Partial<MockFactsDB> = {}): MockFactsDB {
+  const store = overrides.store ?? vi.fn().mockReturnValue({ id: "pointer-id-1", text: "", category: "technical" });
+  const { store: _s, storeWithResult: _swr, ...rest } = overrides;
   return {
     lookup: vi.fn().mockReturnValue([]),
     delete: vi.fn(),
-    store: vi.fn().mockReturnValue({ id: "pointer-id-1", text: "", category: "technical" }),
+    store,
+    storeWithResult:
+      overrides.storeWithResult ??
+      vi.fn((args: Record<string, unknown>) => {
+        const entry = store(args);
+        return {
+          skipped: false,
+          newlyStored: true,
+          embeddingStale: false,
+          evictedFactId: null,
+          preMergeText: null,
+          entry,
+        };
+      }),
     setEmbeddingModel: vi.fn(),
-    ...overrides,
+    ...rest,
   };
 }
 
@@ -69,6 +86,7 @@ function makeCredentialsDB(overrides: Partial<MockCredentialsDB> = {}): MockCred
   return {
     store: vi.fn(),
     get: vi.fn().mockReturnValue({ service: "github", type: "api_key", value: TOKEN_VALUE }),
+    delete: vi.fn(),
     ...overrides,
   };
 }
@@ -159,7 +177,7 @@ describe("migrateCredentialsToVault", () => {
       );
 
       // Pointer fact stored in factsDb with vault: prefix value
-      expect(factsDb.store).toHaveBeenCalledWith(
+      expect(factsDb.storeWithResult).toHaveBeenCalledWith(
         expect.objectContaining({
           value: expect.stringMatching(/^vault:/),
           entity: "Credentials",
@@ -436,9 +454,9 @@ describe("migrateCredentialsToVault", () => {
     });
   });
 
-  describe("failure paths — factsDb.store, embeddings.embed, vectorDb.store", () => {
-    it("collects error when factsDb.store throws writing vault pointer", async () => {
-      // factsDb.store is called once (to write the pointer). If it throws, the outer
+  describe("failure paths — factsDb.storeWithResult, embeddings.embed, vectorDb.store", () => {
+    it("collects error when factsDb.storeWithResult throws writing vault pointer", async () => {
+      // storeWithResult is called once (to write the pointer). If it throws, the outer
       // catch handles it: error collected, migrated NOT incremented.
       const fact = makeCredentialFact();
       const factsDb = makeFactsDB({
@@ -514,11 +532,8 @@ describe("migrateCredentialsToVault", () => {
     });
   });
 
-  describe("factsDb.delete failure — error collected, vault entry already stored", () => {
+  describe("factsDb.delete failure — error collected, vault rolled back", () => {
     it("collects error when factsDb.delete throws during migration", async () => {
-      // If factsDb.delete throws, the outer catch handles it. The vault entry was already
-      // written (credentialsDb.store succeeded and verification passed), but the original
-      // fact remains in factsDb. The error is surfaced to prevent silent data inconsistency.
       const fact = makeCredentialFact();
       const factsDb = makeFactsDB({
         lookup: vi.fn().mockReturnValue([fact]),
@@ -533,8 +548,59 @@ describe("migrateCredentialsToVault", () => {
       expect(result.errors).toHaveLength(1);
       expect(result.errors[0]).toContain("sqlite delete failed");
       expect(result.migrated).toBe(0);
-      // Vault entry was stored before the failed deletion
       expect(credentialsDb.store).toHaveBeenCalled();
+      expect(credentialsDb.delete).toHaveBeenCalledWith("github", "api_key");
+    });
+  });
+
+  describe("pointer store outcomes — preserve plaintext until pointer confirmed", () => {
+    it("rolls back vault and keeps plaintext when pointer store is skipped", async () => {
+      const fact = makeCredentialFact();
+      const factsDb = makeFactsDB({
+        lookup: vi.fn().mockReturnValue([fact]),
+        storeWithResult: vi.fn().mockReturnValue({
+          skipped: true,
+          rejected: true,
+          newlyStored: false,
+          embeddingStale: false,
+          evictedFactId: null,
+          preMergeText: null,
+          entry: { id: "", text: "" },
+        }),
+      });
+      const credentialsDb = makeCredentialsDB();
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb }));
+
+      expect(result.migrated).toBe(0);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain("pre-store guard blocked");
+      expect(factsDb.delete).not.toHaveBeenCalled();
+      expect(credentialsDb.delete).toHaveBeenCalledWith("github", "api_key");
+    });
+
+    it("removes plaintext and counts migrated when pointer already exists", async () => {
+      const fact = makeCredentialFact();
+      const factsDb = makeFactsDB({
+        lookup: vi.fn().mockReturnValue([fact]),
+        storeWithResult: vi.fn().mockReturnValue({
+          skipped: false,
+          newlyStored: false,
+          embeddingStale: false,
+          evictedFactId: null,
+          preMergeText: null,
+          entry: { id: "existing-pointer", text: "pointer" },
+        }),
+      });
+      const credentialsDb = makeCredentialsDB();
+      const vectorDb = makeVectorDB();
+
+      const result = await migrateCredentialsToVault(makeOpts({ factsDb, credentialsDb, vectorDb }));
+
+      expect(result.migrated).toBe(1);
+      expect(result.errors).toHaveLength(0);
+      expect(factsDb.delete).toHaveBeenCalledWith("fact-id-1");
+      expect(vectorDb.delete).toHaveBeenCalledWith("fact-id-1");
     });
   });
 

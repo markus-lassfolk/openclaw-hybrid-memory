@@ -2,7 +2,19 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "../../maintenance-overrides.js";
 import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
+import type { SelfCorrectionRunResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
+
+function isSelfCorrectionDegradedStatus(status: SelfCorrectionRunResult["status"]): boolean {
+  return status === "failed_partial" || status === "failed_suspect_zero_parsed";
+}
+
+function selfCorrectionBatchProgressSuffix(res: SelfCorrectionRunResult): string {
+  if (res.status === "failed_partial" || res.status === "failed" || res.status === "failed_parse") {
+    return ` batches_completed=${res.batchesCompleted ?? 0}/${res.totalBatches ?? "?"}`;
+  }
+  return "";
+}
 
 export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBindings): void {
   const {
@@ -62,6 +74,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
       .option("--extract-path <path>", "Path to incidents JSON (default: memory/.self-correction-incidents.json)")
       .option("--workspace <w>", "Workspace path (for TOOLS.md)")
       .option("--dry-run", "Show what would be applied without applying")
+      .option("--days <n>", "Days to look back when extracting incidents (default 3)", "3")
       .option("--model <m>", "LLM model override (default from self-correction heavy tier)")
       .option("--approve", "Auto-approve all corrections (skip review)")
       .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
@@ -73,6 +86,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           extractPath?: string;
           workspace?: string;
           dryRun?: boolean;
+          days?: string;
           model?: string;
           approve?: boolean;
           applyTools?: boolean;
@@ -85,6 +99,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         const extractPath = opts?.extractPath;
         const workspace = opts?.workspace;
         const dryRun = !!opts?.dryRun;
+        const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
         const model = opts?.model?.trim() || undefined;
         const approve = !!opts?.approve;
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
@@ -94,6 +109,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             extractPath,
             workspace,
             dryRun,
+            days,
             model,
             approve,
             applyTools: opts?.applyTools,
@@ -109,8 +125,11 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         }
         if (res.error) {
           console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
-          process.exitCode = 1;
+          process.exitCode = isSelfCorrectionDegradedStatus(res.status) ? 2 : 1;
           return;
+        }
+        if (isSelfCorrectionDegradedStatus(res.status)) {
+          process.exitCode = 2;
         }
         if (res.skipped) {
           const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);
@@ -126,6 +145,15 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         console.log(
           `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}${res.status ? ` status=${res.status}` : ""}`,
         );
+        if (res.batchesStarted != null || res.retryCount != null || res.batchesCompleted != null) {
+          console.log(
+            `Batches started: ${res.batchesStarted ?? 0} | Batches completed: ${res.batchesCompleted ?? 0}/${res.totalBatches ?? "?"} | Parsed item lines: ${res.analysed ?? 0} | Retry lines: ${res.retryCount ?? 0} | Fallback lines: ${res.fallbackCount ?? 0} | Errors/unparseable/failure lines: ${(res.parseFailures ?? 0) + (res.unparseableFailures ?? 0)}`,
+          );
+          const parseSuccess = res.status === "success_analyzed" || res.status === "success_no_incidents";
+          console.log(
+            `parse_success=${parseSuccess} parsed_candidates=${res.analysed ?? 0} retry_count=${res.retryCount ?? 0} fallback_count=${res.fallbackCount ?? 0} parse_failures=${res.parseFailures ?? 0} unparseable_failures=${res.unparseableFailures ?? 0}${selfCorrectionBatchProgressSuffix(res)}`,
+          );
+        }
         if (res.proposals.length > 0) {
           console.log(`Proposals (${res.proposals.length}):`);
           for (const p of res.proposals) {

@@ -1,4 +1,4 @@
-/** Persona proposal generation CLI (`runGenerateProposalsForCli`). Split from cmd-extract.ts. */
+import { resolveHybridMemVerbose } from "./global-verbose.js";
 import { getEnv } from "../utils/env-manager.js";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -8,22 +8,65 @@ import { resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { scoreIdentityGaps } from "../services/identity-gap-scorer.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
 import {
   buildPersonaStateInsightsBlock,
   promotePersonaStateFromReflections,
 } from "../services/persona-state-promotion.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
-import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
+import { parseStructuredItemsAcceptingEmpty, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
+
+function isSelfCorrectionInsight(f: { source?: string | null; tags?: string[] | null }): boolean {
+  return (
+    f.source === "self-correction" ||
+    f.source === "self-correction-analysis" ||
+    (f.tags?.includes("self-correction") ?? false)
+  );
+}
+
+function buildSemanticEmptyFallbackProposal(
+  gapBullets: string[],
+  allowedFiles: string[],
+): {
+  targetFile: string;
+  title: string;
+  observation: string;
+  suggestedChange: string;
+  confidence: number;
+} | null {
+  const uncovered = gapBullets.find((b) => b.startsWith("Uncovered in "));
+  if (!uncovered) return null;
+  const fileMatch = uncovered.match(/^Uncovered in ([^:]+):/);
+  const targetFile = fileMatch?.[1]?.trim() ?? "";
+  if (!targetFile || !allowedFiles.includes(targetFile as (typeof allowedFiles)[number])) return null;
+  const previewMatch = uncovered.match(/"([^"]+)"/);
+  const preview = previewMatch?.[1]?.trim() ?? uncovered.slice(0, 120);
+  return {
+    targetFile,
+    title: "Append uncovered reflection insight",
+    observation: `Pre-flight identity gap scorer flagged: ${preview}`,
+    suggestedChange: `- ${preview}`,
+    confidence: 0.7,
+  };
+}
+
+function isGenerateProposalItem(item: unknown): boolean {
+  if (typeof item !== "object" || item === null) return false;
+  const candidate = item as Record<string, unknown>;
+  return typeof candidate.targetFile === "string" && typeof candidate.suggestedChange === "string";
+}
 
 export async function runGenerateProposalsForCli(
   ctx: HandlerContext,
   opts: { dryRun: boolean; verbose?: boolean },
   api: { resolvePath: (file: string) => string },
+  argv: readonly string[] = process.argv,
 ): Promise<{ created: number }> {
+  const verbose = resolveHybridMemVerbose(opts, undefined, argv);
   const { factsDb, proposalsDb, cfg, openai } = ctx;
   if (!cfg.personaProposals.enabled || !proposalsDb) {
     return { created: 0 };
@@ -51,6 +94,16 @@ export async function runGenerateProposalsForCli(
   const patterns = allRelevant.filter((f) => f.category === "pattern");
   const rules = allRelevant.filter((f) => f.category === "rule");
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
+  const selfCorrectionInsights = allRelevant.filter(isSelfCorrectionInsight).slice(0, 20);
+  const implicitInsights = factsDb
+    .getAll({ scopeFilter })
+    .filter(
+      (f) =>
+        (f.source === "implicit-feedback" || f.tags?.includes("implicit-feedback")) &&
+        !f.supersededAt &&
+        (f.expiresAt === null || f.expiresAt > nowSec),
+    )
+    .slice(0, 15);
 
   let personaStateBlock = "";
   if (ctx.personaStateStore) {
@@ -70,7 +123,7 @@ export async function runGenerateProposalsForCli(
             dryRun: opts.dryRun,
             model: cfg.identityReflection.model ?? defaultModel,
             fallbackModels,
-            verbose: opts.verbose,
+            verbose,
             scopeFilter,
           },
           {
@@ -90,7 +143,7 @@ export async function runGenerateProposalsForCli(
         for (const entry of promotion.entries) {
           personaStateEntries.set(entry.stateKey, entry);
         }
-        if (opts.verbose && promotion.candidatesFound > 0) {
+        if (verbose && promotion.candidatesFound > 0) {
           ctx.logger.info?.(
             `memory-hybrid: persona-state promotion — ${promotion.promoted} created, ${promotion.updated} updated, ${promotion.unchanged} unchanged`,
           );
@@ -126,16 +179,42 @@ export async function runGenerateProposalsForCli(
         .join("\n")}`,
     );
   }
+  if (selfCorrectionInsights.length) {
+    insights.push(
+      `Self-correction lessons:\n${selfCorrectionInsights.map((f) => `- ${f.text.slice(0, 300)}`).join("\n")}`,
+    );
+  }
+  if (implicitInsights.length) {
+    insights.push(`Implicit feedback lessons:\n${implicitInsights.map((f) => `- ${f.text.slice(0, 300)}`).join("\n")}`);
+  }
   if (personaStateBlock) {
     insights.push(`Durable persona state:\n${personaStateBlock}`);
   }
   if (insights.length === 0) {
-    if (opts.verbose)
+    if (verbose)
       ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
     return { created: 0 };
   }
   const insightsBlock = insights.join("\n\n");
   const allowedFiles = cfg.personaProposals.allowedFiles;
+  const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+  const gapInsights = [
+    ...patterns,
+    ...rules,
+    ...metaPatterns,
+    ...selfCorrectionInsights,
+    ...implicitInsights,
+  ];
+  const identityGapResult = scoreIdentityGaps(gapInsights, workspace);
+  const identityGapsBlock = identityGapResult.bullets.join("\n");
+  const pendingProposals = proposalsDb.list({ status: "pending" });
+  const pendingProposalsBlock =
+    pendingProposals.length > 0
+      ? pendingProposals
+          .slice(0, 20)
+          .map((p) => `- ${p.title} -> ${p.targetFile} (pending since ${new Date(p.createdAt * 1000).toISOString().slice(0, 10)})`)
+          .join("\n")
+      : "(none)";
   const identityFilesContent: string[] = [];
   for (const file of allowedFiles) {
     try {
@@ -156,11 +235,18 @@ export async function runGenerateProposalsForCli(
     }
   }
   const identityFilesBlock = identityFilesContent.join("\n");
+  if (verbose) {
+    ctx.logger.info?.(
+      `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} pending=${pendingProposals.length}`,
+    );
+  }
   const prompt = fillPrompt(loadPrompt("generate-proposals"), {
     allowed_files: allowedFiles.join(", "),
     min_confidence: String(cfg.personaProposals.minConfidence),
     insights: insightsBlock,
     identity_files: identityFilesBlock,
+    identity_gaps: identityGapsBlock,
+    pending_proposals: pendingProposalsBlock,
   });
   const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(
     cfg,
@@ -195,6 +281,7 @@ export async function runGenerateProposalsForCli(
         fallbackModels: [],
         label: "memory-hybrid: generate-proposals",
         feature: CostFeature.generateProposals,
+        thinkingMode: "disabled",
         logger: {
           info: (msg) => ctx.logger.info?.(msg),
           warn: (msg) => ctx.logger.warn?.(msg),
@@ -204,7 +291,7 @@ export async function runGenerateProposalsForCli(
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       lastFailReason = `model=${tryModel} failure_type=llm_call_failed`;
-      if (opts.verbose) {
+      if (verbose) {
         ctx.logger.warn?.(`memory-hybrid: generate-proposals — ${tryModel} LLM call failed: ${errMsg.slice(0, 200)}`);
       }
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -214,16 +301,9 @@ export async function runGenerateProposalsForCli(
       continue;
     }
     try {
-      const strippedResponse = stripThinkingWrapperBlocks(rawResponse);
-      const firstBracket = strippedResponse.indexOf("[");
-      const lastBracket = strippedResponse.lastIndexOf("]");
-      const trimmed =
-        firstBracket !== -1 && lastBracket !== -1 && lastBracket >= firstBracket
-          ? strippedResponse.substring(firstBracket, lastBracket + 1)
-          : strippedResponse;
-      const parsed = JSON.parse(trimmed);
-      if (!Array.isArray(parsed)) throw new SyntaxError("Not an array");
-      items = parsed;
+      const parsed = parseStructuredItemsAcceptingEmpty(rawResponse, isGenerateProposalItem);
+      if (parsed === null) throw new SyntaxError("No valid proposal items parsed");
+      items = parsed as typeof items;
       break;
     } catch (_err) {
       const responseSnippet = rawResponse.slice(0, 200);
@@ -232,7 +312,7 @@ export async function runGenerateProposalsForCli(
         ctx.logger.warn?.(
           `memory-hybrid: generate-proposals — ${tryModel} returned invalid JSON, retrying with fallback model`,
         );
-      } else if (opts.verbose) {
+      } else if (verbose) {
         ctx.logger.warn?.(`memory-hybrid: generate-proposals — LLM output was not valid JSON: ${responseSnippet}`);
       }
       continue;
@@ -240,12 +320,80 @@ export async function runGenerateProposalsForCli(
   }
   if (items === undefined) {
     const failureMessage = `memory-hybrid: generate-proposals — all models failed: ${lastFailReason} (models tried: ${allModels.join(", ")})`;
-    console.error(failureMessage);
+    console.error(`${failureMessage} parse_success=false`);
     throw new Error(failureMessage);
   }
+  if (items.length === 0 && insights.length > 0) {
+    // One retry with explicit nudge when model returns [] despite rich insight input.
+    const retryPrompt = `${prompt}\n\nIf any gap exists between the reflection data and identity files, return at least one well-supported proposal. Do not return an empty array when insights are present.`;
+    try {
+      const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+        model: allModels[0],
+        modelSource: "maintenance",
+        content: retryPrompt,
+        temperature: 0.35,
+        maxTokens: 4000,
+        openai,
+        fallbackModels: fallbackModels.slice(0, 1),
+        label: "memory-hybrid: generate-proposals-retry",
+        feature: CostFeature.generateProposals,
+        thinkingMode: "disabled",
+        logger: {
+          info: (msg) => ctx.logger.info?.(msg),
+          warn: (msg) => ctx.logger.warn?.(msg),
+        },
+      });
+      const parsed = parseStructuredItemsAcceptingEmpty(detail.content, isGenerateProposalItem);
+      if (parsed && parsed.length > 0) {
+        items = parsed as typeof items;
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "cli",
+        operation: "runGenerateProposalsForCli:semantic-empty-retry",
+      });
+    }
+  }
+  if (items.length === 0 && insights.length > 0) {
+    if (identityGapResult.score >= 0.25) {
+      const fallback = buildSemanticEmptyFallbackProposal(identityGapResult.bullets, allowedFiles);
+      if (fallback) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals semantic_empty_with_gaps=true identity_gap_score=${identityGapResult.score.toFixed(2)} — using deterministic fallback proposal`,
+        );
+        items = [fallback];
+      }
+    }
+  }
+  if (items.length === 0 && insights.length > 0) {
+    const failureMessage =
+      "memory-hybrid: generate-proposals semantic_empty: had insight input but parsed zero proposal items";
+    ctx.logger.warn?.(
+      `${failureMessage} identity_gap_score=${identityGapResult.score.toFixed(2)} parse_success=false created=0 — returning degraded empty result`,
+    );
+    proposalsDb.recordRun({
+      runAt: nowSec,
+      insightsCount: insights.length,
+      parsedCount: 0,
+      createdCount: 0,
+      semanticEmpty: true,
+      identityGapScore: identityGapResult.score,
+      model: allModels[0] ?? null,
+      zeroReason: "semantic_empty",
+    });
+    return { created: 0 };
+  }
   const weekDays = 7;
-  const recentCount = proposalsDb.countRecentProposals(weekDays);
+  const separateSCQuota = cfg.personaProposals.separateSelfCorrectionQuota !== false;
+  const recentCount = proposalsDb.countRecentProposals(weekDays, {
+    excludeSelfCorrection: separateSCQuota,
+  });
   const limit = cfg.personaProposals.maxProposalsPerWeek;
+  if (recentCount >= limit) {
+    ctx.logger.warn?.(
+      `memory-hybrid: generate-proposals weekly cap reached (${recentCount}/${limit} in last ${weekDays}d${separateSCQuota ? ", excluding self-correction" : ""}); skipping creation`,
+    );
+  }
   const minConf = cfg.personaProposals.minConfidence;
   const evidenceSessions = Array.from(
     { length: Math.max(1, cfg.personaProposals.minSessionEvidence) },
@@ -255,7 +403,14 @@ export async function runGenerateProposalsForCli(
     cfg.personaProposals.proposalTTLDays > 0 ? nowSec + cfg.personaProposals.proposalTTLDays * 24 * 3600 : null;
   let created = 0;
   for (const item of items) {
-    if (recentCount + created >= limit) break;
+    if (recentCount + created >= limit) {
+      if (created === 0) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals weekly cap reached (${recentCount}/${limit}); parsed ${items.length} item(s) but created 0`,
+        );
+      }
+      break;
+    }
     const targetFile = String(item.targetFile ?? "").trim();
     if (!allowedFiles.includes(targetFile as any)) continue;
     const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
@@ -278,7 +433,7 @@ export async function runGenerateProposalsForCli(
     const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
     if (!suggestedChange.trim()) continue;
     if (opts.dryRun) {
-      if (opts.verbose) ctx.logger.info?.(`memory-hybrid: [dry-run] would create proposal: ${title} -> ${targetFile}`);
+      if (verbose) ctx.logger.info?.(`memory-hybrid: [dry-run] would create proposal: ${title} -> ${targetFile}`);
       created++;
       continue;
     }
@@ -295,7 +450,7 @@ export async function runGenerateProposalsForCli(
         targetHash: snapshot?.hash ?? null,
       });
       created++;
-      if (opts.verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
+      if (verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "cli",
@@ -303,5 +458,20 @@ export async function runGenerateProposalsForCli(
       });
     }
   }
+  proposalsDb.recordRun({
+    runAt: nowSec,
+    insightsCount: insights.length,
+    parsedCount: items.length,
+    createdCount: created,
+    semanticEmpty: created === 0 && items.length === 0,
+      identityGapScore: identityGapResult.score,
+      model: allModels[0] ?? null,
+      zeroReason: created === 0 ? (items.length === 0 ? "semantic_empty" : "filtered_or_capped") : null,
+    });
+    if (verbose) {
+      ctx.logger.info?.(
+        `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} created=${created}`,
+      );
+    }
   return { created };
 }

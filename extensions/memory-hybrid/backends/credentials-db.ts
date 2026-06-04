@@ -408,14 +408,14 @@ export class CredentialsDB extends BaseSqliteStore {
             );
             for (const row of credRows) {
               insertCred.run(
-                row.service,
-                row.type,
-                row.value,
-                row.url,
-                row.notes,
-                row.created,
-                row.updated,
-                row.expires,
+                row.service as string,
+                row.type as string,
+                row.value as string,
+                row.url as string | null,
+                row.notes as string | null,
+                row.created as number,
+                row.updated as number,
+                row.expires as number | null,
               );
             }
 

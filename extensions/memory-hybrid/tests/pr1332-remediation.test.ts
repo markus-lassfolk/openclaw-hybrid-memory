@@ -106,7 +106,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
       expiresAt: null,
     };
     const replacement = { ...existing, id: "updated", text: "edited text" };
-    const storeWithResult = vi.fn(() => ({ entry: replacement, skipped: false }));
+    const storeWithResult = vi.fn(() => ({ entry: replacement, skipped: false, newlyStored: true }));
     const context = {
       factsDb: {
         getById: vi.fn((id: string) => (id === existing.id ? existing : null)),
@@ -249,7 +249,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
     const written: unknown[] = [];
     const wal = {
       getPath: () => walPath,
-      readAll: vi.fn().mockResolvedValue([]),
+      readAll: vi.fn().mockImplementation(async () => written),
       getValidEntries: vi.fn().mockImplementation(async () => written),
       write: vi.fn().mockImplementation(async (entry: unknown) => written.push(entry)),
       remove: vi.fn().mockRejectedValue(new Error("cleanup failed")),

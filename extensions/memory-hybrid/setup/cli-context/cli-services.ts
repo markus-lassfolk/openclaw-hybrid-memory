@@ -4,7 +4,11 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import type { FindDuplicatesResult } from "../../cli/types.js";
-import { getMemoryCategories, resolveReflectionModelAndFallbacks } from "../../config.js";
+import {
+  getMemoryCategories,
+  resolveReflectionModelAndFallbacks,
+  resolveReflectionThinkingMode,
+} from "../../config.js";
 import { runClassifyForCli } from "../../services/auto-classifier.js";
 import { runConsolidate } from "../../services/consolidation.js";
 import { type VerificationCycleResult, runVerificationCycle } from "../../services/continuous-verifier.js";
@@ -16,6 +20,7 @@ import { runBuildLanguageKeywords } from "../../services/language-keywords-build
 import { mergeResults } from "../../services/merge-results.js";
 import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
 import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
+import { runIdentityReflection } from "../../services/identity-reflection.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
 import { parseSourceDate } from "../../utils/dates.js";
 import { getEnv } from "../../utils/env-manager.js";
@@ -61,7 +66,17 @@ interface CliContextServices {
     dryRun: boolean;
     model: string;
     verbose?: boolean;
-  }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  }) => Promise<{
+    metaExtracted: number;
+    metaStored: number;
+    diagnostics?: import("../../services/reflection.js").ReflectionMetaDiagnostics;
+  }>;
+  runReflectIdentity: (opts: {
+    dryRun: boolean;
+    model?: string;
+    verbose?: boolean;
+    window?: number;
+  }) => Promise<{ insightsExtracted: number; insightsStored: number; questionsAsked: number }>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -195,10 +210,22 @@ export function buildCliContextServices(
     runConsolidate: async (opts) => {
       // Skip if OpenAI provider is configured but API key is missing
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
+        api.logger.warn?.(
+          "memory-hybrid: consolidate skipped — embedding.provider is openai but embedding.apiKey is missing",
+        );
         return { clustersFound: 0, merged: 0, deleted: 0 };
       }
       await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
-      return runConsolidate(factsDb, vectorDb, embeddings, openai, opts, api.logger, aliasDb, provenanceService);
+      return runConsolidate(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        { ...opts, thinkingMode: resolveReflectionThinkingMode(cfg) },
+        api.logger,
+        aliasDb,
+        provenanceService,
+      );
     },
     runReflection: async (opts) => {
       const requestedModel = opts.model ?? cfg.reflection.model;
@@ -225,6 +252,7 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          thinkingMode: resolveReflectionThinkingMode(cfg),
         },
         logSink,
         provenanceService,
@@ -261,6 +289,8 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          // JSON extraction must not use adaptive thinking (breaks json_object parsing).
+          thinkingMode: "disabled",
         },
         logSink,
         provenanceService,
@@ -286,9 +316,32 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
+          thinkingMode: resolveReflectionThinkingMode(cfg),
         },
         logSink,
         provenanceService,
+      );
+    },
+    runReflectIdentity: async (opts) => {
+      if (!ctx.identityReflectionStore) {
+        return { insightsExtracted: 0, insightsStored: 0, questionsAsked: 0 };
+      }
+      const requestedModel = opts.model ?? cfg.identityReflection.model;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
+      const effectiveModel = requestedModel ?? defaultModel;
+      return runIdentityReflection(
+        factsDb,
+        ctx.identityReflectionStore,
+        openai,
+        cfg.identityReflection,
+        {
+          dryRun: opts.dryRun,
+          model: effectiveModel,
+          fallbackModels,
+          verbose: opts.verbose,
+          window: opts.window,
+        },
+        logSink,
       );
     },
     runClassify: async (opts) => {

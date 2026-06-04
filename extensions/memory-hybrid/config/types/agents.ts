@@ -44,4 +44,10 @@ export type PersonaProposalsConfig = {
    * Default: false (warn-only for backward compatibility).
    */
   requireScopeFilter: boolean;
+  /**
+   * When true, proposals created directly by self-correction-run (title starts with "Self-correction:")
+   * are excluded from the weekly cap count, giving generate-proposals its own quota.
+   * Default: true — prevents self-correction backlog from permanently blocking reflection-driven proposals.
+   */
+  separateSelfCorrectionQuota: boolean;
 };

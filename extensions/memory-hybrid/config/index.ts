@@ -21,6 +21,14 @@ export { EMBEDDING_DIMENSIONS, OPENAI_MODELS } from "./parsers/core.js";
 
 // Re-export vectorDimsForModel and parseVerbosityLevel from parsers/index
 export { vectorDimsForModel, parseVerbosityLevel } from "./parsers/index.js";
+export {
+  resolveMiniMaxThinkingMode,
+  resolveSelfCorrectionThinkingMode,
+  resolveReinforcementThinkingMode,
+  resolveDistillThinkingMode,
+  resolveReflectionThinkingMode,
+  resolveTaskThinkingMode,
+} from "./thinking-mode.js";
 
 import { resolveSecretRef } from "./parsers/core.js";
 import {
@@ -297,6 +305,17 @@ function appendUniqueFallbackList(chain: string[], candidates: string[] | undefi
 }
 
 /**
+ * Effective tier for the main distill pass. Config may still store `"heavy"` for backward
+ * compatibility, but runtime always uses maintenance (#1205/#1216).
+ */
+export function effectiveDistillMainModelTier(
+  configured: "nano" | "maintenance" | "default" | "heavy" | undefined,
+): "nano" | "maintenance" | "default" {
+  const tier = configured ?? "maintenance";
+  return tier === "heavy" ? "maintenance" : tier;
+}
+
+/**
  * Resolve default model and fallback list for reflection/cron (default or heavy tier).
  * Single place for getCronModelConfig + getLLMModelPreference + cfg.llm fallback logic.
  *
@@ -366,3 +385,5 @@ export function resolveReflectionModelAndFallbacks(
 
   return { defaultModel, fallbackModels: chain.length > 0 ? chain : undefined };
 }
+
+// resolveMiniMaxThinkingMode lives in thinking-mode.ts (re-exported above).

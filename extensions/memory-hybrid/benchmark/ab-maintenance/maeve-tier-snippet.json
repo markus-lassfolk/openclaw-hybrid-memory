@@ -1,0 +1,37 @@
+{
+  "_comment": "Quality-first policy (validated run 2026-06-04T10-42-51). Richness/reliability trump latency for scheduled maintenance.",
+  "llm": {
+    "nano": ["minimax/MiniMax-M2.7-highspeed"],
+    "maintenance": ["minimax/MiniMax-M3", "minimax/MiniMax-M2.7-highspeed"],
+    "default": ["minimax/MiniMax-M3"],
+    "heavy": ["minimax/MiniMax-M3"],
+    "minimax": {
+      "thinking": "disabled"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "models": {
+        "minimax/MiniMax-M3": { "alias": "minimax-m3" },
+        "minimax/MiniMax-M2.7-highspeed": { "alias": "minimax-fast" },
+        "minimax/MiniMax-M2.7": { "alias": "minimax" }
+      }
+    }
+  },
+  "selfCorrection": {
+    "model": "minimax/MiniMax-M3",
+    "thinking": "disabled"
+  },
+  "reinforcement": {
+    "model": "minimax/MiniMax-M2.7-highspeed",
+    "thinking": "disabled"
+  },
+  "distill": {
+    "modelTier": "maintenance",
+    "thinking": "disabled"
+  },
+  "reflection": {
+    "model": "minimax/MiniMax-M3",
+    "thinking": "adaptive"
+  }
+}

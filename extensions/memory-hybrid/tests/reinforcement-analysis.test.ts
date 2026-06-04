@@ -482,7 +482,7 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
       reportPath: null,
     });
     expect(result.error).toContain(
-      "Self-correction analysis: LLM response could not be parsed as a JSON array (repair failed)",
+      "Self-correction analysis: batch 1/1 LLM response could not be parsed as a JSON array (repair failed)",
     );
   });
 
@@ -499,7 +499,6 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
 
     const openai = makeOpenAIMock(llmResponse);
 
-    const _reportDir = join(tmpDir, "memory", "reports");
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeFileSync(
       sessionFile,

@@ -10,12 +10,14 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { getDirectiveSignalRegex } from "../utils/language-keywords.js";
+import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 
-import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
+import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
+import { getMaxMtime } from "./cmd-extract-sessions.js";
 
 const VECTOR_CANDIDATE_LIMIT = 10;
 const VECTOR_CANDIDATE_OVERFETCH_LIMIT = 50;
@@ -88,7 +90,6 @@ export async function runExtractDirectivesForCli(
   const { factsDb, vectorDb, embeddings, cfg, logger } = ctx;
   const SCAN_TYPE = "extract-directives";
   logger.info?.("memory-hybrid: extract-directives — regex extraction (no LLM model selection)");
-  const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
@@ -115,11 +116,14 @@ export async function runExtractDirectivesForCli(
   try {
     let filePaths: string[];
     if (!bypassWatermark && cursor) {
-      filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastSessionTs);
+      filePaths = resolveExtractSessionFilePaths(cfg, days, cursor.lastSessionTs);
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
     } else {
-      filePaths = getSessionFilePathsSince(sessionDir, days);
+      filePaths = resolveExtractSessionFilePaths(cfg, days);
     }
+    logger.info?.(
+      `memory-hybrid: ${SCAN_TYPE} scan scope allAgentSessions=${cfg.procedures.allAgentSessions === true} candidateSessions=${filePaths.length}`,
+    );
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
     // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
@@ -142,7 +146,16 @@ export async function runExtractDirectivesForCli(
     const result = runDirectiveExtract({
       filePaths: extractionPaths,
       directiveRegex,
+      verboseRejections: !!opts.verbose,
+      logRejection: opts.verbose ? (line) => logger.info?.(line) : undefined,
     });
+
+    if (opts.verbose && result.rejectionReasons && Object.keys(result.rejectionReasons).length > 0) {
+      const parts = Object.entries(result.rejectionReasons)
+        .sort((a, b) => b[1] - a[1])
+        .map(([reason, n]) => `${reason}=${n}`);
+      logger.info?.(`memory-hybrid: extract-directives rejection breakdown: ${parts.join(", ")}`);
+    }
 
     if (opts.verbose) {
       for (const incident of result.incidents) {
@@ -238,7 +251,7 @@ export async function runExtractDirectivesForCli(
           });
           const storeResult = factsDb.storeWithResult(
             {
-              text: incident.extractedRule,
+              text: redactMaintenancePrivateText(incident.extractedRule),
               category: category as MemoryCategory,
               importance: 0.8,
               entity: null,

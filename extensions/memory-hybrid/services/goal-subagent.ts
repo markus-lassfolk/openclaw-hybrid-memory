@@ -4,6 +4,7 @@
 
 import { isTerminalStatus, listActiveGoals, readGoal, readGoalByLabel, updateGoal } from "./goal-registry.js";
 import type { Goal } from "./goal-stewardship-types.js";
+import { taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 
 export type GoalSubagentSpawnEvent = {
   childSessionKey?: string;
@@ -68,10 +69,10 @@ export async function linkSubagentToGoal(
   const g = await readGoal(goalsDir, goalId);
   if (!g || isTerminalStatus(g.status)) return;
   const ts = nowIso();
-  const existing = g.linkedTasks.find((t) => t.label === task.label);
+  const existing = g.linkedTasks.find((t) => taskLabelsMatch(t.label, task.label));
   const linkedTasks = existing
     ? g.linkedTasks.map((t) =>
-        t.label === task.label
+        taskLabelsMatch(t.label, task.label)
           ? {
               ...t,
               sessionKey: task.sessionKey,
@@ -118,10 +119,10 @@ export async function markGoalDispatchFailure(
   const g = await readGoal(goalsDir, goalId);
   if (!g || isTerminalStatus(g.status)) return;
   const ts = nowIso();
-  const existing = g.linkedTasks.find((t) => t.label === info.label);
+  const existing = g.linkedTasks.find((t) => taskLabelsMatch(t.label, info.label));
   const linkedTasks = existing
     ? g.linkedTasks.map((t) =>
-        t.label === info.label
+        taskLabelsMatch(t.label, info.label)
           ? {
               ...t,
               sessionKey: info.sessionKey ?? t.sessionKey ?? null,
@@ -196,18 +197,33 @@ export async function updateGoalOnSubagentEnd(
       if (task) matches.push({ goal: g, taskLabel: task.label });
       continue;
     }
-    const task = linkedTasks.find((t) => t.label === info.label);
+    const task = linkedTasks.find((t) => taskLabelsMatch(t.label, info.label));
     if (task) matches.push({ goal: g, taskLabel: task.label });
   }
-  if (matches.length !== 1) {
+
+  let resolved = matches;
+  if (resolved.length !== 1 && info.sessionKey && info.label) {
+    const byLabel = matches.filter((m) => taskLabelsMatch(m.taskLabel, info.label));
+    if (byLabel.length === 1) resolved = byLabel;
+  }
+  if (resolved.length !== 1 && info.label) {
+    const labelOnly: Array<{ goal: Goal; taskLabel: string }> = [];
+    for (const g of goals) {
+      const linkedTasks = normalizedLinkedTasks(g);
+      const task = linkedTasks.find((t) => taskLabelsMatch(t.label, info.label));
+      if (task) labelOnly.push({ goal: g, taskLabel: task.label });
+    }
+    if (labelOnly.length === 1) resolved = labelOnly;
+  }
+  if (resolved.length !== 1) {
     return;
   }
-  const { goal: g, taskLabel: matchedTaskLabel } = matches[0];
+  const { goal: g, taskLabel: matchedTaskLabel } = resolved[0];
 
   const ts = nowIso();
   const newStatus = info.success ? "completed" : "failed";
   const linkedTasks = normalizedLinkedTasks(g).map((t) =>
-    t.label === matchedTaskLabel
+    taskLabelsMatch(t.label, matchedTaskLabel)
       ? { ...t, status: newStatus, updatedAt: ts, sessionKey: info.sessionKey ?? t.sessionKey }
       : t,
   );

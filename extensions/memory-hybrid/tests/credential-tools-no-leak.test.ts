@@ -13,9 +13,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
+import { FactsDB } from "../backends/facts-db.js";
+import type { FactsDB as FactsDBType } from "../backends/facts-db.js";
 import type { CredentialsConfig, HybridMemoryConfig } from "../config/types/index.js";
 import type { PluginContext } from "../tools/credential-tools.js";
 import { registerCredentialTools } from "../tools/credential-tools.js";
+import { ensureCredentialVaultPointer, findCredentialPointerFactIds } from "../services/credential-vault-pointer.js";
 
 const TEST_KEY = "test-encryption-key-for-unit-tests-32chars";
 const FAKE_SECRET = "ghp_FAKE_DO_NOT_LEAK_1234567890abcdef";
@@ -61,8 +64,13 @@ function makeMinimalCfg(overrides: Partial<CredentialsConfig> = {}): HybridMemor
   return { credentials } as HybridMemoryConfig;
 }
 
-function makeCtx(db: CredentialsDB, cfg: HybridMemoryConfig, api: MockApi): PluginContext {
-  return { credentialsDb: db, cfg, api: api as unknown as PluginContext["api"] };
+function makeCtx(
+  db: CredentialsDB,
+  cfg: HybridMemoryConfig,
+  api: MockApi,
+  factsDb: FactsDBType | null = null,
+): PluginContext {
+  return { credentialsDb: db, factsDb, cfg, api: api as unknown as PluginContext["api"] };
 }
 
 let tmpDir: string;
@@ -171,5 +179,119 @@ describe("credential_get — revealInContent opt-in path", () => {
 
     const text = result.content[0]?.text ?? "";
     expect(text.toLowerCase()).toContain("production");
+  });
+});
+
+describe("credential_store — vault pointer fact", () => {
+  it("writes a vault pointer to factsDb after storing in vault", async () => {
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const storeWithResult = vi.fn().mockReturnValue({
+      skipped: false,
+      newlyStored: true,
+      embeddingStale: false,
+      evictedFactId: null,
+      entry: { id: "pointer-1", text: "pointer", category: "technical" },
+    });
+    const factsDb = { storeWithResult } as unknown as FactsDBType;
+
+    registerCredentialTools(makeCtx(db, cfg, api, factsDb), api as unknown as PluginContext["api"]);
+
+    const tool = api.getTool("credential_store");
+    if (!tool) throw new Error("credential_store tool was not registered");
+
+    await tool.execute("call-store", {
+      service: "openai",
+      type: "api_key",
+      value: "sk-new-secret-value-12345678",
+    });
+
+    expect(storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: "Credentials",
+        key: "openai",
+        value: expect.stringMatching(/^vault:openai:api_key/),
+      }),
+    );
+  });
+
+  it("rolls back vault when pointer store is skipped", async () => {
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const deleteSpy = vi.spyOn(db, "delete");
+    const factsDb = {
+      storeWithResult: vi.fn().mockReturnValue({
+        skipped: true,
+        newlyStored: false,
+        embeddingStale: false,
+        evictedFactId: null,
+        entry: { id: "", text: "" },
+      }),
+    } as unknown as FactsDBType;
+
+    registerCredentialTools(makeCtx(db, cfg, api, factsDb), api as unknown as PluginContext["api"]);
+
+    const tool = api.getTool("credential_store");
+    if (!tool) throw new Error("credential_store tool was not registered");
+
+    await expect(
+      tool.execute("call-store-fail", {
+        service: "anthropic",
+        type: "api_key",
+        value: "sk-rollback-test-value-123456",
+      }),
+    ).rejects.toThrow(/pre-store guard/);
+
+    expect(deleteSpy).toHaveBeenCalledWith("anthropic", "api_key");
+    deleteSpy.mockRestore();
+  });
+
+  it("rolls back vault when factsDb is unavailable", async () => {
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const deleteSpy = vi.spyOn(db, "delete");
+
+    registerCredentialTools(makeCtx(db, cfg, api, null), api as unknown as PluginContext["api"]);
+
+    const tool = api.getTool("credential_store");
+    if (!tool) throw new Error("credential_store tool was not registered");
+
+    await expect(
+      tool.execute("call-store-no-facts", {
+        service: "openai",
+        type: "api_key",
+        value: "sk-no-facts-db-value-12345678",
+      }),
+    ).rejects.toThrow(/Facts store not available/);
+
+    expect(deleteSpy).toHaveBeenCalledWith("openai", "api_key");
+    deleteSpy.mockRestore();
+  });
+
+  it("removes memory pointers when credential_delete succeeds", async () => {
+    const factsDb = new FactsDB(join(tmpDir, "facts-del.db"));
+    ensureCredentialVaultPointer(factsDb, "github", "api_key", "test");
+    expect(findCredentialPointerFactIds(factsDb, "github", "api_key")).toHaveLength(1);
+
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const vectorDb = {
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as import("../backends/vector-db.js").VectorDB;
+
+    registerCredentialTools(
+      { credentialsDb: db, factsDb, vectorDb, cfg, api: api as unknown as PluginContext["api"] },
+      api as unknown as PluginContext["api"],
+    );
+
+    const tool = api.getTool("credential_delete");
+    if (!tool) throw new Error("credential_delete tool was not registered");
+
+    const result = await tool.execute("call-del", { service: "github", type: "api_key" });
+    expect(result.details?.deleted).toBe(true);
+    expect(result.details?.pointersRemoved).toBe(1);
+    expect(findCredentialPointerFactIds(factsDb, "github", "api_key")).toHaveLength(0);
+
+    factsDb.close();
   });
 });

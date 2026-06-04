@@ -53,15 +53,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _testing } from "../index.js";
+import { WalReadCorruptionError, WriteAheadLog } from "../backends/wal.js";
 import { pluginLogger } from "../utils/logger.js";
 
-const { WriteAheadLog } = _testing;
-
-// Test constants
 const TEST_MAX_AGE_MS = 1000; // 1 second for fast tests
 const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes (production default)
 
@@ -187,12 +184,11 @@ describe("WriteAheadLog", () => {
       expect(entries).toEqual([]);
     });
 
-    it("handles corrupted JSON gracefully", async () => {
+    it("throws WalReadCorruptionError for corrupted entry lines", async () => {
       // Write invalid JSON directly to the file
       writeFileSync(walPath, "{ invalid json }", "utf-8");
 
-      const entries = await wal.readAll();
-      expect(entries).toEqual([]);
+      await expect(wal.readAll()).rejects.toBeInstanceOf(WalReadCorruptionError);
     });
 
     it("handles empty file", async () => {
@@ -507,6 +503,27 @@ describe("WriteAheadLog", () => {
       expect(pruned).toBe(1);
       expect(existsSync(walPath)).toBe(false);
     });
+
+    it("repairs corrupt lines even when no entries are stale", async () => {
+      const recentEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Recent memory", category: "general", importance: 0.8, source: "test" },
+      };
+
+      await wal.write(recentEntry);
+      appendFileSync(walPath, "{not valid wal json}\n", "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const pruned = await wal.pruneStale();
+
+      expect(pruned).toBe(0);
+      expect(await wal.readAll()).toHaveLength(1);
+      expect((await wal.readAll())[0].id).toBe(recentEntry.id);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("WAL pruneStale detected corruption"));
+      warnSpy.mockRestore();
+    });
   });
 
   describe("getValidEntries", () => {
@@ -563,6 +580,132 @@ describe("WriteAheadLog", () => {
       await emptyWal.init();
       const validEntries = await emptyWal.getValidEntries();
       expect(validEntries).toEqual([]);
+    });
+
+    it("returns valid entries when WAL contains corrupt lines", async () => {
+      const maxAgeMs = 60_000;
+      const localWal = new WriteAheadLog(walPath, maxAgeMs);
+      await localWal.init();
+
+      const recentEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Recent", category: "general", importance: 0.8, source: "test" },
+      };
+
+      await localWal.write(recentEntry);
+      appendFileSync(walPath, "{not valid wal json}\n", "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const validEntries = await localWal.getValidEntries();
+
+      expect(validEntries).toHaveLength(1);
+      expect(validEntries[0].id).toBe(recentEntry.id);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("falling back to lenient read"));
+      warnSpy.mockRestore();
+    });
+  });
+
+  describe("compactIfOversized", () => {
+    beforeEach(async () => {
+      wal = new WriteAheadLog(walPath, TEST_MAX_AGE_MS);
+      await wal.init();
+    });
+
+    it("retains entries older than maxAge during size compaction", async () => {
+      const maxAgeMs = 1000;
+      const localWal = new WriteAheadLog(walPath, maxAgeMs);
+      await localWal.init();
+
+      const oldEntry = {
+        id: randomUUID(),
+        timestamp: Date.now() - maxAgeMs - 5000,
+        operation: "store" as const,
+        data: { text: "Old pending", category: "general", importance: 0.7, source: "test" },
+      };
+      const recentEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Recent pending", category: "general", importance: 0.8, source: "test" },
+      };
+
+      await localWal.write(oldEntry);
+      await localWal.write(recentEntry);
+
+      const compacted = await localWal.compactIfOversized(0);
+      expect(compacted).toBe(1);
+
+      const entries = await localWal.readAll();
+      expect(entries).toHaveLength(2);
+      expect(entries.map((entry) => entry.id).sort()).toEqual([oldEntry.id, recentEntry.id].sort());
+    });
+  });
+
+  describe("readAllRecoverable", () => {
+    beforeEach(async () => {
+      wal = new WriteAheadLog(walPath, TEST_MAX_AGE_MS);
+      await wal.init();
+    });
+
+    it("returns strict results for a clean WAL", async () => {
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Clean", category: "general", importance: 0.8, source: "test" },
+      };
+      await wal.write(entry);
+
+      const { entries, hadCorruption } = await wal.readAllRecoverable();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].id).toBe(entry.id);
+      expect(hadCorruption).toBe(false);
+    });
+
+    it("returns recoverable entries when WAL contains corrupt lines", async () => {
+      const entry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Recoverable", category: "general", importance: 0.8, source: "test" },
+      };
+      await wal.write(entry);
+      appendFileSync(walPath, "{not valid wal json}\n", "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const { entries, hadCorruption } = await wal.readAllRecoverable();
+
+      expect(entries).toHaveLength(1);
+      expect(entries[0].id).toBe(entry.id);
+      expect(hadCorruption).toBe(true);
+      warnSpy.mockRestore();
+    });
+
+    it("recovers JSON array lines during lenient fallback", async () => {
+      const entry1 = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Line entry", category: "general", importance: 0.8, source: "test" },
+      };
+      const entry2 = {
+        id: randomUUID(),
+        timestamp: Date.now() + 1,
+        operation: "store" as const,
+        data: { text: "Array entry", category: "general", importance: 0.7, source: "test" },
+      };
+      await wal.write(entry1);
+      appendFileSync(walPath, `${JSON.stringify([entry2])}\n`, "utf-8");
+      appendFileSync(walPath, "{not valid wal json}\n", "utf-8");
+
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      const { entries, hadCorruption } = await wal.readAllRecoverable();
+
+      expect(hadCorruption).toBe(true);
+      expect(entries.map((e) => e.id).sort()).toEqual([entry1.id, entry2.id].sort());
+      warnSpy.mockRestore();
     });
   });
 
@@ -740,7 +883,7 @@ describe("WriteAheadLog", () => {
       expect(entries[0]).toEqual(entry);
     });
 
-    it("handles partial file corruption by returning empty array", async () => {
+    it("throws WalReadCorruptionError for truncated/corrupt WAL files", async () => {
       // Write valid data first
       const entry = {
         id: randomUUID(),
@@ -757,10 +900,44 @@ describe("WriteAheadLog", () => {
       // Create new instance and try to read
       const recoveredWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
       await recoveredWal.init();
-      const entries = await recoveredWal.readAll();
+      await expect(recoveredWal.readAll()).rejects.toBeInstanceOf(WalReadCorruptionError);
+    });
 
-      // Should return empty array for corrupted data
-      expect(entries).toEqual([]);
+    it("loads recoverable IDs on init when WAL contains corrupt lines", async () => {
+      const entry1 = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Entry 1", category: "general", importance: 0.7, source: "test" },
+      };
+      const entry2 = {
+        id: randomUUID(),
+        timestamp: Date.now() + 1,
+        operation: "store" as const,
+        data: { text: "Entry 2", category: "general", importance: 0.8, source: "test" },
+      };
+
+      await wal.write(entry1);
+      await wal.write(entry2);
+      appendFileSync(walPath, "{not valid wal json}\n", "utf-8");
+
+      const recoveredWal = new WriteAheadLog(walPath, DEFAULT_MAX_AGE_MS);
+      const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+      await recoveredWal.init();
+      await expect(recoveredWal.readAll()).rejects.toBeInstanceOf(WalReadCorruptionError);
+
+      const { entries, hadCorruption } = await recoveredWal.readAllRecoverable();
+      expect(entries).toHaveLength(2);
+      expect(hadCorruption).toBe(true);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("recovered 2 active ID(s) from lenient read after corruption"),
+      );
+
+      await recoveredWal.remove(entry1.id);
+
+      expect(existsSync(walPath)).toBe(true);
+      expect(readFileSync(walPath, "utf-8")).toContain(entry2.id);
+      warnSpy.mockRestore();
     });
 
     it("preserves WAL file during crash recovery with multiple entries", async () => {

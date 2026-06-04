@@ -40,7 +40,7 @@ export const CONSOLIDATION_MERGE_MAX_CHARS = 5000;
 /** Max characters for reflection pattern text. */
 export const REFLECTION_PATTERN_MAX_CHARS = 500;
 /** Max characters for reflection meta-pattern text. */
-export const REFLECTION_META_MAX_CHARS = 300;
+export const REFLECTION_META_MAX_CHARS = 500;
 /** Cosine similarity threshold for deduplicating reflection patterns. */
 export const REFLECTION_DEDUPE_THRESHOLD = 0.85;
 /** Cosine similarity threshold for distillation/ingest deduplication. */
@@ -79,6 +79,20 @@ export const OLLAMA_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 // LLM chat completion constants
 /** Default timeout for chat completion requests (ms). */
 export const DEFAULT_CHAT_TIMEOUT_MS = 45_000;
+
+/** Maintenance LLM timeout for MiniMax M3 without thinking (A/B p95 ~40–90s). */
+export const MAINTENANCE_M3_CHAT_TIMEOUT_MS = 120_000;
+
+/** Maintenance LLM timeout when MiniMax thinking is on (A/B: M3 adaptive reflection can exceed 90s). */
+export const MAINTENANCE_THINKING_CHAT_TIMEOUT_MS = 180_000;
+
+/** Maintenance LLM timeout for MiniMax M2.x with thinking enabled. */
+export const MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS = 120_000;
+
+/** Env override for maintenance chat timeout (ms). Clamped to [10s, 30min]. */
+export const MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV = "OPENCLAW_HYBRID_MEM_MAINTENANCE_TIMEOUT_MS";
+export const MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MIN_MS = 10_000;
+export const MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MAX_MS = 30 * 60 * 1000;
 
 /** Daily narrative prompts aggregate many events — allow longer than default chat timeout (#935, #936). */
 export const NARRATIVE_CHAT_TIMEOUT_MS = 120_000;

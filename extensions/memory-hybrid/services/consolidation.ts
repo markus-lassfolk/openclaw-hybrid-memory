@@ -20,9 +20,11 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
+import { isMiniMaxModel } from "./chat.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import type { ProvenanceService } from "./provenance.js";
 import { dotProductSimilarity, loadReflectionDedupeCorpusVectors } from "./reflection.js";
-import { deleteVectorsForFactIds } from "./vector-maintenance.js";
+import { deleteVectorsForFactIds, cleanupEvictedVector } from "./vector-maintenance.js";
 
 interface ConsolidateOptions {
   threshold: number;
@@ -30,6 +32,7 @@ interface ConsolidateOptions {
   dryRun: boolean;
   limit: number;
   model: string;
+  thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
 }
 
 interface ConsolidateResult {
@@ -205,11 +208,12 @@ export async function runConsolidate(
               messages: [{ role: "user", content: prompt }],
               temperature: 0,
               ...chatCompletionTokenParams(opts.model, 300),
+              ...(opts.thinkingMode && isMiniMaxModel(opts.model) ? { thinking: { type: opts.thinkingMode } } : {}),
             }),
           { maxRetries: 2 },
         ),
       );
-      mergedText = (resp.choices[0]?.message?.content ?? "").trim().slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
+      mergedText = extractAssistantMessageText(resp.choices[0]?.message).text.slice(0, CONSOLIDATION_MERGE_MAX_CHARS);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate LLM failed for cluster: ${err}`);
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -240,7 +244,7 @@ export async function runConsolidate(
     }
 
     storeDedupeVectorFallbackSuppressed++;
-    const entry = factsDb.store(
+    const storeResult = factsDb.storeWithResult(
       {
         text: mergedText,
         category,
@@ -271,6 +275,25 @@ export async function runConsolidate(
         suppressVectorFallbackWarning: true,
       },
     );
+    if (storeResult.skipped) {
+      logger.warn(
+        `memory-hybrid: consolidate skipped merge store (pre-store guard blocked): "${mergedText.slice(0, 80)}..."`,
+      );
+      continue;
+    }
+    if (storeResult.newlyStored === false) {
+      logger.warn(
+        `memory-hybrid: consolidate skipped merge store (dedupe resolved to existing fact ${storeResult.entry.id.slice(0, 8)}): "${mergedText.slice(0, 80)}..."`,
+      );
+      continue;
+    }
+    const entry = storeResult.entry;
+    await cleanupEvictedVector({
+      vectorDb,
+      evictedFactId: storeResult.evictedFactId,
+      logger,
+      context: "consolidation",
+    });
     if (provenanceService && consolidationRunId) {
       try {
         provenanceService.addEdge(entry.id, {

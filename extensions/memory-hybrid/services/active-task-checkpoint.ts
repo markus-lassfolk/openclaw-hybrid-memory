@@ -10,7 +10,12 @@ import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.j
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { escapeRegExp } from "../utils/text.js";
-import { renderActiveTaskMarkdownFile, taskEntityKey, upsertProjectTaskKey } from "./task-ledger-facts.js";
+import {
+  renderActiveTaskMarkdownFile,
+  taskEntityKey,
+  upsertProjectTaskKey,
+  activeTaskRenderGoalsOpts,
+} from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 
@@ -589,7 +594,14 @@ async function refreshActiveTaskProjectionFromFacts(
     : join(workspaceRoot, input.cfg.activeTask.filePath);
   const staleMinutes = parseDuration(input.cfg.activeTask.staleThreshold);
 
-  await renderActiveTaskMarkdownFile(input.factsDb, staleMinutes, activeTaskPath, input.cfg.activeTask.projection);
+  await renderActiveTaskMarkdownFile(
+    input.factsDb,
+    staleMinutes,
+    activeTaskPath,
+    input.cfg.activeTask.projection,
+    undefined,
+    activeTaskRenderGoalsOpts(input.cfg, workspaceRoot),
+  );
   return { attempted: true, refreshed: true, path: activeTaskPath };
 }
 

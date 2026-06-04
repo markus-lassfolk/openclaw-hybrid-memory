@@ -18,10 +18,14 @@ export type SubagentEndedEvent = {
 export function subagentEndedIsSuccess(ev: SubagentEndedEvent): boolean {
   if (typeof ev.success === "boolean") return ev.success;
   const o = (ev.outcome ?? "").toLowerCase();
-  if (!o) return true;
+  if (!o) return false;
   if (["error", "timeout", "killed", "failed", "failure"].includes(o)) return false;
   if (["success", "completed", "ok", "done"].includes(o)) return true;
-  return true;
+  return false;
+}
+
+export function taskLabelsMatch(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 /**
@@ -35,7 +39,7 @@ export function findActiveTaskForSubagentEnd<T extends { label: string; subagent
   const targetKey = ev.targetSessionKey ?? ev.sessionKey;
   const candidateLabel = ev.label ?? targetKey;
   if (candidateLabel) {
-    const byLabel = active.find((t) => t.label === candidateLabel);
+    const byLabel = active.find((t) => taskLabelsMatch(t.label, candidateLabel));
     if (byLabel) return byLabel;
   }
   if (targetKey) {

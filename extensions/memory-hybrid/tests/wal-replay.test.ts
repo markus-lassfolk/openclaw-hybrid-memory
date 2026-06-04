@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { VectorDB } from "../backends/vector-db.js";
 import { _testing } from "../index.js";
-import { replayWalEntries } from "../utils/wal-replay.js";
+import { replayWalEntries, replayWalEntriesWithRepair } from "../utils/wal-replay.js";
 
 const { FactsDB, WriteAheadLog } = _testing;
 
@@ -198,7 +198,10 @@ describe("replayWalEntries", () => {
     expect(await wal.readAll()).toHaveLength(0);
   });
 
-  it("ignores invalid WAL scopes instead of passing them into FactsDB.store", async () => {
+  it("skips invalid WAL scopes instead of passing them into FactsDB.store", async () => {
+    const warnSpy = vi.fn();
+    const logger = { warn: warnSpy };
+
     await wal.write(
       walEntry({
         data: {
@@ -211,19 +214,14 @@ describe("replayWalEntries", () => {
       }),
     );
 
-    const result = await replayWalEntries(wal, factsDb);
+    const result = await replayWalEntries(wal, factsDb, undefined, undefined, logger);
 
-    expect(result.committed).toBe(1);
-    const stored = factsDb
-      .getRawDb()
-      .prepare("SELECT scope, scope_target FROM facts WHERE text = ?")
-      .get("Scoped replay fact") as {
-      scope: string;
-      scope_target: string | null;
-    };
-    expect(stored.scope).toBe("global");
-    expect(stored.scope_target).toBeNull();
+    expect(result).toEqual({ committed: 0, skipped: 1 });
+    const row = factsDb.getRawDb().prepare("SELECT id FROM facts WHERE text = ?").get("Scoped replay fact");
+    expect(row).toBeUndefined();
     expect(await wal.readAll()).toHaveLength(0);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(warnSpy.mock.calls[0][0]).toContain("invalid scope");
   });
 
   it("uses WAL embedding model metadata for precomputed vectors", async () => {
@@ -366,5 +364,22 @@ describe("replayWalEntries", () => {
     expect(factsDb.getById(target.id)?.supersededBy).toBeNull();
     expect(factsDb.getById(unrelated.id)?.supersedesId).toBeUndefined();
     expect(await wal.readAll()).toHaveLength(0);
+  });
+});
+
+describe("replayWalEntriesWithRepair — corruption recovery", () => {
+  it("repairs corrupt WAL lines and replays recoverable entries", async () => {
+    const entry = walEntry({ data: { text: "Corruption survivor", category: "fact", source: "test" } });
+    await wal.write(entry);
+    appendFileSync(wal.getPath(), "{not valid wal json}\n", "utf-8");
+
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const result = await replayWalEntriesWithRepair(wal, factsDb, undefined, undefined, logger, "test-repair");
+
+    expect(result).toEqual({ committed: 1, skipped: 0 });
+    expect(factsDb.getRawDb().prepare("SELECT COUNT(*) AS c FROM facts").get()).toEqual({ c: 1 });
+    expect(await wal.readAll()).toHaveLength(0);
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("detected corruption"));
+    expect(logger.info).toHaveBeenCalledWith(expect.stringContaining("retrying test-repair"));
   });
 });

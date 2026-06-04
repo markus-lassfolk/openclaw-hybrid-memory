@@ -38,12 +38,12 @@ type UtilityInstallerContext = {
   runReflection: MemoryPluginAPI["runReflection"];
   runReflectionRules: MemoryPluginAPI["runReflectionRules"];
   runReflectionMeta: MemoryPluginAPI["runReflectionMeta"];
-  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string>;
+  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string | null>;
   walRemove: (id: string) => Promise<void>;
 };
 
 type ProvenanceInstallerContext = Pick<ToolsContext, "factsDb" | "eventLog" | "provenanceService" | "cfg">;
-type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "cfg">;
+type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "vectorDb" | "cfg">;
 type DocumentInstallerContext = Pick<
   ToolsContext,
   "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
@@ -172,14 +172,19 @@ function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPl
   }
 }
 
-function selectCredentialToolsContext({ credentialsDb, cfg }: ToolsContext): CredentialInstallerContext {
-  return { credentialsDb, cfg };
+function selectCredentialToolsContext({
+  credentialsDb,
+  factsDb,
+  vectorDb,
+  cfg,
+}: ToolsContext): CredentialInstallerContext {
+  return { credentialsDb, factsDb, vectorDb, cfg };
 }
 
 function installCredentialTools(ctx: CredentialInstallerContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, cfg } = ctx;
+  const { credentialsDb, factsDb, vectorDb, cfg } = ctx;
   if (cfg.credentials.enabled && credentialsDb) {
-    registerCredentialTools({ credentialsDb, cfg, api }, api);
+    registerCredentialTools({ credentialsDb, factsDb, vectorDb, cfg, api }, api);
   }
 }
 
@@ -335,6 +340,9 @@ function selectPublicApiRoutesContext({
   recallInFlightRef,
   variantQueue,
 }: ToolsContext): PublicApiRoutesContext {
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  const goalsDir =
+    cfg.goalStewardship?.enabled === true ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir) : undefined;
   return {
     cfg,
     factsDb,
@@ -344,6 +352,7 @@ function selectPublicApiRoutesContext({
     resolvedLancePath: typeof vectorDb?.getPath === "function" ? vectorDb.getPath() : undefined,
     recallInFlightRef,
     variantQueue,
+    goalsDir,
   };
 }
 

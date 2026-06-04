@@ -653,4 +653,147 @@ describe("runCaptureStage", () => {
       expect.stringContaining("credential auto-detect failed: Error: simulated write failure"),
     );
   });
+
+  it("writes vault pointer fact after tool-call credential auto-capture", async () => {
+    const token = `ghp_${"A".repeat(36)}`;
+    const store = vi.fn().mockReturnValue({ id: "pointer-fact-1", text: "pointer", category: "technical" });
+    const storeWithResult = vi.fn().mockImplementation((entry: Parameters<typeof store>[0]) => ({
+      entry: store(entry),
+      evictedFactId: null,
+      skipped: false,
+      newlyStored: true,
+      embeddingStale: false,
+    }));
+    const storeIfNew = vi.fn().mockReturnValue(true);
+    const credentialsDelete = vi.fn();
+    const setEmbeddingModel = vi.fn();
+    const vectorStore = vi.fn().mockResolvedValue(undefined);
+    const vectorHasDuplicate = vi.fn().mockResolvedValue(false);
+    const embed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+
+    const api = makeApi("chat");
+    const { ctx } = makeContext({
+      credentialsDb: {
+        storeIfNew,
+        delete: credentialsDelete,
+      } as unknown as LifecycleContext["credentialsDb"],
+      factsDb: {
+        store,
+        storeWithResult,
+        hasDuplicate: vi.fn().mockReturnValue(false),
+        setEmbeddingModel,
+        storeEmbedding: vi.fn(),
+      } as unknown as LifecycleContext["factsDb"],
+      vectorDb: {
+        hasDuplicate: vectorHasDuplicate,
+        store: vectorStore,
+      } as unknown as LifecycleContext["vectorDb"],
+      embeddings: {
+        modelName: "test-model",
+        embed,
+      } as unknown as LifecycleContext["embeddings"],
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: ["semantic"] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: true, autoCapture: { toolCalls: true, logCaptures: true } },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                function: {
+                  name: "exec",
+                  arguments: JSON.stringify({
+                    command: `export GITHUB_TOKEN=${token}`,
+                  }),
+                },
+              },
+            ],
+          },
+        ],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeIfNew).toHaveBeenCalledWith(
+      expect.objectContaining({
+        service: "github",
+        type: "token",
+        value: token,
+      }),
+    );
+    expect(storeWithResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entity: "Credentials",
+        key: "github",
+        value: expect.stringMatching(/^vault:/),
+      }),
+    );
+    expect(credentialsDelete).not.toHaveBeenCalled();
+    expect(vectorStore).toHaveBeenCalledOnce();
+  });
+
+  it("skips tool-call credential capture when vault is unavailable (no plaintext in facts)", async () => {
+    const token = `ghp_${"B".repeat(36)}`;
+    const storeWithResult = vi.fn();
+    const api = makeApi("chat");
+    const { ctx } = makeContext({
+      credentialsDb: null,
+      factsDb: {
+        storeWithResult,
+      } as unknown as LifecycleContext["factsDb"],
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: ["semantic"] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: true, autoCapture: { toolCalls: true, logCaptures: true } },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                function: {
+                  name: "exec",
+                  arguments: JSON.stringify({
+                    command: `export GITHUB_TOKEN=${token}`,
+                  }),
+                },
+              },
+            ],
+          },
+        ],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeWithResult).not.toHaveBeenCalled();
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("vault disabled or unavailable"));
+  });
 });

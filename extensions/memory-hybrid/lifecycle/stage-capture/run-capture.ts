@@ -12,6 +12,12 @@ import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
 import { detectCredentialPatterns } from "../../services/auto-capture.js";
 import {
+  abortCredentialVaultWriteOnPointerDedupe,
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  rollbackVaultCredentialWrite,
+} from "../../services/credential-vault-pointer.js";
+import {
   getAutoCaptureExtractionConfidence,
   getAutoCaptureExtractionMethod,
   resolveCaptureProvenance,
@@ -28,6 +34,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { formatQualityLoopEntry, runHumanizerScore } from "../../services/humanizer-score.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import { isWalWriteFailure } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
@@ -529,10 +536,16 @@ export async function runCapture(
                         extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                         vector,
                         embeddingModelName: vector ? ctx.embeddings.modelName : undefined,
+                        scope: preservedScope,
+                        scopeTarget: preservedScopeTarget,
                       },
                       api.logger,
                       classification.targetId,
                     );
+                    if (isWalWriteFailure(ctx.wal, walEntryId)) {
+                      api.logger.warn?.("memory-hybrid: auto-capture UPDATE aborted (WAL write failed)");
+                      continue;
+                    }
                     const nowSec = Math.floor(Date.now() / 1000);
                     const storeResult = ctx.factsDb.storeWithResult({
                       text: textToStore,
@@ -555,7 +568,49 @@ export async function runCapture(
                       extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
                     });
                     if (storeResult.skipped) {
-                      await ctx.walRemove(walEntryId, api.logger);
+                      if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+                      continue;
+                    }
+                    if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+                      if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+                      api.logger.info?.(
+                        `memory-hybrid: auto-capture UPDATE dedupe — skipped supersede of ${classification.targetId}`,
+                      );
+                      continue;
+                    }
+                    if (storeResult.newlyStored === false && storeResult.embeddingStale) {
+                      const mergedEntry = storeResult.entry;
+                      await cleanupEvictedVector({
+                        vectorDb: ctx.vectorDb,
+                        evictedFactId: storeResult.evictedFactId,
+                        logger: api.logger,
+                        context: "stage-capture-update-merge",
+                      });
+                      try {
+                        const mergedVector = await ctx.embeddings.embed(mergedEntry.text);
+                        ctx.factsDb.setEmbeddingModel(mergedEntry.id, ctx.embeddings.modelName);
+                        await ctx.vectorDb.store({
+                          text: mergedEntry.text,
+                          vector: mergedVector,
+                          importance: finalImportance,
+                          category,
+                          id: mergedEntry.id,
+                        });
+                        persistCanonicalFactEmbedding(
+                          ctx.factsDb,
+                          mergedEntry.id,
+                          ctx.embeddings.modelName,
+                          mergedVector,
+                          "auto-capture-fact-embeddings",
+                          "auto-capture",
+                          api.logger.warn?.bind(api.logger),
+                        );
+                      } catch (vecErr) {
+                        api.logger.warn(
+                          `memory-hybrid: auto-capture UPDATE merge vector refresh failed for ${mergedEntry.id.slice(0, 8)}: ${vecErr}`,
+                        );
+                      }
+                      if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
                       continue;
                     }
                     const newEntry = storeResult.entry;
@@ -626,7 +681,7 @@ export async function runCapture(
                       `memory-hybrid: auto-capture UPDATE — superseded ${classification.targetId} with ${newEntry.id}`,
                     );
                     stored++;
-                    await ctx.walRemove(walEntryId, api.logger);
+                    if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
                     continue;
                   } // close if (oldFact) guard
                   // Validation failed: fall through to default ADD-style store path
@@ -670,6 +725,10 @@ export async function runCapture(
             },
             api.logger,
           );
+          if (isWalWriteFailure(ctx.wal, walEntryId)) {
+            api.logger.warn?.("memory-hybrid: auto-capture store aborted (WAL write failed)");
+            continue;
+          }
           const storeResult = ctx.factsDb.storeWithResult({
             text: textToStore,
             category,
@@ -685,6 +744,14 @@ export async function runCapture(
             extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
             extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
           });
+          if (storeResult.skipped) {
+            if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+            continue;
+          }
+          if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+            if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+            continue;
+          }
           const storedEntry = storeResult.entry;
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
@@ -767,7 +834,7 @@ export async function runCapture(
               context: { category, entity: extracted.entity, role: candidate.role },
             });
           }
-          await ctx.walRemove(walEntryId, api.logger);
+          if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
         }
         if (stored > 0) api.logger.info(`memory-hybrid: auto-captured ${stored} memories`);
       }
@@ -1014,110 +1081,106 @@ export async function runCapture(
           const creds = extractCredentialsFromToolCalls(argsToScan || args);
           for (const cred of creds) {
             if (ctx.credentialsDb) {
-              const stored = ctx.credentialsDb.storeIfNew({
-                service: cred.service,
-                type: cred.type,
-                value: cred.value,
-                url: cred.url,
-                notes: cred.notes,
+              let storedInVault = false;
+              try {
+                storedInVault = ctx.credentialsDb.storeIfNew({
+                  service: cred.service,
+                  type: cred.type,
+                  value: cred.value,
+                  url: cred.url,
+                  notes: cred.notes,
+                });
+              } catch (err) {
+                if (!suppressCaptureStageError(ctx, api, err)) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "tool-call-credential-vault-store",
+                    subsystem: "credentials",
+                  });
+                  api.logger.warn?.(
+                    `memory-hybrid: tool-call credential vault store failed for ${cred.service}: ${err}`,
+                  );
+                }
+                continue;
+              }
+              const pointer = ensureCredentialVaultPointer(ctx.factsDb, cred.service, cred.type, "conversation", {
+                decayClass: "permanent",
               });
-              if (stored && logCaptures) {
+              if (!pointer.ok) {
+                if (storedInVault) {
+                  rollbackVaultCredentialWrite(ctx.credentialsDb, cred.service, cred.type);
+                }
+                continue;
+              }
+              if (
+                abortCredentialVaultWriteOnPointerDedupe(
+                  storedInVault,
+                  pointer,
+                  ctx.credentialsDb,
+                  cred.service,
+                  cred.type,
+                )
+              ) {
+                continue;
+              }
+              const entry = pointer.entry;
+              await cleanupEvictedVector({
+                vectorDb: ctx.vectorDb,
+                evictedFactId: pointer.evictedFactId,
+                logger: api.logger,
+                context: "stage-capture-credential-pointer",
+              });
+              if (
+                ctx.cfg.retrieval.strategies.includes("semantic") &&
+                (pointer.newlyStored || pointer.embeddingStale)
+              ) {
+                const pointerText = buildCredentialPointerText(cred.service, cred.type);
+                try {
+                  const vector = await ctx.embeddings.embed(pointer.embeddingStale ? entry.text : pointerText);
+                  ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
+                  if (!(await ctx.vectorDb.hasDuplicate(vector))) {
+                    await ctx.vectorDb.store({
+                      text: pointer.embeddingStale ? entry.text : pointerText,
+                      vector,
+                      importance: 0.9,
+                      category: "technical",
+                      id: entry.id,
+                    });
+                    persistCanonicalFactEmbedding(
+                      ctx.factsDb,
+                      entry.id,
+                      ctx.embeddings.modelName,
+                      vector,
+                      "auto-capture-credential-pointer-embeddings",
+                      "auto-capture",
+                      api.logger.warn?.bind(api.logger),
+                    );
+                  }
+                } catch (err) {
+                  const asErr = err instanceof Error ? err : new Error(String(err));
+                  if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
+                    capturePluginError(asErr, {
+                      operation: pointer.embeddingStale
+                        ? "tool-call-credential-pointer-stale-vector-update"
+                        : "tool-call-credential-pointer-vector-store",
+                      subsystem: "credentials",
+                    });
+                  }
+                  if (!suppressCaptureStageError(ctx, api, asErr)) {
+                    api.logger.warn(
+                      pointer.embeddingStale
+                        ? `memory-hybrid: stale vector re-embed failed for credential pointer ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
+                        : `memory-hybrid: vector store for credential pointer failed: ${err}`,
+                    );
+                  }
+                }
+              }
+              if (logCaptures) {
                 api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
               }
             } else {
-              const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}.`;
-              const storeResult = ctx.factsDb.storeWithResult({
-                text,
-                category: "technical" as MemoryCategory,
-                importance: 0.9,
-                entity: "Credentials",
-                key: cred.service,
-                value: cred.value,
-                source: "conversation",
-                decayClass: "permanent",
-                tags: ["auth", "credential"],
-              });
-              if (storeResult.skipped) {
-                continue;
-              }
-              const entry = storeResult.entry;
-              // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-              if (!storeResult.skipped) {
-                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                await cleanupEvictedVector({
-                  vectorDb: ctx.vectorDb,
-                  evictedFactId: storeResult.evictedFactId,
-                  logger: api.logger,
-                  context: "stage-capture",
-                });
-                if (ctx.cfg.retrieval.strategies.includes("semantic")) {
-                  try {
-                    if (storeResult.embeddingStale) {
-                      // Merge case: re-embed the merged text to keep the vector in sync.
-                      // If embed fails, the vector encodes stale pre-merge text; nightly re-index will repair.
-                      const mergedVector = await ctx.embeddings.embed(entry.text);
-                      ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
-                      await ctx.vectorDb.store({
-                        text: entry.text,
-                        vector: mergedVector,
-                        importance: 0.9,
-                        category: "technical",
-                        id: entry.id,
-                      });
-                      persistCanonicalFactEmbedding(
-                        ctx.factsDb,
-                        entry.id,
-                        ctx.embeddings.modelName,
-                        mergedVector,
-                        "auto-capture-fact-embeddings",
-                        "auto-capture",
-                        api.logger.warn?.bind(api.logger),
-                      );
-                    } else {
-                      const vector = await ctx.embeddings.embed(entry.text);
-                      ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
-                      if (!(await ctx.vectorDb.hasDuplicate(vector))) {
-                        await ctx.vectorDb.store({
-                          text: entry.text,
-                          vector,
-                          importance: 0.9,
-                          category: "technical",
-                          id: entry.id,
-                        });
-                        persistCanonicalFactEmbedding(
-                          ctx.factsDb,
-                          entry.id,
-                          ctx.embeddings.modelName,
-                          vector,
-                          "auto-capture-fact-embeddings",
-                          "auto-capture",
-                          api.logger.warn?.bind(api.logger),
-                        );
-                      }
-                    }
-                  } catch (err) {
-                    const asErr = err instanceof Error ? err : new Error(String(err));
-                    if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-                      capturePluginError(asErr, {
-                        operation: storeResult.embeddingStale
-                          ? "tool-call-credential-stale-vector-update"
-                          : "tool-call-credential-vector-store",
-                        subsystem: "credentials",
-                      });
-                    }
-                    if (!suppressCaptureStageError(ctx, api, asErr)) {
-                      api.logger.warn(
-                        storeResult.embeddingStale
-                          ? `memory-hybrid: stale vector re-embed failed for merged credential fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
-                          : `memory-hybrid: vector store for credential fact failed: ${err}`,
-                      );
-                    }
-                  }
-                }
-                if (logCaptures) {
-                  api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
-                }
-              } // close if (!storeResult.skipped) guard (#1560, #1561)
+              api.logger.warn?.(
+                `memory-hybrid: skipped tool-call credential for ${cred.service} (${cred.type}): vault disabled or unavailable`,
+              );
             }
           }
         }

@@ -15,7 +15,9 @@ import {
   type ActiveTaskEntry,
   type ActiveTaskStatus,
   completeTask,
+  clearActiveTaskHandoff,
   flushCompletedTaskToMemory,
+  isTerminalActiveTaskStatus,
   readActiveTaskFile,
   reconcileActiveTaskInProgressSessions,
   upsertTask,
@@ -23,6 +25,7 @@ import {
 } from "../services/active-task.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import {
+  activeTaskRenderGoalsOpts,
   applyActiveTaskHygieneFacts,
   backfillActiveTaskCanonicalLabels,
   loadTaskLedgerFromFacts,
@@ -31,6 +34,7 @@ import {
   reconcileActiveTaskInProgressSessionsFacts,
   reconcileActiveTaskLiveState,
   renderActiveTaskMarkdownFile,
+  subagentRefIfSessionPresent,
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { formatDuration, parseDuration } from "../utils/duration.js";
@@ -47,12 +51,26 @@ import type {
   ActiveTaskStaleResult,
 } from "./types.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "./global-verbose.js";
+
+function isReopeningActiveTaskEntry(
+  existing: ActiveTaskEntry | undefined,
+  newStatus: ActiveTaskStatus,
+  fromCompleted: boolean,
+): boolean {
+  if (!existing || newStatus === "Done") return false;
+  if (fromCompleted) return true;
+  return isTerminalActiveTaskStatus(existing.status) && newStatus !== existing.status;
+}
 import { ActiveTaskReconcileProgressReporter } from "../services/active-task-reconcile-progress.js";
 
 /** Context injected into all active-task CLI commands */
 export type ActiveTaskContext = {
   /** Absolute path to ACTIVE-TASKS.md (markdown ledger or render target) */
   activeTaskFilePath: string;
+  /** Workspace root (for goal mirror refresh on projection renders). */
+  workspaceRoot?: string;
+  /** Plugin config (for goal mirror refresh on projection renders). */
+  cfg?: HybridMemoryConfig;
   /** Minutes before a task is considered stale (parsed from staleThreshold) */
   staleMinutes: number;
   /** Flush on complete: true = append to memory/YYYY-MM-DD.md */
@@ -73,6 +91,11 @@ function requireFacts(ctx: ActiveTaskContext): { factsDb: FactsDB; vectorDb: Vec
     throw new Error("activeTask.ledger=facts requires factsDb, vectorDb, and embeddings in CLI context");
   }
   return { factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings };
+}
+
+function renderProjectionOpts(ctx: ActiveTaskContext, extra: { includeCompleted?: boolean } = {}) {
+  const goals = ctx.cfg && ctx.workspaceRoot ? activeTaskRenderGoalsOpts(ctx.cfg, ctx.workspaceRoot) : {};
+  return { ...goals, ...extra };
 }
 
 // ---------------------------------------------------------------------------
@@ -273,17 +296,22 @@ export async function runActiveTaskAdd(
       }
       return existing?.status ?? "In progress";
     })();
+    const existingInCompleted = completed.some((t) => t.label.toLowerCase() === normalizedLabel);
+    const reopening = isReopeningActiveTaskEntry(existing, status, existingInCompleted);
     const entry: ActiveTaskEntry = {
       label: opts.label.trim().toLowerCase(),
       description: opts.description,
       status,
       branch: opts.branch ?? existing?.branch,
-      subagent: opts.subagent ?? existing?.subagent,
-      next: opts.next ?? existing?.next,
+      subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
+      next: opts.next ?? (reopening ? "" : existing?.next),
       stashCommit: existing?.stashCommit,
+      ...(existing?.handoff ? { handoff: existing.handoff } : {}),
+      relatedGoal: existing?.relatedGoal,
       started: existing?.started ?? now,
       updated: now,
     };
+    if (reopening) clearActiveTaskHandoff(entry);
     await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry);
     if (status === "Done" && ctx.flushOnComplete) {
       try {
@@ -310,17 +338,22 @@ export async function runActiveTaskAdd(
     return existing?.status ?? "In progress";
   })();
 
+  const existingInCompleted = existingCompleted.some((t) => t.label === opts.label);
+  const reopening = isReopeningActiveTaskEntry(existing, status, existingInCompleted);
+
   const entry: ActiveTaskEntry = {
     label: opts.label,
     description: opts.description,
     status,
     branch: opts.branch ?? existing?.branch,
-    subagent: opts.subagent ?? existing?.subagent,
-    next: opts.next ?? existing?.next,
+    subagent: opts.subagent ?? (status === "Done" || reopening ? "" : existing?.subagent),
+    next: opts.next ?? (reopening ? "" : existing?.next),
     stashCommit: existing?.stashCommit,
+    ...(existing?.handoff ? { handoff: existing.handoff } : {}),
     started: existing?.started ?? now,
     updated: now,
   };
+  if (reopening) clearActiveTaskHandoff(entry);
 
   if (status === "Done") {
     const updatedActive = existingActive.filter((t) => t.label !== opts.label);
@@ -334,8 +367,12 @@ export async function runActiveTaskAdd(
       }
     }
   } else {
-    const updatedActive = upsertTask(existingActive, entry);
-    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, existingCompleted);
+    const updatedActive = upsertTask(
+      existingActive.filter((t) => t.label !== opts.label),
+      entry,
+    );
+    const updatedCompleted = existingCompleted.filter((t) => t.label !== opts.label);
+    await writeActiveTaskFile(ctx.activeTaskFilePath, updatedActive, updatedCompleted);
   }
 
   return { ok: true, label: opts.label, upserted: wasExisting };
@@ -377,8 +414,16 @@ export async function runActiveTaskHygiene(
     const applied = await applyActiveTaskHygieneFacts(factsDb, vectorDb, embeddings, plan, {
       flushOnComplete: ctx.flushOnComplete,
       memoryDir: ctx.memoryDir,
+      openclawHome: opts.openclawHome,
     });
-    await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+    await renderActiveTaskMarkdownFile(
+      factsDb,
+      ctx.staleMinutes,
+      ctx.activeTaskFilePath,
+      ctx.projection,
+      undefined,
+      renderProjectionOpts(ctx),
+    );
     return {
       ledger: "facts",
       dryRun: false,
@@ -429,10 +474,25 @@ export async function runActiveTaskHygiene(
   const newCompleted: ActiveTaskEntry[] = [...completed];
   const now = new Date().toISOString();
   const toFlush: ActiveTaskEntry[] = [];
+  let appliedCount = 0;
   for (const task of active) {
     const action = actionByLabel.get(task.label);
     if (!action) {
       newActive.push(task);
+      continue;
+    }
+    if (action.kind === "pr-live-blocker") {
+      const subagent = await subagentRefIfSessionPresent(task.subagent, opts.openclawHome);
+      const waitingEntry: ActiveTaskEntry = {
+        ...task,
+        status: "Waiting",
+        updated: now,
+        next: action.reason,
+        subagent,
+      };
+      if (!subagent?.trim()) clearActiveTaskHandoff(waitingEntry);
+      newActive.push(waitingEntry);
+      appliedCount++;
       continue;
     }
     const completedEntry: ActiveTaskEntry = {
@@ -440,10 +500,12 @@ export async function runActiveTaskHygiene(
       status: "Done",
       updated: now,
       next: action.reason,
-      subagent: action.kind === "dead-session" ? undefined : task.subagent,
+      subagent: "",
     };
+    clearActiveTaskHandoff(completedEntry);
     newCompleted.push(completedEntry);
     toFlush.push(completedEntry);
+    appliedCount++;
   }
   await writeActiveTaskFile(ctx.activeTaskFilePath, newActive, newCompleted);
   if (ctx.flushOnComplete) {
@@ -458,7 +520,7 @@ export async function runActiveTaskHygiene(
     duplicates: plan.duplicates,
     stale: plan.stale,
     actions: plan.actions,
-    appliedCount: toFlush.length,
+    appliedCount,
   };
 }
 
@@ -514,19 +576,13 @@ export async function runActiveTaskReconcile(
 
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
-    const result = await reconcileActiveTaskInProgressSessionsFacts(
-      factsDb,
-      vectorDb,
-      embeddings,
-      ctx.staleMinutes,
-      {
-        flushOnComplete: ctx.flushOnComplete,
-        memoryDir: ctx.memoryDir,
-        dryRun,
-        openclawHome: opts.openclawHome,
-        progress,
-      },
-    );
+    const result = await reconcileActiveTaskInProgressSessionsFacts(factsDb, vectorDb, embeddings, ctx.staleMinutes, {
+      flushOnComplete: ctx.flushOnComplete,
+      memoryDir: ctx.memoryDir,
+      dryRun,
+      openclawHome: opts.openclawHome,
+      progress,
+    });
 
     let liveState: ActiveTaskReconcileResult["liveState"];
     if (!dryRun && cfg.activeTask.liveStateReconcile.enabled) {
@@ -541,7 +597,14 @@ export async function runActiveTaskReconcile(
           skippedCount: liveResult.skippedCount,
         };
         if (liveResult.updatedCount > 0) {
-          await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+          await renderActiveTaskMarkdownFile(
+            factsDb,
+            ctx.staleMinutes,
+            ctx.activeTaskFilePath,
+            ctx.projection,
+            undefined,
+            renderProjectionOpts(ctx),
+          );
         }
       } catch (liveErr) {
         userLog.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
@@ -579,7 +642,7 @@ export async function runActiveTaskReconcile(
     ledger: "markdown",
     reconciledLabels: result.reconciledLabels,
     candidates: result.candidates,
-    reconciled: dryRun ? result.candidates : (result.wrote ? result.reconciledLabels.length : 0),
+    reconciled: dryRun ? result.candidates : result.wrote ? result.reconciledLabels.length : 0,
     skipped: result.skipped,
     failed: result.failed,
     scanned: result.scanned,
@@ -622,13 +685,10 @@ function printActiveTaskReconcile(result: ActiveTaskReconcileResult, log: (msg: 
         `✅ Live-state reconcile: marked ${updatedCount} task(s) done (checked ${checkedCount}, skipped ${skippedCount})`,
       );
     } else {
-      log(
-        `✅ Live-state reconcile: no terminal states found (checked ${checkedCount}, skipped ${skippedCount})`,
-      );
+      log(`✅ Live-state reconcile: no terminal states found (checked ${checkedCount}, skipped ${skippedCount})`);
     }
   }
 }
-
 
 function createMaintainLineEmitter(jsonMode?: boolean): (line: string) => void {
   const target = jsonMode ? process.stderr : process.stdout;
@@ -665,9 +725,14 @@ export async function runActiveTaskRender(
       userLog.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
     }
   }
-  await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection, undefined, {
-    includeCompleted: opts.includeCompleted === true,
-  });
+  await renderActiveTaskMarkdownFile(
+    factsDb,
+    ctx.staleMinutes,
+    ctx.activeTaskFilePath,
+    ctx.projection,
+    undefined,
+    renderProjectionOpts(ctx, { includeCompleted: opts.includeCompleted === true }),
+  );
   const list = await runActiveTaskList(ctx);
   const stale = await runActiveTaskStale(ctx);
   let bytes = 0;
@@ -685,7 +750,11 @@ export async function runActiveTaskRender(
   };
 }
 
-function printActiveTaskStaleSummary(result: ActiveTaskStaleResult, log: (msg: string) => void = console.log, headingPrefix = ""): void {
+function printActiveTaskStaleSummary(
+  result: ActiveTaskStaleResult,
+  log: (msg: string) => void = console.log,
+  headingPrefix = "",
+): void {
   if (result.total === 0) {
     log("✅ No stale tasks.");
     return;
@@ -705,7 +774,9 @@ function summarizeReconcileLine(result: ActiveTaskReconcileResult): string {
 function summarizeHygieneLine(result: ActiveTaskHygieneResult): string {
   const audit = result.auditFactId ? ` auditFact=${result.auditFactId}` : "";
   const failed = result.dryRun ? 0 : Math.max(0, result.actions.length - result.appliedCount);
-  const skipped = result.dryRun ? result.actions.length : Math.max(0, result.actions.length - result.appliedCount - failed);
+  const skipped = result.dryRun
+    ? result.actions.length
+    : Math.max(0, result.actions.length - result.appliedCount - failed);
   return `active-tasks hygiene: actions=${result.actions.length} applied=${result.appliedCount} skipped=${skipped} failed=${failed}${audit}`;
 }
 
@@ -1088,15 +1159,10 @@ export function registerActiveTaskCommands(
 
   activeTasks
     .command("maintain")
-    .description(
-      "Run reconcile + hygiene (+ optional render/stale summary) in one plugin process (#1865)",
-    )
+    .description("Run reconcile + hygiene (+ optional render/stale summary) in one plugin process (#1865)")
     .option("--apply", "Apply reconcile/hygiene mutations (default: dry-run/report only)")
     .option("--dry-run", "Report planned reconcile/hygiene actions without mutations")
-    .option(
-      "--qa",
-      "Operator QA: before-stale + dry-run summaries + apply + render + final stale summary",
-    )
+    .option("--qa", "Operator QA: before-stale + dry-run summaries + apply + render + final stale summary")
     .option("--render", "Write ACTIVE-TASKS.md projection after apply (facts ledger)")
     .option("--stale-summary", "Print stale task summary after maintenance")
     .option("--before-stale", "Print stale task summary before mutations")
@@ -1209,7 +1275,14 @@ export function registerActiveTaskCommands(
           liveCheckedCount = liveResult.checkedCount;
           liveSkippedCount = liveResult.skippedCount;
           if (liveResult.updatedCount > 0) {
-            await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+            await renderActiveTaskMarkdownFile(
+              factsDb,
+              ctx.staleMinutes,
+              ctx.activeTaskFilePath,
+              ctx.projection,
+              undefined,
+              renderProjectionOpts(ctx),
+            );
           }
         } catch (liveErr) {
           console.warn(`⚠️  Live-state reconcile failed (non-fatal): ${liveErr}`);
@@ -1268,7 +1341,14 @@ export function registerActiveTaskCommands(
         }
       }
       if (!opts.dryRun) {
-        await renderActiveTaskMarkdownFile(factsDb, ctx.staleMinutes, ctx.activeTaskFilePath, ctx.projection);
+        await renderActiveTaskMarkdownFile(
+          factsDb,
+          ctx.staleMinutes,
+          ctx.activeTaskFilePath,
+          ctx.projection,
+          undefined,
+          renderProjectionOpts(ctx),
+        );
         console.log(`Projection refreshed: ${ctx.activeTaskFilePath}`);
       }
     });

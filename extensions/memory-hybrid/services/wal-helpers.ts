@@ -93,16 +93,28 @@ export function getWalCircuitBreakerState(wal: WriteAheadLog | null): WalCircuit
   };
 }
 
+/** True when WAL is configured but the write did not durably land (fail closed). */
+export function isWalWriteFailure(
+  wal: WriteAheadLog | null | undefined,
+  walEntryId: string | null,
+): walEntryId is null {
+  if (wal == null) return false;
+  return walEntryId === null;
+}
+
 export async function walWrite(
   wal: WriteAheadLog | null,
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
   supersedeTargetId?: string,
-): Promise<string> {
+): Promise<string | null> {
+  if (!wal) return null;
   const id = randomUUID();
-  if (!wal) return id;
-  if (walDisabled) return id;
+  if (walDisabled) {
+    logger.warn("memory-hybrid: WAL write skipped (circuit breaker disabled)");
+    return null;
+  }
   const walPath = resolveWalPath(wal);
   if (walPath && isWalPersistentlyDisabledAtPath(walPath)) {
     walDisabled = true;
@@ -112,7 +124,7 @@ export async function walWrite(
       );
       walPersistentDisableWarned = true;
     }
-    return id;
+    return null;
   }
   try {
     const entry: WALEntry = {
@@ -128,6 +140,7 @@ export async function walWrite(
     await wal.write(entry);
     walFailureCount = 0; // Reset on success
     walPersistentDisableWarned = false;
+    return id;
   } catch (err) {
     walFailureCount++;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -147,8 +160,8 @@ export async function walWrite(
         }
       }
     }
+    return null;
   }
-  return id;
 }
 
 export async function walRemove(

@@ -1861,3 +1861,102 @@ describe("gateway provider log-once deduplication (issue #1691)", () => {
     expect(infoSpy).toHaveBeenCalledTimes(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// OpenClaw gateway agent-first model contract
+// ---------------------------------------------------------------------------
+
+describe("OpenClaw gateway agent-first model contract", () => {
+  let tmpDir: string;
+  let MockOpenAI: ReturnType<typeof vi.fn>;
+  let ctx: ReturnType<typeof initializeDatabases> | undefined;
+  let origGatewayPort: string | undefined;
+  let origGatewayToken: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "provider-routing-gateway-model-"));
+    MockOpenAI = vi.mocked(OpenAI);
+    MockOpenAI.mockClear();
+    ctx = undefined;
+    origGatewayPort = getEnv("OPENCLAW_GATEWAY_PORT");
+    origGatewayToken = getEnv("OPENCLAW_GATEWAY_TOKEN");
+    setEnv("OPENCLAW_GATEWAY_PORT", "18789");
+    setEnv("OPENCLAW_GATEWAY_TOKEN", "test-gateway-token");
+  });
+
+  afterEach(() => {
+    if (ctx) {
+      try {
+        closeOldDatabases(ctx);
+      } catch {
+        /* best effort */
+      }
+    }
+    rmSync(tmpDir, { recursive: true, force: true });
+    restoreEnv("OPENCLAW_GATEWAY_PORT", origGatewayPort);
+    restoreEnv("OPENCLAW_GATEWAY_TOKEN", origGatewayToken);
+  });
+
+  function getGatewayCreateCall() {
+    const gatewayIdx = MockOpenAI.mock.calls.findIndex(
+      ([args]) => (args as Record<string, unknown>)?.baseURL === "http://127.0.0.1:18789/v1",
+    );
+    expect(gatewayIdx).toBeGreaterThanOrEqual(0);
+    const instance = MockOpenAI.mock.results[gatewayIdx]?.value as {
+      chat: { completions: { create: ReturnType<typeof vi.fn> } };
+    };
+    expect(instance?.chat?.completions?.create).toBeDefined();
+    const createCalls = instance.chat.completions.create.mock.calls;
+    expect(createCalls.length).toBeGreaterThan(0);
+    return createCalls[0];
+  }
+
+  it("sends model openclaw and x-openclaw-model when routing openai/* through gateway", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      llm: {
+        nano: ["openai/gpt-4.1-nano"],
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "openai/gpt-4.1-nano",
+      messages: [{ role: "user", content: "classify" }],
+      max_tokens: 100,
+    });
+
+    const [callBody, callOpts] = getGatewayCreateCall();
+    expect((callBody as { model?: string }).model).toBe("openclaw");
+    expect((callOpts as { headers?: Record<string, string> })?.headers?.["x-openclaw-model"]).toBe(
+      "openai/gpt-4.1-nano",
+    );
+  });
+
+  it("sends model openclaw and x-openclaw-model for OAuth-routed providers", async () => {
+    const cfg = getTestConfig(tmpDir, {
+      auth: {
+        order: {
+          deepseek: ["deepseek:oauth"],
+        },
+      },
+    });
+    const api = makeMockApi({
+      resolvePath: (p: string) => (p.startsWith("/") ? p : join(tmpDir, p)),
+    });
+
+    ctx = initializeDatabases(cfg, api as never);
+
+    await ctx.openai.chat.completions.create({
+      model: "deepseek/chat",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const [callBody, callOpts] = getGatewayCreateCall();
+    expect((callBody as { model?: string }).model).toBe("openclaw");
+    expect((callOpts as { headers?: Record<string, string> })?.headers?.["x-openclaw-model"]).toBe("deepseek/chat");
+  });
+});

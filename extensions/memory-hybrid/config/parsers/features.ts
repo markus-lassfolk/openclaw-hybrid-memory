@@ -230,6 +230,26 @@ export function parseAmbientConfig(cfg: Record<string, unknown>): AmbientConfig 
 
 export function parseReinforcementConfig(cfg: Record<string, unknown>): ReinforcementConfig {
   const reinforcementRaw = cfg.reinforcement as Record<string, unknown> | undefined;
+  const scRaw = cfg.selfCorrection as Record<string, unknown> | undefined;
+  const readReinforcementField = <T>(
+    reinfKey: keyof ReinforcementConfig,
+    scKey: string,
+    parse: (v: unknown) => T | undefined,
+    fallback: T,
+  ): T => {
+    const fromReinf = reinforcementRaw ? parse(reinforcementRaw[reinfKey as string]) : undefined;
+    if (fromReinf !== undefined) return fromReinf;
+    const fromSc = scRaw ? parse(scRaw[scKey]) : undefined;
+    if (fromSc !== undefined) {
+      if (reinforcementRaw && reinforcementRaw[reinfKey as string] === undefined && scRaw?.[scKey] !== undefined) {
+        pluginLogger.warn(
+          `memory-hybrid: selfCorrection.${scKey} is deprecated — use reinforcement.${String(reinfKey)} instead.`,
+        );
+      }
+      return fromSc;
+    }
+    return fallback;
+  };
   return {
     enabled: reinforcementRaw?.enabled !== false,
     passiveBoost:
@@ -269,6 +289,56 @@ export function parseReinforcementConfig(cfg: Record<string, unknown>): Reinforc
       typeof reinforcementRaw?.boostAmount === "number" && reinforcementRaw.boostAmount > 0
         ? reinforcementRaw.boostAmount
         : 1.0,
+    positiveRulesSection: readReinforcementField(
+      "positiveRulesSection",
+      "positiveRulesSection",
+      (v) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined),
+      "Positive Reinforcement Rules",
+    ),
+    reinforcementLLMAnalysis: readReinforcementField(
+      "reinforcementLLMAnalysis",
+      "reinforcementLLMAnalysis",
+      (v) => (typeof v === "boolean" ? v : undefined),
+      true,
+    ),
+    reinforcementToProposals: readReinforcementField(
+      "reinforcementToProposals",
+      "reinforcementToProposals",
+      (v) => (typeof v === "boolean" ? v : undefined),
+      true,
+    ),
+    analysisBatchSize: (() => {
+      const raw =
+        typeof reinforcementRaw?.analysisBatchSize === "number"
+          ? reinforcementRaw.analysisBatchSize
+          : typeof scRaw?.analysisBatchSize === "number"
+            ? scRaw.analysisBatchSize
+            : undefined;
+      if (
+        raw !== undefined &&
+        reinforcementRaw?.analysisBatchSize === undefined &&
+        scRaw?.analysisBatchSize !== undefined
+      ) {
+        pluginLogger.warn(
+          "memory-hybrid: selfCorrection.analysisBatchSize is deprecated — use reinforcement.analysisBatchSize instead.",
+        );
+      }
+      return typeof raw === "number" && raw >= 1 ? Math.floor(raw) : undefined;
+    })(),
+    maxIncidentsPerRun: readReinforcementField(
+      "maxIncidentsPerRun",
+      "maxIncidentsPerRun",
+      (v) => (typeof v === "number" && v >= 1 ? Math.floor(v) : undefined),
+      100,
+    ),
+    model:
+      typeof reinforcementRaw?.model === "string" && reinforcementRaw.model.trim().length > 0
+        ? reinforcementRaw.model.trim()
+        : undefined,
+    thinking:
+      reinforcementRaw?.thinking === "adaptive" || reinforcementRaw?.thinking === "disabled"
+        ? reinforcementRaw.thinking
+        : undefined,
   };
 }
 
@@ -352,6 +422,7 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
         ? Math.floor(proposalsRaw.minSessionEvidence)
         : 10,
     requireScopeFilter: proposalsRaw?.requireScopeFilter === true,
+    separateSelfCorrectionQuota: proposalsRaw?.separateSelfCorrectionQuota !== false,
   };
 }
 
@@ -688,6 +759,22 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
         : 300,
     trajectoryLLMAnalysis:
       topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
+    llmSignalAnalysis: raw?.llmSignalAnalysis !== false,
+    llmSignalBatchSize:
+      typeof raw?.llmSignalBatchSize === "number" && raw.llmSignalBatchSize >= 1
+        ? Math.min(50, Math.floor(raw.llmSignalBatchSize))
+        : 10,
+    triggerSelfCorrectionRun: raw?.triggerSelfCorrectionRun === true,
+    selfCorrectionBridgeMaxIncidents:
+      typeof raw?.selfCorrectionBridgeMaxIncidents === "number" && raw.selfCorrectionBridgeMaxIncidents >= 1
+        ? Math.min(100, Math.floor(raw.selfCorrectionBridgeMaxIncidents))
+        : 5,
+    selfCorrectionBridgeMinConfidence:
+      typeof raw?.selfCorrectionBridgeMinConfidence === "number" &&
+      raw.selfCorrectionBridgeMinConfidence >= 0 &&
+      raw.selfCorrectionBridgeMinConfidence <= 1
+        ? raw.selfCorrectionBridgeMinConfidence
+        : 0.7,
   };
 }
 

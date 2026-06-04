@@ -11,21 +11,30 @@ import { basename, dirname, join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import {
   describeMaintenanceFallbackPolicy,
+  effectiveDistillMainModelTier,
   getCronModelConfig,
   getDefaultCronModel,
   isValidCategory,
+  resolveDistillThinkingMode,
   resolveReflectionModelAndFallbacks,
 } from "../config.js";
 import {
   ADAPTIVE_MODEL_LIMITS_VERSION,
   adaptiveFailureShrinkRatios,
+  type AdaptiveFailureKind,
   getEffectiveModelLimits,
   loadAdaptiveModelLimits,
   recordAdaptiveFailure,
   recordAdaptiveSuccess,
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
-import { isCredentialLike, tryParseCredentialForVault, VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import {
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  abortCredentialVaultWriteOnPointerDedupe,
+  rollbackVaultCredentialWrite,
+} from "../services/credential-vault-pointer.js";
 import {
   chatCompleteWithRetryDetailed,
   distillBatchTokenLimit,
@@ -35,6 +44,7 @@ import {
   isConnectionErrorLike,
   isContextLengthError,
   parseRetryAfterMs,
+  resolveMaintenanceChatTimeoutMs,
 } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -42,6 +52,7 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
@@ -252,7 +263,7 @@ export async function runDistillForCli(
     // Operators who want heavy tier for distill must pass --model explicitly; distill.modelTier
     // is now clamped to maintenance/default/nano.
     const configuredDistillTier = cfg.distill?.modelTier ?? "maintenance";
-    const distillMainTier = configuredDistillTier === "heavy" ? "maintenance" : configuredDistillTier;
+    const distillMainTier = effectiveDistillMainModelTier(configuredDistillTier);
     if (configuredDistillTier === "heavy") {
       logger.warn?.(
         "memory-hybrid: distill.modelTier=heavy is not supported for the main distill pass (clamped to maintenance). Use --model to override for a single run.",
@@ -429,6 +440,27 @@ export async function runDistillForCli(
       }
     };
 
+    const shrinkForRetry = (kind: AdaptiveFailureKind, failureModel: string) => {
+      if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
+        const flimits = effectiveLimitsForModel(failureModel);
+        recordAdaptiveFailure({
+          state: adaptiveState,
+          model: failureModel,
+          kind,
+          catalogBatchTokenLimit: distillBatchTokenLimit(failureModel),
+          catalogMaxOutputTokens: distillMaxOutputTokens(failureModel),
+          usedBatchTokenLimit: flimits.batchTokenLimit,
+          usedMaxOutputTokens: flimits.maxOutputTokens,
+        });
+        persistAdaptiveLimitsToDisk();
+      }
+      if (!adaptiveEnabled) {
+        const { batch: bf, out: of } = adaptiveFailureShrinkRatios(kind);
+        nonAdaptiveBatchFactor *= bf;
+        nonAdaptiveOutFactor *= of;
+      }
+    };
+
     const buildBatch = (startIdx: number, batchTokenLimit: number): { text: string; count: number; tokens: number } => {
       let text = "";
       let tokens = promptTokens;
@@ -445,6 +477,8 @@ export async function runDistillForCli(
       }
       return { text, count, tokens };
     };
+
+    let batchFailures = 0;
 
     while (cursorBlock < blocks.length) {
       batchNum++;
@@ -475,16 +509,49 @@ export async function runDistillForCli(
       }
 
       logger.info?.(`memory-hybrid: distill batch ${batchNum} starting with model ${model} (source=${modelSource})`);
+      let callModel = model;
+      let callFallbacks = compatibleFallbacks;
+      const primaryInputLimit = distillBatchTokenLimit(model);
+      if (inputTokens > primaryInputLimit) {
+        if (callFallbacks.length === 0) {
+          sink.warn(
+            `memory-hybrid: distill batch ${batchNum} input (~${inputTokens} tokens) exceeds primary limit (${primaryInputLimit}) with no compatible fallbacks`,
+          );
+          batchFailures++;
+          break;
+        }
+        callModel = callFallbacks[0];
+        callFallbacks = callFallbacks.slice(1);
+        logger.warn?.(
+          `memory-hybrid: distill batch ${batchNum} primary ${model} cannot fit ~${inputTokens} tokens (limit ${primaryInputLimit}); using ${callModel} first`,
+        );
+      }
       try {
         const detail = await chatCompleteWithRetryDetailed({
-          model,
+          model: callModel,
           content: userContent,
           temperature: 0.2,
+          maxTokens: limits.maxOutputTokens,
           openai,
-          fallbackModels: compatibleFallbacks,
+          fallbackModels: callFallbacks,
           label: `memory-hybrid: distill batch ${batchNum}`,
           feature: CostFeature.distillCli,
+          thinkingMode: resolveDistillThinkingMode(cfg),
+          timeoutMsPerModel: (m) => resolveMaintenanceChatTimeoutMs(m, resolveDistillThinkingMode(cfg)),
         });
+        if (detail.finishReason?.toLowerCase() === "length") {
+          logger.warn?.(
+            `memory-hybrid: distill batch ${batchNum} output truncated (finish=length); extracted facts may be incomplete`,
+          );
+          if (shrinkBudget > 0 && !opts.dryRun) {
+            shrinkBudget--;
+            shrinkForRetry("other", detail.modelUsed ?? model);
+            logger.warn?.(
+              `memory-hybrid: distill batch ${batchNum} truncated — shrinking and retrying (budget left=${shrinkBudget})`,
+            );
+            continue;
+          }
+        }
         if (detail.modelUsed !== model) {
           const src = fallbackSources.get(detail.modelUsed) ?? "fallback";
           logger.info?.(
@@ -557,28 +624,11 @@ export async function runDistillForCli(
               : isTimeout || isConn
                 ? "timeout"
                 : "other";
-        if (adaptiveEnabled && !opts.dryRun && adaptiveStatePath) {
-          const failureModel =
-            typeof (e as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
-              ? (e as Error & { lastAttemptedModel: string }).lastAttemptedModel
-              : model;
-          const flimits = effectiveLimitsForModel(failureModel);
-          recordAdaptiveFailure({
-            state: adaptiveState,
-            model: failureModel,
-            kind,
-            catalogBatchTokenLimit: distillBatchTokenLimit(failureModel),
-            catalogMaxOutputTokens: distillMaxOutputTokens(failureModel),
-            usedBatchTokenLimit: flimits.batchTokenLimit,
-            usedMaxOutputTokens: flimits.maxOutputTokens,
-          });
-          persistAdaptiveLimitsToDisk();
-        }
-        if (!adaptiveEnabled) {
-          const { batch: bf, out: of } = adaptiveFailureShrinkRatios(kind);
-          nonAdaptiveBatchFactor *= bf;
-          nonAdaptiveOutFactor *= of;
-        }
+        const failureModel =
+          typeof (e as Error & { lastAttemptedModel?: string }).lastAttemptedModel === "string"
+            ? (e as Error & { lastAttemptedModel: string }).lastAttemptedModel
+            : model;
+        shrinkForRetry(kind, failureModel);
         const retryAfterMs = parseRetryAfterMs(e);
         if ((isRateLimit || isQuota) && retryAfterMs != null && retryAfterMs > 0) {
           const delay = Math.min(retryAfterMs, 60_000);
@@ -598,16 +648,23 @@ export async function runDistillForCli(
         }
         sink.warn(`memory-hybrid: distill batch ${batchNum} failed: ${e}`);
         capturePluginError(e, { subsystem: "cli", operation: "runDistillForCli:llm-batch" });
+        batchFailures++;
         if (!adaptiveEnabled) {
           nonAdaptiveBatchFactor = 1;
           nonAdaptiveOutFactor = 1;
         }
-        cursorBlock += batch.count;
-        processedBlocks += batch.count;
-        progress.update(processedBlocks);
+        break;
       }
     }
     progress.done();
+    const semanticEmpty = filesToProcess.length > 0 && allFacts.length === 0;
+    if (semanticEmpty) {
+      sink.warn(
+        `memory-hybrid: distill semantic_empty: processed ${filesToProcess.length} session(s) but parsed zero facts`,
+      );
+    }
+    const runSucceeded = batchFailures === 0 && !semanticEmpty;
+    const shouldAdvanceCursor = batchFailures === 0;
     if (opts.dryRun) {
       sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
       return {
@@ -644,61 +701,68 @@ export async function runDistillForCli(
                   url: parsed.url,
                   notes: parsed.notes,
                 });
-                if (!credStoreResult) {
-                  continue;
-                }
-                storedInVault = true;
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in vault.`;
-                const storeResult = factsDb.storeWithResult({
-                  text: pointerText,
-                  category: "technical",
+                storedInVault = credStoreResult;
+                const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "distillation", {
                   importance: BATCH_STORE_IMPORTANCE,
-                  entity: "Credentials",
-                  key: parsed.service,
-                  value: `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`,
-                  source: "distillation",
                   sourceDate: sourceDateSec(fact.source_date),
                 });
-                const entry = storeResult.entry;
+                if (!pointer.ok) {
+                  if (storedInVault) {
+                    rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
+                  }
+                  continue;
+                }
+                if (
+                  abortCredentialVaultWriteOnPointerDedupe(
+                    storedInVault,
+                    pointer,
+                    credentialsDb,
+                    parsed.service,
+                    parsed.type,
+                  )
+                ) {
+                  continue;
+                }
+                const entry = pointer.entry;
+                const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
                 // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
                 await cleanupEvictedVector({
                   vectorDb: vectorDb,
-                  evictedFactId: storeResult.evictedFactId,
+                  evictedFactId: pointer.evictedFactId,
                   logger: sink,
                   context: "distill",
                 });
-                try {
-                  const vector = await embeddings.embed(pointerText);
-                  factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-                  if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
-                    await vectorDb.store({
-                      text: pointerText,
-                      vector,
-                      importance: BATCH_STORE_IMPORTANCE,
-                      category: "technical",
-                      id: entry.id,
+                if (pointer.newlyStored || pointer.embeddingStale) {
+                  try {
+                    const vector = await embeddings.embed(pointerText);
+                    factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+                    if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+                      await vectorDb.store({
+                        text: pointerText,
+                        vector,
+                        importance: BATCH_STORE_IMPORTANCE,
+                        category: "technical",
+                        id: entry.id,
+                      });
+                    }
+                  } catch (err) {
+                    capturePluginError(err as Error, {
+                      subsystem: "cli",
+                      operation: "runDistillForCli:credential-vector-store",
                     });
                   }
-                } catch (err) {
-                  capturePluginError(err as Error, {
-                    subsystem: "cli",
-                    operation: "runDistillForCli:credential-vector-store",
-                  });
                 }
                 stored++;
                 if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
               } catch (err) {
                 if (storedInVault) {
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type);
-                  } catch (cleanupErr) {
-                    if (opts.verbose)
-                      sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+                  rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (message, cleanupErr) => {
+                    if (opts.verbose) sink.log(`  ${message}: ${cleanupErr}`);
                     capturePluginError(cleanupErr as Error, {
                       subsystem: "cli",
                       operation: "runDistillForCli:credential-compensating-delete",
                     });
-                  }
+                  });
                 }
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
               }
@@ -715,23 +779,29 @@ export async function runDistillForCli(
         continue;
       }
       try {
-        const vector = await embeddings.embed(fact.text);
+        const redactedText = redactMaintenancePrivateText(fact.text);
+        const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
+        const vector = await embeddings.embed(redactedText);
         if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
           skipped++;
           continue;
         }
         const storeResult = factsDb.storeWithResult({
-          text: fact.text,
+          text: redactedText,
           category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
           importance: BATCH_STORE_IMPORTANCE,
           entity: fact.entity ?? null,
           key: fact.key ?? null,
-          value: fact.value ?? fact.text.slice(0, 200),
+          value: redactedValue,
           source: "distillation",
           sourceDate: sourceDateSec(fact.source_date),
-          tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
+          tags: fact.tags?.length ? fact.tags : extractTags(redactedText, fact.entity ?? undefined),
         });
         if (storeResult.skipped) {
+          continue;
+        }
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+          skipped++;
           continue;
         }
         const entry = storeResult.entry;
@@ -744,7 +814,7 @@ export async function runDistillForCli(
         });
         try {
           await vectorDb.store({
-            text: fact.text,
+            text: redactedText,
             vector,
             importance: BATCH_STORE_IMPORTANCE,
             category: fact.category,
@@ -763,15 +833,19 @@ export async function runDistillForCli(
       }
     }
     try {
-      runRecordDistillForCli(ctx);
+      if (runSucceeded) {
+        runRecordDistillForCli(ctx);
+      }
     } catch (err) {
       sink.warn(`memory-hybrid: failed to record distill timestamp: ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:record-timestamp" });
     }
-    if (!opts.dryRun) {
+    if (!opts.dryRun && shouldAdvanceCursor) {
       // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
       const lastSessionTs = getMaxMtime(allCandidatePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
+    } else if (batchFailures > 0) {
+      sink.warn(`memory-hybrid: distill partial failure: ${batchFailures} batch(es) failed; scan cursor not advanced`);
     }
     return {
       sessionsScanned: filesToProcess.length,
@@ -779,6 +853,9 @@ export async function runDistillForCli(
       stored,
       dedupSkipped: skipped,
       dryRun: false,
+      semanticEmpty,
+      partialFailure: batchFailures > 0,
+      batchFailures,
     };
   } finally {
     if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);

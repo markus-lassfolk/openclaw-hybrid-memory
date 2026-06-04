@@ -493,7 +493,16 @@ function collectMaintenanceTelemetryIssues(params: {
   const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(logContent);
   const reflectStored = parsePositiveMetric(logContent, "stored");
   const reflectInsufficientPatterns = /\bzero_rules_reason\s*[=:]\s*insufficient_patterns\b/i.test(logContent);
-  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0) && !reflectInsufficientPatterns) {
+  const reflectDegradedFlake =
+    /\bzero_rules_reason\s*[=:]\s*invalid_response_format\b/i.test(logContent) &&
+    /\bstatus\s*[=:]\s*degraded\b/i.test(logContent) &&
+    (parsePositiveMetric(logContent, "model_response_chars") ?? 0) > 0;
+  if (
+    reflectRulesDetected &&
+    (reflectParseFailed || reflectStored === 0) &&
+    !reflectInsufficientPatterns &&
+    !reflectDegradedFlake
+  ) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -510,6 +519,93 @@ function collectMaintenanceTelemetryIssues(params: {
         message: `${jobName}:reflect-rules produced no usable rules despite a mechanically successful run`,
         semanticStatus: "semantic_fail",
         storedCount: reflectStored,
+      }),
+    );
+  }
+
+  const selfCorrectionDetected =
+    requiredSteps.includes("self-correction-run") ||
+    /\bself-correction-run\b/i.test(logContent) ||
+    /\bfailed_suspect_zero_parsed\b/i.test(logContent);
+  const selfCorrectionSuspect =
+    /\bstatus=failed_suspect_zero_parsed\b/i.test(logContent) ||
+    /\bzero parsed\/analysed remediation items\b/i.test(logContent);
+  const selfCorrectionAnalysisFailed = /\bstatus=failed\b/i.test(logContent);
+  const selfCorrectionParseFailed =
+    /\bstatus=failed_parse\b/i.test(logContent) ||
+    /\bstatus=failed_partial\b/i.test(logContent) ||
+    (/\bparse_success=false\b/i.test(logContent) && /\bself-correction-run\b/i.test(logContent));
+  const selfCorrectionIncidents = parsePositiveMetric(logContent, "incidents found");
+  const selfCorrectionParsed =
+    parsePositiveMetric(logContent, "parsed_candidates") ?? parsePositiveMetric(logContent, "analysed");
+  if (
+    selfCorrectionDetected &&
+    (selfCorrectionSuspect ||
+      selfCorrectionAnalysisFailed ||
+      selfCorrectionParseFailed ||
+      (typeof selfCorrectionIncidents === "number" && selfCorrectionIncidents > 0 && selfCorrectionParsed === 0))
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "self-correction-run",
+        failureCategory: "semantic_failure",
+        failureClass: /\bstatus=failed_partial\b/i.test(logContent)
+          ? "self_correction_partial_batch_failure"
+          : selfCorrectionAnalysisFailed
+            ? "self_correction_analysis_failure"
+            : /\bstatus=failed_parse\b/i.test(logContent) ||
+                (/\bparse_success=false\b/i.test(logContent) && /\bself-correction-run\b/i.test(logContent))
+              ? "self_correction_parse_failure"
+              : "self_correction_zero_parsed",
+        message: selfCorrectionAnalysisFailed
+          ? `${jobName}:self-correction-run analysis failed before completing batches`
+          : `${jobName}:self-correction-run found incidents but produced no parsed analysed items`,
+        semanticStatus: "semantic_fail",
+      }),
+    );
+  }
+
+  const generateProposalsDetected =
+    requiredSteps.includes("generate-proposals") || /\bgenerate-proposals\b/i.test(logContent);
+  const generateProposalsSemanticEmpty =
+    /\bgenerate-proposals.*semantic_empty\b/i.test(logContent) ||
+    (/\bgenerate-proposals\b/i.test(logContent) &&
+      /\binsights?\b/i.test(logContent) &&
+      /\bcreated:\s*0\b/i.test(logContent) &&
+      /\bparse_success=false\b/i.test(logContent));
+  if (generateProposalsDetected && generateProposalsSemanticEmpty) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "generate-proposals",
+        failureCategory: "semantic_failure",
+        failureClass: "generate_proposals_zero_created",
+        message: `${jobName}:generate-proposals had insight input but created zero proposals`,
+        semanticStatus: "semantic_fail",
+      }),
+    );
+  }
+
+  const reinforcementDetected =
+    requiredSteps.includes("extract-reinforcement") || /\bextract-reinforcement\b/i.test(logContent);
+  const reinforcementDegraded =
+    /\bdegraded_model_or_parser\b/i.test(logContent) || /\bstatus=degraded_model_or_parser\b/i.test(logContent);
+  if (reinforcementDetected && reinforcementDegraded) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "extract-reinforcement",
+        failureCategory: "semantic_failure",
+        failureClass: "extract_reinforcement_parser_degraded",
+        message: `${jobName}:extract-reinforcement LLM analysis degraded due to parser/model output issues`,
+        semanticStatus: "degraded",
       }),
     );
   }
@@ -630,7 +726,13 @@ function deriveSemanticStatus(
 }
 
 function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
-  return issue.failureCategory === "semantic_failure" && issue.stepName === "reflect-rules";
+  if (issue.failureCategory !== "semantic_failure") return false;
+  return (
+    issue.stepName === "reflect-rules" ||
+    issue.stepName === "self-correction-run" ||
+    issue.stepName === "generate-proposals" ||
+    issue.stepName === "extract-reinforcement"
+  );
 }
 
 /**

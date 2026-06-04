@@ -339,6 +339,123 @@ describe("runEpisodicConsolidation", () => {
     expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle").length).toBe(dreamFactsBefore);
   });
 
+  it("marks events consolidated when store dedupes to an existing fact", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    const eventText = "Dedupe marker event for dream-cycle";
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: eventText },
+    });
+
+    factsDb.store({
+      text: eventText,
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: "consolidated",
+      value: null,
+      source: "dream-cycle",
+      decayClass: "durable",
+      tags: ["dream-cycle", "consolidated"],
+    });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(result.eventsConsolidated).toBe(1);
+    expect(result.factsCreated).toBe(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(1);
+  });
+
+  it("marks events consolidated when pre-store guard rejects merged text", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Blocked consolidation batch" },
+    });
+
+    const storeWithResultSpy = vi.spyOn(factsDb, "storeWithResult").mockReturnValue({
+      skipped: true,
+      newlyStored: false,
+      embeddingStale: false,
+      evictedFactId: null,
+      entry: { id: "", text: "", category: "fact" } as never,
+      rejected: true,
+      preMergeText: null,
+    });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(result.eventsConsolidated).toBe(1);
+    expect(result.factsCreated).toBe(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+
+    storeWithResultSpy.mockRestore();
+  });
+
+  it("marks events consolidated when consolidated fact store throws", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Store failure should not loop forever" },
+    });
+
+    const storeWithResultSpy = vi.spyOn(factsDb, "storeWithResult").mockImplementation(() => {
+      throw new Error("FactsDB storage failed");
+    });
+
+    const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger);
+    expect(result.eventsConsolidated).toBe(1);
+    expect(result.factsCreated).toBe(0);
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
+
+    storeWithResultSpy.mockRestore();
+  });
+
+  it("does not re-embed when consolidation dedupes to an existing fact", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    const eventText = "Existing semantic consolidation target";
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: eventText },
+    });
+
+    factsDb.store({
+      text: eventText,
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: "consolidated",
+      value: null,
+      source: "dream-cycle",
+      decayClass: "durable",
+      tags: ["dream-cycle", "consolidated"],
+    });
+
+    const embeddings = { embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]) };
+    const vectorDb = { store: vi.fn().mockResolvedValue(undefined) };
+    await runEpisodicConsolidation(
+      factsDb,
+      eventLog,
+      7,
+      silentLogger,
+      false,
+      200,
+      null,
+      vectorDb as never,
+      embeddings as never,
+    );
+
+    expect(embeddings.embed).not.toHaveBeenCalled();
+    expect(vectorDb.store).not.toHaveBeenCalled();
+  });
+
   it("stores JSON provenance instead of DERIVED_FROM links for consolidated events", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     eventLog.append({
@@ -710,6 +827,38 @@ describe("runDreamCycle", () => {
     );
     expect(result.eventsConsolidated).toBe(1);
     expect(result.factsCreated).toBe(1);
+  });
+
+  it("does not delete unconsolidated events before consolidateAfterDays even when maxUnconsolidatedAgeDays is lower", async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: tenDaysAgo,
+      eventType: "fact_learned",
+      content: { text: "Should survive premature archive cleanup" },
+    });
+
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+
+    await runDreamCycle(
+      factsDb,
+      {} as never,
+      embeddingsStub,
+      openaiStub,
+      eventLog,
+      {
+        ...baseConfig,
+        consolidateAfterDays: 14,
+        maxUnconsolidatedAgeDays: 5,
+        eventLogArchivalDays: 0,
+      },
+      silentLogger,
+    );
+
+    expect(eventLog.getUnconsolidated(0)).toHaveLength(1);
   });
 
   it("skips consolidation when eventLog is null", async () => {

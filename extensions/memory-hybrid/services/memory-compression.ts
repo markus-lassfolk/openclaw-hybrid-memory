@@ -137,7 +137,12 @@ export class MemoryCompressionService {
         }),
       };
 
-      const storedSummary = this.factsDb.store(summaryFact);
+      const storeResult = this.factsDb.storeWithResult(summaryFact);
+
+      if (storeResult.skipped || storeResult.newlyStored === false) {
+        continue;
+      }
+      const storedSummary = storeResult.entry;
 
       // Supersede original facts if configured
       if (!this.config.preserveOriginals) {

@@ -278,7 +278,7 @@ export async function extractProceduresFromSessions(
     const dir = options.sessionDir;
     if (!fs.existsSync(dir)) {
       logger.warn(`procedure-extractor: session dir not found: ${dir}`);
-      return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun };
+      return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun, readFailures: 0 };
     }
     const files = fs.readdirSync(dir);
     filePaths = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted")).map((f) => path.join(dir, f));
@@ -287,6 +287,7 @@ export async function extractProceduresFromSessions(
   let proceduresStored = 0;
   let positiveCount = 0;
   let negativeCount = 0;
+  let readFailures = 0;
 
   for (const filePath of filePaths) {
     const fs = await import("node:fs");
@@ -295,6 +296,7 @@ export async function extractProceduresFromSessions(
     try {
       content = fs.readFileSync(filePath, "utf-8");
     } catch (err) {
+      readFailures++;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-extractor",
         operation: "read-session-file",
@@ -366,5 +368,6 @@ export async function extractProceduresFromSessions(
     positiveCount,
     negativeCount,
     dryRun,
+    readFailures,
   };
 }

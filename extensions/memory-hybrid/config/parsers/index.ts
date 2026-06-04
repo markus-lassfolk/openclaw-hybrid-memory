@@ -748,6 +748,10 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
               ? (v as "nano" | "maintenance" | "default" | "heavy")
               : undefined;
           })(),
+          thinking: ((): "disabled" | "adaptive" | undefined => {
+            const rawThinking = distillRaw.thinking;
+            return rawThinking === "adaptive" || rawThinking === "disabled" ? rawThinking : undefined;
+          })(),
         }
       : undefined;
 

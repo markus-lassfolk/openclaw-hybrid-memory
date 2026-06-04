@@ -58,6 +58,10 @@ export function parseReflectionConfig(cfg: Record<string, unknown>): ReflectionC
       typeof reflectionRaw?.minObservations === "number" && reflectionRaw.minObservations >= 1
         ? Math.floor(reflectionRaw.minObservations)
         : 2,
+    thinking:
+      reflectionRaw?.thinking === "adaptive" || reflectionRaw?.thinking === "disabled"
+        ? reflectionRaw.thinking
+        : undefined,
   };
 }
 
@@ -150,6 +154,8 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
       proceduresRaw.promotionContextSpecificPatterns.every((x) => typeof x === "string")
         ? (proceduresRaw.promotionContextSpecificPatterns as string[]).map((s) => s.trim()).filter((s) => s.length > 0)
         : undefined,
+    quarantineAfterGenerate: proceduresRaw?.quarantineAfterGenerate === true,
+    allAgentSessions: proceduresRaw?.allAgentSessions === true,
   };
 }
 

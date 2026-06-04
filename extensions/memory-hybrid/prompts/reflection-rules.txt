@@ -4,7 +4,6 @@ Below are behavioral patterns observed about the user. Turn them into short, imp
 - Each rule should start with a verb: Always, Never, Prefer, Use, Avoid, Show, Keep, etc.
 - One line per rule; no explanations.
 - Keep each rule under 80 characters so they are easy to recall.
-- Output each rule on its own line, starting with exactly "RULE: " (no numbering or bullets).
 - Only output rules that are directly actionable (what to do or not do), not descriptions.
 
 Patterns:

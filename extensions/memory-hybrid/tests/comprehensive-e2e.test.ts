@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { _testing } from "../index.js";
 import { resetPluginRegistrationStateForTests, runtimeRef } from "../setup/register-plugin.js";
+import { _resetWalCircuitBreakerForTesting } from "../services/wal-helpers.js";
 import { awaitReloadTeardownBeforeOpen, TEARDOWN_WAIT_MS } from "../setup/hybrid-memory-reload-coordinator.js";
 import { benignFinalizationMessages, pendingCiTurnMessages } from "./fixtures/maeve-ledger.js";
 import {
@@ -52,6 +53,7 @@ describe("Comprehensive e2e — full plugin register()", () => {
     tmpDir = mkdtempSync(join(tmpdir(), "comprehensive-e2e-"));
     api = makeFullStackApi(tmpDir);
     process.env.OPENCLAW_HYBRID_MEM_REREGISTER_POLICY = "reuse-databases";
+    _resetWalCircuitBreakerForTesting();
     resetPluginRegistrationStateForTests();
   });
 
@@ -137,7 +139,9 @@ describe("Comprehensive e2e — full plugin register()", () => {
   });
 
   describe("tool round-trip (registered tools + real backends)", () => {
-    beforeEach(() => register());
+    beforeEach(() => {
+      register();
+    });
 
     it("memory_store → memory_recall by id → memory_forget", async () => {
       const text = "Comprehensive e2e round-trip fact 10.0.0.99";

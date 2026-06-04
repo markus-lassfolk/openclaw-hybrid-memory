@@ -3,7 +3,15 @@
  * JSON mode is requested via chat response_format; line-based RULE:/META: parsing remains as fallback.
  */
 
-import { stripMarkdownCodeFence, stripThinkingWrapperBlocks } from "../../utils/llm-json-array.js";
+import {
+  DEFAULT_STRUCTURED_ITEM_ENVELOPE_KEYS,
+  parseFirstJsonObjectValue,
+  parseStructuredItemsAcceptingEmpty,
+  repairLooseJsonObject,
+  stripBracketContextPreamble,
+  stripMarkdownCodeFence,
+  stripThinkingWrapperBlocks,
+} from "../../utils/llm-json-array.js";
 import { REFLECTION_META_MAX_CHARS } from "../../utils/constants.js";
 import { REFLECTION_META_MIN_CHARS, REFLECTION_RULE_MAX_CHARS, REFLECTION_RULE_MIN_CHARS } from "./shared.js";
 
@@ -19,7 +27,8 @@ export const REFLECTION_META_JSON_INSTRUCTION = `
 Respond with JSON only (no markdown fences). Use this schema:
 {"metas":["<1-2 sentence meta-pattern>", "..."],"noAction":false}
 When there are no meta-patterns, return {"metas":[],"noAction":true}.
-Each meta-pattern must be 1-2 sentences synthesizing themes across the patterns.`;
+Each meta-pattern must be 1-2 sentences synthesizing themes across the patterns.
+Keep each meta under 480 characters.`;
 
 const VALID_NO_RULES_PATTERN =
   /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[^\n\r]*$/i;
@@ -53,57 +62,8 @@ export type ReflectionMetaParseResult = {
 };
 
 function tryParseJsonObject(raw: string): Record<string, unknown> | null {
-  const stripped = stripThinkingWrapperBlocks(stripMarkdownCodeFence(raw.trim()));
-  if (!stripped) return null;
-  try {
-    const parsed: unknown = JSON.parse(stripped);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    const start = stripped.indexOf("{");
-    if (start === -1) return null;
-    let depth = 0;
-    let inString = false;
-    let afterBackslash = false;
-    for (let i = start; i < stripped.length; i++) {
-      const c = stripped.charAt(i);
-      if (inString) {
-        if (afterBackslash) {
-          afterBackslash = false;
-          continue;
-        }
-        if (c === "\\") {
-          afterBackslash = true;
-          continue;
-        }
-        if (c === '"') {
-          inString = false;
-          continue;
-        }
-        continue;
-      }
-      if (c === '"') {
-        inString = true;
-        continue;
-      }
-      if (c === "{") depth++;
-      else if (c === "}") {
-        depth--;
-        if (depth === 0) {
-          try {
-            const parsed: unknown = JSON.parse(stripped.slice(start, i + 1));
-            return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-              ? (parsed as Record<string, unknown>)
-              : null;
-          } catch {
-            return null;
-          }
-        }
-      }
-    }
-    return null;
-  }
+  const stripped = stripBracketContextPreamble(stripThinkingWrapperBlocks(stripMarkdownCodeFence(raw.trim())));
+  return parseFirstJsonObjectValue(stripped) ?? repairLooseJsonObject(stripped);
 }
 
 function readStringArrayField(obj: Record<string, unknown>, key: string): string[] {
@@ -127,6 +87,12 @@ function normalizeRuleCandidate(text: string): {
   let candidate = text.trim();
   if (LOW_CONFIDENCE_PREFIX_PATTERN.test(candidate)) {
     return { text: candidate, rejectedLowConfidence: true, rejectedLength: false };
+  }
+  if (
+    /^<[^>]+>$/i.test(candidate) ||
+    /^<imperative\s+one-line\s+rule>/i.test(candidate)
+  ) {
+    return { text: candidate, rejectedLowConfidence: false, rejectedLength: true };
   }
   const confidencePrefix = candidate.match(EXPLICIT_CONFIDENCE_PREFIX_PATTERN);
   if (confidencePrefix?.groups?.value) {
@@ -261,10 +227,32 @@ export function parseRulesFromModelResponse(rawResponse: string): ReflectionRule
         parsedFromJson: true,
       };
     }
+  } else {
+    const structuredRules = parseStructuredItemsAcceptingEmpty(
+      responseForParsing,
+      (item): item is string => typeof item === "string" && item.trim().length > 0,
+      { envelopeKeys: ["rules", ...DEFAULT_STRUCTURED_ITEM_ENVELOPE_KEYS] },
+    );
+    if (structuredRules && structuredRules.length > 0) {
+      parsedFromJson = true;
+      parseableLines = structuredRules.length;
+      for (const candidate of structuredRules) {
+        const normalized = normalizeRuleCandidate(candidate);
+        if (normalized.rejectedLowConfidence) {
+          rejectedLowConfidence++;
+          continue;
+        }
+        if (normalized.rejectedLength) {
+          rejectedLength++;
+          continue;
+        }
+        rules.push(normalized.text);
+      }
+    }
   }
 
   const lineParse = parseRuleLines(responseForParsing);
-  if (!jsonObject) {
+  if (!jsonObject && !parsedFromJson) {
     rules = lineParse.rules;
     parseableLines = lineParse.parseableLines;
     rejectedLowConfidence = lineParse.rejectedLowConfidence;

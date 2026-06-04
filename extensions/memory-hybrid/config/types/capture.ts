@@ -22,6 +22,8 @@ export type ReflectionConfig = {
   model?: string; // when unset, runtime uses getDefaultCronModel(cfg, "default")
   defaultWindow: number; // Time window in days (default: 14)
   minObservations: number; // Min observations to support a pattern (default: 2)
+  /** MiniMax thinking mode for reflection/consolidation LLM calls (default: llm.minimax.thinking or disabled). */
+  thinking?: "disabled" | "adaptive";
 };
 
 /** Identity reflection: persona-level synthesis from reflection outputs */
@@ -94,6 +96,8 @@ export type ProceduresConfig = {
   enabled: boolean;
   /** Session JSONL directory (default: ~/.openclaw/agents/main/sessions) */
   sessionsDir: string;
+  /** When true, scan all agent session dirs under ~/.openclaw/agents (multi-agent hosts). Default false. */
+  allAgentSessions?: boolean;
   /** Min tool steps to consider a procedure (default: 2) */
   minSteps: number;
   /** Validations before auto-generating a skill (default: 3) */
@@ -108,4 +112,6 @@ export type ProceduresConfig = {
   maxInjectionTokens: number;
   /** Optional regex pattern strings (case-insensitive) for extra `too_context_specific` task checks (#1421). */
   promotionContextSpecificPatterns?: string[];
+  /** When true, quarantine auto-skills that fail post-generate audit (default: false). */
+  quarantineAfterGenerate: boolean;
 };

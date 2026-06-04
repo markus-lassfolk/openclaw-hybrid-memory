@@ -14,6 +14,7 @@ import {
 } from "../services/goal-stewardship-heartbeat.js";
 import { llmTriageNeedsHeavy } from "../services/goal-stewardship-llm-triage.js";
 import { isGlobalRateLimited, listActiveGoals, resolveGoalsDir } from "../services/goal-stewardship.js";
+import { renderActiveTaskMarkdownFile } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
@@ -36,8 +37,36 @@ export function registerGoalStewardshipInjection(
       if (!userText || !matchesHeartbeat(userText, gs)) return undefined;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
+      if (isSubagentSession(sessionKey ?? undefined)) return undefined;
 
       const goals = await listActiveGoals(goalsDir);
+
+      if (
+        gs.heartbeatRefreshActiveTask &&
+        ctx.cfg.activeTask.enabled &&
+        resolvedActiveTaskPath &&
+        ctx.cfg.verbosity !== "silent"
+      ) {
+        const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
+        if (ctx.cfg.activeTask.ledger === "facts") {
+          await renderActiveTaskMarkdownFile(
+            ctx.factsDb,
+            staleMinutes,
+            resolvedActiveTaskPath,
+            ctx.cfg.activeTask.projection,
+            api.logger,
+            { goals },
+          );
+        } else {
+          await refreshActiveTaskMirrorWithGoals({
+            activeTaskPath: resolvedActiveTaskPath,
+            goals,
+            staleMinutes,
+            logger: api.logger,
+          });
+        }
+      }
+
       if (goals.length === 0) return undefined;
 
       if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
@@ -46,22 +75,6 @@ export function registerGoalStewardshipInjection(
           prependContext:
             "<goal-stewardship>Global goal dispatch rate limit reached this hour. Assess without spawning if possible.</goal-stewardship>\n\n",
         };
-      }
-
-      if (
-        gs.heartbeatRefreshActiveTask &&
-        ctx.cfg.activeTask.enabled &&
-        resolvedActiveTaskPath &&
-        ctx.cfg.verbosity !== "silent" &&
-        !isSubagentSession(sessionKey ?? undefined)
-      ) {
-        const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-        await refreshActiveTaskMirrorWithGoals({
-          activeTaskPath: resolvedActiveTaskPath,
-          goals,
-          staleMinutes,
-          logger: api.logger,
-        });
       }
 
       let triageHeavy = heuristicNeedsHeavyAttention(goals);

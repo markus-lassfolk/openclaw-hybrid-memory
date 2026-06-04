@@ -94,5 +94,29 @@
     "defaultAction": "escalate-user",
     "severity": "high",
     "suggestedAction": "The 'openclaw' binary is not in PATH for the cron context. Run 'which openclaw' in a login shell, then update the cron preamble to source the correct PATH or use the full absolute binary path (e.g. /home/user/.local/bin/openclaw)."
+  },
+  {
+    "id": "self-correction-zero-parsed",
+    "pattern": "self-correction-run|failed_suspect_zero_parsed|failed_partial|zero parsed\\/analysed remediation items|status=failed_parse|status=failed_partial",
+    "classification": "json-parse-failure",
+    "defaultAction": "glitchtip+digest",
+    "severity": "high",
+    "suggestedAction": "Self-correction found incidents but parsed zero analysed items. Inspect verbose logs for M3 output/tool-call envelope parsing and resume state under workspace/tmp/self-correction/."
+  },
+  {
+    "id": "generate-proposals-semantic-empty",
+    "pattern": "generate-proposals.*semantic_empty|generate-proposals.*parse_success=false",
+    "classification": "json-parse-failure",
+    "defaultAction": "glitchtip+digest",
+    "severity": "high",
+    "suggestedAction": "Generate-proposals had insight input but created zero proposals. Check LLM output shape and structured parser diagnostics."
+  },
+  {
+    "id": "extract-reinforcement-parser-degraded",
+    "pattern": "extract-reinforcement.*degraded_model_or_parser|status=degraded_model_or_parser",
+    "classification": "json-parse-failure",
+    "defaultAction": "glitchtip+digest",
+    "severity": "medium",
+    "suggestedAction": "Extract-reinforcement LLM analysis failed to parse model output. Inspect reinforcement analysis logs and provider response shape."
   }
 ]

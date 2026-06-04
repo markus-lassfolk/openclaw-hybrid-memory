@@ -349,8 +349,8 @@ export const resolvers: GraphQLResolvers = {
         },
         { allowPreStoreGuardBypass: true },
       );
-      // Skip supersede if store was rejected (artifact text)
-      if (result.entry.id !== "") {
+      // Skip supersede if store was rejected (artifact text) or deduped to an existing row
+      if (result.entry.id !== "" && result.newlyStored) {
         context.factsDb.supersede(existing.id, result.entry.id);
       }
       await cleanupGraphqlEviction(context, result.evictedFactId);
@@ -408,7 +408,7 @@ export const resolvers: GraphQLResolvers = {
       const stored: MemoryEntry[] = [];
       for (const input of inputs) {
         const result = context.factsDb.storeWithResult(input);
-        if (result.entry.id !== "") {
+        if (result.entry.id !== "" && result.newlyStored) {
           stored.push(result.entry);
         }
         await cleanupGraphqlEviction(context, result.evictedFactId);

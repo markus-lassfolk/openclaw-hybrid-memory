@@ -64,6 +64,10 @@ export type PendingReviewDigestReport = {
       targetFile: string;
       confidence: number;
       createdAt: number;
+      /** Days since proposal was created. */
+      ageDays: number;
+      /** e.g. self-correction when title matches Self-correction: CATEGORY */
+      sourceCategory: string | null;
       approveCommand: string;
       declineCommand: string;
       deferCommand: string;
@@ -210,7 +214,18 @@ export function buildPendingReviewDigestReport(opts: {
       )
     : [];
   const personaPending = personaAll.filter((p) => p.status === "pending");
-  const personaRecentPending = personaPending.filter((p) => p.createdAt >= sinceSec);
+  const nowSec = Math.floor(now.getTime() / 1000);
+  function selfCorrectionCategory(title: string): string | null {
+    const m = title.match(/^Self-correction:\s*([A-Z_]+)/);
+    return m?.[1] ?? null;
+  }
+  const personaPendingSorted = [...personaPending].sort((a, b) => {
+    const aSc = selfCorrectionCategory(a.title) ? 0 : 1;
+    const bSc = selfCorrectionCategory(b.title) ? 0 : 1;
+    if (aSc !== bSc) return aSc - bSc;
+    return b.createdAt - a.createdAt;
+  });
+  const personaRecentPending = personaPendingSorted.filter((p) => p.createdAt >= sinceSec);
 
   const toolAll = withStore(
     () => new ToolProposalStore(paths.toolProposals),
@@ -292,6 +307,8 @@ export function buildPendingReviewDigestReport(opts: {
         targetFile: p.targetFile,
         confidence: p.confidence,
         createdAt: p.createdAt,
+        ageDays: Math.max(0, Math.floor((nowSec - p.createdAt) / 86400)),
+        sourceCategory: selfCorrectionCategory(p.title),
         approveCommand: `openclaw hybrid-mem proposals approve ${p.id}`,
         declineCommand: `openclaw hybrid-mem proposals reject ${p.id}`,
         deferCommand: "openclaw hybrid-mem proposals list --status pending",
@@ -341,8 +358,9 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
   if (report.personaProposals.pendingEntries.length === 0)
     lines.push("No recent pending persona proposals in this window.");
   report.personaProposals.pendingEntries.forEach((p, i) => {
+    const categoryHint = p.sourceCategory ? ` [${p.sourceCategory}]` : "";
     lines.push(
-      `${i + 1}. [proposed ${relativeTime(p.createdAt)}] ${p.title} (${p.targetFile}, confidence ${p.confidence.toFixed(2)})`,
+      `${i + 1}. [pending ${p.ageDays}d${categoryHint}] ${p.title} (${p.targetFile}, confidence ${p.confidence.toFixed(2)})`,
     );
     lines.push(`   - Approve: ${p.approveCommand}`);
     lines.push(`   - Decline: ${p.declineCommand}`);
