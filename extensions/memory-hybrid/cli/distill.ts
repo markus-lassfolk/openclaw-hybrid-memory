@@ -501,6 +501,9 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
           } else if (factsReinforced > 0 && result.annotationReasons?.errors && result.annotationReasons.errors > 0) {
             process.exitCode = 2;
           }
+          if (result.partialBatchFailure) {
+            process.exitCode = 2;
+          }
         }
       },
     ),

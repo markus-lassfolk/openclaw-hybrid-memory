@@ -84,6 +84,11 @@ export type ReinforcementExtractResult = {
    * Undefined when incidentsFound == 0, annotated > 0, or dry-run.
    */
   annotationDiagnostic?: ReinforcementAnnotationDiagnostic;
+  /**
+   * True when some but not all LLM analysis batches failed.
+   * Set by CLI; used to determine exit code 2.
+   */
+  partialBatchFailure?: boolean;
 };
 
 /** Hard cap on bytes read per file per run to avoid unbounded JSONL reads (matches passive observer). */

@@ -857,6 +857,7 @@ export async function runSelfCorrectionRunForCli(
       const fetchSpawnBatchContent = async (prompt: string): Promise<string> => {
         const { spawnSync } = await import("node:child_process");
         const { tmpdir: osTmp } = await import("node:os");
+        const { extractAssistantMessageText } = await import("../utils/llm-message.js");
         const promptPath = join(osTmp(), `self-correction-prompt-${Date.now()}.txt`);
         writeFileSync(promptPath, prompt, "utf-8");
         const spawnModel = scCfg.spawnModel?.trim() || getDefaultCronModel(getCronModelConfig(cfg), "default");
@@ -879,9 +880,21 @@ export async function runSelfCorrectionRunForCli(
         } catch (err) {
           capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:cleanup-tmp" });
         }
-        const content = (r.stdout ?? "") + (r.stderr ?? "");
-        if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${content.slice(0, 500)}`);
-        return content;
+        const rawContent = (r.stdout ?? "") + (r.stderr ?? "");
+        if (r.status !== 0) throw new Error(`sessions spawn exited ${r.status}: ${rawContent.slice(0, 500)}`);
+        try {
+          const parsed = JSON.parse(rawContent);
+          if (parsed && typeof parsed === "object" && "choices" in parsed && Array.isArray(parsed.choices)) {
+            const firstChoice = parsed.choices[0];
+            if (firstChoice && typeof firstChoice === "object" && "message" in firstChoice) {
+              const extracted = extractAssistantMessageText(firstChoice.message);
+              if (extracted.text) return extracted.text;
+            }
+          }
+        } catch {
+          /* not API-shaped JSON; use raw */
+        }
+        return rawContent;
       };
 
       const spawnInputTokenThreshold = 100_000;

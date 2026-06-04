@@ -471,6 +471,7 @@ export async function runExtractReinforcementForCli(
           logger.warn?.(
             `memory-hybrid: extract-reinforcement partial batch failure: completed=${completedBatchIndexes.size}/${batches.length} failed=${failedBatchCount} analysed=${analysed.length}`,
           );
+          result.partialBatchFailure = true;
         }
         if (incidentsForAnalysis.length > 0 && analysed.length === 0) {
           llmAnalysisFailed = true;
