@@ -330,24 +330,6 @@ export class WriteAheadLog {
     const content = rawContent.trim();
     if (!content) return [];
 
-    // Backward-compat: support full-file JSON array format if present.
-    if (content.startsWith("[")) {
-      try {
-        const entries = JSON.parse(content) as WALEntry[];
-        return Array.isArray(entries) ? entries : [];
-      } catch (err) {
-        capturePluginError(err as Error, {
-          operation: "wal-parse-array",
-          severity: "info",
-          subsystem: "wal",
-        });
-        // Fall back to NDJSON parsing if the array is corrupted.
-        pluginLogger.warn(
-          `WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`,
-        );
-      }
-    }
-
     const removedIds = new Set<string>();
     for (const line of content.split("\n")) {
       const trimmed = line.trim();
@@ -368,6 +350,40 @@ export class WriteAheadLog {
     const entries: WALEntry[] = [];
     const corruptLineNumbers: number[] = [];
     const lines = content.split("\n");
+
+    // Backward-compat: if first line is a JSON array, parse and validate it.
+    if (content.startsWith("[")) {
+      try {
+        const arrayEntries = JSON.parse(content) as WALEntry[];
+        if (Array.isArray(arrayEntries)) {
+          for (let i = 0; i < arrayEntries.length; i++) {
+            if (isWalEntry(arrayEntries[i])) {
+              if (!removedIds.has(arrayEntries[i].id)) {
+                entries.push(arrayEntries[i] as WALEntry);
+              }
+            } else {
+              corruptLineNumbers.push(i + 1);
+            }
+          }
+          if (corruptLineNumbers.length > 0) {
+            throw new WalReadCorruptionError(corruptLineNumbers.length, corruptLineNumbers);
+          }
+          return entries;
+        }
+      } catch (err) {
+        if (err instanceof WalReadCorruptionError) throw err;
+        capturePluginError(err as Error, {
+          operation: "wal-parse-array",
+          severity: "info",
+          subsystem: "wal",
+        });
+        // Fall back to NDJSON parsing if the array is corrupted.
+        pluginLogger.warn(
+          `WAL readAll: failed to parse JSON array format, falling back to line-by-line parsing: ${err}`,
+        );
+      }
+    }
+
     for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
       const trimmed = lines[lineIndex]?.trim();
       if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
