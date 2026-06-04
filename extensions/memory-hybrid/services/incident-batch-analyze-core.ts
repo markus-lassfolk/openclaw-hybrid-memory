@@ -232,8 +232,6 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
   const parsedCount = items?.length ?? 0;
   const underCoverage = batch.length > 0 && parsedCount > 0 && parsedCount < batch.length;
 
-  if (isTruncated) diagnostics.truncations++;
-
   if (
     allowBudgetBump &&
     isTruncated &&
@@ -288,6 +286,7 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
     mergeBatchDiagnostics(diagnostics, leftResult.diagnostics);
     mergeBatchDiagnostics(diagnostics, rightResult.diagnostics);
     if (leftResult.items === null || rightResult.items === null) {
+      diagnostics.truncations++;
       return {
         items: null,
         finishReason,
@@ -310,7 +309,10 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
       batchLabel,
       deps.logger,
     );
-    if (rejected) return rejected;
+    if (rejected) {
+      diagnostics.truncations++;
+      return rejected;
+    }
     return {
       items: merged,
       finishReason:
@@ -328,7 +330,10 @@ export async function analyzeIncidentBatchWithSplit<TItem, TIncident>(
     batchLabel,
     deps.logger,
   );
-  if (rejected) return rejected;
+  if (rejected) {
+    diagnostics.truncations++;
+    return rejected;
+  }
 
   return { items, finishReason, rawContent: content, diagnostics };
 }

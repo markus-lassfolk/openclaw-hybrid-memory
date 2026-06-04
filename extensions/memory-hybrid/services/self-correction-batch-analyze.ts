@@ -84,14 +84,15 @@ async function parseBatchContent(
 ): Promise<SelfCorrectionRemediationItem[] | null> {
   const parsed = parseSelfCorrectionLLMResponse(content);
   if (parsed !== null) return parsed as SelfCorrectionRemediationItem[];
-  diagnostics.parseFailures++;
   try {
     const repaired = await deps.attemptAnalysisJsonRepair(content);
     diagnostics.fallbacks += repaired.fallbacks;
     if (repaired.items !== null) return repaired.items;
   } catch {
+    diagnostics.parseFailures++;
     return null;
   }
+  diagnostics.parseFailures++;
   return null;
 }
 

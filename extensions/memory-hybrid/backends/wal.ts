@@ -234,7 +234,13 @@ export class WriteAheadLog {
       if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
       try {
         const obj = JSON.parse(trimmed) as unknown;
-        if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
+        if (Array.isArray(obj)) {
+          for (const item of obj) {
+            if (isWalEntry(item) && !removedIds.has(item.id)) entries.push(item);
+          }
+        } else if (isWalEntry(obj) && !removedIds.has(obj.id)) {
+          entries.push(obj);
+        }
       } catch {
         // Skip corrupt lines during lenient read.
       }
