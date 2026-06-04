@@ -903,6 +903,11 @@ function migrateRecallEventsTable(db: DatabaseSync): void {
   `);
   db.exec("CREATE INDEX IF NOT EXISTS idx_recall_events_time ON recall_events(occurred_at)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_recall_events_session ON recall_events(session_key)");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_recall_events_backfill_identity
+    ON recall_events(session_key, occurred_at, query, fact_ids)
+    WHERE source = 'backfill'
+  `);
 }
 
 /** Per-session language metadata from runtime hooks and JSONL backfill. */

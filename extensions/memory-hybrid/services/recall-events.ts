@@ -1,7 +1,7 @@
 /**
  * Structured recall event capture and JSONL backfill for reinforcement linkage.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -25,6 +25,46 @@ export type RecallEventInput = {
   source: RecallEventSource;
 };
 
+/** Stable primary key for backfilled recall rows (session + occurrence + query + fact set). */
+export function backfillRecallEventId(input: {
+  sessionKey: string;
+  occurredAtSec: number;
+  query: string | null;
+  factIds: string[];
+}): string {
+  const factSig = [...input.factIds].sort().join(",");
+  const payload = `backfill\0${input.sessionKey}\0${input.occurredAtSec}\0${input.query ?? ""}\0${factSig}`;
+  const hex = createHash("sha256").update(payload).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** Insert a recall event; returns true when a new row was written. */
+export function insertRecallEvent(db: DatabaseSync, input: RecallEventInput, opts?: { id?: string }): boolean {
+  const id = opts?.id ?? randomUUID();
+  const occurredAt = input.occurredAtSec ?? Math.floor(Date.now() / 1000);
+  const factIdsJson = JSON.stringify([...input.factIds].sort().slice(0, 100));
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO recall_events (id, occurred_at, session_key, agent_id, query, fact_ids, hit, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      occurredAt,
+      input.sessionKey ?? null,
+      input.agentId ?? null,
+      input.query ?? null,
+      factIdsJson,
+      input.hit ? 1 : 0,
+      input.source,
+    );
+  return (result.changes ?? 0) > 0;
+}
+
+export function logRecallEvent(db: DatabaseSync, input: RecallEventInput): boolean {
+  return insertRecallEvent(db, input);
+}
+
 export type RecallEventRow = {
   id: string;
   occurredAt: number;
@@ -35,25 +75,6 @@ export type RecallEventRow = {
   hit: boolean;
   source: RecallEventSource;
 };
-
-export function logRecallEvent(db: DatabaseSync, input: RecallEventInput): void {
-  const id = randomUUID();
-  const occurredAt = input.occurredAtSec ?? Math.floor(Date.now() / 1000);
-  const factIdsJson = JSON.stringify(input.factIds.slice(0, 100));
-  db.prepare(
-    `INSERT INTO recall_events (id, occurred_at, session_key, agent_id, query, fact_ids, hit, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    occurredAt,
-    input.sessionKey ?? null,
-    input.agentId ?? null,
-    input.query ?? null,
-    factIdsJson,
-    input.hit ? 1 : 0,
-    input.source,
-  );
-}
 
 export function countRecallEventsSince(db: DatabaseSync, sinceSec: number): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM recall_events WHERE occurred_at >= ?").get(sinceSec) as
@@ -190,15 +211,23 @@ export function backfillRecallEventsFromSessionFile(db: DatabaseSync, filePath: 
   const logParsedEvents = (events: ReturnType<typeof extractRecallEventsFromMessages>): void => {
     for (const ev of events) {
       turnIndex++;
-      logRecallEvent(db, {
-        occurredAtSec: occurredBase + turnIndex,
-        sessionKey,
-        query: ev.query ?? null,
-        factIds: ev.factIds,
-        hit: ev.hit,
-        source: "backfill",
-      });
-      inserted++;
+      const occurredAtSec = occurredBase + turnIndex;
+      const query = ev.query ?? null;
+      const insertedRow = insertRecallEvent(
+        db,
+        {
+          occurredAtSec,
+          sessionKey,
+          query,
+          factIds: ev.factIds,
+          hit: ev.hit,
+          source: "backfill",
+        },
+        {
+          id: backfillRecallEventId({ sessionKey, occurredAtSec, query, factIds: ev.factIds }),
+        },
+      );
+      if (insertedRow) inserted++;
     }
   };
 

@@ -167,4 +167,20 @@ describe("maintenance data gaps", () => {
     expect(ids).toContain(memoryId);
     db.close();
   });
+
+  it("backfill recall_events is idempotent on rerun", () => {
+    const db = openTestDb();
+    const dir = mkdtempSync(join(tmpdir(), "sess-idem-"));
+    const memoryId = "11111111-2222-3333-4444-555555555555";
+    const sessionFile = join(dir, "2026-06-04-idem.jsonl");
+    writeFileSync(
+      sessionFile,
+      `{"type":"message","message":{"role":"assistant","content":[{"type":"tool_use","name":"memory_recall","id":"t1","input":{"query":"prefs"}},{"type":"tool_result","tool_use_id":"t1","content":"Memory (id: ${memoryId})"}]}}\n`,
+    );
+    expect(backfillRecallEventsFromSessionFile(db, sessionFile)).toBe(1);
+    expect(backfillRecallEventsFromSessionFile(db, sessionFile)).toBe(0);
+    const row = db.prepare("SELECT COUNT(*) AS cnt FROM recall_events").get() as { cnt: number };
+    expect(row.cnt).toBe(1);
+    db.close();
+  });
 });
