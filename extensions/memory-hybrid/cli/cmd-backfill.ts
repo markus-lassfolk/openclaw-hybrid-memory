@@ -387,7 +387,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
         if (!firstSessionParseError) {
           firstSessionParseError = `Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}`;
         }
-      } else {
+      }
+      if (texts.length > 0) {
         successfullyScannedSessions++;
       }
       allTexts.push(...texts);
