@@ -289,7 +289,8 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
-          thinkingMode: resolveReflectionThinkingMode(cfg),
+          // JSON extraction must not use adaptive thinking (breaks json_object parsing).
+          thinkingMode: "disabled",
         },
         logSink,
         provenanceService,

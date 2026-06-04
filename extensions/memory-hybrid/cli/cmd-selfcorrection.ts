@@ -39,7 +39,8 @@ import {
   resolveSelfCorrectionThinkingMode,
   type SelfCorrectionRemediationItem,
 } from "../services/self-correction-batch-analyze.js";
-import { type CorrectionIncident, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
+import { type CorrectionIncident, collectHeuristicFeedbackCandidates, mergeCorrectionIncidents, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
+import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
@@ -242,6 +243,8 @@ const DEFAULT_SELF_CORRECTION: SelfCorrectionConfig = {
   analyzeViaSpawn: false,
   spawnThreshold: 15,
   spawnModel: "",
+  llmExtract: true,
+  llmExtractMinConfidence: 0.6,
 };
 
 function sanitizeLlmResponseExcerpt(content: string): string {
@@ -668,6 +671,38 @@ export async function runSelfCorrectionRunForCli(
         verbose: opts.verbose,
       });
       incidents = extractResult.incidents;
+      const scCfgExtract = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
+      if (scCfgExtract.llmExtract !== false && incidents.length >= 0) {
+        const correctionRegex = getCorrectionSignalRegex();
+        const pathsForHeuristic =
+          scFilePaths ?? gatherSessionFiles({ days: scanDays }).map((f: { path: string }) => f.path);
+        const heuristic = collectHeuristicFeedbackCandidates({
+          filePaths: pathsForHeuristic,
+          correctionRegex,
+        });
+        incidents = mergeCorrectionIncidents(incidents, heuristic.slice(0, 80));
+        if (incidents.length > 0) {
+          const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
+            cfg,
+            "maintenance",
+            scCfgExtract.model,
+          );
+          const filtered = await classifyAndFilterCorrectionIncidents({
+            incidents,
+            openai,
+            model: scCfgExtract.model ?? defaultModel,
+            fallbackModels,
+            minConfidence: scCfgExtract.llmExtractMinConfidence ?? 0.6,
+            batchSize: 10,
+            factsDb,
+            logger: {
+              info: (msg) => logger.info?.(msg),
+              warn: (msg) => logger.warn?.(msg),
+            },
+          });
+          incidents = filtered.incidents;
+        }
+      }
     }
     if (incidents.length === 0) {
       const scanDays = opts.days ?? 3;
@@ -941,10 +976,7 @@ export async function runSelfCorrectionRunForCli(
             if (batch.length === 0) {
               completedBatchIndexes.add(batchIndex);
               persistBatchState();
-              if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
-                await sleepSelfCorrectionBackoff(batchDelayMs);
-              }
-              continue;
+              return;
             }
             const synthesized: SelfCorrectionRemediationItem[] = batch.map((_, localIdx) => ({
               incidentIndex: localIdx,
@@ -972,10 +1004,7 @@ export async function runSelfCorrectionRunForCli(
             completedBatchIndexes.add(batchIndex);
             logger.info?.(`memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${attached.length}`);
             persistBatchState();
-            if (batchDelayMs > 0 && batchIndex < batches.length - 1) {
-              await sleepSelfCorrectionBackoff(batchDelayMs);
-            }
-            continue;
+            return;
           }
           diagnostics.unparseableFailures++;
           const excerpt = sanitizeLlmResponseExcerpt(result.rawContent ?? "");

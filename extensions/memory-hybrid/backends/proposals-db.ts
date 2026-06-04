@@ -90,6 +90,52 @@ export class ProposalsDB extends BaseSqliteStore {
 
     this.migrateRejectionReasonColumn();
     this.migrateTargetSnapshotColumns();
+    this.migrateProposalRunsTable();
+  }
+
+  private migrateProposalRunsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS proposal_runs (
+        id TEXT PRIMARY KEY,
+        run_at INTEGER NOT NULL,
+        insights_count INTEGER NOT NULL DEFAULT 0,
+        parsed_count INTEGER NOT NULL DEFAULT 0,
+        created_count INTEGER NOT NULL DEFAULT 0,
+        semantic_empty INTEGER NOT NULL DEFAULT 0,
+        identity_gap_score REAL,
+        model TEXT,
+        zero_reason TEXT
+      )
+    `);
+    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_proposal_runs_run_at ON proposal_runs(run_at)");
+  }
+
+  recordRun(entry: {
+    runAt: number;
+    insightsCount: number;
+    parsedCount: number;
+    createdCount: number;
+    semanticEmpty: boolean;
+    identityGapScore: number;
+    model: string | null;
+    zeroReason: string | null;
+  }): void {
+    this.liveDb
+      .prepare(
+        `INSERT INTO proposal_runs (id, run_at, insights_count, parsed_count, created_count, semantic_empty, identity_gap_score, model, zero_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        randomUUID(),
+        entry.runAt,
+        entry.insightsCount,
+        entry.parsedCount,
+        entry.createdCount,
+        entry.semanticEmpty ? 1 : 0,
+        entry.identityGapScore,
+        entry.model,
+        entry.zeroReason,
+      );
   }
 
   protected getSubsystemName(): string {

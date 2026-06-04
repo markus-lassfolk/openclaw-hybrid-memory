@@ -582,9 +582,8 @@ export class WriteAheadLog {
         await this.atomicRewriteEntries(entries);
         return 1;
       }
-      const now = Date.now();
-      const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
-      await this.atomicRewriteEntries(valid);
+      // Size compaction must retain all recoverable entries for replay; age pruning is pruneStale's job.
+      await this.atomicRewriteEntries(entries);
       return 1;
     } catch (err) {
       pluginLogger.warn(

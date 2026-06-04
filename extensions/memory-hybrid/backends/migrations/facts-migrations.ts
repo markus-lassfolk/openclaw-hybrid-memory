@@ -887,6 +887,31 @@ function migrateImplicitSignalsTable(db: DatabaseSync): void {
   );
 }
 
+/** LLM feedback signal classification audit trail. */
+function migrateSignalClassificationsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS signal_classifications (
+      id TEXT PRIMARY KEY,
+      session_file TEXT NOT NULL,
+      turn_index INTEGER NOT NULL,
+      source TEXT NOT NULL,
+      verdict TEXT NOT NULL,
+      polarity TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      categories TEXT,
+      explanation TEXT,
+      recommended_pipeline TEXT,
+      routed_to TEXT,
+      model TEXT,
+      user_message_preview TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sc_session ON signal_classifications(session_file)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sc_verdict ON signal_classifications(verdict)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_sc_created ON signal_classifications(created_at)");
+}
+
 /** Create feedback_trajectories table for multi-turn task sequence learning (#262). */
 function migrateFeedbackTrajectoriesTable(db: DatabaseSync): void {
   db.exec(`
@@ -1350,6 +1375,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Implicit/behavioral feedback
   migrateImplicitSignalsTable(db);
+  migrateSignalClassificationsTable(db);
   migrateFeedbackTrajectoriesTable(db);
   migrateFeedbackEffectivenessTable(db);
 

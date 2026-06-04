@@ -304,6 +304,10 @@ export type ImplicitFeedbackConfig = {
   selfCorrectionBridgeMinConfidence?: number;
   /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
   trajectoryLLMAnalysis: boolean;
+  /** Classify heuristic implicit signals with LLM before routing (default: true). */
+  llmSignalAnalysis?: boolean;
+  /** Batch size for LLM signal classification (default: 10). */
+  llmSignalBatchSize?: number;
   /** Maximum implicit-feedback lessons to store per UTC day (default: 50). */
   maxLessonsPerDay: number;
   /** Token-Jaccard threshold for implicit-feedback lesson near-duplicate suppression (default: 0.8). */

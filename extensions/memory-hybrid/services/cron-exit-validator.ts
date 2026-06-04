@@ -493,7 +493,16 @@ function collectMaintenanceTelemetryIssues(params: {
   const reflectParseFailed = /\bparse[_\s-]?success\s*[=:]\s*(false|0)\b/i.test(logContent);
   const reflectStored = parsePositiveMetric(logContent, "stored");
   const reflectInsufficientPatterns = /\bzero_rules_reason\s*[=:]\s*insufficient_patterns\b/i.test(logContent);
-  if (reflectRulesDetected && (reflectParseFailed || reflectStored === 0) && !reflectInsufficientPatterns) {
+  const reflectDegradedFlake =
+    /\bzero_rules_reason\s*[=:]\s*invalid_response_format\b/i.test(logContent) &&
+    /\bstatus\s*[=:]\s*degraded\b/i.test(logContent) &&
+    (parsePositiveMetric(logContent, "model_response_chars") ?? 0) > 0;
+  if (
+    reflectRulesDetected &&
+    (reflectParseFailed || reflectStored === 0) &&
+    !reflectInsufficientPatterns &&
+    !reflectDegradedFlake
+  ) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({

@@ -12,12 +12,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { FactsDB, ReinforcementContext } from "../backends/facts-db.js";
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity, resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithRetry } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
+import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
 import {
@@ -600,7 +601,7 @@ export async function runExtractImplicitFeedbackForCli(
     autoCleanup: true,
     cleanupLimit: 1000,
   };
-  const bridgeIncidents: CorrectionIncident[] = [];
+  let bridgeIncidents: CorrectionIncident[] = [];
   const bridgeMinConfidence = implicitCfg.selfCorrectionBridgeMinConfidence ?? 0.7;
 
   if (implicitCfg.enabled === false) {
@@ -1431,6 +1432,34 @@ export async function runExtractImplicitFeedbackForCli(
 
   progress.stage = "done";
   emitProgress();
+
+  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+    if (implicitCfg.llmSignalAnalysis !== false) {
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      try {
+        const filtered = await classifyAndFilterCorrectionIncidents({
+          incidents: bridgeIncidents,
+          openai,
+          model: defaultModel,
+          fallbackModels,
+          minConfidence: implicitCfg.selfCorrectionBridgeMinConfidence ?? 0.7,
+          batchSize: implicitCfg.llmSignalBatchSize ?? 10,
+          factsDb,
+          logger: {
+            info: (msg) => logger?.info?.(msg),
+            warn: (msg) => logger?.warn?.(msg),
+          },
+        });
+        bridgeIncidents = filtered.incidents;
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:llm-signal-bridge",
+          severity: "warning",
+          subsystem: "implicit-feedback",
+        });
+      }
+    }
+  }
 
   if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
     const cap = implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5;

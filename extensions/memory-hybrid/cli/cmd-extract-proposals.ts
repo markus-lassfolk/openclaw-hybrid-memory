@@ -8,6 +8,7 @@ import { resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { scoreIdentityGaps } from "../services/identity-gap-scorer.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
 import {
   buildPersonaStateInsightsBlock,
@@ -18,6 +19,40 @@ import { parseStructuredItemsAcceptingEmpty, stripThinkingWrapperBlocks } from "
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
 import { capProposalConfidence } from "./proposals.js";
+
+function isSelfCorrectionInsight(f: { source?: string | null; tags?: string[] | null }): boolean {
+  return (
+    f.source === "self-correction" ||
+    f.source === "self-correction-analysis" ||
+    (f.tags?.includes("self-correction") ?? false)
+  );
+}
+
+function buildSemanticEmptyFallbackProposal(
+  gapBullets: string[],
+  allowedFiles: string[],
+): {
+  targetFile: string;
+  title: string;
+  observation: string;
+  suggestedChange: string;
+  confidence: number;
+} | null {
+  const uncovered = gapBullets.find((b) => b.startsWith("Uncovered in "));
+  if (!uncovered) return null;
+  const fileMatch = uncovered.match(/^Uncovered in ([^:]+):/);
+  const targetFile = fileMatch?.[1]?.trim() ?? "";
+  if (!targetFile || !allowedFiles.includes(targetFile as (typeof allowedFiles)[number])) return null;
+  const previewMatch = uncovered.match(/"([^"]+)"/);
+  const preview = previewMatch?.[1]?.trim() ?? uncovered.slice(0, 120);
+  return {
+    targetFile,
+    title: "Append uncovered reflection insight",
+    observation: `Pre-flight identity gap scorer flagged: ${preview}`,
+    suggestedChange: `- ${preview}`,
+    confidence: 0.7,
+  };
+}
 
 function isGenerateProposalItem(item: unknown): boolean {
   if (typeof item !== "object" || item === null) return false;
@@ -57,9 +92,7 @@ export async function runGenerateProposalsForCli(
   const patterns = allRelevant.filter((f) => f.category === "pattern");
   const rules = allRelevant.filter((f) => f.category === "rule");
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
-  const selfCorrectionInsights = allRelevant
-    .filter((f) => f.source === "self-correction-analysis" || f.tags?.includes("self-correction"))
-    .slice(0, 20);
+  const selfCorrectionInsights = allRelevant.filter(isSelfCorrectionInsight).slice(0, 20);
   const implicitInsights = factsDb
     .getAll({ scopeFilter })
     .filter(
@@ -162,6 +195,24 @@ export async function runGenerateProposalsForCli(
   }
   const insightsBlock = insights.join("\n\n");
   const allowedFiles = cfg.personaProposals.allowedFiles;
+  const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+  const gapInsights = [
+    ...patterns,
+    ...rules,
+    ...metaPatterns,
+    ...selfCorrectionInsights,
+    ...implicitInsights,
+  ];
+  const identityGapResult = scoreIdentityGaps(gapInsights, workspace);
+  const identityGapsBlock = identityGapResult.bullets.join("\n");
+  const pendingProposals = proposalsDb.list({ status: "pending" });
+  const pendingProposalsBlock =
+    pendingProposals.length > 0
+      ? pendingProposals
+          .slice(0, 20)
+          .map((p) => `- ${p.title} -> ${p.targetFile} (pending since ${new Date(p.createdAt * 1000).toISOString().slice(0, 10)})`)
+          .join("\n")
+      : "(none)";
   const identityFilesContent: string[] = [];
   for (const file of allowedFiles) {
     try {
@@ -182,11 +233,18 @@ export async function runGenerateProposalsForCli(
     }
   }
   const identityFilesBlock = identityFilesContent.join("\n");
+  if (opts.verbose) {
+    ctx.logger.info?.(
+      `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} pending=${pendingProposals.length}`,
+    );
+  }
   const prompt = fillPrompt(loadPrompt("generate-proposals"), {
     allowed_files: allowedFiles.join(", "),
     min_confidence: String(cfg.personaProposals.minConfidence),
     insights: insightsBlock,
     identity_files: identityFilesBlock,
+    identity_gaps: identityGapsBlock,
+    pending_proposals: pendingProposalsBlock,
   });
   const { defaultModel: model, fallbackModels: resolvedFallbacks } = resolveReflectionModelAndFallbacks(
     cfg,
@@ -295,14 +353,42 @@ export async function runGenerateProposalsForCli(
     }
   }
   if (items.length === 0 && insights.length > 0) {
+    if (identityGapResult.score >= 0.25) {
+      const fallback = buildSemanticEmptyFallbackProposal(identityGapResult.bullets, allowedFiles);
+      if (fallback) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals semantic_empty_with_gaps=true identity_gap_score=${identityGapResult.score.toFixed(2)} — using deterministic fallback proposal`,
+        );
+        items = [fallback];
+      }
+    }
+  }
+  if (items.length === 0 && insights.length > 0) {
     const failureMessage =
       "memory-hybrid: generate-proposals semantic_empty: had insight input but parsed zero proposal items";
-    ctx.logger.warn?.(`${failureMessage} parse_success=false created=0 — returning degraded empty result`);
+    ctx.logger.warn?.(
+      `${failureMessage} identity_gap_score=${identityGapResult.score.toFixed(2)} parse_success=false created=0 — returning degraded empty result`,
+    );
+    proposalsDb.recordRun({
+      runAt: nowSec,
+      insightsCount: insights.length,
+      parsedCount: 0,
+      createdCount: 0,
+      semanticEmpty: true,
+      identityGapScore: identityGapResult.score,
+      model: allModels[0] ?? null,
+      zeroReason: "semantic_empty",
+    });
     return { created: 0 };
   }
   const weekDays = 7;
   const recentCount = proposalsDb.countRecentProposals(weekDays);
   const limit = cfg.personaProposals.maxProposalsPerWeek;
+  if (recentCount >= limit) {
+    ctx.logger.warn?.(
+      `memory-hybrid: generate-proposals weekly cap reached (${recentCount}/${limit} in last ${weekDays}d); skipping creation`,
+    );
+  }
   const minConf = cfg.personaProposals.minConfidence;
   const evidenceSessions = Array.from(
     { length: Math.max(1, cfg.personaProposals.minSessionEvidence) },
@@ -312,7 +398,14 @@ export async function runGenerateProposalsForCli(
     cfg.personaProposals.proposalTTLDays > 0 ? nowSec + cfg.personaProposals.proposalTTLDays * 24 * 3600 : null;
   let created = 0;
   for (const item of items) {
-    if (recentCount + created >= limit) break;
+    if (recentCount + created >= limit) {
+      if (created === 0) {
+        ctx.logger.warn?.(
+          `memory-hybrid: generate-proposals weekly cap reached (${recentCount}/${limit}); parsed ${items.length} item(s) but created 0`,
+        );
+      }
+      break;
+    }
     const targetFile = String(item.targetFile ?? "").trim();
     if (!allowedFiles.includes(targetFile as any)) continue;
     const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
@@ -360,5 +453,20 @@ export async function runGenerateProposalsForCli(
       });
     }
   }
+  proposalsDb.recordRun({
+    runAt: nowSec,
+    insightsCount: insights.length,
+    parsedCount: items.length,
+    createdCount: created,
+    semanticEmpty: created === 0 && items.length === 0,
+      identityGapScore: identityGapResult.score,
+      model: allModels[0] ?? null,
+      zeroReason: created === 0 ? (items.length === 0 ? "semantic_empty" : "filtered_or_capped") : null,
+    });
+    if (opts.verbose) {
+      ctx.logger.info?.(
+        `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} created=${created}`,
+      );
+    }
   return { created };
 }

@@ -513,6 +513,13 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
       typeof scRaw.batchDelayMs === "number" && scRaw.batchDelayMs >= 0 ? Math.floor(scRaw.batchDelayMs) : undefined,
     model: typeof scRaw.model === "string" && scRaw.model.trim().length > 0 ? scRaw.model.trim() : undefined,
     thinking: scRaw.thinking === "adaptive" || scRaw.thinking === "disabled" ? scRaw.thinking : undefined,
+    llmExtract: scRaw.llmExtract !== false,
+    llmExtractMinConfidence:
+      typeof scRaw.llmExtractMinConfidence === "number" &&
+      scRaw.llmExtractMinConfidence >= 0 &&
+      scRaw.llmExtractMinConfidence <= 1
+        ? scRaw.llmExtractMinConfidence
+        : 0.6,
   };
 }
 

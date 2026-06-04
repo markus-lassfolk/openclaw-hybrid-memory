@@ -59,25 +59,25 @@ export const QA_TASK_PLAN: QaTaskSpec[] = [
   },
   {
     id: "extract-directives",
-    args: ["extract-directives", "--days", "7", "--verbose", "--force"],
+    args: ["extract-directives", "--days", "60", "--verbose", "--force"],
     expectation: "Scans main agent sessions for directives; 0 stored ok if none found.",
     llmTask: true,
   },
   {
     id: "extract-reinforcement",
-    args: ["extract-reinforcement", "--days", "7", "--verbose", "--force"],
+    args: ["extract-reinforcement", "--days", "60", "--verbose", "--force"],
     expectation: "Finds reinforcement incidents; corpus may have RE=0 (data gap).",
     llmTask: true,
   },
   {
     id: "extract-implicit",
-    args: ["extract-implicit", "--days", "3", "--verbose", "--force"],
+    args: ["extract-implicit", "--days", "60", "--verbose", "--force"],
     expectation: "Extracts implicit feedback signals from sessions.",
     llmTask: true,
   },
   {
     id: "extract-procedures",
-    args: ["extract-procedures", "--days", "7", "--verbose", "--force"],
+    args: ["extract-procedures", "--days", "60", "--verbose", "--force"],
     expectation: "Extracts procedure facts; 0 ok if procedures.enabled=false or none found.",
     llmTask: true,
   },
@@ -123,7 +123,7 @@ export const QA_TASK_PLAN: QaTaskSpec[] = [
   },
   {
     id: "self-correction-run",
-    args: ["self-correction-run", "--days", "7", "--verbose", "--force"],
+    args: ["self-correction-run", "--days", "60", "--verbose", "--force"],
     expectation: "Scans sessions for correction incidents; 0 ok if none in window.",
     llmTask: true,
   },

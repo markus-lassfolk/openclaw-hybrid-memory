@@ -498,6 +498,10 @@ export type SelfCorrectionConfig = {
   model?: string;
   /** MiniMax thinking mode for self-correction analysis (default: llm.minimax.thinking or disabled). */
   thinking?: "disabled" | "adaptive";
+  /** Use LLM to classify regex/heuristic correction candidates (default: true). */
+  llmExtract?: boolean;
+  /** Minimum LLM confidence to keep a correction incident (default: 0.6). */
+  llmExtractMinConfidence?: number;
 };
 
 /**

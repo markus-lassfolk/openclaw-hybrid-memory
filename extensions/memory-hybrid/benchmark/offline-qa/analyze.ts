@@ -100,6 +100,7 @@ export function detectProviderLeak(log: string, llmTask: boolean): { leak: boole
         !/disabledProviders|config-set|Example \(/.test(line) &&
         !/distill store failed for.*azure-foundry/i.test(line) &&
         !/using llm\.providers\["azure-foundry"\] for embeddings/i.test(line) &&
+        !(/azure-foundry/i.test(line) && /embed|embedding|Embedding provider|reflection-rules-embed|loadReflectionDedupeCorpusVectors/i.test(line)) &&
         !/embedding\.endpoint|test-embeddings|Embedding provider/i.test(line),
     )
     .join("\n");
@@ -219,19 +220,32 @@ export function analyzeTaskResult(task: QaTaskSpec, log: string, exitCode: numbe
       classification = "data-gap";
       notes.push("0 facts in reflection window — check fact timestamps vs window");
     }
-  } else if (
-    task.id === "generate-proposals" &&
-    (/semantic_empty|parse_success=false created=0/i.test(log) || (counts.created ?? 0) === 0)
-  ) {
-    classification = "by-design-zero";
-    errors.length = 0;
-    notes.push("Zero proposals — model parse empty or no patterns meeting confidence gate");
+  } else if (task.id === "generate-proposals" && /semantic_empty_with_gaps=true/i.test(log)) {
+    classification = "needs-fix";
+    notes.push("semantic_empty despite identity gaps — check proposal pipeline wiring");
+  } else if (task.id === "generate-proposals") {
+    const gapMatch = log.match(/identity_gap_score=([0-9.]+)/i);
+    const gapScore = gapMatch ? Number.parseFloat(gapMatch[1]) : 0;
+    if (/semantic_empty/i.test(log) && gapScore >= 0.25) {
+      classification = "needs-fix";
+      notes.push(`semantic_empty with identity_gap_score=${gapScore.toFixed(2)} — proposals pipeline gap`);
+    } else if (/semantic_empty|parse_success=false created=0/i.test(log) || (counts.created ?? 0) === 0) {
+      classification = "by-design-zero";
+      errors.length = 0;
+      notes.push("Zero proposals — model parse empty or no patterns meeting confidence gate");
+    }
   } else if (task.id === "reflect-rules" || task.id === "reflect-meta") {
     const storedN = counts.rulesStored ?? counts.metaStored ?? counts.stored ?? 0;
     if (storedN === 0) {
       if (/invalid_response_format|zero_rules_reason=invalid/i.test(log)) {
-        classification = exitCode === 0 ? "by-design-zero" : "needs-fix";
-        notes.push("LLM returned unparseable rules format — retry or model swap (known MiniMax flake)");
+        const minimalRetryOk = /minimal JSON retry succeeded/i.test(log);
+        classification =
+          exitCode === 0 && !minimalRetryOk ? "needs-fix" : exitCode === 0 ? "by-design-zero" : "needs-fix";
+        notes.push(
+          minimalRetryOk
+            ? "Rules recovered via minimal JSON retry"
+            : "LLM returned unparseable rules format — retry or model swap (known MiniMax flake)",
+        );
       } else {
         classification = exitCode === 0 ? "by-design-zero" : "needs-fix";
         notes.push(task.runAllGate ?? "Pattern gate may block output");

@@ -1143,6 +1143,8 @@ export async function runReflectionRules(
     thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
     /** Internal: one-shot retry with thinking enabled after invalid JSON (#1801). */
     formatRetryWithThinking?: boolean;
+    /** Internal: one-shot retry with minimal JSON-only prompt after invalid JSON. */
+    formatRetryMinimal?: boolean;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -1206,8 +1208,8 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
-      // Structured JSON extraction: disable M3 thinking blocks by default (adaptive breaks json_object parsing).
-      thinkingMode: opts.thinkingMode ?? "disabled",
+      // Structured JSON extraction: always disable thinking (adaptive breaks json_object parsing).
+      thinkingMode: "disabled",
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1224,8 +1226,8 @@ export async function runReflectionRules(
     });
     throw err instanceof Error ? err : new Error(String(err));
   }
-  const parseResult = parseRulesFromModelResponse(rawResponse);
-  const uniqueRules = parseResult.rules;
+  let parseResult = parseRulesFromModelResponse(rawResponse);
+  let uniqueRules = parseResult.rules;
   const { parseableLines, rejectedLowConfidence, rejectedLength, rejectedDuplicates, parseSuccess, parsedFromJson } =
     parseResult;
   const modelResponseChars = rawResponse.length;
@@ -1284,6 +1286,58 @@ export async function runReflectionRules(
     }
     if (
       (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
+      !opts.formatRetryMinimal
+    ) {
+      const minimalPrompt =
+        `${patternsBlock}\n\nReturn only valid JSON with this schema (no markdown, no prose):\n` +
+        `{"rules":["<imperative one-line rule>"],"noAction":false}\n` +
+        `When there are no actionable rules, return {"rules":[],"noAction":true}.`;
+      logger.warn(
+        `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying once with minimal JSON-only prompt`,
+      );
+      try {
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+          model: opts.model,
+          modelSource: "format-retry-minimal",
+          content: minimalPrompt,
+          temperature: REFLECTION_TEMPERATURE,
+          maxTokens: 800,
+          openai,
+          fallbackModels: opts.fallbackModels ?? [],
+          label: "memory-hybrid: reflect-rules-minimal-retry",
+          feature: CostFeature.reflectionRules,
+          logger,
+          adaptiveStatePath: opts.adaptiveStatePath,
+          enabled: adaptiveEnabled,
+          responseFormat: { type: "json_object" },
+          thinkingMode: "disabled",
+        });
+        const minimalParse = parseRulesFromModelResponse(detail.content);
+        if (minimalParse.rules.length > 0) {
+          logger.info(
+            `memory-hybrid: reflect-rules — minimal JSON retry succeeded with ${minimalParse.rules.length} rule(s) (model=${detail.modelUsed})`,
+          );
+          parseResult = minimalParse;
+          uniqueRules = minimalParse.rules;
+          modelUsed = detail.modelUsed;
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: reflect-rules minimal JSON retry failed: ${err}`);
+      }
+      if (uniqueRules.length === 0) {
+        return runReflectionRules(
+          factsDb,
+          vectorDb,
+          embeddings,
+          openai,
+          { ...opts, formatRetryMinimal: true },
+          logger,
+          provenanceService,
+        );
+      }
+    } else if (
+      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
       !opts.formatRetryWithThinking
     ) {
       logger.warn(
@@ -1299,15 +1353,20 @@ export async function runReflectionRules(
         provenanceService,
       );
     }
-    if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
-      logger.warn(
-        `memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}; returning 0 stored (degraded)`,
-      );
+    if (uniqueRules.length > 0) {
+      // Minimal retry recovered parseable rules — continue to storage below.
+    } else {
+      if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
+        logger.warn(
+          `memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}; returning 0 stored (degraded)`,
+        );
+      }
+      return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
     }
-    return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
   }
 
-  if (parsedFromJson && opts.verbose) {
+  const { parsedFromJson: activeParsedFromJson } = parseResult;
+  if (activeParsedFromJson && opts.verbose) {
     logger.info("memory-hybrid: reflect-rules — parsed rules from JSON response");
   }
 

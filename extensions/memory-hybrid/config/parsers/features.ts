@@ -758,6 +758,11 @@ export function parseImplicitFeedbackConfig(cfg: Record<string, unknown>): Impli
         : 300,
     trajectoryLLMAnalysis:
       topLevelTrajectoryLLMAnalysis !== undefined ? topLevelTrajectoryLLMAnalysis : raw?.trajectoryLLMAnalysis === true,
+    llmSignalAnalysis: raw?.llmSignalAnalysis !== false,
+    llmSignalBatchSize:
+      typeof raw?.llmSignalBatchSize === "number" && raw.llmSignalBatchSize >= 1
+        ? Math.min(50, Math.floor(raw.llmSignalBatchSize))
+        : 10,
     triggerSelfCorrectionRun: raw?.triggerSelfCorrectionRun === true,
     selfCorrectionBridgeMaxIncidents:
       typeof raw?.selfCorrectionBridgeMaxIncidents === "number" && raw.selfCorrectionBridgeMaxIncidents >= 1

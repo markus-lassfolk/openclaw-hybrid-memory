@@ -152,8 +152,13 @@ function reviewReflection(taskId: string, log: string, kind: "reflect" | "meta" 
     const actionable = samples.some((s) => s.length >= 40 && !ABSOLUTE_PATH_RE.test(s));
     verdict = actionable ? "good" : "acceptable";
   } else if (kind === "rules" && zeroRulesReason === "invalid_response_format") {
-    verdict = "acceptable";
-    findings.push("Known MiniMax highspeed flake — baseline run stored 44 rules on same corpus");
+    const minimalRetryOk = /minimal JSON retry succeeded/i.test(log);
+    verdict = minimalRetryOk ? "good" : "acceptable";
+    findings.push(
+      minimalRetryOk
+        ? "Recovered via minimal JSON retry"
+        : "Known MiniMax format flake — baseline run stored 44 rules on same corpus",
+    );
   } else if (kind === "meta" && zeroMetasReason === "all_candidates_rejected_length" && parsedCandidates > 0) {
     verdict = "acceptable";
     findings.push(`${parsedCandidates} meta candidate(s) rejected by length gate — working as designed`);
@@ -424,7 +429,13 @@ function reviewProposals(workHome: string, log: string): TaskQualityReview {
   const findings: string[] = [];
   const samples: string[] = [];
   const createdThisRun = Number.parseInt(log.match(/Created (\d+) proposal\(s\)/i)?.[1] ?? "0", 10);
-  if (/semantic_empty/i.test(log)) findings.push("LLM had insight input but parsed zero proposal items this run");
+  if (/semantic_empty_with_gaps=true/i.test(log)) {
+    findings.push("semantic_empty despite identity gaps — deterministic fallback should have fired");
+  } else if (/semantic_empty/i.test(log)) findings.push("LLM had insight input but parsed zero proposal items this run");
+  const gapScore = Number.parseFloat(log.match(/identity_gap_score=([0-9.]+)/i)?.[1] ?? "0");
+  if (/semantic_empty/i.test(log) && gapScore >= 0.25) {
+    findings.push(`identity_gap_score=${gapScore.toFixed(2)} — proposals should not be empty`);
+  }
   if (/no patterns\/rules\/meta/i.test(log)) findings.push("Skipped — no patterns/rules/meta in memory");
   for (const f of ["SOUL.md", "IDENTITY.md", "USER.md"]) {
     const p = join(workHome, ".openclaw/workspace", f);

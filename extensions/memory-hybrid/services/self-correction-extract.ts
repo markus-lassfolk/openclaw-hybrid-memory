@@ -94,3 +94,68 @@ export function runSelfCorrectionExtract(opts: RunSelfCorrectionExtractOpts): Se
 
   return { incidents, sessionsScanned: filePaths.length };
 }
+
+/**
+ * Broader pre-filter: user turns after assistant that did not match correction regex.
+ * Used as LLM classifier input to catch non-keyword frustration/corrections.
+ */
+export function collectHeuristicFeedbackCandidates(opts: RunSelfCorrectionExtractOpts): CorrectionIncident[] {
+  const { filePaths, correctionRegex } = opts;
+  const incidents: CorrectionIncident[] = [];
+  const seen = new Set<string>();
+
+  for (const filePath of filePaths) {
+    const messages = parseSessionMessagesSync(filePath, "self-correction-heuristic");
+    if (messages.length === 0) continue;
+
+    const sessionName = basename(filePath);
+    const ts = timestampFromFilename(sessionName);
+
+    for (let i = 0; i < messages.length; i++) {
+      if (messages[i].role !== "user") continue;
+      const userText = messages[i].text;
+      if (testSignalRegex(correctionRegex, userText)) continue;
+      if (shouldSkipUserMessage(userText)) continue;
+      if (userText.trim().length < 40) continue;
+
+      const ctx = buildSignalContext(messages, i, { lookback: 20 });
+      if (!ctx.precedingAssistant.trim()) continue;
+
+      const dedupeKey = `${sessionName}:${userText.slice(0, 80)}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+
+      incidents.push({
+        userMessage: truncate(userText, MAX_USER_MSG),
+        precedingAssistant: truncate(ctx.precedingAssistant, MAX_ASSISTANT_MSG),
+        followingAssistant: truncate(ctx.followingAssistant, MAX_ASSISTANT_MSG),
+        precedingUserMessage: ctx.precedingUserMessage
+          ? truncate(ctx.precedingUserMessage, MAX_ASSISTANT_MSG)
+          : undefined,
+        toolCallSequence: ctx.toolCallSequence.length > 0 ? ctx.toolCallSequence : undefined,
+        recalledMemoryIds: ctx.recalledMemoryIds.length > 0 ? ctx.recalledMemoryIds : undefined,
+        timestamp: ts,
+        sessionFile: sessionName,
+      });
+    }
+  }
+
+  return incidents;
+}
+
+export function mergeCorrectionIncidents(
+  primary: CorrectionIncident[],
+  secondary: CorrectionIncident[],
+  maxTotal = 200,
+): CorrectionIncident[] {
+  const seen = new Set<string>();
+  const merged: CorrectionIncident[] = [];
+  for (const inc of [...primary, ...secondary]) {
+    const key = `${inc.sessionFile}:${inc.userMessage.slice(0, 100)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(inc);
+    if (merged.length >= maxTotal) break;
+  }
+  return merged;
+}

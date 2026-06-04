@@ -56,13 +56,9 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _testing } from "../index.js";
-import { WalReadCorruptionError } from "../backends/wal.js";
+import { WalReadCorruptionError, WriteAheadLog } from "../backends/wal.js";
 import { pluginLogger } from "../utils/logger.js";
 
-const { WriteAheadLog } = _testing;
-
-// Test constants
 const TEST_MAX_AGE_MS = 1000; // 1 second for fast tests
 const DEFAULT_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes (production default)
 
@@ -608,6 +604,42 @@ describe("WriteAheadLog", () => {
       expect(validEntries[0].id).toBe(recentEntry.id);
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("falling back to lenient read"));
       warnSpy.mockRestore();
+    });
+  });
+
+  describe("compactIfOversized", () => {
+    beforeEach(async () => {
+      wal = new WriteAheadLog(walPath, TEST_MAX_AGE_MS);
+      await wal.init();
+    });
+
+    it("retains entries older than maxAge during size compaction", async () => {
+      const maxAgeMs = 1000;
+      const localWal = new WriteAheadLog(walPath, maxAgeMs);
+      await localWal.init();
+
+      const oldEntry = {
+        id: randomUUID(),
+        timestamp: Date.now() - maxAgeMs - 5000,
+        operation: "store" as const,
+        data: { text: "Old pending", category: "general", importance: 0.7, source: "test" },
+      };
+      const recentEntry = {
+        id: randomUUID(),
+        timestamp: Date.now(),
+        operation: "store" as const,
+        data: { text: "Recent pending", category: "general", importance: 0.8, source: "test" },
+      };
+
+      await localWal.write(oldEntry);
+      await localWal.write(recentEntry);
+
+      const compacted = await localWal.compactIfOversized(0);
+      expect(compacted).toBe(1);
+
+      const entries = await localWal.readAll();
+      expect(entries).toHaveLength(2);
+      expect(entries.map((entry) => entry.id).sort()).toEqual([oldEntry.id, recentEntry.id].sort());
     });
   });
 
