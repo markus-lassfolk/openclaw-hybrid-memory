@@ -96,6 +96,8 @@ export type ProceduresConfig = {
   enabled: boolean;
   /** Session JSONL directory (default: ~/.openclaw/agents/main/sessions) */
   sessionsDir: string;
+  /** When true, scan all agent session dirs under ~/.openclaw/agents (multi-agent hosts). Default false. */
+  allAgentSessions?: boolean;
   /** Min tool steps to consider a procedure (default: 2) */
   minSteps: number;
   /** Validations before auto-generating a skill (default: 3) */

@@ -39,9 +39,11 @@ import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
+import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 import { parseStructuredItemsAcceptingEmpty } from "../utils/llm-json-array.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
-import { getMaxMtime, getSessionFilePathsSince } from "./cmd-extract-sessions.js";
+import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
+import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import type { HandlerContext } from "./handlers.js";
@@ -224,7 +226,6 @@ export async function runExtractReinforcementForCli(
   const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
   const { factsDb, vectorDb, embeddings, openai, cfg, proposalsDb, logger } = ctx;
   const SCAN_TYPE = "extract-reinforcement";
-  const sessionDir = cfg.procedures.sessionsDir;
   const days = opts.days ?? 3;
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
 
@@ -242,10 +243,10 @@ export async function runExtractReinforcementForCli(
   try {
     let filePaths: string[];
     if (!bypassWatermark && cursor) {
-      filePaths = getSessionFilePathsSince(sessionDir, days, cursor.lastSessionTs);
+      filePaths = resolveExtractSessionFilePaths(cfg, days, cursor.lastSessionTs);
       logger.info?.(`memory-hybrid: ${SCAN_TYPE} incremental — ${filePaths.length} new sessions since last run`);
     } else {
-      filePaths = getSessionFilePathsSince(sessionDir, days);
+      filePaths = resolveExtractSessionFilePaths(cfg, days);
     }
     const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 
@@ -746,6 +747,44 @@ export async function runExtractReinforcementForCli(
       for (const incident of result.incidents) {
         if (incident.recalledMemoryIds.length === 0) {
           annotationReasons.noRecalledIds++;
+          // Store standalone praise signal when no memory_recall IDs (sparse recall usage).
+          if (!opts.dryRun && incident.confidence >= 0.55) {
+            try {
+              const praiseText = redactMaintenancePrivateText(
+                `[Reinforcement praise] User: "${incident.userMessage.slice(0, 180)}" — praised behavior: ${incident.agentBehavior.slice(0, 180)}`,
+              );
+              if (!factsDb.hasDuplicate(praiseText, "reinforcement-praise")) {
+                const storeResult = factsDb.storeWithResult({
+                  text: praiseText,
+                  category: "preference",
+                  importance: Math.min(0.85, 0.5 + incident.confidence * 0.3),
+                  entity: null,
+                  key: "reinforcement_praise",
+                  value: praiseText.slice(0, 200),
+                  source: "reinforcement-praise",
+                  confidence: incident.confidence,
+                  tags: ["reinforcement", "praise", "no-recall-ids"],
+                  decayClass: "normal",
+                });
+                if (!storeResult.skipped && (storeResult.newlyStored || storeResult.embeddingStale)) {
+                  annotated++;
+                  annotationReasons.reinforced++;
+                  await cleanupEvictedVector({
+                    vectorDb: ctx.vectorDb,
+                    evictedFactId: storeResult.evictedFactId,
+                    logger: ctx.logger,
+                    context: "extract-reinforcement-praise",
+                  });
+                }
+              }
+            } catch (err) {
+              annotationReasons.errors++;
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractReinforcementForCli:praise-signal",
+              });
+            }
+          }
           // Still process procedure boosts even without recalled fact IDs
           try {
             if (incident.toolCallSequence.length >= 2) {

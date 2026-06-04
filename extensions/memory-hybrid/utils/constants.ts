@@ -40,7 +40,7 @@ export const CONSOLIDATION_MERGE_MAX_CHARS = 5000;
 /** Max characters for reflection pattern text. */
 export const REFLECTION_PATTERN_MAX_CHARS = 500;
 /** Max characters for reflection meta-pattern text. */
-export const REFLECTION_META_MAX_CHARS = 300;
+export const REFLECTION_META_MAX_CHARS = 500;
 /** Cosine similarity threshold for deduplicating reflection patterns. */
 export const REFLECTION_DEDUPE_THRESHOLD = 0.85;
 /** Cosine similarity threshold for distillation/ingest deduplication. */

@@ -123,7 +123,7 @@ export const QA_TASK_PLAN: QaTaskSpec[] = [
   },
   {
     id: "self-correction-run",
-    args: ["self-correction-run", "--verbose", "--force"],
+    args: ["self-correction-run", "--days", "7", "--verbose", "--force"],
     expectation: "Scans sessions for correction incidents; 0 ok if none in window.",
     llmTask: true,
   },

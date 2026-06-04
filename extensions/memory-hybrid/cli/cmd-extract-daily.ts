@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { buildCredentialPointerText, ensureCredentialVaultPointer, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
+import { buildCredentialPointerText, ensureCredentialVaultPointer, abortCredentialVaultWriteOnPointerDedupe, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
 import { classifyMemoryOperationsBatch, type MemoryClassification } from "../services/classification.js";
 import { validateScopedClassificationTarget } from "../services/classification-scope.js";
 import { capturePluginError } from "../services/error-reporter.js";
@@ -234,7 +234,15 @@ export async function runExtractDailyForCli(
                   }
                   continue;
                 }
-                if (!storedInVault && !pointer.newlyStored && !pointer.embeddingStale) {
+                if (
+                  abortCredentialVaultWriteOnPointerDedupe(
+                    storedInVault,
+                    pointer,
+                    credentialsDb,
+                    parsed.service,
+                    parsed.type,
+                  )
+                ) {
                   continue;
                 }
                 const pointerEntry = pointer.entry;

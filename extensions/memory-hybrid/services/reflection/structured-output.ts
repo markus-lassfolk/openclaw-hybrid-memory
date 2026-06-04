@@ -7,6 +7,7 @@ import {
   DEFAULT_STRUCTURED_ITEM_ENVELOPE_KEYS,
   parseFirstJsonObjectValue,
   parseStructuredItemsAcceptingEmpty,
+  repairLooseJsonObject,
   stripBracketContextPreamble,
   stripMarkdownCodeFence,
   stripThinkingWrapperBlocks,
@@ -26,7 +27,8 @@ export const REFLECTION_META_JSON_INSTRUCTION = `
 Respond with JSON only (no markdown fences). Use this schema:
 {"metas":["<1-2 sentence meta-pattern>", "..."],"noAction":false}
 When there are no meta-patterns, return {"metas":[],"noAction":true}.
-Each meta-pattern must be 1-2 sentences synthesizing themes across the patterns.`;
+Each meta-pattern must be 1-2 sentences synthesizing themes across the patterns.
+Keep each meta under 480 characters.`;
 
 const VALID_NO_RULES_PATTERN =
   /^\s*(no\s+(actionable\s+)?rules?|no rules (detected|identified)|unable to extract rules|insufficient information for rules)[^\n\r]*$/i;
@@ -63,7 +65,7 @@ function tryParseJsonObject(raw: string): Record<string, unknown> | null {
   const stripped = stripBracketContextPreamble(
     stripThinkingWrapperBlocks(stripMarkdownCodeFence(raw.trim())),
   );
-  return parseFirstJsonObjectValue(stripped);
+  return parseFirstJsonObjectValue(stripped) ?? repairLooseJsonObject(stripped);
 }
 
 function readStringArrayField(obj: Record<string, unknown>, key: string): string[] {
@@ -87,6 +89,9 @@ function normalizeRuleCandidate(text: string): {
   let candidate = text.trim();
   if (LOW_CONFIDENCE_PREFIX_PATTERN.test(candidate)) {
     return { text: candidate, rejectedLowConfidence: true, rejectedLength: false };
+  }
+  if (/^<imperative one-line rule>$/i.test(candidate) || /^<\w+[^>]*>$/.test(candidate)) {
+    return { text: candidate, rejectedLowConfidence: false, rejectedLength: true };
   }
   const confidencePrefix = candidate.match(EXPLICIT_CONFIDENCE_PREFIX_PATTERN);
   if (confidencePrefix?.groups?.value) {

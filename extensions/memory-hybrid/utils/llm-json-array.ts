@@ -253,6 +253,31 @@ export function tryParseFirstJsonObject(
 }
 
 /**
+ * Attempt lightweight JSON repairs (trailing commas, single-quoted strings) before giving up.
+ */
+export function repairLooseJsonObject(raw: string): Record<string, unknown> | null {
+  const stripped = stripThinkingWrapperBlocks(stripMarkdownCodeFence(stripBracketContextPreamble(raw.trim())));
+  const candidates = [stripped];
+  // Trailing comma before closing brace/bracket
+  candidates.push(stripped.replace(/,\s*([}\]])/g, "$1"));
+  // Unwrap extra prose: grab first { ... } again after repair
+  for (const candidate of candidates) {
+    const obj = parseFirstJsonObjectValue(candidate);
+    if (obj) return obj;
+  }
+  // MiniMax sometimes returns rules as newline-separated strings inside broken JSON
+  const rulesMatch = stripped.match(/"rules"\s*:\s*\[([\s\S]*?)\]/i);
+  if (rulesMatch) {
+    const inner = rulesMatch[1];
+    const rules = [...inner.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+      .map((m) => m[1].replace(/\\"/g, '"').trim())
+      .filter(Boolean);
+    if (rules.length > 0) return { rules, noAction: false };
+  }
+  return null;
+}
+
+/**
  * Parse the first balanced JSON object in assistant text and return it as a record.
  * Unlike {@link tryParseFirstJsonObject}, this returns the object itself (not a filtered array).
  */

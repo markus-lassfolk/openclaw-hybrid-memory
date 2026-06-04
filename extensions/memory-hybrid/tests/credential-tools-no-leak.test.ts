@@ -244,6 +244,28 @@ describe("credential_store — vault pointer fact", () => {
     deleteSpy.mockRestore();
   });
 
+  it("rolls back vault when factsDb is unavailable", async () => {
+    const api = makeMockApi();
+    const cfg = makeMinimalCfg();
+    const deleteSpy = vi.spyOn(db, "delete");
+
+    registerCredentialTools(makeCtx(db, cfg, api, null), api as unknown as PluginContext["api"]);
+
+    const tool = api.getTool("credential_store");
+    if (!tool) throw new Error("credential_store tool was not registered");
+
+    await expect(
+      tool.execute("call-store-no-facts", {
+        service: "openai",
+        type: "api_key",
+        value: "sk-no-facts-db-value-12345678",
+      }),
+    ).rejects.toThrow(/Facts store not available/);
+
+    expect(deleteSpy).toHaveBeenCalledWith("openai", "api_key");
+    deleteSpy.mockRestore();
+  });
+
   it("removes memory pointers when credential_delete succeeds", async () => {
     const factsDb = new FactsDB(join(tmpDir, "facts-del.db"));
     ensureCredentialVaultPointer(factsDb, "github", "api_key", "test");

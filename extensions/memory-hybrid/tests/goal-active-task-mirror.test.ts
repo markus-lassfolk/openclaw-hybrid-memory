@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { refreshActiveTaskMirrorWithGoals } from "../services/goal-active-task-mirror.js";
+import { preserveGoalsMirrorSection, refreshActiveTaskMirrorWithGoals } from "../services/goal-active-task-mirror.js";
 
 describe("refreshActiveTaskMirrorWithGoals", () => {
   let dir: string;
@@ -123,5 +123,37 @@ _none_
     expect(content).toContain("## Active Goals");
     expect(content).toContain("_No active goals._");
     expect(content).not.toContain("[old-goal]");
+  });
+});
+
+describe("preserveGoalsMirrorSection", () => {
+  it("keeps goals block when projection is regenerated", () => {
+    const previous = `# ACTIVE-TASKS.md
+
+## Active
+
+### [task-a]: Work
+- **Status:** In progress
+
+## Active Goals
+_Mirror from goal registry — do not edit by hand; refreshed on heartbeat._
+
+### [g1]: Goal one
+
+`;
+    const projection = `# ACTIVE-TASKS.md
+
+> **Projection** of hybrid-memory facts
+
+## Active
+
+### [task-b]: New work
+- **Status:** In progress
+`;
+    const merged = preserveGoalsMirrorSection(previous, projection);
+    expect(merged).toContain("### [task-b]: New work");
+    expect(merged).toContain("## Active Goals");
+    expect(merged).toContain("### [g1]: Goal one");
+    expect(merged).not.toContain("### [task-a]: Work");
   });
 });

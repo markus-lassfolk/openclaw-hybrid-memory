@@ -52,6 +52,21 @@ export function isCredentialPointerPureDedupe(result: StoreFactResult): boolean 
   return isCredentialPointerLinked(result) && result.newlyStored === false && !result.embeddingStale;
 }
 
+/** When the facts pointer already exists, roll back a fresh vault write to avoid orphaned secrets. Returns true if the caller should treat the operation as a no-op duplicate. */
+export function abortCredentialVaultWriteOnPointerDedupe(
+  storedInVault: boolean,
+  pointer: Extract<EnsureCredentialPointerResult, { ok: true }>,
+  credentialsDb: CredentialsDB,
+  service: string,
+  type: CredentialType,
+): boolean {
+  if (pointer.newlyStored || pointer.embeddingStale) return false;
+  if (storedInVault) {
+    rollbackVaultCredentialWrite(credentialsDb, service, type);
+  }
+  return true;
+}
+
 export function rollbackVaultCredentialWrite(
   credentialsDb: CredentialsDB,
   service: string,

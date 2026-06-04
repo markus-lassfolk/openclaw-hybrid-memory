@@ -333,6 +333,25 @@ describe("runStoreForCli credential_skipped_duplicate", () => {
 
     expect(credentialsDb.get("openai", "api_key")?.value).toBe("sk-testAbCdEfGh1234IjKlMnOpQrSt");
   });
+
+  it("rolls back orphan vault write when pointer already exists", async () => {
+    const secret = "sk-testAbCdEfGh1234IjKlMnOpQrSt";
+    const opts: StoreCliOpts = {
+      text: `OpenAI API Key: ${secret}`,
+      category: "technical",
+    };
+    await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    credentialsDb.delete("openai", "api_key");
+
+    const orphanSecret = "sk-orphanSecretForRollbackTest123456";
+    const orphanOpts: StoreCliOpts = {
+      text: `OpenAI API Key: ${orphanSecret}`,
+      category: "technical",
+    };
+    const result = await runStoreForCli(mockCtx, orphanOpts, { warn: vi.fn() });
+    expect(result.outcome).toBe("credential_skipped_duplicate");
+    expect(credentialsDb.get("openai", "api_key")).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

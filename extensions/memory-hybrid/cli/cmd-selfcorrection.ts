@@ -592,6 +592,7 @@ export async function runSelfCorrectionRunForCli(
     incidents?: CorrectionIncident[];
     workspace?: string;
     dryRun?: boolean;
+    days?: number;
     model?: string;
     approve?: boolean;
     applyTools?: boolean;
@@ -643,9 +644,10 @@ export async function runSelfCorrectionRunForCli(
     } else {
       // Two-tier pre-filter: use local Ollama to triage sessions before extraction (Issue #290).
       let scFilePaths: string[] | undefined;
+      const scanDays = opts.days ?? 3;
       const pfCfgSC = buildPreFilterConfig(cfg);
       if (pfCfgSC.enabled) {
-        const sessionFiles = gatherSessionFiles({ days: 3 });
+        const sessionFiles = gatherSessionFiles({ days: scanDays });
         const allPaths = sessionFiles.map((f: { path: string; mtime: number }) => f.path);
         if (allPaths.length > 0) {
           const pfResult = await preFilterSessions(allPaths, pfCfgSC);
@@ -661,14 +663,15 @@ export async function runSelfCorrectionRunForCli(
         }
       }
       const extractResult = runSelfCorrectionExtractForCli(ctx, {
-        days: 3,
+        days: scanDays,
         filePaths: scFilePaths,
         verbose: opts.verbose,
       });
       incidents = extractResult.incidents;
     }
     if (incidents.length === 0) {
-      const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: 3 days.\nIncidents found: 0.\n`;
+      const scanDays = opts.days ?? 3;
+      const emptyReport = `# Self-Correction Analysis (${today})\n\nScanned sessions: ${scanDays} days.\nIncidents found: 0.\n`;
       if (!opts.dryRun) {
         try {
           atomicWriteFile(reportPath, emptyReport);

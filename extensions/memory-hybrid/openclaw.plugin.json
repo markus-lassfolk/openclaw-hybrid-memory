@@ -1570,6 +1570,10 @@
             "type": "string",
             "description": "Session JSONL directory (default: ~/.openclaw/agents/main/sessions)"
           },
+          "allAgentSessions": {
+            "type": "boolean",
+            "description": "When true, scan all agent session dirs under ~/.openclaw/agents (multi-agent hosts). Default false."
+          },
           "minSteps": {
             "type": "number",
             "description": "Min tool steps per procedure (default: 2)"

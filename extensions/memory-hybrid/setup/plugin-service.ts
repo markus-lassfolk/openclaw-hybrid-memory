@@ -36,12 +36,13 @@ import type { ProvenanceService } from "../services/provenance.js";
 import {
   reconcileActiveTaskInProgressSessionsFacts,
   reconcileActiveTaskLiveState,
+  activeTaskRenderGoalsOpts,
   renderActiveTaskMarkdownFile,
 } from "../services/task-ledger-facts.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
-import { replayWalEntries } from "../utils/wal-replay.js";
+import { replayWalEntriesWithRepair } from "../utils/wal-replay.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
@@ -352,60 +353,25 @@ export function createPluginService(ctx: PluginServiceContext) {
       // WAL Recovery: replay uncommitted operations from previous session
       if (wal) {
         try {
-          const replayResult = await replayWalEntries(wal, factsDb, vectorDb, embeddings, api.logger);
+          const replayResult = await replayWalEntriesWithRepair(
+            wal,
+            factsDb,
+            vectorDb,
+            embeddings,
+            api.logger,
+            "WAL recovery",
+          );
           if (replayResult.committed > 0 || replayResult.skipped > 0) {
             api.logger.info(
               `memory-hybrid: WAL recovery completed — committed ${replayResult.committed}, skipped ${replayResult.skipped}`,
             );
           }
         } catch (err) {
-          if (err instanceof Error && err.name === "WalReadCorruptionError") {
-            api.logger.warn(
-              `memory-hybrid: WAL recovery detected corruption: ${err.message}. Attempting repair by compacting valid entries.`,
-            );
-            capturePluginError(err, {
-              subsystem: "plugin-service",
-              operation: "wal-recovery-corrupted",
-            });
-            try {
-              const compacted = await wal.compactIfOversized(0);
-              if (compacted > 0) {
-                api.logger.info("memory-hybrid: corrupted WAL repaired, retrying recovery");
-                try {
-                  const retryResult = await replayWalEntries(wal, factsDb, vectorDb, embeddings, api.logger);
-                  if (retryResult.committed > 0 || retryResult.skipped > 0) {
-                    api.logger.info(
-                      `memory-hybrid: WAL recovery retry completed — committed ${retryResult.committed}, skipped ${retryResult.skipped}`,
-                    );
-                  }
-                } catch (retryErr) {
-                  api.logger.warn(
-                    `memory-hybrid: WAL recovery retry failed after repair: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
-                  );
-                  capturePluginError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)), {
-                    subsystem: "plugin-service",
-                    operation: "wal-recovery-retry-failed",
-                  });
-                }
-              } else {
-                api.logger.info("memory-hybrid: WAL repair resulted in empty log");
-              }
-            } catch (repairErr) {
-              api.logger.warn(
-                `memory-hybrid: failed to repair corrupted WAL: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}`,
-              );
-              capturePluginError(repairErr instanceof Error ? repairErr : new Error(String(repairErr)), {
-                subsystem: "plugin-service",
-                operation: "wal-recovery-repair-failed",
-              });
-            }
-          } else {
-            api.logger.warn?.(`memory-hybrid: WAL recovery failed: ${err}`);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "plugin-service",
-              operation: "wal-recovery",
-            });
-          }
+          api.logger.warn?.(`memory-hybrid: WAL recovery failed: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "wal-recovery",
+          });
         }
 
         // Size-based compaction only — do not time-prune pending entries (data loss risk).
@@ -722,6 +688,8 @@ export function createPluginService(ctx: PluginServiceContext) {
                       staleMinutes,
                       activeTaskFilePath,
                       cfg.activeTask.projection,
+                      api.logger,
+                      activeTaskRenderGoalsOpts(cfg, workspaceRoot),
                     );
                   }
                 } catch (liveErr) {

@@ -746,4 +746,56 @@ describe("runCaptureStage", () => {
     expect(credentialsDelete).not.toHaveBeenCalled();
     expect(vectorStore).toHaveBeenCalledOnce();
   });
+
+  it("skips tool-call credential capture when vault is unavailable (no plaintext in facts)", async () => {
+    const token = `ghp_${"B".repeat(36)}`;
+    const storeWithResult = vi.fn();
+    const api = makeApi("chat");
+    const { ctx } = makeContext({
+      credentialsDb: null,
+      factsDb: {
+        storeWithResult,
+      } as unknown as LifecycleContext["factsDb"],
+      cfg: {
+        autoCapture: false,
+        captureMaxChars: 5000,
+        autoRecall: { enabled: false, summaryThreshold: 0, summaryMaxChars: 200 },
+        retrieval: { strategies: ["semantic"] },
+        store: { classifyBeforeWrite: false },
+        memoryTiering: { enabled: false, compactionOnSessionEnd: false },
+        credentials: { enabled: true, autoCapture: { toolCalls: true, logCaptures: true } },
+        humanizer: { enabled: false },
+      } as unknown as LifecycleContext["cfg"],
+    });
+    const sessionState = makeSessionState();
+
+    await runCaptureStage(
+      {
+        success: true,
+        messages: [
+          {
+            role: "assistant",
+            tool_calls: [
+              {
+                function: {
+                  name: "exec",
+                  arguments: JSON.stringify({
+                    command: `export GITHUB_TOKEN=${token}`,
+                  }),
+                },
+              },
+            ],
+          },
+        ],
+      },
+      api as never,
+      ctx,
+      sessionState,
+    );
+
+    expect(storeWithResult).not.toHaveBeenCalled();
+    expect(api.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("vault disabled or unavailable"),
+    );
+  });
 });

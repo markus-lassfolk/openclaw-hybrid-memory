@@ -57,6 +57,18 @@ export async function runGenerateProposalsForCli(
   const patterns = allRelevant.filter((f) => f.category === "pattern");
   const rules = allRelevant.filter((f) => f.category === "rule");
   const metaPatterns = patterns.filter((f) => f.tags?.includes("meta"));
+  const selfCorrectionInsights = allRelevant
+    .filter((f) => f.source === "self-correction-analysis" || f.tags?.includes("self-correction"))
+    .slice(0, 20);
+  const implicitInsights = factsDb
+    .getAll({ scopeFilter })
+    .filter(
+      (f) =>
+        (f.source === "implicit-feedback" || f.tags?.includes("implicit-feedback")) &&
+        !f.supersededAt &&
+        (f.expiresAt === null || f.expiresAt > nowSec),
+    )
+    .slice(0, 15);
 
   let personaStateBlock = "";
   if (ctx.personaStateStore) {
@@ -129,6 +141,20 @@ export async function runGenerateProposalsForCli(
       `Meta-patterns:\n${metaPatterns
         .slice(0, 10)
         .map((f) => `- ${f.text}`)
+        .join("\n")}`,
+    );
+  }
+  if (selfCorrectionInsights.length) {
+    insights.push(
+      `Self-correction lessons:\n${selfCorrectionInsights
+        .map((f) => `- ${f.text.slice(0, 300)}`)
+        .join("\n")}`,
+    );
+  }
+  if (implicitInsights.length) {
+    insights.push(
+      `Implicit feedback lessons:\n${implicitInsights
+        .map((f) => `- ${f.text.slice(0, 300)}`)
         .join("\n")}`,
     );
   }
@@ -242,6 +268,37 @@ export async function runGenerateProposalsForCli(
     const failureMessage = `memory-hybrid: generate-proposals — all models failed: ${lastFailReason} (models tried: ${allModels.join(", ")})`;
     console.error(`${failureMessage} parse_success=false`);
     throw new Error(failureMessage);
+  }
+  if (items.length === 0 && insights.length > 0) {
+    // One retry with explicit nudge when model returns [] despite rich insight input.
+    const retryPrompt = `${prompt}\n\nIf any gap exists between the reflection data and identity files, return at least one well-supported proposal. Do not return an empty array when insights are present.`;
+    try {
+      const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+        model: allModels[0],
+        modelSource: "maintenance",
+        content: retryPrompt,
+        temperature: 0.35,
+        maxTokens: 4000,
+        openai,
+        fallbackModels: fallbackModels.slice(0, 1),
+        label: "memory-hybrid: generate-proposals-retry",
+        feature: CostFeature.generateProposals,
+        thinkingMode: "disabled",
+        logger: {
+          info: (msg) => ctx.logger.info?.(msg),
+          warn: (msg) => ctx.logger.warn?.(msg),
+        },
+      });
+      const parsed = parseStructuredItemsAcceptingEmpty(detail.content, isGenerateProposalItem);
+      if (parsed && parsed.length > 0) {
+        items = parsed as typeof items;
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "cli",
+        operation: "runGenerateProposalsForCli:semantic-empty-retry",
+      });
+    }
   }
   if (items.length === 0 && insights.length > 0) {
     const failureMessage =

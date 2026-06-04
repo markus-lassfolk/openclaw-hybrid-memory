@@ -8,10 +8,18 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
-import type { ActiveTaskProjectionConfig, MemoryCategory } from "../config.js";
+import {
+  formatGoalsMirrorSection,
+  mergeGoalsMirrorIntoMarkdown,
+  preserveGoalsMirrorSection,
+} from "./goal-active-task-mirror.js";
+import type { Goal } from "./goal-stewardship-types.js";
+import { listActiveGoals, resolveGoalsDir } from "./goal-stewardship.js";
+import type { ActiveTaskProjectionConfig, HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { escapeRegExp } from "../utils/text.js";
 import { execFile } from "../utils/process-runner.js";
 import {
   type ActiveTaskEntry,
@@ -21,6 +29,7 @@ import {
   detectStaleTasks,
   flushCompletedTaskToMemory,
   isNonActionableSubagentPlaceholderTask,
+  isTerminalActiveTaskStatus,
   normalizePlaceholderTaskNext,
   OMITTED_CAP_NOTE,
   parseHandoffRef,
@@ -34,6 +43,7 @@ import {
 import type { EmbeddingProvider } from "./embeddings.js";
 import type { ActiveTaskReconcileProgressReporter } from "./active-task-reconcile-progress.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
+import { taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 import { fetchLivePrBlockerStatus } from "./task-hygiene.js";
 import {
   activeTaskProvenance,
@@ -95,11 +105,22 @@ export type ActiveTaskCanonicalBackfillOptions = {
   limit?: number;
 };
 
+function activeTaskFactValue(key: string, e: MemoryEntry): string {
+  if (e.value !== null && e.value !== undefined) {
+    return String(e.value);
+  }
+  const text = e.text ?? "";
+  const pattern = new RegExp(`^Task\\s*\\[[^\\]]+\\]\\s+${escapeRegExp(key)}:\\s*(.*)$`, "s");
+  const match = text.match(pattern);
+  if (match) return match[1] ?? "";
+  return text;
+}
+
 function rowToRecord(row: Map<string, MemoryEntry>): Record<string, string> {
   const o: Record<string, string> = {};
   for (const [k, e] of row) {
     const key = k === "_body" ? "description" : k;
-    o[key] = e.value ?? e.text ?? "";
+    o[key] = activeTaskFactValue(k, e);
   }
   return o;
 }
@@ -398,10 +419,13 @@ export async function refreshActiveTaskProjectionBestEffort(opts: {
   reason: string;
   source?: string;
   factId?: string;
+  goalsDir?: string;
   logger?: { warn?: (m: string) => void };
 }): Promise<{ rendered: boolean; staleMarked: boolean; error?: string }> {
   try {
-    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection);
+    await renderActiveTaskMarkdownFile(opts.factsDb, opts.staleMinutes, opts.filePath, opts.projection, opts.logger, {
+      goalsDir: opts.goalsDir,
+    });
     return { rendered: true, staleMarked: false };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -483,6 +507,9 @@ async function recordActiveTaskSessionReconcileAudit(
     key: "report",
     value: JSON.stringify(audit),
   });
+  if (storeResult.skipped) {
+    return undefined;
+  }
   if (storeResult.evictedFactId) {
     await cleanupEvictedVector({
       vectorDb,
@@ -491,7 +518,7 @@ async function recordActiveTaskSessionReconcileAudit(
       context: "active-task-session-reconcile-audit",
     });
   }
-  if (!storeResult.skipped && storeResult.newlyStored) {
+  if (storeResult.newlyStored) {
     try {
       if (!vectorDb.isLanceAvailable()) {
         log?.warn?.(
@@ -996,7 +1023,9 @@ export async function upsertProjectTaskKey(
     provenanceJson: activeTaskProvenance(canonical),
   });
   if (storeResult.skipped) {
-    return;
+    throw new Error(
+      `memory-hybrid: active-task ledger upsert blocked by pre-store guard (${normalizedEntity}/${key})`,
+    );
   }
   const entry = storeResult.entry;
   if (storeResult.evictedFactId) {
@@ -1283,64 +1312,70 @@ export async function applyActiveTaskHygieneFacts(
     const task = byLabel.get(action.label);
     if (!task) continue;
 
-    if (action.kind === "pr-live-blocker") {
-      // Update task in-place: set status to "Waiting" and record the live blocker reason.
-      // Do NOT complete the task — it is actively blocked and needs Forge attention.
-      const updatedEntry: ActiveTaskEntry = {
+    try {
+      if (action.kind === "pr-live-blocker") {
+        // Update task in-place: set status to "Waiting" and record the live blocker reason.
+        // Do NOT complete the task — it is actively blocked and needs Forge attention.
+        const updatedEntry: ActiveTaskEntry = {
+          ...task,
+          status: "Waiting",
+          updated: runAt,
+          next: action.reason,
+          // Keep subagent so we know who is working on it
+          subagent: task.subagent,
+        };
+        await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, updatedEntry, opts.log, {
+          statusOverride: displayStatusToFact("Waiting"),
+          latestByEntityKey,
+        });
+        // Record so caller can dispatch Forge for these tasks
+        const parsed = action.prBlockerStatus ?? "";
+        const [actualStatus, prRef] = parsed.includes("|") ? parsed.split("|", 2) : ["", parsed];
+        const prParts = prRef.split(":");
+        prBlockerTasks.push({
+          label: task.label,
+          owner: prParts[0] ?? "",
+          repo: prParts[1] ?? "",
+          number: Number(prParts[2] ?? 0) || 0,
+          blockerStatus: actualStatus,
+          reason: action.reason,
+        });
+        appliedCount++;
+        continue;
+      }
+
+      const doneEntry: ActiveTaskEntry = {
         ...task,
-        status: "Waiting",
+        status: "Done",
         updated: runAt,
         next: action.reason,
-        // Keep subagent so we know who is working on it
-        subagent: task.subagent,
+        subagent: action.kind === "dead-session" ? "" : task.subagent,
       };
-      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, updatedEntry, opts.log, {
-        statusOverride: displayStatusToFact("Waiting"),
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log, {
+        statusOverride: action.toStatus,
         latestByEntityKey,
       });
-      // Record so caller can dispatch Forge for these tasks
-      const parsed = action.prBlockerStatus ?? "";
-      const [actualStatus, prRef] = parsed.includes("|") ? parsed.split("|", 2) : ["", parsed];
-      const prParts = prRef.split(":");
-      prBlockerTasks.push({
-        label: task.label,
-        owner: prParts[0] ?? "",
-        repo: prParts[1] ?? "",
-        number: Number(prParts[2] ?? 0) || 0,
-        blockerStatus: actualStatus,
-        reason: action.reason,
-      });
+      if (action.kind === "superseded-duplicate" && action.canonicalLabel) {
+        await upsertProjectTaskKey(
+          factsDb,
+          vectorDb,
+          embeddings,
+          doneEntry.label,
+          "superseded_by",
+          action.canonicalLabel,
+          opts.log,
+          { latestByEntityKey },
+        );
+      }
+      if (opts.flushOnComplete && opts.memoryDir) {
+        await flushCompletedTaskToMemory(doneEntry, opts.memoryDir).catch(() => {});
+      }
       appliedCount++;
-      continue;
-    }
-
-    const doneEntry: ActiveTaskEntry = {
-      ...task,
-      status: "Done",
-      updated: runAt,
-      next: action.reason,
-      subagent: action.kind === "dead-session" ? undefined : task.subagent,
-    };
-    await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log, {
-      statusOverride: action.toStatus,
-      latestByEntityKey,
-    });
-    if (action.kind === "superseded-duplicate" && action.canonicalLabel) {
-      await upsertProjectTaskKey(
-        factsDb,
-        vectorDb,
-        embeddings,
-        doneEntry.label,
-        "superseded_by",
-        action.canonicalLabel,
-        opts.log,
-        { latestByEntityKey },
+    } catch (err) {
+      opts.log?.warn?.(
+        `memory-hybrid: active-task hygiene apply failed for [${action.label}] (${action.kind}): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-    if (opts.flushOnComplete && opts.memoryDir) {
-      await flushCompletedTaskToMemory(doneEntry, opts.memoryDir).catch(() => {});
-    }
-    appliedCount++;
   }
 
   const audit = {
@@ -1361,6 +1396,9 @@ export async function applyActiveTaskHygieneFacts(
     key: "report",
     value: JSON.stringify(audit),
   });
+  if (auditFactResult.skipped) {
+    return { appliedCount, auditFactId: undefined, prBlockerTasks };
+  }
   if (auditFactResult.evictedFactId) {
     await cleanupEvictedVector({
       vectorDb,
@@ -1369,10 +1407,7 @@ export async function applyActiveTaskHygieneFacts(
       context: "active-task-hygiene-audit",
     });
   }
-  const auditFactId =
-    !auditFactResult.skipped && auditFactResult.newlyStored !== false
-      ? auditFactResult.entry.id
-      : undefined;
+  const auditFactId = auditFactResult.newlyStored !== false ? auditFactResult.entry.id : undefined;
 
   return { appliedCount, auditFactId, prBlockerTasks };
 }
@@ -1383,7 +1418,7 @@ export async function renderActiveTaskMarkdownFile(
   filePath: string,
   projection: ActiveTaskProjectionConfig,
   logger?: { debug?: (message: string) => void },
-  opts: { includeCompleted?: boolean } = {},
+  opts: { includeCompleted?: boolean; goals?: Goal[]; goalsDir?: string } = {},
 ): Promise<void> {
   const renderStartMs = Date.now();
   const includeCompleted = opts.includeCompleted === true;
@@ -1441,8 +1476,25 @@ export async function renderActiveTaskMarkdownFile(
     "> **Operators:** Update or close tasks via `memory_store` / project facts; run `hybrid-mem active-tasks reconcile` when session rows are obsolete; then `active-tasks render`. See `docs/ACTIVE-TASKS-PROJECTION.md`.",
     "",
   );
+  let finalContent = lines.join("\n");
+  let goalsForMirror = opts.goals;
+  if (!goalsForMirror && opts.goalsDir) {
+    goalsForMirror = await listActiveGoals(opts.goalsDir);
+  }
+  if (goalsForMirror) {
+    finalContent = mergeGoalsMirrorIntoMarkdown(finalContent, formatGoalsMirrorSection(goalsForMirror));
+  } else {
+    try {
+      const existing = await readFile(filePath, "utf-8");
+      finalContent = preserveGoalsMirrorSection(existing, finalContent);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger?.debug?.(`memory-hybrid: active-task projection could not preserve goals mirror: ${String(err)}`);
+      }
+    }
+  }
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, lines.join("\n"), "utf-8");
+  await writeFile(filePath, finalContent, "utf-8");
   try {
     await clearActiveTaskProjectionStale(filePath);
   } catch {
@@ -1451,6 +1503,15 @@ export async function renderActiveTaskMarkdownFile(
   logger?.debug?.(
     `memory-hybrid: active-task projection rowsFetched=${metrics.projectRowsFetched} groupedEntities=${metrics.groupedEntityCount} duplicatesCollapsed=${metrics.duplicateRowsCollapsed} activeCandidates=${metrics.activeCandidates} staleBucketed=${staleRaw.length} renderedActive=${capAct.rows.length} renderedStale=${capStale.rows.length} renderedCompleted=${capDone.rows.length} elapsedMs=${Date.now() - renderStartMs}`,
   );
+}
+
+/** Pass to `renderActiveTaskMarkdownFile` when goal stewardship is enabled. */
+export function activeTaskRenderGoalsOpts(
+  cfg: HybridMemoryConfig,
+  workspaceRoot: string,
+): { goalsDir?: string } {
+  if (!cfg.goalStewardship?.enabled) return {};
+  return { goalsDir: resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir) };
 }
 
 /**
@@ -1493,9 +1554,12 @@ export async function consumePendingTaskSignalsFacts(
   const { active: rawActive, completed: rawCompleted } = loadTaskLedgerFromFacts(factsDb);
   const active = detectStaleTasks(rawActive, staleMinutes);
 
-  const findMatchingTask = (activeEntries: ActiveTaskEntry[], signal: PendingTaskSignal): ActiveTaskEntry | null => {
-    const normalizedTaskRef = signal.taskRef.trim().toLowerCase();
-    const byLabel = activeEntries.filter((t) => t.label.toLowerCase() === normalizedTaskRef);
+  const findMatchingTaskInList = (
+    activeEntries: ActiveTaskEntry[],
+    signal: PendingTaskSignal,
+  ): ActiveTaskEntry | null => {
+    const normalizedTaskRef = signal.taskRef.trim();
+    const byLabel = activeEntries.filter((t) => taskLabelsMatch(t.label, normalizedTaskRef));
     if (byLabel.length === 1) return byLabel[0];
     if (byLabel.length > 1) {
       logger?.warn?.(`memory-hybrid: multiple active tasks share label ${signal.taskRef}; leaving signal pending`);
@@ -1517,10 +1581,14 @@ export async function consumePendingTaskSignalsFacts(
     return null;
   };
 
+  const findMatchingTask = (signal: PendingTaskSignal): ActiveTaskEntry | null =>
+    findMatchingTaskInList(updatedActive, signal) ?? findMatchingTaskInList(updatedCompleted, signal);
+
   const touched = new Set<string>();
   let updatedActive = [...active];
   const updatedCompleted = [...rawCompleted];
-  const processedSignals: PendingTaskSignal[] = [];
+  const processedEntries: Array<{ signal: PendingTaskSignal; label: string }> = [];
+  const droppedTerminalSignals: PendingTaskSignal[] = [];
   const expiredSignals: PendingTaskSignal[] = [];
   const completedToFlush: ActiveTaskEntry[] = [];
 
@@ -1531,10 +1599,18 @@ export async function consumePendingTaskSignalsFacts(
         return Number.isNaN(t) ? new Date().toISOString() : signal.timestamp;
       })();
 
-      const existing = findMatchingTask(updatedActive, signal);
+      const existing = findMatchingTask(signal);
       if (!existing) {
         if (isSignalExpired(signal)) expiredSignals.push(signal);
         else logger?.warn?.(`memory-hybrid: no matching active task for signal ${signal.taskRef}; leaving pending`);
+        continue;
+      }
+
+      if (isTerminalActiveTaskStatus(existing.status)) {
+        droppedTerminalSignals.push(signal);
+        logger?.info?.(
+          `memory-hybrid: dropped ${signal.signal} signal for terminal task [${existing.label}] (${existing.status})`,
+        );
         continue;
       }
 
@@ -1547,7 +1623,7 @@ export async function consumePendingTaskSignalsFacts(
             updated: updatedTimestamp,
             handoff: signal._handoff ?? completed.handoff,
           });
-          processedSignals.push(signal);
+          processedEntries.push({ signal, label: existing.label });
           completedToFlush.push({
             ...completed,
             updated: updatedTimestamp,
@@ -1577,14 +1653,14 @@ export async function consumePendingTaskSignalsFacts(
         handoff: signal._handoff ?? existing.handoff,
       };
       updatedActive = upsertTask(updatedActive, updatedEntry, true);
-      processedSignals.push(signal);
+      processedEntries.push({ signal, label: existing.label });
       touched.add(existing.label);
     } catch (err) {
       logger?.warn?.(`memory-hybrid: failed to process signal from ${signal._filePath}: ${err}`);
     }
   }
 
-  if (processedSignals.length === 0) {
+  if (processedEntries.length === 0 && droppedTerminalSignals.length === 0) {
     if (expiredSignals.length > 0) {
       for (const signal of expiredSignals) await deleteSignal(signal._filePath).catch(() => {});
       logger?.info?.(`memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) (facts ledger)`);
@@ -1592,28 +1668,45 @@ export async function consumePendingTaskSignalsFacts(
     return;
   }
 
-  try {
+  const persistedLabels = new Set<string>();
+  if (processedEntries.length > 0) {
     for (const label of touched) {
       const a = updatedActive.find((t) => t.label === label);
       const c = updatedCompleted.find((t) => t.label === label);
       const entry = a ?? c;
-      if (entry) {
+      if (!entry) continue;
+      try {
         await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, logger);
+        persistedLabels.add(label);
+      } catch (err) {
+        logger?.warn?.(
+          `memory-hybrid: failed to persist facts for task [${label}] after signals: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
-  } catch (err) {
-    logger?.warn?.(`memory-hybrid: failed to persist facts after task signals: ${err}`);
+  }
+
+  if (persistedLabels.size === 0 && droppedTerminalSignals.length === 0) {
+    if (expiredSignals.length > 0) {
+      for (const signal of expiredSignals) await deleteSignal(signal._filePath).catch(() => {});
+      logger?.info?.(`memory-hybrid: pruned ${expiredSignals.length} expired task signal(s) (facts ledger)`);
+    }
     return;
   }
 
-  for (const signal of processedSignals) await deleteSignal(signal._filePath).catch(() => {});
+  const consumedSignals = processedEntries.filter(({ label }) => persistedLabels.has(label));
+  for (const { signal } of consumedSignals) await deleteSignal(signal._filePath).catch(() => {});
+  for (const signal of droppedTerminalSignals) await deleteSignal(signal._filePath).catch(() => {});
   for (const signal of expiredSignals) await deleteSignal(signal._filePath).catch(() => {});
   if (flushOnComplete && completedToFlush.length > 0) {
     for (const completed of completedToFlush) {
+      if (!persistedLabels.has(completed.label)) continue;
       await flushCompletedTaskToMemory(completed, memoryDir).catch(() => {});
     }
   }
-  logger?.info?.(`memory-hybrid: consumed ${processedSignals.length} pending task signal(s) into facts ledger`);
+  logger?.info?.(
+    `memory-hybrid: consumed ${consumedSignals.length + droppedTerminalSignals.length} pending task signal(s) into facts ledger`,
+  );
 }
 
 export interface FactsReconcileResult {
@@ -1704,10 +1797,10 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
     const now = new Date().toISOString();
     const doneEntry: ActiveTaskEntry = {
       ...task,
-      status: "Done",
+      status: "Failed",
       updated: now,
       next: `Auto-reconciled: session transcript not found for ${ref} (subagent bookkeeping cleanup).`,
-      subagent: undefined,
+      subagent: "",
     };
     reconciledLabels.push(task.label);
     toFlush.push(doneEntry);
@@ -1716,7 +1809,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
       index: scanned,
       total: scanTotal,
       entity: task.label,
-      action: "mark_done",
+      action: "mark_abandoned",
       reason: "session_missing",
       previousStatus: task.status,
       elapsedMs,
@@ -1750,7 +1843,9 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   for (let i = 0; i < toFlush.length; i++) {
     const entry = toFlush[i]!;
     try {
-      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log);
+      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, entry, opts.log, {
+        statusOverride: "abandoned",
+      });
       factsWritten += 1;
       successfullyWritten.push(entry);
       progress?.onWriteItem(entry.label, i + 1, toFlush.length, false);
@@ -1769,6 +1864,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of successfullyWritten) {
+      if (entry.status === "Failed") continue;
       await flushCompletedTaskToMemory(entry, opts.memoryDir).catch(() => {});
     }
   }
@@ -2030,10 +2126,17 @@ export async function reconcileActiveTaskLiveState(
         status: "Done",
         updated: now,
         next,
+        subagent: "",
       };
-      await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log);
-      updatedCount++;
-      opts.log?.info?.(`memory-hybrid: live-state reconcile marked "${task.label}" done (${terminalState})`);
+      try {
+        await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log);
+        updatedCount++;
+        opts.log?.info?.(`memory-hybrid: live-state reconcile marked "${task.label}" done (${terminalState})`);
+      } catch (err) {
+        opts.log?.warn?.(
+          `memory-hybrid: live-state reconcile failed for [${task.label}]: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 

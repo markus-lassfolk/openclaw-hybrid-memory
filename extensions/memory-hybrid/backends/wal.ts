@@ -116,9 +116,14 @@ export class WriteAheadLog {
 
       try {
         await prevLock;
-        const entries = await this.readAll();
+        const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
         this.activeIds = new Set(entries.map((e) => e.id));
         this.initLoadFailed = false;
+        if (hadCorruption) {
+          pluginLogger.warn(
+            `WAL init: recovered ${entries.length} active ID(s) from lenient read after corruption`,
+          );
+        }
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "wal-init",
@@ -196,12 +201,85 @@ export class WriteAheadLog {
     }
   }
 
+  /** Parse WAL content, skipping corrupt lines (no WalReadCorruptionError). */
+  private parseWalContentLenient(rawContent: string): WALEntry[] {
+    const content = rawContent.trim();
+    if (!content) return [];
+
+    // Backward-compat: support full-file JSON array format if present.
+    if (content.startsWith("[")) {
+      try {
+        const entries = JSON.parse(content) as WALEntry[];
+        if (Array.isArray(entries)) {
+          return entries.filter((e) => isWalEntry(e));
+        }
+      } catch {
+        // Fall back to NDJSON parsing if the array is corrupted.
+      }
+    }
+
+    const removedIds = new Set<string>();
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed?.startsWith(WAL_REMOVE_PREFIX)) continue;
+      try {
+        const obj = JSON.parse(trimmed) as { op: string; id: string };
+        if (obj.op === "remove" && obj.id) removedIds.add(obj.id);
+      } catch {
+        // Skip invalid remove lines during lenient read.
+      }
+    }
+
+    const entries: WALEntry[] = [];
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
+      try {
+        const obj = JSON.parse(trimmed) as unknown;
+        if (isWalEntry(obj) && !removedIds.has(obj.id)) entries.push(obj);
+      } catch {
+        // Skip corrupt lines during lenient read.
+      }
+    }
+    return entries;
+  }
+
+  private async readAllLenient(): Promise<WALEntry[]> {
+    let rawContent: string;
+    try {
+      rawContent = await readFile(this.walPath, "utf-8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw err;
+    }
+    return this.parseWalContentLenient(rawContent);
+  }
+
+  /** Strict readAll with lenient fallback for maintenance/replay paths that must recover from corruption. */
+  private async readAllWithCorruptionFallback(): Promise<{ entries: WALEntry[]; hadCorruption: boolean }> {
+    try {
+      const entries = await this.readAll();
+      return { entries, hadCorruption: false };
+    } catch (err) {
+      if (err instanceof WalReadCorruptionError) {
+        pluginLogger.warn(
+          `memory-hybrid: WAL read detected corruption (${err.corruptLineCount} corrupt lines), falling back to lenient read`,
+        );
+        const entries = await this.readAllLenient();
+        return { entries, hadCorruption: true };
+      }
+      throw err;
+    }
+  }
+
   private async syncActiveIdsFromDisk(): Promise<void> {
     if (!this.initLoadFailed || this.activeIds.size > 0) return;
     try {
-      const entries = await this.readAll();
+      const { entries } = await this.readAllWithCorruptionFallback();
       this.activeIds = new Set(entries.map((e) => e.id));
-      this.initLoadFailed = false;
+      if (entries.length > 0) {
+        this.initLoadFailed = false;
+      }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "wal-sync-active-ids",
@@ -234,6 +312,11 @@ export class WriteAheadLog {
       // biome-ignore lint/style/noNonNullAssertion: Synchronous
       releaseLock!();
     }
+  }
+
+  /** All recoverable entries; lenient fallback when strict read detects corruption. */
+  async readAllRecoverable(): Promise<{ entries: WALEntry[]; hadCorruption: boolean }> {
+    return this.readAllWithCorruptionFallback();
   }
 
   async readAll(): Promise<WALEntry[]> {
@@ -328,22 +411,22 @@ export class WriteAheadLog {
       await this.fsyncAfterWrite();
       if (this.activeIds.size === 0) {
         if (this.initLoadFailed) {
-          try {
-            const remaining = await this.readAll();
-            if (remaining.length === 0) {
-              await this._clearInternal();
-            } else {
-              for (const e of remaining) this.activeIds.add(e.id);
-            }
-          } catch (err) {
-            if (err instanceof WalReadCorruptionError) {
+          const { entries: remaining, hadCorruption } = await this.readAllWithCorruptionFallback();
+          if (remaining.length === 0) {
+            if (hadCorruption) {
               pluginLogger.warn(
-                `WAL remove: disk verification failed due to corruption (${err.corruptLineCount} corrupt lines), clearing WAL anyway since in-memory set is empty`,
+                "WAL remove: disk verification found corruption and no recoverable entries, clearing WAL",
               );
-              await this._clearInternal();
-            } else {
-              throw err;
             }
+            await this._clearInternal();
+          } else {
+            if (hadCorruption) {
+              pluginLogger.warn(
+                `WAL remove: disk verification found corruption, recovered ${remaining.length} valid entries — preserving WAL`,
+              );
+            }
+            for (const e of remaining) this.activeIds.add(e.id);
+            this.initLoadFailed = false;
           }
         } else {
           await this._clearInternal();
@@ -391,7 +474,7 @@ export class WriteAheadLog {
   }
 
   async getValidEntries(): Promise<WALEntry[]> {
-    const entries = await this.readAll();
+    const { entries } = await this.readAllWithCorruptionFallback();
     const now = Date.now();
     return entries.filter((e) => now - e.timestamp < this.maxAge);
   }
@@ -436,12 +519,17 @@ export class WriteAheadLog {
 
     try {
       await prevLock;
-      const entries = await this.readAll();
+      const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
       const now = Date.now();
       const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
       const pruned = entries.length - valid.length;
 
-      if (pruned > 0) {
+      if (pruned > 0 || hadCorruption) {
+        if (hadCorruption) {
+          pluginLogger.warn(
+            `memory-hybrid: WAL pruneStale detected corruption, rewriting ${valid.length} valid entr${valid.length === 1 ? "y" : "ies"}`,
+          );
+        }
         await this.atomicRewriteEntries(valid);
       }
       return pruned;
@@ -464,63 +552,22 @@ export class WriteAheadLog {
       const st = statSync(this.walPath);
       if (st.size <= maxBytes) return 0;
       // Size-triggered rewrite only — never age-prune pending entries (#1876).
-      const entries = await this.readAll();
+      const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
+      if (hadCorruption) {
+        pluginLogger.warn(
+          "memory-hybrid: WAL compactIfOversized detected corruption, attempting repair by rewriting valid entries",
+        );
+        if (entries.length === 0) {
+          await this._clearInternal();
+          return 1;
+        }
+        pluginLogger.info(
+          `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${entries.length} valid entries`,
+        );
+      }
       await this.atomicRewriteEntries(entries);
       return 1;
     } catch (err) {
-      if (err instanceof WalReadCorruptionError) {
-        pluginLogger.warn(
-          `memory-hybrid: WAL compactIfOversized detected corruption (${err.corruptLineCount} corrupt lines), attempting repair by rewriting valid entries`,
-        );
-        try {
-          const rawContent = await readFile(this.walPath, "utf-8");
-          const content = rawContent.trim();
-          if (!content) {
-            await this._clearInternal();
-            return 1;
-          }
-
-          const removedIds = new Set<string>();
-          for (const line of content.split("\n")) {
-            const trimmed = line.trim();
-            if (!trimmed?.startsWith(WAL_REMOVE_PREFIX)) continue;
-            try {
-              const obj = JSON.parse(trimmed) as { op: string; id: string };
-              if (obj.op === "remove" && obj.id) removedIds.add(obj.id);
-            } catch {
-              // Skip invalid remove lines during repair.
-            }
-          }
-
-          const validEntries: WALEntry[] = [];
-          const lines = content.split("\n");
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || trimmed.startsWith(WAL_REMOVE_PREFIX)) continue;
-            try {
-              const obj = JSON.parse(trimmed) as unknown;
-              if (isWalEntry(obj) && !removedIds.has(obj.id)) validEntries.push(obj);
-            } catch {
-              // Skip corrupt lines during repair.
-            }
-          }
-
-          await this.atomicRewriteEntries(validEntries);
-          pluginLogger.info(
-            `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${validEntries.length} valid entries`,
-          );
-          return 1;
-        } catch (repairErr) {
-          capturePluginError(repairErr instanceof Error ? repairErr : new Error(String(repairErr)), {
-            operation: "wal-compact-repair",
-            subsystem: "wal",
-          });
-          pluginLogger.error(
-            `memory-hybrid: WAL compactIfOversized repair failed: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}`,
-          );
-          throw repairErr;
-        }
-      }
       pluginLogger.warn(
         `memory-hybrid: WAL compactIfOversized failed; skipping compaction: ${err instanceof Error ? err.message : String(err)}`,
       );

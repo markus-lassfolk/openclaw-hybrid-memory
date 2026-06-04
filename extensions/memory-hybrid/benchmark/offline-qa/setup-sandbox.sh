@@ -27,6 +27,19 @@ if [ -d "$RAW/sessions" ]; then
   done
 fi
 
+# QA parity: merge non-main agent sessions into main/sessions so default extract-* scan path
+# sees multi-agent signal (directives/reinforcement live in forge/scholar/pr-steward, not main 7d).
+MAIN_SESS="$OC/agents/main/sessions"
+mkdir -p "$MAIN_SESS"
+if [ -d "$RAW/sessions" ]; then
+  for agent_dir in "$RAW/sessions"/*/; do
+    [ -d "$agent_dir" ] || continue
+    agent=$(basename "$agent_dir")
+    [ "$agent" = "main" ] && continue
+    rsync -a "$agent_dir/" "$MAIN_SESS/"
+  done
+fi
+
 # Memory DB + lance + supporting DBs
 cp -f "$RAW/memory/facts.db" "$OC/memory/facts.db"
 if [ -d "$RAW/memory/lancedb" ]; then
@@ -136,7 +149,7 @@ mem["reflection"] = {
     "defaultWindow": 14,
     "minObservations": 5,
 }
-mem["procedures"] = {"enabled": True, "requireApprovalForPromote": False}
+mem["procedures"] = {"enabled": True, "requireApprovalForPromote": False, "allAgentSessions": True}
 mem["identityReflection"] = {"enabled": True}
 mem["selfCorrection"] = {
     **(mem.get("selfCorrection") or {}),
@@ -145,6 +158,10 @@ mem["selfCorrection"] = {
 mem["implicitFeedback"] = {
     **(mem.get("implicitFeedback") or {}),
     "enabled": True,
+    "maxSessionsPerRun": 0,
+    "maxTrajectoriesPerRun": 500,
+    "maxSignalsPerRun": 500,
+    "minConfidence": 0.4,
 }
 mem["languageKeywords"] = {
     **(mem.get("languageKeywords") or {}),

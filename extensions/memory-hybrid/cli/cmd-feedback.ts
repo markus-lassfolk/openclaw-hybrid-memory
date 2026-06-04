@@ -33,7 +33,7 @@ import { createTransaction } from "../utils/sqlite-transaction.js";
 import type { CorrectionIncident } from "../services/self-correction-extract.js";
 import { getEnv } from "../utils/env-manager.js";
 import { runSelfCorrectionRunForCli } from "./cmd-selfcorrection.js";
-import { getSessionFilePathsSince } from "./cmd-extract.js";
+import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 
@@ -480,7 +480,6 @@ export async function runExtractImplicitFeedbackForCli(
   const { factsDb, vectorDb, cfg, logger, openai } = ctx;
   const SCAN_TYPE = "extract-implicit-feedback";
   const days = opts.days ?? 3;
-  const sessionDir = cfg.procedures.sessionsDir;
 
   // Get scan cursor for incremental mode
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
@@ -492,7 +491,7 @@ export async function runExtractImplicitFeedbackForCli(
     // A capped backlog may take longer than `days` to drain; using the day window
     // first would permanently strand old-but-unprocessed sessions after the cursor.
     const cursorFloor = Math.max(0, cursor.lastSessionTs - 1);
-    const allFiles = getSessionFilePathsSince(sessionDir, 0, cursorFloor);
+    const allFiles = resolveExtractSessionFilePaths(cfg, 0, cursorFloor);
     const incrementalCandidates: Array<{ path: string; mtime: number; fname: string }> = [];
     for (const path of allFiles) {
       try {
@@ -536,7 +535,7 @@ export async function runExtractImplicitFeedbackForCli(
     }
   } else {
     // Full mode: process all files in the date range
-    filePaths = getSessionFilePathsSince(sessionDir, days);
+    filePaths = resolveExtractSessionFilePaths(cfg, days);
     // Sort by mtime ascending, then by filename to ensure deterministic processing order
     filePaths.sort((a, b) => {
       let statA, statB;
@@ -1215,6 +1214,51 @@ export async function runExtractImplicitFeedbackForCli(
 
             trajectoriesBuilt++;
             progress.trajectoriesBuilt = trajectoriesBuilt;
+
+            // Count trajectory outcomes as implicit signals when turn-level heuristics found none.
+            if (rawDb) {
+              const polarity =
+                traj.outcome === "success" || traj.outcome === "partial"
+                  ? "positive"
+                  : traj.outcome === "failure"
+                    ? "negative"
+                    : "neutral";
+              const summary =
+                traj.lessonsExtracted.find((l) => l.trim().length > 0)?.trim() ??
+                `Trajectory ${traj.outcome}: ${traj.outcomeSignal}`;
+              if (polarity !== "neutral" && summary.length > 0) {
+                try {
+                  const insertSignal = rawDb.prepare(`
+                    INSERT OR IGNORE INTO implicit_signals (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'trajectory')
+                  `);
+                  const changes = insertSignal.run(
+                    traj.sessionFile,
+                    `trajectory_${traj.outcomeSignal}`,
+                    traj.outcome === "success" ? 0.65 : traj.outcome === "partial" ? 0.55 : 0.5,
+                    polarity,
+                    summary.slice(0, 500),
+                    (traj.topic ?? "").slice(0, 500),
+                    traj.keyPivot ?? 0,
+                  ).changes;
+                  if (changes > 0) {
+                    totalSignals++;
+                    if (polarity === "positive") positiveCount++;
+                    else negativeCount++;
+                    progress.signalsExtracted = totalSignals;
+                    progress.positiveCount = positiveCount;
+                    progress.negativeCount = negativeCount;
+                  }
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "runExtractImplicitFeedbackForCli:trajectory-signal",
+                    severity: "info",
+                    subsystem: "implicit-feedback",
+                  });
+                }
+              }
+            }
+
             emitProgress();
 
             // Keep vector maintenance outside the SQL transaction.

@@ -76,12 +76,14 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
             });
             throw err;
           }
-          if (factsDb) {
-            const pointer = ensureCredentialVaultPointer(factsDb, service, type, "credential-tool");
-            if (!pointer.ok) {
-              rollbackVaultCredentialWrite(credentialsDb, service, type);
-              throw new Error("Credential pointer rejected by pre-store guard");
-            }
+          if (!factsDb) {
+            rollbackVaultCredentialWrite(credentialsDb, service, type);
+            throw new Error("Facts store not available — cannot create vault pointer for credential");
+          }
+          const pointer = ensureCredentialVaultPointer(factsDb, service, type, "credential-tool");
+          if (!pointer.ok) {
+            rollbackVaultCredentialWrite(credentialsDb, service, type);
+            throw new Error("Credential pointer rejected by pre-store guard");
           }
           return {
             content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],

@@ -11,6 +11,7 @@ import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-c
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
+  abortCredentialVaultWriteOnPointerDedupe,
   rollbackVaultCredentialWrite,
 } from "../services/credential-vault-pointer.js";
 import { classifyMemoryOperation } from "../services/classification.js";
@@ -88,7 +89,15 @@ export async function runStoreForCli(
             return { outcome: "noop", reason: "artifact text rejected by pre-store guard" };
           }
           pointerEntry = pointer.entry;
-          if (!storedInVault && !pointer.newlyStored && !pointer.embeddingStale) {
+          if (
+            abortCredentialVaultWriteOnPointerDedupe(
+              storedInVault,
+              pointer,
+              credentialsDb,
+              parsed.service,
+              parsed.type,
+            )
+          ) {
             return {
               outcome: "credential_skipped_duplicate",
               service: parsed.service,

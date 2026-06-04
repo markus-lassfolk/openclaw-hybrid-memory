@@ -238,7 +238,6 @@ export async function buildMultiGoalStewardshipPrepend(
     const maxGoals = Math.min(cfg.multiGoalMaxGoals, rotated.length);
     const selectedGoals = rotated.slice(0, maxGoals);
     const next = (rot + selectedGoals.length) % Math.max(1, candidates.length);
-    await writeRoundRobin(goalsDir, { offset: next });
     return { rrOffset: rr.offset, nextOff: next, selected: selectedGoals };
   });
 
@@ -267,6 +266,10 @@ export async function buildMultiGoalStewardshipPrepend(
   }
 
   if (blocks.length === 0) return null;
+
+  await withRoundRobinLock(goalsDir, async () => {
+    await writeRoundRobin(goalsDir, { offset: nextOff });
+  });
 
   let header = "<goal-stewardship-bundle>\n";
   header += `<!-- goals: ${includedGoals.length} | cap: ${cap} chars | rr: ${rrOffset}->${nextOff} -->\n`;

@@ -3,6 +3,7 @@
  */
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
+import type { ActiveTaskEntry } from "../services/active-task.js";
 import {
   markGoalDispatchFailure,
   type GoalSubagentSpawnEvent,
@@ -10,8 +11,42 @@ import {
   resolveGoalForSpawn,
   updateGoalOnSubagentEnd,
 } from "../services/goal-stewardship.js";
-import { type SubagentEndedEvent, subagentEndedIsSuccess } from "../utils/subagent-ended-utils.js";
+import { loadTaskLedgerFromFacts, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
+import { type SubagentEndedEvent, subagentEndedIsSuccess, taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 import type { LifecycleContext } from "./types.js";
+
+async function syncGoalLinkedTaskToFactsLedger(
+  ctx: LifecycleContext,
+  label: string,
+  goalId: string,
+  childOrSession: string | null | undefined,
+  description: string | undefined,
+  logger?: ClawdbotPluginApi["logger"],
+  overrides?: { status?: ActiveTaskEntry["status"]; next?: string },
+): Promise<void> {
+  if (!ctx.cfg.activeTask.enabled || ctx.cfg.activeTask.ledger !== "facts") return;
+  const { active } = loadTaskLedgerFromFacts(ctx.factsDb);
+  const existing = active.find((t) => taskLabelsMatch(t.label, label));
+  const now = new Date().toISOString();
+  await syncActiveTaskEntryToFacts(
+    ctx.factsDb,
+    ctx.vectorDb,
+    ctx.embeddings,
+    {
+      ...(existing ?? {}),
+      label: existing?.label ?? label,
+      description:
+        description ?? existing?.description ?? `Subagent task (session: ${childOrSession ?? "unknown"})`,
+      status: overrides?.status ?? "In progress",
+      subagent: childOrSession === null ? "" : (childOrSession ?? existing?.subagent),
+      relatedGoal: goalId,
+      next: overrides?.next ?? existing?.next,
+      started: existing?.started ?? now,
+      updated: now,
+    },
+    logger,
+  );
+}
 
 function getEventStringField(event: unknown, key: string): string | null {
   if (!event || typeof event !== "object") return null;
@@ -53,6 +88,10 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
           runId: runId ?? null,
           reason,
         });
+        await syncGoalLinkedTaskToFactsLedger(ctx, label, gid, null, ev.task ?? reason, api.logger, {
+          status: "Failed",
+          next: reason,
+        });
         return;
       }
       await linkSubagentToGoal(goalsDir, gid, {
@@ -61,6 +100,7 @@ export function registerGoalSubagentHandlers(api: ClawdbotPluginApi, ctx: Lifecy
         runId: runId ?? null,
         status: "in_progress",
       });
+      await syncGoalLinkedTaskToFactsLedger(ctx, label, gid, childOrSession, ev.task, api.logger);
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "goal-subagent",

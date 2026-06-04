@@ -1141,6 +1141,8 @@ export async function runReflectionRules(
     modelSource?: string;
     adaptiveStatePath?: string;
     thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
+    /** Internal: one-shot retry with thinking enabled after invalid JSON (#1801). */
+    formatRetryWithThinking?: boolean;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -1204,8 +1206,8 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
-      // Structured JSON extraction: disable M3 thinking blocks (adaptive breaks json_object parsing).
-      thinkingMode: "disabled",
+      // Structured JSON extraction: disable M3 thinking blocks by default (adaptive breaks json_object parsing).
+      thinkingMode: opts.thinkingMode ?? "disabled",
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1279,6 +1281,23 @@ export async function runReflectionRules(
           provenanceService,
         );
       }
+    }
+    if (
+      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
+      !opts.formatRetryWithThinking
+    ) {
+      logger.warn(
+        `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying once with thinking=adaptive`,
+      );
+      return runReflectionRules(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        { ...opts, formatRetryWithThinking: true, thinkingMode: "adaptive", fallbackModels: [] },
+        logger,
+        provenanceService,
+      );
     }
     if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
       logger.warn(

@@ -29,7 +29,7 @@ import {
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
 import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
-import { buildCredentialPointerText, ensureCredentialVaultPointer, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
+import { buildCredentialPointerText, ensureCredentialVaultPointer, abortCredentialVaultWriteOnPointerDedupe, rollbackVaultCredentialWrite } from "../services/credential-vault-pointer.js";
 import {
   chatCompleteWithRetryDetailed,
   distillBatchTokenLimit,
@@ -47,6 +47,7 @@ import { preFilterSessions } from "../services/session-pre-filter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
+import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { extractTags } from "../utils/tags.js";
@@ -706,7 +707,15 @@ export async function runDistillForCli(
                   }
                   continue;
                 }
-                if (!storedInVault && !pointer.newlyStored && !pointer.embeddingStale) {
+                if (
+                  abortCredentialVaultWriteOnPointerDedupe(
+                    storedInVault,
+                    pointer,
+                    credentialsDb,
+                    parsed.service,
+                    parsed.type,
+                  )
+                ) {
                   continue;
                 }
                 const entry = pointer.entry;
@@ -742,16 +751,13 @@ export async function runDistillForCli(
                 if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
               } catch (err) {
                 if (storedInVault) {
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type);
-                  } catch (cleanupErr) {
-                    if (opts.verbose)
-                      sink.log(`  failed to clean up orphaned credential for ${parsed.service}: ${cleanupErr}`);
+                  rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (message, cleanupErr) => {
+                    if (opts.verbose) sink.log(`  ${message}: ${cleanupErr}`);
                     capturePluginError(cleanupErr as Error, {
                       subsystem: "cli",
                       operation: "runDistillForCli:credential-compensating-delete",
                     });
-                  }
+                  });
                 }
                 capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
               }
@@ -768,21 +774,23 @@ export async function runDistillForCli(
         continue;
       }
       try {
-        const vector = await embeddings.embed(fact.text);
+        const redactedText = redactMaintenancePrivateText(fact.text);
+        const redactedValue = fact.value ? redactMaintenancePrivateText(fact.value) : redactedText.slice(0, 200);
+        const vector = await embeddings.embed(redactedText);
         if (await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD)) {
           skipped++;
           continue;
         }
         const storeResult = factsDb.storeWithResult({
-          text: fact.text,
+          text: redactedText,
           category: (isValidCategory(fact.category) ? fact.category : "other") as MemoryCategory,
           importance: BATCH_STORE_IMPORTANCE,
           entity: fact.entity ?? null,
           key: fact.key ?? null,
-          value: fact.value ?? fact.text.slice(0, 200),
+          value: redactedValue,
           source: "distillation",
           sourceDate: sourceDateSec(fact.source_date),
-          tags: fact.tags?.length ? fact.tags : extractTags(fact.text, fact.entity ?? undefined),
+          tags: fact.tags?.length ? fact.tags : extractTags(redactedText, fact.entity ?? undefined),
         });
         if (storeResult.skipped) {
           continue;
@@ -801,7 +809,7 @@ export async function runDistillForCli(
         });
         try {
           await vectorDb.store({
-            text: fact.text,
+            text: redactedText,
             vector,
             importance: BATCH_STORE_IMPORTANCE,
             category: fact.category,

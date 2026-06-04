@@ -1,37 +1,36 @@
 // @ts-nocheck
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { replayWalEntries } = vi.hoisted(() => ({ replayWalEntries: vi.fn() }));
+const { replayWalEntriesWithRepair } = vi.hoisted(() => ({ replayWalEntriesWithRepair: vi.fn() }));
 
-vi.mock("../utils/wal-replay.js", () => ({ replayWalEntries }));
+vi.mock("../utils/wal-replay.js", () => ({ replayWalEntriesWithRepair }));
 
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 
 describe("runPreConsolidationFlush", () => {
   beforeEach(() => {
-    replayWalEntries.mockReset();
+    replayWalEntriesWithRepair.mockReset();
   });
 
   it("returns zeroes when WAL is unavailable", async () => {
     const result = await runPreConsolidationFlush(
-      { wal: null, factsDb: {} as never, edictStore: null as any, vectorDb: {} as never, embeddings: {} as never },
+      { wal: null, factsDb: {} as never, vectorDb: {} as never, embeddings: {} as never },
       {},
       "test-phase",
     );
 
     expect(result).toEqual({ committed: 0, skipped: 0 });
-    expect(replayWalEntries).not.toHaveBeenCalled();
+    expect(replayWalEntriesWithRepair).not.toHaveBeenCalled();
   });
 
   it("replays pending WAL entries and returns counts", async () => {
-    replayWalEntries.mockResolvedValue({ committed: 2, skipped: 1 });
+    replayWalEntriesWithRepair.mockResolvedValue({ committed: 2, skipped: 1 });
     const logger = { info: vi.fn(), warn: vi.fn() };
 
     const result = await runPreConsolidationFlush(
       {
         wal: {} as never,
         factsDb: {} as never,
-        edictStore: null as any,
         vectorDb: {} as never,
         embeddings: {} as never,
       },

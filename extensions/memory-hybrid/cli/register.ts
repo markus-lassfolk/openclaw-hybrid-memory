@@ -331,6 +331,7 @@ export type HybridMemCliContext = {
     }>;
     workspace?: string;
     dryRun?: boolean;
+    days?: number;
     model?: string;
     approve?: boolean;
     applyTools?: boolean;

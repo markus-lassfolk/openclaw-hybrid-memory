@@ -212,6 +212,7 @@ export type ManageContext = {
     }>;
     workspace?: string;
     dryRun?: boolean;
+    days?: number;
     model?: string;
     approve?: boolean;
     applyTools?: boolean;

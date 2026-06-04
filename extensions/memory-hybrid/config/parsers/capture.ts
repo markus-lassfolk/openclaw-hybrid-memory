@@ -155,6 +155,7 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
         ? (proceduresRaw.promotionContextSpecificPatterns as string[]).map((s) => s.trim()).filter((s) => s.length > 0)
         : undefined,
     quarantineAfterGenerate: proceduresRaw?.quarantineAfterGenerate === true,
+    allAgentSessions: proceduresRaw?.allAgentSessions === true,
   };
 }
 

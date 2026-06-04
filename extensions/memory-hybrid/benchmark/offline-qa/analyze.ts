@@ -58,10 +58,14 @@ function parseEmbedFailureCount(log: string): number {
 export function parseCountsFromLog(log: string): ParsedCounts {
   const counts: ParsedCounts = {};
   const patterns: Array<[keyof ParsedCounts, RegExp]> = [
-    ["sessionsScanned", /sessionsScanned[=:\s]+(\d+)/i],
+    ["sessionsScanned", /Sessions scanned:\s*(\d+)/i],
     ["sessionsScanned", /(\d+)\s+sessions?\s+scanned/i],
     ["stored", /stored[=:\s]+(\d+)/i],
-    ["stored", /(\d+)\s+stored/i],
+    ["stored", /stored (\d+) (?:directives|rules|meta-patterns?|patterns?|facts?)\b/i],
+    ["stored", /(?:extracted|finished:)\s*(\d+)\s+rule\(s\) stored/i],
+    ["stored", /Reflection \(meta\) complete:.*stored (\d+)/i],
+    ["stored", /Reflection complete:.*stored (\d+)/i],
+    ["rulesStored", /(\d+) rule\(s\) stored/i],
     ["factsExtracted", /extract(?:ed)?[=:\s]+(\d+)/i],
     ["factsExtracted", /Would extract (\d+) facts/i],
     ["patternsStored", /patternsStored[=:\s]+(\d+)/i],
@@ -189,9 +193,23 @@ export function analyzeTaskResult(
   } else if (task.id === "extract-daily" && !/20\d{2}-\d{2}-\d{2}\.md/.test(log) && (counts.stored ?? 0) === 0 && (counts.factsExtracted ?? 0) === 0) {
     classification = "data-gap";
     notes.push("No daily log activity — check memory/YYYY-MM-DD.md copies");
-  } else if (task.id === "extract-reinforcement" && (counts.stored ?? 0) === 0 && (counts.sessionsScanned ?? 0) === 0) {
-    classification = "data-gap";
-    notes.push("RE=0 in corpus — known Maeve data gap");
+  } else if (task.id === "extract-reinforcement") {
+    const incidentsFound = Number.parseInt(
+      log.match(/reinforcement incidents found:\s*(\d+)/i)?.[1] ?? "0",
+      10,
+    );
+    const annotated = Number.parseInt(log.match(/Annotated (\d+) facts/i)?.[1] ?? "0", 10);
+    if (incidentsFound > 0) {
+      classification = annotated > 0 ? "ok" : "by-design-zero";
+      notes.push(
+        annotated > 0
+          ? `${annotated} fact(s) annotated from ${incidentsFound} incident(s)`
+          : `${incidentsFound} incident(s) found; 0 annotated (noRecalledIds — expected without memory_recall in sessions)`,
+      );
+    } else if ((counts.sessionsScanned ?? 0) === 0) {
+      classification = "data-gap";
+      notes.push("RE=0 in corpus — known Maeve data gap");
+    }
   } else if (task.id === "reflect" && (counts.factsAnalyzed ?? 0) === 0 && (counts.stored ?? 0) === 0) {
     if (/analyzed 0 facts, extracted 0/i.test(log) && !/facts in window/i.test(log)) {
       classification = "needs-fix";
@@ -208,9 +226,15 @@ export function analyzeTaskResult(
     errors.length = 0;
     notes.push("Zero proposals — model parse empty or no patterns meeting confidence gate");
   } else if (task.id === "reflect-rules" || task.id === "reflect-meta") {
-    if ((counts.rulesStored ?? counts.metaStored ?? counts.stored ?? 0) === 0) {
-      classification = exitCode === 0 ? "by-design-zero" : "needs-fix";
-      notes.push(task.runAllGate ?? "Pattern gate may block output");
+    const storedN = counts.rulesStored ?? counts.metaStored ?? counts.stored ?? 0;
+    if (storedN === 0) {
+      if (/invalid_response_format|zero_rules_reason=invalid/i.test(log)) {
+        classification = exitCode === 0 ? "by-design-zero" : "needs-fix";
+        notes.push("LLM returned unparseable rules format — retry or model swap (known MiniMax flake)");
+      } else {
+        classification = exitCode === 0 ? "by-design-zero" : "needs-fix";
+        notes.push(task.runAllGate ?? "Pattern gate may block output");
+      }
     } else {
       classification = "ok";
     }

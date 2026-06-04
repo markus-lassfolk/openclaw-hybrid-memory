@@ -91,6 +91,11 @@ export const OMITTED_CAP_NOTE =
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
 export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
 
+/** Terminal statuses — pending sub-agent signals must not mutate or reopen these rows. */
+export function isTerminalActiveTaskStatus(status: ActiveTaskStatus): boolean {
+  return status === "Done" || status === "Failed";
+}
+
 /** Non-terminal statuses (still active) */
 const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set(["In progress", "Waiting", "Stalled", "Failed"]);
 
@@ -593,6 +598,7 @@ export function buildActiveTaskInjection(
     const summary = [`- [${task.label}] ${task.description} (${task.status})`];
     if (task.next) summary.push(`  Next: ${task.next}`);
     if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
+    if (task.relatedGoal?.trim()) summary.push(`  Related goal: ${task.relatedGoal.trim()}`);
     const block = summary.join("\n");
     if (used + block.length > charBudget) break;
     lines.push(block);
@@ -1202,7 +1208,7 @@ export interface ActiveTaskSessionReconcileResult {
 /**
  * For each "In progress" task with an OpenClaw-shaped session reference, if no session JSONL
  * exists under ~/.openclaw/agents (per-agent sessions folders), move the task to the Completed
- * section as Done with a note (unknown outcome / bookkeeping cleanup).
+ * section as Failed with a note (missing transcript / abandoned bookkeeping cleanup).
  */
 export async function reconcileActiveTaskInProgressSessions(
   filePath: string,
@@ -1298,9 +1304,10 @@ export async function reconcileActiveTaskInProgressSessions(
     const now = new Date().toISOString();
     const completedEntry: ActiveTaskEntry = {
       ...task,
-      status: "Done",
+      status: "Failed",
       updated: now,
       next: `Auto-reconciled: session transcript not found for ${ref} (subagent bookkeeping cleanup).`,
+      subagent: "",
     };
     newCompleted.push(completedEntry);
     reconciledLabels.push(task.label);
@@ -1309,7 +1316,7 @@ export async function reconcileActiveTaskInProgressSessions(
       index: scanned,
       total: scanTotal,
       entity: task.label,
-      action: "mark_done",
+      action: "mark_abandoned",
       reason: "session_missing",
       previousStatus: task.status,
       elapsedMs,
@@ -1352,6 +1359,7 @@ export async function reconcileActiveTaskInProgressSessions(
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of toFlush) {
+      if (entry.status === "Failed") continue;
       try {
         await flushCompletedTaskToMemory(entry, opts.memoryDir);
       } catch {

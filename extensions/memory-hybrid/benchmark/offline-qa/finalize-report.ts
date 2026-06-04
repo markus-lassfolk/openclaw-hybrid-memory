@@ -114,7 +114,18 @@ if (dataGaps.length) lines.push(`Data gaps (expected): ${dataGaps.map((t) => t.i
 if (skipped.length) lines.push(`Skipped (by design): ${skipped.map((t) => t.id).join(", ")}`, "");
 
 const taskLogs = Object.fromEntries(state.tasks.map((t) => [t.id, t.logPath]));
-lines.push(renderQualityMarkdown(buildQualityReport(state.workHome, taskLogs)));
+const qualityReport = buildQualityReport(state.workHome, taskLogs);
+lines.push(renderQualityMarkdown(qualityReport));
+
+const documentedGaps: string[] = [];
+for (const t of qualityReport.tasks) {
+  if (t.verdict === "good") continue;
+  if (t.verdict === "failed") continue;
+  documentedGaps.push(`- **${t.taskId}** (${t.verdict}): ${t.summary}`);
+}
+if (documentedGaps.length) {
+  lines.push("## Documented quality gaps (real data, not harness bugs)", "", ...documentedGaps, "");
+}
 
 lines.push(
   "## Remaining before live Maeve deploy",

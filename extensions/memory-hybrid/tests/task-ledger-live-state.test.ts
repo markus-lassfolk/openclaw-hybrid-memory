@@ -102,6 +102,32 @@ describe.sequential("task-ledger live-state reconciliation", () => {
     await rm(ghBinDir, { recursive: true, force: true });
   });
 
+  it("clears related_session when live GitHub state marks a task Done", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "hm-live-state-subagent-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      await syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+        ...baseTask("merged-with-subagent", "Land acme/widgets pull request #777"),
+        subagent: "agent:main:subagent:forge-777",
+      });
+
+      process.env.MOCK_GH_TABLE = JSON.stringify({
+        "pr:acme/widgets#777": { state: "MERGED", mergedAt: "2026-05-01T10:00:00Z", closedAt: "2026-05-01T10:00:00Z" },
+      });
+
+      const result = await reconcileActiveTaskLiveState(db, vectorDb, embeddings, { maxRequests: 5 });
+      expect(result.updatedCount).toBe(1);
+
+      const { completed } = loadTaskLedgerFromFacts(db);
+      const task = completed.find((t) => t.label === "merged-with-subagent");
+      expect(task?.status).toBe("Done");
+      expect(task?.subagent).toBeUndefined();
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("parses bare refs as issues and verbose refs by explicit kind", async () => {
     const dir = await mkdtemp(join(tmpdir(), "hm-live-state-ledger-"));
     const db = new FactsDB(join(dir, "facts.db"));

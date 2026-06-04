@@ -213,19 +213,23 @@ export function registerDoctorCommand(
         }
 
         try {
-          const allEntries = await wal.readAll();
+          const { entries: allEntries, hadCorruption } = await wal.readAllRecoverable();
           const validEntries = await wal.getValidEntries();
           const staleEntries = Math.max(0, allEntries.length - validEntries.length);
           const walSizeBytes =
             breaker.walPath && existsSync(breaker.walPath) ? Math.max(0, statSync(breaker.walPath).size) : 0;
-          const walStatus: "pass" | "warn" = staleEntries > 0 || walSizeBytes > WAL_SIZE_WARN_BYTES ? "warn" : "pass";
+          const walStatus: "pass" | "warn" =
+            hadCorruption || staleEntries > 0 || walSizeBytes > WAL_SIZE_WARN_BYTES ? "warn" : "pass";
+          const corruptionNote = hadCorruption ? ", corruption detected" : "";
           checks.push({
             name: "WAL Journal",
             status: walStatus,
-            message: `${validEntries.length} pending, ${staleEntries} stale, ${formatBytes(walSizeBytes)} at ${walPath}`,
+            message: `${validEntries.length} pending, ${staleEntries} stale${corruptionNote}, ${formatBytes(walSizeBytes)} at ${walPath}`,
             fix:
               walStatus === "warn"
-                ? "Investigate replay blockers and run maintenance; clear stale WAL entries after root cause is fixed"
+                ? hadCorruption
+                  ? "Run: openclaw hybrid-mem verify --fix"
+                  : "Investigate replay blockers and run maintenance; clear stale WAL entries after root cause is fixed"
                 : undefined,
           });
         } catch (error) {

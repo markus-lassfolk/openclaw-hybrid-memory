@@ -12,6 +12,7 @@ import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
 import { detectCredentialPatterns } from "../../services/auto-capture.js";
 import {
+  abortCredentialVaultWriteOnPointerDedupe,
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
   rollbackVaultCredentialWrite,
@@ -1114,6 +1115,17 @@ export async function runCapture(
                 }
                 continue;
               }
+              if (
+                abortCredentialVaultWriteOnPointerDedupe(
+                  storedInVault,
+                  pointer,
+                  ctx.credentialsDb,
+                  cred.service,
+                  cred.type,
+                )
+              ) {
+                continue;
+              }
               const entry = pointer.entry;
               await cleanupEvictedVector({
                 vectorDb: ctx.vectorDb,
@@ -1167,102 +1179,9 @@ export async function runCapture(
                 api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
               }
             } else {
-              const text = `Credential for ${cred.service} (${cred.type})${cred.url ? ` — ${cred.url}` : ""}${cred.notes ? `. ${cred.notes}` : ""}.`;
-              const storeResult = ctx.factsDb.storeWithResult({
-                text,
-                category: "technical" as MemoryCategory,
-                importance: 0.9,
-                entity: "Credentials",
-                key: cred.service,
-                value: cred.value,
-                source: "conversation",
-                decayClass: "permanent",
-                tags: ["auth", "credential"],
-              });
-              if (storeResult.skipped) {
-                continue;
-              }
-              if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
-                continue;
-              }
-              const entry = storeResult.entry;
-              // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-              if (!storeResult.skipped) {
-                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                await cleanupEvictedVector({
-                  vectorDb: ctx.vectorDb,
-                  evictedFactId: storeResult.evictedFactId,
-                  logger: api.logger,
-                  context: "stage-capture",
-                });
-                if (ctx.cfg.retrieval.strategies.includes("semantic")) {
-                  try {
-                    if (storeResult.embeddingStale) {
-                      // Merge case: re-embed the merged text to keep the vector in sync.
-                      // If embed fails, the vector encodes stale pre-merge text; nightly re-index will repair.
-                      const mergedVector = await ctx.embeddings.embed(entry.text);
-                      ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
-                      await ctx.vectorDb.store({
-                        text: entry.text,
-                        vector: mergedVector,
-                        importance: 0.9,
-                        category: "technical",
-                        id: entry.id,
-                      });
-                      persistCanonicalFactEmbedding(
-                        ctx.factsDb,
-                        entry.id,
-                        ctx.embeddings.modelName,
-                        mergedVector,
-                        "auto-capture-fact-embeddings",
-                        "auto-capture",
-                        api.logger.warn?.bind(api.logger),
-                      );
-                    } else {
-                      const vector = await ctx.embeddings.embed(entry.text);
-                      ctx.factsDb.setEmbeddingModel(entry.id, ctx.embeddings.modelName);
-                      if (!(await ctx.vectorDb.hasDuplicate(vector))) {
-                        await ctx.vectorDb.store({
-                          text: entry.text,
-                          vector,
-                          importance: 0.9,
-                          category: "technical",
-                          id: entry.id,
-                        });
-                        persistCanonicalFactEmbedding(
-                          ctx.factsDb,
-                          entry.id,
-                          ctx.embeddings.modelName,
-                          vector,
-                          "auto-capture-fact-embeddings",
-                          "auto-capture",
-                          api.logger.warn?.bind(api.logger),
-                        );
-                      }
-                    }
-                  } catch (err) {
-                    const asErr = err instanceof Error ? err : new Error(String(err));
-                    if (!suppressCaptureStageError(ctx, api, asErr) && !isOllamaCircuitBreakerOpen(asErr)) {
-                      capturePluginError(asErr, {
-                        operation: storeResult.embeddingStale
-                          ? "tool-call-credential-stale-vector-update"
-                          : "tool-call-credential-vector-store",
-                        subsystem: "credentials",
-                      });
-                    }
-                    if (!suppressCaptureStageError(ctx, api, asErr)) {
-                      api.logger.warn(
-                        storeResult.embeddingStale
-                          ? `memory-hybrid: stale vector re-embed failed for merged credential fact ${entry.id.slice(0, 8)} — nightly re-index will repair: ${err}`
-                          : `memory-hybrid: vector store for credential fact failed: ${err}`,
-                      );
-                    }
-                  }
-                }
-                if (logCaptures) {
-                  api.logger.info(`memory-hybrid: auto-captured credential for ${cred.service} (${cred.type})`);
-                }
-              } // close if (!storeResult.skipped) guard (#1560, #1561)
+              api.logger.warn?.(
+                `memory-hybrid: skipped tool-call credential for ${cred.service} (${cred.type}): vault disabled or unavailable`,
+              );
             }
           }
         }

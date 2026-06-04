@@ -42,10 +42,21 @@ export type DirectiveIncident = {
   sessionFile: string;
 };
 
+export type DirectiveRejectionReason = DirectiveRejectionReasonInternal;
+
+type DirectiveRejectionReasonInternal =
+  | "untrusted_metadata"
+  | "json_envelope"
+  | "chat_fragment"
+  | "one_off_command"
+  | "missing_durable_signal";
+
 export type DirectiveExtractResult = {
   incidents: DirectiveIncident[];
   sessionsScanned: number;
   rejected?: number;
+  /** Count of candidates rejected by reason (regex hit + user turn, failed classifyDirectiveCandidate). */
+  rejectionReasons?: Partial<Record<DirectiveRejectionReason, number>>;
 };
 
 export const DIRECTIVE_EXTRACTION_METHOD = "directive-extract:regex-heuristic-v2";
@@ -86,12 +97,6 @@ function shouldSkipUserMessage(text: string): boolean {
   return false;
 }
 
-type DirectiveRejectionReason =
-  | "untrusted_metadata"
-  | "json_envelope"
-  | "chat_fragment"
-  | "one_off_command"
-  | "missing_durable_signal";
 
 const UNTRUSTED_METADATA_MARKERS = [/conversation info\s*\(untrusted metadata\)/i, /sender\s*\(untrusted metadata\)/i];
 const UNTRUSTED_METADATA_KEYS_RE = /\b(chat_id|message_id|sender_id|inbound_event_kind|conversation_id)\b/i;
@@ -322,6 +327,9 @@ function fallbackExtract(trimmed: string): string {
 type RunDirectiveExtractOpts = {
   filePaths: string[];
   directiveRegex: RegExp;
+  /** When true, log each rejection reason at info level (for QA diagnostics). */
+  verboseRejections?: boolean;
+  logRejection?: (line: string) => void;
 };
 
 /**
@@ -330,9 +338,10 @@ type RunDirectiveExtractOpts = {
  * so that all languages from .language-keywords.json are included.
  */
 export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExtractResult {
-  const { filePaths, directiveRegex } = opts;
+  const { filePaths, directiveRegex, verboseRejections, logRejection } = opts;
   const incidents: DirectiveIncident[] = [];
   let rejected = 0;
+  const rejectionReasons: Partial<Record<DirectiveRejectionReason, number>> = {};
 
   for (const filePath of filePaths) {
     let lines: string[];
@@ -388,6 +397,12 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
       const candidate = classifyDirectiveCandidate(extractedRule, userText, categories);
       if (!candidate.accepted) {
         rejected++;
+        rejectionReasons[candidate.reason] = (rejectionReasons[candidate.reason] ?? 0) + 1;
+        if (verboseRejections && logRejection) {
+          logRejection(
+            `[reject:${candidate.reason}] [${sessionName}] ${categories.join(",")}: ${truncate(userText, 120)}`,
+          );
+        }
         continue;
       }
 
@@ -403,5 +418,10 @@ export function runDirectiveExtract(opts: RunDirectiveExtractOpts): DirectiveExt
     }
   }
 
-  return { incidents, sessionsScanned: filePaths.length, rejected };
+  return {
+    incidents,
+    sessionsScanned: filePaths.length,
+    rejected,
+    rejectionReasons: rejected > 0 ? rejectionReasons : undefined,
+  };
 }

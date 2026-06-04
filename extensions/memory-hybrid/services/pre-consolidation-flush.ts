@@ -1,8 +1,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
-import { WalReadCorruptionError } from "../backends/wal.js";
-import { replayWalEntries } from "../utils/wal-replay.js";
+import { replayWalEntriesWithRepair } from "../utils/wal-replay.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -21,15 +20,19 @@ export async function runPreConsolidationFlush(
   if (!deps.wal) return { committed: 0, skipped: 0 };
 
   try {
-    const result = await replayWalEntries(deps.wal, deps.factsDb, deps.vectorDb, deps.embeddings);
+    const result = await replayWalEntriesWithRepair(
+      deps.wal,
+      deps.factsDb,
+      deps.vectorDb,
+      deps.embeddings,
+      logger,
+      phase,
+    );
     if (result.committed > 0 || result.skipped > 0) {
       logger.info?.(`memory-hybrid: ${phase} — WAL replay: ${result.committed} committed, ${result.skipped} skipped`);
     }
     return result;
   } catch (err) {
-    if (err instanceof WalReadCorruptionError) {
-      throw err;
-    }
     logger.warn?.(`memory-hybrid: ${phase} — WAL replay failed (non-fatal): ${String(err)}`);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "lifecycle",

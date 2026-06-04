@@ -335,6 +335,11 @@ function selectPublicApiRoutesContext({
   recallInFlightRef,
   variantQueue,
 }: ToolsContext): PublicApiRoutesContext {
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  const goalsDir =
+    cfg.goalStewardship?.enabled === true
+      ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir)
+      : undefined;
   return {
     cfg,
     factsDb,
@@ -344,6 +349,7 @@ function selectPublicApiRoutesContext({
     resolvedLancePath: typeof vectorDb?.getPath === "function" ? vectorDb.getPath() : undefined,
     recallInFlightRef,
     variantQueue,
+    goalsDir,
   };
 }
 

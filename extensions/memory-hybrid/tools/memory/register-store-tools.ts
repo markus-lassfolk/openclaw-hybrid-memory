@@ -22,6 +22,7 @@ import { isCredentialLike, tryParseCredentialForVault } from "../../services/aut
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
+  abortCredentialVaultWriteOnPointerDedupe,
   rollbackVaultCredentialWrite,
 } from "../../services/credential-vault-pointer.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
@@ -408,7 +409,15 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   };
                 }
                 const pointerEntry = pointer.entry;
-                if (!storedInVault && !pointer.newlyStored && !pointer.embeddingStale) {
+                if (
+                  abortCredentialVaultWriteOnPointerDedupe(
+                    storedInVault,
+                    pointer,
+                    credentialsDb,
+                    parsed.service,
+                    parsed.type,
+                  )
+                ) {
                   return {
                     content: [
                       {

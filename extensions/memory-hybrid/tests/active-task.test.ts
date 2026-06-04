@@ -412,6 +412,12 @@ describe("buildActiveTaskInjection", () => {
     expect(result.text).toContain("Deploy the fix");
   });
 
+  it("includes related goal when present", () => {
+    const tasks = [makeEntry({ relatedGoal: "goal-abc" })];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result.text).toContain("Related goal: goal-abc");
+  });
+
   it("excludes stale tasks from active-task injection when excludeStale is true", () => {
     const tasks = [makeEntry({ stale: true })];
     const result = buildActiveTaskInjection(tasks, 500, { excludeStale: true });
@@ -1762,7 +1768,7 @@ describe("reconcileActiveTaskInProgressSessions", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("moves in-progress tasks to completed when session transcript is missing", async () => {
+  it("moves in-progress tasks to completed as Failed when session transcript is missing", async () => {
     const path = join(tmpDir, "ACTIVE-TASKS.md");
     const key = "agent:testagent:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
     await writeFile(
@@ -1787,6 +1793,7 @@ describe("reconcileActiveTaskInProgressSessions", () => {
     const content = await readFile(path, "utf-8");
     expect(content).toContain("## Completed");
     expect(content).toContain("orphan");
+    expect(content).toContain("**Status:** Failed");
   });
 
   it("does not reconcile when session jsonl exists", async () => {

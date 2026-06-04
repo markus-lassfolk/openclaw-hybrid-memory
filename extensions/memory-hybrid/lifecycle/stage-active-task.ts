@@ -6,6 +6,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import {
   detectStaleTasks,
+  isSubagentSession,
   readActiveTaskFile,
   upsertTask,
   writeActiveTaskFileGuarded,
@@ -49,6 +50,7 @@ export function registerActiveTaskInjection(
         userText && longRunningMode !== "off" ? detectLongRunningWorkflowProposal(userText, workspaceRoot) : null;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
+      const isSubagent = isSubagentSession(sessionKey ?? undefined);
       let factsSelectionMetrics: import("../services/task-ledger-facts.js").ActiveTaskLedgerSelectionMetrics | null =
         null;
       let factsSelectionStartMs: number | null = null;
@@ -134,6 +136,7 @@ export function registerActiveTaskInjection(
 
       const th = ctx.cfg.activeTask.taskHygiene;
       const isHeartbeat =
+        !isSubagent &&
         th.heartbeatEscalation &&
         ctx.cfg.goalStewardship.enabled &&
         !!userText &&

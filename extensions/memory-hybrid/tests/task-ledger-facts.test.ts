@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -9,7 +9,7 @@ vi.mock("../utils/process-runner.js", () => ({ execFile: execFileMock }));
 import { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
-import { type ActiveTaskEntry, UNKNOWN_ACTIVE_TASK_TIME } from "../services/active-task.js";
+import { type ActiveTaskEntry, UNKNOWN_ACTIVE_TASK_TIME, readPendingSignals, writeTaskSignal } from "../services/active-task.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { initPluginLogger, resetPluginLogger } from "../utils/logger.js";
 import {
@@ -27,6 +27,7 @@ import {
   planActiveTaskHygiene,
   reconcileActiveTaskInProgressSessionsFacts,
   reconcileActiveTaskLiveState,
+  consumePendingTaskSignalsFacts,
   renderActiveTaskMarkdownFile,
   syncActiveTaskEntryToFacts,
   taskEntityKey,
@@ -507,6 +508,70 @@ describe("task-ledger-facts", () => {
     }
   });
 
+  it("applyActiveTaskHygieneFacts continues after a single action persist failure", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-hygiene-partial-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    const { vectorDb, embeddings } = activeTaskStubs();
+    const staleIso = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const originalStoreWithResult = FactsDB.prototype.storeWithResult;
+
+    const storeTask = (entity: string, title: string, status: string, updated: string): void => {
+      const base = {
+        category: "project" as const,
+        importance: 0.7,
+        source: "active-task" as const,
+        decayClass: "permanent" as const,
+        entity,
+      };
+      db.store({ ...base, key: "title", value: title, text: `Task [${entity}] title: ${title}` });
+      db.store({ ...base, key: "status", value: status, text: `Task [${entity}] status: ${status}` });
+      db.store({ ...base, key: "started", value: updated, text: `Task [${entity}] started: ${updated}` });
+      db.store({ ...base, key: "task_updated", value: updated, text: `Task [${entity}] updated: ${updated}` });
+    };
+
+    try {
+      storeTask("hygiene-ok", "Will apply", "failed", staleIso);
+      storeTask("hygiene-fail", "Will fail persist", "failed", staleIso);
+
+      vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+        if (input.source === "active-task" && input.entity === "hygiene-fail" && input.key === "status") {
+          return {
+            skipped: true,
+            rejected: true,
+            evictedFactId: null,
+            embeddingStale: false,
+            newlyStored: false,
+            preMergeText: null,
+            entry: {
+              id: "blocked-hygiene-fail",
+              text: input.text ?? "",
+              category: "project",
+              importance: 0.7,
+              source: "active-task",
+              createdAt: 1,
+              decayClass: "permanent",
+            },
+          };
+        }
+        return originalStoreWithResult.call(this, input);
+      });
+
+      const plan = await planActiveTaskHygiene(loadTaskLedgerFromFacts(db).active, {
+        olderThanMinutes: 60,
+      });
+      const applied = await applyActiveTaskHygieneFacts(db, vectorDb, embeddings, plan);
+
+      expect(applied.appliedCount).toBeGreaterThanOrEqual(1);
+      const { active, completed } = loadTaskLedgerFromFacts(db);
+      expect(completed.some((t) => t.label === "hygiene-ok")).toBe(true);
+      expect(active.some((t) => t.label === "hygiene-fail")).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reconcileActiveTaskInProgressSessionsFacts records an audit fact for changed orphan subagent rows", async () => {
     const dir = await mkdtemp(join(tmpdir(), "task-ledger-session-reconcile-"));
     const db = new FactsDB(join(dir, "facts.db"));
@@ -797,6 +862,53 @@ describe("task-ledger-facts", () => {
       expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("renderedActive=1"));
       expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("renderedStale=1"));
       expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining("elapsedMs="));
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renderActiveTaskMarkdownFile preserves goals mirror across re-renders", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "task-ledger-render-goals-preserve-"));
+    const db = new FactsDB(join(dir, "facts.db"));
+    try {
+      storeActiveTaskFactRow(db, "render-goal-task", "Active work", "in_progress");
+      const outPath = join(dir, "ACTIVE-TASKS.md");
+      await writeFile(
+        outPath,
+        `# ACTIVE-TASKS.md
+
+## Active Goals
+_Mirror from goal registry — do not edit by hand; refreshed on heartbeat._
+
+### [deploy]: Ship it
+
+## Active
+
+### [old-task]: stale
+`,
+        "utf-8",
+      );
+
+      await renderActiveTaskMarkdownFile(
+        db,
+        60,
+        outPath,
+        {
+          mode: "readable",
+          excludeGenericTitle: true,
+          titleMinChars: 0,
+          dedupeBy: "none",
+          sectioned: true,
+        },
+        undefined,
+      );
+
+      const rendered = await readFile(outPath, "utf-8");
+      expect(rendered).toContain("[render-goal-task]");
+      expect(rendered).toContain("## Active Goals");
+      expect(rendered).toContain("### [deploy]: Ship it");
+      expect(rendered).not.toContain("[old-task]");
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
@@ -1391,6 +1503,322 @@ it("syncActiveTaskEntryToFacts writes related_goal when provided", async () => {
       .listFactsByCategory("project", 20)
       .find((f) => f.entity === "goal-backed-task" && f.key === "related_goal");
     expect(row?.value).toBe("goal-1271");
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("syncActiveTaskEntryToFacts fails fast when a required key is blocked by pre-store guard", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-upsert-guard-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+  const originalStoreWithResult = FactsDB.prototype.storeWithResult;
+
+  try {
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+      if (input.source === "active-task" && input.key === "status") {
+        return {
+          skipped: true,
+          rejected: true,
+          evictedFactId: null,
+          embeddingStale: false,
+          newlyStored: false,
+          preMergeText: null,
+          entry: {
+            id: "blocked-status-id",
+            text: input.text ?? "",
+            category: "project",
+            importance: 0.7,
+            source: "active-task",
+            createdAt: 1,
+            decayClass: "permanent",
+          },
+        };
+      }
+      return originalStoreWithResult.call(this, input);
+    });
+
+    await expect(
+      syncActiveTaskEntryToFacts(db, vectorDb, embeddings, {
+        label: "guard-task",
+        description: "Should not partially persist",
+        status: "In progress",
+        started: now,
+        updated: now,
+      }),
+    ).rejects.toThrow(/pre-store guard/);
+
+    const rows = db.listFactsByCategory("project", 20).filter((f) => f.entity === "guard-task");
+    expect(rows.some((f) => f.key === "status")).toBe(false);
+  } finally {
+    vi.restoreAllMocks();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("reconcileActiveTaskInProgressSessionsFacts skips audit fact id when reconcile audit is guard-blocked", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-reconcile-audit-guard-"));
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const staleIso = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const originalStoreWithResult = FactsDB.prototype.storeWithResult;
+
+  try {
+    db.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "agent:main:subagent:dead-audit",
+      key: "title",
+      value: "Subagent task",
+      text: "Task [agent:main:subagent:dead-audit] title: Subagent task",
+    });
+    db.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "agent:main:subagent:dead-audit",
+      key: "status",
+      value: "in_progress",
+      text: "Task [agent:main:subagent:dead-audit] status: in_progress",
+    });
+    db.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "agent:main:subagent:dead-audit",
+      key: "task_updated",
+      value: staleIso,
+      text: `Task [agent:main:subagent:dead-audit] task_updated: ${staleIso}`,
+    });
+    db.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "agent:main:subagent:dead-audit",
+      key: "related_session",
+      value: "agent:main:subagent:dead-audit",
+      text: "Task [agent:main:subagent:dead-audit] related_session: agent:main:subagent:dead-audit",
+    });
+
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+      if (input.source === "active-task-session-reconcile") {
+        return {
+          skipped: true,
+          rejected: true,
+          evictedFactId: null,
+          embeddingStale: false,
+          newlyStored: false,
+          preMergeText: null,
+          entry: {
+            id: "bogus-audit-id",
+            text: input.text ?? "",
+            category: "episode",
+            importance: 0.7,
+            source: "active-task-session-reconcile",
+            createdAt: 1,
+            decayClass: "permanent",
+          },
+        };
+      }
+      return originalStoreWithResult.call(this, input);
+    });
+
+    const result = await reconcileActiveTaskInProgressSessionsFacts(db, vectorDb, embeddings, 60, {
+      openclawHome: dir,
+    });
+
+    expect(result.reconciledLabels).toEqual(["agent:main:subagent:dead-audit"]);
+    const audits = db
+      .listFactsByCategory("episode", 1000)
+      .filter((row) => row.source === "active-task-session-reconcile");
+    expect(audits).toHaveLength(0);
+    expect(db.getById("bogus-audit-id")).toBeNull();
+  } finally {
+    vi.restoreAllMocks();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("consumePendingTaskSignalsFacts deletes only signals whose facts persist succeeded", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-signal-partial-"));
+  const workspaceRoot = join(dir, "workspace");
+  const memoryDir = join(workspaceRoot, "memory");
+  await mkdir(memoryDir, { recursive: true });
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+  const originalStoreWithResult = FactsDB.prototype.storeWithResult;
+
+  const seedTask = (entity: string, title: string) => {
+    for (const [key, value] of [
+      ["title", title],
+      ["status", "in_progress"],
+      ["task_updated", now],
+      ["started", now],
+    ] as const) {
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity,
+        key,
+        value,
+        text: `Task [${entity}] ${key}: ${value}`,
+      });
+    }
+  };
+
+  try {
+    seedTask("ok-task", "First task");
+    seedTask("fail-task", "Second task");
+
+    await writeTaskSignal(
+      "ok-task",
+      { agent: "sub-1", taskRef: "ok-task", signal: "update", summary: "first ok", timestamp: now },
+      memoryDir,
+    );
+    await writeTaskSignal(
+      "fail-task",
+      { agent: "sub-2", taskRef: "fail-task", signal: "update", summary: "second fails", timestamp: now },
+      memoryDir,
+    );
+
+    vi.spyOn(FactsDB.prototype, "storeWithResult").mockImplementation(function (this: FactsDB, input) {
+      if (input.source === "active-task" && input.entity === "fail-task" && input.key === "status") {
+        return {
+          skipped: true,
+          rejected: true,
+          evictedFactId: null,
+          embeddingStale: false,
+          newlyStored: false,
+          preMergeText: null,
+          entry: {
+            id: "blocked-fail-task-status",
+            text: input.text ?? "",
+            category: "project",
+            importance: 0.7,
+            source: "active-task",
+            createdAt: 1,
+            decayClass: "permanent",
+          },
+        };
+      }
+      return originalStoreWithResult.call(this, input);
+    });
+
+    await consumePendingTaskSignalsFacts(workspaceRoot, 60, false, db, vectorDb, embeddings);
+
+    const { active } = loadTaskLedgerFromFacts(db);
+    expect(active.find((t) => t.label === "ok-task")?.next).toContain("first ok");
+    expect(active.find((t) => t.label === "fail-task")?.next ?? "").not.toContain("second fails");
+
+    const pending = await readPendingSignals(memoryDir);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.taskRef).toBe("fail-task");
+  } finally {
+    vi.restoreAllMocks();
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("consumePendingTaskSignalsFacts drops signals for terminal Failed tasks without reopening", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-signal-terminal-"));
+  const workspaceRoot = join(dir, "workspace");
+  const memoryDir = join(workspaceRoot, "memory");
+  await mkdir(memoryDir, { recursive: true });
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+
+  const seedTask = (entity: string, title: string, status: string) => {
+    for (const [key, value] of [
+      ["title", title],
+      ["status", status],
+      ["task_updated", now],
+      ["started", now],
+    ] as const) {
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity,
+        key,
+        value,
+        text: `Task [${entity}] ${key}: ${value}`,
+      });
+    }
+  };
+
+  try {
+    seedTask("failed-task", "Already failed", "failed");
+    await writeTaskSignal(
+      "failed-task",
+      { agent: "sub-1", taskRef: "failed-task", signal: "blocked", summary: "should not reopen", timestamp: now },
+      memoryDir,
+    );
+
+    await consumePendingTaskSignalsFacts(workspaceRoot, 60, false, db, vectorDb, embeddings);
+
+    const { active } = loadTaskLedgerFromFacts(db);
+    const task = active.find((t) => t.label === "failed-task");
+    expect(task?.status).toBe("Failed");
+    expect(task?.next ?? "").not.toContain("should not reopen");
+    expect(await readPendingSignals(memoryDir)).toHaveLength(0);
+  } finally {
+    db.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+it("consumePendingTaskSignalsFacts drops completed signals for Done tasks in completed list", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "task-signal-done-"));
+  const workspaceRoot = join(dir, "workspace");
+  const memoryDir = join(workspaceRoot, "memory");
+  await mkdir(memoryDir, { recursive: true });
+  const db = new FactsDB(join(dir, "facts.db"));
+  const { vectorDb, embeddings } = activeTaskStubs();
+  const now = new Date().toISOString();
+
+  for (const [key, value] of [
+    ["title", "Finished task"],
+    ["status", "done"],
+    ["task_updated", now],
+    ["started", now],
+  ] as const) {
+    db.store({
+      category: "project",
+      importance: 0.7,
+      source: "active-task",
+      decayClass: "permanent",
+      entity: "done-task",
+      key,
+      value,
+      text: `Task [done-task] ${key}: ${value}`,
+    });
+  }
+
+  try {
+    await writeTaskSignal(
+      "done-task",
+      { agent: "sub-1", taskRef: "done-task", signal: "completed", summary: "late duplicate", timestamp: now },
+      memoryDir,
+    );
+
+    await consumePendingTaskSignalsFacts(workspaceRoot, 60, false, db, vectorDb, embeddings);
+
+    expect(await readPendingSignals(memoryDir)).toHaveLength(0);
   } finally {
     db.close();
     await rm(dir, { recursive: true, force: true });

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { FactsDB } from "../backends/facts-db.js";
 import {
+  abortCredentialVaultWriteOnPointerDedupe,
   buildCredentialPointerStoreInput,
   credentialPointerValue,
   deleteCredentialPointerFacts,
@@ -50,6 +51,25 @@ describe("credential-vault-pointer helpers", () => {
     if (!second.ok) return;
     expect(second.newlyStored).toBe(false);
     expect(findCredentialPointerFactIds(factsDb, "openai", "api_key")).toHaveLength(1);
+  });
+
+  it("rolls back vault write when pointer is a pure dedupe", () => {
+    ensureCredentialVaultPointer(factsDb, "orphan", "api_key", "test");
+    credentialsDb.store({ service: "orphan", type: "api_key", value: "orphan-secret" });
+
+    const pointer = ensureCredentialVaultPointer(factsDb, "orphan", "api_key", "test");
+    expect(pointer.ok).toBe(true);
+    if (!pointer.ok) return;
+
+    const shouldSkip = abortCredentialVaultWriteOnPointerDedupe(
+      true,
+      pointer,
+      credentialsDb,
+      "orphan",
+      "api_key",
+    );
+    expect(shouldSkip).toBe(true);
+    expect(credentialsDb.get("orphan", "api_key")).toBeNull();
   });
 
   it("deletes pointer facts for credential_delete cleanup", async () => {

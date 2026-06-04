@@ -8,6 +8,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
+import { WalReadCorruptionError } from "../backends/wal.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
@@ -526,4 +527,62 @@ export async function replayWalEntries(
   }
 
   return { committed, skipped };
+}
+
+/**
+ * Replay WAL entries, repairing corruption via compaction rewrite before retrying.
+ */
+export async function replayWalEntriesWithRepair(
+  wal: WriteAheadLog,
+  factsDb: FactsDB,
+  vectorDb?: VectorDB,
+  embeddings?: EmbeddingProvider | null,
+  logger?: { info?: (msg: string) => void; warn?: (msg: string) => void },
+  phase = "WAL replay",
+): Promise<WalReplayResult> {
+  try {
+    return await replayWalEntries(wal, factsDb, vectorDb, embeddings, logger);
+  } catch (err) {
+    if (!(err instanceof WalReadCorruptionError)) {
+      throw err;
+    }
+
+    logger?.warn?.(
+      `memory-hybrid: ${phase} detected corruption: ${err.message}. Attempting repair by compacting valid entries.`,
+    );
+    capturePluginError(err, {
+      subsystem: "wal-replay",
+      operation: `${phase}-corrupted`,
+    });
+
+    try {
+      const compacted = await wal.compactIfOversized(0);
+      if (compacted > 0) {
+        logger?.info?.(`memory-hybrid: corrupted WAL repaired, retrying ${phase}`);
+        try {
+          return await replayWalEntries(wal, factsDb, vectorDb, embeddings, logger);
+        } catch (retryErr) {
+          logger?.warn?.(
+            `memory-hybrid: ${phase} retry failed after repair: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+          );
+          capturePluginError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)), {
+            subsystem: "wal-replay",
+            operation: `${phase}-retry-failed`,
+          });
+          return { committed: 0, skipped: 0 };
+        }
+      }
+      logger?.info?.("memory-hybrid: WAL repair resulted in empty log");
+      return { committed: 0, skipped: 0 };
+    } catch (repairErr) {
+      logger?.warn?.(
+        `memory-hybrid: failed to repair corrupted WAL: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}`,
+      );
+      capturePluginError(repairErr instanceof Error ? repairErr : new Error(String(repairErr)), {
+        subsystem: "wal-replay",
+        operation: `${phase}-repair-failed`,
+      });
+      return { committed: 0, skipped: 0 };
+    }
+  }
 }

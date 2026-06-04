@@ -11,6 +11,7 @@ import type { MemoryCategory } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { extractTags } from "../utils/tags.js";
 import { VAULT_POINTER_PREFIX, tryParseCredentialForVault } from "./auto-capture.js";
+import { rollbackVaultCredentialWrite } from "./credential-vault-pointer.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -95,14 +96,12 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
         tags: ["auth", ...extractTags(pointerText, "Credentials")],
       });
       if (pointerResult.skipped) {
-        try {
-          credentialsDb.delete(parsed.service, parsed.type);
-        } catch (cleanupErr) {
+        rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (message, cleanupErr) => {
           capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
             operation: "migrate-credential-compensating-delete-skip",
             subsystem: "credentials",
           });
-        }
+        });
         errors.push(`pointer rejected for ${parsed.service}: pre-store guard blocked`);
         continue;
       }
@@ -174,11 +173,7 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
       migrated++;
     } catch (e) {
       if (!plaintextRemoved) {
-        try {
-          credentialsDb.delete(parsed.service, parsed.type);
-        } catch {
-          // best-effort rollback when pointer/plaintext migration did not complete
-        }
+        rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
       }
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "credentials",

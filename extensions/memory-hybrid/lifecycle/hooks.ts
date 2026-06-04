@@ -359,7 +359,18 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             guard.reason === "missing_checkpoint_block" || guard.reason === "missing_checkpoint_warn";
           if (requiresProjectFacts) {
             const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId });
+            let goalAliases: Array<{ id: string; label: string }> | undefined;
+            if (ctx.cfg.goalStewardship?.enabled) {
+              try {
+                const { listActiveGoals, resolveGoalsDir } = await import("../services/goal-stewardship.js");
+                const gDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+                const activeGoals = await listActiveGoals(gDir);
+                goalAliases = activeGoals.map((g) => ({ id: g.id, label: g.label }));
+              } catch {
+                goalAliases = undefined;
+              }
+            }
+            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId, goalAliases });
           }
           const guardMessage = formatPreFinalizationGuardMessage(guard);
           if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {

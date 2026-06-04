@@ -48,6 +48,8 @@ export interface PublicApiRoutesContext {
   resolvedLancePath?: string;
   recallInFlightRef?: { value: number };
   variantQueue?: { queueLength: number } | null;
+  /** Resolved goals directory when goal stewardship is enabled (for projection mirror refresh). */
+  goalsDir?: string;
 }
 
 export const PUBLIC_API_PREFIX = "/plugins/memory-public";
@@ -375,6 +377,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
           reason: "public_api_active_tasks_render",
           source: "public_api",
           logger: api.logger,
+          goalsDir: ctx.goalsDir,
         });
         renderApplied = result.rendered;
         renderError = result.error ?? null;
