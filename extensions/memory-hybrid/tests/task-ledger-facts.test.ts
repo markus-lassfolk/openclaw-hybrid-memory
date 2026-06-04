@@ -487,6 +487,24 @@ describe("task-ledger-facts", () => {
       storeTask("proj-1273-b", "Issue 1273 Active Task Hygiene", "waiting", freshIso);
       storeTask("proj-1273-copy", "Issue 1273 active task hygiene", "waiting", freshIso);
       storeTask("stale-failure", "Failed run", "failed", staleIso, "agent:forge:subagent:stale-fail");
+      const staleHandoff = JSON.stringify({
+        schema: "octave/task-handoff@v1",
+        artifactId: "stale-fail-artifact",
+        signal: "update",
+        agent: "worker",
+        timestamp: staleIso,
+        checksum: "abc123",
+      });
+      db.store({
+        category: "project",
+        importance: 0.7,
+        source: "active-task",
+        decayClass: "permanent",
+        entity: "stale-failure",
+        key: "handoff",
+        value: staleHandoff,
+        text: `Task [stale-failure] handoff: ${staleHandoff}`,
+      });
 
       const plan = await planActiveTaskHygiene(loadTaskLedgerFromFacts(db).active, {
         olderThanMinutes: 60,
@@ -501,6 +519,7 @@ describe("task-ledger-facts", () => {
       expect(completed.some((t) => t.label === "proj-1273-copy")).toBe(true);
       expect(completed.some((t) => t.label === "stale-failure")).toBe(true);
       expect(completed.find((t) => t.label === "stale-failure")?.subagent).toBeUndefined();
+      expect(completed.find((t) => t.label === "stale-failure")?.handoff).toBeUndefined();
 
       const projectRows = groupProjectFactsByEntity(db.listFactsByCategory("project", 1000));
       expect(projectRows.get("proj-1273-copy")?.get("status")?.value).toBe("superseded");
@@ -526,6 +545,14 @@ describe("task-ledger-facts", () => {
         description: "Drive owner/repo pull request #99",
         status: "Stalled",
         subagent: "agent:forge:subagent:dead-pr-blocker",
+        handoff: {
+          schema: "octave/task-handoff@v1",
+          artifactId: "pr-blocker-artifact",
+          signal: "update",
+          agent: "worker",
+          timestamp: updated,
+          checksum: "abc123",
+        },
         started: updated,
         updated,
       });
@@ -554,6 +581,7 @@ describe("task-ledger-facts", () => {
       const task = reloaded.active.find((t) => taskLabelsMatch(t.label, stored!.label));
       expect(task?.status).toBe("Waiting");
       expect(task?.subagent).toBeUndefined();
+      expect(task?.handoff).toBeUndefined();
       expect(reloaded.completed.some((t) => taskLabelsMatch(t.label, stored!.label))).toBe(false);
     } finally {
       db.close();

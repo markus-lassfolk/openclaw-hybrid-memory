@@ -483,13 +483,15 @@ export async function runActiveTaskHygiene(
     }
     if (action.kind === "pr-live-blocker") {
       const subagent = await subagentRefIfSessionPresent(task.subagent, opts.openclawHome);
-      newActive.push({
+      const waitingEntry: ActiveTaskEntry = {
         ...task,
         status: "Waiting",
         updated: now,
         next: action.reason,
         subagent,
-      });
+      };
+      if (!subagent?.trim()) clearActiveTaskHandoff(waitingEntry);
+      newActive.push(waitingEntry);
       appliedCount++;
       continue;
     }
@@ -500,6 +502,7 @@ export async function runActiveTaskHygiene(
       next: action.reason,
       subagent: "",
     };
+    clearActiveTaskHandoff(completedEntry);
     newCompleted.push(completedEntry);
     toFlush.push(completedEntry);
     appliedCount++;

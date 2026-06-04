@@ -236,8 +236,9 @@ async function consumePendingTaskSignals(
           status: newStatus,
           next: signal.summary ? `[Signal: ${signal.signal}] ${signal.summary}` : existing.next,
           updated: updatedTimestamp,
-          handoff: signal._handoff ?? existing.handoff,
         };
+        if (signal._handoff) updatedEntry.handoff = signal._handoff;
+        else delete updatedEntry.handoff;
         updatedActive = upsertTask(updatedActive, updatedEntry, true);
         processedSignals.push(signal);
       } catch (err) {

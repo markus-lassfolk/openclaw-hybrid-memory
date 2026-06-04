@@ -1372,6 +1372,8 @@ export async function applyActiveTaskHygieneFacts(
           next: action.reason,
           subagent,
         };
+        if (!subagent?.trim()) clearActiveTaskHandoff(updatedEntry);
+        else delete updatedEntry.handoff;
         await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, updatedEntry, opts.log, {
           statusOverride: displayStatusToFact("Waiting"),
           latestByEntityKey,
@@ -1399,6 +1401,7 @@ export async function applyActiveTaskHygieneFacts(
         next: action.reason,
         subagent: "",
       };
+      clearActiveTaskHandoff(doneEntry);
       await syncActiveTaskEntryToFacts(factsDb, vectorDb, embeddings, doneEntry, opts.log, {
         statusOverride: action.toStatus,
         latestByEntityKey,
@@ -1693,8 +1696,9 @@ export async function consumePendingTaskSignalsFacts(
         status: newStatus,
         next: signal.summary ? `[Signal: ${signal.signal}] ${signal.summary}` : existing.next,
         updated: updatedTimestamp,
-        handoff: signal._handoff ?? existing.handoff,
       };
+      if (signal._handoff) updatedEntry.handoff = signal._handoff;
+      else delete updatedEntry.handoff;
       updatedActive = upsertTask(updatedActive, updatedEntry, true);
       processedEntries.push({ signal, label: existing.label });
       touched.add(existing.label);
