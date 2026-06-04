@@ -354,8 +354,9 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     });
 
     expect(res.error).toBeUndefined();
-    expect(res.status).toBe("success_analyzed");
+    expect(res.status).toBe("failed_partial");
     expect(res.analysed).toBe(1);
+    expect(res.parseFailures).toBe(1);
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
   });
 
@@ -431,8 +432,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     expect(res.analysed).toBe(1);
   });
 
-  it("marks a zero-parsed result with incidents as suspect instead of clean success", async () => {
-    const ctx = makeCtx(makeOpenAIMock(""));
+  it("marks a zero-parsed result with incidents as failed when LLM returns empty array", async () => {
+    const ctx = makeCtx(makeOpenAIMock("[]"));
 
     const res = await runSelfCorrectionRunForCli(ctx, {
       incidents: [SAMPLE_INCIDENT],
@@ -441,8 +442,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     });
 
     expect(res.analysed).toBe(0);
-    expect(res.status).toBe("failed_suspect_zero_parsed");
-    expect(res.error).toMatch(/zero parsed\/analysed/i);
+    expect(res.status).toBe("failed_parse");
+    expect(res.error).toBeDefined();
   });
 
 

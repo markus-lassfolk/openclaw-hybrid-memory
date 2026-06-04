@@ -1142,7 +1142,7 @@ export async function runSelfCorrectionRunForCli(
       batchesStarted,
       batchesCompleted: completedBatchIndexes.size,
       totalBatches: batches.length,
-      status: "success_analyzed",
+      status: diagnosticsIndicateFailure ? "failed_partial" : "success_analyzed",
     };
   } finally {
     if (!bypassScanCooldown && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);
