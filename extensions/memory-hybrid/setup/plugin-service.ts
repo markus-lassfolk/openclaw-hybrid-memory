@@ -361,22 +361,42 @@ export function createPluginService(ctx: PluginServiceContext) {
         } catch (err) {
           if (err instanceof Error && err.name === "WalReadCorruptionError") {
             api.logger.warn(
-              `memory-hybrid: WAL recovery aborted due to corruption: ${err.message}. WAL will be cleared to allow startup.`,
+              `memory-hybrid: WAL recovery detected corruption: ${err.message}. Attempting repair by compacting valid entries.`,
             );
             capturePluginError(err, {
               subsystem: "plugin-service",
               operation: "wal-recovery-corrupted",
             });
             try {
-              await wal.clear();
-              api.logger.info("memory-hybrid: corrupted WAL cleared successfully");
-            } catch (clearErr) {
+              const compacted = await wal.compactIfOversized(0);
+              if (compacted > 0) {
+                api.logger.info("memory-hybrid: corrupted WAL repaired, retrying recovery");
+                try {
+                  const retryResult = await replayWalEntries(wal, factsDb, vectorDb, embeddings, api.logger);
+                  if (retryResult.committed > 0 || retryResult.skipped > 0) {
+                    api.logger.info(
+                      `memory-hybrid: WAL recovery retry completed — committed ${retryResult.committed}, skipped ${retryResult.skipped}`,
+                    );
+                  }
+                } catch (retryErr) {
+                  api.logger.warn(
+                    `memory-hybrid: WAL recovery retry failed after repair: ${retryErr instanceof Error ? retryErr.message : String(retryErr)}`,
+                  );
+                  capturePluginError(retryErr instanceof Error ? retryErr : new Error(String(retryErr)), {
+                    subsystem: "plugin-service",
+                    operation: "wal-recovery-retry-failed",
+                  });
+                }
+              } else {
+                api.logger.info("memory-hybrid: WAL repair resulted in empty log");
+              }
+            } catch (repairErr) {
               api.logger.warn(
-                `memory-hybrid: failed to clear corrupted WAL: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`,
+                `memory-hybrid: failed to repair corrupted WAL: ${repairErr instanceof Error ? repairErr.message : String(repairErr)}`,
               );
-              capturePluginError(clearErr instanceof Error ? clearErr : new Error(String(clearErr)), {
+              capturePluginError(repairErr instanceof Error ? repairErr : new Error(String(repairErr)), {
                 subsystem: "plugin-service",
-                operation: "wal-recovery-clear-failed",
+                operation: "wal-recovery-repair-failed",
               });
             }
           } else {
