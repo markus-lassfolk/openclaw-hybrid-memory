@@ -1023,7 +1023,7 @@ export async function upsertProjectTaskKey(
   value: string,
   log?: { warn?: (m: string) => void },
   opts?: { latestByEntityKey?: Map<string, MemoryEntry> },
-): Promise<void> {
+): Promise<{ entry: MemoryEntry; previous?: MemoryEntry; changed: boolean }> {
   // Normalise entity labels on write (trim + lowercase) to prevent case-variant
   // collisions (e.g. "Humanizer" and "humanizer" stored as separate entities).
   const normalizedEntity = entity.trim().toLowerCase();
@@ -1080,7 +1080,7 @@ export async function upsertProjectTaskKey(
   }
   if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
     opts?.latestByEntityKey?.set(cacheKey, entry);
-    return;
+    return { entry, changed: false };
   }
   if (previous && storeResult.newlyStored) {
     factsDb.supersede(previous.id, entry.id);
@@ -1101,6 +1101,49 @@ export async function upsertProjectTaskKey(
   } catch (err) {
     log?.warn?.(`memory-hybrid: active-task ledger vector store failed: ${err}`);
   }
+  return {
+    entry,
+    previous: previous && storeResult.newlyStored ? previous : undefined,
+    changed: storeResult.newlyStored,
+  };
+}
+
+type ActiveTaskFactsSyncWrite = {
+  key: string;
+  previous?: MemoryEntry;
+  newEntry: MemoryEntry;
+};
+
+async function rollbackActiveTaskFactsSync(
+  factsDb: FactsDB,
+  vectorDb: VectorDB,
+  embeddings: EmbeddingProvider,
+  entity: string,
+  writes: ActiveTaskFactsSyncWrite[],
+  log?: { warn?: (m: string) => void },
+): Promise<void> {
+  for (const write of [...writes].reverse()) {
+    try {
+      if (write.previous?.value != null) {
+        await upsertProjectTaskKey(
+          factsDb,
+          vectorDb,
+          embeddings,
+          entity,
+          write.key,
+          write.previous.value,
+          log,
+        );
+      } else {
+        factsDb.supersede(write.newEntry.id, null);
+        retireProjectTaskKeyFacts(factsDb, entity, write.key);
+      }
+    } catch (rollbackErr) {
+      log?.warn?.(
+        `memory-hybrid: active-task sync rollback failed for [${entity}] ${write.key}: ${rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr)}`,
+      );
+    }
+  }
 }
 
 /** Persist one task row to project facts (multi-key upsert). */
@@ -1117,71 +1160,50 @@ export async function syncActiveTaskEntryToFacts(
 ): Promise<void> {
   const entity = entry.label;
   const upsertOpts = { latestByEntityKey: opts?.latestByEntityKey };
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "title", entry.description, log, upsertOpts);
-  const statusValue = opts?.statusOverride?.trim() || displayStatusToFact(entry.status);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "status", statusValue, log, upsertOpts);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "task_updated", entry.updated, log, upsertOpts);
-  await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "started", entry.started, log, upsertOpts);
-
-  // Optional fields: only upsert when explicitly provided on the entry so partial syncs
-  // (e.g. subagent_spawned auto-checkpoint) do not wipe existing next/branch/goal links.
-  if (entry.next !== undefined) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "next", entry.next.trim(), log, upsertOpts);
-  }
-  if (entry.subagent !== undefined) {
-    await upsertProjectTaskKey(
-      factsDb,
-      vectorDb,
-      embeddings,
-      entity,
-      "related_session",
-      entry.subagent.trim(),
-      log,
-      upsertOpts,
-    );
-  }
-  if (entry.branch !== undefined) {
-    await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, "branch", entry.branch.trim(), log, upsertOpts);
-  }
-  if (entry.stashCommit !== undefined) {
-    await upsertProjectTaskKey(
-      factsDb,
-      vectorDb,
-      embeddings,
-      entity,
-      "stash_commit",
-      entry.stashCommit.trim(),
-      log,
-      upsertOpts,
-    );
-  }
-  if ('handoff' in entry) {
-    if (entry.handoff) {
-      await upsertProjectTaskKey(
-        factsDb,
-        vectorDb,
-        embeddings,
-        entity,
-        "handoff",
-        JSON.stringify(entry.handoff),
-        log,
-        upsertOpts,
-      );
-    } else {
-      retireProjectTaskKeyFacts(factsDb, entity, "handoff");
+  const pendingWrites: ActiveTaskFactsSyncWrite[] = [];
+  const upsertKey = async (key: string, value: string): Promise<void> => {
+    const result = await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, key, value, log, upsertOpts);
+    if (result.changed) {
+      pendingWrites.push({ key, previous: result.previous, newEntry: result.entry });
     }
-  }
-  if (entry.relatedGoal !== undefined) {
-    await upsertProjectTaskKey(
-      factsDb,
-      vectorDb,
-      embeddings,
-      entity,
-      "related_goal",
-      entry.relatedGoal.trim(),
-      log,
-      upsertOpts,
-    );
+  };
+
+  try {
+    await upsertKey("title", entry.description);
+    const statusValue = opts?.statusOverride?.trim() || displayStatusToFact(entry.status);
+    await upsertKey("status", statusValue);
+    await upsertKey("task_updated", entry.updated);
+    await upsertKey("started", entry.started);
+
+    // Optional fields: only upsert when explicitly provided on the entry so partial syncs
+    // (e.g. subagent_spawned auto-checkpoint) do not wipe existing next/branch/goal links.
+    if (entry.next !== undefined) {
+      await upsertKey("next", entry.next.trim());
+    }
+    if (entry.subagent !== undefined) {
+      await upsertKey("related_session", entry.subagent.trim());
+    }
+    if (entry.branch !== undefined) {
+      await upsertKey("branch", entry.branch.trim());
+    }
+    if (entry.stashCommit !== undefined) {
+      await upsertKey("stash_commit", entry.stashCommit.trim());
+    }
+    if ("handoff" in entry) {
+      if (entry.handoff) {
+        await upsertKey("handoff", JSON.stringify(entry.handoff));
+      } else {
+        retireProjectTaskKeyFacts(factsDb, entity, "handoff");
+      }
+    }
+    if (entry.relatedGoal !== undefined) {
+      await upsertKey("related_goal", entry.relatedGoal.trim());
+    }
+  } catch (err) {
+    if (pendingWrites.length > 0) {
+      await rollbackActiveTaskFactsSync(factsDb, vectorDb, embeddings, entity, pendingWrites, log);
+    }
+    throw err;
   }
 }
 

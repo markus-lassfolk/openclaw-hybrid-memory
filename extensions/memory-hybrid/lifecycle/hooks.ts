@@ -187,6 +187,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
+    // Register before active-task injection so credential hints prepend ahead of task blocks
+    // when OpenClaw merges before_agent_start prependContext (left-to-right concat).
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
+      registerCredentialHint(api, ctx);
+    }
+
     registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
     registerGoalStewardshipInjection(
@@ -201,13 +207,6 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     // event listeners whose bodies immediately return when disabled (#581).
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       registerAuthFailureRecall(api, ctx, sessionState);
-    }
-    // Note: credential hints are gated on verbosity !== "silent" because their output
-    // (a prepended hint block) is meaningless in silent mode. This is intentional:
-    // the feature adds context only when the agent can surface it. If credential detection
-    // without output injection is ever needed, split the guard accordingly.
-    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
-      registerCredentialHint(api, ctx);
     }
   };
 

@@ -1698,6 +1698,7 @@ it("syncActiveTaskEntryToFacts fails fast when a required key is blocked by pre-
 
     const rows = db.listFactsByCategory("project", 20).filter((f) => f.entity === "guard-task");
     expect(rows.some((f) => f.key === "status")).toBe(false);
+    expect(rows.some((f) => f.key === "title")).toBe(false);
   } finally {
     vi.restoreAllMocks();
     db.close();

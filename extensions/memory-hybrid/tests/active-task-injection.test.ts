@@ -278,4 +278,33 @@ describe("buildActiveTaskContextBundle", () => {
     expect(staleBlock).toContain("[live-stale]");
     expect(staleBlock).not.toContain("[failed-stale]");
   });
+
+  it("excludes Failed rows from stale warning even without heartbeat hygiene", () => {
+    const tasks = [
+      entry({
+        label: "failed-stale",
+        status: "Failed",
+        description: "Terminal failure",
+        stale: true,
+        updated: "2020-01-01T00:00:00.000Z",
+      }),
+      entry({
+        label: "live-stale",
+        status: "In progress",
+        description: "Needs attention",
+        stale: true,
+        updated: "2020-01-01T00:00:00.000Z",
+      }),
+    ];
+    const bundle = buildActiveTaskContextBundle({
+      ledgerTasks: tasks,
+      injectionBudgetTokens: 500,
+      staleMinutes: 60,
+      staleWarningEnabled: true,
+      projection: { ...defaultProjection, excludeGenericTitle: false },
+    });
+    const staleBlock = bundle.parts.find((p) => p.includes("STALE ACTIVE TASKS")) ?? "";
+    expect(staleBlock).toContain("[live-stale]");
+    expect(staleBlock).not.toContain("[failed-stale]");
+  });
 });

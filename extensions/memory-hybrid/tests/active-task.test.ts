@@ -520,6 +520,18 @@ describe("buildStaleWarningInjection", () => {
     expect(result.renderedCount).toBe(1);
   });
 
+  it("excludes Failed tasks from stale warnings", () => {
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const tasks = [
+      makeEntry({ label: "failed-stale", status: "Failed", stale: true, updated: staleTime }),
+      makeEntry({ label: "live-stale", status: "In progress", stale: true, updated: staleTime }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result.text).toContain("[live-stale]");
+    expect(result.text).not.toContain("[failed-stale]");
+    expect(result.renderedCount).toBe(1);
+  });
+
   it("includes hours-ago elapsed time in warning", () => {
     const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
     const tasks = [makeEntry({ stale: true, updated: staleTime })];

@@ -640,9 +640,11 @@ export function buildStaleWarningInjection(
   maxChars?: number,
 ): { text: string; renderedCount: number } {
   const visibleTasks = tasks.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
-  const staleTasks = visibleTasks.filter((t) => t.stale);
+  // Failed rows are terminal bookkeeping — not actionable stale work.
+  const actionableTasks = visibleTasks.filter((t) => t.status !== "Failed");
+  const staleTasks = actionableTasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
-  const inProgressWithSubagent = visibleTasks.filter((t) => t.status === "In progress" && t.subagent);
+  const inProgressWithSubagent = actionableTasks.filter((t) => t.status === "In progress" && t.subagent);
 
   if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return { text: "", renderedCount: 0 };
 
