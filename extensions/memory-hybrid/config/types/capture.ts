@@ -108,4 +108,6 @@ export type ProceduresConfig = {
   maxInjectionTokens: number;
   /** Optional regex pattern strings (case-insensitive) for extra `too_context_specific` task checks (#1421). */
   promotionContextSpecificPatterns?: string[];
+  /** When true, quarantine auto-skills that fail post-generate audit (default: false). */
+  quarantineAfterGenerate: boolean;
 };

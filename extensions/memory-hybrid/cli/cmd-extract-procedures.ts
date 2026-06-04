@@ -134,9 +134,7 @@ export async function runGenerateAutoSkillsForCli(
         warn(
           `memory-hybrid: auto-skills post-generate audit: ${audit.quarantinable} quarantinable of ${audit.scanned} scanned`,
         );
-        const quarantineAfterGenerate =
-          (cfg.procedures as { quarantineAfterGenerate?: boolean }).quarantineAfterGenerate === true;
-        if (quarantineAfterGenerate) {
+        if (cfg.procedures.quarantineAfterGenerate) {
           const toMove = audit.entries.filter(
             (e) => !e.loadable || e.transcriptLike || e.secretLike || e.injectionLike,
           );

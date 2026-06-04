@@ -1585,6 +1585,10 @@
               "type": "string"
             },
             "description": "Optional regex pattern strings (case-insensitive) for extra too_context_specific task checks (#1421)"
+          },
+          "quarantineAfterGenerate": {
+            "type": "boolean",
+            "description": "When true, quarantine auto-skills that fail post-generate audit (default: false)"
           }
         },
         "description": "Procedural memory: auto-generated skills from learned patterns"

@@ -458,6 +458,7 @@ async function applySelfCorrectionRemediations(params: {
               ? join(dirname(ctx.resolvedSqlitePath), ".adaptive-llm-limits.json")
               : undefined,
           enabled: adaptiveEnabled,
+          thinkingMode: resolveSelfCorrectionThinkingMode(cfg),
         });
         const cleaned = detail.content
           .trim()
@@ -757,9 +758,7 @@ export async function runSelfCorrectionRunForCli(
         logger.info?.(
           `memory-hybrid: ${SCAN_TYPE} — MiniMax batch mode: ${batches.length} batch(es), size=${batchSize}`,
         );
-        logger.info?.(
-          `memory-hybrid: ${SCAN_TYPE} — MiniMax resume file: ${statePath}; completed=0`,
-        );
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} — MiniMax resume file: ${statePath}; completed=0`);
       }
     } else {
       logger.info?.(
@@ -902,10 +901,7 @@ export async function runSelfCorrectionRunForCli(
           }
           batchAnalysed = parsed as SelfCorrectionRemediation[];
         } else {
-          const result = await analyzeSelfCorrectionIncidentBatchWithSplit(
-            { ...analyzeDeps, batchLabel },
-            batch,
-          );
+          const result = await analyzeSelfCorrectionIncidentBatchWithSplit({ ...analyzeDeps, batchLabel }, batch);
           diagnostics.fallbacks += result.diagnostics.fallbacks;
           diagnostics.parseFailures += result.diagnostics.parseFailures;
           diagnostics.batchSplits += result.diagnostics.batchSplits;
@@ -929,7 +925,7 @@ export async function runSelfCorrectionRunForCli(
 
         diagnostics.parsedItems += batchAnalysed.length;
         for (let k = 0; k < batchAnalysed.length; k++) {
-          const idx = Math.min(k, batch.length - 1);
+          const idx = k < batch.length ? k : batch.length - 1;
           analysed.push({
             ...batchAnalysed[k],
             incidentIndex: idx,
@@ -937,9 +933,7 @@ export async function runSelfCorrectionRunForCli(
           });
         }
         completedBatchIndexes.add(batchIndex);
-        logger.info?.(
-          `memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${batchAnalysed.length}`,
-        );
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} analyze ${batchLabel}: parsed_items=${batchAnalysed.length}`);
         persistBatchState();
       };
 
@@ -1039,7 +1033,10 @@ export async function runSelfCorrectionRunForCli(
         status,
       };
     }
-    if (incidents.length > 0 && analysed.length === 0) {
+    const totalBatchesCompleted = completedBatchIndexes.size;
+    const allBatchesSucceeded = totalBatchesCompleted === batches.length;
+    const diagnosticsIndicateFailure = diagnostics.unparseableFailures > 0 || diagnostics.parseFailures > 0;
+    if (incidents.length > 0 && analysed.length === 0 && (diagnosticsIndicateFailure || !allBatchesSucceeded)) {
       const error = `Self-correction analysis suspect: ${incidents.length} incident(s) found but zero parsed/analysed remediation items.`;
       logger.warn?.(`memory-hybrid: ${SCAN_TYPE} — ${error}`);
       if (existsSync(statePath)) {
