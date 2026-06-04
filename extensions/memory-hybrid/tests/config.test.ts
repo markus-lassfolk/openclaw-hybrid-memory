@@ -1739,6 +1739,24 @@ describe("hybridConfigSchema.parse", () => {
     });
   });
 
+  it("parses llm.minimax.thinking and selfCorrection batchDelayMs", () => {
+    const result = hybridConfigSchema.parse({
+      ...validBase,
+      llm: {
+        default: ["minimax/MiniMax-M3"],
+        heavy: ["minimax/MiniMax-M3"],
+        minimax: { thinking: "adaptive" },
+      },
+      selfCorrection: {
+        analysisBatchSize: 8,
+        batchDelayMs: 500,
+      },
+    });
+    expect(result.llm?.minimax?.thinking).toBe("adaptive");
+    expect(result.selfCorrection?.analysisBatchSize).toBe(8);
+    expect(result.selfCorrection?.batchDelayMs).toBe(500);
+  });
+
   it("parses optional selfCorrection config", () => {
     const result = hybridConfigSchema.parse({
       ...validBase,

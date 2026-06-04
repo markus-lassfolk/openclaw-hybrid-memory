@@ -149,7 +149,7 @@ The fingerprint includes **incidents**, **model**, **batch size**, **dry-run**, 
 - State is **removed on successful completion** (including suspect zero-parsed exits that finish the run).
 - Stale state files in the same directory are pruned when a new run starts.
 
-Configure batch size with `selfCorrection.analysisBatchSize` (default **1** for MiniMax/M3 models, **25** otherwise).
+Configure batch size with `selfCorrection.analysisBatchSize` (default **5** for MiniMax/M3 models, **25** otherwise). When a batch returns fewer items than incidents (or hits output truncation), the pipeline **auto-splits** the batch in half recursively. Optional `selfCorrection.batchDelayMs` (default **250**) paces sequential batches for MiniMax rate limits.
 
 ### Run status values
 
@@ -222,7 +222,8 @@ Under `plugins.entries["openclaw-hybrid-memory"].config.selfCorrection`:
 | `analyzeViaSpawn` | `false` | When `true` and incident count > `spawnThreshold`, run Phase 2 (analyze) via `openclaw sessions spawn --model <spawnModel>` for large context (e.g. Gemini). |
 | `spawnThreshold` | `15` | Use spawn for Phase 2 when incidents exceed this count. |
 | `spawnModel` | `"gemini"` | Model for spawn when `analyzeViaSpawn` is true. |
-| `analysisBatchSize` | `1` (MiniMax/M3) / `25` (others) | Incidents per LLM analysis batch. Smaller batches improve M3 parse visibility (`expected` vs `parsed` per batch). |
+| `analysisBatchSize` | `5` (MiniMax/M3) / `25` (others) | Incidents per LLM analysis batch. Auto-split-on-mismatch recovers partial M3 batches. |
+| `batchDelayMs` | `250` | Delay between sequential analysis batches (MiniMax RPM/TPM pacing). |
 
 Example (in `openclaw.json` or plugin config):
 

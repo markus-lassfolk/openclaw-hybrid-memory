@@ -53,6 +53,8 @@ describe("distillMaxOutputTokens", () => {
   it("returns catalog max output for known models, 8000 default for unknown", () => {
     expect(distillMaxOutputTokens("gpt-4o-mini")).toBe(16_384);
     expect(distillMaxOutputTokens("gpt-4")).toBe(8000);
+    expect(distillMaxOutputTokens("minimax/MiniMax-M3")).toBe(131_072);
+    expect(distillMaxOutputTokens("MiniMax-M2.7-highspeed")).toBe(128_000);
   });
 });
 
@@ -114,6 +116,40 @@ describe("chatComplete", () => {
       }),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("uses max_completion_tokens and thinking disabled for MiniMax M3", async () => {
+    await chatComplete({
+      model: "minimax/MiniMax-M3",
+      content: "test",
+      maxTokens: 131072,
+      thinkingMode: "disabled",
+      openai: mockOpenai,
+    });
+    expect(mockOpenai.chat.completions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "minimax/MiniMax-M3",
+        max_completion_tokens: 131072,
+        thinking: { type: "disabled" },
+      }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("chatCompleteDetailed surfaces finishReason and usage", async () => {
+    vi.mocked(mockOpenai.chat.completions.create).mockResolvedValue({
+      choices: [{ message: { content: "[]" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+    } as any);
+    const { chatCompleteDetailed } = await import("../services/chat.js");
+    const detail = await chatCompleteDetailed({
+      model: "gpt-4o-mini",
+      content: "test",
+      openai: mockOpenai,
+    });
+    expect(detail.text).toBe("[]");
+    expect(detail.finishReason).toBe("stop");
+    expect(detail.usage?.totalTokens).toBe(12);
   });
 
   it("routes gemini-2.0-flash through gateway (openai.chat.completions.create)", async () => {

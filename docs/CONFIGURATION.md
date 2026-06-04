@@ -704,6 +704,14 @@ Optional config for the self-correction pipeline: semantic dedup before storing 
 | `analyzeViaSpawn` | `false` | When true and incidents > spawnThreshold, run Phase 2 via `openclaw sessions spawn` |
 | `spawnThreshold` | `15` | Use spawn for Phase 2 when incident count exceeds this |
 | `spawnModel` | `gemini` | Model for spawn when analyzeViaSpawn is true |
+| `analysisBatchSize` | `5` (MiniMax/M3) / `25` | Incidents per LLM analysis batch; auto-split-on-mismatch for partial M3 output |
+| `batchDelayMs` | `250` | Delay in ms between sequential analysis batches (rate-limit pacing) |
+
+MiniMax M3 maintenance tuning under `llm.minimax`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `llm.minimax.thinking` | `"disabled"` | M3 thinking mode for maintenance LLM calls: `"disabled"` (recommended for JSON extraction) or `"adaptive"` |
 
 ---
 
