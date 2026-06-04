@@ -356,7 +356,40 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       // WAL Recovery: replay uncommitted operations from previous session
       if (wal) {
-        const pendingEntries = await wal.getValidEntries();
+        let pendingEntries: Awaited<ReturnType<typeof wal.getValidEntries>> = [];
+        try {
+          pendingEntries = await wal.getValidEntries();
+        } catch (err) {
+          if (err instanceof Error && err.name === "WalReadCorruptionError") {
+            api.logger.warn(
+              `memory-hybrid: WAL recovery aborted due to corruption: ${err.message}. WAL will be cleared to allow startup.`,
+            );
+            capturePluginError(err, {
+              subsystem: "plugin-service",
+              operation: "wal-recovery-corrupted",
+            });
+            try {
+              await wal.clear();
+              api.logger.info("memory-hybrid: corrupted WAL cleared successfully");
+            } catch (clearErr) {
+              api.logger.warn(
+                `memory-hybrid: failed to clear corrupted WAL: ${clearErr instanceof Error ? clearErr.message : String(clearErr)}`,
+              );
+              capturePluginError(clearErr instanceof Error ? clearErr : new Error(String(clearErr)), {
+                subsystem: "plugin-service",
+                operation: "wal-recovery-clear-failed",
+              });
+            }
+          } else {
+            api.logger.warn(
+              `memory-hybrid: WAL recovery failed with unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+            );
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "plugin-service",
+              operation: "wal-recovery-unexpected-error",
+            });
+          }
+        }
         if (pendingEntries.length > 0) {
           api.logger.info(`memory-hybrid: WAL recovery starting — found ${pendingEntries.length} pending operation(s)`);
           let recovered = 0;
