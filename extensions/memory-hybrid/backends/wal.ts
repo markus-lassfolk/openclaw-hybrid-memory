@@ -534,16 +534,18 @@ export class WriteAheadLog {
     try {
       await prevLock;
       const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
+      if (hadCorruption) {
+        pluginLogger.warn(
+          `memory-hybrid: WAL pruneStale detected corruption, rewriting ${entries.length} recoverable entr${entries.length === 1 ? "y" : "ies"} (preserving all for replay)`,
+        );
+        await this.atomicRewriteEntries(entries);
+        return 0;
+      }
       const now = Date.now();
       const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
       const pruned = entries.length - valid.length;
 
-      if (pruned > 0 || hadCorruption) {
-        if (hadCorruption) {
-          pluginLogger.warn(
-            `memory-hybrid: WAL pruneStale detected corruption, rewriting ${valid.length} valid entr${valid.length === 1 ? "y" : "ies"}`,
-          );
-        }
+      if (pruned > 0) {
         await this.atomicRewriteEntries(valid);
       }
       return pruned;
@@ -577,6 +579,8 @@ export class WriteAheadLog {
         pluginLogger.info(
           `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${entries.length} valid entries`,
         );
+        await this.atomicRewriteEntries(entries);
+        return 1;
       }
       const now = Date.now();
       const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
