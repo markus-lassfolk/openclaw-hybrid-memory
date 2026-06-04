@@ -465,6 +465,7 @@ export async function runSelfCorrectionRunForCli(
     }
 
     const persistBatchState = () => {
+      if (opts.dryRun) return;
       writeSelfCorrectionBatchState(statePath, {
         version: SELF_CORRECTION_BATCH_STATE_VERSION,
         incidentsHash,
@@ -693,7 +694,7 @@ export async function runSelfCorrectionRunForCli(
       const isParseFailure = (e as any).isParseFailure === true;
       return {
         incidentsFound: incidents.length,
-        analysed: 0,
+        analysed: analysed.length,
         autoFixed: 0,
         proposals: [],
         reportPath: null,
