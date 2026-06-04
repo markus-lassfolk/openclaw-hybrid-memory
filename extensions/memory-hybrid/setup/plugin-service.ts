@@ -374,7 +374,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           });
         }
 
-        // Size-based compaction only — do not time-prune pending entries (data loss risk).
+        // Size-based compaction — prunes stale entries when file exceeds maxSizeBytes.
         try {
           const compacted = await wal.compactIfOversized(cfg.wal?.maxSizeBytes ?? 16 * 1024 * 1024);
           if (compacted > 0) {

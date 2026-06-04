@@ -565,7 +565,6 @@ export class WriteAheadLog {
       if (!existsSync(this.walPath)) return 0;
       const st = statSync(this.walPath);
       if (st.size <= maxBytes) return 0;
-      // Size-triggered rewrite only — never age-prune pending entries (#1876).
       const { entries, hadCorruption } = await this.readAllWithCorruptionFallback();
       if (hadCorruption) {
         pluginLogger.warn(
@@ -579,7 +578,9 @@ export class WriteAheadLog {
           `memory-hybrid: WAL compactIfOversized repaired corruption, recovered ${entries.length} valid entries`,
         );
       }
-      await this.atomicRewriteEntries(entries);
+      const now = Date.now();
+      const valid = entries.filter((e) => now - e.timestamp < this.maxAge);
+      await this.atomicRewriteEntries(valid);
       return 1;
     } catch (err) {
       pluginLogger.warn(
