@@ -643,7 +643,6 @@ export class CredentialsDB extends BaseSqliteStore {
     let rekeySucceeded = false;
     try {
       rekey();
-      rekeySucceeded = true;
       this.kdfVersion = newKdfVersion;
       this.salt = newSalt;
       this.key = newKey;
@@ -664,6 +663,8 @@ export class CredentialsDB extends BaseSqliteStore {
         }
         verified = true;
       }
+
+      rekeySucceeded = true;
 
       if (oldBackupPath) {
         try {
