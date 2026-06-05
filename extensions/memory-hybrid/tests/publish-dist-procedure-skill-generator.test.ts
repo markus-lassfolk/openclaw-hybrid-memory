@@ -9,6 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const distDir = join(root, "dist");
@@ -123,18 +124,28 @@ category: procedure
     db.recordProcedureSuccess(proc.id, undefined, "s2");
     db.recordProcedureSuccess(proc.id, undefined, "s3");
 
-    const result = generateAutoSkills(
-      db,
-      {
-        skillsAutoPath: skillsDir,
-        validationThreshold: 3,
-        apply: true,
-        policy: "auto-safe",
-        maxPerRun: 10,
-        skillTTLDays: 30,
-      },
-      { info: () => {}, warn: () => {} },
-    );
+    const previousWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
+    let result;
+    try {
+      result = generateAutoSkills(
+        db,
+        {
+          skillsAutoPath: skillsDir,
+          skillsPendingPath: join(tmpDir, "skills-pending"),
+          requireApprovalForPromote: false,
+          validationThreshold: 3,
+          apply: true,
+          policy: "auto-safe",
+          maxPerRun: 10,
+          skillTTLDays: 30,
+        },
+        { info: () => {}, warn: () => {} },
+      );
+    } finally {
+      if (previousWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
+      else setEnv("OPENCLAW_WORKSPACE", undefined);
+    }
 
     expect(result.summary?.drafted).toBe(1);
     const slugDir = join(skillsDir, "check-moltbook-notifications");
@@ -174,18 +185,28 @@ category: procedure
     db.recordProcedureSuccess(proc.id, undefined, "s2");
     db.recordProcedureSuccess(proc.id, undefined, "s3");
 
-    const result = generateAutoSkills(
-      db,
-      {
-        skillsAutoPath: skillsDir,
-        validationThreshold: 3,
-        apply: true,
-        policy: "auto-safe",
-        maxPerRun: 10,
-        skillTTLDays: 30,
-      },
-      { info: () => {}, warn: () => {} },
-    );
+    const previousWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
+    let result;
+    try {
+      result = generateAutoSkills(
+        db,
+        {
+          skillsAutoPath: skillsDir,
+          skillsPendingPath: join(tmpDir, "skills-pending"),
+          requireApprovalForPromote: false,
+          validationThreshold: 3,
+          apply: true,
+          policy: "auto-safe",
+          maxPerRun: 10,
+          skillTTLDays: 30,
+        },
+        { info: () => {}, warn: () => {} },
+      );
+    } finally {
+      if (previousWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
+      else setEnv("OPENCLAW_WORKSPACE", undefined);
+    }
 
     expect(result.summary?.drafted ?? 0).toBe(0);
     expect(result.summary?.defersByReason?.noisy_trace ?? 0).toBeGreaterThan(0);
