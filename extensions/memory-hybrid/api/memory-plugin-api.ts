@@ -84,6 +84,7 @@ export interface MemoryPluginAPI {
   lastProgressiveIndexIds: string[];
   progressiveIndexBySession: Map<string, string[]>;
   lastAutoRecallPromptBySession: Map<string, string>;
+  injectedFactIdsBySession: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
   pendingLLMWarnings: PendingLLMWarnings;
 
   // --- Optional core (nullable) ---

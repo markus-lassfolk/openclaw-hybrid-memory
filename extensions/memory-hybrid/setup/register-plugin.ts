@@ -498,6 +498,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     lastProgressiveIndexIds: [],
     progressiveIndexBySession: new Map(),
     lastAutoRecallPromptBySession: new Map(),
+    injectedFactIdsBySession: new Map(),
     timers: createTimers(),
   };
 
@@ -530,6 +531,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     lastProgressiveIndexIds: runtime.lastProgressiveIndexIds,
     progressiveIndexBySession: runtime.progressiveIndexBySession,
     lastAutoRecallPromptBySession: runtime.lastAutoRecallPromptBySession,
+    injectedFactIdsBySession: runtime.injectedFactIdsBySession,
     currentAgentIdRef: runtime.currentAgentIdRef,
     restartPendingClearedRef: runtime.restartPendingClearedRef,
     recallInFlightRef: runtime.recallInFlightRef,
@@ -653,6 +655,12 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         costTracker: runtime.costTracker,
         auditStore: runtime.auditStore ?? null,
         agentHealthStore: runtime.agentHealthStore ?? null,
+        verificationStore: runtime.verificationStore ?? null,
+        issueStore: runtime.issueStore ?? null,
+        workflowStore: runtime.workflowStore ?? null,
+        narrativesDb: runtime.narrativesDb ?? null,
+        crystallizationStore: runtime.crystallizationStore ?? null,
+        toolProposalStore: runtime.toolProposalStore ?? null,
       }),
     );
   } catch (err) {

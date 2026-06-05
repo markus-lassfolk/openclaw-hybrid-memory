@@ -18,6 +18,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, 
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve as pathResolve, relative } from "node:path";
 
+import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { getEnv } from "../../utils/env-manager.js";
 import { expandTilde } from "../../utils/path.js";
 import { escapeRegExp } from "../../utils/text.js";
@@ -254,19 +255,19 @@ export function applyHybridMemoryToolsMd(opts: {
   try {
     mkdirSync(workspaceRoot, { recursive: true });
     if (!existsSync(toolsPath)) {
-      writeFileSync(toolsPath, `# TOOLS\n\n${block}\n`, "utf-8");
+      atomicWriteFile(toolsPath, `# TOOLS\n\n${block}\n`);
       return { path: toolsPath, updated: true };
     }
     const existing = readFileSync(toolsPath, "utf-8");
     if (managedRe.test(existing)) {
       const next = existing.replace(managedRe, block);
       if (next !== existing) {
-        writeFileSync(toolsPath, next, "utf-8");
+        atomicWriteFile(toolsPath, next);
         return { path: toolsPath, updated: true };
       }
       return { path: toolsPath, updated: false };
     }
-    writeFileSync(toolsPath, `${existing.trimEnd()}\n\n${block}\n`, "utf-8");
+    atomicWriteFile(toolsPath, `${existing.trimEnd()}\n\n${block}\n`);
     return { path: toolsPath, updated: true };
   } catch (err) {
     return { path: toolsPath, error: String(err), updated: false };

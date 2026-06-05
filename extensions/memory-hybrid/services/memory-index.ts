@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { getEnv } from "../utils/env-manager.js";
+import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
   LLMRetryError,
@@ -296,7 +296,7 @@ async function synthesizeMemoryIndex(
 
 function resolveOutputPath(options: Pick<MemoryIndexOptions, "workspaceRoot" | "outputPath">): string {
   if (options.outputPath) return options.outputPath;
-  const workspaceRoot = options.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const workspaceRoot = options.workspaceRoot ?? resolveOpenClawWorkspaceRoot();
   return join(workspaceRoot, "MEMORY_INDEX.md");
 }
 

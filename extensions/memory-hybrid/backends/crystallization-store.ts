@@ -608,6 +608,47 @@ export class CrystallizationStore extends BaseSqliteStore {
     });
   }
 
+  /**
+   * Roll back a failed install: approved → validated (clears approved_at).
+   * Used when disk write fails after approveWithinCap.
+   */
+  revertApproval(id: string): CrystallizationProposal | null {
+    return this.runWithDb("revertApproval", () => {
+      const now = new Date().toISOString();
+      const result = this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+           SET status = 'validated', approved_at = NULL, updated_at = ?
+           WHERE id = ? AND status = 'approved'`,
+        )
+        .run(now, id);
+      if (result.changes === 0) return null;
+      return this.getByIdInternal(id);
+    });
+  }
+
+  /**
+   * Reject pending proposals (drafted/validated) untouched longer than `maxAgeDays`.
+   * Returns the number of rows pruned. No-op when maxAgeDays <= 0.
+   */
+  pruneStalePendingProposals(maxAgeDays: number): number {
+    return this.runWithDb("pruneStalePendingProposals", () => {
+      if (maxAgeDays <= 0) return 0;
+      const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+      const reason = `pruned: unused for ${maxAgeDays} days`;
+      const now = new Date().toISOString();
+      const result = this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+           SET status = 'rejected', rejection_reason = ?, updated_at = ?
+           WHERE status IN ('drafted', 'validated')
+             AND updated_at < ?`,
+        )
+        .run(reason, now, cutoff);
+      return result.changes;
+    });
+  }
+
   /** Mark an installed proposal as quarantined (failed re-validation of on-disk SKILL.md). */
   quarantine(id: string, reason?: string): CrystallizationProposal | null {
     return this.runWithDb("quarantine", () => {
@@ -619,6 +660,37 @@ export class CrystallizationStore extends BaseSqliteStore {
            WHERE id = ? AND status = 'installed'`,
         )
         .run(reason ?? null, now, id);
+      if (result.changes === 0) return null;
+      return this.getByIdInternal(id);
+    });
+  }
+
+  updateOutputPath(id: string, outputPath: string): CrystallizationProposal | null {
+    return this.runWithDb("updateOutputPath", () => {
+      const now = new Date().toISOString();
+      const result = this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+           SET output_path = ?, updated_at = ?
+           WHERE id = ?`,
+        )
+        .run(outputPath, now, id);
+      if (result.changes === 0) return null;
+      return this.getByIdInternal(id);
+    });
+  }
+
+  /** Restore a quarantined proposal to installed (clears stale rejection reason). */
+  restoreFromQuarantine(id: string, outputPath: string): CrystallizationProposal | null {
+    return this.runWithDb("restoreFromQuarantine", () => {
+      const now = new Date().toISOString();
+      const result = this.liveDb
+        .prepare(
+          `UPDATE crystallization_proposals
+           SET status = 'installed', output_path = ?, rejection_reason = NULL, updated_at = ?
+           WHERE id = ? AND status = 'quarantined'`,
+        )
+        .run(outputPath, now, id);
       if (result.changes === 0) return null;
       return this.getByIdInternal(id);
     });
@@ -673,6 +745,55 @@ export class CrystallizationStore extends BaseSqliteStore {
         )
         .get(patternId) as { n: number };
       return row.n > 0;
+    });
+  }
+
+  /** Latest installed proposal for a pattern (at most one per pattern via unique index). */
+  getInstalledForPattern(patternId: string): CrystallizationProposal | null {
+    return this.runWithDb("getInstalledForPattern", () => {
+      const row = this.liveDb
+        .prepare(
+          "SELECT * FROM crystallization_proposals WHERE pattern_id = ? AND status = 'installed' ORDER BY normalizedCrystallizationTimestamp(installed_at, created_at) DESC, id DESC LIMIT 1",
+        )
+        .get(patternId) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      return this.rowToProposal(row);
+    });
+  }
+
+  /**
+   * Returns true when an installed skill already covers this evidence milestone.
+   * Allows re-proposal only when metrics/goals crossed a new bucket since install.
+   */
+  hasInstalledWithSameEvidence(
+    patternId: string,
+    evidenceHash: string,
+    opts?: { legacyEvidenceHash?: string; evidenceCountBucketSize?: number },
+  ): boolean {
+    return this.runWithDb("hasInstalledWithSameEvidence", () => {
+      const row = this.liveDb
+        .prepare(
+          "SELECT evidence_hash, pattern_snapshot FROM crystallization_proposals WHERE pattern_id = ? AND status = 'installed' ORDER BY normalizedCrystallizationTimestamp(installed_at, created_at) DESC, id DESC LIMIT 1",
+        )
+        .get(patternId) as { evidence_hash?: string; pattern_snapshot?: string } | undefined;
+      if (!row) return false;
+
+      const stored = row.evidence_hash ?? "";
+      if (stored === evidenceHash) return true;
+
+      const legacyEvidenceHash = opts?.legacyEvidenceHash;
+      if (!legacyEvidenceHash || stored !== legacyEvidenceHash) return false;
+
+      const bucketSize = opts.evidenceCountBucketSize ?? 5;
+      try {
+        const atInstall = JSON.parse(row.pattern_snapshot ?? "{}") as WorkflowPattern;
+        const installMilestoneHash = computeEvidenceHash(atInstall, {
+          evidenceCountBucketSize: bucketSize,
+        });
+        return installMilestoneHash === evidenceHash;
+      } catch {
+        return true;
+      }
     });
   }
 

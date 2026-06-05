@@ -136,23 +136,21 @@ export async function runVerboseFollowUp<T>(
   });
 }
 
-export function recordDreamCycleFollowUpFailure(
-  failures: Array<{ phase: string; error: string }>,
-  phase: string,
-  error: unknown,
-): void {
-  failures.push({
-    phase,
-    error: error instanceof Error ? error.message : String(error),
-  });
+/** Skip follow-ups when the core cycle was skipped or WAL replay failed before mutation. */
+export function shouldSkipDreamCycleFollowUps(result: {
+  skipped: boolean;
+  failedStages: readonly string[];
+}): boolean {
+  return result.skipped || result.failedStages.includes("wal pre-flush");
 }
 
-export function applyDreamCyclePipelineExitCode(params: {
-  coreSuccess: boolean;
-  coreFailedStages: string[];
-  followUpFailures: Array<{ phase: string; error: string }>;
-}): void {
-  if (!params.coreSuccess || params.coreFailedStages.length > 0 || params.followUpFailures.length > 0) {
-    process.exitCode = 2;
+export function dreamCycleFollowUpSkipReason(result: {
+  skipped: boolean;
+  failedStages: readonly string[];
+}): string | null {
+  if (result.skipped) return "dream cycle skipped";
+  if (result.failedStages.includes("wal pre-flush")) {
+    return "WAL pre-flush failed (SQLite state may be stale)";
   }
+  return null;
 }

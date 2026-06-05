@@ -86,6 +86,11 @@ export type NightlyCycleConfig = {
    * Default: true (enabled for backward compatibility).
    */
   enableReflectionRules?: boolean;
+  /**
+   * When true, dream-cycle reflection output is auto-enqueued as governed proposals
+   * (persona rules + optional Skill Workshop bridge). Default: false.
+   */
+  autoPropose?: boolean;
 };
 
 /** Memory health dashboard configuration (Issue #148). */

@@ -288,6 +288,41 @@ describe("pending review digest (#1197)", () => {
     factsDb.close();
   });
 
+  it("counts pending proposals past expires_at as expired", () => {
+    const dir = newDir();
+    const cfg = configFor(join(dir, "facts.db"));
+    const paths = pendingStorePaths(cfg.sqlitePath);
+    const factsDb = new FactsDB(cfg.sqlitePath);
+    const persona = new ProposalsDB(paths.proposals);
+    const now = new Date("2026-05-07T00:00:00.000Z");
+    const nowSec = Math.floor(now.getTime() / 1000);
+    persona.create({
+      targetFile: "USER.md",
+      title: "Expired pending",
+      observation: "Should count as expired",
+      suggestedChange: "Append note",
+      confidence: 0.8,
+      evidenceSessions: ["session-x"],
+      expiresAt: nowSec - 3600,
+    });
+    persona.create({
+      targetFile: "USER.md",
+      title: "Still valid",
+      observation: "Not expired",
+      suggestedChange: "Append note",
+      confidence: 0.8,
+      evidenceSessions: ["session-y"],
+      expiresAt: nowSec + 3600,
+    });
+
+    const report = buildPendingReviewDigestReport({ cfg, factsDb, now });
+    expect(report.personaProposals.pending).toBe(2);
+    expect(report.personaProposals.expired).toBe(1);
+
+    persona.close();
+    factsDb.close();
+  });
+
   it("renders approve, decline, and defer operator commands in markdown", () => {
     const dir = newDir();
     const cfg = configFor(join(dir, "facts.db"));

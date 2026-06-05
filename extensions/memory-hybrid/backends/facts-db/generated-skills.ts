@@ -11,7 +11,7 @@ import type {
   MemoryScope,
   ProcedureEntry,
 } from "../../types/memory.js";
-import { getEnv } from "../../utils/env-manager.js";
+import { resolveOpenClawWorkspaceRoot } from "../../utils/openclaw-workspace.js";
 import {
   DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
   effectiveDemoteThresholdsForRisk,
@@ -1179,14 +1179,14 @@ export type GeneratedSkillDoctorReport = {
  * remain rejected because that terminal operator decision must not be overwritten by
  * disk reconciliation.
  *
- * @param workspaceRoot  Absolute path used to resolve relative skill paths. Defaults to `OPENCLAW_WORKSPACE` env var, then `process.cwd()`.
+ * @param workspaceRoot  Absolute path used to resolve relative skill paths. Defaults to canonical OpenClaw workspace resolution.
  * @param fix            When true, update missing rows to `uninstalled` in the DB.
  */
 export function reconcileGeneratedSkillDiskState(
   db: DatabaseSync,
   opts: { workspaceRoot?: string; fix?: boolean; now?: number } = {},
 ): GeneratedSkillDoctorReport {
-  const workspaceRoot = opts.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const workspaceRoot = opts.workspaceRoot ?? resolveOpenClawWorkspaceRoot();
   const fix = opts.fix ?? false;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const procedures = listGeneratedSkillProcedures(db);

@@ -67,4 +67,14 @@ describe("corrections-report", () => {
     expect(formatted).toContain("skills/hybrid-memory/SKILL.md");
     expect(formatted).toContain("Add verification step");
   });
+
+  it("resolves SKILL_UPDATE from free text when only one skill exists", () => {
+    const skillDir = join(tmpDir, "skills", "hybrid-memory");
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Skill\n", "utf-8");
+    const resolved = resolveSkillUpdateTarget("[SKILL_UPDATE] Add verification step before deploy", tmpDir);
+    expect(resolved?.skillPath).toBe(join(skillDir, "SKILL.md"));
+    const formatted = formatSkillUpdateProposal("Add verification step before deploy", tmpDir);
+    expect(formatted).toContain("skills/hybrid-memory/SKILL.md");
+  });
 });

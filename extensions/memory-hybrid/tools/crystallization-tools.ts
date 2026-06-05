@@ -327,7 +327,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
         const result = proposer.rescanInstalledSkills();
         const lines: string[] = [
-          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`,
+          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, disk-moved: ${result.diskQuarantined}, skipped (no path): ${result.skipped}`,
         ];
         for (const m of result.messages) lines.push(`  ${m}`);
         for (const e of result.errors) lines.push(`  error: ${e}`);

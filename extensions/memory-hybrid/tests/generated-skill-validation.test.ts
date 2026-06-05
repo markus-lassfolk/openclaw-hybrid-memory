@@ -24,6 +24,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };

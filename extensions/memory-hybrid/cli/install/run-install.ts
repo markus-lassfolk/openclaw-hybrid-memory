@@ -212,6 +212,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
         featureGates: {
           "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true,
           "nightlyCycle.enabled": (dreamCycleRaw?.enabled as boolean | undefined) === true,
+          "crystallization.enabled": (pluginCfg?.crystallization as { enabled?: boolean } | undefined)?.enabled === true,
         },
         digestWeeklyDelivery: parseDigestWeeklyDeliveryOnly(getPluginEntryConfig(config) ?? {}),
       });
@@ -441,6 +442,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
       featureGates: {
         "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
         "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
+        "crystallization.enabled": cfg.crystallization?.enabled === true,
       },
       digestWeeklyDelivery: cfg.digest.weekly.delivery,
     });

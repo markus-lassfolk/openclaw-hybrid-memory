@@ -35,6 +35,7 @@ function makeBindings(overrides: Partial<ManageBindings> & { factsDb: ManageBind
     runReflection: vi.fn().mockResolvedValue({ patternsStored: 0 }),
     runReflectionRules: vi.fn().mockResolvedValue({ rulesStored: 0 }),
     runReflectionMeta: vi.fn().mockResolvedValue({ metaStored: 0 }),
+    requireWalFlushBeforeMutation: vi.fn().mockResolvedValue({ committed: 0, skipped: 0 }),
     ...overrides,
   } as unknown as ManageBindings;
 }

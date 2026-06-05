@@ -176,18 +176,32 @@ describe("runRecallStage", () => {
 
   it("returns degraded FTS+HOT fallback when stage wall-clock timeout fires", async () => {
     vi.useFakeTimers();
-    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
-    vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation(() => new Promise(() => undefined));
-    const sessionState = makeRecallSessionState();
-    const api = makeMockStageApi();
+    try {
+      const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+      vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation((_q, _l, _d, _h, opts) => {
+        return new Promise((resolve) => {
+          const onAbort = () => resolve([]);
+          if (opts?.stageSignal?.aborted) {
+            onAbort();
+            return;
+          }
+          opts?.stageSignal?.addEventListener("abort", onAbort, { once: true });
+        });
+      });
+      const sessionState = makeRecallSessionState();
+      const api = makeMockStageApi();
 
-    const pending = runRecallStage({ prompt: "long running recall query here" }, api as never, ctx, sessionState);
-    await vi.advanceTimersByTimeAsync(INTERACTIVE_RECALL_STAGE_TIMEOUT_MS + 1);
-    const result = await pending;
+      const pending = runRecallStage({ prompt: "long running recall query here" }, api as never, ctx, sessionState);
+      await vi.advanceTimersByTimeAsync(INTERACTIVE_RECALL_STAGE_TIMEOUT_MS + 1);
+      const result = await pending;
 
-    expect(result?.kind).toBe("degraded");
-    if (result?.kind === "degraded") {
-      expect(result.prependContext).toContain("recall degraded: timeout");
+      expect(result?.kind).toBe("degraded");
+      if (result?.kind === "degraded") {
+        expect(result.prependContext).toContain("recall degraded: timeout");
+      }
+      expect(ctx.recallInFlightRef.value).toBe(0);
+    } finally {
+      vi.useRealTimers();
     }
   });
 
@@ -196,7 +210,16 @@ describe("runRecallStage", () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     ctx.registrationGeneration = 1;
     ctx.currentRegistrationGenerationRef = { value: 1 };
-    vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation(() => new Promise(() => undefined));
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation((_q, _l, _d, _h, opts) => {
+      return new Promise((resolve) => {
+        const onAbort = () => resolve([]);
+        if (opts?.stageSignal?.aborted) {
+          onAbort();
+          return;
+        }
+        opts?.stageSignal?.addEventListener("abort", onAbort, { once: true });
+      });
+    });
     const sessionState = makeRecallSessionState();
     const api = makeMockStageApi();
 
@@ -242,6 +265,9 @@ describe("runRecallStage", () => {
     );
 
     expect(recallPipeline.runRecallPipelineQuery).toHaveBeenCalled();
+    expect(recallPipeline.runRecallPipelineQuery.mock.calls[0]?.[4]).toMatchObject({
+      stageSignal: expect.any(AbortSignal),
+    });
     expect(result?.kind).toBe("full");
     if (result?.kind === "full") {
       expect(result.result.candidates.some((c) => c.entry.id === "pipe-1")).toBe(true);

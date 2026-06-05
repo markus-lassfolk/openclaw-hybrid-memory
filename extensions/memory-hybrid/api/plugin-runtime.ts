@@ -123,6 +123,8 @@ export interface PluginRuntime {
   lastProgressiveIndexIds: string[];
   progressiveIndexBySession: Map<string, string[]>;
   lastAutoRecallPromptBySession: Map<string, string>;
+  /** Per-session fact IDs injected this turn (lifecycle + ContextEngine dedup). */
+  injectedFactIdsBySession: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
 
   // --- Timer refs (objects so they can be passed by reference to plugin-service) ---
   timers: {

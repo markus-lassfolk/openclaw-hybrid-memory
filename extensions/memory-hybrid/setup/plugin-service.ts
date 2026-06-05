@@ -13,7 +13,11 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
-import { ensureHybridMemoryWorkspaceSkillIfMissing, loadOpenclawRootForWorkspace } from "../cli/cmd-install.js";
+import {
+  applyHybridMemoryToolsMd,
+  ensureHybridMemoryWorkspaceSkillIfMissing,
+  loadOpenclawRootForWorkspace,
+} from "../cli/cmd-install.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import type { DashboardServer } from "../routes/dashboard-server.js";
@@ -42,9 +46,10 @@ import {
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
-import { replayWalEntriesWithRepair } from "../utils/wal-replay.js";
+import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
+import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
 import { findPluginRoot } from "../utils/plugin-root.js";
 import {
@@ -85,6 +90,8 @@ export interface PluginServiceContext {
   issueStore?: IssueStore | null;
   workflowStore?: WorkflowStore | null;
   narrativesDb?: NarrativesDB | null;
+  crystallizationStore?: import("../backends/crystallization-store.js").CrystallizationStore | null;
+  toolProposalStore?: import("../backends/tool-proposal-store.js").ToolProposalStore | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -134,6 +141,8 @@ export function createPluginService(ctx: PluginServiceContext) {
     issueStore,
     workflowStore,
     narrativesDb,
+    crystallizationStore,
+    toolProposalStore,
   } = ctx;
 
   let observerRunning = false;
@@ -206,6 +215,25 @@ export function createPluginService(ctx: PluginServiceContext) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "plugin-service",
           operation: "ensure-workspace-skill",
+        });
+      }
+
+      try {
+        const openclawConfig = loadOpenclawRootForWorkspace();
+        const toolsOutcome = applyHybridMemoryToolsMd({
+          mergedOpenclawConfig: openclawConfig,
+          pluginRootDir: findPluginRoot(import.meta.url),
+          dryRun: false,
+        });
+        if (toolsOutcome.updated) {
+          api.logger.info(`memory-hybrid: ensured workspace TOOLS.md at ${toolsOutcome.path}`);
+        } else if (toolsOutcome.error) {
+          api.logger.warn(`memory-hybrid: workspace TOOLS.md bootstrap failed — ${toolsOutcome.error}`);
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "plugin-service",
+          operation: "ensure-workspace-tools-md",
         });
       }
 
@@ -352,26 +380,19 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       // WAL Recovery: replay uncommitted operations from previous session
       if (wal) {
-        try {
-          const replayResult = await replayWalEntriesWithRepair(
-            wal,
-            factsDb,
-            vectorDb,
-            embeddings,
-            api.logger,
-            "WAL recovery",
+        const recoveryFlush = await runPreConsolidationFlush(
+          { wal, factsDb, vectorDb, embeddings },
+          api.logger,
+          "WAL recovery",
+        );
+        if (recoveryFlush.failed) {
+          api.logger.error?.(
+            "memory-hybrid: WAL recovery failed on startup; mutation commands should abort until WAL replay succeeds",
           );
-          if (replayResult.committed > 0 || replayResult.skipped > 0) {
-            api.logger.info(
-              `memory-hybrid: WAL recovery completed — committed ${replayResult.committed}, skipped ${replayResult.skipped}`,
-            );
-          }
-        } catch (err) {
-          api.logger.warn?.(`memory-hybrid: WAL recovery failed: ${err}`);
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "plugin-service",
-            operation: "wal-recovery",
-          });
+        } else if (recoveryFlush.committed > 0 || recoveryFlush.skipped > 0) {
+          api.logger.info(
+            `memory-hybrid: WAL recovery completed — committed ${recoveryFlush.committed}, skipped ${recoveryFlush.skipped}`,
+          );
         }
 
         // Size-based compaction — prunes stale entries when file exceeds maxSizeBytes.
@@ -419,6 +440,15 @@ export function createPluginService(ctx: PluginServiceContext) {
               provenanceService,
               graphHubDegreeCap: cfg.graph.hubDegreeCap,
               graphHubScorePenalty: cfg.graph.hubScorePenalty,
+              hybridCfg: cfg,
+              proposalsDb,
+              crystallizationStore: crystallizationStore ?? null,
+              toolProposalStore: toolProposalStore ?? null,
+              dreamCycleLogDir: join(
+                getEnv("OPENCLAW_HOME")?.trim() || pathJoin(homedir(), ".openclaw"),
+                "logs",
+                "dream-cycle",
+              ),
             },
             cfg.dashboard.port,
           );
@@ -651,7 +681,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
       const watchdogRun = async () => {
         try {
-          await runTaskQueueWatchdog({ repoDir: getEnv("OPENCLAW_WORKSPACE") ?? process.cwd() }, api.logger);
+          await runTaskQueueWatchdog({ repoDir: resolveOpenClawWorkspaceRoot() }, api.logger);
         } catch (err) {
           api.logger.warn?.(`memory-hybrid: task-queue-watchdog failed (non-fatal): ${err}`);
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -661,7 +691,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
         if (cfg.activeTask.enabled) {
           try {
-            const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+            const workspaceRoot = resolveOpenClawWorkspaceRoot();
             const activeTaskFilePath = isAbsolute(cfg.activeTask.filePath)
               ? cfg.activeTask.filePath
               : join(workspaceRoot, cfg.activeTask.filePath);
@@ -723,7 +753,7 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
         if (cfg.goalStewardship.enabled && cfg.goalStewardship.watchdogHealthCheck) {
           try {
-            const workspaceRootGs = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+            const workspaceRootGs = resolveOpenClawWorkspaceRoot();
             const goalsDir = resolveGoalsDir(workspaceRootGs, cfg.goalStewardship.goalsDir);
             const gh = await runGoalHealthCheck({
               goalsDir,

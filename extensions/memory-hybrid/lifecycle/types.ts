@@ -89,6 +89,8 @@ export interface LifecycleContext {
   currentRegistrationGenerationRef?: { value: number };
   /** Per-turn shared prepend token budget (initialized by recall, consumed by downstream hooks). */
   prependBudgetRef?: PrependBudgetRef;
+  /** Fact IDs already injected this turn (lifecycle + ContextEngine dedup). */
+  injectedFactIdsBySession?: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */

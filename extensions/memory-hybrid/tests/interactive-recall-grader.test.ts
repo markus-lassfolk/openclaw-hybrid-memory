@@ -79,4 +79,24 @@ describe("filterCandidatesByInteractiveGrading", () => {
     const out = await filterCandidatesByInteractiveGrading("q", candidates, cfg, openai as never);
     expect(out).toEqual([]);
   });
+
+  it("skips grading when stage abort signal is already fired", async () => {
+    const candidates = [makeCandidate("a", "alpha"), makeCandidate("b", "beta")];
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(),
+        },
+      },
+    };
+    const controller = new AbortController();
+    controller.abort();
+
+    const out = await filterCandidatesByInteractiveGrading("q", candidates, cfg, openai as never, {
+      signal: controller.signal,
+    });
+
+    expect(out).toEqual(candidates);
+    expect(openai.chat.completions.create).not.toHaveBeenCalled();
+  });
 });

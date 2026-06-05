@@ -17,6 +17,10 @@ import { type AgentHealthView, mergeAgentHealthDashboard } from "../../backends/
 import type { AuditStore } from "../../backends/audit-store.js";
 import type { EdictStore } from "../../backends/edict-store.js";
 import type { FactsDB } from "../../backends/facts-db.js";
+import type { ProposalsDB } from "../../backends/proposals-db.js";
+import type { CrystallizationStore } from "../../backends/crystallization-store.js";
+import type { ToolProposalStore } from "../../backends/tool-proposal-store.js";
+import type { HybridMemoryConfig } from "../../config.js";
 import { escapeLikeLiteralForBackslashEscape } from "../../backends/facts-db/entity-layer.js";
 import type { IssueStore } from "../../backends/issue-store.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
@@ -178,6 +182,13 @@ export interface DashboardContext {
   graphHubDegreeCap?: number | null;
   /** Mirrors `graph.hubScorePenalty` for dashboard graph recall (#1192). */
   graphHubScorePenalty?: number | null;
+  /** Workshop tab: full plugin config. */
+  hybridCfg?: HybridMemoryConfig;
+  proposalsDb?: ProposalsDB | null;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
+  /** Dream-cycle stage artifact directory for workshop log view. */
+  dreamCycleLogDir?: string;
 }
 
 interface MemoryStats {

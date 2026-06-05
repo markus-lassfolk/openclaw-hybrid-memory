@@ -224,10 +224,45 @@ export class ProposalsDB extends BaseSqliteStore {
   }
 
   updateStatus(id: string, status: string, reviewedBy?: string, rejectionReason?: string): ProposalEntry | null {
+    if (status === "pending") {
+      this.liveDb
+        .prepare(
+          "UPDATE proposals SET status = ?, reviewed_at = NULL, reviewed_by = NULL, rejection_reason = NULL WHERE id = ?",
+        )
+        .run(status, id);
+      return this.get(id);
+    }
     const now = Math.floor(Date.now() / 1000);
     this.liveDb
       .prepare("UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?")
       .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id);
+    return this.get(id);
+  }
+
+  updateSuggestedChange(
+    id: string,
+    suggestedChange: string,
+    snapshot?: { targetMtimeMs: number | null; targetHash: string | null; confidence?: number },
+  ): ProposalEntry | null {
+    if (snapshot) {
+      this.liveDb
+        .prepare(
+          `UPDATE proposals SET suggested_change = ?, target_mtime_ms = ?, target_hash = ?, confidence = COALESCE(?, confidence)
+           WHERE id = ? AND status = 'pending'`,
+        )
+        .run(
+          suggestedChange,
+          snapshot.targetMtimeMs,
+          snapshot.targetHash,
+          snapshot.confidence ?? null,
+          id,
+        );
+    } else {
+      this.liveDb.prepare("UPDATE proposals SET suggested_change = ? WHERE id = ? AND status = 'pending'").run(
+        suggestedChange,
+        id,
+      );
+    }
     return this.get(id);
   }
 

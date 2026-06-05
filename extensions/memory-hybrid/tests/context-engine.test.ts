@@ -543,6 +543,28 @@ describe("HybridMemoryContextEngine.assemble()", () => {
     expect(result.estimatedTokens).toBeGreaterThan(0);
   });
 
+  it("skips facts already injected this turn for the session", async () => {
+    const entry = factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Already injected preference",
+      category: "preference",
+      importance: 0.9,
+      source: "test",
+    });
+    const injectedFactIdsBySession = new Map<string, Set<string>>([["s-dedup", new Set([entry.id])]]);
+    const engine = makeEngine({
+      injectedFactIdsBySession,
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
+
+    const result = await engine.assemble({ sessionId: "s-dedup", messages: [], tokenBudget: 2000 });
+
+    expect(result.systemPromptAddition).toBeUndefined();
+    expect(result.estimatedTokens).toBe(0);
+  });
+
   it("respects tokenBudget — truncates facts when budget is very small", async () => {
     // Store many facts
     for (let i = 0; i < 10; i++) {

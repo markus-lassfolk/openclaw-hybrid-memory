@@ -212,6 +212,8 @@ export type CrystallizationConfig = {
   maxCrystallized: number;
   /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
   pruneUnusedDays: number;
+  /** Maximum pending proposals in queue (drafted+validated; default: 100; 0 = unlimited). */
+  maxPendingProposals: number;
   /** Project-level SKILL.md section taxonomy overrides keyed by category. */
   sectionTaxonomy?: SectionTaxonomyOverrides;
   /**

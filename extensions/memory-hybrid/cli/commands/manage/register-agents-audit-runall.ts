@@ -40,6 +40,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
     runGenerateProposals,
     runSelfCorrectionRun,
     runBuildLanguageKeywords,
+    requireWalFlushBeforeMutation,
   } = b;
 
   const agentsCmd = mem.command("agents").description("Multi-agent health (Issue #789)");
@@ -365,6 +366,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           });
           return;
         }
+        await requireWalFlushBeforeMutation("run_all_maintenance");
         for (let i = 0; i < steps.length; i++) {
           log(`[${i + 1}/${steps.length}] ${steps[i].name}`);
           try {

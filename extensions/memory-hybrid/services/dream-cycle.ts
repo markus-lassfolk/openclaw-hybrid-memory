@@ -15,6 +15,7 @@ import { join } from "node:path";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
@@ -29,6 +30,7 @@ import {
   runReflection,
   runReflectionRules,
 } from "./reflection.js";
+import { runDreamCycleProposalBridge, type DreamCycleProposalBridgeInput } from "./dream-cycle-proposal-bridge.js";
 import { cleanupEvictedVector, deleteVectorsForFactIds, reconcileOrphanVectors } from "./vector-maintenance.js";
 
 /** Prune modes for the dream cycle. */
@@ -108,6 +110,9 @@ export interface DreamCycleConfig {
    */
   walFlushFailed?: boolean;
 }
+
+/** Optional bridge context for auto-proposing reflection output (Phase 4). */
+export type DreamCycleBridgeOpts = Pick<DreamCycleProposalBridgeInput, "cfg" | "proposalsDb" | "api">;
 
 /** Result returned by a single dream cycle run. */
 export interface DreamCycleResult {
@@ -692,6 +697,7 @@ export async function runDreamCycle(
   config: DreamCycleConfig,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
+  bridge?: DreamCycleBridgeOpts,
 ): Promise<DreamCycleResult> {
   if (!config.enabled) {
     return {
@@ -1096,6 +1102,12 @@ export async function runDreamCycle(
   }
 
   // ── Stage 3: Reflection (patterns) ────────────────────────────────────────
+  const patternIdsBeforeReflection = new Set(
+    factsDb
+      .getAll()
+      .filter((f) => f.category === "pattern" && !f.supersededAt)
+      .map((f) => f.id),
+  );
   let patternsFound = 0;
   let stageReflectionError: unknown;
   const stageReflection = beginStage("reflection (patterns)", {
@@ -1144,6 +1156,12 @@ export async function runDreamCycle(
   const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
 
   // ── Stage 4: Reflect-rules (optional) ─────────────────────────────────────
+  const ruleIdsBeforeReflectRules = new Set(
+    factsDb
+      .getAll()
+      .filter((f) => f.category === "rule" && !f.supersededAt)
+      .map((f) => f.id),
+  );
   let rulesGenerated = 0;
   let reflectionRulesDiagnostics: DreamCycleResult["reflectionRulesDiagnostics"];
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
@@ -1221,6 +1239,37 @@ export async function runDreamCycle(
       logger.info(
         `memory-hybrid: dream-cycle — skipping reflect-rules (${patternsFound} stored this cycle, ${livePatternCountForRules} live patterns; need ≥${MIN_PATTERNS_FOR_RULES})`,
       );
+    }
+  }
+
+  if (bridge?.cfg?.nightlyCycle?.autoPropose === true) {
+    try {
+      const newPatternFactIds = factsDb
+        .getAll()
+        .filter((f) => f.category === "pattern" && !f.supersededAt && !patternIdsBeforeReflection.has(f.id))
+        .map((f) => f.id);
+      const newRuleFactIds = factsDb
+        .getAll()
+        .filter((f) => f.category === "rule" && !f.supersededAt && !ruleIdsBeforeReflectRules.has(f.id))
+        .map((f) => f.id);
+      const bridgeResult = runDreamCycleProposalBridge({
+        cfg: bridge.cfg,
+        factsDb,
+        proposalsDb: bridge.proposalsDb ?? null,
+        patternsStored: patternsFound,
+        rulesGenerated,
+        newRuleFactIds,
+        newPatternFactIds,
+        logger,
+        api: bridge.api,
+      });
+      if (bridgeResult.personaProposalsCreated > 0 || bridgeResult.skillWorkshopBridged > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle auto-propose — persona=${bridgeResult.personaProposalsCreated} skillWorkshop=${bridgeResult.skillWorkshopBridged}`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle auto-propose bridge failed (non-fatal): ${err}`);
     }
   }
 

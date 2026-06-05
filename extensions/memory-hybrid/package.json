@@ -91,6 +91,7 @@
     "offline-qa:finalize-report": "node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/finalize-report.ts",
     "offline-qa:verify": "node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/verify-fixtures.ts",
     "offline-qa:backfill": "HOME=.offline-qa/sandbox-work node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/run-sandbox-backfill.ts",
+    "offline-qa:crystallization": "HOME=.offline-qa/sandbox-work node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/analyze-crystallization.ts",
     "maintenance:backfill": "node ../../scripts/run-with-supported-node.mjs openclaw hybrid-mem backfill-daily-logs --days 60 && node ../../scripts/run-with-supported-node.mjs openclaw hybrid-mem backfill-session-languages --days 60 && node ../../scripts/run-with-supported-node.mjs openclaw hybrid-mem backfill-recall-events --days 60",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",

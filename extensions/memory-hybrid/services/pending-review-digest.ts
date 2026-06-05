@@ -298,7 +298,9 @@ export function buildPendingReviewDigestReport(opts: {
       pending: personaPending.length,
       approved: personaAll.filter((p) => p.status === "approved").length,
       rejected: personaAll.filter((p) => p.status === "rejected").length,
-      expired: personaAll.filter((p) => p.status === "expired").length,
+      expired: personaAll.filter(
+        (p) => p.status === "pending" && p.expiresAt != null && p.expiresAt < nowSec,
+      ).length,
       // #1742: track omitted entries so callers can surface a truncation marker.
       truncated: personaPending.length - personaRecentPending.slice(0, 10).length,
       pendingEntries: personaRecentPending.slice(0, 10).map((p) => ({
@@ -329,7 +331,7 @@ export function buildPendingReviewDigestReport(opts: {
     },
     crystallization: {
       pending: crystalPending.length,
-      approved: crystalAll.filter((p) => p.status === "approved").length,
+      approved: crystalAll.filter((p) => p.status === "approved" || p.status === "installed").length,
       rejected: crystalAll.filter((p) => p.status === "rejected").length,
       pendingEntries: crystalPending.slice(0, 10).map((p) => ({
         id: p.id,

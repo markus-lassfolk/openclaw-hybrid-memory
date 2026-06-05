@@ -180,6 +180,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
       progressiveIndexBySession: ctx.progressiveIndexBySession,
       lastAutoRecallPromptBySession: ctx.lastAutoRecallPromptBySession,
+      injectedFactIdsBySession: ctx.injectedFactIdsBySession,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       walWrite: (operation, data, logger, supersedeTargetId) =>

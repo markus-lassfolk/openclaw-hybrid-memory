@@ -279,6 +279,7 @@ export type HybridMemCliContext = {
   runApplyContradictionReviewDecisions: (
     decisions: import("../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
   ) => Promise<import("../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
+  requireWalFlushBeforeMutation: (phase: string) => Promise<{ committed: number; skipped: number }>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;

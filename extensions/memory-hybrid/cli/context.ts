@@ -191,6 +191,7 @@ export type ManageContext = {
   runApplyContradictionReviewDecisions: (
     decisions: import("../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
   ) => Promise<import("../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
+  requireWalFlushBeforeMutation: (phase: string) => Promise<{ committed: number; skipped: number }>;
   runSelfCorrectionExtract: (opts: {
     days?: number;
     outputPath?: string;

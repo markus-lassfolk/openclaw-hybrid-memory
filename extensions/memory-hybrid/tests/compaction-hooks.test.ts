@@ -69,6 +69,20 @@ describe("compaction lifecycle hooks", () => {
     );
   });
 
+  it("logs an error when before_compaction WAL flush fails", async () => {
+    vi.mocked(runPreConsolidationFlush).mockResolvedValueOnce({ committed: 0, skipped: 0, failed: true });
+    const api = makeHooksApi();
+    const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb);
+    registerLifecycleHooks(pluginApi as never, api as never);
+    const handler = captureHookHandler(api, "before_compaction");
+
+    await handler?.({ messageCount: 10, tokenCount: 5000 }, {});
+
+    expect(api.logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("before_compaction — WAL pre-flush failed"),
+    );
+  });
+
   it("after_compaction returns undefined in silent verbosity without injecting", async () => {
     const api = makeHooksApi();
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, { verbosity: "silent" });

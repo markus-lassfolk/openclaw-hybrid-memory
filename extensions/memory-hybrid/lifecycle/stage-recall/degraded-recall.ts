@@ -152,7 +152,7 @@ function buildNarrativePart(
   prompt: string,
   narrativeCapTokens: number,
   budgetState: BudgetState,
-  sessionId?: string | null,
+  sessionKey?: string | null,
 ): string {
   if (!ctx.narrativesDb && !ctx.eventLog) return "";
   try {
@@ -160,7 +160,7 @@ function buildNarrativePart(
       narrativesDb: ctx.narrativesDb,
       eventLog: ctx.eventLog,
       query: prompt,
-      sessionId: sessionId ?? undefined,
+      sessionId: sessionKey ?? undefined,
       limit: 1,
     });
     if (recentNarratives.length === 0) return "";

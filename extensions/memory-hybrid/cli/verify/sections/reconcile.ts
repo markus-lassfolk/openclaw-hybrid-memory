@@ -344,6 +344,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             featureGates: {
               "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,
               "nightlyCycle.enabled": cfg.nightlyCycle?.enabled === true,
+              "crystallization.enabled": cfg.crystallization?.enabled === true,
             },
             digestWeeklyDelivery: cfg.digest.weekly.delivery,
           });

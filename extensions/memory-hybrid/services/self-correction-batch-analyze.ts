@@ -75,6 +75,8 @@ type AnalyzeDeps = {
     batchLabel: string,
     maxTokensOverride?: number,
   ) => Promise<SelfCorrectionBatchLlmResult>;
+  /** JSON array of `{ slug, path }` for SKILL_UPDATE targeting in the analyze prompt. */
+  availableSkillsJson?: string;
 };
 
 async function parseBatchContent(
@@ -117,6 +119,7 @@ export async function analyzeSelfCorrectionIncidentBatchWithSplit(
       buildPrompt: (incidents) =>
         fillPrompt(loadPrompt("self-correction-analyze"), {
           incidents_json: serializeIncidentsForBatchPrompt(incidents),
+          available_skills_json: deps.availableSkillsJson ?? "[]",
         }),
     },
     batch,

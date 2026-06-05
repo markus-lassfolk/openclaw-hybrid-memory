@@ -2,7 +2,7 @@
  * CLI: skill proposal queue (crystallization lifecycle) and generated-skill telemetry.
  *
  * Commands:
- * - hybrid-mem skills queue | show | validate | reject | install | rescan | telemetry …
+ * - hybrid-mem skills queue | show | validate | reject | install | rescan | restore | crystallize | telemetry …
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
@@ -13,6 +13,7 @@ import {
 } from "../backends/crystallization-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import { runCrystallizationProposalCycle } from "../services/crystallization-maintenance.js";
 import {
   summarizeSkillProposalValidation,
   type SkillProposalValidationResult,
@@ -577,6 +578,51 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
+  (skills.command("restore") as ArgumentChainable)
+    .description(
+      "Restore a quarantined crystallization skill after re-validation (moves files back to the active output tree)",
+    )
+    .argument("<id>", "Proposal id")
+    .option("--override-warnings", "Bypass activation warnings when validation returns allow-with-override")
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (id: string, opts: { overrideWarnings?: boolean; json?: boolean }) => {
+        const store = requireStore(ctx);
+        const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+        const result = proposer.restoreProposal(id, { overrideWarnings: opts.overrideWarnings });
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: result.success, ...result }, null, 2));
+          if (!result.success) process.exitCode = 1;
+          return;
+        }
+        console.log(result.success ? `✓ ${result.message}` : `✗ ${result.message}`);
+        if (!result.success) process.exitCode = 1;
+      }),
+    );
+
+  (skills.command("crystallize") as ArgumentChainable)
+    .description(
+      "Run one workflow crystallization cycle (detect patterns → validate → queue proposals). Requires crystallization.enabled.",
+    )
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (opts: { json?: boolean }) => {
+        const result = runCrystallizationProposalCycle(ctx.cfg);
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: result.skippedReason !== "stores-unavailable", ...result }, null, 2));
+          if (result.skippedReason === "stores-unavailable") process.exitCode = 2;
+          return;
+        }
+        if (result.skippedReason === "disabled") {
+          console.log("Crystallization is disabled (set crystallization.enabled=true).");
+          return;
+        }
+        console.log(`Proposed: ${result.proposed}, skipped: ${result.skipped}`);
+        for (const r of result.reasons) console.log(`  - ${r}`);
+        if (result.skippedReason === "stores-unavailable") process.exitCode = 2;
+      }),
+    );
+
   (skills.command("rescan") as ArgumentChainable)
     .description(
       "Re-validate on-disk SKILL.md for each installed crystallization proposal; quarantine rows that fail generated-skill validation",
@@ -593,7 +639,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           return;
         }
         console.log(
-          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`,
+          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, disk-moved: ${result.diskQuarantined}, skipped (no path): ${result.skipped}`,
         );
         for (const line of result.messages) console.log(`  ${line}`);
         for (const line of result.errors) console.error(`  error: ${line}`);

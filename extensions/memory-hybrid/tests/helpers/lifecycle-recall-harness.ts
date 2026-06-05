@@ -91,6 +91,7 @@ export function buildRecallLifecycleContext(
     recallInFlightRef: { value: 0 },
     lastAutoRecallPromptRef: { value: null },
     prependBudgetRef: { value: null },
+    injectedFactIdsBySession: new Map(),
   };
 }
 

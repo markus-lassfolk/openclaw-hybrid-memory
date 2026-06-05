@@ -636,6 +636,10 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
       typeof raw?.maxCrystallized === "number" && raw.maxCrystallized > 0 ? Math.floor(raw.maxCrystallized) : 50,
     pruneUnusedDays:
       typeof raw?.pruneUnusedDays === "number" && raw.pruneUnusedDays >= 0 ? Math.floor(raw.pruneUnusedDays) : 30,
+    maxPendingProposals:
+      typeof raw?.maxPendingProposals === "number" && raw.maxPendingProposals >= 0
+        ? Math.floor(raw.maxPendingProposals)
+        : 100,
     evidenceCountBucketSize:
       typeof raw?.evidenceCountBucketSize === "number" && raw.evidenceCountBucketSize >= 1
         ? Math.min(1000, Math.floor(raw.evidenceCountBucketSize))

@@ -27,6 +27,7 @@ import {
   formatProgressiveIndexLine,
   sanitizeRecallFactText,
 } from "../utils/text.js";
+import { markFactsInjectedForSession } from "../services/session-injection-dedup.js";
 import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
@@ -78,6 +79,7 @@ function applyInjectionSideEffects(
   ctx: LifecycleContext,
   api: ClawdbotPluginApi,
   ambientSeenFacts: RecallResult["ambientSeenFacts"],
+  sessionKey: string,
   sideEffects: InjectionSideEffects,
 ): void {
   const accessedIds = sideEffects.accessedIds ?? [];
@@ -85,6 +87,7 @@ function applyInjectionSideEffects(
   if (accessedIds.length > 0) ctx.factsDb.refreshAccessedFacts(accessedIds);
   if (indexedIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexedIds);
   const seenIds = [...accessedIds, ...indexedIds];
+  markFactsInjectedForSession(ctx.injectedFactIdsBySession, sessionKey, seenIds);
   if (ambientSeenFacts && seenIds.length > 0) ambientSeenFacts.markSeen(seenIds);
   if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && accessedIds.length >= 2) {
     strengthenHebbianLinks(accessedIds, ctx.factsDb, api.logger);
@@ -98,9 +101,13 @@ export async function runInjectionStage(
   event: unknown,
 ): Promise<{ prependContext: string } | undefined> {
   const emitGate = { emitted: false };
+  const injectionAbort = new AbortController();
   let primarySettled = false;
 
-  const primary = runInjection(recallResult, api, ctx, event, { emitGate }).then((result) => {
+  const primary = runInjection(recallResult, api, ctx, event, {
+    emitGate,
+    abortSignal: injectionAbort.signal,
+  }).then((result) => {
     primarySettled = true;
     return result;
   });
@@ -111,6 +118,7 @@ export async function runInjectionStage(
         resolve(undefined);
         return;
       }
+      injectionAbort.abort();
       api.logger.warn?.(
         "memory-hybrid: injection stage timed out — returning unsummarized partial injection",
       );
@@ -125,6 +133,8 @@ type RunInjectionOptions = {
   skipLlmSummarize?: boolean;
   /** Prevents double prepend emission when primary and timeout paths race. */
   emitGate?: { emitted: boolean };
+  /** Aborted when injection stage timeout wins — skips LLM summarize on primary path. */
+  abortSignal?: AbortSignal;
 };
 
 async function runInjection(
@@ -208,7 +218,7 @@ async function runInjection(
     if (!prepend) return undefined;
     if (options.emitGate) options.emitGate.emitted = true;
     consumePrependBudget(ctx.prependBudgetRef, prepend);
-    if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, sideEffects);
+    if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, progressiveIndexSessionKey, sideEffects);
     return { prependContext: prepend };
   };
 
@@ -442,7 +452,12 @@ async function runInjection(
   let memoryContext = lines.join("\n");
   let accessRefreshIds = injectedIds;
 
-  if (!options.skipLlmSummarize && summarizeWhenOverBudget && lines.length < candidates.length) {
+  if (
+    !options.skipLlmSummarize &&
+    !options.abortSignal?.aborted &&
+    summarizeWhenOverBudget &&
+    lines.length < candidates.length
+  ) {
     const summarizeStartedAt = recallTiming.phaseStarted("injection_summarize", {
       candidate_count: candidates.length,
     });
@@ -463,8 +478,11 @@ async function runInjection(
       const { withLLMRetry } = await import("../services/chat.js");
       const injectionSummarizeModel = summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
       const resp = await withLLMRetry(
-        () =>
-          ctx.openai.chat.completions.create({
+        () => {
+          if (options.abortSignal?.aborted) {
+            throw Object.assign(new Error("injection stage aborted"), { name: "AbortError" });
+          }
+          return ctx.openai.chat.completions.create({
             model: injectionSummarizeModel,
             messages: [
               {
@@ -474,7 +492,8 @@ async function runInjection(
             ],
             temperature: 0,
             ...chatCompletionTokenParams(injectionSummarizeModel, 200),
-          }),
+          });
+        },
         { maxRetries: 2 },
       );
       const summary = extractAssistantMessageText(resp.choices[0]?.message).text;

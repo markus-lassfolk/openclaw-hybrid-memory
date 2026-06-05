@@ -8,14 +8,21 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import type { SkillProposalCard, SkillProposalRecommendedOutput } from "../backends/crystallization-store.js";
 import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { ACTION_VERB_PATTERN } from "../utils/constants.js";
-import { deriveSkillName, isExecOnlySequence } from "./skill-crystallizer-helpers.js";
+import {
+  deriveSkillName,
+  formatYamlFrontmatterScalar,
+  isExecOnlySequence,
+} from "./skill-crystallizer-helpers.js";
 
-export { deriveSkillName, isExecOnlySequence, normalizeSkillName } from "./skill-crystallizer-helpers.js";
+export { deriveSkillName, formatYamlFrontmatterScalar, isExecOnlySequence, normalizeSkillName, sanitizeApprovedSkillSlug } from "./skill-crystallizer-helpers.js";
+
+/** Relative path for exec-only workflow scaffold scripts (written on install). */
+export const CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH = "scripts/run.sh";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -76,9 +83,9 @@ function buildSkillContent(
       .trim() ?? card.description;
 
   return `---
-name: ${skillName}
-description: ${desc}
-category: ${card.category}
+name: ${formatYamlFrontmatterScalar(skillName)}
+description: ${formatYamlFrontmatterScalar(desc)}
+category: ${formatYamlFrontmatterScalar(card.category)}
 provenance: workflow-pattern:${patternId}
 generated_at: ${createdAt}
 ---
@@ -302,4 +309,22 @@ ${steps}
 
 echo "Skill '${skillName}' scaffold generated. Replace each '# Step N' block with concrete commands before use."
 `;
+}
+
+/** Build on-disk skill files for install (SKILL.md plus optional exec scaffold). */
+export function buildCrystallizationInstallFiles(
+  skillName: string,
+  skillContent: string,
+  pattern: WorkflowPattern | undefined,
+  patternId: string | undefined,
+): Record<string, string> {
+  const files: Record<string, string> = { "SKILL.md": skillContent };
+  if (pattern && patternId && isExecOnlySequence(pattern.toolSequence)) {
+    files[CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH] = buildShellScript(skillName, pattern, patternId);
+  }
+  return files;
+}
+
+export function execScriptPathForSkill(outputDir: string, skillName: string): string {
+  return join(outputDir, skillName, CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH);
 }

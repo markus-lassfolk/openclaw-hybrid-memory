@@ -108,6 +108,7 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
     consolidationEventTypeAllow: parseStringList(nightlyCycleRaw?.consolidationEventTypeAllow),
     consolidationEventTypeDeny: parseStringList(nightlyCycleRaw?.consolidationEventTypeDeny),
     enableReflectionRules: nightlyCycleRaw?.enableReflectionRules !== false,
+    autoPropose: nightlyCycleRaw?.autoPropose === true,
   };
 }
 

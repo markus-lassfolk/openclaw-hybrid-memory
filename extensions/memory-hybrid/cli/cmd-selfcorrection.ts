@@ -46,6 +46,7 @@ import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { applyToolsMdRules } from "../services/tools-md-rewrite.js";
 import { formatSkillUpdateProposal } from "../services/corrections-report.js";
 import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
+import { serializeWorkspaceSkillTargetsForPrompt } from "../utils/skill-discovery.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
@@ -58,6 +59,7 @@ import { gatherSessionFiles } from "./cmd-distill.js";
 import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
+import { resolvePipelineProposalTarget } from "./proposals.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
@@ -403,7 +405,19 @@ async function applySelfCorrectionRemediations(params: {
           !opts.dryRun
         ) {
           try {
-            const targetFile = inferTargetFile(line);
+            const lineText = line.trim();
+            const targetFile = inferTargetFile(lineText);
+            const resolved = resolvePipelineProposalTarget({
+              targetFile,
+              suggestedChange: lineText,
+              allowedFiles: ctx.cfg.personaProposals.allowedFiles,
+              workspaceRoot,
+              confidence: 0.7,
+              proposalTTLDays: ctx.cfg.personaProposals.proposalTTLDays,
+              minConfidence: ctx.cfg.personaProposals.minConfidence,
+              proposalsDb,
+            });
+            if (!resolved) continue;
             const src =
               a.sourceIncident ??
               (typeof a.incidentIndex === "number" && incidents[a.incidentIndex]
@@ -416,12 +430,15 @@ async function applySelfCorrectionRemediations(params: {
               ? [src.sessionFile]
               : incidents.map((inc) => inc.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx);
             proposalsDb.create({
-              targetFile,
+              targetFile: resolved.targetFile,
               title: `Self-correction: ${a.category ?? "behavior"}`,
               observation: incidentContext,
-              suggestedChange: line.trim(),
-              confidence: 0.7,
+              suggestedChange: lineText,
+              confidence: resolved.confidence,
               evidenceSessions,
+              expiresAt: resolved.expiresAt,
+              targetMtimeMs: resolved.targetMtimeMs,
+              targetHash: resolved.targetHash,
             });
           } catch (err) {
             capturePluginError(err as Error, {
@@ -871,6 +888,7 @@ export async function runSelfCorrectionRunForCli(
         };
       };
 
+      const availableSkillsJson = serializeWorkspaceSkillTargetsForPrompt(workspaceRoot);
       const analyzeDeps = {
         model,
         modelSource,
@@ -881,6 +899,7 @@ export async function runSelfCorrectionRunForCli(
         adaptiveEnabled,
         adaptiveStatePath,
         logger,
+        availableSkillsJson,
         onTransientRetry: (info: { attempt: number; delayMs: number; error: Error }) => {
           logTransientRetry(-1, info.attempt, info.delayMs, info.error);
         },
@@ -954,6 +973,7 @@ export async function runSelfCorrectionRunForCli(
                   llmCall: async (spawnBatch, _batchLabel, maxTokensOverride) => {
                     const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
                       incidents_json: serializeIncidentsForBatchPrompt(spawnBatch),
+                      available_skills_json: availableSkillsJson,
                     });
                     const outputBudget = maxTokensOverride ?? maxTokens;
                     if (maxTokensOverride != null && maxTokensOverride !== maxTokens) {

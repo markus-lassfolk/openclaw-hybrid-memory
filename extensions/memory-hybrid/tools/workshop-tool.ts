@@ -1,0 +1,180 @@
+/**
+ * memory_workshop — unified proposal review tool (OpenClaw integration plan Phase 1).
+ */
+
+import { Type } from "@sinclair/typebox";
+import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
+import type { HybridMemoryConfig } from "../config.js";
+import { capturePluginError } from "../services/error-reporter.js";
+import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
+import {
+  type WorkshopServiceContext,
+  workshopApprove,
+  workshopInspect,
+  workshopList,
+  workshopQuarantine,
+  workshopReject,
+  workshopRevise,
+  workshopUndo,
+} from "../services/workshop-service.js";
+
+export interface WorkshopToolsContext {
+  cfg: HybridMemoryConfig;
+  factsDb: FactsDB;
+  proposalsDb?: ProposalsDB | null;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
+  workflowStore?: WorkflowStore | null;
+  resolvedSqlitePath: string;
+}
+
+function buildWorkshopCtx(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): WorkshopServiceContext {
+  return {
+    cfg: ctx.cfg,
+    factsDb: ctx.factsDb,
+    proposalsDb: ctx.proposalsDb ?? null,
+    crystallizationStore: ctx.crystallizationStore ?? null,
+    toolProposalStore: ctx.toolProposalStore ?? null,
+    workflowStore: ctx.workflowStore ?? null,
+    resolvedSqlitePath: ctx.resolvedSqlitePath,
+    api,
+  };
+}
+
+export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): void {
+  api.registerTool({
+    name: "memory_workshop",
+    label: "Memory Workshop",
+    description:
+      "Unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, approve, reject, quarantine, revise, undo, digest.",
+    parameters: Type.Object({
+      action: Type.Union(
+        [
+          Type.Literal("list"),
+          Type.Literal("inspect"),
+          Type.Literal("approve"),
+          Type.Literal("reject"),
+          Type.Literal("quarantine"),
+          Type.Literal("revise"),
+          Type.Literal("undo"),
+          Type.Literal("digest"),
+        ],
+        { description: "Workshop action to perform." },
+      ),
+      id: Type.Optional(Type.String({ description: "Unified proposal key (type:storeId) for inspect/approve/reject/etc." })),
+      reason: Type.Optional(Type.String({ description: "Rejection or quarantine reason." })),
+      revision: Type.Optional(Type.String({ description: "Revised suggested_change body (persona proposals only)." })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Max proposals for list (default 20)." })),
+    }),
+    async execute(_toolCallId: string, params: Record<string, unknown>) {
+      const action = params.action as string;
+      const workshopCtx = buildWorkshopCtx(ctx, api);
+      try {
+        switch (action) {
+          case "list": {
+            const items = workshopList(workshopCtx, { status: "pending", limit: (params.limit as number) ?? 20 });
+            const lines = items.map(
+              (p, i) =>
+                `${i + 1}. [${p.type}] ${p.title} (${p.unifiedKey}, conf=${p.confidence.toFixed(2)}, ${p.preview.slice(0, 80)})`,
+            );
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: items.length
+                    ? `Pending proposals (${items.length}):\n\n${lines.join("\n")}`
+                    : "No pending proposals in the unified workshop queue.",
+                },
+              ],
+              details: items,
+            };
+          }
+          case "inspect": {
+            const id = params.id as string | undefined;
+            if (!id) return { content: [{ type: "text", text: "id is required for inspect" }], details: { ok: false } };
+            const item = workshopInspect(workshopCtx, id);
+            if (!item) return { content: [{ type: "text", text: `Proposal not found: ${id}` }], details: { ok: false } };
+            return {
+              content: [{ type: "text", text: `${item.type} ${item.title}\n\n${item.fullContent ?? item.preview}` }],
+              details: item,
+            };
+          }
+          case "approve": {
+            const id = params.id as string | undefined;
+            if (!id) return { content: [{ type: "text", text: "id is required for approve" }], details: { ok: false } };
+            const result = await workshopApprove(workshopCtx, id);
+            return {
+              content: [{ type: "text", text: result.ok ? result.message : result.error }],
+              details: result,
+            };
+          }
+          case "reject": {
+            const id = params.id as string | undefined;
+            if (!id) return { content: [{ type: "text", text: "id is required for reject" }], details: { ok: false } };
+            const result = workshopReject(workshopCtx, id, params.reason as string | undefined);
+            return {
+              content: [{ type: "text", text: result.ok ? result.message : result.error }],
+              details: result,
+            };
+          }
+          case "quarantine": {
+            const id = params.id as string | undefined;
+            if (!id) return { content: [{ type: "text", text: "id is required for quarantine" }], details: { ok: false } };
+            const result = workshopQuarantine(workshopCtx, id, params.reason as string | undefined);
+            return {
+              content: [{ type: "text", text: result.ok ? result.message : result.error }],
+              details: result,
+            };
+          }
+          case "revise": {
+            const id = params.id as string | undefined;
+            const revision = params.revision as string | undefined;
+            if (!id || !revision) {
+              return { content: [{ type: "text", text: "id and revision are required for revise" }], details: { ok: false } };
+            }
+            const result = workshopRevise(workshopCtx, id, revision);
+            return {
+              content: [{ type: "text", text: result.ok ? result.message : result.error }],
+              details: result,
+            };
+          }
+          case "undo": {
+            const id = params.id as string | undefined;
+            if (!id) return { content: [{ type: "text", text: "id is required for undo" }], details: { ok: false } };
+            const result = workshopUndo(workshopCtx, id);
+            return {
+              content: [{ type: "text", text: result.ok ? result.message : result.error }],
+              details: result,
+            };
+          }
+          case "digest": {
+            const report = buildWorkshopDigestReport(workshopCtx);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Pending: persona=${report.pendingReview.persona} procedures=${report.pendingReview.procedures} tools=${report.pendingReview.tools} crystal=${report.pendingReview.crystallization}`,
+                },
+              ],
+              details: report,
+            };
+          }
+          default:
+            return { content: [{ type: "text", text: `Unknown action: ${action}` }], details: { ok: false } };
+        }
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "workshop",
+          operation: `memory-workshop-${action}`,
+        });
+        throw err;
+      }
+    },
+  });
+}

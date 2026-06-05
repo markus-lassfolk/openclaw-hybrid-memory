@@ -66,6 +66,7 @@ export const AGENT_TOOL_CONTRACT_NAMES = [
   "memory_verification_status",
   "memory_verified_list",
   "memory_verify",
+  "memory_workshop",
   "memory_workflows",
   "persona_propose",
   "persona_proposals_list",

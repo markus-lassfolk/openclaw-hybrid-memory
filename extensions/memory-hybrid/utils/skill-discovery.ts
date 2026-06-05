@@ -1,5 +1,5 @@
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { SKILL_ATOMIC_TEMP_PREFIX, isSkillDirComplete } from "./atomic-write.js";
 
 export interface DiscoveredSkillDir {
@@ -56,4 +56,78 @@ function safeReadSkillDir(dir: string): Array<{ name: string; isDirectory: boole
   } catch {
     return [];
   }
+}
+
+/**
+ * List absolute paths to every `SKILL.md` under `{workspaceRoot}/skills/**`,
+ * skipping atomic-write scratch dirs and dot directories.
+ */
+export function listWorkspaceSkillMdPaths(workspaceRoot: string): string[] {
+  const skillsRoot = join(workspaceRoot, "skills");
+  const out: string[] = [];
+
+  function walk(dir: string): void {
+    if (!existsSync(dir)) return;
+    const skillMd = join(dir, "SKILL.md");
+    if (existsSync(skillMd)) out.push(skillMd);
+
+    for (const entry of safeReadSkillDir(dir)) {
+      if (entry.name.startsWith(".")) continue;
+      if (isAtomicSkillWriteScratchDir(entry.name)) continue;
+      if (!entry.isDirectory) continue;
+      walk(join(dir, entry.name));
+    }
+  }
+
+  walk(skillsRoot);
+  return out;
+}
+
+export type WorkspaceSkillTarget = {
+  /** Primary slug for SKILL_UPDATE (`slug: change` or `auto/slug: change`). */
+  slug: string;
+  /** Workspace-relative path to SKILL.md. */
+  relPath: string;
+};
+
+/**
+ * Index installed workspace skills for SKILL_UPDATE targeting.
+ * When `skills/foo` and `skills/auto/foo` both exist, top-level `foo` maps to
+ * `skills/foo/SKILL.md` and auto uses alias `auto/foo`.
+ */
+export function listWorkspaceSkillTargets(workspaceRoot: string): WorkspaceSkillTarget[] {
+  const paths = listWorkspaceSkillMdPaths(workspaceRoot);
+  const topLevelBySlug = new Map<string, string>();
+  const autoBySlug = new Map<string, string>();
+
+  for (const absPath of paths) {
+    const rel = relative(workspaceRoot, absPath).replace(/\\/g, "/");
+    const autoMatch = rel.match(/^skills\/auto\/([^/]+)\/SKILL\.md$/);
+    if (autoMatch) {
+      autoBySlug.set(autoMatch[1]!, rel);
+      continue;
+    }
+    const topMatch = rel.match(/^skills\/([^/]+)\/SKILL\.md$/);
+    if (topMatch && topMatch[1] !== "auto") {
+      topLevelBySlug.set(topMatch[1]!, rel);
+    }
+  }
+
+  const targets: WorkspaceSkillTarget[] = [];
+  const slugs = new Set([...topLevelBySlug.keys(), ...autoBySlug.keys()]);
+  for (const slug of [...slugs].sort()) {
+    const topRel = topLevelBySlug.get(slug);
+    const autoRel = autoBySlug.get(slug);
+    if (topRel) targets.push({ slug, relPath: topRel });
+    if (autoRel) {
+      targets.push({ slug: topRel ? `auto/${slug}` : slug, relPath: autoRel });
+    }
+  }
+  return targets;
+}
+
+/** JSON array of `{ slug, path }` for self-correction analyze prompts. */
+export function serializeWorkspaceSkillTargetsForPrompt(workspaceRoot: string): string {
+  const targets = listWorkspaceSkillTargets(workspaceRoot);
+  return JSON.stringify(targets.map((t) => ({ slug: t.slug, path: t.relPath })));
 }

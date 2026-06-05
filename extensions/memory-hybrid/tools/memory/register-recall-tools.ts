@@ -8,7 +8,6 @@
 import { Type } from "@sinclair/typebox";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
-import { filterByScope, mergeResults } from "../../services/merge-results.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { QueryExpander } from "../../services/query-expander.js";
 import {
@@ -17,6 +16,7 @@ import {
   type ExplicitDeepRetrievalPolicy,
 } from "../../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
 import {
   inferEntityFilterFromQuery,
   inferRetrievalModeFromQuery,
@@ -726,6 +726,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     // Entity-targeted lookup is useful for legacy explicit recall, but it bypasses
     // filter → rank → hydrate semantics, so disable it in constrained mode.
     let entityResults: SearchResult[] = [];
+    let recallOutcome: "success" | "degraded_fallback" = "success";
     if (entity && !shouldUseConstrainedMode) {
       entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
     }
@@ -846,18 +847,21 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         );
         results = [...entityResults];
       } else {
-        api.logger.warn(`memory-hybrid: RRF pipeline failed, falling back to legacy merge: ${err}`);
-        const ftsResults = factsDb.search(query, limit, {
-          ...recallOpts,
+        api.logger.warn(`memory-hybrid: RRF pipeline failed, falling back to scoped FTS+vector merge: ${err}`);
+        recallOutcome = "degraded_fallback";
+        results = await runScopedFtsVectorFallback({
+          query,
+          limit,
+          queryVector,
+          factsDb,
+          vectorDb,
+          recallOpts,
+          scopeFilter,
+          warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
+          seedResults: entityResults,
           reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
           diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
         });
-        let lanceResults: SearchResult[] = [];
-        if (queryVector) {
-          lanceResults = await vectorDb.search(queryVector, limit * 3, 0.3);
-          lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
-        }
-        results = mergeResults([...entityResults, ...ftsResults], lanceResults, limit, factsDb);
       }
     }
 
@@ -1049,10 +1053,13 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       agentId: agentIdForAudit(),
       action: "memory_recall",
       target: query ? `query="${query.slice(0, 160)}"` : undefined,
-      outcome: "success",
+      outcome: recallOutcome,
       durationMs: Date.now() - recallStartedAt,
       sessionId: api.context?.sessionId ?? undefined,
-      context: { count: results.length },
+      context: {
+        count: results.length,
+        ...(recallOutcome === "degraded_fallback" ? { degradedFallback: true } : {}),
+      },
     });
 
     return {

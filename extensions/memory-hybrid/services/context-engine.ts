@@ -24,9 +24,14 @@ import type { MemoryEntry } from "../types/memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { trimBlockToBudget } from "./context-block-trim.js";
 import { capturePluginError } from "./error-reporter.js";
-import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
+import { runPreConsolidationFlush, WAL_FLUSH_ABORT_MESSAGE } from "./pre-consolidation-flush.js";
 import { estimateTokenCount, serializeFactForContext } from "./retrieval-orchestrator.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import {
+  filterFactsNotYetInjected,
+  markFactsInjectedForSession,
+  type InjectedFactIdsBySession,
+} from "./session-injection-dedup.js";
 import { RECALLED_CONTEXT_BOUNDARY } from "./skill-prompt-injection.js";
 
 // ---------------------------------------------------------------------------
@@ -229,6 +234,7 @@ export interface ContextEngineOptions {
   cfg: HybridMemoryConfig;
   logger: { info?: (m: string) => void; warn?: (m: string) => void; debug?: (m: string) => void };
   pluginVersion?: string;
+  injectedFactIdsBySession?: InjectedFactIdsBySession;
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +262,7 @@ export function buildContextBlock(
   header: string,
   label: string,
   tokenBudget?: number,
+  injectedIdsOut?: string[],
 ): string | null {
   if (facts.length === 0) return null;
 
@@ -277,6 +284,7 @@ export function buildContextBlock(
     lines.push(serialized);
     currentTokens += entryTokens;
     addedFacts++;
+    injectedIdsOut?.push(entry.id);
   }
 
   if (addedFacts === 0) return null;
@@ -370,7 +378,23 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         return { messages: params.messages, estimatedTokens: 0 };
       }
 
-      const block = buildContextBlock(facts, "session-context", "Relevant memories for this session:", budget);
+      const sessionKey = params.sessionId;
+      facts = filterFactsNotYetInjected(this.opts.injectedFactIdsBySession, sessionKey, facts);
+      if (facts.length === 0) {
+        return { messages: params.messages, estimatedTokens: 0 };
+      }
+
+      const injectedIds: string[] = [];
+      const block = buildContextBlock(
+        facts,
+        "session-context",
+        "Relevant memories for this session:",
+        budget,
+        injectedIds,
+      );
+      if (block && injectedIds.length > 0) {
+        markFactsInjectedForSession(this.opts.injectedFactIdsBySession, sessionKey, injectedIds);
+      }
       if (!block) {
         return { messages: params.messages, estimatedTokens: 0 };
       }
@@ -415,7 +439,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         return {
           ok: false,
           compacted: false,
-          reason: "WAL pre-flush failed; aborting compaction to avoid stale SQLite state",
+          reason: `${WAL_FLUSH_ABORT_MESSAGE} (context-engine compact)`,
         };
       }
       const { committed: walCommitted } = flush;
@@ -515,7 +539,12 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
 
       // Fetch top-N recent/important facts to seed the sub-agent's context
       const limit = cfg.autoRecall?.limit ?? 10;
-      const topFacts = factsDb.list(Math.min(limit, 15));
+      let topFacts = factsDb.list(Math.min(limit, 15));
+      topFacts = filterFactsNotYetInjected(
+        this.opts.injectedFactIdsBySession,
+        params.childSessionKey,
+        topFacts,
+      );
 
       if (topFacts.length === 0) {
         logger.debug?.(`memory-hybrid: prepareSubagentSpawn — no facts to inject for child=${params.childSessionKey}`);
@@ -525,11 +554,17 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       // contextAddition is a non-standard field on the return type — populated so that
       // SDK versions that support it can inject the block; older versions ignore it.
       // Uses serializeFactForContext for consistent formatting with the retrieval pipeline.
+      const injectedIds: string[] = [];
       const rawBlock = buildContextBlock(
         topFacts,
         `parent context injected for subagent ${params.childSessionKey}`,
         `Relevant memories from parent session (${params.parentSessionKey}):`,
+        undefined,
+        injectedIds,
       );
+      if (rawBlock && injectedIds.length > 0) {
+        markFactsInjectedForSession(this.opts.injectedFactIdsBySession, params.childSessionKey, injectedIds);
+      }
       const tokenBudget = Math.min(cfg.autoRecall?.maxTokens ?? 800, cfg.retrieval.ambientBudgetTokens);
       const contextAddition = rawBlock
         ? trimBlockToBudget(rawBlock, tokenBudget).text || null

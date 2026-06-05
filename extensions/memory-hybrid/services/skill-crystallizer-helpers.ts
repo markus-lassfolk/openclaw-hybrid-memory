@@ -36,6 +36,53 @@ export function normalizeSkillName(value: string): string {
   return normalized.length > 0 ? normalized : "auto-generated-skill";
 }
 
+/** Slug-safe name for operator overrides at approve/install time (preserves underscores). */
+export function sanitizeApprovedSkillSlug(name: string): string {
+  const slug = name
+    .replace(/[^a-z0-9_-]/gi, "-")
+    .replace(/^\.+/, "")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "auto-generated-skill";
+}
+
+/** Format a scalar for YAML frontmatter (quotes reserved words, numbers, and special chars). */
+export function formatYamlFrontmatterScalar(value: string): string {
+  if (value === "") return '""';
+
+  const yamlReservedWords = new Set([
+    "true",
+    "false",
+    "True",
+    "False",
+    "TRUE",
+    "FALSE",
+    "yes",
+    "no",
+    "Yes",
+    "No",
+    "YES",
+    "NO",
+    "on",
+    "off",
+    "On",
+    "Off",
+    "ON",
+    "OFF",
+    "null",
+    "Null",
+    "NULL",
+    "~",
+  ]);
+
+  if (yamlReservedWords.has(value) || /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(value)) {
+    return JSON.stringify(value);
+  }
+
+  if (/^[\w.-]+$/.test(value)) return value;
+  return JSON.stringify(value);
+}
+
 /**
  * Check whether a tool sequence is entirely exec calls (shell-automatable).
  */

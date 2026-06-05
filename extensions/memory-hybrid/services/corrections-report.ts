@@ -3,9 +3,10 @@
  */
 
 import { existsSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import { inferTargetFile } from "../cli/cmd-store.js";
 import { isPathInsideDir } from "../cli/install/workspace.js";
+import { listWorkspaceSkillMdPaths } from "../utils/skill-discovery.js";
 import { insertRulesUnderSection } from "./tools-md-section.js";
 
 export type ParsedCorrectionRules = {
@@ -84,9 +85,35 @@ export function parseReportProposedSections(content: string): string[] {
   return items;
 }
 
+/** Resolve `head` from `head: change` to an absolute SKILL.md path when it exists. */
+function resolveSkillPathFromHead(workspaceRoot: string, head: string): string | null {
+  const normalized = head.replace(/\\/g, "/").trim();
+  if (!normalized) return null;
+
+  if (normalized.startsWith("skills/") && normalized.endsWith(".md")) {
+    const abs = join(workspaceRoot, normalized);
+    return existsSync(abs) ? abs : null;
+  }
+
+  const autoSlash = normalized.match(/^auto\/([\w-]+)$/);
+  if (autoSlash) {
+    const abs = join(workspaceRoot, "skills", "auto", autoSlash[1]!, "SKILL.md");
+    return existsSync(abs) ? abs : null;
+  }
+
+  if (/^[\w-]+$/.test(normalized)) {
+    const top = join(workspaceRoot, "skills", normalized, "SKILL.md");
+    if (existsSync(top)) return top;
+    const auto = join(workspaceRoot, "skills", "auto", normalized, "SKILL.md");
+    if (existsSync(auto)) return auto;
+  }
+
+  return null;
+}
+
 /**
  * Resolve a SKILL_UPDATE line to a workspace-relative skills/*.md path when possible.
- * Accepts explicit `skills/.../SKILL.md` in the text or `skills/auto/slug: change`.
+ * Accepts explicit `skills/.../SKILL.md`, `slug: change`, or `auto/slug: change`.
  */
 export function resolveSkillUpdateTarget(text: string, workspaceRoot: string): { skillPath: string } | null {
   const body = text.replace(SKILL_UPDATE_PREFIX, "").trim();
@@ -95,22 +122,23 @@ export function resolveSkillUpdateTarget(text: string, workspaceRoot: string): {
     const rel = explicit[1].replace(/\\/g, "/");
     const abs = join(workspaceRoot, rel);
     if (existsSync(abs)) return { skillPath: abs };
-    if (rel.endsWith(".md")) return { skillPath: abs };
   }
-  const colonSplit = body.match(/^([^\s:]+):\s*(.+)$/);
+  const colonSplit = body.match(/^([^\s:]+):\s*(.+)$/s);
   if (colonSplit) {
-    const head = colonSplit[1].replace(/\\/g, "/");
-    if (head.startsWith("skills/") && head.endsWith(".md")) {
-      return { skillPath: join(workspaceRoot, head) };
-    }
-    if (/^[\w-]+$/.test(head)) {
-      const candidate = join(workspaceRoot, "skills", head, "SKILL.md");
-      if (existsSync(candidate)) return { skillPath: candidate };
-      const autoCandidate = join(workspaceRoot, "skills", "auto", head, "SKILL.md");
-      if (existsSync(autoCandidate)) return { skillPath: autoCandidate };
-    }
+    const resolved = resolveSkillPathFromHead(workspaceRoot, colonSplit[1]!);
+    if (resolved) return { skillPath: resolved };
   }
+  const soleSkill = resolveSingleWorkspaceSkill(workspaceRoot);
+  if (soleSkill) return { skillPath: soleSkill };
   return null;
+}
+
+/** When exactly one SKILL.md exists under workspace/skills, use it as an implicit target. */
+function resolveSingleWorkspaceSkill(workspaceRoot: string): string | null {
+  const candidates = listWorkspaceSkillMdPaths(workspaceRoot).filter((p) =>
+    isSafeSkillPathUnderWorkspace(workspaceRoot, p),
+  );
+  return candidates.length === 1 ? candidates[0]! : null;
 }
 
 /** Parse report sections into typed apply targets. */

@@ -27,9 +27,14 @@ export async function runRecallStage(
   const ac = new AbortController();
   const { signal } = ac;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let recallSettled = false;
   try {
+    const recallPromise = runRecall(event, api, ctx, sessionState, signal).then((result) => {
+      recallSettled = true;
+      return result;
+    });
     return await Promise.race([
-      runRecall(event, api, ctx, sessionState, signal),
+      recallPromise,
       new Promise<RecallStageResult | null>((resolve) => {
         timer = setTimeout(() => {
           ac.abort();
@@ -37,7 +42,9 @@ export async function runRecallStage(
             resolve({ kind: "empty", prependContext: undefined });
             return;
           }
-          void buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "timeout").then(resolve);
+          void buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "timeout").then((degraded) => {
+            if (!recallSettled) resolve(degraded);
+          });
         }, RECALL_STAGE_TIMEOUT_MS);
       }),
     ]);

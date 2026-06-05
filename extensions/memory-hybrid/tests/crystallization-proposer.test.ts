@@ -28,9 +28,9 @@
  * - Marks proposal as rejected on success.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
@@ -53,6 +53,7 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "", // will be set in beforeEach
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
@@ -343,6 +344,58 @@ describe("CrystallizationProposer.approveProposal", () => {
     expect(cStore.getById(oldP.id)?.status).toBe("superseded");
     expect(cStore.getById(newP.id)?.status).toBe("installed");
   });
+  it("reverts approval when disk write fails so the proposal stays installable", () => {
+    const outputDir = join(tmpDir, "readonly-out");
+    mkdirSync(outputDir, { recursive: true });
+    chmodSync(outputDir, 0o444);
+
+    const proposal = cStore.create({
+      patternId: "p-write-fail",
+      evidenceHash: "ev-write-fail",
+      skillName: "write-fail-skill",
+      skillContent: skillFixture("write-fail-skill", "Write Fail Skill"),
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, maxCrystallized: 50 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    let result = proposer.approveProposal(proposal.id);
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(proposal.id, { overrideWarnings: true });
+    }
+    if (result.success) {
+      chmodSync(outputDir, 0o755);
+      throw new Error("expected write failure in read-only output directory");
+    }
+
+    expect(result.message).toMatch(/reverted/i);
+    expect(cStore.getById(proposal.id)?.status).toBe("validated");
+    chmodSync(outputDir, 0o755);
+  });
+
+  it("falls back to auto-generated-skill when rename slug is empty", () => {
+    const outputDir = join(tmpDir, "empty-slug");
+    const proposal = cStore.create({
+      patternId: "p-empty-slug",
+      evidenceHash: "ev-empty-slug",
+      skillName: "orig-skill",
+      skillContent: skillFixture("orig-skill", "Orig Skill"),
+      patternSnapshot: "{}",
+      status: "validated",
+    });
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, maxCrystallized: 50 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+
+    let result = proposer.approveProposal(proposal.id, { name: "!!!" });
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(proposal.id, { name: "!!!", overrideWarnings: true });
+    }
+    expect(result.success, result.message).toBe(true);
+    expect(result.outputPath).toContain("auto-generated-skill");
+  });
+
   it("returns success=false when maxCrystallized is 0", () => {
     // Manually create a pending proposal
     const proposal = cStore.create({
@@ -736,5 +789,87 @@ Bounded narrative body without YAML.
     const stored = cStore.getById(proposal.id);
     const activationNotes = stored?.validationResult?.syntheticActivationEval?.notes ?? [];
     expect(activationNotes.some((n: string) => n.includes("legacy crystallization"))).toBe(true);
+  });
+});
+
+describe("CrystallizationProposer — exec-only script install", () => {
+  it("writes scripts/run.sh for exec-only patterns on approve", () => {
+    const outputDir = join(tmpDir, "exec-script-skills");
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, minUsageCount: 2 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    seedPatterns(["exec", "exec"], 3, 1);
+
+    proposer.runCycle();
+    const pending = cStore.list({ status: "pending", limit: 1 });
+    expect(pending.length).toBe(1);
+
+    let result = proposer.approveProposal(pending[0].id);
+    if (!result.success && /explicit override/i.test(result.message)) {
+      result = proposer.approveProposal(pending[0].id, { overrideWarnings: true });
+    }
+    expect(result.success, result.message).toBe(true);
+    const scriptPath = join(dirname(result.outputPath!), "scripts", "run.sh");
+    expect(existsSync(scriptPath)).toBe(true);
+    expect(readFileSync(scriptPath, "utf-8")).toContain("#!/usr/bin/env bash");
+  });
+});
+
+describe("CrystallizationProposer.runCycle — maxPendingProposals", () => {
+  it("returns early when pending queue is at cap", () => {
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: tmpDir, maxPendingProposals: 2 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    for (let i = 0; i < 2; i++) {
+      cStore.create({
+        patternId: `pending-cap-${i}`,
+        evidenceHash: `ev-${i}`,
+        skillName: `pending-${i}`,
+        skillContent: "# pending",
+        patternSnapshot: "{}",
+        status: "validated",
+      });
+    }
+    seedPatterns(["exec", "read", "write"], 5, 1);
+    const result = proposer.runCycle();
+    expect(result.proposed).toBe(0);
+    expect(result.reasons.some((r) => /maxPendingProposals/i.test(r))).toBe(true);
+  });
+});
+
+describe("CrystallizationProposer.restoreProposal", () => {
+  it("restores a quarantined legacy skill back to the active output tree", () => {
+    const outputDir = join(tmpDir, "restore-skills");
+    mkdirSync(outputDir, { recursive: true });
+    const quarantineDir = join(outputDir, "..", "crystallization-quarantine", "2026-06-05", "legacy-restore");
+    mkdirSync(quarantineDir, { recursive: true });
+    const quarantineSkillPath = join(quarantineDir, "SKILL.md");
+    writeFileSync(
+      quarantineSkillPath,
+      `# Legacy Crystallized Workflow
+
+> Auto-crystallized from workflow pattern on 2020-01-01.
+
+Bounded narrative body without YAML.
+`,
+      "utf-8",
+    );
+
+    const proposal = cStore.create({
+      patternId: "restore-pattern",
+      evidenceHash: "ev-restore",
+      skillName: "legacy-restore",
+      skillContent: readFileSync(quarantineSkillPath, "utf-8"),
+      patternSnapshot: "{}",
+      status: "quarantined",
+      rejectionReason: "stale validation: test",
+    });
+    cStore.updateOutputPath(proposal.id, quarantineSkillPath);
+
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    const result = proposer.restoreProposal(proposal.id);
+    expect(result.success, result.message).toBe(true);
+    expect(result.outputPath).toBe(join(outputDir, "legacy-restore", "SKILL.md"));
+    expect(existsSync(result.outputPath!)).toBe(true);
+    expect(cStore.getById(proposal.id)?.status).toBe("installed");
   });
 });

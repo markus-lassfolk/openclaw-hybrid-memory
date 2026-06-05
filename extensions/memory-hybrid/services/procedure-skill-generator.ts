@@ -9,6 +9,7 @@ import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limits.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { atomicWriteSkillDir, SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { bumpSkillsSnapshotBestEffort } from "./bump-skills-snapshot.js";
 import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
 import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
@@ -458,6 +459,10 @@ export function generateAutoSkills(
         reservedCandidate.slug = allocated.slug;
       }
       writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
+      void bumpSkillsSnapshotBestEffort({
+        changedPath: join(allocated.skillDir, "SKILL.md"),
+        reason: "hybrid-memory-procedure-skill-draft",
+      });
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
@@ -666,6 +671,10 @@ export function generateAutoSkillForProcedure(
   try {
     allocated = allocateDraftSkillDir(basePath, options.skillsAutoPath, item.payload.skillSlug);
     writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
+    void bumpSkillsSnapshotBestEffort({
+      changedPath: join(allocated.skillDir, "SKILL.md"),
+      reason: "hybrid-memory-procedure-skill-draft",
+    });
     factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
   } catch (err) {
     rollbackDraftSkill(allocated?.skillDir ?? skillDir);

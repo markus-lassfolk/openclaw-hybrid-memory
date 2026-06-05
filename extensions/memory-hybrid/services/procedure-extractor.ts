@@ -292,19 +292,21 @@ export async function extractProceduresFromSessions(
   for (const filePath of filePaths) {
     const fs = await import("node:fs");
     const path = await import("node:path");
+    const sessionDir = options.sessionDir ?? path.dirname(filePath);
+    const resolvedPath = resolveSessionTranscriptPath(sessionDir, filePath);
     let content: string;
     try {
-      content = fs.readFileSync(filePath, "utf-8");
+      content = fs.readFileSync(resolvedPath, "utf-8");
     } catch (err) {
       readFailures++;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-extractor",
         operation: "read-session-file",
       });
-      logger.warn(`procedure-extractor: read failed ${filePath}: ${err}`);
+      logger.warn(`procedure-extractor: read failed ${resolvedPath}: ${err}`);
       continue;
     }
-    const sessionId = path.basename(filePath, ".jsonl");
+    const sessionId = path.basename(resolvedPath, ".jsonl");
     const parsed = verbose
       ? parseSessionJsonl(content, sessionId, { includeSkipReason: true })
       : parseSessionJsonl(content, sessionId);

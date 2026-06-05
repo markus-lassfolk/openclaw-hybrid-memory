@@ -26,6 +26,7 @@ describe("registerContextEngineBestEffort", () => {
       wal: null,
       embeddings: {} as unknown,
       cfg: {} as unknown,
+      injectedFactIdsBySession: new Map(),
     } as Parameters<typeof registerContextEngineBestEffort>[0]["runtime"];
   }
 
@@ -49,6 +50,7 @@ describe("registerContextEngineBestEffort", () => {
       wal: runtime.wal,
       embeddings: runtime.embeddings,
       cfg: runtime.cfg,
+      injectedFactIdsBySession: runtime.injectedFactIdsBySession,
       logger,
       pluginVersion: "2026.5.0",
     });

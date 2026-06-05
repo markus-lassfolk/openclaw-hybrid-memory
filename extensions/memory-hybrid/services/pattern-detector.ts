@@ -121,6 +121,24 @@ export function detectCrystallizationCandidates(
       continue;
     }
 
+    // Skip if an installed skill already covers this evidence milestone (re-propose only on metric/goals change).
+    try {
+      if (
+        crystallizationStore.hasInstalledWithSameEvidence(patternId, evidenceHash, {
+          legacyEvidenceHash,
+          evidenceCountBucketSize: cfg.evidenceCountBucketSize,
+        })
+      ) {
+        continue;
+      }
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "check-installed-evidence",
+        subsystem: "pattern-detector",
+      });
+      continue;
+    }
+
     candidates.push({
       patternId,
       evidenceHash,

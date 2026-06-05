@@ -47,6 +47,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
@@ -428,6 +429,31 @@ describe("CrystallizationStore.hasPendingOrApprovedForPattern", () => {
   });
 });
 
+describe("CrystallizationStore.hasInstalledWithSameEvidence", () => {
+  it("returns true when installed row has the same evidence hash", () => {
+    const p = cStore.create({
+      patternId: "p-installed",
+      evidenceHash: "ev-same",
+      skillName: "installed-skill",
+      skillContent: "#c",
+      patternSnapshot: JSON.stringify({
+        toolSequence: ["read"],
+        totalCount: 10,
+        successCount: 9,
+        failureCount: 1,
+        successRate: 0.9,
+        avgDurationMs: 100,
+        exampleGoals: ["deploy"],
+      }),
+      status: "validated",
+    });
+    cStore.approve(p.id);
+    cStore.install(p.id, "/tmp/installed-skill/SKILL.md");
+    expect(cStore.hasInstalledWithSameEvidence("p-installed", "ev-same")).toBe(true);
+    expect(cStore.hasInstalledWithSameEvidence("p-installed", "ev-new")).toBe(false);
+  });
+});
+
 describe("CrystallizationStore.count", () => {
   it("counts all proposals", () => {
     expect(cStore.count()).toBe(0);
@@ -693,6 +719,40 @@ describe("detectCrystallizationCandidates", () => {
     expect(candidates2.some((c: any) => c.patternId === candidates[0].patternId)).toBe(false);
   });
 
+  it("skips patterns with an installed skill covering the same evidence", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: `installed ${i}`,
+        toolSequence: ["exec", "write"],
+        outcome: "success",
+      });
+    }
+    const candidates = detectCrystallizationCandidates(wfStore, cStore, {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      minUsageCount: 1,
+    });
+    expect(candidates.length).toBeGreaterThan(0);
+
+    const patternId = candidates[0].patternId;
+    const evidenceHash = candidates[0].evidenceHash;
+    const p = cStore.create({
+      patternId,
+      evidenceHash,
+      skillName: "installed-skill",
+      skillContent: "#c",
+      patternSnapshot: JSON.stringify(candidates[0].pattern),
+      status: "validated",
+    });
+    cStore.approve(p.id);
+    cStore.install(p.id, "/tmp/installed/SKILL.md");
+
+    const candidates2 = detectCrystallizationCandidates(wfStore, cStore, {
+      ...DEFAULT_CRYSTALLIZATION_CFG,
+      minUsageCount: 1,
+    });
+    expect(candidates2.some((c: any) => c.patternId === patternId)).toBe(false);
+  });
+
   it("sorts candidates by score descending", () => {
     // High-score pattern: 5 successes
     for (let i = 0; i < 5; i++) {
@@ -874,6 +934,21 @@ describe("crystallizeSkill", () => {
     expect(inferCategory(["exec", "read"])).toBe("shell-automation");
     expect(inferCategory(["write", "read"])).toBe("filesystem-editing");
     expect(inferCategory(["read", "search"])).toBe("research-and-analysis");
+  });
+
+  it("quotes YAML frontmatter values that contain colons or reserved words", () => {
+    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "/tmp/skills" };
+    const pattern = {
+      toolSequence: ["read", "write"],
+      totalCount: 5,
+      successCount: 5,
+      failureCount: 0,
+      successRate: 1.0,
+      avgDurationMs: 100,
+      exampleGoals: ["Deploy: production v2 — step one"],
+    };
+    const result = crystallizeSkill({ patternId: "yaml1", evidenceHash: "ev1", pattern }, cfg);
+    expect(result.skillContent).toMatch(/description: ".*Deploy: production/);
   });
 
   it("expands ~ in outputDir", () => {
@@ -1581,6 +1656,7 @@ describe("parseCrystallizationConfig", () => {
     expect(cfg.crystallization.outputDir).toBe("~/.openclaw/workspace/skills/auto");
     expect(cfg.crystallization.maxCrystallized).toBe(50);
     expect(cfg.crystallization.pruneUnusedDays).toBe(30);
+    expect(cfg.crystallization.maxPendingProposals).toBe(100);
     expect(cfg.crystallization.evidenceCountBucketSize).toBe(5);
   });
 

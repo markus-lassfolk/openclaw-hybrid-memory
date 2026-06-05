@@ -19,7 +19,8 @@ const _MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
 const _VERIFIED_FACT_SET_TTL_MS = 5000;
 const _verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
 
-export function getDashboardHtml(): string {
+export function getDashboardHtml(workshopMode = false): string {
+  const initialMode = workshopMode ? "workshop" : "overview";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -86,12 +87,24 @@ export function getDashboardHtml(): string {
   .agent-name { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .agent-task { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .section-full { grid-column: 1 / -1; }
+  .nav-tabs { display: flex; gap: 10px; margin-left: 16px; }
+  .nav-tabs a { color: var(--muted); text-decoration: none; font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid transparent; }
+  .nav-tabs a.active { color: var(--blue); border-color: var(--border); background: rgba(59,130,246,0.08); }
+  .workshop-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .workshop-table th, .workshop-table td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .workshop-actions button { margin-right: 6px; font-size: 11px; padding: 2px 8px; cursor: pointer; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
   @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } main { padding: 8px; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>⚡ Mission Control</h1>
+  <div style="display:flex;align-items:center;gap:8px">
+    <h1>⚡ Mission Control</h1>
+    <nav class="nav-tabs">
+      <a href="/" id="nav-overview">Overview</a>
+      <a href="/workshop" id="nav-workshop">Workshop</a>
+    </nav>
+  </div>
   <div style="display:flex;align-items:center;gap:14px">
     <a href="/graph" style="color:var(--muted);text-decoration:none;font-size:12px">Memory graph →</a>
     <span id="last-updated">Loading…</span>
@@ -103,6 +116,7 @@ export function getDashboardHtml(): string {
   </div>
 </main>
 <script>
+const INITIAL_MODE = '${initialMode}';
 const AGENT_AVATARS = { Forge: '⚒️', Scholar: '📚', Hearth: '🏠', Warden: '🛡️', Reaver: '🔧' };
 const STATUS_BADGE = {
   running: '<span class="badge badge-green">running</span>',
@@ -330,6 +344,100 @@ function renderAudit(a) {
   return html;
 }
 
+function renderWorkshopProposals(proposals) {
+  let html = '<div class="card section-full"><div class="card-title"><span class="icon">🛠️</span> Pending Proposals</div>';
+  if (!proposals || proposals.length === 0) {
+    html += '<div class="empty">No pending proposals</div></div>';
+    return html;
+  }
+  html += '<table class="workshop-table"><thead><tr><th>Type</th><th>Title</th><th>Conf</th><th>Preview</th><th>Actions</th></tr></thead><tbody>';
+  proposals.forEach(p => {
+    const actions = p.actions || {};
+    let actionHtml = '';
+    if (actions.approveSupported) {
+      actionHtml += '<button data-approve="' + escHtml(p.unifiedKey) + '">Approve</button>';
+    }
+    if (actions.rejectSupported) {
+      actionHtml += '<button data-reject="' + escHtml(p.unifiedKey) + '">Reject</button>';
+    }
+    html += '<tr><td>' + escHtml(p.type) + '</td><td>' + escHtml(p.title) + '</td><td>' + Number(p.confidence || 0).toFixed(2) + '</td><td>' + escHtml((p.preview || '').slice(0,120)) + '</td><td class="workshop-actions">' + actionHtml + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function renderDreamLog(runs) {
+  let html = '<div class="card"><div class="card-title"><span class="icon">🌙</span> Dream Cycle Log</div>';
+  if (!runs || runs.length === 0) {
+    html += '<div class="empty">No dream-cycle artifacts found</div></div>';
+    return html;
+  }
+  runs.slice(0, 5).forEach(run => {
+    html += '<div class="task-row"><div class="task-title">' + escHtml(run.runId) + '</div><div class="task-meta">' + (run.stages || []).length + ' stages</div></div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderSkillTelemetry(rows) {
+  let html = '<div class="card"><div class="card-title"><span class="icon">📈</span> Skill Telemetry</div>';
+  if (!rows || rows.length === 0) {
+    html += '<div class="empty">No generated skill telemetry</div></div>';
+    return html;
+  }
+  rows.slice(0, 8).forEach(r => {
+    html += '<div class="stat-row"><span class="stat-label">' + escHtml(r.skillName || r.procedureId || '?') + '</span><span class="stat-value">' + escHtml(r.skillState || r.recommendedAction || '—') + '</span></div>';
+  });
+  html += '</div>';
+  return html;
+}
+
+async function workshopAction(path, body) {
+  const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  return res.json();
+}
+
+async function refreshWorkshop() {
+  const grid = document.getElementById('grid');
+  try {
+    const [proposalsRes, dreamRes, skillsRes] = await Promise.all([
+      fetch('/api/workshop/proposals'),
+      fetch('/api/workshop/dream-log'),
+      fetch('/api/workshop/skills'),
+    ]);
+    const proposals = (await proposalsRes.json()).proposals || [];
+    const dream = (await dreamRes.json()).runs || [];
+    const skills = (await skillsRes.json()).skills || [];
+    grid.innerHTML = [
+      renderWorkshopProposals(proposals),
+      renderDreamLog(dream),
+      renderSkillTelemetry(skills),
+    ].join('');
+    grid.querySelectorAll('[data-approve]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-approve');
+        await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/approve', {});
+        refreshWorkshop();
+      });
+    });
+    grid.querySelectorAll('[data-reject]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-reject');
+        await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/reject', { reason: 'dashboard reject' });
+        refreshWorkshop();
+      });
+    });
+    document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  } catch (err) {
+    document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+  }
+}
+
+function setActiveNav(mode) {
+  document.getElementById('nav-overview')?.classList.toggle('active', mode === 'overview');
+  document.getElementById('nav-workshop')?.classList.toggle('active', mode === 'workshop');
+}
+
 async function refresh() {
   try {
     const res = await fetch('/api/status');
@@ -354,8 +462,14 @@ async function refresh() {
   }
 }
 
-refresh();
-setInterval(refresh, 60000);
+setActiveNav(INITIAL_MODE);
+if (INITIAL_MODE === 'workshop') {
+  refreshWorkshop();
+  setInterval(refreshWorkshop, 60000);
+} else {
+  refresh();
+  setInterval(refresh, 60000);
+}
 </script>
 </body>
 </html>`;

@@ -12,7 +12,9 @@ export async function filterCandidatesByInteractiveGrading(
   candidates: SearchResult[],
   cfg: DocumentGradingConfig,
   openai: OpenAI,
+  opts?: { signal?: AbortSignal },
 ): Promise<SearchResult[]> {
+  if (opts?.signal?.aborted) return candidates;
   if (!cfg.enabled || !cfg.interactiveRecall || candidates.length === 0) {
     return candidates;
   }
@@ -27,10 +29,12 @@ export async function filterCandidatesByInteractiveGrading(
   });
 
   try {
+    if (opts?.signal?.aborted) return candidates;
     const grades = await grader.gradeDocuments(
       query,
       toGrade.map((r) => ({ factId: r.entry.id, text: r.entry.summary || r.entry.text })),
     );
+    if (opts?.signal?.aborted) return candidates;
     if (grades.length === 0) return [];
 
     const relevantIds = new Set(grades.filter((g) => g.relevant).map((g) => g.factId));

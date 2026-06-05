@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { ProposalsDB } from "../backends/proposals-db.js";
-import { applyApprovedProposal } from "../cli/proposals.js";
+import { applyApprovedProposal, capProposalConfidence, findDuplicateProposal, validateProposalContent } from "../cli/proposals.js";
 import { type HybridMemoryConfig, PROPOSAL_STATUSES, isCompactVerbosity } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
@@ -67,10 +67,12 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
     }
   };
 
-  // Helper: rate limiting check
+  // Helper: rate limiting check (honor separateSelfCorrectionQuota like generate-proposals)
   const checkRateLimit = (): { allowed: boolean; count: number; limit: number } => {
     const weekInDays = 7;
-    const count = proposalsDb?.countRecentProposals(weekInDays);
+    const excludeSelfCorrection = cfg.personaProposals.separateSelfCorrectionQuota !== false;
+    const count =
+      proposalsDb?.countRecentProposals(weekInDays, { excludeSelfCorrection }) ?? 0;
     const limit = cfg.personaProposals.maxProposalsPerWeek;
     return { allowed: count < limit, count, limit };
   };
@@ -157,6 +159,21 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           };
         }
 
+        // Safety validation on untrusted proposal text
+        const proposalText = `${title}\n${observation}\n${suggestedChange}`;
+        const contentCheck = validateProposalContent(proposalText);
+        if (!contentCheck.ok) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Proposal rejected: ${contentCheck.reason.replace(/_/g, " ")} detected in proposal content.`,
+              },
+            ],
+            details: { error: contentCheck.reason },
+          };
+        }
+
         // Rate limiting
         const rateCheck = checkRateLimit();
         if (!rateCheck.allowed) {
@@ -171,16 +188,24 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           };
         }
 
+        // Cap replace-type confidence (issue #89) before min-confidence gate
+        const cappedConfidence = capProposalConfidence(confidence, targetFile, suggestedChange);
+
         // Confidence check
-        if (confidence < cfg.personaProposals.minConfidence) {
+        if (cappedConfidence < cfg.personaProposals.minConfidence) {
           return {
             content: [
               {
                 type: "text",
-                text: `Confidence ${confidence} is below minimum ${cfg.personaProposals.minConfidence}. Gather more evidence before proposing.`,
+                text: `Confidence ${cappedConfidence}${cappedConfidence < confidence ? ` (capped from ${confidence})` : ""} is below minimum ${cfg.personaProposals.minConfidence}. Gather more evidence before proposing.`,
               },
             ],
-            details: { error: "confidence_too_low", confidence, minRequired: cfg.personaProposals.minConfidence },
+            details: {
+              error: "confidence_too_low",
+              confidence: cappedConfidence,
+              rawConfidence: confidence,
+              minRequired: cfg.personaProposals.minConfidence,
+            },
           };
         }
 
@@ -232,6 +257,24 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           };
         }
 
+        // Check for duplicate pending/applied proposals with the same change
+        const duplicate = findDuplicateProposal(proposalsDb.list(), { targetFile, suggestedChange });
+        if (duplicate) {
+          const duplicateKind = duplicate.status === "applied" ? "already_applied" : "duplicate_pending";
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  duplicate.status === "applied"
+                    ? `This change was already applied in proposal ${duplicate.id}.`
+                    : `A pending proposal with the same change already exists: ${duplicate.id}.`,
+              },
+            ],
+            details: { error: duplicateKind, duplicateId: duplicate.id, duplicateStatus: duplicate.status },
+          };
+        }
+
         // Calculate expiry
         const expiresAt =
           cfg.personaProposals.proposalTTLDays > 0
@@ -245,7 +288,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           title,
           observation,
           suggestedChange,
-          confidence,
+          confidence: cappedConfidence,
           evidenceSessions,
           expiresAt,
           targetMtimeMs: snapshot?.mtimeMs ?? null,
@@ -258,7 +301,8 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           {
             targetFile,
             title,
-            confidence,
+            confidence: cappedConfidence,
+            rawConfidence: confidence !== cappedConfidence ? confidence : undefined,
             evidenceCount: evidenceSessions.length,
           },
           api.logger,
@@ -327,6 +371,13 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
               },
             };
           }
+          proposalsDb?.updateStatus(proposal.id, "pending");
+          await auditProposal(
+            "apply_failed",
+            proposal.id,
+            { error: applyResult.error, revertedTo: "pending" },
+            api.logger,
+          );
           return {
             content: [
               {
@@ -336,7 +387,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
                   : `Proposal ${proposal.id} was approved automatically but applying to the file failed: ${applyResult.error}\n\nYou can run \`openclaw proposals apply ${proposal.id}\` after fixing the issue.`,
               },
             ],
-            details: { proposalId: proposal.id, status: "approved", applyError: applyResult.error },
+            details: { proposalId: proposal.id, status: "pending", applyError: applyResult.error },
           };
         }
 
@@ -381,7 +432,22 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
         const { status, targetFile } = params as { status?: string; targetFile?: string };
         const verbosity = cfg.verbosity ?? "normal";
 
-        let proposals = proposalsDb?.list({ status, targetFile });
+        if (
+          targetFile &&
+          !cfg.personaProposals.allowedFiles.includes(targetFile as (typeof cfg.personaProposals.allowedFiles)[number])
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Invalid target file filter: ${targetFile}. Allowed: ${cfg.personaProposals.allowedFiles.join(", ")}`,
+              },
+            ],
+            details: { error: "invalid_target_file", targetFile, allowedFiles: cfg.personaProposals.allowedFiles },
+          };
+        }
+
+        let proposals = proposalsDb.list({ status, targetFile });
 
         // Quiet mode: suppress freshly-created pending proposals (< 24h old) to reduce noise,
         // but keep all non-pending proposals (approved/rejected/applied/wont-fix) visible.

@@ -1,10 +1,40 @@
 /**
  * Session file helpers for extract CLI (split from cmd-extract.ts).
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import { capturePluginError } from "../services/error-reporter.js";
+
+/** Session JSONL basenames eligible for procedure/directive extraction scans. */
+export function isSessionTranscriptCandidate(name: string): boolean {
+  return (
+    name.endsWith(".jsonl") &&
+    !name.startsWith(".deleted") &&
+    !name.includes(".checkpoint.") &&
+    !name.includes(".trajectory.")
+  );
+}
+
+/**
+ * Resolve a session transcript path after OpenClaw rollover/archival moves the file.
+ * Falls back to `sessionDir/archive/<basename>` when the original path is missing.
+ */
+export function resolveSessionTranscriptPath(sessionDir: string, filePath: string): string {
+  if (existsSync(filePath)) {
+    try {
+      return realpathSync(filePath);
+    } catch {
+      return filePath;
+    }
+  }
+  const base = basename(filePath);
+  const direct = join(sessionDir, base);
+  if (existsSync(direct)) return direct;
+  const archived = join(sessionDir, "archive", base);
+  if (existsSync(archived)) return archived;
+  return filePath;
+}
 
 /**
  * Returns session .jsonl file paths modified within the last `days` days,
@@ -17,7 +47,7 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
   try {
     const files = readdirSync(sessionDir);
     return files
-      .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
+      .filter((f) => isSessionTranscriptCandidate(f))
       .map((f) => join(sessionDir, f))
       .filter((p) => {
         try {

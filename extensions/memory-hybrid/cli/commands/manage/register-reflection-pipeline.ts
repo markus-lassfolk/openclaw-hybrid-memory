@@ -24,10 +24,12 @@ import type { ManageBindings } from "./bindings.js";
 import {
   assessContinuousVerificationResult,
   applyDreamCyclePipelineExitCode,
+  dreamCycleFollowUpSkipReason,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
   recordDreamCycleFollowUpFailure,
   type RunVerboseFollowUpOptions,
+  shouldSkipDreamCycleFollowUps,
   runVerboseFollowUp,
 } from "./dream-cycle-followup.js";
 import {
@@ -40,7 +42,7 @@ import {
   readConsecutiveNoProgressRuns,
   type ContradictionProgressJsonSummary,
 } from "../../../services/contradiction-progress-summary.js";
-import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
+import { runCrystallizationProposalCycle } from "../../../services/crystallization-maintenance.js";
 
 const CONTRADICTION_BUCKET_PREVIEW_TARGET_RATE = 0.8;
 
@@ -689,23 +691,29 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             }
           }
 
+          const skipFollowUps = shouldSkipDreamCycleFollowUps(res);
+          const followUpSkipReason = dreamCycleFollowUpSkipReason(res);
+          if (followUpSkipReason && verbose) {
+            console.log(`[dream-cycle] skipping follow-ups: ${followUpSkipReason}`);
+          }
+
           const followUpPlan: string[] = [];
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             runContinuousVerification &&
             cfg.verification.enabled &&
             cfg.verification.continuousVerification
           ) {
             followUpPlan.push("continuous verification");
           }
-          if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
+          if (!skipFollowUps && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
             followUpPlan.push("extract implicit feedback");
           }
-          if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
+          if (!skipFollowUps && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
             followUpPlan.push("closed-loop effectiveness");
           }
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             runCrossAgentLearning &&
             cfg.crossAgentLearning?.enabled &&
             cfg.crossAgentLearning?.runInNightlyCycle !== false
@@ -713,15 +721,18 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             followUpPlan.push("cross-agent learning");
           }
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             runToolEffectiveness &&
             cfg.toolEffectiveness?.enabled !== false &&
             cfg.toolEffectiveness?.runInNightlyCycle !== false
           ) {
             followUpPlan.push("tool effectiveness");
           }
+          if (!skipFollowUps && cfg.crystallization?.enabled === true) {
+            followUpPlan.push("crystallization proposals");
+          }
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             pruneCostLog &&
             cfg.costTracking?.enabled !== false &&
             cfg.costTracking?.pruneInNightlyCycle !== false
@@ -769,62 +780,57 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             }
           };
 
-          if (!res.skipped && verbose) {
+          if (!skipFollowUps && verbose) {
             const labels = followUpPlan.length > 0 ? followUpPlan.join(", ") : "none";
             console.log(`[dream-cycle] follow-up plan: ${followUpPlan.length} stage(s) — ${labels}`);
           }
 
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             runContinuousVerification &&
             cfg.verification.enabled &&
             cfg.verification.continuousVerification
           ) {
-            let verificationRes;
-            try {
-              verificationRes = await runFollowUpStage("continuous verification", () =>
-                runContinuousVerification(verbose ? { verbose: true } : undefined),
-              );
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "cli",
-                operation: "continuous-verification",
-              });
-              throw err;
-            }
-            console.log("Continuous verification complete:");
-            console.log(`  Checked: ${verificationRes.checked}`);
-            console.log(`  Confirmed: ${verificationRes.confirmed}`);
-            console.log(`  Stale: ${verificationRes.stale}`);
-            console.log(`  Uncertain: ${verificationRes.uncertain}`);
-            console.log(`  Errors: ${verificationRes.errors}`);
-            if (verificationRes.errorSummaries.length > 0) {
-              console.log("  Error summary:");
-              for (const summary of verificationRes.errorSummaries) {
-                console.log(`    - ${summary}`);
-              }
-            }
-            const verificationAssessment = assessContinuousVerificationResult(verificationRes);
-            if (verificationAssessment.status !== "healthy") {
-              console.log(`  Status: ${verificationAssessment.status.toUpperCase()}`);
-              console.log(
-                `  Machine status: ${formatContinuousVerificationAssessmentLine(verificationRes, verificationAssessment)}`,
-              );
-              if (verificationAssessment.summary) {
-                console.log(`  Warning: ${verificationAssessment.summary}`);
-              }
-              if (verificationAssessment.shouldFailPipeline) {
-                recordDreamCycleFollowUpFailure(
-                  followUpFailures,
-                  "continuous verification",
-                  verificationAssessment.summary ?? "verification follow-up degraded",
-                );
-              }
-            }
+            await runFollowUpStageSafe(
+              "continuous verification",
+              async () => {
+                const verificationRes = await runContinuousVerification(verbose ? { verbose: true } : undefined);
+                console.log("Continuous verification complete:");
+                console.log(`  Checked: ${verificationRes.checked}`);
+                console.log(`  Confirmed: ${verificationRes.confirmed}`);
+                console.log(`  Stale: ${verificationRes.stale}`);
+                console.log(`  Uncertain: ${verificationRes.uncertain}`);
+                console.log(`  Errors: ${verificationRes.errors}`);
+                if (verificationRes.errorSummaries.length > 0) {
+                  console.log("  Error summary:");
+                  for (const summary of verificationRes.errorSummaries) {
+                    console.log(`    - ${summary}`);
+                  }
+                }
+                const verificationAssessment = assessContinuousVerificationResult(verificationRes);
+                if (verificationAssessment.status !== "healthy") {
+                  console.log(`  Status: ${verificationAssessment.status.toUpperCase()}`);
+                  console.log(
+                    `  Machine status: ${formatContinuousVerificationAssessmentLine(verificationRes, verificationAssessment)}`,
+                  );
+                  if (verificationAssessment.summary) {
+                    console.log(`  Warning: ${verificationAssessment.summary}`);
+                  }
+                  if (verificationAssessment.shouldFailPipeline) {
+                    recordDreamCycleFollowUpFailure(
+                      followUpFailures,
+                      "continuous verification",
+                      verificationAssessment.summary ?? "verification follow-up degraded",
+                    );
+                  }
+                }
+              },
+              "continuous-verification",
+            );
           }
 
           // Extract implicit feedback signals as part of nightly cycle
-          if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
+          if (!skipFollowUps && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
             let latestProgress: ExtractImplicitFeedbackProgressSnapshot | undefined;
             await runFollowUpStageSafe(
               "extract implicit feedback",
@@ -853,7 +859,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           }
 
           // Closed-loop effectiveness analysis
-          if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
+          if (!skipFollowUps && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
             await runFollowUpStageSafe(
               "closed-loop effectiveness",
               async () => {
@@ -875,7 +881,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
 
           // Cross-agent learning (Issue #263 — Phase 2)
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             runCrossAgentLearning &&
             cfg.crossAgentLearning?.enabled &&
             cfg.crossAgentLearning?.runInNightlyCycle !== false
@@ -894,7 +900,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
 
           // Tool effectiveness scoring (Issue #263 — Phase 3)
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             runToolEffectiveness &&
             cfg.toolEffectiveness?.enabled !== false &&
             cfg.toolEffectiveness?.runInNightlyCycle !== false
@@ -925,7 +931,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               toolEffectivenessSummary = `degraded (${err instanceof Error ? err.message : String(err)})`;
               recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", err);
             }
-          } else if (!res.skipped) {
+          } else if (!skipFollowUps) {
             if (!runToolEffectiveness) {
               toolEffectivenessSummary = "no-op (tool-effectiveness handler unavailable)";
             } else if (cfg.toolEffectiveness?.enabled === false) {
@@ -935,12 +941,33 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             }
           }
 
-          if (!res.skipped && toolEffectivenessSummary) {
+          if (!skipFollowUps && toolEffectivenessSummary) {
             console.log(`Tool effectiveness: ${toolEffectivenessSummary}`);
           }
+
+          if (!skipFollowUps && cfg.crystallization?.enabled === true) {
+            await runFollowUpStageSafe(
+              "crystallization proposals",
+              async () => {
+                const crystalRes = runCrystallizationProposalCycle(cfg);
+                if (crystalRes.skippedReason === "disabled") {
+                  console.log("Crystallization: skipped (disabled).");
+                  return;
+                }
+                console.log(
+                  `Crystallization: proposed=${crystalRes.proposed}, skipped=${crystalRes.skipped}${crystalRes.reasons.length > 0 ? ` — ${crystalRes.reasons.slice(0, 3).join("; ")}` : ""}`,
+                );
+                if (crystalRes.skippedReason === "stores-unavailable") {
+                  throw new Error(crystalRes.reasons[0] ?? "crystallization stores unavailable");
+                }
+              },
+              "dream-cycle:crystallization",
+            );
+          }
+
           // Cost log pruning (Issue #270)
           if (
-            !res.skipped &&
+            !skipFollowUps &&
             pruneCostLog &&
             cfg.costTracking?.enabled !== false &&
             cfg.costTracking?.pruneInNightlyCycle !== false

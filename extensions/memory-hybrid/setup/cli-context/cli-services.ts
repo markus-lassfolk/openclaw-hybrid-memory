@@ -18,7 +18,7 @@ import { runExport } from "../../services/export-memory.js";
 import { runFindDuplicates } from "../../services/find-duplicates.js";
 import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
 import { mergeResults } from "../../services/merge-results.js";
-import { runPreConsolidationFlush } from "../../services/pre-consolidation-flush.js";
+import { runPreConsolidationFlush, requireWalFlushBeforeMutation } from "../../services/pre-consolidation-flush.js";
 import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
 import { runIdentityReflection } from "../../services/identity-reflection.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../../services/reflection.js";
@@ -137,6 +137,7 @@ interface CliContextServices {
   }) => Promise<{ factsExported: number; proceduresExported: number; filesWritten: number; outputPath: string }>;
   runDreamCycle: (opts?: { verbose?: boolean }) => Promise<DreamCycleResult>;
   runContinuousVerification: (opts?: { verbose?: boolean }) => Promise<VerificationCycleResult>;
+  requireWalFlushBeforeMutation: (phase: string) => Promise<{ committed: number; skipped: number }>;
   runResolveContradictions: () => Promise<{
     autoResolved: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
     ambiguous: Array<{ contradictionId: string; factIdNew: string; factIdOld: string }>;
@@ -205,11 +206,17 @@ export function buildCliContextServices(
     aliasDb,
     verificationStore,
     provenanceService,
+    proposalsDb,
     wal,
   } = ctx;
   const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
   const adaptiveMaintenanceStatePath = join(dirname(resolvedSqlitePath), ".adaptive-llm-limits.json");
   const logSink = { info: (m: string) => pluginLogger.info(m), warn: (m: string) => pluginLogger.warn(m) };
+  const walFlushDeps = { wal, factsDb, vectorDb, embeddings };
+  const guardWal = (phase: string) => requireWalFlushBeforeMutation(walFlushDeps, api.logger, phase);
+  const guardWalUnlessDryRun = async (phase: string, dryRun?: boolean) => {
+    if (!dryRun) await guardWal(phase);
+  };
   return {
     runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
     runConsolidate: async (opts) => {
@@ -220,10 +227,7 @@ export function buildCliContextServices(
         );
         return { clustersFound: 0, merged: 0, deleted: 0 };
       }
-      const flush = await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
-      if (flush.failed) {
-        throw new Error("WAL pre-flush failed; aborting consolidate to avoid stale SQLite state");
-      }
+      await guardWalUnlessDryRun("cli_consolidation", opts.dryRun);
       return runConsolidate(
         factsDb,
         vectorDb,
@@ -236,6 +240,7 @@ export function buildCliContextServices(
       );
     },
     runReflection: async (opts) => {
+      await guardWalUnlessDryRun("cli_reflection", opts.dryRun);
       const requestedModel = opts.model ?? cfg.reflection.model;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
       const effectiveModel = requestedModel ?? defaultModel;
@@ -277,7 +282,8 @@ export function buildCliContextServices(
       }
       return result;
     },
-    runReflectionRules: (opts) => {
+    runReflectionRules: async (opts) => {
+      await guardWalUnlessDryRun("cli_reflect_rules", opts.dryRun);
       const explicitModel = opts.model?.trim() || undefined;
       const configuredModel = cfg.reflection.model?.trim() || undefined;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
@@ -308,7 +314,8 @@ export function buildCliContextServices(
         provenanceService,
       );
     },
-    runReflectionMeta: (opts) => {
+    runReflectionMeta: async (opts) => {
+      await guardWalUnlessDryRun("cli_reflect_meta", opts.dryRun);
       const requestedModel = opts.model ?? cfg.reflection.model;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
       const effectiveModel = requestedModel ?? defaultModel;
@@ -338,6 +345,7 @@ export function buildCliContextServices(
       if (!ctx.identityReflectionStore) {
         return { insightsExtracted: 0, insightsStored: 0, questionsAsked: 0 };
       }
+      await guardWalUnlessDryRun("cli_reflect_identity", opts.dryRun);
       const requestedModel = opts.model ?? cfg.identityReflection.model;
       const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
       const effectiveModel = requestedModel ?? defaultModel;
@@ -357,6 +365,7 @@ export function buildCliContextServices(
       );
     },
     runClassify: async (opts) => {
+      await guardWalUnlessDryRun("cli_classify", opts.dryRun);
       const result = await runClassifyForCli(
         factsDb,
         openai,
@@ -386,9 +395,11 @@ export function buildCliContextServices(
       }
       return result;
     },
-    runCompaction: (opts?: { apply?: boolean }) =>
-      Promise.resolve(
-        factsDb.retier(
+    runCompaction: async (opts?: { apply?: boolean }) => {
+      if (opts?.apply !== false) {
+        await guardWal("cli_compaction_retier");
+      }
+      return factsDb.retier(
           {
             inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
             hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
@@ -403,15 +414,20 @@ export function buildCliContextServices(
             structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
           },
           opts?.apply !== false,
-        ),
-      ),
-    runBuildLanguageKeywords: (opts) =>
-      runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
+        );
+    },
+    runBuildLanguageKeywords: async (opts) => {
+      await guardWalUnlessDryRun("cli_build_language_keywords", opts.dryRun);
+      return runBuildLanguageKeywords(factsDb.getFactsForConsolidation(300), openai, dirname(resolvedSqlitePath), {
         model:
           opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel,
         dryRun: opts.dryRun,
-      }),
-    runEntityEnrichment: (opts) => runEntityEnrichmentForCli(factsDb, openai, cfg, opts),
+      });
+    },
+    runEntityEnrichment: async (opts) => {
+      await guardWalUnlessDryRun("cli_entity_enrichment", opts.dryRun);
+      return runEntityEnrichmentForCli(factsDb, openai, cfg, opts);
+    },
     runExport: (opts) =>
       Promise.resolve(
         runExport(factsDb, opts, {
@@ -491,6 +507,7 @@ export function buildCliContextServices(
         },
         logSink,
         provenanceService,
+        { cfg, proposalsDb: proposalsDb ?? null, api },
       );
     },
     runContinuousVerification: async (opts?: { verbose?: boolean }) => {
@@ -510,11 +527,17 @@ export function buildCliContextServices(
           : {}),
       });
     },
-    runResolveContradictions: () => Promise.resolve(factsDb.resolveContradictions()),
+    runResolveContradictions: async () => {
+      await guardWal("cli_resolve_contradictions");
+      return factsDb.resolveContradictions();
+    },
     runResolveContradictionsDryRun: () => Promise.resolve(factsDb.previewResolveContradictions()),
-    runResolveContradictionsProjectStateLww: (opts: { dryRun?: boolean }) =>
-      Promise.resolve(factsDb.resolveContradictionsProjectStateLww(opts)),
-    runResolveContradictionsAuto: (opts) => {
+    runResolveContradictionsProjectStateLww: async (opts: { dryRun?: boolean }) => {
+      await guardWalUnlessDryRun("cli_resolve_contradictions_project_state_lww", opts.dryRun);
+      return factsDb.resolveContradictionsProjectStateLww(opts);
+    },
+    runResolveContradictionsAuto: async (opts) => {
+      await guardWalUnlessDryRun("cli_resolve_contradictions_auto", opts.dryRun);
       const model =
         opts.model ?? cfg.autoClassify.model ?? resolveReflectionModelAndFallbacks(cfg, "maintenance").defaultModel;
       return factsDb.resolveContradictionsAuto({
@@ -529,13 +552,14 @@ export function buildCliContextServices(
         toolVersion: versionInfo.pluginVersion,
       });
     },
-    runApplyContradictionReviewDecisions: (decisions) =>
-      Promise.resolve(
-        factsDb.applyContradictionReviewDecisions(decisions, {
-          actor: "resolve-contradictions-review",
-          toolVersion: versionInfo.pluginVersion,
-        }),
-      ),
+    runApplyContradictionReviewDecisions: async (decisions) => {
+      await guardWal("cli_apply_contradiction_review_decisions");
+      return factsDb.applyContradictionReviewDecisions(decisions, {
+        actor: "resolve-contradictions-review",
+        toolVersion: versionInfo.pluginVersion,
+      });
+    },
+    requireWalFlushBeforeMutation: guardWal,
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,
     parseSourceDate,

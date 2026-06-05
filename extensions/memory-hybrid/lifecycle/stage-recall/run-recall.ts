@@ -40,6 +40,7 @@ import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js
 import { isTierAllowedForWarmSearch } from "../../utils/tier-filter.js";
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
+import { raceWithAbortSignal } from "../../utils/signal-race.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
 import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
@@ -242,6 +243,7 @@ export async function runRecall(
   };
 
   ctx.recallInFlightRef.value++;
+  // Global ref supports plugin drain/shutdown; per-session recallInFlightBySession drives degradation.
   const trackedSessionScopeKey =
     sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
   sessionState.recallInFlightBySession.set(
@@ -478,6 +480,12 @@ export async function runRecall(
       logger: api.logger,
       registrationGeneration: ctx.registrationGeneration,
     };
+    const recallPipeline = (
+      query: string,
+      limitNum: number,
+      extra?: Omit<NonNullable<Parameters<typeof runRecallPipelineQuery>[4]>, "stageSignal">,
+    ) =>
+      runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
 
     const ambientCfg = ctx.cfg.ambient;
     const sessionKey = sessionScopeKey;
@@ -507,7 +515,7 @@ export async function runRecall(
       ctx.cfg.retrieval.strategies.includes("semantic")
     ) {
       try {
-        promptEmbedding = await ctx.embeddings.embed(e.prompt);
+        promptEmbedding = await raceWithAbortSignal(ctx.embeddings.embed(e.prompt), signal, null);
       } catch {
         // Non-fatal
       }
@@ -521,7 +529,7 @@ export async function runRecall(
     const mainPipelineStartedAt = recallTiming.phaseStarted("main_pipeline");
     const pipelineStatusRef = { semanticDegraded: false };
     let skipPostMainRecallEnrichment = false;
-    let candidates = await runRecallPipelineQuery(e.prompt, limit, pipelineDeps, hydeUsedRef, {
+    let candidates = await recallPipeline(e.prompt, limit, {
       probeId: `${recallProbeId}:main`,
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
@@ -593,7 +601,7 @@ export async function runRecall(
             }
             await yieldEventLoop();
             try {
-              const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
+              const qResults = await recallPipeline(q.text, Math.ceil(limit / 2), {
                 probeId: `${recallProbeId}:ambient:${q.type}:${ambientQueriesRun + 1}`,
                 entity: q.type === "entity" ? q.entity : undefined,
                 hydeLabel: "HyDE",
@@ -842,7 +850,7 @@ export async function runRecall(
               if (recallAborted(signal)) break;
               if (!promptMentionsEntity(e.prompt, entity)) continue;
               if (!canRunDirective()) break;
-              const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
+              const results = await recallPipeline(entity, directiveLimit, {
                 probeId: `${recallProbeId}:directive:entity:${entity}`,
                 entity,
                 hydeLabel: "HyDE",
@@ -865,7 +873,7 @@ export async function runRecall(
             if (recallAborted(signal)) break;
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
-            const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
+            const results = await recallPipeline(keyword, directiveLimit, {
               probeId: `${recallProbeId}:directive:keyword:${keyword}`,
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
@@ -885,7 +893,7 @@ export async function runRecall(
           if (recallAborted(signal)) break;
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
-          const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
+          const results = await recallPipeline(taskType, directiveLimit, {
             probeId: `${recallProbeId}:directive:task:${taskType}`,
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
@@ -904,7 +912,7 @@ export async function runRecall(
           if (recallAborted(signal)) {
             // skip session-start directive on stage timeout
           } else if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
-            const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
+            const results = await recallPipeline("session start", directiveLimit, {
               probeId: `${recallProbeId}:directive:session-start`,
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
@@ -983,12 +991,13 @@ export async function runRecall(
       candidates = candidates.filter((r) => !hotFactIds.has(r.entry.id));
     }
 
-    candidates = await filterCandidatesByInteractiveGrading(
-      e.prompt,
-      candidates,
-      ctx.cfg.documentGrading,
-      ctx.openai,
-    );
+    if (!shouldAbortRecall()) {
+      candidates = await raceWithAbortSignal(
+        filterCandidatesByInteractiveGrading(e.prompt, candidates, ctx.cfg.documentGrading, ctx.openai, { signal }),
+        signal,
+        candidates,
+      );
+    }
 
     const {
       maxPerMemoryChars,
@@ -1001,6 +1010,8 @@ export async function runRecall(
       hotMaxTokens: hotBlockCapCfg,
       narrativeMaxTokens: narrativeBlockCapCfg,
       procedureMaxTokens: procedureBlockCapCfg,
+      activeTaskMaxTokens: activeTaskBlockCapCfg,
+      staleWarningMaxTokens: staleWarningBlockCapCfg,
     } = ctx.cfg.autoRecall;
     // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
@@ -1029,6 +1040,17 @@ export async function runRecall(
     narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens, budgetState);
     hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
     procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens, budgetState);
+
+    const activeTaskReserveCap = ctx.cfg.activeTask.enabled
+      ? (activeTaskBlockCapCfg ??
+        Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2))))
+      : 0;
+    const staleWarningReserveCap =
+      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled
+        ? (staleWarningBlockCapCfg ?? Math.max(40, Math.floor(totalBudget * 0.08)))
+        : 0;
+    reserveAndTrackBlock("activeTask", activeTaskReserveCap, activeTaskReserveCap > 0, budgetState);
+    reserveAndTrackBlock("staleWarning", staleWarningReserveCap, staleWarningReserveCap > 0, budgetState);
 
     const fixedBlocksTokens = totalBudget - budgetState.remainingBudget;
     const maxTokens = Math.max(0, budgetState.remainingBudget);

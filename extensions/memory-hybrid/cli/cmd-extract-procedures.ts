@@ -8,7 +8,7 @@ import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { ExtractProceduresResult, GenerateAutoSkillsResult } from "./types.js";
 
-import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
+import { getSessionFilePathsSince, getMaxMtime, resolveSessionTranscriptPath } from "./cmd-extract-sessions.js";
 export async function runExtractProceduresForCli(
   ctx: HandlerContext,
   opts: {

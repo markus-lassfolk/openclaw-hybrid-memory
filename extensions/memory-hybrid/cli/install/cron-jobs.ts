@@ -283,6 +283,25 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Sunday 04:15 | weekly-crystallization-skills-rescan | re-validate installed crystallized SKILL.md
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-crystallization-skills-rescan`,
+    sessionTarget: "isolated",
+    name: "weekly-crystallization-skills-rescan",
+    schedule: { kind: "cron", expr: "15 4 * * 0" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-crystallization-skills-rescan", {
+      preamble:
+        "Re-validate installed crystallization SKILL.md files. If crystallization.enabled is false, skip and do not update the guard file. Report scanned/quarantined counts.",
+      steps: [{ name: "skills-rescan", cmd: "openclaw hybrid-mem skills rescan" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+    featureGate: "crystallization.enabled",
+  },
+
   // Daily 04:05 | daily-storage-growth-sample | record-storage-sample (7d deltas in audit-health)
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}daily-storage-growth-sample`,

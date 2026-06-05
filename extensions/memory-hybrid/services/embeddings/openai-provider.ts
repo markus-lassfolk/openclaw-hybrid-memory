@@ -6,7 +6,7 @@ import OpenAI from "openai";
 import { withLLMRetry } from "../chat.js";
 import { capturePluginError } from "../error-reporter.js";
 import {
-  AsyncSemaphore,
+  embedWriteSemaphore,
   EMBEDDING_CACHE_MAX,
   makeCacheKey,
   shouldSuppressEmbeddingError,
@@ -58,8 +58,6 @@ export class Embeddings implements EmbeddingProvider {
    * Required for some Azure/APIM/Foundry routes that reject the field even for text-embedding-3-*.
    */
   private readonly omitDimensionsInRequest: boolean;
-  /** Serializes OpenAI embedding API calls (#840); release always runs via try/finally. */
-  private readonly apiSemaphore = new AsyncSemaphore(1);
 
   constructor(
     clientOrApiKey: OpenAI | string,
@@ -123,7 +121,7 @@ export class Embeddings implements EmbeddingProvider {
       }
     }
 
-    await this.apiSemaphore.acquire();
+    await embedWriteSemaphore.acquire();
     try {
       let lastErr: Error | undefined;
       for (const model of this.models) {
@@ -179,7 +177,7 @@ export class Embeddings implements EmbeddingProvider {
       }
       throw lastErr!;
     } finally {
-      this.apiSemaphore.release();
+      embedWriteSemaphore.release();
     }
   }
 
@@ -218,7 +216,7 @@ export class Embeddings implements EmbeddingProvider {
     // Phase 2: Batch-embed only the uncached texts, chunked by batchSize.
     const uncachedTexts = uncachedIndices.map((i) => texts[i]);
     const freshVectors: number[][] = [];
-    await this.apiSemaphore.acquire();
+    await embedWriteSemaphore.acquire();
     try {
       for (let i = 0; i < uncachedTexts.length; i += this.batchSize) {
         const batch = uncachedTexts.slice(i, i + this.batchSize);
@@ -304,7 +302,7 @@ export class Embeddings implements EmbeddingProvider {
         }
       }
     } finally {
-      this.apiSemaphore.release();
+      embedWriteSemaphore.release();
     }
 
     // Phase 3: Reconstruct the full result array in original input order.

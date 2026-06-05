@@ -3,9 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   assessContinuousVerificationResult,
   applyDreamCyclePipelineExitCode,
+  dreamCycleFollowUpSkipReason,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
   recordDreamCycleFollowUpFailure,
+  shouldSkipDreamCycleFollowUps,
   runVerboseFollowUp,
 } from "../cli/commands/manage/dream-cycle-followup.js";
 
@@ -168,5 +170,30 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     });
     expect(process.exitCode).toBe(2);
     process.exitCode = previousExitCode;
+  });
+
+  it("skips follow-ups when WAL pre-flush failed in core cycle", () => {
+    expect(
+      shouldSkipDreamCycleFollowUps({
+        skipped: false,
+        failedStages: ["wal pre-flush", "episodic consolidation"],
+      }),
+    ).toBe(true);
+    expect(
+      dreamCycleFollowUpSkipReason({
+        skipped: false,
+        failedStages: ["wal pre-flush"],
+      }),
+    ).toContain("WAL pre-flush failed");
+  });
+
+  it("does not skip follow-ups when core succeeded", () => {
+    expect(
+      shouldSkipDreamCycleFollowUps({
+        skipped: false,
+        failedStages: [],
+      }),
+    ).toBe(false);
+    expect(dreamCycleFollowUpSkipReason({ skipped: false, failedStages: [] })).toBeNull();
   });
 });

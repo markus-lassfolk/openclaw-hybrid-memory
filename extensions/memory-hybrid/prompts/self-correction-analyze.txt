@@ -22,7 +22,7 @@ For each incident, determine:
    - SKILL_UPDATE: A change to a specific skill file
    - NO_ACTION: Already handled or one-off
 
-4. **Remediation content**: The exact text/rule to store or add. For MEMORY_STORE include: text, entity, key (optional), tags (array). For TOOLS_RULE/AGENTS_RULE: the exact line(s) to append.
+4. **Remediation content**: The exact text/rule to store or add. For MEMORY_STORE include: text, entity, key (optional), tags (array). For TOOLS_RULE/AGENTS_RULE: the exact line(s) to append. For SKILL_UPDATE you MUST pick a target from **Available workspace skills** below and use `slug: change text` (e.g. `hybrid-memory: Add verification before deploy`) or `skills/.../SKILL.md: change text`. For skills under `skills/auto/`, use `auto/slug: change` when the slug alone would be ambiguous. Never emit SKILL_UPDATE without a resolvable slug or path.
 
 5. **Dedup**: Is this correcting the same thing as another incident in this list? If so, set "repeated": true and consider raising severity.
 
@@ -33,6 +33,10 @@ Output ONLY a JSON array of objects. Exactly one object per incident, in any ord
 Example:
 {"incidentIndex":0,"category":"FORGOT_INFO","severity":"MEDIUM","remediationType":"MEMORY_STORE","remediationContent":{"text":"SSH to server uses user@192.168.1.198","entity":"Credentials","key":"server_ssh","tags":["ssh","server"]},"repeated":false}
 {"incidentIndex":1,"category":"WRONG_APPROACH","severity":"LOW","remediationType":"TOOLS_RULE","remediationContent":"If CLI fails twice, fall back to cURL.","repeated":false}
+{"incidentIndex":2,"category":"WRONG_APPROACH","severity":"MEDIUM","remediationType":"SKILL_UPDATE","remediationContent":"hybrid-memory: Verify API response before reporting success.","repeated":false}
+
+Available workspace skills (JSON array of `{ slug, path }` — use for SKILL_UPDATE):
+{{available_skills_json}}
 
 Incidents (JSON array):
 {{incidents_json}}

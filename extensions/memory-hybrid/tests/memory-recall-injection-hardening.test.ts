@@ -243,6 +243,59 @@ describe("runInjectionStage — untrusted-data boundary in assembled prompt", ()
     expect(out?.prependContext).toContain("deployment notes");
   });
 
+  it("aborts primary LLM summarize when injection stage times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+      const api = makeMockStageApi();
+      const createMock = vi.fn(() => new Promise(() => undefined));
+      ctx.openai = {
+        chat: { completions: { create: createMock } },
+      } as typeof ctx.openai;
+      const candidates = Array.from({ length: 4 }, (_, i) => ({
+        entry: {
+          id: `fact-${i}`,
+          text: `Memory ${i}`,
+          category: "preference" as const,
+          entity: null,
+          key: null,
+          value: null,
+          summary: null,
+          tags: [],
+          importance: 0.5,
+          decayClass: "stable" as const,
+          recallCount: 0,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          source: "conversation",
+          createdAt: Math.floor(Date.now() / 1000),
+          expiresAt: null,
+          validFrom: 0,
+          validUntil: null,
+          supersededBy: null,
+          scope: "global" as const,
+        },
+        score: 0.9,
+        backend: "sqlite" as const,
+      }));
+      const recall = makeMinimalRecallResult({
+        candidates,
+        maxTokens: 120,
+        summarizeWhenOverBudget: true,
+        injectionFormat: "full",
+      });
+
+      const pending = runInjectionStage(recall, api as never, ctx, { prompt: "test" });
+      await vi.advanceTimersByTimeAsync(10_001);
+      const out = await pending;
+
+      expect(out?.prependContext).toBeDefined();
+      expect(createMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("sanitizes injection markers in degraded recall path (queue depth exceeded)", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     const sessionState = makeRecallSessionState();

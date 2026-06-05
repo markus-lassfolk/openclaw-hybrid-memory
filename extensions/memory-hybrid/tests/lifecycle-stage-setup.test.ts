@@ -40,6 +40,17 @@ describe("runSetupStage", () => {
     expect(touchSpy).toHaveBeenCalledWith("agent:main:telegram:setup-1");
   });
 
+  it("clears session injection dedup at turn start", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    ctx.injectedFactIdsBySession = new Map([["agent:main:telegram:setup-dedup", new Set(["fact-1"])]]);
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi("agent:main:telegram:setup-dedup");
+
+    await runSetupStage({ prompt: "hello" }, api as never, ctx, sessionState);
+
+    expect(ctx.injectedFactIdsBySession?.has("agent:main:telegram:setup-dedup")).toBe(false);
+  });
+
   it("clears prepend budget ref at turn start", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     const ref = createPrependBudgetRef();

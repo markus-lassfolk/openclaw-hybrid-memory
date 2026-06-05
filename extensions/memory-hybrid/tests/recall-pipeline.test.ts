@@ -1089,3 +1089,70 @@ describe("runRecallPipelineQuery — probe logs", () => {
     expect(debugCalls.some((line) => line.includes("recall-probe id=probe-123 pipeline-exit"))).toBe(true);
   });
 });
+
+describe("runRecallPipelineQuery — stage abort signal", () => {
+  it("returns empty when stageSignal is already aborted before pipeline starts", async () => {
+    const deps = makeDeps({
+      factsDb: {
+        search: vi.fn(() => [makeSearchResult("fts-1")]),
+        getById: vi.fn((id: string) => makeEntry(id)),
+        lookup: vi.fn(() => []),
+        getSupersededTexts: vi.fn(() => new Set<string>()),
+      },
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runRecallPipelineQuery("hello", 5, deps, { value: false }, {
+      stageSignal: controller.signal,
+    });
+
+    expect(result).toEqual([]);
+    expect(deps.factsDb.search).not.toHaveBeenCalled();
+  });
+
+  it("returns FTS-only partial results when stageSignal aborts after FTS in semantic mode", async () => {
+    const ftsHit = makeSearchResult("fts-partial", 0.9);
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+      factsDb: {
+        search: vi.fn(() => [ftsHit]),
+        getById: vi.fn((id: string) => makeEntry(id)),
+        lookup: vi.fn(() => []),
+        getSupersededTexts: vi.fn(() => new Set<string>()),
+      },
+      embeddings: {
+        embed: vi.fn(async () => new Promise<number[]>(() => undefined)),
+      },
+      vectorDb: {
+        search: vi.fn(async () => [makeSearchResult("vec-1", 0.95, {}, "lancedb")]),
+      },
+    });
+    const controller = new AbortController();
+    const statusRef = { semanticDegraded: false };
+
+    const pending = runRecallPipelineQuery("semantic query", 5, deps, { value: false }, {
+      stageSignal: controller.signal,
+      policy: DEFAULT_INTERACTIVE_RECALL_POLICY,
+      pipelineStatusRef: statusRef,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    const result = await pending;
+
+    expect(result.map((r) => r.entry.id)).toEqual(["fts-partial"]);
+    expect(deps.vectorDb.search).not.toHaveBeenCalled();
+    expect(statusRef.semanticDegraded).toBe(true);
+  });
+});

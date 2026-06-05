@@ -67,6 +67,7 @@
       "memory_verification_status",
       "memory_verified_list",
       "memory_verify",
+      "memory_workshop",
       "memory_workflows",
       "persona_propose",
       "persona_proposals_list"
@@ -1847,6 +1848,10 @@
               "type": "string"
             },
             "description": "Extra event_type deny list merged with built-in session/heartbeat filter (#1185)"
+          },
+          "autoPropose": {
+            "type": "boolean",
+            "description": "When true, dream-cycle reflection output is auto-enqueued as governed proposals (default: false)"
           }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"
@@ -1965,6 +1970,9 @@
             "type": "number"
           },
           "pruneUnusedDays": {
+            "type": "number"
+          },
+          "maxPendingProposals": {
             "type": "number"
           },
           "evidenceCountBucketSize": {

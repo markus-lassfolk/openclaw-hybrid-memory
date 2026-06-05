@@ -22,6 +22,9 @@ import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
 import { registerTaskHygieneTools, resolveActiveTaskPathForTools } from "../tools/task-hygiene-tools.js";
 import { type PluginContext as UtilityToolsContext, registerUtilityTools } from "../tools/utility-tools.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
+import { registerWorkshopTools, type WorkshopToolsContext } from "../tools/workshop-tool.js";
+import { registerProposalGatewayMethods, type ProposalGatewayContext } from "../tools/proposal-gateway-methods.js";
+import { registerProposalHttpRoutes, type ProposalRoutesContext } from "../tools/proposal-routes.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
 import { getEnv } from "../utils/env-manager.js";
 
@@ -366,6 +369,49 @@ function installPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPlugin
   registerPublicApiRoutes(ctx, api);
 }
 
+function selectWorkshopToolsContext({
+  cfg,
+  factsDb,
+  proposalsDb,
+  crystallizationStore,
+  toolProposalStore,
+  workflowStore,
+  resolvedSqlitePath,
+}: ToolsContext): WorkshopToolsContext {
+  return {
+    cfg,
+    factsDb,
+    proposalsDb,
+    crystallizationStore,
+    toolProposalStore,
+    workflowStore,
+    resolvedSqlitePath,
+  };
+}
+
+function installWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): void {
+  registerWorkshopTools(ctx, api);
+}
+
+function selectProposalRoutesContext(ctx: ToolsContext, api: ClawdbotPluginApi): ProposalRoutesContext {
+  return {
+    cfg: { health: ctx.cfg.health },
+    cfgFull: ctx.cfg,
+    factsDb: ctx.factsDb,
+    proposalsDb: ctx.proposalsDb,
+    crystallizationStore: ctx.crystallizationStore,
+    toolProposalStore: ctx.toolProposalStore,
+    workflowStore: ctx.workflowStore,
+    resolvedSqlitePath: ctx.resolvedSqlitePath,
+    api,
+  };
+}
+
+function installProposalRoutes(ctx: ProposalRoutesContext): void {
+  registerProposalHttpRoutes(ctx);
+  registerProposalGatewayMethods(ctx);
+}
+
 function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
   const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
   const goalsDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
@@ -435,6 +481,18 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectPersonaToolsContext(ctx),
     install: installPersonaTools,
+  }),
+  defineToolInstaller({
+    id: "workshop",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectWorkshopToolsContext(ctx),
+    install: installWorkshopTools,
+  }),
+  defineToolInstaller({
+    id: "proposalRoutes",
+    bootstrapPhase: "optional",
+    selectContext: (ctx, api) => selectProposalRoutesContext(ctx, api),
+    install: installProposalRoutes,
   }),
   defineToolInstaller({
     id: "documents",

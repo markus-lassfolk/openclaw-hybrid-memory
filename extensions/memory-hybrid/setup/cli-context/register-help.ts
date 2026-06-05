@@ -14,7 +14,7 @@ import type { ActiveTaskContext } from "../../cli/active-tasks.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../../cli/backup.js";
 import type { HandlerContext } from "../../cli/handlers.js";
 import * as handlers from "../../cli/handlers.js";
-import { applyApprovedProposal } from "../../cli/proposals.js";
+import { applyApprovedProposal, getProposalExpiryError } from "../../cli/proposals.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import { getCronModelConfig, getDefaultCronModel, hybridConfigSchema } from "../../config.js";
 import { readGuardTimestampMs } from "../../services/cron-guard.js";
@@ -323,6 +323,8 @@ function buildListCommands(
       const p = proposalsDb.get(id);
       if (!p) return { ok: false, error: `Proposal ${id} not found` };
       if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
+      const expiryError = getProposalExpiryError(p);
+      if (expiryError) return { ok: false, error: expiryError };
       proposalsDb.updateStatus(id, "approved");
       const applyResult = await applyApprovedProposal({ proposalsDb, cfg, resolvedSqlitePath, api }, id);
       if (!applyResult.ok) {
@@ -492,6 +494,9 @@ export function createHybridMemCliContext(
     runResolveContradictions: services.runResolveContradictions,
     runResolveContradictionsDryRun: services.runResolveContradictionsDryRun,
     runResolveContradictionsProjectStateLww: services.runResolveContradictionsProjectStateLww,
+    runResolveContradictionsAuto: services.runResolveContradictionsAuto,
+    runApplyContradictionReviewDecisions: services.runApplyContradictionReviewDecisions,
+    requireWalFlushBeforeMutation: services.requireWalFlushBeforeMutation,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
       model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "maintenance"),

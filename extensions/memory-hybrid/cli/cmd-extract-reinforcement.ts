@@ -48,6 +48,7 @@ import { resolveExtractSessionFilePaths } from "../services/extract-session-path
 import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
+import { resolvePipelineProposalTarget } from "./proposals.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
@@ -703,15 +704,29 @@ export async function runExtractReinforcementForCli(
             const suggestedChange = obj.suggestedChange ?? (typeof c === "string" ? c : "");
             const targetFile = obj.targetFile ?? inferTargetFile(suggestedChange);
             if (suggestedChange.trim()) {
-              proposalsDb.create({
+              const resolved = resolvePipelineProposalTarget({
                 targetFile,
+                suggestedChange,
+                allowedFiles: cfg.personaProposals.allowedFiles,
+                workspaceRoot,
+                confidence: 0.7,
+                proposalTTLDays: cfg.personaProposals.proposalTTLDays,
+                minConfidence: cfg.personaProposals.minConfidence,
+                proposalsDb,
+              });
+              if (!resolved) continue;
+              proposalsDb.create({
+                targetFile: resolved.targetFile,
                 title: `Reinforcement: ${a.category}`,
                 observation: "Positive signal from reinforcement analysis",
                 suggestedChange: suggestedChange.trim(),
-                confidence: 0.7,
+                confidence: resolved.confidence,
                 evidenceSessions: result.incidents
                   .map((i) => i.sessionFile)
                   .filter((v, idx, arr) => arr.indexOf(v) === idx),
+                expiresAt: resolved.expiresAt,
+                targetMtimeMs: resolved.targetMtimeMs,
+                targetHash: resolved.targetHash,
               });
             }
           }

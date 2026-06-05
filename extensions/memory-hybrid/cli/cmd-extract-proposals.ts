@@ -14,11 +14,10 @@ import {
   buildPersonaStateInsightsBlock,
   promotePersonaStateFromReflections,
 } from "../services/persona-state-promotion.js";
-import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { parseStructuredItemsAcceptingEmpty, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import type { HandlerContext } from "./handlers.js";
-import { capProposalConfidence } from "./proposals.js";
+import { resolvePipelineProposalTarget } from "./proposals.js";
 
 function isSelfCorrectionInsight(f: { source?: string | null; tags?: string[] | null }): boolean {
   return (
@@ -399,8 +398,6 @@ export async function runGenerateProposalsForCli(
     { length: Math.max(1, cfg.personaProposals.minSessionEvidence) },
     () => "reflection-pipeline",
   );
-  const expiresAt =
-    cfg.personaProposals.proposalTTLDays > 0 ? nowSec + cfg.personaProposals.proposalTTLDays * 24 * 3600 : null;
   let created = 0;
   for (const item of items) {
     if (recentCount + created >= limit) {
@@ -412,26 +409,31 @@ export async function runGenerateProposalsForCli(
       break;
     }
     const targetFile = String(item.targetFile ?? "").trim();
-    if (!allowedFiles.includes(targetFile as any)) continue;
-    const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-    const snapshot = getFileSnapshot(join(workspace, targetFile));
-    let confidence = Number(item.confidence);
-    if (!Number.isFinite(confidence)) continue;
-    confidence = capProposalConfidence(confidence, targetFile, String(item.suggestedChange ?? ""));
-    if (confidence < minConf) {
-      ctx.logger.info?.(
-        `memory-hybrid: proposal dropped — confidence ${
-          confidence < Number(item.confidence)
-            ? `capped to ${confidence.toFixed(2)} (below minConf ${minConf})`
-            : `below minConf ${minConf}`
-        }: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`,
-      );
+    const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
+    if (!suggestedChange.trim()) continue;
+    const rawConfidence = Number(item.confidence);
+    if (!Number.isFinite(rawConfidence)) continue;
+    const resolved = resolvePipelineProposalTarget({
+      targetFile,
+      suggestedChange,
+      allowedFiles,
+      workspaceRoot: workspace,
+      confidence: rawConfidence,
+      proposalTTLDays: cfg.personaProposals.proposalTTLDays,
+      minConfidence: minConf,
+      nowSec,
+      proposalsDb,
+    });
+    if (!resolved) {
+      if (verbose) {
+        ctx.logger.info?.(
+          `memory-hybrid: proposal dropped — failed allowlist/confidence/safety gates: ${String(item.title ?? "").slice(0, 80)} -> ${targetFile}`,
+        );
+      }
       continue;
     }
     const title = String(item.title ?? "Update from reflection").slice(0, 256);
     const observation = String(item.observation ?? "").slice(0, 2000);
-    const suggestedChange = String(item.suggestedChange ?? "").slice(0, 50000);
-    if (!suggestedChange.trim()) continue;
     if (opts.dryRun) {
       if (verbose) ctx.logger.info?.(`memory-hybrid: [dry-run] would create proposal: ${title} -> ${targetFile}`);
       created++;
@@ -439,15 +441,15 @@ export async function runGenerateProposalsForCli(
     }
     try {
       proposalsDb.create({
-        targetFile,
+        targetFile: resolved.targetFile,
         title,
         observation,
         suggestedChange,
-        confidence,
+        confidence: resolved.confidence,
         evidenceSessions,
-        expiresAt,
-        targetMtimeMs: snapshot?.mtimeMs ?? null,
-        targetHash: snapshot?.hash ?? null,
+        expiresAt: resolved.expiresAt,
+        targetMtimeMs: resolved.targetMtimeMs,
+        targetHash: resolved.targetHash,
       });
       created++;
       if (verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);

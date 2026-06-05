@@ -177,6 +177,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     listCommands,
     auditStore,
     runExport,
+    requireWalFlushBeforeMutation,
   } = b;
 
   const tierCompactCmd = mem
@@ -1129,6 +1130,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .action(
       withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        await requireWalFlushBeforeMutation("cli_prune_expired");
         const before = factsDb.count();
         if (verbose) {
           const pending = factsDb.listExpiredFactIdsPendingPrune();
