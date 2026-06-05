@@ -94,8 +94,8 @@ export function buildRecallLifecycleContext(
   };
 }
 
-export function makeRecallSessionState(): SessionState {
-  return createSessionState();
+export function makeRecallSessionState(ctx?: LifecycleContext): SessionState {
+  return createSessionState(ctx?.progressiveIndexBySession, ctx?.lastAutoRecallPromptBySession);
 }
 
 /** Seed per-session recall queue depth so the next runRecall exceeds degradationQueueDepth. */

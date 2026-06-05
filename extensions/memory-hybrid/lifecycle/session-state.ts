@@ -48,7 +48,10 @@ export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyH
   return sessionId ? String(sessionId) : null;
 }
 
-export function createSessionState(): SessionState {
+export function createSessionState(
+  progressiveIndexBySession?: Map<string, string[]>,
+  lastAutoRecallPromptBySession?: Map<string, string>,
+): SessionState {
   const authFailureRecallsThisSession = new Map<string, number>();
   const sessionStartSeen = new Set<string>();
   const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
@@ -75,6 +78,8 @@ export function createSessionState(): SessionState {
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
     }
     recallInFlightBySession.delete(sessionKey);
+    progressiveIndexBySession?.delete(sessionKey);
+    lastAutoRecallPromptBySession?.delete(sessionKey);
   }
 
   function pruneSessionMaps(): void {
@@ -129,6 +134,22 @@ export function createSessionState(): SessionState {
         if (value) sessionLastActivity.delete(value);
       }
     }
+    if (progressiveIndexBySession && progressiveIndexBySession.size > MAX_TRACKED_SESSIONS) {
+      const excess = progressiveIndexBySession.size - MAX_TRACKED_SESSIONS;
+      const keys = progressiveIndexBySession.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) progressiveIndexBySession.delete(value);
+      }
+    }
+    if (lastAutoRecallPromptBySession && lastAutoRecallPromptBySession.size > MAX_TRACKED_SESSIONS) {
+      const excess = lastAutoRecallPromptBySession.size - MAX_TRACKED_SESSIONS;
+      const keys = lastAutoRecallPromptBySession.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) lastAutoRecallPromptBySession.delete(value);
+      }
+    }
   }
 
   function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
@@ -144,6 +165,8 @@ export function createSessionState(): SessionState {
     sessionLastActivity.clear();
     capabilityHintsSessionsSeen.clear();
     recallInFlightBySession.clear();
+    progressiveIndexBySession?.clear();
+    lastAutoRecallPromptBySession?.clear();
   };
 
   return {

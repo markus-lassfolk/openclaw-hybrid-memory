@@ -37,7 +37,7 @@ import { isStaleLifecycleGeneration } from "../utils/lifecycle-generation.js";
 export type { LifecycleContext } from "./types.js";
 
 export function createLifecycleHooks(ctx: LifecycleContext) {
-  const sessionState = createSessionState();
+  const sessionState = createSessionState(ctx.progressiveIndexBySession, ctx.lastAutoRecallPromptBySession);
   const staleSweepTimer = createStaleSweepTimer(sessionState);
   let firstRecallCheckpointCaptured = false;
 
