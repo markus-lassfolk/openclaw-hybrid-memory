@@ -16,7 +16,12 @@ import {
   buildMaintenanceCoverageReport,
   formatMaintenanceCoverageReport,
 } from "../../services/maintenance-coverage.js";
-import { extractToolSequenceFromMessages, extractToolSequenceFromTrajectoryLines, normalizeWorkflowToolSequence, readTrajectoryLines } from "../../services/session-v3-parser.js";
+import {
+  extractToolSequenceFromMessages,
+  extractToolSequenceFromTrajectoryLines,
+  normalizeWorkflowToolSequence,
+  readTrajectoryLines,
+} from "../../services/session-v3-parser.js";
 import { parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
 import { redactMaintenancePrivateText } from "../../utils/maintenance-privacy.js";
 
@@ -47,13 +52,13 @@ for (const p of paths) {
   if (trajLines) tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "sandbox-backfill"));
   tools = normalizeWorkflowToolSequence(tools);
   if (tools.length >= 2) {
-    wf.record({
+    const inserted = wf.recordBackfillIfAbsent({
       goal: redactMaintenancePrivateText(messages.find((m) => m.role === "user")?.text.slice(0, 200) ?? "session"),
       toolSequence: tools,
       outcome: "unknown",
       sessionId: basename(p),
     });
-    traces++;
+    if (inserted) traces++;
   }
 }
 
@@ -63,7 +68,10 @@ const row = factsDb
     `SELECT MAX(created_at) AS max_created FROM facts WHERE category IN ('pattern', 'rule') AND superseded_at IS NULL`,
   )
   .get() as { max_created: number | null };
-factsDb.setMaintenanceState("reflection_last_fact_created_at", String(row?.max_created ?? Math.floor(Date.now() / 1000)));
+factsDb.setMaintenanceState(
+  "reflection_last_fact_created_at",
+  String(row?.max_created ?? Math.floor(Date.now() / 1000)),
+);
 
 const cov = buildMaintenanceCoverageReport({
   factsDbPath: sqlitePath,

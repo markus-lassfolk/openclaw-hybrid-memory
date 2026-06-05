@@ -16,7 +16,10 @@ import { WorkflowStore } from "../../backends/workflow-store.js";
 import { hybridConfigSchema } from "../../config.js";
 import { getSessionFilePathsSince } from "../../cli/cmd-extract-sessions.js";
 import { resolveExtractSessionFilePaths } from "../../services/extract-session-paths.js";
-import { buildMaintenanceCoverageReport, formatMaintenanceCoverageReport } from "../../services/maintenance-coverage.js";
+import {
+  buildMaintenanceCoverageReport,
+  formatMaintenanceCoverageReport,
+} from "../../services/maintenance-coverage.js";
 import { detectCrystallizationCandidates } from "../../services/pattern-detector.js";
 import { GeneratedSkillValidationService } from "../../services/generated-skill-validation.js";
 import { crystallizeSkill } from "../../services/skill-crystallizer.js";
@@ -92,7 +95,10 @@ function detectSessionGaps(hist: Map<string, number>, windowDays: number): strin
   return gaps;
 }
 
-function backfillWorkflowTraces(wf: WorkflowStore, paths: string[]): { traces: number; skipped: number; noTools: number } {
+function backfillWorkflowTraces(
+  wf: WorkflowStore,
+  paths: string[],
+): { traces: number; skipped: number; noTools: number } {
   let traces = 0;
   let skipped = 0;
   let noTools = 0;
@@ -133,11 +139,13 @@ function outcomeBreakdown(wfPath: string): Record<string, number> {
 }
 
 function topPatterns(wf: WorkflowStore, minSuccessRate: number, minUsage: number, limit = 15): WorkflowPattern[] {
-  return wf.getPatterns({
-    minSuccessRate,
-    traceSampleLimit: 8000,
-    limit: 200,
-  }).filter((p) => p.totalCount >= minUsage);
+  return wf
+    .getPatterns({
+      minSuccessRate,
+      traceSampleLimit: 8000,
+      limit: 200,
+    })
+    .filter((p) => p.totalCount >= minUsage);
 }
 
 function isCronOrSystemGoal(goal: string): boolean {
@@ -267,16 +275,15 @@ async function main(): Promise<void> {
   if (existsSync(liveWfPath)) {
     const db = new DatabaseSync(liveWfPath);
     try {
-      const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
+      const sinceMs = Date.now() - days * 86400 * 1000;
+      const sinceIso = new Date(sinceMs).toISOString();
       const total = (db.prepare("SELECT COUNT(*) AS n FROM workflow_traces").get() as { n: number }).n;
       const sinceWindow = (
-        db
-          .prepare(`SELECT COUNT(*) AS n FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch')`)
-          .get(sinceSec) as { n: number }
+        db.prepare(`SELECT COUNT(*) AS n FROM workflow_traces WHERE created_at >= ?`).get(sinceIso) as { n: number }
       ).n;
       const rows = db
-        .prepare(`SELECT outcome, COUNT(*) AS cnt FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch') GROUP BY outcome`)
-        .all(sinceSec) as Array<{ outcome: string; cnt: number }>;
+        .prepare(`SELECT outcome, COUNT(*) AS cnt FROM workflow_traces WHERE created_at >= ? GROUP BY outcome`)
+        .all(sinceIso) as Array<{ outcome: string; cnt: number }>;
       const outcomes: Record<string, number> = {};
       for (const r of rows) outcomes[r.outcome] = r.cnt;
       liveWfStats = { total, sinceWindow, outcomes };
@@ -286,18 +293,17 @@ async function main(): Promise<void> {
   }
 
   const dataGapOk = gaps.length <= 2;
-  const verdict =
-    !dataGapOk
-      ? "INCONCLUSIVE — session coverage has multi-day gaps in the window."
-      : prodCandidates.length === 0 && structuralCandidates.length === 0
-        ? "NOT READY — no repeatable tool patterns at minimum usage thresholds."
-        : prodCandidates.length === 0
-          ? "BLOCKED ON OUTCOMES — patterns exist but production minSuccessRate (0.7) eliminates all candidates because backfill traces use outcome=unknown. Enable workflowTracking on Maeve first."
-          : validationSummary.deny > validationSummary.allow
-            ? "MOSTLY GARBAGE — validation denies more samples than it allows."
-            : (usefulnessCounts.potentially ?? 0) >= 4
-              ? "PROMISING — several candidates look actionable with real goals."
-              : "MIXED — some structure, but many skills are generic boilerplate.";
+  const verdict = !dataGapOk
+    ? "INCONCLUSIVE — session coverage has multi-day gaps in the window."
+    : prodCandidates.length === 0 && structuralCandidates.length === 0
+      ? "NOT READY — no repeatable tool patterns at minimum usage thresholds."
+      : prodCandidates.length === 0
+        ? "BLOCKED ON OUTCOMES — patterns exist but production minSuccessRate (0.7) eliminates all candidates because backfill traces use outcome=unknown. Enable workflowTracking on Maeve first."
+        : validationSummary.deny > validationSummary.allow
+          ? "MOSTLY GARBAGE — validation denies more samples than it allows."
+          : (usefulnessCounts.potentially ?? 0) >= 4
+            ? "PROMISING — several candidates look actionable with real goals."
+            : "MIXED — some structure, but many skills are generic boilerplate.";
 
   const lines: string[] = [
     `# Crystallization analysis (Maeve offline QA)`,
@@ -318,9 +324,17 @@ async function main(): Promise<void> {
     `- Data-gap gate (≤2 zero days): **${dataGapOk ? "PASS" : "FAIL"}**`,
     `- Sessions with <2 tools (no trace): **${backfill.noTools}**`,
     `- Workflow traces backfilled (isolated DB): **${backfill.traces}** (skipped dupes: ${backfill.skipped})`,
-    `- Trace outcomes (backfill isolated DB): ${Object.entries(outcomes).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`,
+    `- Trace outcomes (backfill isolated DB): ${
+      Object.entries(outcomes)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ") || "(none)"
+    }`,
     liveWfStats
-      ? `- Live workflow-traces.db on sandbox: total=${liveWfStats.total}, last ${days}d=${liveWfStats.sinceWindow}, outcomes: ${Object.entries(liveWfStats.outcomes).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`
+      ? `- Live workflow-traces.db on sandbox: total=${liveWfStats.total}, last ${days}d=${liveWfStats.sinceWindow}, outcomes: ${
+          Object.entries(liveWfStats.outcomes)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ") || "(none)"
+        }`
       : `- Live workflow-traces.db on sandbox: (not present — backfill-only analysis)`,
     `- Maeve config workflowTracking.enabled: **${cfg.workflowTracking.enabled}**`,
     `- Maeve config crystallization.enabled: **${cfg.crystallization.enabled}**`,
@@ -329,9 +343,7 @@ async function main(): Promise<void> {
     ``,
     `### Sessions per UTC day`,
     ``,
-    ...[...hist.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([day, count]) => `- ${day}: ${count}`),
+    ...[...hist.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([day, count]) => `- ${day}: ${count}`),
     ``,
     `## Pattern detection`,
     ``,
@@ -344,7 +356,10 @@ async function main(): Promise<void> {
     lines.push(`### Top structural patterns (by usage)`, ``);
     for (const p of structuralPatterns.slice(0, 10)) {
       lines.push(
-        `- \`${p.toolSequence.join(" → ")}\` — count=${p.totalCount}, successRate=${(p.successRate * 100).toFixed(0)}%, goals: ${p.exampleGoals.slice(0, 2).map((g) => JSON.stringify(g.slice(0, 60))).join("; ")}`,
+        `- \`${p.toolSequence.join(" → ")}\` — count=${p.totalCount}, successRate=${(p.successRate * 100).toFixed(0)}%, goals: ${p.exampleGoals
+          .slice(0, 2)
+          .map((g) => JSON.stringify(g.slice(0, 60)))
+          .join("; ")}`,
       );
     }
     lines.push(``);
@@ -357,11 +372,18 @@ async function main(): Promise<void> {
     lines.push(
       `Validation summary: allow=${validationSummary.allow}, allow-with-override=${validationSummary.allowWithOverride}, deny=${validationSummary.deny}; passed=${validationSummary.passed}, warn=${validationSummary.warn}, failed=${validationSummary.failed}`,
     );
-    lines.push(`Usefulness buckets: ${Object.entries(usefulnessCounts).map(([k, v]) => `${k}=${v}`).join(", ")}`, ``);
+    lines.push(
+      `Usefulness buckets: ${Object.entries(usefulnessCounts)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ")}`,
+      ``,
+    );
     for (const s of samples) {
       lines.push(`### ${s.skillName}`);
       lines.push(`- Sequence: \`${s.toolSequence}\``);
-      lines.push(`- Evidence: count=${s.totalCount}, successRate=${(s.successRate * 100).toFixed(0)}%, score=${s.score.toFixed(1)}`);
+      lines.push(
+        `- Evidence: count=${s.totalCount}, successRate=${(s.successRate * 100).toFixed(0)}%, score=${s.score.toFixed(1)}`,
+      );
       lines.push(`- Example goals: ${s.exampleGoals.map((g) => JSON.stringify(g.slice(0, 80))).join(", ")}`);
       lines.push(`- Exec script: ${s.hasScript ? "yes" : "no"}`);
       lines.push(
@@ -373,16 +395,27 @@ async function main(): Promise<void> {
 
   lines.push(`## Recommendations`, ``);
   if (!cfg.workflowTracking.enabled) {
-    lines.push(`1. Enable \`workflowTracking.enabled\` on Maeve so traces record success/failure instead of backfill-only \`unknown\`.`);
+    lines.push(
+      `1. Enable \`workflowTracking.enabled\` on Maeve so traces record success/failure instead of backfill-only \`unknown\`.`,
+    );
   }
   if (prodCandidates.length === 0 && structuralCandidates.length > 0) {
-    lines.push(`2. Re-run this analysis after 2 weeks of live workflow tracking; production gates need non-zero success rates.`);
+    lines.push(
+      `2. Re-run this analysis after 2 weeks of live workflow tracking; production gates need non-zero success rates.`,
+    );
   }
-  if (structuralCandidates.length > 0 && (usefulnessCounts.mediocre ?? 0) + (usefulnessCounts.weak ?? 0) > (usefulnessCounts.potentially ?? 0)) {
-    lines.push(`3. Expect many generic SKILL.md bodies until goals are richer — consider raising \`minUsageCount\` or tightening pattern similarity.`);
+  if (
+    structuralCandidates.length > 0 &&
+    (usefulnessCounts.mediocre ?? 0) + (usefulnessCounts.weak ?? 0) > (usefulnessCounts.potentially ?? 0)
+  ) {
+    lines.push(
+      `3. Expect many generic SKILL.md bodies until goals are richer — consider raising \`minUsageCount\` or tightening pattern similarity.`,
+    );
   }
   if (dataGapOk && structuralCandidates.length >= 5) {
-    lines.push(`4. Optional pilot: enable \`crystallization.enabled\` with \`autoApprove: false\` and review the pending digest for 1–2 weeks.`);
+    lines.push(
+      `4. Optional pilot: enable \`crystallization.enabled\` with \`autoApprove: false\` and review the pending digest for 1–2 weeks.`,
+    );
   }
 
   mkdirSync(dirname(outPath), { recursive: true });

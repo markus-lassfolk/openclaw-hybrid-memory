@@ -761,6 +761,10 @@ export async function runExtractReinforcementForCli(
               const similar = await findSimilarByEmbedding(vectorDb, factsDb, vector, 1, 0.55);
               if (similar.length > 0) {
                 const entry = similar[0];
+                const now = Date.now();
+                if (entry.expiresAt != null && entry.expiresAt <= now) {
+                  continue;
+                }
                 const context: ReinforcementContext = {
                   querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
                   topic: analysisCategory,
