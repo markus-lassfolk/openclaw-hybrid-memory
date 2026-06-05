@@ -388,7 +388,6 @@ describe("maintenance log analyzer", () => {
     mkdirSync(day, { recursive: true });
     const stem = "maintenance-nightly-20260605T030000Z-99";
     const summaryPath = join(day, `${stem}.summary.json`);
-    const siblingExitPath = join(day, `${stem}.exit.txt`);
     const canonicalExitPath = join(root, `${stem}.exit.txt`);
     writeFileSync(
       summaryPath,
@@ -400,7 +399,6 @@ describe("maintenance log analyzer", () => {
         steps: [{ name: "distill", status: "ok", summary: "stored=1" }],
       }),
     );
-    writeFileSync(siblingExitPath, "2026-06-05T03:15:00Z distill exit=0\n");
     writeFileSync(canonicalExitPath, "2026-06-05T03:15:00Z distill exit=0\n");
 
     const nowMs = Date.UTC(2026, 5, 5, 4, 0, 0);
