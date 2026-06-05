@@ -64,12 +64,16 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
         ? Number(opts.maxRuntimeMin) * 60_000
         : undefined;
 
+    const isJsonMode = opts?.json || !!opts?.summaryOut?.trim() || !!process.env.HM_SUMMARY?.trim();
+    const log = isJsonMode ? (m: string) => console.error(m) : (m: string) => console.log(m);
+    const warn = (m: string) => console.error(m);
+
     const result = await runMaintenanceOrchestrator(
       {
         cfg: b.cfg,
         runners,
         openclawDir,
-        logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
+        logger: { info: log, warn },
         oneTimeMarkerExists: (path) => existsSync(join(memoryDir, path)),
       },
       {
