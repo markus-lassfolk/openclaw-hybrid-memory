@@ -42,14 +42,43 @@ describe("runRecallStage", () => {
     vi.useRealTimers();
   });
 
-  it("returns empty when prompt is shorter than 5 characters", async () => {
-    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+  it("injects fixed blocks for short prompts without running recall pipeline", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      memoryTiering: { enabled: true, hotMaxTokens: 500 },
+    });
+    vi.spyOn(factsDb, "getHotFacts").mockReturnValue([
+      {
+        entry: {
+          id: "hot-short",
+          text: "Active blocker: finish deploy checklist before merge",
+          category: "project",
+          importance: 0.9,
+          entity: null,
+          key: null,
+          value: null,
+          source: "conversation",
+          createdAt: 1,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          scope: "global",
+        },
+        score: 1,
+        backend: "sqlite",
+      },
+    ]);
     const sessionState = makeRecallSessionState();
     const api = makeMockStageApi();
 
     const result = await runRecallStage({ prompt: "hi" }, api as never, ctx, sessionState);
 
-    expect(result).toEqual({ kind: "empty", prependContext: undefined });
+    expect(result?.kind).toBe("empty");
+    if (result?.kind === "empty") {
+      expect(result.prependContext).toContain("short prompt");
+      expect(result.prependContext).toContain("Active blocker");
+      expect(result.prependContext).toContain("recalled data only");
+    }
     expect(recallPipeline.runRecallPipelineQuery).not.toHaveBeenCalled();
     expect(ctx.recallInFlightRef.value).toBe(0);
   });
@@ -143,7 +172,7 @@ describe("runRecallStage", () => {
     expect(ctx.recallInFlightRef.value).toBe(0);
   });
 
-  it("returns null when stage wall-clock timeout fires", async () => {
+  it("returns degraded FTS+HOT fallback when stage wall-clock timeout fires", async () => {
     vi.useFakeTimers();
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation(() => new Promise(() => undefined));
@@ -154,7 +183,10 @@ describe("runRecallStage", () => {
     await vi.advanceTimersByTimeAsync(INTERACTIVE_RECALL_STAGE_TIMEOUT_MS + 1);
     const result = await pending;
 
-    expect(result).toBeNull();
+    expect(result?.kind).toBe("degraded");
+    if (result?.kind === "degraded") {
+      expect(result.prependContext).toContain("recall degraded: timeout");
+    }
   });
 
   it("returns empty (not timeout null) when registration is superseded before timeout fires", async () => {
@@ -288,14 +320,11 @@ describe("runRecallStage", () => {
   it("logs fixed-block consumers when recall budget is exhausted", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
       memoryTiering: { enabled: true, hotMaxTokens: 2000 },
-      activeTask: { enabled: true, ledger: "facts", injectionBudget: 500, staleWarning: { enabled: true } },
       autoRecall: {
-        maxTokens: 120,
-        hotMaxTokens: 80,
-        narrativeMaxTokens: 80,
-        procedureMaxTokens: 80,
-        activeTaskMaxTokens: 80,
-        staleWarningMaxTokens: 40,
+        maxTokens: 40,
+        hotMaxTokens: 40,
+        narrativeMaxTokens: 0,
+        procedureMaxTokens: 0,
       },
     });
     vi.mocked(recallPipeline.runRecallPipelineQuery).mockResolvedValue([
@@ -349,6 +378,6 @@ describe("runRecallStage", () => {
 
     expect(result?.kind).toBe("full");
     expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("consumers:"));
-    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("active-task"));
+    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("hot"));
   });
 });

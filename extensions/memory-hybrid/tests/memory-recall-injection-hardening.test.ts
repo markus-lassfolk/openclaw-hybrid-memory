@@ -209,7 +209,7 @@ describe("runInjectionStage — untrusted-data boundary in assembled prompt", ()
     expect(out?.prependContext).toContain("recalled data only");
   });
 
-  it("returns undefined and skips boundary when there are no candidates", async () => {
+  it("returns undefined when there are no candidates and no ambient content", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
     const api = makeMockStageApi();
     const recall = makeMinimalRecallResult({ candidates: [] });
@@ -217,6 +217,21 @@ describe("runInjectionStage — untrusted-data boundary in assembled prompt", ()
     const out = await runInjectionStage(recall, api as never, ctx, { prompt: "test" });
 
     expect(out).toBeUndefined();
+  });
+
+  it("wraps ambient-only recall with boundary when candidates are empty", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    const api = makeMockStageApi();
+    const recall = makeMinimalRecallResult({
+      candidates: [],
+      hotBlock: "<hot-memories>\n- [hot/fact] deployment notes\n</hot-memories>\n\n",
+    });
+
+    const out = await runInjectionStage(recall, api as never, ctx, { prompt: "test" });
+
+    expect(out?.prependContext).toContain("<recalled-context>");
+    expect(out?.prependContext).toContain("recalled data only");
+    expect(out?.prependContext).toContain("deployment notes");
   });
 
   it("sanitizes injection markers in degraded recall path (queue depth exceeded)", async () => {

@@ -16,6 +16,7 @@ import { reconcileAllCronRunLedgers } from "../../../services/cron-maintenance-r
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
+import { findOrphanVectorIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
 
@@ -72,7 +73,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
         const vectorIds = await vectorDb.getAllIds();
 
         // Vector orphans: IDs in LanceDB that have no corresponding SQLite fact.
-        const vectorOrphans = vectorIds.filter((id) => !sqliteIds.has(id));
+        const vectorOrphans = await findOrphanVectorIds(factsDb, vectorDb);
         // SQLite orphans: active facts in SQLite with no vector in LanceDB.
         const vectorIdSet = new Set(vectorIds);
         const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
@@ -90,33 +91,18 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
             });
             if (vectorOrphans.length > 10) log(`  … and ${vectorOrphans.length - 10} more`);
             if (opts.fix) {
-              let attempted = 0;
-              let apiDeleted = 0;
-              let apiNoOp = 0;
-              let deleteErrors = 0;
-              for (const id of vectorOrphans) {
-                try {
-                  attempted++;
-                  const removed = await vectorDb.delete(id);
-                  if (removed) {
-                    apiDeleted++;
-                  } else {
-                    apiNoOp++;
-                  }
-                } catch {
-                  deleteErrors++;
-                }
-              }
+              const reconcileResult = await reconcileOrphanVectors(factsDb, vectorDb, {
+                operation: "verify-reconcile",
+              });
               log(
-                `  → Delete attempted for ${attempted} orphan vector(s): ` +
-                  `apiDeleted=${apiDeleted}, apiNoOp=${apiNoOp}, errors=${deleteErrors}.`,
+                `  → Delete attempted for ${reconcileResult.orphansFound} orphan vector(s): ` +
+                  `deleted=${reconcileResult.orphanVectorsRemoved}, failed=${reconcileResult.failed}.`,
               );
 
               let unresolvedAfterDelete = [...vectorOrphans];
               let recheckFailed = false;
               try {
-                const postDeleteVectorIds = new Set(await vectorDb.getAllIds());
-                unresolvedAfterDelete = vectorOrphans.filter((id) => postDeleteVectorIds.has(id));
+                unresolvedAfterDelete = await findOrphanVectorIds(factsDb, vectorDb);
               } catch (recheckErr) {
                 log(`${FAIL} Could not re-query LanceDB after delete attempt: ${String(recheckErr)}`);
                 recheckFailed = true;

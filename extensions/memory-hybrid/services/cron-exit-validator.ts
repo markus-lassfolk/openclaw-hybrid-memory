@@ -249,6 +249,44 @@ function detectDegradedContinuousVerificationStatus(logContent: string): Degrade
   return null;
 }
 
+const DREAM_CYCLE_CORE_STAGE_FAILED_RE =
+  /memory-hybrid:\s*dream-cycle\s*[—-]\s*(?:stage\s+\d+\s+)?failed after \d+s:/i;
+const DREAM_CYCLE_FINISHED_WITH_ERRORS_RE = /Dream cycle finished with errors:/i;
+const DREAM_CYCLE_CORE_STAGE_FAILURES_RE = /Core stage failures:/i;
+const DREAM_CYCLE_FOLLOW_UP_FAILURES_RE = /follow-up-failures=([1-9]\d*)/i;
+const DREAM_CYCLE_FOLLOW_UP_FAILURE_LIST_RE = /Dream cycle follow-ups:\s*([1-9]\d*)\s+failure/i;
+
+function detectDreamCyclePipelineFailures(logContent: string): Array<{ step: string; reason: string; line: string }> {
+  const failures: Array<{ step: string; reason: string; line: string }> = [];
+  if (DREAM_CYCLE_FINISHED_WITH_ERRORS_RE.test(logContent) || DREAM_CYCLE_CORE_STAGE_FAILURES_RE.test(logContent)) {
+    failures.push({
+      step: "dream-cycle-core",
+      reason: "core_stage_failed",
+      line: "Dream cycle core stages reported failures",
+    });
+  }
+  for (const line of logContent.split("\n")) {
+    if (DREAM_CYCLE_CORE_STAGE_FAILED_RE.test(line)) {
+      failures.push({
+        step: "dream-cycle-core",
+        reason: "core_stage_failed",
+        line: line.trim(),
+      });
+      break;
+    }
+  }
+  const followUpMatch = logContent.match(DREAM_CYCLE_FOLLOW_UP_FAILURES_RE);
+  const followUpListMatch = logContent.match(DREAM_CYCLE_FOLLOW_UP_FAILURE_LIST_RE);
+  if (followUpMatch || followUpListMatch) {
+    failures.push({
+      step: "dream-cycle-follow-ups",
+      reason: "follow_up_failed",
+      line: followUpMatch?.[0] ?? followUpListMatch?.[0] ?? "follow-up failures detected",
+    });
+  }
+  return failures;
+}
+
 function extractMaintenanceJobName(path: string | undefined): string {
   if (!path) return "unknown-job";
   const file = basename(path);
@@ -867,6 +905,19 @@ export function validateMaintenanceExecution(
         line: degradedVerification.machineLine,
         failureReason: degradedVerification.reason ?? "degraded",
       });
+    }
+    const dreamCycleFailures = detectDreamCyclePipelineFailures(logContent);
+    if (dreamCycleFailures.length > 0) {
+      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
+      for (const failure of dreamCycleFailures) {
+        failedSteps.push({
+          timestamp: dreamCycleTimestamp,
+          step: failure.step,
+          exitCode: 2,
+          line: failure.line,
+          failureReason: failure.reason,
+        });
+      }
     }
   }
 

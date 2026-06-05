@@ -1262,10 +1262,15 @@ export async function runReflectionRules(
     );
     // Format retry (#1824): when the model returned an unusable response format and fallbacks are
     // available, retry with the next model in the chain before giving up.
-    if (
-      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
-      opts.fallbackModels?.length
-    ) {
+    const formatRetryEligible =
+      zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response";
+    const placeholderRetryEligible =
+      zeroRulesReason === "all_candidates_rejected_length" &&
+      parsedFromJson &&
+      parseableLines > 0 &&
+      rejectedLength > 0;
+
+    if (formatRetryEligible && opts.fallbackModels?.length) {
       // Filter out the model that was actually used (which produced the bad response)
       const remainingFallbacks = opts.fallbackModels.filter((m) => m !== modelUsed);
       if (remainingFallbacks.length > 0) {
@@ -1284,14 +1289,27 @@ export async function runReflectionRules(
         );
       }
     }
-    if (
-      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
-      !opts.formatRetryMinimal
-    ) {
+    // Adaptive thinking before minimal prompt — Maeve M3/M2.7 often need thinking to emit parseable JSON.
+    if ((formatRetryEligible || placeholderRetryEligible) && !opts.formatRetryWithThinking) {
+      logger.warn(
+        `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying once with thinking=adaptive`,
+      );
+      return runReflectionRules(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        { ...opts, formatRetryWithThinking: true, thinkingMode: "adaptive", fallbackModels: opts.fallbackModels?.filter((m) => m !== modelUsed) },
+        logger,
+        provenanceService,
+      );
+    }
+    if (formatRetryEligible && !opts.formatRetryMinimal) {
       const minimalPrompt =
         `${patternsBlock}\n\nReturn only valid JSON with this schema (no markdown, no prose):\n` +
-        `{"rules":["<imperative one-line rule>"],"noAction":false}\n` +
-        `When there are no actionable rules, return {"rules":[],"noAction":true}.`;
+        `{"rules":["<imperative one-line rule>", "..."],"noAction":false}\n` +
+        `When there are no actionable rules, return {"rules":[],"noAction":true}.\n` +
+        `Replace every rules[] entry with a real imperative rule — never echo schema placeholders.`;
       logger.warn(
         `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying once with minimal JSON-only prompt`,
       );
@@ -1311,7 +1329,7 @@ export async function runReflectionRules(
           adaptiveStatePath: opts.adaptiveStatePath,
           enabled: adaptiveEnabled,
           responseFormat: { type: "json_object" },
-          thinkingMode: "disabled",
+          thinkingMode: opts.thinkingMode ?? "disabled",
         });
         const minimalParse = parseRulesFromModelResponse(detail.content);
         if (minimalParse.rules.length > 0) {
@@ -1336,27 +1354,11 @@ export async function runReflectionRules(
           provenanceService,
         );
       }
-    } else if (
-      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
-      !opts.formatRetryWithThinking
-    ) {
-      logger.warn(
-        `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying once with thinking=adaptive`,
-      );
-      return runReflectionRules(
-        factsDb,
-        vectorDb,
-        embeddings,
-        openai,
-        { ...opts, formatRetryWithThinking: true, thinkingMode: "adaptive", fallbackModels: [] },
-        logger,
-        provenanceService,
-      );
     }
     if (uniqueRules.length > 0) {
       // Minimal retry recovered parseable rules — continue to storage below.
     } else {
-      if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
+      if (formatRetryEligible) {
         logger.warn(
           `memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}; returning 0 stored (degraded)`,
         );

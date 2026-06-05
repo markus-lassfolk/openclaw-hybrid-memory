@@ -25,6 +25,7 @@ import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
 import { estimateTokenCount, serializeFactForContext } from "./retrieval-orchestrator.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { RECALLED_CONTEXT_BOUNDARY } from "./skill-prompt-injection.js";
 
 // ---------------------------------------------------------------------------
@@ -335,11 +336,33 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
    */
   async assemble(params: { sessionId: string; messages: unknown[]; tokenBudget?: number }): Promise<AssembleResult> {
     const { factsDb, cfg, logger } = this.opts;
+
+    // Auto-recall already injects query-relevant memories via before_agent_start; skip
+    // recency-based list() injection to avoid duplicate/conflicting context (#908).
+    if (cfg.autoRecall?.enabled) {
+      logger.debug?.(
+        "memory-hybrid: context-engine assemble skipped (autoRecall handles per-turn injection)",
+      );
+      return { messages: params.messages, estimatedTokens: 0 };
+    }
+
     const budget = params.tokenBudget ?? cfg.autoRecall?.maxTokens ?? 1000;
 
     try {
       const limit = cfg.autoRecall?.limit ?? 10;
-      const facts = factsDb.list(Math.min(limit, 15));
+      const query = extractLastUserMessageText({ messages: params.messages })?.trim();
+      let facts: MemoryEntry[] = [];
+      if (query && query.length >= 5) {
+        const tierFilter = cfg.memoryTiering?.enabled ? ("warm" as const) : ("all" as const);
+        const results = factsDb.search(query, Math.min(limit, 15), {
+          tierFilter,
+          interactiveFtsFastPath: true,
+        });
+        facts = results.map((r) => r.entry);
+      }
+      if (facts.length === 0) {
+        facts = factsDb.list(Math.min(limit, 15));
+      }
 
       if (facts.length === 0) {
         return { messages: params.messages, estimatedTokens: 0 };

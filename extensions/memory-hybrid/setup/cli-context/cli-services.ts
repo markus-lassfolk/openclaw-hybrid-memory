@@ -275,12 +275,17 @@ export function buildCliContextServices(
       return result;
     },
     runReflectionRules: (opts) => {
-      const requestedModel = opts.model ?? cfg.reflection.model;
-      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance", requestedModel);
-      const effectiveModel = requestedModel ?? defaultModel;
-      const modelSource = opts.model
+      const explicitModel = opts.model?.trim() || undefined;
+      const configuredModel = cfg.reflection.model?.trim() || undefined;
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(
+        cfg,
+        "maintenance",
+        explicitModel ?? configuredModel,
+      );
+      const effectiveModel = explicitModel ?? configuredModel ?? defaultModel;
+      const modelSource = explicitModel
         ? "--model"
-        : cfg.reflection.model?.trim()
+        : configuredModel
           ? "reflection.model"
           : "llm.maintenance[0]";
       return runReflectionRules(

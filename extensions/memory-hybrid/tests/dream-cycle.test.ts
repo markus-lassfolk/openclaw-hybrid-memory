@@ -21,6 +21,7 @@ import type { EventLogEntry } from "../backends/event-log.js";
 import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import {
+  buildConsolidatedFactText,
   buildDigestSummary,
   type DreamCycleConfig,
   extractEventText,
@@ -153,6 +154,33 @@ describe("buildDigestSummary", () => {
     expect(s).toContain("VACUUM ran");
   });
 
+  it("reports failed stages in digest summary", () => {
+    const s = buildDigestSummary({
+      factsPruned: 0,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+      failedStages: ["reflection (patterns)"],
+    });
+    expect(s).toContain("1 stage(s) failed");
+    expect(s).toContain("reflection (patterns)");
+  });
+
+  it("returns stage-only failure message when no other changes", () => {
+    const s = buildDigestSummary({
+      factsPruned: 0,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+      failedStages: ["wal pre-flush", "reflection (patterns)"],
+    });
+    expect(s).toBe("Stages failed: wal pre-flush, reflection (patterns).");
+  });
+
   it("omits log rows pruned when count is zero (Issue #573)", () => {
     const s = buildDigestSummary({
       factsPruned: 1,
@@ -166,6 +194,25 @@ describe("buildDigestSummary", () => {
     });
     expect(s).not.toContain("log rows");
     expect(s).not.toContain("VACUUM");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildConsolidatedFactText
+// ---------------------------------------------------------------------------
+
+describe("buildConsolidatedFactText", () => {
+  it("returns single event text unchanged within max length", () => {
+    expect(buildConsolidatedFactText(["hello world"], null)).toBe("hello world");
+  });
+
+  it("packs more than five event snippets when space allows", () => {
+    const texts = Array.from({ length: 8 }, (_, i) => `evt-${i}`);
+    const merged = buildConsolidatedFactText(texts, null, 500);
+    expect(merged).toContain("[consolidated from 8 events]");
+    expect(merged).toContain("evt-0");
+    expect(merged).toContain("evt-6");
+    expect(merged).not.toMatch(/evt-0; evt-1; evt-2; evt-3; evt-4$/);
   });
 });
 
@@ -570,7 +617,7 @@ describe("runEpisodicConsolidation", () => {
     expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
   });
 
-  it("skips oversized default groups instead of creating DERIVED_FROM mega-hubs", async () => {
+  it("consolidates first batch of oversized default groups and skips excess events", async () => {
     const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
     for (let i = 0; i < 4; i++) {
       eventLog.append({
@@ -584,8 +631,8 @@ describe("runEpisodicConsolidation", () => {
     const result = await runEpisodicConsolidation(factsDb, eventLog, 7, silentLogger, false, 3);
 
     expect(result.eventsConsolidated).toBe(4);
-    expect(result.factsCreated).toBe(0);
-    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(0);
+    expect(result.factsCreated).toBe(1);
+    expect(factsDb.getByCategory("fact").filter((f) => f.source === "dream-cycle")).toHaveLength(1);
     expect(eventLog.getUnconsolidated(7)).toHaveLength(0);
   });
 
@@ -725,6 +772,8 @@ describe("runDreamCycle", () => {
       silentLogger,
     );
     expect(result.skipped).toBe(true);
+    expect(result.success).toBe(true);
+    expect(result.failedStages).toEqual([]);
     expect(result.factsPruned).toBe(0);
     expect(result.patternsFound).toBe(0);
     expect(result.digestSummary).toContain("disabled");
@@ -799,6 +848,7 @@ describe("runDreamCycle", () => {
     // decayConfidence only fires for facts that have passed 75% of their TTL;
     // our test fact is fresh, so decayed count may be 0 — just confirm no throw
     expect(result.skipped).toBe(false);
+    expect(result.success).toBe(true);
     expect(result.factsPruned).toBe(0); // pruneExpired not called
   });
 
@@ -980,6 +1030,41 @@ describe("runDreamCycle", () => {
     );
     // Permanent fact must still be there
     expect(factsDb.count()).toBe(beforeCount);
+  });
+
+  it("skips episodic consolidation when walFlushFailed is set", async () => {
+    const oldTs = new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString();
+    eventLog.append({
+      sessionId: "s1",
+      timestamp: oldTs,
+      eventType: "fact_learned",
+      content: { text: "Should not consolidate after WAL failure" },
+    });
+
+    const openaiStub = {
+      chat: { completions: { create: vi.fn().mockRejectedValue(new Error("no key")) } },
+    } as never;
+    const embeddingsStub = { embed: vi.fn().mockRejectedValue(new Error("no key")) } as never;
+    const vectorDb = {
+      getAllIds: vi.fn().mockResolvedValue([]),
+      isLanceDbAvailable: vi.fn().mockReturnValue(false),
+    };
+
+    const result = await runDreamCycle(
+      factsDb,
+      vectorDb as never,
+      embeddingsStub,
+      openaiStub,
+      eventLog,
+      { ...baseConfig, walFlushFailed: true },
+      silentLogger,
+    );
+
+    expect(result.eventsConsolidated).toBe(0);
+    expect(result.factsCreated).toBe(0);
+    expect(result.success).toBe(false);
+    expect(result.failedStages).toContain("wal pre-flush");
+    expect(eventLog.getUnconsolidated(7)).toHaveLength(1);
   });
 
   it("removes orphaned vectors and reports reconciliation in the digest", async () => {

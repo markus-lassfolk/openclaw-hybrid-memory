@@ -14,8 +14,13 @@ import { withHookResolutionApi } from "../lifecycle/hook-resolution-api.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
 import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { trimBlockToBudget } from "../services/context-block-trim.js";
+import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
+import { formatSanitizedMemoryPreview } from "../services/recalled-context-assembler.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { estimateTokens } from "../utils/text.js";
 import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import {
@@ -178,6 +183,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       issueStore: ctx.issueStore,
       recallInFlightRef: ctx.recallInFlightRef,
       lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
+      prependBudgetRef: ctx.prependBudgetRef,
       registrationGeneration,
       currentRegistrationGenerationRef,
     };
@@ -300,6 +306,11 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         hooks.sessionState.touchSession(sessionKey);
         hooks.sessionState.pruneSessionMaps();
       }
+      const remaining = getRemainingPrependTokens(lifecycleContext.prependBudgetRef);
+      if (remaining !== undefined && remaining < 120) return;
+      if (staticMemoryInstructions) {
+        consumePrependBudget(lifecycleContext.prependBudgetRef, staticMemoryInstructions);
+      }
       return { prependContext: staticMemoryInstructions };
     });
   }
@@ -373,7 +384,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           const agentsMdPath = api.resolvePath("AGENTS.md");
           if (fs.existsSync(agentsMdPath)) {
             const content = fs.readFileSync(agentsMdPath, "utf-8");
-            injectedContext += `\n<!-- Workspace Agent Rules (AGENTS.md) -->\n${content}\n`;
+            const agentsBlock = `\n<!-- Workspace Agent Rules (AGENTS.md) -->\n${content}\n`;
+            injectedContext += trimBlockToBudget(agentsBlock, 1500).text;
           }
         }
       } catch (err) {
@@ -389,13 +401,21 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         const hotFacts = ctx.factsDb.getHotFacts(4000, scopeFilter);
         const pinnedRecallThreshold = ctx.cfg.autoRecall?.progressivePinnedRecallCount ?? 3;
 
-        const pinnedFacts = hotFacts.filter(
-          (x) => x.entry.decayClass === "permanent" || (x.entry.recallCount ?? 0) >= pinnedRecallThreshold,
+        const pinnedFacts = hotFacts.filter((x) =>
+          shouldPinFactForInjection(x.entry, pinnedRecallThreshold),
         );
 
         if (pinnedFacts.length > 0) {
-          injectedContext += "\n<!-- Pinned Session Constraints / Memories -->\n";
-          injectedContext += `${pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n")}\n`;
+          const lines = pinnedFacts
+            .map((f) => {
+              const raw = sanitizePromptInjection(f.entry.summary || f.entry.text);
+              return raw ? `- ${raw}` : "";
+            })
+            .filter(Boolean);
+          if (lines.length > 0) {
+            const pinnedBlock = `\n<!-- Pinned Session Constraints / Memories -->\n${lines.join("\n")}\n`;
+            injectedContext += trimBlockToBudget(pinnedBlock, 800).text;
+          }
         }
       } catch (err) {
         api.logger.debug?.(`memory-hybrid: failed to fetch pinned facts for pre-compaction: ${err}`);
@@ -481,33 +501,48 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         // NOTE: `after_compaction` may not support prependContext in all OpenClaw versions.
         // The return value is a best-effort injection — older runtimes will silently ignore it.
         try {
+          const postCompactionBudget = Math.min(
+            ctx.cfg.autoRecall.maxTokens ?? 800,
+            ctx.cfg.retrieval.ambientBudgetTokens ?? 2000,
+            Math.max(400, Math.floor((ev.tokenCount ?? 800) * 0.15)),
+          );
           const blocks: string[] = [];
+          let usedRecallSnippet = false;
 
           if (ctx.cfg.autoRecall.enabled) {
             const lastPrompt = lifecycleContext.lastAutoRecallPromptRef.value;
             if (typeof lastPrompt === "string" && lastPrompt.trim().length >= 5) {
-              const recallBlock = await buildPostCompactionRecallSnippet(lifecycleContext, api, lastPrompt);
+              const recallBlock = await buildPostCompactionRecallSnippet(
+                lifecycleContext,
+                api,
+                lastPrompt,
+                postCompactionBudget,
+              );
               if (recallBlock) {
                 blocks.push(recallBlock);
+                usedRecallSnippet = true;
                 api.logger.debug?.("memory-hybrid: after_compaction — injecting post-compaction recall snippet (#957)");
               }
             }
           }
 
-          const summaryFacts = ctx.factsDb.list(8);
           const summaryLines: string[] = [];
 
-          if (summaryFacts.length > 0) {
-            summaryLines.push("<!-- memory-hybrid: post-compaction memory summary -->");
-            summaryLines.push("Key memories retained across compaction:");
-            for (const f of summaryFacts) {
-              const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-              const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
-              summaryLines.push(`- ${entityPrefix}${preview}`);
+          if (!usedRecallSnippet) {
+            const summaryFacts = ctx.factsDb.list(8);
+            if (summaryFacts.length > 0) {
+              summaryLines.push("<!-- memory-hybrid: post-compaction memory summary -->");
+              summaryLines.push("Key memories retained across compaction:");
+              for (const f of summaryFacts) {
+                const line = formatSanitizedMemoryPreview(f.text, {
+                  entity: f.entity,
+                  maxChars: 150,
+                });
+                if (line) summaryLines.push(line);
+              }
             }
           }
 
-          // Append open issues summary if IssueStore is available
           if (ctx.issueStore) {
             try {
               const openIssues = ctx.issueStore.list({
@@ -518,7 +553,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
                 summaryLines.push("");
                 summaryLines.push("Open issues:");
                 for (const issue of openIssues) {
-                  summaryLines.push(`- [${issue.severity}] ${issue.title} (${issue.status})`);
+                  const title = sanitizePromptInjection(issue.title);
+                  summaryLines.push(`- [${issue.severity}] ${title} (${issue.status})`);
                 }
               }
             } catch {
@@ -528,14 +564,21 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
 
           if (summaryLines.length > 0) {
             summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
-            blocks.push(summaryLines.join("\n"));
+            const summaryBlock = summaryLines.join("\n");
+            const remaining = Math.max(
+              0,
+              postCompactionBudget - blocks.reduce((sum, b) => sum + estimateTokens(b), 0),
+            );
+            blocks.push(trimBlockToBudget(summaryBlock, remaining).text);
           }
 
-          if (blocks.length > 0) {
+          const combined = blocks.filter((b) => b.trim().length > 0).join("\n\n");
+          const trimmed = trimBlockToBudget(combined, postCompactionBudget).text;
+          if (trimmed) {
             api.logger.debug?.(
-              `memory-hybrid: after_compaction — injecting post-compaction context (${summaryFacts.length} summary facts)`,
+              `memory-hybrid: after_compaction — injecting post-compaction context (~${estimateTokens(trimmed)} tokens, recall=${usedRecallSnippet})`,
             );
-            return { prependContext: blocks.join("\n\n") };
+            return { prependContext: trimmed };
           }
         } catch {
           // Non-fatal — summary injection failure should not disrupt normal operation

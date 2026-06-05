@@ -85,6 +85,7 @@ export function buildRecallLifecycleContext(
     issueStore: null,
     recallInFlightRef: { value: 0 },
     lastAutoRecallPromptRef: { value: null },
+    prependBudgetRef: { value: null },
   };
 }
 
@@ -158,6 +159,7 @@ export function makeMinimalRecallResult(overrides: Partial<RecallResult> = {}): 
     lastProgressiveIndexIdsRef: [],
     ambientCfg: { enabled: false },
     ambientSeenFacts: null,
+    totalBudget: 2000,
     ...overrides,
   };
 }

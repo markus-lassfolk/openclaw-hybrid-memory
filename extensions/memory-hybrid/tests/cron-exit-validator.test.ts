@@ -518,6 +518,47 @@ error: unknown command 'bar'
       expect(result.failedSteps[0].failureReason).toBe("all_uncertain");
     });
 
+    it("fails dream-cycle validation when core stages report failures in the log", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "2024-05-08T02:15:30Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "Dream cycle finished with errors: Stages failed: reflection (patterns).",
+          "  Core stage failures: reflection (patterns)",
+          "memory-hybrid: dream-cycle — stage 3 failed after 12s: reflection (patterns): Error: llm down",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.failedSteps.some((s) => s.step === "dream-cycle-core")).toBe(true);
+    });
+
+    it("fails dream-cycle validation when follow-up failures are reported", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "2024-05-08T02:15:30Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "Dream cycle complete: No changes.",
+          "Dream cycle follow-ups: 1 failure(s)",
+          "  - extract implicit feedback: boom",
+          "[dream-cycle] pipeline complete in 120s (core=10s, follow-ups=5/6, follow-up-elapsed=110s, follow-up-failures=1)",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.failedSteps.some((s) => s.step === "dream-cycle-follow-ups")).toBe(true);
+    });
+
     it("detects semantic reflect-rules failures with stable grouped fingerprints", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const firstExitPath = join(tmpDir, "weekly-reflection-20260508T021500Z-111.exit.txt");

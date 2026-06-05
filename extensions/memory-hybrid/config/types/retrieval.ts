@@ -211,6 +211,10 @@ export type DocumentGradingConfig = {
    * `undefined` here means "no config-level timeout" — chatComplete uses its internal default.
    */
   timeoutMs: number | undefined;
+  /** Grade top-N auto-recall candidates on interactive chat turns (default: false). */
+  interactiveRecall?: boolean;
+  /** Max candidates to grade on the interactive path (default: 6). */
+  interactiveTopN?: number;
 };
 
 /** Contextual variant generation at index time (Issue #159). */

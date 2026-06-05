@@ -450,8 +450,26 @@ describe("HybridMemoryContextEngine.info", () => {
 // ---------------------------------------------------------------------------
 
 describe("HybridMemoryContextEngine.assemble()", () => {
-  it("returns messages unchanged and estimatedTokens=0 when store is empty", async () => {
+  it("skips injection when autoRecall is enabled (before_agent_start owns recall)", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Should not appear in assemble when autoRecall is on",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
     const engine = makeEngine();
+    const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
+    expect(result.estimatedTokens).toBe(0);
+    expect(result.systemPromptAddition).toBeUndefined();
+  });
+
+  it("returns messages unchanged and estimatedTokens=0 when store is empty", async () => {
+    const engine = makeEngine({
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     const messages = [{ role: "user", content: "hello" }];
     const result = await engine.assemble({ sessionId: "s1", messages, tokenBudget: 2000 });
 
@@ -471,7 +489,9 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
 
     expect(result.systemPromptAddition).toBeDefined();
@@ -494,8 +514,12 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       });
     }
 
-    const engineFull = makeEngine();
-    const engineTight = makeEngine();
+    const cfgDisabled = {
+      ...makeMinimalConfig(),
+      autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false },
+    } as never;
+    const engineFull = makeEngine({ cfg: cfgDisabled });
+    const engineTight = makeEngine({ cfg: cfgDisabled });
 
     const resultFull = await engineFull.assemble({ sessionId: "s1", messages: [], tokenBudget: 10000 });
     // Budget arithmetic (char/4 estimate):
@@ -537,7 +561,9 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     // No tokenBudget → falls back to cfg.autoRecall.maxTokens (2000 in test config)
     const result = await engine.assemble({ sessionId: "s1", messages: [] });
 
@@ -553,7 +579,10 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       getCount: vi.fn().mockReturnValue(0),
     };
 
-    const engine = makeEngine({ factsDb: brokenFactsDb as never });
+    const engine = makeEngine({
+      factsDb: brokenFactsDb as never,
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
 
     expect(result.estimatedTokens).toBe(0);

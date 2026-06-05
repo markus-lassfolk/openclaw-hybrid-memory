@@ -19,6 +19,7 @@ import type { PendingLLMWarnings } from "../services/chat.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
+import type { PrependBudgetRef } from "../services/prepend-budget.js";
 import type { WorkflowTracker } from "../services/workflow-tracker.js";
 import type { MemoryEntry, MemoryScope, SearchResult } from "../types/memory.js";
 
@@ -81,6 +82,8 @@ export interface LifecycleContext {
   registrationGeneration?: number;
   /** Shared current generation ref; differs from registrationGeneration after plugin re-registration. */
   currentRegistrationGenerationRef?: { value: number };
+  /** Per-turn shared prepend token budget (initialized by recall, consumed by downstream hooks). */
+  prependBudgetRef?: PrependBudgetRef;
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */
@@ -125,6 +128,10 @@ export interface RecallResult {
   ambientCfg: { enabled: boolean; multiQuery?: boolean };
   /** When ambient multiQuery is on, the session's seen-facts for topic-shift deduplication. */
   ambientSeenFacts: SessionSeenFacts | null;
+  /** True when the main recall pipeline fell back to FTS-only (vector timeout/error/Lance unavailable). */
+  semanticDegraded?: boolean;
+  /** Total interactive prepend token ceiling (min of autoRecall.maxTokens and ambientBudgetTokens). */
+  totalBudget: number;
 }
 
 /** Result of injection stage. */

@@ -391,20 +391,19 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       .command("reflect-rules")
       .description("Run reflection (rules): extract high-level rules from patterns")
       .option("--dry-run", "Show what would be stored without storing")
-      .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
+      .option("--model <m>", "LLM model (default from config llm.maintenance tier)")
       .option("--thinking <mode>", "MiniMax thinking mode for initial call: disabled|adaptive (default: disabled)")
       .option("-v, --verbose", "Log each rule as it is extracted"),
   ).action(
     withExit(async (opts?: { dryRun?: boolean; model?: string; thinking?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
       const dryRun = !!opts?.dryRun;
-      const model =
-        opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
+      const explicitModel = opts?.model?.trim() || undefined;
       const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
       const thinkingMode =
         opts?.thinking === "adaptive" || opts?.thinking === "disabled" ? opts.thinking : undefined;
       let res;
       try {
-        res = await runReflectionRules({ dryRun, model, verbose, thinkingMode });
+        res = await runReflectionRules({ dryRun, model: explicitModel, verbose, thinkingMode });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "cli",

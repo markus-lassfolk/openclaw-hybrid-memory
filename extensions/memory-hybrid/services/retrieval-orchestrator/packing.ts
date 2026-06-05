@@ -25,7 +25,7 @@ export function estimateTokenCount(text: string): number {
 export function serializeFactForContext(entry: MemoryEntry, options?: { isContradicted?: boolean }): string {
   const parts: string[] = [];
 
-  if (entry.entity) parts.push(`entity: ${entry.entity}`);
+  if (entry.entity) parts.push(`entity: ${sanitizePromptInjection(entry.entity)}`);
   parts.push(`category: ${entry.category}`);
   parts.push(`confidence: ${entry.confidence.toFixed(2)}`);
   const storedSec = entry.sourceDate ?? entry.createdAt;

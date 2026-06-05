@@ -24,7 +24,7 @@ import {
   type VectorBackendObservability,
 } from "../../../services/vector-backend-observability.js";
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
-import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
+import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import type { MemoryEntry } from "../../../types/memory.js";
 import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
 import { getEnv } from "../../../utils/env-manager.js";
@@ -1470,22 +1470,16 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
 
         // Step 3: reconcile and policy-based self-heal
         try {
-          const sqliteIds = new Set(factsDb.getAllIds());
           const vectorIds = await vectorDb.getAllIds();
           const vectorIdSet = new Set(vectorIds);
-          const vectorOrphans = vectorIds.filter((id) => !sqliteIds.has(id));
+          const reconcileResult = await reconcileOrphanVectors(factsDb, vectorDb, {
+            operation: "vectordb-optimize-reconcile",
+          });
+          report.reconcile.vectorOrphans = reconcileResult.orphansFound;
+          report.reconcile.vectorOrphansDeleted = reconcileResult.orphanVectorsRemoved;
+          const sqliteIds = new Set(factsDb.getAllIds());
           const sqliteOrphans = Array.from(sqliteIds).filter((id) => !vectorIdSet.has(id));
-          report.reconcile.vectorOrphans = vectorOrphans.length;
           report.reconcile.sqliteOrphans = sqliteOrphans.length;
-
-          for (const id of vectorOrphans) {
-            try {
-              await vectorDb.delete(id);
-              report.reconcile.vectorOrphansDeleted++;
-            } catch (err) {
-              report.errors.push(`delete orphan vector ${id}: ${String(err)}`);
-            }
-          }
 
           const rebuildLimit = Math.min(resolveRepairBudget(policy, maxFixes), sqliteOrphans.length);
           for (const id of sqliteOrphans.slice(0, rebuildLimit)) {

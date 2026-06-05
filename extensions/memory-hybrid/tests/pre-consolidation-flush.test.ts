@@ -19,7 +19,7 @@ describe("runPreConsolidationFlush", () => {
       "test-phase",
     );
 
-    expect(result).toEqual({ committed: 0, skipped: 0 });
+    expect(result).toEqual({ committed: 0, skipped: 0, failed: false });
     expect(replayWalEntriesWithRepair).not.toHaveBeenCalled();
   });
 
@@ -38,7 +38,26 @@ describe("runPreConsolidationFlush", () => {
       "test-phase",
     );
 
-    expect(result).toEqual({ committed: 2, skipped: 1 });
+    expect(result).toEqual({ committed: 2, skipped: 1, failed: false });
     expect(logger.info).toHaveBeenCalledWith("memory-hybrid: test-phase — WAL replay: 2 committed, 1 skipped");
+  });
+
+  it("marks failed=true when WAL replay throws", async () => {
+    replayWalEntriesWithRepair.mockRejectedValue(new Error("wal boom"));
+    const logger = { info: vi.fn(), warn: vi.fn() };
+
+    const result = await runPreConsolidationFlush(
+      {
+        wal: {} as never,
+        factsDb: {} as never,
+        vectorDb: {} as never,
+        embeddings: {} as never,
+      },
+      logger,
+      "test-phase",
+    );
+
+    expect(result).toEqual({ committed: 0, skipped: 0, failed: true });
+    expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("WAL replay failed"));
   });
 });

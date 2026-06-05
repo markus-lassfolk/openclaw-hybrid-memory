@@ -28,6 +28,7 @@ import { formatDuration } from "../utils/duration.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { escapeRegExp } from "../utils/text.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import type { ActiveTaskReconcileProgressReporter } from "./active-task-reconcile-progress.js";
 
@@ -597,10 +598,12 @@ export function buildActiveTaskInjection(
   let injectedCount = 0;
 
   for (const task of activeTasks) {
-    const summary = [`- [${task.label}] ${task.description} (${task.status})`];
-    if (task.next) summary.push(`  Next: ${task.next}`);
-    if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
-    if (task.relatedGoal?.trim()) summary.push(`  Related goal: ${task.relatedGoal.trim()}`);
+    const label = sanitizePromptInjection(task.label);
+    const description = sanitizePromptInjection(task.description);
+    const summary = [`- [${label}] ${description} (${task.status})`];
+    if (task.next) summary.push(`  Next: ${sanitizePromptInjection(task.next)}`);
+    if (task.subagent) summary.push(`  Subagent: ${sanitizePromptInjection(task.subagent)}`);
+    if (task.relatedGoal?.trim()) summary.push(`  Related goal: ${sanitizePromptInjection(task.relatedGoal.trim())}`);
     const block = summary.join("\n");
     if (used + block.length > charBudget) break;
     lines.push(block);
@@ -664,8 +667,8 @@ export function buildStaleWarningInjection(
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
       const hoursAgo = Number.isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
-      const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
-      const nextPart = task.next ? `, Next: ${task.next}` : "";
+      const line1 = `- [${sanitizePromptInjection(task.label)}]: ${sanitizePromptInjection(task.description)} — last updated ${task.updated} (${hoursAgo}h ago)`;
+      const nextPart = task.next ? `, Next: ${sanitizePromptInjection(task.next)}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;
       const blockSize = line1.length + line2.length + 2;
       if (maxChars != null && usedChars + blockSize > maxChars) break;
@@ -694,7 +697,7 @@ export function buildStaleWarningInjection(
     usedChars += headerSize;
 
     for (const task of inProgressWithSubagent) {
-      const line = `- [${task.label}]: ${task.description} (subagent: ${task.subagent})`;
+      const line = `- [${sanitizePromptInjection(task.label)}]: ${sanitizePromptInjection(task.description)} (subagent: ${sanitizePromptInjection(task.subagent ?? "")})`;
       if (maxChars != null && usedChars + line.length + 1 > maxChars) break;
       lines.push(line);
       usedChars += line.length + 1;

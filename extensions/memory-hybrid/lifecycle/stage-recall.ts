@@ -10,6 +10,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import { isRecallContextSuperseded } from "../utils/registration-superseded.js";
 import type { LifecycleContext, RecallStageResult, SessionState } from "./types.js";
+import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecall } from "./stage-recall/run-recall.js";
 
 const RECALL_STAGE_TIMEOUT_MS = INTERACTIVE_RECALL_STAGE_TIMEOUT_MS;
@@ -36,7 +37,7 @@ export async function runRecallStage(
             resolve({ kind: "empty", prependContext: undefined });
             return;
           }
-          resolve(null);
+          void buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "timeout").then(resolve);
         }, RECALL_STAGE_TIMEOUT_MS);
       }),
     ]);

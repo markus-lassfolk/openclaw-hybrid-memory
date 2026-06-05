@@ -281,6 +281,29 @@ export function getAllIds(db: DatabaseSync): string[] {
   return rows.map((row) => row.id.toLowerCase());
 }
 
+const ACTIVE_FACT_ID_CHUNK = 500;
+
+/**
+ * Return the subset of {@link ids} that refer to active (non-superseded, non-expired) facts.
+ * Uses chunked queries to avoid loading the full facts table into memory.
+ */
+export function filterActiveFactIds(db: DatabaseSync, ids: readonly string[]): Set<string> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const active = new Set<string>();
+  const unique = [...new Set(ids.filter((id) => typeof id === "string" && id.length > 0).map((id) => id.toLowerCase()))];
+  for (let i = 0; i < unique.length; i += ACTIVE_FACT_ID_CHUNK) {
+    const chunk = unique.slice(i, i + ACTIVE_FACT_ID_CHUNK);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = db
+      .prepare(
+        `SELECT id FROM facts WHERE id IN (${placeholders}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+      )
+      .all(...chunk, nowSec) as Array<{ id: string }>;
+    for (const row of rows) active.add(String(row.id).toLowerCase());
+  }
+  return active;
+}
+
 export function getBatch(
   db: DatabaseSync,
   offset: number,

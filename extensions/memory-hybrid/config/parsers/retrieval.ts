@@ -503,9 +503,17 @@ export function parseDocumentGradingConfig(cfg: Record<string, unknown>): Docume
       ? Math.floor(rawTimeoutRaw)
       : null;
 
+  const interactiveRecall = dgRaw?.interactiveRecall === true;
+  const interactiveTopN =
+    typeof dgRaw?.interactiveTopN === "number" && dgRaw.interactiveTopN > 0
+      ? Math.floor(dgRaw.interactiveTopN)
+      : undefined;
+
   return {
     enabled,
     model,
     timeoutMs: rawTimeout !== null ? rawTimeout : 10000,
+    interactiveRecall,
+    interactiveTopN,
   };
 }

@@ -117,6 +117,8 @@ export interface PluginRuntime {
   recallInFlightRef: { value: number };
   /** Last user prompt used for interactive auto-recall (issue #957 post-compaction reinjection). */
   lastAutoRecallPromptRef: { value: string | null };
+  /** Per-turn shared prepend token budget across before_agent_start hooks. */
+  prependBudgetRef: import("../services/prepend-budget.js").PrependBudgetRef;
   /** Last progressive index fact IDs (1-based position → fact id). */
   lastProgressiveIndexIds: string[];
 
