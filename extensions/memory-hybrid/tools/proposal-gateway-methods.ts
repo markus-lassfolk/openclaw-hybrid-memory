@@ -29,6 +29,8 @@ import {
 } from "../services/workshop-service.js";
 
 export interface ProposalGatewayContext {
+  /** Full plugin config when callers pass a health-only `cfg` slice (see ProposalRoutesContext). */
+  cfgFull?: HybridMemoryConfig;
   cfg: HybridMemoryConfig;
   factsDb: FactsDB;
   proposalsDb?: ProposalsDB | null;
@@ -48,9 +50,13 @@ type GatewayHandler = (opts: {
   respond: GatewayRespond;
 }) => void | Promise<void>;
 
+function resolveProposalCfg(ctx: ProposalGatewayContext): HybridMemoryConfig {
+  return ctx.cfgFull ?? ctx.cfg;
+}
+
 function workshopCtx(ctx: ProposalGatewayContext): WorkshopServiceContext {
   return withWorkshopDefaults({
-    cfg: ctx.cfg,
+    cfg: resolveProposalCfg(ctx),
     factsDb: ctx.factsDb,
     proposalsDb: ctx.proposalsDb ?? null,
     crystallizationStore: ctx.crystallizationStore ?? null,
@@ -65,7 +71,7 @@ function workshopCtx(ctx: ProposalGatewayContext): WorkshopServiceContext {
 function changeRevertCtx(ctx: ProposalGatewayContext, sessionKey = "default") {
   return buildChangeRevertContext({
     changeFeed: ctx.changeFeed!,
-    cfg: ctx.cfg,
+    cfg: resolveProposalCfg(ctx),
     workshopCtx: workshopCtx(ctx),
     sessionKey,
     sessionState: ctx.sessionStateRef?.value ?? null,
@@ -87,7 +93,7 @@ function refreshWorkshopControlUi(ctx: ProposalGatewayContext, pendingCount: num
 }
 
 export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): void {
-  if (!isWorkshopEnabled(ctx.cfg)) return;
+  if (!isWorkshopEnabled(resolveProposalCfg(ctx))) return;
   const register = (ctx.api as { registerGatewayMethod?: (method: string, handler: GatewayHandler) => void })
     .registerGatewayMethod;
   if (typeof register !== "function") {
@@ -176,7 +182,7 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
     register("hybrid-mem.changes.revert", async ({ params, respond }) => {
       if (!ctx.changeFeed) return respond(false, undefined, { message: "change feed unavailable" });
       const sessionKey = resolveWorkshopRevertSessionKey(
-        ctx.cfg,
+        resolveProposalCfg(ctx),
         typeof params.sessionKey === "string" ? params.sessionKey : undefined,
         (ctx.api.context?.sessionKey as string | undefined) ??
           (ctx.api.context?.sessionId as string | undefined),

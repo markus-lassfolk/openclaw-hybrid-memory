@@ -11,8 +11,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { CredentialType } from "../../../config.js";
+import type { CredentialType, HybridMemoryConfig } from "../../../config.js";
 import { readGuardTimestampMs } from "../../../services/cron-guard.js";
+import { listMaintenanceSteps } from "../../../services/maintenance-orchestrator.js";
 import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../../../services/cron-job-bash-harness.js";
 import {
   collectRecentHmExitLedgerPaths,
@@ -32,9 +33,59 @@ import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../../../utils/openclaw-agent-defaults.js";
+import {
+  isConsolidatedMaintenanceCronEnabled,
+  readConsolidatedCronJobsFlag,
+} from "../../install/cron-jobs.js";
 import { approxIntervalMs, relativeTime } from "../../shared.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
+
+/** Former standalone cron jobs — now config-gated orchestrator modules (not separate cron entries). */
+const CONSOLIDATED_FORMER_STANDALONE_MODULES: Array<{
+  step: string;
+  label: string;
+  configHint: string;
+  isEnabled: (cfg: HybridMemoryConfig) => boolean;
+  runsIn: string;
+}> = [
+  {
+    step: "dream-cycle-core",
+    label: "dream cycle",
+    configHint: "nightlyCycle.enabled",
+    isEnabled: (cfg) => cfg.nightlyCycle?.enabled === true,
+    runsIn: "maintenance nightly orchestrator",
+  },
+  {
+    step: "sensor-sweep",
+    label: "sensor sweep",
+    configHint: "sensorSweep.enabled",
+    isEnabled: (cfg) => cfg.sensorSweep?.enabled === true,
+    runsIn: "cycle tier (gateway background tick, not maintenance-nightly)",
+  },
+];
+
+function logConsolidatedOrchestratorModules(
+  cfg: HybridMemoryConfig,
+  log: (msg: string) => void,
+  noEmoji: boolean,
+): void {
+  const nightlyStepCount = listMaintenanceSteps({ tier: "nightly" }).length;
+  const ON = noEmoji ? "on" : "✅ on";
+  const OFF = noEmoji ? "off" : "○ off";
+
+  log(
+    `\n  Orchestrator: \`maintenance nightly\` runs ${nightlyStepCount} steps with per-step guards (~20h daily, ~5d weekly, ~25d monthly).`,
+  );
+  log("  No separate per-task cron jobs are required in consolidated mode.");
+  log("\n  Config-gated modules (formerly standalone cron jobs):");
+  for (const mod of CONSOLIDATED_FORMER_STANDALONE_MODULES) {
+    const enabled = mod.isEnabled(cfg);
+    const status = enabled ? ON : OFF;
+    log(`    ${status.padEnd(8)} ${mod.step.padEnd(22)} (${mod.configHint}; ${mod.runsIn})`);
+  }
+  log("  Full step list: `openclaw hybrid-mem maintenance steps`");
+}
 
 export async function runVerifyConfigCronSection(state: VerifyRunState): Promise<void> {
   const {
@@ -223,7 +274,24 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     }
   }
 
+  const useConsolidatedCron = isConsolidatedMaintenanceCronEnabled({
+    consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
+  });
+
+  const legacyCronJobKeys = [
+    "nightly-memory-sweep",
+    "weekly-reflection",
+    "weekly-extract-procedures",
+    "self-correction-analysis",
+    "weekly-deep-maintenance",
+    "monthly-consolidation",
+    "weekly-persona-proposals",
+    "nightly-dream-cycle",
+    "sensor-sweep",
+  ] as const;
+
   const knownJobSlugs = new Set([
+    "maintenance-nightly",
     "nightly-memory-sweep",
     "weekly-reflection",
     "weekly-extract-procedures",
@@ -234,6 +302,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     "nightly-dream-cycle",
     "sensor-sweep",
   ]);
+  const maintenanceNightlyRe = /maintenance[- ]?nightly|orchestrator.*maintenance/i;
   const nightlyDreamCycleRe = /nightly[- ]?dream[- ]?cycle|dream[- ]?cycle/i;
   const sensorSweepRe = /sensor[- ]?sweep/i;
 
@@ -269,6 +338,12 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     }
     if (monthlyConsolidationRe.test(nameLower)) {
       return "monthly-consolidation";
+    }
+    if (
+      maintenanceNightlyRe.test(nameLower) ||
+      (msg && /hybrid-mem maintenance nightly|maintenance nightly --verbose/i.test(msg))
+    ) {
+      return "maintenance-nightly";
     }
     if (nightlyDreamCycleRe.test(nameLower)) {
       return "nightly-dream-cycle";
@@ -340,8 +415,6 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
       log(`${indent}   └─ error: ${errorPreview}${job.state.lastError.length > 100 ? "..." : ""}`);
     }
   }
-
-  log("\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):");
 
   interface JobInfo {
     name: string;
@@ -447,24 +520,6 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     if (status === "partial") cronEnvLeakPartial.push(key);
     if (status === "missing") cronEnvLeakMissing.push(key);
   }
-  if (cronEnvLeakPartial.length > 0 || cronEnvLeakMissing.length > 0) {
-    const WARN = noEmoji ? "[WARN]" : "⚠️";
-    const list = [
-      cronEnvLeakMissing.length > 0 ? `missing sanitizer: ${cronEnvLeakMissing.join(", ")}` : null,
-      cronEnvLeakPartial.length > 0 ? `partial sanitizer: ${cronEnvLeakPartial.join(", ")}` : null,
-    ]
-      .filter(Boolean)
-      .join(" | ");
-    log(
-      `\n${WARN} Cron payload env sanitizer (issue #1205): ${list}. Service/cron environments can leak OPENCLAW_HOME / service marker vars and make \`openclaw hybrid-mem\` unavailable. Fix: run \`openclaw hybrid-mem verify --fix\` to inject a robust sanitizer (unsets OPENCLAW_HOME, OPENCLAW_CLI, OPENCLAW_SERVICE_KIND, OPENCLAW_SERVICE_MARKER, OPENCLAW_SKIP_HYBRID_MEMORY_CLI).`,
-    );
-    state.warnings.push(
-      `hybrid-mem cron payloads are missing/partial env sanitizer (issue #1205); run 'openclaw hybrid-mem verify --fix'`,
-    );
-    state.fixes.push(
-      "Run 'openclaw hybrid-mem verify --fix' to update managed cron job messages with an env sanitizer for OPENCLAW_HOME/service markers.",
-    );
-  }
 
   // Also check default config for jobs not found in cron store
   if (openclawConfigRead.root) {
@@ -498,19 +553,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     }
   }
 
-  // Display each job with its status
-  const jobsToDisplay = [
-    {
-      key: "nightly-memory-sweep",
-      description: "session distillation",
-      docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup",
-    },
-    { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
-    { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
-    { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
-    { key: "weekly-deep-maintenance", description: "deep maintenance", docsPath: null },
-    { key: "monthly-consolidation", description: "monthly consolidation", docsPath: null },
-    { key: "weekly-persona-proposals", description: "persona proposals", docsPath: null },
+  const optionalFeatureGatedJobs = [
     {
       key: "nightly-dream-cycle",
       description: "dream cycle",
@@ -523,19 +566,78 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
       docsPath: null,
       featureEnabled: cfg.sensorSweep?.enabled === true,
     },
-  ];
+  ] as const;
+
+  const legacyJobsToDisplay = [
+    {
+      key: "nightly-memory-sweep",
+      description: "session distillation",
+      docsPath: "docs/SESSION-DISTILLATION.md § Nightly Cron Setup",
+    },
+    { key: "weekly-reflection", description: "pattern synthesis", docsPath: "docs/REFLECTION.md § Scheduled Job" },
+    { key: "weekly-extract-procedures", description: "procedural memory", docsPath: "docs/PROCEDURAL-MEMORY.md" },
+    { key: "self-correction-analysis", description: "self-correction", docsPath: "docs/SELF-CORRECTION-PIPELINE.md" },
+    { key: "weekly-deep-maintenance", description: "deep maintenance", docsPath: null },
+    { key: "monthly-consolidation", description: "monthly consolidation", docsPath: null },
+    { key: "weekly-persona-proposals", description: "persona proposals", docsPath: null },
+  ] as const;
+
+  const jobsToDisplay = useConsolidatedCron
+    ? [
+        {
+          key: "maintenance-nightly",
+          description: "maintenance orchestrator",
+          docsPath: "docs/SESSION-DISTILLATION.md § Maintenance orchestrator",
+        },
+      ]
+    : [...legacyJobsToDisplay, ...optionalFeatureGatedJobs];
+
+  /** Compact verify mode suppresses indented lines; always show consolidated orchestrator details. */
+  const cronLog = useConsolidatedCron ? tableLog : log;
+
+  cronLog(
+    useConsolidatedCron
+      ? "\nScheduled maintenance (consolidated orchestrator — ~/.openclaw/cron/jobs.json):"
+      : "\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):",
+  );
+  if (useConsolidatedCron) {
+    cronLog(
+      "  Mode: one gateway cron → `openclaw hybrid-mem maintenance nightly` → orchestrator (legacy per-task jobs superseded).",
+    );
+  }
+
+  if (useConsolidatedCron) {
+    const enabledLegacy = legacyCronJobKeys.filter((key) => allJobs.get(key)?.enabled);
+    if (enabledLegacy.length > 0) {
+      const WARN = noEmoji ? "[WARN]" : "⚠️";
+      cronLog(
+        `\n${WARN} Legacy per-task cron jobs still enabled under consolidated orchestrator mode: ${enabledLegacy.join(", ")}. Run \`openclaw hybrid-mem verify --fix\` to disable superseded jobs and normalize maintenance-nightly.`,
+      );
+      state.warnings.push(
+        `legacy cron jobs still enabled under consolidated orchestrator: ${enabledLegacy.join(", ")}`,
+      );
+      state.fixes.push(
+        "Run 'openclaw hybrid-mem verify --fix' to disable superseded legacy maintenance jobs and ensure maintenance-nightly is installed.",
+      );
+    }
+  }
+
+  if (useConsolidatedCron) {
+    cronLog("\n  Gateway cron:");
+  }
 
   for (const entry of jobsToDisplay) {
     const { key, description, docsPath } = entry;
     const featureEnabled = (entry as { featureEnabled?: boolean }).featureEnabled;
     const job = allJobs.get(key);
+    const lineLog = useConsolidatedCron ? cronLog : log;
 
     if (!job) {
       if (featureEnabled === false) {
-        log(`  ○ ${key.padEnd(30)} not installed (feature off in config)`);
+        lineLog(`  ○ ${key.padEnd(30)} not installed (feature off in config)`);
         continue;
       }
-      log(`  ${FAIL} ${key.padEnd(30)} missing`);
+      lineLog(`  ${FAIL} ${key.padEnd(30)} missing`);
       const fixMsg = docsPath
         ? `Optional: Set up ${description} via jobs. See ${docsPath}. Run 'openclaw hybrid-mem verify --fix' to add.`
         : `Optional: Set up ${description} via jobs. Run 'openclaw hybrid-mem verify --fix' to add.`;
@@ -543,11 +645,38 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
       continue;
     }
 
-    formatJobStatus(job, key, "  ", log);
+    formatJobStatus(job, key, "  ", lineLog);
+  }
+
+  if (useConsolidatedCron) {
+    logConsolidatedOrchestratorModules(cfg, cronLog, noEmoji);
+  }
+
+  if (cronEnvLeakPartial.length > 0 || cronEnvLeakMissing.length > 0) {
+    const WARN = noEmoji ? "[WARN]" : "⚠️";
+    const list = [
+      cronEnvLeakMissing.length > 0 ? `missing sanitizer: ${cronEnvLeakMissing.join(", ")}` : null,
+      cronEnvLeakPartial.length > 0 ? `partial sanitizer: ${cronEnvLeakPartial.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
+    log(
+      `\n${WARN} Cron payload env sanitizer (issue #1205): ${list}. Service/cron environments can leak OPENCLAW_HOME / service marker vars and make \`openclaw hybrid-mem\` unavailable. Fix: run \`openclaw hybrid-mem verify --fix\` to inject a robust sanitizer (unsets OPENCLAW_HOME, OPENCLAW_CLI, OPENCLAW_SERVICE_KIND, OPENCLAW_SERVICE_MARKER, OPENCLAW_SKIP_HYBRID_MEMORY_CLI).`,
+    );
+    state.warnings.push(
+      `hybrid-mem cron payloads are missing/partial env sanitizer (issue #1205); run 'openclaw hybrid-mem verify --fix'`,
+    );
+    state.fixes.push(
+      "Run 'openclaw hybrid-mem verify --fix' to update managed cron job messages with an env sanitizer for OPENCLAW_HOME/service markers.",
+    );
   }
 
   // Truly external jobs: those not in the hybrid-mem canonical list AND not pluginJobId hybrid-mem:*
-  const knownKeys = new Set(jobsToDisplay.map((j) => j.key));
+  const knownKeys = new Set(
+    useConsolidatedCron
+      ? ["maintenance-nightly", ...legacyCronJobKeys]
+      : jobsToDisplay.map((j) => j.key),
+  );
   const otherJobs = Array.from(allJobs.entries()).filter(([key, job]) => !knownKeys.has(key) && !job.isHybridMem);
 
   if (otherJobs.length > 0) {
@@ -720,7 +849,13 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     log(
       "Note: If you see 'plugins.allow is empty' above, it is from OpenClaw. Optional: set plugins.allow to [\"openclaw-hybrid-memory\"] in openclaw.json for an explicit allow-list.",
     );
-    if (!allJobs.has("nightly-memory-sweep")) {
+    if (useConsolidatedCron) {
+      if (!allJobs.has("maintenance-nightly")) {
+        log(
+          "Optional: Set up consolidated maintenance via OpenClaw scheduled jobs. Run 'openclaw hybrid-mem verify --fix' to add maintenance-nightly. See docs/SESSION-DISTILLATION.md.",
+        );
+      }
+    } else if (!allJobs.has("nightly-memory-sweep")) {
       log(
         "Optional: Set up nightly session distillation via OpenClaw's scheduled jobs or system cron. See docs/SESSION-DISTILLATION.md.",
       );
