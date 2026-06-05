@@ -72,10 +72,7 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
   try {
     const seen = new Set<string>();
     const paths: string[] = [];
-    for (const p of [
-      ...collectFromDir(sessionDir, true),
-      ...collectFromDir(join(sessionDir, "archive"), false),
-    ]) {
+    for (const p of [...collectFromDir(sessionDir, true), ...collectFromDir(join(sessionDir, "archive"), false)]) {
       const base = basename(p);
       if (seen.has(base)) continue;
       seen.add(base);

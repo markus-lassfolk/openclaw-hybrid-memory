@@ -65,7 +65,19 @@ export OPENCLAW_CRED_KEY="your-secret-key-min-16-chars"
 
 **Without encryption (plaintext vault):** Omit `encryptionKey` (or set `enabled: true` only). The vault is fully functional; values are stored in plaintext. Secure the credentials file (e.g. `~/.openclaw/memory/credentials.db`) via filesystem permissions or full-disk encryption if desired.
 
-- **encryptionKey** (optional): `env:VAR_NAME` (e.g. `env:OPENCLAW_CRED_KEY`) or a 16+ character secret. When set and valid, the vault is encrypted at rest. When omitted, the vault is plaintext.
+- **encryptionKey** (optional): `env:VAR_NAME`, `file:/absolute/path/to/key` (reads file contents), or a 16+ character secret. When set and valid, the vault is encrypted at rest. When omitted, the vault is plaintext.
+
+#### `file:` SecretRef semantics
+
+`file:/path/to/key` follows the same SecretRef pattern as other hybrid-mem config secrets: the **file contents** (trimmed) are used as the vault passphrase.
+
+**Legacy behavior (pre-2026.6):** Some vaults were encrypted using the literal configured string `file:/path/to/key` as the passphrase (the path text itself, not the file contents). On open, the plugin tries file contents first, then falls back to the legacy literal ref so existing vaults keep working. When the legacy fallback is used, a one-time warning is logged with migration guidance.
+
+To migrate to file-content semantics: put your desired passphrase in the key file, ensure `encryptionKey` is `file:/path/to/key`, then re-encrypt:
+
+```bash
+openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes
+```
 - **enabled**: Set to `true` to enable the vault; set to `false` to disable.
 - **autoDetect** (optional): When true, detects credential patterns in conversation and prompts the agent to offer storing them.
 - **autoCapture** (optional): Auto-capture credentials from tool call inputs (see [Auto-Capture from Tool Calls](#auto-capture-from-tool-calls) below). You can set **requirePatternMatch** to `true` so that only values matching a known credential pattern (e.g. JWT, `sk-...`, `ghp_...`) are stored; narrative or value-only text is then rejected.

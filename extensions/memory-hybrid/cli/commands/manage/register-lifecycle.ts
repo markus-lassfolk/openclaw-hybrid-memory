@@ -62,6 +62,12 @@ export function registerLifecycleSyncCommands(mem: Chainable, b: ManageBindings)
           console.log(
             `lifecycle sync github ${opts?.dryRun ? "(dry-run)" : ""}: scanned=${report.scanned} matched=${report.matched} expiredNow=${report.expiredNow} expiredSoon=${report.expiredSoon} keptStable=${report.keptStable}${report.errors.length > 0 ? ` errors=${report.errors.length}` : ""}`,
           );
+          const syncErrors = report.errors.length;
+          const summary = `lifecycle-sync matched=${report.matched} sync_errors=${syncErrors} semantic=${syncErrors > 0 ? "partial" : "success"}`;
+          console.log(summary);
+          if (syncErrors > 0) {
+            process.exitCode = 2;
+          }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.error(`lifecycle sync github: ${message}`);

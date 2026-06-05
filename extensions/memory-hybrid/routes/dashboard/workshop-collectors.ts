@@ -190,12 +190,10 @@ export function collectDreamCycleLog(ctx: WorkshopDashboardContext, limit = 5): 
       }
     }
 
-    return [...runs.entries()]
-      .slice(0, limit)
-      .map(([runId, stages]) => ({
-        runId,
-        stages: stages.sort((a, b) => Number(a.stageNumber ?? 0) - Number(b.stageNumber ?? 0)),
-      }));
+    return [...runs.entries()].slice(0, limit).map(([runId, stages]) => ({
+      runId,
+      stages: stages.sort((a, b) => Number(a.stageNumber ?? 0) - Number(b.stageNumber ?? 0)),
+    }));
   } catch {
     return [];
   }

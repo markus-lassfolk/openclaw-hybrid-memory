@@ -41,8 +41,7 @@ export function extractToolNamesFromMessages(messages: unknown[]): string[] {
         const b = block as Record<string, unknown>;
         const blockType = typeof b.type === "string" ? b.type : "";
         if (blockType !== "tool_use" && blockType !== "toolCall") continue;
-        const name =
-          typeof b.name === "string" ? b.name : typeof b.toolName === "string" ? b.toolName : null;
+        const name = typeof b.name === "string" ? b.name : typeof b.toolName === "string" ? b.toolName : null;
         if (typeof name === "string" && name.trim()) names.push(name.trim());
       }
     }

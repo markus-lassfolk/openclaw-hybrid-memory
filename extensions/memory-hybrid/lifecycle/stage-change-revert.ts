@@ -6,10 +6,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import { capturePluginError } from "../services/error-reporter.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
-import {
-  buildChangeRevertContext,
-  revertChangeByOrdinal,
-} from "../services/change-feed-revert.js";
+import { buildChangeRevertContext, revertChangeByOrdinal } from "../services/change-feed-revert.js";
 import { withWorkshopDefaults } from "../services/workshop-service.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";

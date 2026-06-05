@@ -88,6 +88,7 @@ interface ReflectionResult {
   patternsExtracted: number;
   patternsStored: number;
   window: number;
+  semanticOutcome?: string;
 }
 
 interface ReflectionRulesResult {
@@ -674,7 +675,13 @@ export async function runReflection(
       retryAttempt,
     });
     touchReflectLastRun();
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
+    return {
+      factsAnalyzed: recentFacts.length,
+      patternsExtracted: 0,
+      patternsStored: 0,
+      window: windowDays,
+      semanticOutcome: "failed",
+    };
   }
 
   const uniqueNewPatterns = parsePatternsFromReflectionResponse(rawResponse);
@@ -1122,6 +1129,7 @@ export async function runReflection(
     patternsExtracted: uniqueNewPatterns.length,
     patternsStored: stored,
     window: windowDays,
+    semanticOutcome: newPatternEmbedFailures > 0 ? "partial" : "success",
   };
 }
 
@@ -1299,7 +1307,12 @@ export async function runReflectionRules(
         vectorDb,
         embeddings,
         openai,
-        { ...opts, formatRetryWithThinking: true, thinkingMode: "adaptive", fallbackModels: opts.fallbackModels?.filter((m) => m !== modelUsed) },
+        {
+          ...opts,
+          formatRetryWithThinking: true,
+          thinkingMode: "adaptive",
+          fallbackModels: opts.fallbackModels?.filter((m) => m !== modelUsed),
+        },
         logger,
         provenanceService,
       );
@@ -1454,7 +1467,9 @@ export async function runReflectionRules(
       continue;
     }
     if (/^<[^>]+>$/i.test(ruleText) || /^<imperative\s+one-line\s+rule>/i.test(ruleText)) {
-      logger.warn(`memory-hybrid: reflect-rules — rejected template placeholder at store gate: ${ruleText.slice(0, 60)}`);
+      logger.warn(
+        `memory-hybrid: reflect-rules — rejected template placeholder at store gate: ${ruleText.slice(0, 60)}`,
+      );
       continue;
     }
     if (opts.dryRun) {
@@ -2434,7 +2449,7 @@ export async function runReflectionMeta(
       parsedCandidates: parseResult.parseableLines,
       rejectedLength: parseResult.rejectedLength,
       stored,
-      status: "ok",
+      status: newMetaEmbedFailures > 0 ? "partial" : "ok",
     },
   };
 }

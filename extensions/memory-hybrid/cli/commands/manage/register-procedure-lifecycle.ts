@@ -84,9 +84,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         );
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
-        console.log(
-          `  Last Validated: ${proc.lastValidated ? formatTimestampUtc(proc.lastValidated) : "never"}`,
-        );
+        console.log(`  Last Validated: ${proc.lastValidated ? formatTimestampUtc(proc.lastValidated) : "never"}`);
         console.log(`  Last Failed:   ${proc.lastFailed ? formatTimestampUtc(proc.lastFailed) : "never"}`);
 
         if (proc.avoidanceNotes && proc.avoidanceNotes.length > 0) {
@@ -696,5 +694,4 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         }
       }),
     );
-
 }

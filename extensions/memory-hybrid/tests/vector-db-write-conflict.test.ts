@@ -37,10 +37,7 @@ describe("VectorDB write conflict retries (#reembed-vectorless)", () => {
     vi.spyOn(db as unknown as { ensureInitialized: () => Promise<void> }, "ensureInitialized").mockResolvedValue(
       undefined,
     );
-    vi.spyOn(
-      db as unknown as { getTable: () => { add: typeof add; delete: typeof del } },
-      "getTable",
-    ).mockReturnValue({
+    vi.spyOn(db as unknown as { getTable: () => { add: typeof add; delete: typeof del } }, "getTable").mockReturnValue({
       add,
       delete: del,
     });

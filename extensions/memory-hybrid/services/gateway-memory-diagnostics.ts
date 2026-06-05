@@ -160,6 +160,51 @@ function buildLeakHints(opts: {
   return hints;
 }
 
+/** Strip tenant/global DB details from diagnostics exposed via public HTTP API. */
+export function sanitizePublicMemoryDiagnostics(diag: GatewayMemoryDiagnostics): GatewayMemoryDiagnostics {
+  const vectorObs = diag.hybridMemory.vectorObservability;
+  return {
+    ...diag,
+    facts: { activeFacts: null, topSources: null },
+    startupAttribution: [],
+    disk: {
+      sqliteBytes: null,
+      sqliteWalBytes: null,
+      lanceDirBytes: null,
+    },
+    hybridMemory: {
+      ...diag.hybridMemory,
+      vectorObservability: vectorObs
+        ? {
+            ...vectorObs,
+            fileDescriptors: vectorObs.fileDescriptors
+              ? {
+                  ...vectorObs.fileDescriptors,
+                  lancedbPaths: [],
+                  sampleTargets: {
+                    lancedb: [],
+                    sqlite: [],
+                    wal: [],
+                    shm: [],
+                    socket: [],
+                    pipe: [],
+                    anon: [],
+                    other: [],
+                  },
+                }
+              : vectorObs.fileDescriptors,
+            vectorDb: { ...vectorObs.vectorDb, path: null },
+            lancedb: {
+              ...vectorObs.lancedb,
+              basePath: null,
+              tables: vectorObs.lancedb.tables.map((t) => ({ ...t, path: "" })),
+            },
+          }
+        : vectorObs,
+    },
+  };
+}
+
 export async function buildGatewayMemoryDiagnostics(
   ctx: GatewayMemoryDiagnosticsContext,
 ): Promise<GatewayMemoryDiagnostics> {

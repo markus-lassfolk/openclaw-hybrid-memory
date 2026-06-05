@@ -27,6 +27,7 @@ import { registerWorkshopTools, type WorkshopToolsContext } from "../tools/works
 import { isWorkshopEnabled } from "../services/workshop-config.js";
 import { registerProposalGatewayMethods, type ProposalGatewayContext } from "../tools/proposal-gateway-methods.js";
 import { registerProposalHttpRoutes, type ProposalRoutesContext } from "../tools/proposal-routes.js";
+import { registerFactMutationGatewayMethods, type FactMutationGatewayContext } from "../tools/fact-mutation-gateway.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
 import { getEnv } from "../utils/env-manager.js";
 
@@ -227,7 +228,8 @@ function selectPersonaToolsContext({
 }
 
 function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginApi): void {
-  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore, timers } = ctx;
+  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore, timers } =
+    ctx;
   if (!(cfg.personaProposals.enabled && proposalsDb)) return;
 
   registerPersonaTools(
@@ -364,7 +366,12 @@ function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPl
 
 type HealthInstallerContext = Pick<ToolsContext, "factsDb" | "cfg" | "resolvedSqlitePath" | "vectorDb">;
 
-function selectHealthToolsContext({ factsDb, cfg, resolvedSqlitePath, vectorDb }: ToolsContext): HealthInstallerContext {
+function selectHealthToolsContext({
+  factsDb,
+  cfg,
+  resolvedSqlitePath,
+  vectorDb,
+}: ToolsContext): HealthInstallerContext {
   return { factsDb, cfg, resolvedSqlitePath, vectorDb };
 }
 
@@ -402,6 +409,7 @@ function selectPublicApiRoutesContext({
     recallInFlightRef,
     variantQueue,
     goalsDir,
+    factMutationsEnabled: cfg.wikiIntegration?.mutations?.enabled === true,
   };
 }
 
@@ -458,6 +466,14 @@ function installProposalRoutes(ctx: ProposalRoutesContext): void {
   if (!isWorkshopEnabled(ctx.cfgFull)) return;
   registerProposalHttpRoutes(ctx);
   registerProposalGatewayMethods(ctx);
+}
+
+function selectFactMutationGatewayContext(ctx: ToolsContext, api: ClawdbotPluginApi): FactMutationGatewayContext {
+  return { cfg: ctx.cfg, factsDb: ctx.factsDb, api };
+}
+
+function installFactMutationGateway(ctx: FactMutationGatewayContext): void {
+  registerFactMutationGatewayMethods(ctx);
 }
 
 function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
@@ -601,5 +617,11 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectPublicApiRoutesContext(ctx),
     install: installPublicApiRoutes,
+  }),
+  defineToolInstaller({
+    id: "factMutationGateway",
+    bootstrapPhase: "optional",
+    selectContext: (ctx, api) => selectFactMutationGatewayContext(ctx, api),
+    install: installFactMutationGateway,
   }),
 ]);

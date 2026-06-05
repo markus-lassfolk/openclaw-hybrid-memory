@@ -28,7 +28,7 @@ const LEGACY_CATEGORY_REMAPS: Readonly<Record<string, string>> = {
   episode: "ops_summary",
 };
 
-type ReindexCheckpoint = {
+export type ReindexCheckpoint = {
   offset: number;
   total: number;
   migrated: number;

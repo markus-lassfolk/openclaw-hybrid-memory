@@ -23,7 +23,8 @@ export async function runExtractProceduresForCli(
   },
 ): Promise<ExtractProceduresResult> {
   const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
-  const { factsDb, cfg, logger, changeFeed, proposalsDb, crystallizationStore, toolProposalStore, resolvedSqlitePath } = ctx;
+  const { factsDb, cfg, logger, changeFeed, proposalsDb, crystallizationStore, toolProposalStore, resolvedSqlitePath } =
+    ctx;
   const SCAN_TYPE = "extract-procedures";
   if (cfg.procedures?.enabled === false) {
     return {

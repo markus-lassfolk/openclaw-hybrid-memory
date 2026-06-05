@@ -6,6 +6,7 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { ScopeFilter } from "../../../types/memory.js";
+import { withMachineOutputStdoutSuppressed } from "../../../utils/hybrid-mem-json-cli.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { MigrateToVaultResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
@@ -16,6 +17,7 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
     vectorDb,
     runMigrateToVault,
     runEncryptVault,
+    runRekeyVault,
     runVaultStatus,
     runCredentialsList,
     runCredentialsGet,
@@ -80,6 +82,44 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
           console.log("⚠  Migration required: vault is plaintext but an encryption key is configured.");
           console.log("   Run: openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes");
         }
+      }),
+    );
+
+  credentials
+    .command("rekey-vault")
+    .description("Re-encrypt an encrypted vault with the configured encryption key (legacy file: ref migration)")
+    .option("--yes", "Apply changes (default: dry-run)")
+    .option("--backup", "Create a backup of the encrypted vault before rekeying (recommended)")
+    .option("--backup-path <path>", "Custom path for the backup file (implies --backup)")
+    .option("--verify", "Verify all entries are readable after rekeying")
+    .action(
+      withExit(async (opts?: { yes?: boolean; backup?: boolean; backupPath?: string; verify?: boolean }) => {
+        const res = runRekeyVault({
+          yes: opts?.yes === true,
+          backup: opts?.backup === true || opts?.backupPath !== undefined,
+          backupPath: opts?.backupPath,
+          verify: opts?.verify === true,
+        });
+        if (!res.ok) {
+          console.error(`Rekey vault: FAIL — ${res.error}`);
+          process.exitCode = 1;
+          return;
+        }
+        if (res.dryRun) {
+          console.log(`Vault is encrypted (kdf_version=${res.status.kdfVersion}).`);
+          console.log(`Vault path: ${res.vaultPath}`);
+          console.log("Dry-run only. To re-encrypt with the configured key material, run:");
+          console.log("  openclaw hybrid-mem credentials rekey-vault --backup --verify --yes");
+          return;
+        }
+        console.log(
+          `Rekeyed vault (kdf_version=${res.status.kdfVersion}). Re-encrypted ${res.rekeyed} entr${
+            res.rekeyed === 1 ? "y" : "ies"
+          }.`,
+        );
+        if (res.backupPath) console.log(`Backup created at: ${res.backupPath}`);
+        if (res.verified === true) console.log("Verification: all entries readable ✓");
+        console.log("Restart the gateway (or re-run verify) to confirm.");
       }),
     );
 
@@ -179,34 +219,40 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
       "--value-only",
       "Print only the secret value (for piping); no metadata. Warning: value is printed in plaintext.",
     )
+    .option("--quiet", "Alias for --value-only (machine-readable stdout for scripting)")
     .option(
       "--show-value",
       "Reveal the secret value in the default (metadata) output. Without this flag the value is masked for safety.",
     )
     .action(
-      withExit(async (opts: { service: string; type?: string; valueOnly?: boolean; showValue?: boolean }) => {
-        const entry = runCredentialsGet({ service: opts.service, type: opts.type });
-        if (!entry) {
-          console.error(
-            `No credential found for service "${opts.service}"${opts.type ? ` (type: ${opts.type})` : ""}.`,
-          );
-          process.exitCode = 1;
-          return;
-        }
-        if (opts.valueOnly) {
-          console.log(entry.value);
-          return;
-        }
-        console.log(`service: ${entry.service}`);
-        console.log(`type: ${entry.type}`);
-        if (opts.showValue) {
-          console.log(`value: ${entry.value}`);
-        } else {
-          console.log("value: *** (use --show-value to reveal, or --value-only to pipe)");
-        }
-        if (entry.url) console.log(`url: ${entry.url}`);
-        if (entry.notes) console.log(`notes: ${entry.notes}`);
-      }),
+      withExit(
+        async (opts: { service: string; type?: string; valueOnly?: boolean; quiet?: boolean; showValue?: boolean }) => {
+          const valueOnly = opts.valueOnly === true || opts.quiet === true;
+          const entry = runCredentialsGet({ service: opts.service, type: opts.type });
+          if (!entry) {
+            console.error(
+              `No credential found for service "${opts.service}"${opts.type ? ` (type: ${opts.type})` : ""}.`,
+            );
+            process.exitCode = 1;
+            return;
+          }
+          if (valueOnly) {
+            withMachineOutputStdoutSuppressed(() => {
+              process.stdout.write(entry.value);
+            });
+            return;
+          }
+          console.log(`service: ${entry.service}`);
+          console.log(`type: ${entry.type}`);
+          if (opts.showValue) {
+            console.log(`value: ${entry.value}`);
+          } else {
+            console.log("value: *** (use --show-value to reveal, or --value-only to pipe)");
+          }
+          if (entry.url) console.log(`url: ${entry.url}`);
+          if (entry.notes) console.log(`notes: ${entry.notes}`);
+        },
+      ),
     );
 
   credentials
@@ -416,12 +462,19 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
         }
 
         let promoted = 0;
+        let skipped = 0;
+        let failed = 0;
         for (const f of candidates) {
-          if (factsDb.promoteScope(f.id, "global", null)) {
-            promoted++;
-          }
+          const outcome = factsDb.promoteScopeToGlobalWithOutcome(f.id);
+          if (outcome === "promoted") promoted++;
+          else if (outcome === "skipped") skipped++;
+          else failed++;
         }
-        console.log(`Promoted ${promoted} facts from session to global scope.`);
+        const summary = `scope-promote promoted=${promoted}/${candidates.length} skipped=${skipped} failed=${failed} semantic=${failed > 0 ? "partial" : "success"}`;
+        console.log(summary);
+        if (failed > 0) {
+          process.exitCode = 2;
+        }
       }),
     );
 }

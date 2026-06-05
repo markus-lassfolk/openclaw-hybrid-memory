@@ -104,6 +104,8 @@ CLI output is controlled by the config `verbosity` setting (`silent`, `quiet`, `
 | `skills record …` / `skills correct …` | Record activation telemetry or mark a false positive (see [PROCEDURAL-MEMORY.md](PROCEDURAL-MEMORY.md)). |
 | `skills demote <skill-name> --reason "<reason>"` | Manually demote a generated skill (for example when it is over-triggering). |
 | `generate-proposals [--dry-run] [--verbose]` | Generate persona proposals from recent reflection (patterns, rules, meta). Proposal inputs follow `autoRecall.scopeFilter`; set it in shared-memory setups to avoid cross-user/agent contamination. Requires personaProposals enabled. Cron: weekly-persona-proposals. |
+| `maintenance run list\|status\|artifacts\|explain\|resume` | Inspect orchestrator / JobRun artifacts (#1877). See [maintenance-job-runs.md](maintenance-job-runs.md). |
+| `maintenance nightly\|cycle\|full [--json] [--summary-out <path>]` | Orchestrator tiers; `--json` / `--summary-out` emit machine-readable run summary. |
 | `run-all [--dry-run] [--verbose] [--force\|--full]` | Run all maintenance tasks in optimal order: backfill-decay (once), prune, compact, distill, extract-daily, extract-directives, extract-reinforcement, extract-procedures, generate-auto-skills, reflect, reflect-rules, reflect-meta, generate-proposals, self-correction-run, build-languages. `--force` / `--full` propagate to scan-style steps (distill, extract-*, self-correction-run). See [MAINTENANCE-TASKS-MATRIX.md](MAINTENANCE-TASKS-MATRIX.md). |
 | `dream-cycle` | Nightly pipeline: prune expired facts, consolidate event log into facts, reflect, reflect-rules. Requires `nightlyCycle.enabled`. Cron: nightly-dream-cycle. |
 | `resolve-contradictions` | Resolve conflicting/superseded facts. Use `--auto --dry-run` / `--auto --apply` for the autonomous pipeline, `--export-review` / `--apply-review` for the manual queue, and `--llm [--model ...]` for opt-in adjudication. Cron: step 4 of nightly-memory-sweep. |
@@ -370,6 +372,75 @@ Safety note: `--clean-all` only deletes storage under `~/.openclaw/memory/` by d
 - Run `find-duplicates` to review candidates, then `consolidate --dry-run` before applying.
 - Run `verify` as a health check after installation or upgrades.
 - Use `install --dry-run` to preview config changes before applying.
+
+---
+
+## Workboard integration
+
+When `workboard.enabled` is true, hybrid-memory syncs active tasks and goals to OpenClaw's Workboard Kanban UI. The sync runs on a configurable interval (default: every 5 minutes).
+
+No dedicated CLI commands are needed — the sync is automatic. Workboard cards are managed through the Workboard UI in OpenClaw's Control Panel.
+
+**How it works:**
+- Active tasks and goals are created as Workboard cards with the configured `cardTag` (default: `"hybrid-memory"`)
+- Status changes map to column names (e.g. `in_progress` → "In Progress")
+- When `bidirectional` is true, moving a card between columns in the Workboard UI updates the task/goal status in hybrid-memory
+- Cards include a description derived from the task/goal details and a link back to the hybrid-memory entity
+
+**Diagnostics:**
+- Check `openclaw hybrid-mem verify` — reports Workboard connectivity and sync status when the feature is enabled
+- Gateway logs contain `memory-hybrid: workboard sync` entries for each sync cycle
+
+---
+
+## Wiki integration and Dreaming UI
+
+When `wikiIntegration.enabled` is true, hybrid-memory facts are bridged to OpenClaw's memory-wiki plugin and visible in the Dreaming UI tab.
+
+**What gets exposed:**
+- Facts appear in the Dreaming UI under "Imported Insights" and "Memory Palace" (via `publicArtifacts`)
+- Facts are included in `memory_search corpus=all` and `wiki_search corpus=all` results (via `corpusSupplement`)
+- Dream findings (patterns, consolidation summaries, digests) from the nightly dream cycle are stored as facts and also bridged
+
+**Bidirectional editing (when `mutations.enabled` is true):**
+
+Gateway RPC methods under `hybrid-mem.facts.*`:
+
+```bash
+# These are called programmatically by memory-wiki or other Gateway clients.
+# List facts
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.list", "params": {"query": "TypeScript"}}'
+
+# Get a specific fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.get", "params": {"id": "<fact-id>"}}'
+
+# Update a fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.update", "params": {"id": "<fact-id>", "text": "Updated text"}}'
+
+# Supersede (replace or delete) a fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.supersede", "params": {"id": "<fact-id>"}}'
+
+# Create a new fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.create", "params": {"text": "New fact", "category": "technical"}}'
+```
+
+HTTP equivalent: `POST /plugins/memory-public/fact/mutate` with `{ "action": "update"|"supersede"|"create", ... }`.
+
+**Wiki CLI:**
+
+```bash
+openclaw hybrid-mem wiki status          # config + mirror status
+openclaw hybrid-mem wiki status --json
+openclaw hybrid-mem wiki export          # run workspace mirror sync now
+openclaw hybrid-mem wiki export --json
+```
+
+`openclaw hybrid-mem verify` includes a **UI integrations (Workboard / Dreaming)** section when `wikiIntegration` or `workboard` is enabled.
 
 ---
 

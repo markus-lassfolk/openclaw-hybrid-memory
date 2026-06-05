@@ -14,10 +14,7 @@ import {
 import { formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 
-export function registerMaintenanceHealthCommands(
-  maintenance: Chainable,
-  cfg: HybridMemoryConfig,
-): void {
+export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: HybridMemoryConfig): void {
   maintenance
     .command("inventory")
     .description("List host-crontab and gateway-cron maintenance jobs in one report.")
@@ -234,9 +231,7 @@ export function registerMaintenanceHealthCommands(
         const cronStorePath = join(homedir(), ".openclaw", "cron", "jobs.json");
         const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
         const useConsolidatedCron = cfg.maintenance?.orchestrator?.consolidatedCronJobs !== false;
-        const criticalJobs = useConsolidatedCron
-          ? ["hybrid-mem:maintenance-nightly"]
-          : ["hybrid-mem:nightly-distill"];
+        const criticalJobs = useConsolidatedCron ? ["hybrid-mem:maintenance-nightly"] : ["hybrid-mem:nightly-distill"];
 
         let cronStore: { jobs?: unknown[] } = { jobs: [] };
         if (existsSync(cronStorePath)) {

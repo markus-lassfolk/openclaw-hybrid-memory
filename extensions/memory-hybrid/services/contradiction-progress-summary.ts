@@ -4,9 +4,12 @@ import { dirname, join } from "node:path";
 import { getEnv } from "../utils/env-manager.js";
 import { nowIso } from "../utils/dates.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import type { ResolveContradictionsAutoResult } from "../backends/facts-db/contradictions.js";
 
 export const DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD = 200;
 export const DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD = 1;
+/** Matches nightly cron `resolve-contradictions --degraded-consecutive-threshold 3`. */
+export const ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD = 3;
 
 export interface ContradictionProgressMetrics {
   autoResolved: number;
@@ -149,4 +152,36 @@ export function buildContradictionProgressJsonSummary(
     ...evaluation,
     suggestions,
   };
+}
+
+/** Run autonomous contradiction resolution and evaluate degraded backlog for maintenance orchestrator/cron. */
+export async function runContradictionMaintenanceAutoStep(params: {
+  runAuto: () => Promise<ResolveContradictionsAutoResult>;
+  openclawHome?: string;
+  degradedAmbiguousThreshold?: number;
+  degradedConsecutiveThreshold?: number;
+}): Promise<{
+  summary: string;
+  evaluation: ContradictionProgressEvaluation;
+  metrics: ContradictionProgressMetrics;
+}> {
+  const res = await params.runAuto();
+  const autoResolvedCount = res.deterministic + res.llm + res.merged;
+  const metrics: ContradictionProgressMetrics = {
+    autoResolved: autoResolvedCount,
+    ambiguous: res.manualReview,
+    totalConsidered: res.total,
+  };
+  const previousConsecutive = readConsecutiveNoProgressRuns(params.openclawHome);
+  const evaluation = evaluateContradictionProgress(metrics, {
+    degradedAmbiguousThreshold:
+      params.degradedAmbiguousThreshold ?? DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
+    degradedConsecutiveThreshold:
+      params.degradedConsecutiveThreshold ?? ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
+    previousConsecutiveNoProgressRuns: previousConsecutive,
+  });
+  persistConsecutiveNoProgressState(metrics, evaluation, params.openclawHome);
+  const semantic = evaluation.degraded ? "partial" : "success";
+  const summary = `${formatContradictionProgressSummaryLine("auto", metrics, evaluation)} semantic=${semantic}`;
+  return { summary, evaluation, metrics };
 }

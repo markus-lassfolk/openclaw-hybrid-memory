@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildToolScopeFilter } from "../utils/scope-filter.js";
+import {
+  buildToolScopeFilter,
+  globalOnlyScopeFilter,
+  resolveCorpusScopeFilter,
+  resolveGatewayScopeFilter,
+  scopeFieldsFromFilter,
+} from "../utils/scope-filter.js";
 import type { ScopeFilter } from "../types/memory.js";
 
 describe("buildToolScopeFilter", () => {
@@ -209,6 +215,40 @@ describe("buildToolScopeFilter", () => {
         agentId: "agent-worker-1",
         sessionId: null,
       });
+    });
+  });
+});
+
+describe("scope helper utilities", () => {
+  const cfg = {
+    multiAgent: { orchestratorId: "orchestrator-1", trustToolScopeParams: false },
+    autoRecall: {},
+  };
+
+  it("resolveGatewayScopeFilter defaults to global-only without identity", () => {
+    expect(resolveGatewayScopeFilter({ context: {} }, cfg)).toEqual(globalOnlyScopeFilter());
+  });
+
+  it("resolveGatewayScopeFilter uses gateway agent context", () => {
+    expect(resolveGatewayScopeFilter({ context: { agentId: "worker-1" } }, cfg)).toEqual({
+      userId: null,
+      agentId: "worker-1",
+      sessionId: null,
+    });
+  });
+
+  it("resolveCorpusScopeFilter uses agentSessionKey when configured scope absent", () => {
+    expect(resolveCorpusScopeFilter("session-abc")).toEqual({ sessionId: "session-abc" });
+  });
+
+  it("resolveCorpusScopeFilter falls back to global-only without session key", () => {
+    expect(resolveCorpusScopeFilter(undefined)).toEqual(globalOnlyScopeFilter());
+  });
+
+  it("scopeFieldsFromFilter maps session scope for creates", () => {
+    expect(scopeFieldsFromFilter({ sessionId: "sess-1" })).toEqual({
+      scope: "session",
+      scopeTarget: "sess-1",
     });
   });
 });

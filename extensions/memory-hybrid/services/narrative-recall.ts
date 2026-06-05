@@ -162,9 +162,7 @@ function collectEventMatches(
     const events = eventLog.getBySession(options.sessionId, 200);
     if (events.length > 0) sessionEvents.set(options.sessionId, events);
   } else {
-    const fromIso = formatTimestampUtc(
-      options.sinceSec ?? options.nowSec - DEFAULT_LOOKBACK_DAYS * 86_400,
-    );
+    const fromIso = formatTimestampUtc(options.sinceSec ?? options.nowSec - DEFAULT_LOOKBACK_DAYS * 86_400);
     const toIso = formatTimestampUtc(options.nowSec);
     const maxSessions = Math.max(1, options.limit);
     const maxEventsPerSession = Math.max(1, options.maxEventsPerSession);

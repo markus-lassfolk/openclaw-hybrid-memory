@@ -7,6 +7,10 @@ import type { FactsDB } from "../../../backends/facts-db.js";
 import type { ChangeFeed } from "../../../services/change-feed.js";
 import { runCrystallizationProposalCycle } from "../../../services/crystallization-maintenance.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import {
+  assessContinuousVerificationResult,
+  formatContinuousVerificationAssessmentLine,
+} from "./dream-cycle-followup.js";
 
 export interface DreamCycleFollowUpDeps {
   cfg: HybridMemoryConfig;
@@ -24,22 +28,34 @@ export interface DreamCycleFollowUpDeps {
     dryRun: boolean;
     includeClosedLoop?: boolean;
     verbose?: boolean;
-  }) => Promise<{ signalsExtracted: number; positiveCount: number; negativeCount: number; sessionsProcessed: number; sessionsScanned: number }>;
-  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<{ generalisedStored: number; agentsScanned: number }>;
+  }) => Promise<{
+    signalsExtracted: number;
+    positiveCount: number;
+    negativeCount: number;
+    sessionsProcessed: number;
+    sessionsScanned: number;
+    partial?: boolean;
+    partialReason?: string;
+  }>;
+  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<{
+    generalisedStored: number;
+    agentsScanned: number;
+    errors: number;
+  }>;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   pruneCostLog?: (retainDays?: number) => number | Promise<number>;
 }
 
-export async function runContinuousVerificationStep(
-  deps: DreamCycleFollowUpDeps,
-  verbose = false,
-): Promise<string> {
+export async function runContinuousVerificationStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
   if (!deps.runContinuousVerification) return "skipped (handler unavailable)";
   const res = await deps.runContinuousVerification(verbose ? { verbose: true } : undefined);
-  if (res.errors > 0) {
-    throw new Error(`${res.errors}/${res.checked} verification check(s) errored`);
+  const assessment = assessContinuousVerificationResult(res);
+  const machineLine = formatContinuousVerificationAssessmentLine(res, assessment);
+  const summary = `checked=${res.checked} confirmed=${res.confirmed} stale=${res.stale} uncertain=${res.uncertain} errors=${res.errors} semantic=${assessment.shouldFailPipeline ? "partial" : "success"} Machine status: ${machineLine}`;
+  if (assessment.shouldFailPipeline) {
+    throw new Error(`continuous-verification degraded (${assessment.reason}): ${summary}`);
   }
-  return `checked=${res.checked} confirmed=${res.confirmed} stale=${res.stale}`;
+  return summary;
 }
 
 export async function runExtractImplicitStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
@@ -49,7 +65,11 @@ export async function runExtractImplicitStep(deps: DreamCycleFollowUpDeps, verbo
     includeClosedLoop: false,
     verbose,
   });
-  return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions`;
+  const summary = `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${res.partial ? "partial" : "success"}`;
+  if (res.partial) {
+    throw new Error(`extract-implicit partial failure (${res.partialReason ?? "capped"}): ${summary}`);
+  }
+  return summary;
 }
 
 export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
@@ -57,13 +77,21 @@ export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, ve
     verbose,
     logger: () => {},
   });
-  return `${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted`;
+  const summary = `${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted semantic=${clReport.interrupted ? "partial" : "success"}`;
+  if (clReport.interrupted) {
+    throw new Error(`closed-loop-analysis interrupted (${summary})`);
+  }
+  return summary;
 }
 
 export async function runCrossAgentLearningStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
   if (!deps.runCrossAgentLearning) return "skipped (handler unavailable)";
   const res = await deps.runCrossAgentLearning(verbose ? { verbose: true } : undefined);
-  return `${res.generalisedStored} patterns from ${res.agentsScanned} agents`;
+  const summary = `${res.generalisedStored} patterns from ${res.agentsScanned} agents errors=${res.errors} semantic=${res.errors > 0 ? "partial" : "success"}`;
+  if (res.errors > 0) {
+    throw new Error(`cross-agent-learning batch errors=${res.errors} (${summary})`);
+  }
+  return summary;
 }
 
 export async function runToolEffectivenessStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
@@ -81,18 +109,22 @@ export async function runCrystallizationProposalsStep(deps: DreamCycleFollowUpDe
   });
   if (crystalRes.skippedReason === "disabled") return "skipped (disabled)";
   if (crystalRes.skippedReason === "stores-unavailable") {
-    throw new Error(crystalRes.reasons[0] ?? "crystallization stores unavailable");
+    throw new Error(
+      `crystallization-proposals stores unavailable (${crystalRes.reasons[0] ?? "stores-unavailable"} semantic=partial)`,
+    );
   }
-  return `proposed=${crystalRes.proposed}, skipped=${crystalRes.skipped}`;
+  return `proposed=${crystalRes.proposed} skipped=${crystalRes.skipped} semantic=success`;
 }
 
 export async function runCostLogPruneStep(deps: DreamCycleFollowUpDeps): Promise<string> {
   if (!deps.pruneCostLog) return "skipped (handler unavailable)";
   const pruned = await Promise.resolve(deps.pruneCostLog(deps.cfg.costTracking?.retainDays));
-  return pruned > 0 ? `pruned ${pruned} entries` : "nothing to prune";
+  return pruned > 0 ? `pruned=${pruned} semantic=success` : "nothing to prune semantic=success";
 }
 
-export function buildDreamCycleFollowUpDepsFromBindings(b: import("./bindings.js").ManageBindings): DreamCycleFollowUpDeps {
+export function buildDreamCycleFollowUpDepsFromBindings(
+  b: import("./bindings.js").ManageBindings,
+): DreamCycleFollowUpDeps {
   return {
     cfg: b.cfg,
     factsDb: b.factsDb,

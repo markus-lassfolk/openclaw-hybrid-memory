@@ -18,6 +18,7 @@ import {
 } from "./manage/register-backfill-maintenance.js";
 import { registerMaintenanceHealthCommands } from "./manage/register-maintenance-health.js";
 import { registerMaintenanceOrchestratorCommands } from "./manage/register-maintenance-orchestrator.js";
+import { registerMaintenanceRunCommands } from "./manage/register-maintenance-run.js";
 import { registerSensorSweepCommand } from "./manage/register-sensor-sweep.js";
 import { registerReconcileCronLedgers } from "./manage/register-reconcile-cron-ledgers.js";
 import { registerValidateCronExit } from "./manage/register-validate-cron-exit.js";
@@ -55,14 +56,11 @@ const MAINTENANCE_FLAT_PATHS: Record<string, string> = {
 };
 
 export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx: ManageContext): void {
-  const maintenance = createCommandGroup(
-    mem,
-    "maintenance",
-    "Cron, backfill, and operational health (Issue #281)",
-  );
+  const maintenance = createCommandGroup(mem, "maintenance", "Cron, backfill, and operational health (Issue #281)");
 
   registerMaintenanceHealthCommands(maintenance, b.cfg);
   registerMaintenanceOrchestratorCommands(maintenance, b);
+  registerMaintenanceRunCommands(maintenance);
   registerSensorSweepCommand(mem, b);
   registerRunAllCommand(maintenance, b, GROUPED_MAINTENANCE_COMMAND_NAMES.runAll);
 
@@ -81,7 +79,11 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
     groupedBackfillParent: true,
   });
 
-  registerRunAllCommand(wrapChainableWithDeprecated(mem, { "run-all": MAINTENANCE_FLAT_PATHS["run-all"]! }), b, "run-all");
+  registerRunAllCommand(
+    wrapChainableWithDeprecated(mem, { "run-all": MAINTENANCE_FLAT_PATHS["run-all"]! }),
+    b,
+    "run-all",
+  );
   registerBackfillMaintenanceCommands(wrapChainableWithDeprecated(mem, BACKFILL_FLAT_PATHS), b, {
     onlyBackfill: true,
   });
@@ -90,7 +92,9 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
     b,
   );
   registerAnalyzeMaintenanceLogsCommand(
-    wrapChainableWithDeprecated(mem, { "analyze-maintenance-logs": MAINTENANCE_FLAT_PATHS["analyze-maintenance-logs"]! }),
+    wrapChainableWithDeprecated(mem, {
+      "analyze-maintenance-logs": MAINTENANCE_FLAT_PATHS["analyze-maintenance-logs"]!,
+    }),
     b,
   );
   registerValidateCronExit(

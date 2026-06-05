@@ -25,6 +25,9 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('HM_LOG_BASE="$OW/logs/cron-hybrid-mem"');
     expect(bash).toContain('if [ -n "${OPENCLAW_HOME:-}" ]; then OW="$OPENCLAW_HOME"; else OW=~/.openclaw; fi');
     expect(bash).toContain('HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"');
+    expect(bash).toContain('export HM_RUN_ID="$RUN_ID"');
+    expect(bash).toContain('HM_VALIDATION_JSON="${DAY_DIR}/${HM_JOB}-${RUN_ID}.validation.json"');
+    expect(bash).toContain('HM_SUMMARY="${DAY_DIR}/${HM_JOB}-${RUN_ID}.summary.json"');
     expect(bash).toContain('HM_REQUIRED_STEPS=("prune")');
     expect(bash).toContain('local step_ec="${PIPESTATUS[0]}"');
     expect(bash).toContain("failed(?:_[A-Za-z0-9_-]+)?");
@@ -34,7 +37,7 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('timeout "$timeout_secs" "${cmd[@]}" 2>&1 | tee -a "$HM_LOG" "$step_output"');
     expect(bash).toContain("openclaw --version");
     expect(bash).toContain(
-      'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps',
+      'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps',
     );
     expect(bash).toContain("trap 'ec=$?; trap - EXIT; hm_validate \"$ec\"; exit $?' EXIT");
     expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 143; exit $?' TERM INT");
@@ -163,6 +166,50 @@ exit 2
     const exitContents = readFileSync(exitPath, "utf-8");
     expect(exitContents).toContain("validate-cron-exit exit=1 status=failed reason=maintenance_partial");
     expect(exitContents).not.toContain("status=partial");
+  });
+
+  it("records validate-cron-exit exit=2 in HM_EXIT for semantic-only failures", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "distill" ]; then
+  echo "distill stored=5 sessions=3 batchFailures=2 semantic=partial"
+  exit 0
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  echo '{"maintenanceStatus":"failed","semanticStatus":"degraded","recommendedExitCode":2}'
+  exit 2
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-memory-sweep", [
+      { name: "distill", cmd: "openclaw hybrid-mem distill --verbose" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.status).toBe(2);
+    const exitDir = join(home, "logs", "cron-hybrid-mem");
+    const exitPath = readdirSync(exitDir)
+      .filter((name) => name.endsWith(".exit.txt"))
+      .map((name) => join(exitDir, name))[0];
+    expect(exitPath).toBeDefined();
+    const exitContents = readFileSync(exitPath, "utf-8");
+    expect(exitContents).toContain("validate-cron-exit exit=2 status=failed reason=maintenance_failed");
+    expect(result.stdout + result.stderr).toContain("FAILED: nightly-memory-sweep");
   });
 
   it("treats semantic no-op status markers as failures when HYBRID_MEM_STRICT_SEMANTICS=1", () => {

@@ -49,10 +49,7 @@ import {
 import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
 import { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
 import type { IssueStore } from "../backends/issue-store.js";
-import {
-  getCriticalOpenIssueFactIds,
-  runIssueRetrievalStrategy,
-} from "./issue-retrieval.js";
+import { getCriticalOpenIssueFactIds, runIssueRetrievalStrategy } from "./issue-retrieval.js";
 import { parseFactProvenanceJson, resolveProvenanceSourceFacts } from "../backends/facts-db/provenance-json.js";
 import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 export { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
@@ -540,9 +537,7 @@ function buildOrchestratorResult(
     const provenance = parseFactProvenanceJson(entry.provenanceJson);
     const sourceFacts = resolveProvenanceSourceFacts(factsDb, provenance, 3);
     if (sourceFacts.length === 0) continue;
-    const preview = sourceFacts
-      .map((s) => sanitizePromptInjection(s.text).slice(0, 40))
-      .join("; ");
+    const preview = sourceFacts.map((s) => sanitizePromptInjection(s.text).slice(0, 40)).join("; ");
     provenanceByFactId.set(factId, `${sourceFacts.length} src: ${preview}`.slice(0, 120));
   }
   const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, {
@@ -774,11 +769,9 @@ export async function runExplicitDeepRetrieval(
   if (policy.mode === "constrained-recall" && constrainedFilters) {
     const ids = getCandidateIdsByStructuredFilters(db, constrainedFilters, { limit: 1000, nowSec });
     if (ids.length === 1000) {
-      pluginLogger.warn(
-        "memory-hybrid: constrained-recall candidate set hit 1000 cap — results may be incomplete",
-      );
+      pluginLogger.warn("memory-hybrid: constrained-recall candidate set hit 1000 cap — results may be incomplete");
     }
-    if (ids.length === 0 && !issueStore && !(entityLayerCandidateIds?.length)) {
+    if (ids.length === 0 && !issueStore && !entityLayerCandidateIds?.length) {
       return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
     }
     candidateIds = new Set(ids);

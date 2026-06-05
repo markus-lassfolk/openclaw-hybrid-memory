@@ -161,7 +161,11 @@ export function formatMaintenanceCoverageReport(report: MaintenanceCoverageRepor
     `  proposal_runs: ${report.proposalRuns}`,
     `  reflection_parse_failures: ${report.reflectionParseFailures}`,
     `  reflection_watermark_age_sec: ${report.reflectionWatermarkAgeSec ?? "unset"}`,
-    `  session_langs: ${Object.entries(report.sessionLangs).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`,
+    `  session_langs: ${
+      Object.entries(report.sessionLangs)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ") || "(none)"
+    }`,
   ];
   return lines.join("\n");
 }

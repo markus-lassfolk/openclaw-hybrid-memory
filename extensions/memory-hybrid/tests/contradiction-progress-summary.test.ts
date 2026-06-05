@@ -6,6 +6,7 @@ import {
   evaluateContradictionProgress,
   persistConsecutiveNoProgressState,
   readConsecutiveNoProgressRuns,
+  runContradictionMaintenanceAutoStep,
 } from "../services/contradiction-progress-summary.js";
 
 describe("contradiction-progress-summary", () => {
@@ -107,5 +108,73 @@ describe("contradiction-progress-summary", () => {
     expect(evaluation.consecutiveNoProgressRuns).toBe(1);
     expect(evaluation.degraded).toBe(true);
     expect(evaluation.exitCode).toBe(2);
+  });
+
+  it("runContradictionMaintenanceAutoStep persists guard state and marks degraded summaries", async () => {
+    const home = tempOpenclawHome();
+    const { summary, evaluation } = await runContradictionMaintenanceAutoStep({
+      openclawHome: home,
+      degradedAmbiguousThreshold: 200,
+      degradedConsecutiveThreshold: 3,
+      runAuto: async () => ({
+        total: 250,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 250,
+        applied: true,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      }),
+    });
+    expect(summary).toContain("mode=auto");
+    expect(summary).toContain("semantic=success");
+    expect(evaluation.degraded).toBe(false);
+    expect(readConsecutiveNoProgressRuns(home)).toBe(1);
+
+    const degraded = await runContradictionMaintenanceAutoStep({
+      openclawHome: home,
+      degradedAmbiguousThreshold: 200,
+      degradedConsecutiveThreshold: 3,
+      runAuto: async () => ({
+        total: 250,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 250,
+        applied: true,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      }),
+    });
+    expect(degraded.evaluation.degraded).toBe(false);
+    expect(degraded.summary).toContain("semantic=success");
+
+    const third = await runContradictionMaintenanceAutoStep({
+      openclawHome: home,
+      degradedAmbiguousThreshold: 200,
+      degradedConsecutiveThreshold: 3,
+      runAuto: async () => ({
+        total: 250,
+        deterministic: 0,
+        llm: 0,
+        merged: 0,
+        manualReview: 250,
+        applied: true,
+        decisionsApplied: 0,
+        targetRate: 0.8,
+        achievedRate: 0,
+        targetMet: false,
+        reviewItems: [],
+      }),
+    });
+    expect(third.evaluation.degraded).toBe(true);
+    expect(third.summary).toContain("semantic=partial");
   });
 });

@@ -192,9 +192,9 @@ export function isConsolidatedMaintenanceCronEnabled(options: { consolidatedCron
 }
 
 /** Read orchestrator.consolidatedCronJobs from plugin or hybrid config (default: consolidated). */
-export function readConsolidatedCronJobsFlag(
-  cfg?: { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } },
-): boolean | undefined {
+export function readConsolidatedCronJobsFlag(cfg?: {
+  maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } };
+}): boolean | undefined {
   return cfg?.maintenance?.orchestrator?.consolidatedCronJobs;
 }
 
@@ -422,7 +422,7 @@ const MAINTENANCE_CRON_JOBS: Array<
       steps: [
         {
           name: "analyze-maintenance-logs",
-          cmd: "openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md",
+          cmd: "openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md --strict",
         },
       ],
     }),
@@ -597,6 +597,11 @@ const MAINTENANCE_CRON_JOBS: Array<
     featureGate: "lifecycle.adapters.github.enabled",
   },
 ];
+
+/** Cron job `name` values superseded by consolidated `maintenance-nightly` orchestrator mode. */
+export function getConsolidatedSupersededLegacyCronJobKeys(): string[] {
+  return MAINTENANCE_CRON_JOBS.map((job) => String(job.name));
+}
 
 /**
  * When `agents.defaults.model.primary` is set, use it for maintenance cron `model` so agent-bound

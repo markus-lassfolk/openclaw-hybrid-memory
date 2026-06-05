@@ -20,15 +20,15 @@ export function registerSensorSweepCommand(mem: Chainable, b: ManageBindings): v
           console.log("sensor-sweep: skipped (sensorSweep.enabled = false)");
           return;
         }
-        const eventBusPath = b.resolvedSqlitePath
-          ? join(dirname(b.resolvedSqlitePath), "event-bus.db")
-          : null;
+        const eventBusPath = b.resolvedSqlitePath ? join(dirname(b.resolvedSqlitePath), "event-bus.db") : null;
         if (!eventBusPath) {
           throw new Error("sensor-sweep requires resolvedSqlitePath to locate event-bus.db");
         }
         const eventBus = new EventBus(eventBusPath);
         try {
-          const tierRaw = String(opts?.tier ?? "all").trim().toLowerCase();
+          const tierRaw = String(opts?.tier ?? "all")
+            .trim()
+            .toLowerCase();
           const tier = tierRaw === "all" ? "all" : tierRaw === "2" ? 2 : 1;
           const result = await sweepAll(eventBus, b.cfg.sensorSweep, b.factsDb, {
             tier,
@@ -36,11 +36,11 @@ export function registerSensorSweepCommand(mem: Chainable, b: ManageBindings): v
             resolvedSqlitePath: b.resolvedSqlitePath,
           });
           console.log(
-            `sensor-sweep tier=${tier}: written=${result.totalWritten} skipped=${result.totalSkipped} errors=${result.errors.length}`,
+            `sensor-sweep tier=${tier}: written=${result.totalWritten} skipped=${result.totalSkipped} errors=${result.errors.length} semantic=${result.errors.length > 0 ? "partial" : "success"}`,
           );
           if (result.errors.length > 0) {
             for (const err of result.errors.slice(0, 5)) console.error(`  ${err}`);
-            process.exitCode = 1;
+            process.exitCode = 2;
           }
         } finally {
           eventBus.close?.();

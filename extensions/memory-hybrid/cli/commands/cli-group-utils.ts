@@ -265,10 +265,7 @@ export function wrapChainableWithRenames(
 }
 
 /** Wrap a Commander chain to emit deprecation warnings for flat top-level aliases. */
-export function wrapChainableWithDeprecated(
-  base: Chainable,
-  flatToGrouped: Record<string, string>,
-): Chainable {
+export function wrapChainableWithDeprecated(base: Chainable, flatToGrouped: Record<string, string>): Chainable {
   const wrap = (node: Chainable, currentFlat?: string): Chainable => {
     const wrapped: Chainable = {
       command(name: string) {

@@ -54,6 +54,12 @@ export type ManageContext = {
     backupPath?: string;
     verify?: boolean;
   }) => EncryptVaultResult;
+  runRekeyVault: (opts: {
+    yes?: boolean;
+    backup?: boolean;
+    backupPath?: string;
+    verify?: boolean;
+  }) => import("./types.js").RekeyVaultResult;
   runVaultStatus: () => VaultStatusResult | null;
   runCredentialsList: () => Array<{ service: string; type: string; url: string | null }>;
   runCredentialsGet: (opts: {
@@ -124,6 +130,7 @@ export type ManageContext = {
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
+    batchFailures?: number;
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: (opts?: { apply?: boolean }) => Promise<{

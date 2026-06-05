@@ -6,10 +6,7 @@ export function resolveProgressiveIndexSessionKey(api: {
   return key && key.trim().length > 0 ? key.trim() : "default";
 }
 
-export function getProgressiveIndexIds(
-  map: Map<string, string[]> | undefined,
-  sessionKey: string,
-): string[] {
+export function getProgressiveIndexIds(map: Map<string, string[]> | undefined, sessionKey: string): string[] {
   return map?.get(sessionKey) ?? [];
 }
 

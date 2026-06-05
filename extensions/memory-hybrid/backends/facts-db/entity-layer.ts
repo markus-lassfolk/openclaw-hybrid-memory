@@ -994,8 +994,7 @@ export function resolveEntityForeignKeys(db: DatabaseSync, factId: string, entit
   if (!existing) return;
 
   const existingKey = normalizeEntityKey(existing.entity ?? "");
-  const hasResolvedFk =
-    existing.entity_contact_id != null || existing.entity_organization_id != null;
+  const hasResolvedFk = existing.entity_contact_id != null || existing.entity_organization_id != null;
   if (hasResolvedFk && existingKey === key) return;
 
   let contactId: string | null = null;

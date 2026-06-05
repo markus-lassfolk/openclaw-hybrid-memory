@@ -40,7 +40,12 @@ import {
   resolveSelfCorrectionThinkingMode,
   type SelfCorrectionRemediationItem,
 } from "../services/self-correction-batch-analyze.js";
-import { type CorrectionIncident, collectHeuristicFeedbackCandidates, mergeCorrectionIncidents, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
+import {
+  type CorrectionIncident,
+  collectHeuristicFeedbackCandidates,
+  mergeCorrectionIncidents,
+  runSelfCorrectionExtract,
+} from "../services/self-correction-extract.js";
 import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
@@ -50,6 +55,14 @@ import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { serializeWorkspaceSkillTargetsForPrompt } from "../utils/skill-discovery.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import {
+  finishSelfCorrectionJobRun,
+  loadSelfCorrectionBatchResume,
+  persistSelfCorrectionBatchState,
+  removeLegacySelfCorrectionState,
+} from "../services/maintenance-job-run/self-correction-bridge.js";
+import { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
+import { selfCorrectionStatusToJobRunOutcome } from "../services/maintenance-job-run/semantic-outcome.js";
 import { formatDateUtc, nowIso } from "../utils/dates.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
@@ -634,6 +647,8 @@ export async function runSelfCorrectionRunForCli(
     full?: boolean;
     force?: boolean;
     verbose?: boolean;
+    /** Override JobRun artifact root (tests). */
+    jobRunLogRoot?: string;
   },
 ): Promise<SelfCorrectionRunResult> {
   const { bypassScanCooldown } = resolveScanMaintenanceOverrides(opts);
@@ -753,6 +768,18 @@ export async function runSelfCorrectionRunForCli(
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
       }
+      let emptyJobRun: MaintenanceJobRun | null = null;
+      if (!opts.dryRun) {
+        emptyJobRun = MaintenanceJobRun.create({
+          command: SCAN_TYPE,
+          inputFingerprint: stableSelfCorrectionHash(JSON.stringify({ scanDays, empty: true })),
+          resumeCommand: "openclaw hybrid-mem self-correction run",
+          logRoot: opts.jobRunLogRoot,
+        });
+        emptyJobRun.startPhase("extract");
+        emptyJobRun.endPhase("extract", "completed", "incidents=0");
+      }
+      const emptyJobRunId = finishSelfCorrectionJobRun(emptyJobRun, "success_no_incidents");
       return {
         incidentsFound: 0,
         analysed: 0,
@@ -760,6 +787,8 @@ export async function runSelfCorrectionRunForCli(
         proposals: [],
         reportPath: opts.dryRun ? null : reportPath,
         status: "success_no_incidents",
+        jobRunId: emptyJobRunId,
+        semanticOutcome: "empty",
       };
     }
     if (opts.verbose) {
@@ -786,21 +815,33 @@ export async function runSelfCorrectionRunForCli(
     const batches = chunkSelfCorrectionIncidents(incidents, batchSize);
     const runFingerprint = buildSelfCorrectionRunFingerprint(incidents, model, batchSize, opts);
     const stateDir = resolveSelfCorrectionBatchStateDir(workspaceRoot);
-    const statePath = join(stateDir, `${SELF_CORRECTION_BATCH_STATE_PREFIX}${runFingerprint}.json`);
+    const legacyStatePath = join(stateDir, `${SELF_CORRECTION_BATCH_STATE_PREFIX}${runFingerprint}.json`);
+    let jobRun: MaintenanceJobRun | null = null;
     if (!opts.dryRun) {
       ensureSelfCorrectionStateDir(workspaceRoot);
-      pruneStaleSelfCorrectionStateFiles(stateDir, statePath);
+      pruneStaleSelfCorrectionStateFiles(stateDir, legacyStatePath);
+      jobRun = MaintenanceJobRun.create({
+        command: SCAN_TYPE,
+        inputFingerprint: runFingerprint,
+        modelPolicy: { model, fallbacks: scFallbackModels },
+        resumeCommand: "openclaw hybrid-mem self-correction run",
+        logRoot: opts.jobRunLogRoot,
+      });
+      jobRun.startPhase("extract");
+      jobRun.endPhase("extract", "completed", `incidents=${incidents.length}`);
+      jobRun.startPhase("analyze");
     }
     const completedBatchIndexes = new Set<number>();
     let batchesStarted = 0;
-    if (!opts.dryRun) {
-      const resumeState = readSelfCorrectionBatchState(statePath);
-      if (
-        resumeState &&
-        resumeState.incidentsHash === runFingerprint &&
-        resumeState.batchSize === batchSize &&
-        resumeState.totalBatches === batches.length
-      ) {
+    if (!opts.dryRun && jobRun) {
+      const resumeState = loadSelfCorrectionBatchResume<SelfCorrectionRemediation>(
+        jobRun,
+        legacyStatePath,
+        runFingerprint,
+        batchSize,
+        batches.length,
+      );
+      if (resumeState) {
         analysed = [...resumeState.analysed];
         Object.assign(diagnostics, resumeState.diagnostics);
         for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
@@ -809,18 +850,18 @@ export async function runSelfCorrectionRunForCli(
           `memory-hybrid: ${SCAN_TYPE} — MiniMax batch mode: ${batches.length} batch(es), size=${batchSize}`,
         );
         logger.info?.(
-          `memory-hybrid: ${SCAN_TYPE} — MiniMax resume file: ${statePath}; completed=${completedBatchIndexes.size}`,
+          `memory-hybrid: ${SCAN_TYPE} — JobRun resume ${jobRun.jobRunId}; checkpoint=${jobRun.checkpointPath}; completed=${completedBatchIndexes.size}`,
         );
         if (opts.verbose && completedBatchIndexes.size > 0) {
           logger.info?.(
-            `memory-hybrid: ${SCAN_TYPE} resume state ${statePath}: skipping ${completedBatchIndexes.size}/${batches.length} completed batch(es)`,
+            `memory-hybrid: ${SCAN_TYPE} resume state: skipping ${completedBatchIndexes.size}/${batches.length} completed batch(es)`,
           );
         }
       } else {
         logger.info?.(
           `memory-hybrid: ${SCAN_TYPE} — MiniMax batch mode: ${batches.length} batch(es), size=${batchSize}`,
         );
-        logger.info?.(`memory-hybrid: ${SCAN_TYPE} — MiniMax resume file: ${statePath}; completed=0`);
+        logger.info?.(`memory-hybrid: ${SCAN_TYPE} — JobRun ${jobRun.jobRunId}; completed=0`);
       }
     } else {
       logger.info?.(
@@ -829,16 +870,14 @@ export async function runSelfCorrectionRunForCli(
     }
 
     const persistBatchState = () => {
-      if (opts.dryRun) return;
-      writeSelfCorrectionBatchState(statePath, {
-        version: SELF_CORRECTION_BATCH_STATE_VERSION,
+      if (opts.dryRun || !jobRun) return;
+      persistSelfCorrectionBatchState(jobRun, {
         incidentsHash: runFingerprint,
         batchSize,
         totalBatches: batches.length,
         completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
         analysed,
-        diagnostics,
-        updatedAt: nowIso(),
+        diagnostics: { ...diagnostics },
       });
     };
 
@@ -1162,6 +1201,10 @@ export async function runSelfCorrectionRunForCli(
           `memory-hybrid: ${SCAN_TYPE} — partial batch failure: batches_completed=${batchesCompleted}/${batches.length} analysed=${analysed.length}`,
         );
       }
+      if (jobRun) {
+        jobRun.endPhase("analyze", isPartial ? "failed" : "failed", String(e).slice(0, 200));
+      }
+      const jobRunId = finishSelfCorrectionJobRun(jobRun, status, { clearCheckpoint: !isPartial });
       return {
         incidentsFound: incidents.length,
         analysed: analysed.length,
@@ -1179,14 +1222,18 @@ export async function runSelfCorrectionRunForCli(
         batchesCompleted,
         totalBatches: batches.length,
         status,
+        jobRunId,
+        semanticOutcome: selfCorrectionStatusToJobRunOutcome(status),
       };
     }
     if (incidents.length > 0 && analysed.length === 0) {
       const error = `Self-correction analysis suspect: ${incidents.length} incident(s) found but zero parsed/analysed remediation items.`;
       logger.warn?.(`memory-hybrid: ${SCAN_TYPE} — ${error}`);
-      if (existsSync(statePath)) {
-        removeSelfCorrectionBatchState(statePath);
+      if (jobRun) {
+        jobRun.endPhase("analyze", "failed", error);
       }
+      removeLegacySelfCorrectionState(stateDir, runFingerprint, SELF_CORRECTION_BATCH_STATE_PREFIX);
+      const jobRunId = finishSelfCorrectionJobRun(jobRun, "failed_suspect_zero_parsed", { clearCheckpoint: true });
       return {
         incidentsFound: incidents.length,
         analysed: 0,
@@ -1200,6 +1247,8 @@ export async function runSelfCorrectionRunForCli(
         unparseableFailures: diagnostics.unparseableFailures,
         batchesStarted,
         status: "failed_suspect_zero_parsed",
+        jobRunId,
+        semanticOutcome: "failed_semantic_empty",
       };
     }
     const applied = await applySelfCorrectionRemediations({
@@ -1253,9 +1302,15 @@ export async function runSelfCorrectionRunForCli(
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, incidents.length);
     }
 
-    if (allBatchesCompleted) {
-      removeSelfCorrectionBatchState(statePath);
+    if (jobRun) {
+      jobRun.endPhase("analyze", "completed", `analysed=${analysed.length}`);
+      jobRun.startPhase("apply");
+      jobRun.endPhase("apply", "completed", `autoFixed=${autoFixed}`);
     }
+    if (allBatchesCompleted) {
+      removeLegacySelfCorrectionState(stateDir, runFingerprint, SELF_CORRECTION_BATCH_STATE_PREFIX);
+    }
+    const jobRunId = finishSelfCorrectionJobRun(jobRun, "success_analyzed", { clearCheckpoint: allBatchesCompleted });
 
     return {
       incidentsFound: incidents.length,
@@ -1273,6 +1328,8 @@ export async function runSelfCorrectionRunForCli(
       batchesCompleted: completedBatchIndexes.size,
       totalBatches: batches.length,
       status: "success_analyzed",
+      jobRunId,
+      semanticOutcome: "success",
     };
   } finally {
     if (!bypassScanCooldown && !opts.dryRun && !opts.incidents && !opts.extractPath) clearScanLock(SCAN_TYPE);

@@ -374,11 +374,13 @@ async function runClassifyForCli(
     reporter = createProgressReporter(sink, numBatches, "Classifying");
   }
   let totalReclassified = 0;
+  let batchFailures = 0;
   let batchIndex = 0;
   for (let i = 0; i < others.length; i += config.batchSize) {
     reporter?.update(batchIndex + 1);
     const batch = others.slice(i, i + config.batchSize).map((e) => ({ id: e.id, text: e.text }));
-    const { results, suggestions } = await classifyBatch(openai, classifyModel, batch, categories);
+    const { results, suggestions, success } = await classifyBatch(openai, classifyModel, batch, categories);
+    if (!success) batchFailures++;
     for (const [id, newCat] of results) {
       if (!opts.dryRun) factsDb.updateCategory(id, newCat);
       totalReclassified++;
@@ -397,7 +399,12 @@ async function runClassifyForCli(
   reporter?.done();
 
   const breakdown = !opts.dryRun ? factsDb.statsBreakdown() : undefined;
-  return { reclassified: totalReclassified, total: others.length, breakdown };
+  return {
+    reclassified: totalReclassified,
+    total: others.length,
+    breakdown,
+    batchFailures: batchFailures > 0 ? batchFailures : undefined,
+  };
 }
 
 /**
@@ -418,7 +425,7 @@ async function runAutoClassify(
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   opts?: { discoveredCategoriesPath?: string; model?: string },
-): Promise<{ reclassified: number; suggested: string[] }> {
+): Promise<{ reclassified: number; suggested: string[]; batchFailures?: number }> {
   const model = opts?.model ?? config.model;
   if (!model) {
     throw new Error(
@@ -451,6 +458,7 @@ async function runAutoClassify(
   );
 
   let totalReclassified = 0;
+  let batchFailures = 0;
 
   for (let i = 0; i < others.length; i += config.batchSize) {
     const batch = others.slice(i, i + config.batchSize).map((e) => ({
@@ -459,6 +467,7 @@ async function runAutoClassify(
     }));
 
     const { results, suggestions, success } = await classifyBatch(openai, model, batch, categories);
+    if (!success) batchFailures++;
 
     const batchIds = batch.map((b) => b.id);
     for (const [id, newCat] of results) {
@@ -481,7 +490,11 @@ async function runAutoClassify(
   }
 
   logger.info(`memory-hybrid: auto-classify done — reclassified ${totalReclassified}/${others.length} facts`);
-  return { reclassified: totalReclassified, suggested: [] };
+  return {
+    reclassified: totalReclassified,
+    suggested: [],
+    batchFailures: batchFailures > 0 ? batchFailures : undefined,
+  };
 }
 
 // ============================================================================

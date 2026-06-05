@@ -14,10 +14,7 @@ import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../services/workflow-goal-classifier.js";
 import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
-import {
-  currentTurnSlice,
-  extractToolNamesFromMessages,
-} from "../services/workflow-message-utils.js";
+import { currentTurnSlice, extractToolNamesFromMessages } from "../services/workflow-message-utils.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
 import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { nowIso } from "../utils/dates.js";

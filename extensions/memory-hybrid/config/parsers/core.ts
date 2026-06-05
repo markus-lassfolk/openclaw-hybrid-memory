@@ -211,20 +211,47 @@ function parseCredentialOptions(credRaw: Record<string, unknown> | undefined): {
   };
 }
 
+/**
+ * Ordered key-material candidates for `credentials.encryptionKey`.
+ * For `file:` refs, file contents are preferred; the literal `file:/path` string is a legacy fallback (issue #1884).
+ */
+export function resolveCredentialsEncryptionKeyCandidates(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (!trimmed) return [""];
+
+  if (trimmed.startsWith("file:")) {
+    const fromFile = resolveSecretRef(trimmed);
+    if (fromFile && fromFile.length >= 16) {
+      return trimmed.length >= 16 ? [fromFile, trimmed] : [fromFile];
+    }
+    // Unreadable key file — never treat the path string as passphrase material.
+    return [""];
+  }
+
+  if (trimmed.startsWith("env:") || trimmed.includes("${")) {
+    const resolved = resolveSecretRef(trimmed);
+    return [resolved && resolved.length >= 16 ? resolved : ""];
+  }
+
+  return [trimmed.length >= 16 ? trimmed : ""];
+}
+
+/** Preferred key material for config validation when the vault file may not exist yet. */
+export function resolveCredentialsEncryptionKeyForConfig(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("file:")) {
+    const fromFile = resolveSecretRef(trimmed);
+    return fromFile && fromFile.length >= 16 ? fromFile : "";
+  }
+  const candidates = resolveCredentialsEncryptionKeyCandidates(raw);
+  return candidates.find((c) => c.length >= 16) ?? "";
+}
+
 export function parseCredentialsConfig(cfg: Record<string, unknown>): CredentialsConfig {
   const credRaw = cfg.credentials as Record<string, unknown> | undefined;
   const explicitlyDisabled = credRaw?.enabled === false;
-  const encKeyRaw = typeof credRaw?.encryptionKey === "string" ? credRaw.encryptionKey : "";
-  let encryptionKey = "";
-  if (encKeyRaw.startsWith("env:")) {
-    const envVar = encKeyRaw.slice(4).trim();
-    const val = process.env[envVar];
-    if (val && val.length >= 16) {
-      encryptionKey = val;
-    }
-  } else if (encKeyRaw.length >= 16) {
-    encryptionKey = encKeyRaw;
-  }
+  const encKeyRaw = typeof credRaw?.encryptionKey === "string" ? credRaw.encryptionKey.trim() : "";
+  const encryptionKey = encKeyRaw ? resolveCredentialsEncryptionKeyForConfig(encKeyRaw) : "";
   const hasValidKey = encryptionKey.length >= 16;
   const shouldEnable = !explicitlyDisabled && (credRaw?.enabled === true || hasValidKey);
 
@@ -258,6 +285,13 @@ export function parseCredentialsConfig(cfg: Record<string, unknown>): Credential
     enumerable: false,
     writable: false,
   });
+  if (encKeyRaw) {
+    Object.defineProperty(credentials, "encryptionKeyRef", {
+      value: encKeyRaw,
+      enumerable: false,
+      writable: false,
+    });
+  }
   return credentials;
 }
 

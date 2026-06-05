@@ -40,7 +40,12 @@ describe("session-v3-parser", () => {
         }),
         JSON.stringify({
           type: "message",
-          message: { role: "toolResult", toolCallId: "c1", toolName: "memory_recall", content: [{ type: "text", text: "hit" }] },
+          message: {
+            role: "toolResult",
+            toolCallId: "c1",
+            toolName: "memory_recall",
+            content: [{ type: "text", text: "hit" }],
+          },
         }),
         JSON.stringify({
           type: "message",
@@ -51,7 +56,12 @@ describe("session-v3-parser", () => {
         }),
         JSON.stringify({
           type: "message",
-          message: { role: "toolResult", toolCallId: "c2", toolName: "exec", content: [{ type: "text", text: "done" }] },
+          message: {
+            role: "toolResult",
+            toolCallId: "c2",
+            toolName: "exec",
+            content: [{ type: "text", text: "done" }],
+          },
         }),
       ],
       "test",

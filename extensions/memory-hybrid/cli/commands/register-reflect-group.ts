@@ -30,11 +30,9 @@ const REFLECT_FLAT_PATHS: Record<string, string> = {
 
 export function registerReflectGroup(mem: Chainable, b: ManageBindings): void {
   const group = createCommandGroup(mem, "reflect", "Reflection pipeline (patterns, rules, meta, identity, dream)");
-  registerManageReflectionPipeline(
-    wrapChainableWithRenames(group, REFLECT_RENAMES, { reflect: true }),
-    b,
-    { onlyReflect: true },
-  );
+  registerManageReflectionPipeline(wrapChainableWithRenames(group, REFLECT_RENAMES, { reflect: true }), b, {
+    onlyReflect: true,
+  });
 
   const reflectFlatPaths = Object.fromEntries(
     Object.entries(REFLECT_FLAT_PATHS).filter(([flatName]) => flatName !== "reflect"),

@@ -28,10 +28,7 @@ import {
   resolveOpenclawJsonPathForWorkspace,
 } from "../../utils/openclaw-workspace.js";
 export { loadOpenclawRootForWorkspace, resolveAgentWorkspaceRoot, resolveOpenclawJsonPathForWorkspace };
-import {
-  TOOLS_MD_MANAGED_BEGIN,
-  TOOLS_MD_MANAGED_END,
-} from "../../services/tools-md-rewrite.js";
+import { TOOLS_MD_MANAGED_BEGIN, TOOLS_MD_MANAGED_END } from "../../services/tools-md-rewrite.js";
 
 import type { HybridMemoryConfig } from "../../config.js";
 import { compileHeartbeatMatchers } from "../../services/goal-stewardship-heartbeat.js";

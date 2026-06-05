@@ -44,8 +44,7 @@ function isClassificationItem(item: unknown): boolean {
 function normalizeClassification(item: Record<string, unknown>): FeedbackSignalClassification {
   const verdict = String(item.verdict) as FeedbackSignalVerdict;
   const polarityRaw = String(item.polarity ?? "neutral");
-  const polarity =
-    polarityRaw === "negative" || polarityRaw === "positive" ? polarityRaw : ("neutral" as const);
+  const polarity = polarityRaw === "negative" || polarityRaw === "positive" ? polarityRaw : ("neutral" as const);
   const confidence = Number(item.confidence);
   const categories = Array.isArray(item.categories)
     ? item.categories.filter((c): c is string => typeof c === "string").slice(0, 8)
@@ -122,9 +121,7 @@ export async function classifyFeedbackSignalBatch(opts: {
       parsed = [];
     }
   }
-  const classifications = (parsed ?? []).map((item) =>
-    normalizeClassification(item as Record<string, unknown>),
-  );
+  const classifications = (parsed ?? []).map((item) => normalizeClassification(item as Record<string, unknown>));
   return { classifications, modelUsed: detail.modelUsed };
 }
 
@@ -137,10 +134,7 @@ export function turnToCorrectionIncident(turn: FeedbackSignalTurn): CorrectionIn
   };
 }
 
-export function isSelfCorrectionClassification(
-  c: FeedbackSignalClassification,
-  minConfidence: number,
-): boolean {
+export function isSelfCorrectionClassification(c: FeedbackSignalClassification, minConfidence: number): boolean {
   return (
     (c.verdict === "correction" || c.verdict === "frustration") &&
     c.confidence >= minConfidence &&

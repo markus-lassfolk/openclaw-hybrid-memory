@@ -119,8 +119,12 @@ describe("workspace skill install", () => {
     const body = readFileSync(r.path, "utf-8");
     expect(body).toContain("name: openclaw_hybrid_memory");
     expect(body).toContain("memory_store");
+    expect(body).toContain("maintenance nightly");
+    expect(body).toContain("credentials get");
     const refPath = join(destRoot, "skills", "hybrid-memory", "references", "memory-optimization.md");
-    expect(readFileSync(refPath, "utf-8")).toContain("run-all");
+    const refBody = readFileSync(refPath, "utf-8");
+    expect(refBody).toContain("maintenance full");
+    expect(refBody).toContain("maintenance-nightly");
   });
 
   it("ensureHybridMemoryWorkspaceSkillIfMissing copies when SKILL.md is absent", () => {

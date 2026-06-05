@@ -336,6 +336,7 @@ These are optional but recommended for long-running systems:
 | **Archive completed projects** | When done | Move from `memory/projects/` to `memory/archive/` |
 | **Run reflection** | Monthly | `openclaw hybrid-mem reflect --dry-run` then `reflect` |
 | **Check distillation** | Weekly (if enabled) | `openclaw hybrid-mem verify` shows last distillation run |
+| **Inspect failed maintenance runs** | After nightly failures | `openclaw hybrid-mem maintenance run list` / `explain <id>` — see [maintenance-job-runs.md](maintenance-job-runs.md) |
 | **Backfill after adding files** | After adding many memory files | `node scripts/backfill-memory.mjs` |
 
 ---

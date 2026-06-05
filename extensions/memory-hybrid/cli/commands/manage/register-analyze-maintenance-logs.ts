@@ -76,7 +76,7 @@ function stepsFromPipedExitLog(content: string): MaintenanceLogStep[] {
 export async function runAnalyzeMaintenanceLogs(
   opts: AnalyzeMaintenanceLogOpts | undefined,
   b: ManageBindings,
-): Promise<void> {
+): Promise<{ summary: string; strictFailed: boolean }> {
   const since = opts?.since ?? "24h";
   const format = opts?.digest ?? opts?.format ?? "md";
   const outPath = opts?.out ?? "-";
@@ -153,7 +153,10 @@ export async function runAnalyzeMaintenanceLogs(
   });
   writeMaintenanceAnalysisOutput(report, format, outPath);
 
-  if (opts?.strict && shouldMaintenanceStrictFail(reportFindings)) process.exitCode = 1;
+  const strictFailed = shouldMaintenanceStrictFail(reportFindings);
+  const summary = `steps=${steps.length} findings=${reportFindings.length} strict=${strictFailed ? "fail" : "ok"} semantic=${strictFailed ? "partial" : "success"}`;
+  if (opts?.strict && strictFailed) process.exitCode = 2;
+  return { summary, strictFailed };
 }
 
 function addAnalyzeOptions(cmd: Chainable): Chainable {

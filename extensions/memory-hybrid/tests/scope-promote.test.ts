@@ -208,6 +208,47 @@ describe("scope promote end-to-end", () => {
     expect(remaining.some((c) => c.id === fact.id)).toBe(false);
   });
 
+  it("promoteScopeToGlobalWithOutcome skips already-global facts without counting as failed", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const oldSec = nowSec - 8 * 86400;
+
+    const fact = db.store({
+      text: "Already global insight",
+      category: "fact",
+      importance: 0.85,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "global",
+      scopeTarget: null,
+    });
+    rawDb.prepare("UPDATE facts SET created_at = ? WHERE id = ?").run(oldSec, fact.id);
+
+    expect(db.promoteScopeToGlobalWithOutcome(fact.id)).toBe("skipped");
+  });
+
+  it("promoteScopeToGlobalWithOutcome reports promoted for session facts", () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const oldSec = nowSec - 8 * 86400;
+
+    const fact = db.store({
+      text: "Session insight to promote",
+      category: "fact",
+      importance: 0.85,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-promote-outcome",
+    });
+    rawDb.prepare("UPDATE facts SET created_at = ? WHERE id = ?").run(oldSec, fact.id);
+
+    expect(db.promoteScopeToGlobalWithOutcome(fact.id)).toBe("promoted");
+    expect(db.getById(fact.id)?.scope).toBe("global");
+  });
+
   it("dry-run leaves facts unchanged", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const oldSec = nowSec - 10 * 86400;

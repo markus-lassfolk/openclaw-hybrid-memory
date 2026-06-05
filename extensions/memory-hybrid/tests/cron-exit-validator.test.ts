@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkForUnknownCommands,
   parseExitLine,
+  validateFromSummaryJson,
   validateMaintenanceExecution,
 } from "../services/cron-exit-validator.js";
 
@@ -144,6 +145,24 @@ error: unknown command 'bar'
       expect(result.reportableIssues[0]?.fingerprint.join(":")).toBe(
         "hybrid-memory-maintenance:test:distill:nonzero_exit",
       );
+    });
+
+    it("should report failed when a step has exit=0 but status=failed in extended HM_EXIT format", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(
+        exitPath,
+        "2024-05-08T02:01:00Z step=extract-daily exit=0 status=failed reason=tolerated_extract_daily_exit_1 duration_ms=120000\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, undefined, ["extract-daily"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps).toHaveLength(1);
+      expect(result.failedSteps[0].step).toBe("extract-daily");
+      expect(result.failedSteps[0].exitCode).toBe(0);
+      expect(result.failedSteps[0].status).toBe("failed");
     });
 
     it("should surface HM_EXIT failure reasons for non-zero steps", () => {
@@ -538,6 +557,22 @@ error: unknown command 'bar'
       expect(result.failedSteps.some((s) => s.step === "dream-cycle-core")).toBe(true);
     });
 
+    it("fails dream-cycle-core validation when required step is dream-cycle-core", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "2024-05-08T02:15:30Z dream-cycle-core exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: dream-cycle — stage 3 failed after 12s: reflection (patterns): Error: llm down",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle-core"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.failedSteps.some((s) => s.step === "dream-cycle-core")).toBe(true);
+    });
+
     it("fails dream-cycle validation from machine-readable status line without duplicate core entries", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
@@ -723,6 +758,262 @@ error: unknown command 'bar'
       );
     });
 
+    it("blocks guard updates when extract-reinforcement reports semantic empty", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "extract-reinforcement.exit.txt");
+      const logPath = join(tmpDir, "extract-reinforcement.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z extract-reinforcement exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: extract-reinforcement suspect: 4 incident(s) but zero parsed remediations\nextract-reinforcement sessions=12 jobRunId=abc semantic=failed_semantic_empty\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["extract-reinforcement"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "extract-reinforcement",
+          failureClass: "extract_reinforcement_semantic_empty",
+        }),
+      );
+    });
+
+    it("detects extract-daily vector_failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "extract-daily.exit.txt");
+      const logPath = join(tmpDir, "extract-daily.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z extract-daily exit=0\n");
+      writeFileSync(logPath, "extract-daily stored=3 vector_failures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["extract-daily"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "extract-daily",
+          failureClass: "extract_daily_vector_partial",
+        }),
+      );
+    });
+
+    it("detects extract-procedures readFailures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "extract-procedures.exit.txt");
+      const logPath = join(tmpDir, "extract-procedures.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z extract-procedures exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-procedures sessions=2 readFailures=1 semantic=partial\nmemory-hybrid: extract-procedures — 1 session read failure(s); scan cursor not advanced\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["extract-procedures"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "extract-procedures",
+          failureClass: "extract_procedures_read_failures",
+        }),
+      );
+    });
+
+    it("detects reflect embed partial on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect.exit.txt");
+      const logPath = join(tmpDir, "reflect.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect exit=0\n");
+      writeFileSync(
+        logPath,
+        "patternsStored=2 facts=40 semantic=partial\nmemory-hybrid: reflection — finished: 2 pattern(s) stored, 0 skipped, 3 new-pattern embed failure(s), 5 candidate(s) total\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect",
+          failureClass: "reflect_embed_partial",
+        }),
+      );
+    });
+
+    it("detects enrich-entities llmFailures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities processed=20 enriched=5 llmFailures=2 stopReason=provider_budget remaining=100 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities",
+          failureClass: "enrich_entities_llm_failures",
+        }),
+      );
+    });
+
+    it("detects consolidate cluster failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "consolidate.exit.txt");
+      const logPath = join(tmpDir, "consolidate.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z consolidate exit=0\n");
+      writeFileSync(
+        logPath,
+        "consolidate merged=1 clusters=3 clustersFailed=2 vector_failures=0 semantic=partial\nmemory-hybrid: consolidate LLM failed for cluster: timeout\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["consolidate"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "consolidate",
+          failureClass: "consolidate_cluster_failures",
+        }),
+      );
+    });
+
+    it("detects reflect-identity LLM failure on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect-identity.exit.txt");
+      const logPath = join(tmpDir, "reflect-identity.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect-identity exit=0\n");
+      writeFileSync(
+        logPath,
+        "reflect-identity insightsStored=0 insightsExtracted=0 semantic=failed\nmemory-hybrid: reflect-identity LLM failed: 429\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-identity"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect-identity",
+          failureClass: "reflect_identity_llm_failure",
+        }),
+      );
+    });
+
+    it("detects resolve-contradictions degraded backlog on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "resolve-contradictions.exit.txt");
+      const logPath = join(tmpDir, "resolve-contradictions.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z resolve-contradictions exit=0\n");
+      writeFileSync(
+        logPath,
+        "resolve-contradictions summary mode=default auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 threshold_enabled=1 threshold=200 consecutive=1 consecutive_threshold=1\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["resolve-contradictions"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "resolve-contradictions",
+          failureClass: "resolve_contradictions_degraded_backlog",
+        }),
+      );
+    });
+
+    it("detects generate-auto-skills validation failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "generate-auto-skills.exit.txt");
+      const logPath = join(tmpDir, "generate-auto-skills.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z generate-auto-skills exit=0\n");
+      writeFileSync(
+        logPath,
+        "generate-auto-skills failedValidation=2 failedEval=1 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["generate-auto-skills"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "generate-auto-skills",
+          failureClass: "generate_auto_skills_validation_failures",
+        }),
+      );
+    });
+
+    it("detects prune vector_failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "prune.exit.txt");
+      const logPath = join(tmpDir, "prune.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z prune exit=0\n");
+      writeFileSync(logPath, "prune pruned=3 vector_failures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "prune",
+          failureClass: "prune_vector_cleanup_partial",
+        }),
+      );
+    });
+
+    it("detects distill partial on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "distill.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(logPath, "distill stored=5 sessions=3 batchFailures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "distill",
+          failureClass: "distill_partial_batch_failures",
+        }),
+      );
+    });
+
+    it("detects continuous-verification degraded on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "continuous-verification.exit.txt");
+      const logPath = join(tmpDir, "continuous-verification.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z continuous-verification exit=0\n");
+      writeFileSync(
+        logPath,
+        "continuous-verification checked=12 confirmed=0 stale=0 uncertain=12 errors=0 semantic=partial Machine status: status=degraded reason=all_uncertain checked=12 confirmed=0 stale=0 uncertain=12 errors=0\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["continuous-verification"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "continuous-verification",
+          failureClass: "continuous_verification_all_uncertain",
+        }),
+      );
+    });
+
     it("detects degraded implicit-feedback collapse backlogs that change nothing", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "weekly-implicit-feedback-collapse-20260508T021500Z-111.exit.txt");
@@ -732,7 +1023,8 @@ error: unknown command 'bar'
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["implicit-feedback-collapse"]);
 
-      expect(result.maintenanceStatus).toBe("success");
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
       expect(result.semanticStatus).toBe("degraded");
       expect(result.reportableIssues).toContainEqual(
         expect.objectContaining({
@@ -834,6 +1126,1135 @@ error: unknown command 'bar'
           message: expect.stringContaining("unknown-fancy-command"),
         }),
       );
+    });
+
+    it("blocks guard updates when hidden LLM failures are logged without a non-zero exit", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "maintenance-nightly.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "distill: LLM call failed after retries\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["maintenance-nightly"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "maintenance",
+          failureClass: "hidden_llm_failure",
+        }),
+      );
+    });
+
+    it("blocks guard updates when maintenance cursor did not advance", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "distill.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(logPath, "distill cursor_advanced=false scanned=1200\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "cursor",
+          failureClass: "cursor_not_advanced",
+        }),
+      );
+    });
+
+    it("detects record-storage-sample storage_unavailable as semantic failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "record-storage-sample.exit.txt");
+      const logPath = join(tmpDir, "record-storage-sample.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z record-storage-sample exit=0\n");
+      writeFileSync(
+        logPath,
+        "record-storage-sample: skipped (storage database unavailable) status=skipped_storage_unavailable reason=storage_unavailable semantic=partial",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["record-storage-sample"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "record-storage-sample",
+          failureClass: "record_storage_unavailable",
+        }),
+      );
+    });
+
+    it("detects analyze-maintenance-logs strict failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "analyze-maintenance-logs.exit.txt");
+      const logPath = join(tmpDir, "analyze-maintenance-logs.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z analyze-maintenance-logs exit=0\n");
+      writeFileSync(logPath, "analyze-maintenance-logs steps=12 findings=3 strict=fail semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["analyze-maintenance-logs"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "analyze-maintenance-logs",
+          failureClass: "analyze_maintenance_logs_strict_fail",
+        }),
+      );
+    });
+
+    it("detects passive-observer errors as semantic failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "passive-observer.exit.txt");
+      const logPath = join(tmpDir, "passive-observer.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z passive-observer exit=0\n");
+      writeFileSync(logPath, "passive-observer scanned=42 errors=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["passive-observer"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "passive-observer",
+          failureClass: "passive_observer_errors",
+        }),
+      );
+    });
+
+    it("does not false-positive implicit-feedback collapse on generic collapse text", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "distill.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(logPath, "distill: cluster collapse avoided scanned=5000 collapsed=0\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "implicit_feedback_large_backlog_zero_changes",
+        }),
+      );
+    });
+
+    it("blocks guard updates when closed-loop analysis was interrupted", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "closed-loop.exit.txt");
+      const logPath = join(tmpDir, "closed-loop.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z closed-loop-analysis exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: closed-loop — interrupted by wall-clock limit after 500 rows\nclosed-loop-analysis interrupted (500 rules measured, 0 deprecated, 0 boosted semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["closed-loop-analysis"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "closed-loop-analysis",
+          failureClass: "closed_loop_analysis_interrupted",
+        }),
+      );
+    });
+
+    it("blocks guard updates when cross-agent-learning reports batch errors", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "cross-agent.exit.txt");
+      const logPath = join(tmpDir, "cross-agent.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z cross-agent-learning exit=0\n");
+      writeFileSync(
+        logPath,
+        "Cross-agent learning complete:\n  Agents scanned: 3\n  Errors: 2\ncross-agent-learning: agents=3 generalised=1 errors=2 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["cross-agent-learning"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "cross-agent-learning",
+          failureClass: "cross_agent_learning_errors",
+        }),
+      );
+    });
+
+    it("blocks guard updates when tool-effectiveness returns empty output", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "tool-effectiveness.exit.txt");
+      const logPath = join(tmpDir, "tool-effectiveness.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z tool-effectiveness exit=0\n");
+      writeFileSync(logPath, "tool-effectiveness: unexpected empty output\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["tool-effectiveness"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "tool-effectiveness",
+          failureClass: "tool_effectiveness_empty_output",
+        }),
+      );
+    });
+
+    it("blocks guard updates when digest-autopilot reports partial status", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "digest-autopilot.exit.txt");
+      const logPath = join(tmpDir, "digest-autopilot.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z digest-autopilot exit=0\n");
+      writeFileSync(
+        logPath,
+        "Pending digest autopilot cron weekly-pending-digest-autopilot-20260508T082000Z\nStatus: partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["digest-autopilot"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "digest-autopilot",
+          failureClass: "digest_autopilot_failed_status",
+        }),
+      );
+    });
+
+    it("blocks guard updates when audit-health JSON reports strict warnings on exit=0", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "audit-health.exit.txt");
+      const logPath = join(tmpDir, "audit-health.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z audit-health exit=0\n");
+      writeFileSync(
+        logPath,
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            generatedAt: "2026-05-09T15:06:34Z",
+            status: "partial",
+            ok: false,
+            warningCount: 2,
+            errorCount: 0,
+            activeFacts: 42,
+            exitCode: 2,
+            exitReason: "strict_warnings",
+            strictFailureReason: "2 warning(s) present and --strict was set",
+            warnings: ["stale vector backlog", "missing storage sample"],
+            errors: [],
+            remediation: [],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["audit-health"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "audit-health",
+          failureClass: "strict_warnings",
+        }),
+      );
+    });
+
+    it("blocks guard updates when sensor-sweep reports errors", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "sensor-sweep.exit.txt");
+      const logPath = join(tmpDir, "sensor-sweep.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z sensor-sweep exit=0\n");
+      writeFileSync(
+        logPath,
+        "sensor-sweep tier=all: written=4 skipped=1 errors=2 semantic=partial\n  disk sensor failed\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["sensor-sweep"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "sensor-sweep",
+          failureClass: "sensor_sweep_errors",
+        }),
+      );
+    });
+
+    it("blocks guard updates when crystallization-proposals stores are unavailable", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "crystallization-proposals.exit.txt");
+      const logPath = join(tmpDir, "crystallization-proposals.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z crystallization-proposals exit=0\n");
+      writeFileSync(
+        logPath,
+        "crystallization-proposals stores unavailable (change feed missing semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["crystallization-proposals"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "crystallization-proposals",
+          failureClass: "crystallization_proposals_stores_unavailable",
+        }),
+      );
+    });
+
+    it("blocks guard updates when crystallization-rescan reports errors", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "crystallization-rescan.exit.txt");
+      const logPath = join(tmpDir, "crystallization-rescan.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z crystallization-rescan exit=0\n");
+      writeFileSync(
+        logPath,
+        "crystallization-rescan errors=2 (skill A parse failed; skill B missing manifest semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["crystallization-rescan"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "crystallization-rescan",
+          failureClass: "crystallization_rescan_errors",
+        }),
+      );
+    });
+
+    it("blocks guard updates when implicit-feedback-collapse is interrupted", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "implicit-feedback-collapse.exit.txt");
+      const logPath = join(tmpDir, "implicit-feedback-collapse.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z implicit-feedback-collapse exit=0\n");
+      writeFileSync(
+        logPath,
+        "implicit-feedback-collapse interrupted (scanned=900 collapsed=12 interrupted=true semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["implicit-feedback-collapse"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "implicit-feedback-collapse",
+          failureClass: "implicit_feedback_collapse_interrupted",
+        }),
+      );
+    });
+
+    it("blocks guard updates when active-tasks-maintain reports reconcile failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "active-tasks-maintain.exit.txt");
+      const logPath = join(tmpDir, "active-tasks-maintain.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z active-tasks-maintain exit=0\n");
+      writeFileSync(
+        logPath,
+        "active-tasks-maintain partial failure (status=partial reconciled=2 failed=1 semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["active-tasks-maintain"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "active-tasks-maintain",
+          failureClass: "active_tasks_maintain_status_partial",
+        }),
+      );
+    });
+
+    it("blocks guard updates when build-languages fails in the log", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "build-languages.exit.txt");
+      const logPath = join(tmpDir, "build-languages.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z build-languages exit=0\n");
+      writeFileSync(
+        logPath,
+        "build-languages: ok=false semantic=partial error=LLM timeout\nError building language keywords: LLM timeout\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["build-languages"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "build-languages",
+          failureClass: "build_languages_failed",
+        }),
+      );
+    });
+
+    it("labels enrich-entities-deep failures with the deep step name", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities-deep.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities-deep.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities-deep exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities-deep processed=10 enriched=4 llmFailures=2 stopReason=completed remaining=0 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities-deep"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities-deep",
+          failureClass: "enrich_entities_llm_failures",
+        }),
+      );
+    });
+
+    it("does not attribute passive-observer errors from unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "cross-agent.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z cross-agent-learning exit=0\n");
+      writeFileSync(
+        logPath,
+        "passive-observer scanned=42 errors=2 semantic=partial\ncross-agent-learning: agents=3 generalised=1 errors=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["cross-agent-learning"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "passive-observer",
+        }),
+      );
+    });
+
+    it("does not attribute auto-classify batchFailures to distill in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "auto-classify reclassified=18/20 batchFailures=3 semantic=partial\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "distill",
+          failureClass: "distill_partial_batch_failures",
+        }),
+      );
+    });
+
+    it("does not attribute distill vector_failures to prune in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "prune.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z prune exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-daily stored=3 vector_failures=2 semantic=partial\nprune pruned=3 vector_failures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "prune",
+          failureClass: "prune_vector_cleanup_partial",
+        }),
+      );
+    });
+
+    it("does not attribute self-correction parse_success=false to reflect-rules in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect-rules.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect-rules exit=0\n");
+      writeFileSync(
+        logPath,
+        "self-correction-run status=failed_partial parse_success=false analysed=0\nreflect-rules parse_success=true stored=4 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-rules"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect-rules",
+        }),
+      );
+    });
+
+    it("does not attribute unrelated status=failed lines to self-correction-run in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "Error: provider timeout status=failed\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "self-correction-run",
+        }),
+      );
+    });
+
+    it("does not attribute reflect-rules failures to reflect in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect exit=0\n");
+      writeFileSync(
+        logPath,
+        "reflect-rules parse_success=false stored=0 semantic=failed\nreflect patternsStored=5 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect",
+          failureClass: "reflect_embed_partial",
+        }),
+      );
+    });
+
+    it("does not attribute hidden LLM failures from unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-directives: LLM call failed after retries semantic=partial\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "hidden_llm_failure",
+        }),
+      );
+    });
+
+    it("does not attribute cursor_not_advanced from unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "cross-agent.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z cross-agent-learning exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-directives cursor_advanced=false semantic=partial\ncross-agent-learning: agents=3 generalised=1 errors=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["cross-agent-learning"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "cursor_not_advanced",
+        }),
+      );
+    });
+
+    it("does not attribute continuous-verification degradation to unrelated steps", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "continuous-verification checked=12 Machine status: status=degraded reason=all_uncertain errors=0 semantic=partial\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "continuous-verification",
+        }),
+      );
+    });
+
+    it("does not attribute closed-loop interruption to unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "tool-effectiveness.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z tool-effectiveness exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: closed-loop — interrupted by wall-clock limit\nclosed-loop-analysis interrupted semantic=partial\ntool-effectiveness ranked=12 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["tool-effectiveness"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "closed-loop-analysis",
+        }),
+      );
+    });
+
+    it("does not attribute digest-autopilot partial status to unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "prune.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z prune exit=0\n");
+      writeFileSync(
+        logPath,
+        "Pending digest autopilot cron weekly-pending-digest-autopilot-20260508T082000Z\nStatus: partial\nprune pruned=3 vector_failures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "digest-autopilot",
+        }),
+      );
+    });
+
+    it("does not fail dream-cycle when standalone continuous-verification degraded lines appear in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "dream-cycle.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "continuous-verification checked=12 Machine status: status=degraded reason=all_uncertain errors=0 semantic=partial",
+          "Dream cycle status: success=true core_success=true failed_stages=0 follow_up_failures=0",
+          "[dream-cycle] pipeline complete in 120s (core=10s, follow-ups=6/6, follow-up-failures=0)",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.failedSteps.some((s) => s.step === "continuous-verification")).toBe(false);
+    });
+
+    it("does not attribute incident diagnostics artifacts to unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "vm memory incident bundle created at /tmp/bundle; memory-diagnostics-live.json 0 bytes and malformed\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "zero_byte_memory_diagnostics",
+        }),
+      );
+    });
+
+    it("detects final-audit.json artifact failures for audit-health scoped runs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "weekly-audit.exit.txt");
+      const logPath = join(tmpDir, "audit.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z audit-health exit=0\n");
+      writeFileSync(logPath, "audit-health wrote final-audit.json (0 bytes, malformed)\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["audit-health"]);
+
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "audit",
+          failureClass: "missing_or_empty_required_artifact",
+          artifactPaths: ["final-audit.json"],
+        }),
+      );
+    });
+  });
+
+  describe("validateFromSummaryJson", () => {
+    it("detects failed orchestrator inner steps from summary.json", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-test",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 1,
+          summaryLine: "failed",
+          steps: [
+            {
+              name: "self-correction-run",
+              status: "failed",
+              summary: "semantic=failed_semantic_empty",
+              durationMs: 10,
+              semanticOutcome: "failed_semantic_empty",
+            },
+          ],
+          counts: { ok: 0, skipped: 0, deferred: 0, failed: 1, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=1\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
+    });
+
+    it("treats ok status with failed semanticOutcome as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-semantic-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-semantic",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with bad semantic",
+          steps: [
+            {
+              name: "self-correction-run",
+              status: "ok",
+              summary: "semantic=failed_semantic_empty",
+              durationMs: 10,
+              semanticOutcome: "failed_semantic_empty",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
+    });
+
+    it("applies dream-cycle embedded continuous verification failures from HM_LOG in summary mode", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-dream-cycle-"));
+      const summaryPath = join(tmpDir, "dream-cycle-run.summary.json");
+      const exitPath = join(tmpDir, "dream-cycle-run.exit.txt");
+      const logPath = join(tmpDir, "dream-cycle-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "dream-cycle-orch",
+          tierLabel: "weekly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok",
+          steps: [
+            {
+              name: "dream-cycle-core",
+              status: "ok",
+              summary: "semantic=success",
+              durationMs: 1000,
+              semanticOutcome: "success",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "Continuous verification complete:",
+          "  Checked: 12",
+          "  Confirmed: 0",
+          "  Stale: 0",
+          "  Uncertain: 12",
+          "  Errors: 12",
+          "  Machine status: status=degraded reason=errors_present checked=12 confirmed=0 stale=0 uncertain=12 errors=12",
+        ].join("\n"),
+      );
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["dream-cycle"], true);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "continuous-verification")).toBe(true);
+      expect(result.failedSteps.find((s) => s.step === "continuous-verification")?.failureReason).toBe(
+        "errors_present",
+      );
+    });
+
+    it("treats ok status with partial semanticOutcome as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-partial-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-partial",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with partial semantic",
+          steps: [
+            {
+              name: "self-correction-run",
+              status: "ok",
+              summary: "semantic=partial",
+              durationMs: 10,
+              semanticOutcome: "partial",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
+    });
+
+    it("treats repair-vectors orphan cleanup partial semantic as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-repair-vectors-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-repair-vectors",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with orphan cleanup partial",
+          steps: [
+            {
+              name: "repair-vectors",
+              status: "ok",
+              summary:
+                "reembedded=1/1 failures=0 orphans=2 orphan_cleanup_failed=1 semantic=partial",
+              durationMs: 10,
+              semanticOutcome: "partial",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["repair-vectors"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "repair-vectors")).toBe(true);
+    });
+
+    it("treats active-tasks-maintain partial semantic as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-active-tasks-"));
+      const summaryPath = join(tmpDir, "maintenance-cycle-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-cycle-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-cycle-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-active-tasks",
+          tierLabel: "cycle",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with active tasks partial",
+          steps: [
+            {
+              name: "active-tasks-maintain",
+              status: "ok",
+              summary: "status=partial reconciled=2 failed=1 semantic=partial",
+              durationMs: 10,
+              semanticOutcome: "partial",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-cycle exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["active-tasks-maintain"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "active-tasks-maintain")).toBe(true);
+    });
+
+    it("treats ok status with legacy failed_suspect_zero_parsed in summary text as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-legacy-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-legacy",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with legacy semantic in summary only",
+          steps: [
+            {
+              name: "self-correction-run",
+              status: "ok",
+              summary: "incidents=3 analysed=0 jobRunId=abc semantic=failed_suspect_zero_parsed",
+              durationMs: 10,
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
+    });
+
+    it("treats ok reflect-rules step with parse_success=false in summary as failure without log corroboration", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-reflect-"));
+      const summaryPath = join(tmpDir, "maintenance-weekly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-weekly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-weekly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-reflect",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with reflect-rules parse failure in summary only",
+          steps: [
+            {
+              name: "reflect-rules",
+              status: "ok",
+              summary:
+                "rulesStored=0 rulesExtracted=0 parse_success=false zero_rules_reason=all_candidates_rejected status=partial",
+              durationMs: 10,
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-weekly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["reflect-rules"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "reflect-rules")).toBe(true);
+    });
+
+    it("treats deferred guard-blocking required steps as failed when summary exitCode is 2", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-deferred-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-deferred",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 2,
+          summaryLine: "deferred",
+          steps: [
+            { name: "prune", status: "ok", summary: "ok", durationMs: 10 },
+            {
+              name: "self-correction-run",
+              status: "deferred",
+              summary: "time budget exceeded",
+              durationMs: 0,
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 1, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=2\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["prune", "self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(false);
+      const deferred = result.steps.find((s) => s.step === "self-correction-run");
+      expect(deferred?.exitCode).toBe(2);
+      expect(deferred?.status).toBe("ok");
+    });
+
+    it("fails when HM_LOG contains semantic failure patterns despite green summary.json", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-log-pattern-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-log-pattern",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok",
+          steps: [
+            {
+              name: "self-correction-run",
+              status: "ok",
+              summary: "semantic=success",
+              durationMs: 10,
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z self-correction-run exit=0\n");
+      writeFileSync(
+        logPath,
+        "self-correction-run status=failed_suspect_zero_parsed parse_success=false incidents found=2 analysed=0\n",
+      );
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues?.some((i) => i.stepName === "self-correction-run")).toBe(true);
+    });
+
+    it("fails when consolidated wrapper HM_EXIT has exit=0 but status=failed", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-wrapper-failed-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-wrapper-failed",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok",
+          steps: [{ name: "prune", status: "ok", summary: "pruned=1", durationMs: 10 }],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(
+        exitPath,
+        "2026-06-05T02:30:00Z step=maintenance-nightly exit=0 status=failed reason=tolerated_extract_daily_exit_1 duration_ms=120000\n",
+      );
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["maintenance-nightly"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+    });
+
+    it("falls back to HM_EXIT validation for empty consolidated summary", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-empty-consolidated-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-empty",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "empty",
+          steps: [],
+          counts: { ok: 0, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=1\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["maintenance-nightly"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
     });
   });
 });

@@ -206,10 +206,7 @@ export function emitPipelinePersonaProposed(
 }
 
 /** Mark a pending proposed change event superseded after successful apply. */
-export function supersedeActiveProposedEvent(
-  changeFeed: ChangeFeed | null | undefined,
-  proposalKey: string,
-): void {
+export function supersedeActiveProposedEvent(changeFeed: ChangeFeed | null | undefined, proposalKey: string): void {
   if (!changeFeed) return;
   const proposed = changeFeed.findActiveByProposalKey(proposalKey, "proposed");
   if (proposed) changeFeed.markSuperseded(proposed.id);
@@ -248,12 +245,7 @@ export function supersedeActiveFrustrationEvents(
   if (!changeFeed) return;
   const key = sessionKey.trim() || "default";
   for (const ev of changeFeed.listRecent({ sessionKey: key, limit: 50, status: "active" })) {
-    if (
-      ev.id !== exceptId &&
-      ev.tier === "session" &&
-      ev.category === "frustration" &&
-      ev.action === "detected"
-    ) {
+    if (ev.id !== exceptId && ev.tier === "session" && ev.category === "frustration" && ev.action === "detected") {
       changeFeed.markSuperseded(ev.id);
     }
   }

@@ -853,7 +853,10 @@ describe("Memory Viewer API (Issue #1023)", () => {
 
 describeCreateDashboardServer("Workshop API", () => {
   async function withWorkshopServer(
-    fn: (ctx: ReturnType<typeof makeContext> & { proposalsDb: import("../backends/proposals-db.js").ProposalsDB }, port: number) => Promise<void>,
+    fn: (
+      ctx: ReturnType<typeof makeContext> & { proposalsDb: import("../backends/proposals-db.js").ProposalsDB },
+      port: number,
+    ) => Promise<void>,
     opts?: { withChangeFeed?: boolean },
   ) {
     const td = mkdtempSync(join(tmpdir(), "workshop-dash-"));
@@ -953,11 +956,7 @@ describeCreateDashboardServer("Workshop API", () => {
         evidenceSessions: [],
       });
       const key = makeUnifiedKey("persona", proposal.id);
-      const { status, body } = await httpPost(
-        port,
-        `/api/workshop/proposals/${encodeURIComponent(key)}/approve`,
-        "{}",
-      );
+      const { status, body } = await httpPost(port, `/api/workshop/proposals/${encodeURIComponent(key)}/approve`, "{}");
       expect(status).toBe(200);
       expect(JSON.parse(body).ok).toBe(true);
       expect(ctx.proposalsDb.get(proposal.id)?.status).toBe("applied");
@@ -977,11 +976,7 @@ describeCreateDashboardServer("Workshop API", () => {
           evidenceSessions: [],
         });
         const key = makeUnifiedKey("persona", proposal.id);
-        const { status } = await httpPost(
-          port,
-          `/api/workshop/proposals/${encodeURIComponent(key)}/approve`,
-          "{}",
-        );
+        const { status } = await httpPost(port, `/api/workshop/proposals/${encodeURIComponent(key)}/approve`, "{}");
         expect(status).toBe(200);
         const applied = ctx.changeFeed!.listRecent({ limit: 10 }).find((e) => e.action === "applied");
         expect(applied?.proposalKey).toBe(key);
@@ -1024,11 +1019,7 @@ describeCreateDashboardServer("Workshop API", () => {
       });
 
       const key = makeUnifiedKey("persona", proposal.id);
-      const { status, body } = await httpPost(
-        port,
-        `/api/workshop/proposals/${encodeURIComponent(key)}/undo`,
-        "{}",
-      );
+      const { status, body } = await httpPost(port, `/api/workshop/proposals/${encodeURIComponent(key)}/undo`, "{}");
       expect(status).toBe(200);
       expect(JSON.parse(body).ok).toBe(true);
       expect(readFileSync(soulPath, "utf-8")).toBe(originalContent);
@@ -1048,10 +1039,7 @@ describeCreateDashboardServer("Workshop API", () => {
         evidenceSessions: [],
       });
       const key = makeUnifiedKey("persona", proposal.id);
-      const { status, body } = await httpGet(
-        port,
-        `/api/workshop/proposals/${encodeURIComponent(key)}`,
-      );
+      const { status, body } = await httpGet(port, `/api/workshop/proposals/${encodeURIComponent(key)}`);
       expect(status).toBe(200);
       const detail = JSON.parse(body) as { id: string; title: string };
       expect(detail.id).toBe(proposal.id);
@@ -1084,11 +1072,7 @@ describeCreateDashboardServer("Workshop API", () => {
           rollbackAvailable: false,
           activation: "next-reload",
         });
-        const { status, body } = await httpPost(
-          port,
-          "/api/workshop/changes/revert",
-          JSON.stringify({ id: event.id }),
-        );
+        const { status, body } = await httpPost(port, "/api/workshop/changes/revert", JSON.stringify({ id: event.id }));
         expect(status).toBe(200);
         expect(JSON.parse(body).ok).toBe(true);
         expect(ctx.proposalsDb.get(proposal.id)?.status).toBe("rejected");

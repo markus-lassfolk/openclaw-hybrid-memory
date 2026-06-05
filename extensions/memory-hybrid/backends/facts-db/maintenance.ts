@@ -734,6 +734,22 @@ export function promoteScope(
   return result.changes > 0;
 }
 
+/** Promote a fact to global scope, distinguishing benign no-ops from hard failures. */
+export function promoteScopeToGlobalWithOutcome(
+  db: DatabaseSync,
+  factId: string,
+): "promoted" | "skipped" | "failed" {
+  const row = db.prepare("SELECT scope, scope_target FROM facts WHERE id = ?").get(factId) as
+    | { scope: string; scope_target: string | null }
+    | undefined;
+  if (!row) return "skipped";
+  if (row.scope === "global" && (row.scope_target ?? null) === null) return "skipped";
+  if (promoteScope(db, factId, "global", null)) return "promoted";
+  const after = db.prepare("SELECT scope FROM facts WHERE id = ?").get(factId) as { scope: string } | undefined;
+  if (!after || after.scope === "global") return "skipped";
+  return "failed";
+}
+
 export function decayConfidence(db: DatabaseSync, nowSec = Math.floor(Date.now() / 1000)): number {
   // Return the number of facts whose confidence was halved — this is the true
   // "decayed" count.  The hard-delete count remains available via

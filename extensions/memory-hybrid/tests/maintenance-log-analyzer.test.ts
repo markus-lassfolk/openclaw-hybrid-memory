@@ -34,6 +34,7 @@ import {
   reportGlitchTipFindings,
   shouldMaintenanceStrictFail,
   summarizeMaintenanceFindings,
+  summarizeMaintenanceLogAnalysis,
   weekOverWeekTrend,
 } from "../services/maintenance-log-analyzer.js";
 
@@ -344,6 +345,94 @@ describe("maintenance log analyzer", () => {
     expect(report.summary.byClassification["plugin-bug"]).toBe(1);
     expect(report.digestMd).toContain("Hybrid-memory maintenance digest");
     expect(report.digestMd).toContain("nightly-distill");
+  });
+
+  it("ingests orchestrator summary.json inner step failures (#1891)", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260605");
+    mkdirSync(day, { recursive: true });
+    const summaryPath = join(day, "maintenance-nightly-20260605T030000Z-42.summary.json");
+    const logPath = summaryPath.replace(/\.summary\.json$/, ".log");
+    const exitPath = summaryPath.replace(/\.summary\.json$/, ".exit.txt");
+    writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        runId: "20260605T030000Z-42",
+        tierLabel: "nightly",
+        finishedAt: "2026-06-05T03:15:00.000Z",
+        exitCode: 1,
+        steps: [
+          { name: "distill", status: "ok", summary: "stored=12 sessions=3" },
+          {
+            name: "self-correction-run",
+            status: "failed",
+            summary: "semantic=failed_semantic_empty jobRunId=distill-abc",
+          },
+          { name: "extract-reinforcement", status: "skipped_guard", summary: "cooldown" },
+        ],
+      }),
+    );
+    writeFileSync(logPath, "self-correction-run semantic_empty\n");
+    writeFileSync(exitPath, "2026-06-05T03:15:00Z self-correction-run exit=1\n");
+
+    const nowMs = Date.UTC(2026, 5, 5, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs);
+    const summarySteps = steps.filter((s) => s.line.startsWith("summary.json "));
+    expect(summarySteps.map((s) => s.step)).toEqual(["distill", "self-correction-run"]);
+    expect(summarySteps[1].exitCode).toBe(1);
+    expect(summarySteps[1].line).toContain("summary.json self-correction-run status=failed");
+  });
+
+  it("treats ok summary steps with semantic=partial as non-zero exit", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260605");
+    mkdirSync(day, { recursive: true });
+    const summaryPath = join(day, "maintenance-nightly-20260605T040000Z-43.summary.json");
+    writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        runId: "20260605T040000Z-43",
+        tierLabel: "nightly",
+        finishedAt: "2026-06-05T04:15:00.000Z",
+        exitCode: 0,
+        steps: [
+          {
+            name: "enrich-entities",
+            status: "ok",
+            summary: "processed=10 enriched=2 llmFailures=1 stopReason=provider_budget remaining=50 semantic=partial",
+          },
+        ],
+      }),
+    );
+
+    const nowMs = Date.UTC(2026, 5, 5, 5, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs);
+    const enrich = steps.find((s) => s.step === "enrich-entities");
+    expect(enrich?.exitCode).toBe(1);
+  });
+
+  it("dedupes HM_EXIT steps when summary.json already ingested the same run", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260605");
+    mkdirSync(day, { recursive: true });
+    const stem = "maintenance-nightly-20260605T030000Z-99";
+    const summaryPath = join(day, `${stem}.summary.json`);
+    const canonicalExitPath = join(root, `${stem}.exit.txt`);
+    writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        runId: "20260605T030000Z-99",
+        tierLabel: "nightly",
+        finishedAt: "2026-06-05T03:15:00.000Z",
+        exitCode: 0,
+        steps: [{ name: "distill", status: "ok", summary: "stored=1" }],
+      }),
+    );
+    writeFileSync(canonicalExitPath, "2026-06-05T03:15:00Z distill exit=0\n");
+
+    const nowMs = Date.UTC(2026, 5, 5, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs);
+    expect(steps.filter((s) => s.step === "distill")).toHaveLength(1);
   });
 
   it("parses extended HM_EXIT lines with step=<name> format", () => {
@@ -744,6 +833,21 @@ describe("maintenance log analyzer", () => {
     expect(findings.filter((f) => f.glitchtipEventId === "event-1")).toHaveLength(2);
     expect(shouldMaintenanceStrictFail(findings)).toBe(true);
     expect(shouldMaintenanceStrictFail([findings[3]])).toBe(false);
+  });
+
+  it("summarizeMaintenanceLogAnalysis marks strict=fail when findings include strict classes", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-memory-sweep-20260511T030000Z-555.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "2026-05-11T03:00:00Z nightly-memory-sweep/distill exit=1\n");
+    writeFileSync(logPath, "TypeError: Cannot read properties of undefined (reading 'foo')");
+
+    const steps = collectMaintenanceSteps(root, "24h", Date.UTC(2026, 4, 11, 4, 0, 0));
+    const result = summarizeMaintenanceLogAnalysis(steps);
+    expect(result.findingsCount).toBeGreaterThan(0);
+    expect(result.strictFailed).toBe(true);
+    expect(result.summary).toContain("strict=fail");
+    expect(result.summary).toContain("semantic=partial");
   });
 
   it("collapses repeated fingerprints into new/still-failing sections and suppresses stale historical noise", () => {

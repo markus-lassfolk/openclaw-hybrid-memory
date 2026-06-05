@@ -81,8 +81,7 @@ function parseColumnDefinitions(body: string): string[] {
 
 /** Extract table/column definitions from CREATE TABLE, CREATE VIRTUAL TABLE, and ALTER TABLE DDL. */
 export function ingestSchemaDdl(content: string, registry: SqlSchemaRegistry): void {
-  const createRe =
-    /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s*\(/gi;
+  const createRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s*\(/gi;
   let match: RegExpExecArray | null;
   while ((match = createRe.exec(content)) !== null) {
     const table = match[1]!.toLowerCase();
@@ -94,8 +93,7 @@ export function ingestSchemaDdl(content: string, registry: SqlSchemaRegistry): v
     }
   }
 
-  const virtualRe =
-    /CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s+USING\s+fts5\s*\(/gi;
+  const virtualRe = /CREATE\s+VIRTUAL\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s+USING\s+fts5\s*\(/gi;
   while ((match = virtualRe.exec(content)) !== null) {
     const table = match[1]!.toLowerCase();
     const openParen = match.index + match[0].length - 1;
@@ -107,8 +105,7 @@ export function ingestSchemaDdl(content: string, registry: SqlSchemaRegistry): v
     addColumn(registry, table, "rowid");
   }
 
-  const alterRe =
-    /ALTER\s+TABLE\s+([a-z_][a-z0-9_]*)\s+ADD\s+COLUMN\s+([a-z_][a-z0-9_]*)/gi;
+  const alterRe = /ALTER\s+TABLE\s+([a-z_][a-z0-9_]*)\s+ADD\s+COLUMN\s+([a-z_][a-z0-9_]*)/gi;
   while ((match = alterRe.exec(content)) !== null) {
     addColumn(registry, match[1]!.toLowerCase(), match[2]!.toLowerCase());
   }
@@ -160,7 +157,9 @@ function applyImplicitSqliteColumns(registry: SqlSchemaRegistry): void {
 }
 
 /** Read live column sets from an open SQLite database. */
-export function runtimeSchemaFromDb(db: { prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] } }): SqlSchemaRegistry {
+export function runtimeSchemaFromDb(db: {
+  prepare: (sql: string) => { all: (...args: unknown[]) => unknown[] };
+}): SqlSchemaRegistry {
   const registry: SqlSchemaRegistry = new Map();
   const tables = db
     .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'")
@@ -231,8 +230,7 @@ export function extractSqlStrings(content: string): string[] {
 /** Parse FROM/JOIN clauses into alias -> table map for one SQL block. */
 export function parseSqlAliasMap(sql: string): Map<string, string> {
   const aliases = new Map<string, string>();
-  const clauseRe =
-    /\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?([a-z_][a-z0-9_]*))?/gi;
+  const clauseRe = /\b(?:FROM|JOIN)\s+([a-z_][a-z0-9_]*)(?:\s+(?:AS\s+)?([a-z_][a-z0-9_]*))?/gi;
   let match: RegExpExecArray | null;
   while ((match = clauseRe.exec(sql)) !== null) {
     const table = match[1]!.toLowerCase();

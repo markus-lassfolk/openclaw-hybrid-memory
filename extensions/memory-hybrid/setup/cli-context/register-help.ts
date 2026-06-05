@@ -361,7 +361,10 @@ function buildListCommands(
         [...parsed.agentsRulesByFile.values()].reduce((n, rules) => n + rules.length, 0) +
         parsed.skillUpdates.length;
       if (totalRules === 0 && parsed.unresolvedSkillUpdates.length === 0) {
-        return { applied: 0, error: "No suggested TOOLS, persona, or skill rules in report (run self-correction-run first)" };
+        return {
+          applied: 0,
+          error: "No suggested TOOLS, persona, or skill rules in report (run self-correction-run first)",
+        };
       }
       const scCfg = cfg.selfCorrection ?? { toolsSection: "Self-correction rules" };
       const section =
@@ -479,6 +482,7 @@ export function createHybridMemCliContext(
     runDistill: (opts, sink) => handlers.runDistillForCli(handlerCtx, opts, sink),
     runMigrateToVault: () => handlers.runMigrateToVaultForCli(handlerCtx),
     runEncryptVault: (opts) => handlers.runEncryptVaultForCli(handlerCtx, opts),
+    runRekeyVault: (opts) => handlers.runRekeyVaultForCli(handlerCtx, opts),
     runVaultStatus: () => handlers.runVaultStatusForCli(handlerCtx),
     runCredentialsList: () => handlers.runCredentialsListForCli(handlerCtx),
     runCredentialsGet: (opts) => handlers.runCredentialsGetForCli(handlerCtx, opts),
@@ -534,7 +538,10 @@ export function createHybridMemCliContext(
           const { runActiveTaskMaintain } = await import("../../cli/active-tasks.js");
           const result = await runActiveTaskMaintain(activeCtx, handlerCtx.cfg, { apply: true, jsonMode: true });
           const reconciled = result.reconcile?.reconciled ?? 0;
-          return `status=${result.status} reconciled=${reconciled}`;
+          const failed = result.reconcile?.failed ?? 0;
+          const semantic =
+            result.status === "partial" || result.status === "failed" || failed > 0 ? "partial" : "success";
+          return `status=${result.status} reconciled=${reconciled} failed=${failed} semantic=${semantic}`;
         }
       : undefined,
     runExport: services.runExport,

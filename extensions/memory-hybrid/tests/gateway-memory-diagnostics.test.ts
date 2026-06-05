@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot } from "../services/gateway-memory-diagnostics.js";
+import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot, sanitizePublicMemoryDiagnostics } from "../services/gateway-memory-diagnostics.js";
 import { resetReregisterPolicyForTests } from "../setup/reregister-policy.js";
 import { setEnv } from "../utils/env-manager.js";
 
@@ -47,5 +47,28 @@ describe("gateway-memory-diagnostics", () => {
     expect(diag.hybridMemory.reregisterPolicy).toBe("reuse-databases");
     expect(diag.process.nativeRssBytes).toBeGreaterThanOrEqual(0);
     expect(Array.isArray(diag.leakHints)).toBe(true);
+  });
+
+  it("sanitizePublicMemoryDiagnostics redacts fact counts and paths", async () => {
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    const raw = await buildGatewayMemoryDiagnostics({
+      factsDb,
+      vectorDb: vectorDb as never,
+      resolvedSqlitePath: join(tmp, "facts.db"),
+      resolvedLancePath: join(tmp, "lancedb"),
+    });
+    const sanitized = sanitizePublicMemoryDiagnostics(raw);
+    expect(raw.facts.activeFacts).not.toBeNull();
+    expect(sanitized.facts.activeFacts).toBeNull();
+    expect(sanitized.facts.topSources).toBeNull();
+    expect(sanitized.startupAttribution).toEqual([]);
+    expect(sanitized.hybridMemory.vectorObservability?.vectorDb.path).toBeNull();
+    expect(sanitized.hybridMemory.vectorObservability?.lancedb.basePath).toBeNull();
+    expect(sanitized.disk.sqliteBytes).toBeNull();
+    expect(sanitized.disk.lanceDirBytes).toBeNull();
   });
 });

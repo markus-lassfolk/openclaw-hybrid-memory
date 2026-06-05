@@ -142,12 +142,14 @@ export interface PluginRuntime {
     languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
     postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
     passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
-  /** Issue #631: Stale-run watchdog timer for autonomous task queue self-healing. */
-  watchdogTimer: { value: ReturnType<typeof setInterval> | null };
-  /** Unified maintenance orchestrator tick (cycle tier). */
-  maintenanceTick: { value: ReturnType<typeof setInterval> | null };
-  maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
-};
+    /** Issue #631: Stale-run watchdog timer for autonomous task queue self-healing. */
+    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
+    /** Unified maintenance orchestrator tick (cycle tier). */
+    maintenanceTick: { value: ReturnType<typeof setInterval> | null };
+    maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
+    /** Workboard bidirectional sync timer. */
+    workboardSync?: { value: ReturnType<typeof setInterval> | null };
+  };
 }
 
 /** Create a fresh, empty timers bag for a new PluginRuntime instance. */
@@ -215,5 +217,9 @@ export function clearRuntimeTimers(timers: PluginRuntime["timers"]): void {
   if (timers.maintenanceStartupTimeout.value) {
     clearTimeout(timers.maintenanceStartupTimeout.value);
     timers.maintenanceStartupTimeout.value = null;
+  }
+  if (timers.workboardSync?.value) {
+    clearInterval(timers.workboardSync.value);
+    timers.workboardSync.value = null;
   }
 }

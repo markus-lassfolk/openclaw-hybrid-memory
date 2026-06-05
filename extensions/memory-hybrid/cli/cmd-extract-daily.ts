@@ -34,6 +34,15 @@ export async function runExtractDailyForCli(
   const daysBack = opts.days;
   let totalExtracted = 0;
   let totalStored = 0;
+  let vectorFailures = 0;
+  const recordVectorFailure = (err: unknown, operation: string): void => {
+    vectorFailures++;
+    sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
+    capturePluginError(err as Error, {
+      subsystem: "cli",
+      operation,
+    });
+  };
   const classifyMicroBatch = Math.max(1, Math.min(10, cfg.autoClassify?.batchSize ?? 10));
   const classifyModelForExtract = cfg.store.classifyModel ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
   type PendingExtractClassify = {
@@ -149,11 +158,7 @@ export async function runExtractDailyForCli(
                 });
               }
             } catch (err) {
-              sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-              capturePluginError(err as Error, {
-                subsystem: "cli",
-                operation: "runExtractDailyForCli:vector-store-update",
-              });
+              recordVectorFailure(err, "runExtractDailyForCli:vector-store-update");
             }
             totalStored++;
             continue;
@@ -187,11 +192,7 @@ export async function runExtractDailyForCli(
             });
           }
         } catch (err) {
-          sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-          capturePluginError(err as Error, {
-            subsystem: "cli",
-            operation: "runExtractDailyForCli:vector-store-final",
-          });
+          recordVectorFailure(err, "runExtractDailyForCli:vector-store-final");
         }
         totalStored++;
       }
@@ -279,11 +280,7 @@ export async function runExtractDailyForCli(
                       });
                     }
                   } catch (err) {
-                    sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-                    capturePluginError(err as Error, {
-                      subsystem: "cli",
-                      operation: "runExtractDailyForCli:vector-store",
-                    });
+                    recordVectorFailure(err, "runExtractDailyForCli:vector-store");
                   }
                 }
                 totalStored++;
@@ -398,16 +395,13 @@ export async function runExtractDailyForCli(
           });
         }
       } catch (err) {
-        sink.warn(`memory-hybrid: extract-daily vector store failed: ${err}`);
-        capturePluginError(err as Error, {
-          subsystem: "cli",
-          operation: "runExtractDailyForCli:vector-store-final",
-        });
+        recordVectorFailure(err, "runExtractDailyForCli:vector-store-final");
       }
       totalStored++;
     }
     await flushPendingExtractClassify();
   }
   await flushPendingExtractClassify();
-  return { totalExtracted, totalStored, daysBack, dryRun: opts.dryRun };
+  const semanticOutcome = vectorFailures > 0 ? "partial" : "success";
+  return { totalExtracted, totalStored, daysBack, dryRun: opts.dryRun, vectorFailures, semanticOutcome };
 }

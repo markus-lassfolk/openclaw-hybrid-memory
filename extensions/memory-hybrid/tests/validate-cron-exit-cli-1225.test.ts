@@ -188,7 +188,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
       { from: "user" },
     );
 
-    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(2));
     const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
       maintenanceStatus: string;
       semanticStatus: string;
@@ -196,6 +196,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     };
     expect(payload.maintenanceStatus).toBe("failed");
     expect(payload.semanticStatus).toBe("semantic_fail");
+    expect(payload.recommendedExitCode).toBe(2);
     expect(payload.reportableIssues[0]?.fingerprint).toBe(
       "hybrid-memory-maintenance:weekly-reflection:reflect-rules:invalid_response_format_zero_stored",
     );

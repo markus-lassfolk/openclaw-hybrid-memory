@@ -6,7 +6,7 @@ import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
 import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
-import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot } from "../services/gateway-memory-diagnostics.js";
+import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot, sanitizePublicMemoryDiagnostics } from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   applyActiveTaskProjectionFilters,
@@ -14,6 +14,8 @@ import {
   readActiveTaskRowsFromFacts,
   refreshActiveTaskProjectionBestEffort,
 } from "../services/task-ledger-facts.js";
+import { globalOnlyScopeFilter, scopeFieldsFromEntry, scopeFieldsFromFilter } from "../utils/scope-filter.js";
+import { pluginLogger } from "../utils/logger.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { nowIso } from "../utils/dates.js";
@@ -51,6 +53,8 @@ export interface PublicApiRoutesContext {
   variantQueue?: { queueLength: number } | null;
   /** Resolved goals directory when goal stewardship is enabled (for projection mirror refresh). */
   goalsDir?: string;
+  /** Enable fact mutation HTTP endpoints for wiki bidirectional editing. */
+  factMutationsEnabled?: boolean;
 }
 
 export const PUBLIC_API_PREFIX = "/plugins/memory-public";
@@ -69,7 +73,6 @@ export const PUBLIC_API_PATHS = {
 } as const;
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
-const DEFAULT_PUBLIC_SCOPE_SENTINEL = "__public_api_unscoped__";
 const DEFAULT_ACTIVE_TASK_PROJECTION: ActiveTaskProjectionConfig = {
   mode: "readable",
   excludeGenericTitle: true,
@@ -158,10 +161,19 @@ function resolveScopeFilter(req: { headers?: Record<string, string> }): ScopeFil
   const sessionId = getHeader(req, "x-openclaw-session-id");
 
   if (!userId && !agentId && !sessionId) {
-    return { agentId: DEFAULT_PUBLIC_SCOPE_SENTINEL };
+    return globalOnlyScopeFilter();
   }
 
   return { userId: userId ?? undefined, agentId: agentId ?? undefined, sessionId: sessionId ?? undefined };
+}
+
+function rejectWhenUnauthenticated(
+  authenticated: boolean,
+): { status: number; headers: Record<string, string>; body: string } | null {
+  if (!authenticated) {
+    return toJson(403, { error: "authentication required" });
+  }
+  return null;
 }
 
 export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {
@@ -280,6 +292,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   });
 
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`, async (req) => {
+    const authReject = rejectWhenUnauthenticated(ctx.cfg.health.authenticated);
+    if (authReject) return authReject;
+
     const url = parseReqUrl(req.url);
     const limit = parseLimitParam(url.searchParams.get("limit"), 100, 1000);
     const narrativeLimit = parseLimitParam(url.searchParams.get("narrativeLimit"), 20, 500);
@@ -355,6 +370,10 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`, async (req) => {
     const url = parseReqUrl(req.url);
     const renderRequested = parseBooleanParam(url.searchParams.get("render"));
+    if (renderRequested) {
+      const authReject = rejectWhenUnauthenticated(ctx.cfg.health.authenticated);
+      if (authReject) return authReject;
+    }
     const includeCompleted = parseBooleanParam(url.searchParams.get("includeCompleted"));
     const scopeFilter = resolveScopeFilter(req);
 
@@ -419,10 +438,39 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   });
 
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`, async (req) => {
+    if (!ctx.cfg.health.authenticated) {
+      return toJson(403, { error: "authentication required" });
+    }
     const url = parseReqUrl(req.url);
-    const sessionId = url.searchParams.get("sessionId")?.trim() ?? null;
-    const agentId = url.searchParams.get("agentId")?.trim() ?? null;
+    const trustedSessionId = getHeader(req, "x-openclaw-session-id");
+    const trustedAgentId = getHeader(req, "x-openclaw-agent-id");
+    const trustedUserId = getHeader(req, "x-openclaw-user-id");
+    const querySessionId = url.searchParams.get("sessionId")?.trim() ?? null;
+    const queryAgentId = url.searchParams.get("agentId")?.trim() ?? null;
     const limit = parseLimitParam(url.searchParams.get("limit"), 50, 200);
+
+    if (trustedSessionId && querySessionId && querySessionId !== trustedSessionId) {
+      return toJson(403, { error: "sessionId query param does not match trusted identity header" });
+    }
+    if (trustedAgentId && queryAgentId && queryAgentId !== trustedAgentId) {
+      return toJson(403, { error: "agentId query param does not match trusted identity header" });
+    }
+
+    const sessionId = trustedSessionId ?? querySessionId;
+    const agentId = trustedAgentId ?? queryAgentId;
+
+    if (!sessionId && !agentId) {
+      return toJson(400, {
+        error:
+          "Missing sessionId or agentId. Provide x-openclaw-session-id / x-openclaw-agent-id headers or matching query params.",
+      });
+    }
+
+    if (!trustedSessionId && !trustedAgentId && !trustedUserId && (querySessionId || queryAgentId)) {
+      return toJson(403, {
+        error: "Untrusted session/agent query params require gateway identity headers",
+      });
+    }
 
     const { buildSessionObservabilityReport } = await import("../services/session-observability.js");
 
@@ -439,22 +487,150 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     return toJson(200, report);
   });
 
-  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`, async () => {
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`, async (req) => {
+    if (!ctx.cfg.health.authenticated) {
+      return toJson(403, { error: "authentication required" });
+    }
     return toJson(200, buildProcessMemorySnapshot());
   });
 
-  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`, async () => {
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`, async (req) => {
+    if (!ctx.cfg.health.authenticated) {
+      return toJson(403, { error: "authentication required" });
+    }
     if (!ctx.vectorDb) {
       return toJson(503, { error: "vector_db_unavailable" });
     }
-    const diag = await buildGatewayMemoryDiagnostics({
-      factsDb: ctx.factsDb,
-      vectorDb: ctx.vectorDb,
-      resolvedSqlitePath: ctx.resolvedSqlitePath,
-      resolvedLancePath: ctx.resolvedLancePath,
-      recallInFlightRef: ctx.recallInFlightRef,
-      variantQueuePending: ctx.variantQueue?.queueLength,
-    });
+    const diag = sanitizePublicMemoryDiagnostics(
+      await buildGatewayMemoryDiagnostics({
+        factsDb: ctx.factsDb,
+        vectorDb: ctx.vectorDb,
+        resolvedSqlitePath: ctx.resolvedSqlitePath,
+        resolvedLancePath: ctx.resolvedLancePath,
+        recallInFlightRef: ctx.recallInFlightRef,
+        variantQueuePending: ctx.variantQueue?.queueLength,
+      }),
+    );
     return toJson(200, diag);
   });
+
+  // ========================================================================
+  // Fact mutation endpoints (wiki bidirectional editing)
+  // ========================================================================
+  if (ctx.factMutationsEnabled) {
+    makeRoute(`${PUBLIC_API_PREFIX}/fact/mutate`, async (req) => {
+      if (!ctx.cfg.health.authenticated) {
+        return toJson(403, { error: "authentication required" });
+      }
+      try {
+        const scopeFilter = resolveScopeFilter(req);
+        const body = req.body ? JSON.parse(req.body) : {};
+        const action = typeof body.action === "string" ? body.action : "";
+        const factId = typeof body.id === "string" ? body.id : "";
+
+        if (action === "update" && factId) {
+          const existing = ctx.factsDb.getById(factId, { scopeFilter });
+          if (!existing) return toJson(404, { error: "not found" });
+
+          const text = typeof body.text === "string" ? body.text : null;
+          const confidence = typeof body.confidence === "number" ? body.confidence : null;
+          const entity = typeof body.entity === "string" ? body.entity : null;
+          const key = typeof body.key === "string" ? body.key : null;
+          const value = typeof body.value === "string" ? body.value : null;
+          const tags = Array.isArray(body.tags)
+            ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
+            : undefined;
+
+          const hasStructural =
+            text !== null || entity !== null || key !== null || value !== null || tags !== undefined;
+
+          if (hasStructural) {
+            const stored = ctx.factsDb.store({
+              text: text ?? existing.text,
+              category: existing.category,
+              importance: existing.importance,
+              source: "wiki-edit",
+              entity: entity ?? existing.entity,
+              key: key ?? existing.key,
+              value: value ?? existing.value,
+              confidence: confidence !== null ? Math.max(0, Math.min(1, confidence)) : existing.confidence,
+              tags: tags ?? existing.tags ?? undefined,
+              ...scopeFieldsFromEntry(existing),
+            });
+            ctx.factsDb.supersede(factId, stored.id);
+            pluginLogger.info(`memory-hybrid: fact ${factId} updated (superseded → ${stored.id}) via HTTP /fact/mutate`);
+            return toJson(200, {
+              ok: true,
+              superseded: factId,
+              newFact: ctx.factsDb.getById(stored.id, { scopeFilter }),
+            });
+          } else if (confidence !== null) {
+            ctx.factsDb.setConfidenceTo(factId, Math.max(0, Math.min(1, confidence)));
+            pluginLogger.info(`memory-hybrid: fact ${factId} confidence updated via HTTP /fact/mutate`);
+            return toJson(200, { ok: true, fact: ctx.factsDb.getById(factId, { scopeFilter }) });
+          }
+          return toJson(200, { ok: true, noop: true });
+        }
+
+        if (action === "supersede" && factId) {
+          const existing = ctx.factsDb.getById(factId, { scopeFilter });
+          if (!existing) return toJson(404, { error: "not found" });
+
+          const replacement = typeof body.replacementText === "string" ? body.replacementText.trim() : "";
+          if (replacement) {
+            const stored = ctx.factsDb.store({
+              text: replacement,
+              category: existing.category,
+              importance: existing.importance,
+              source: "wiki-edit",
+              entity: existing.entity ?? null,
+              key: existing.key ?? null,
+              value: existing.value ?? null,
+              confidence: existing.confidence,
+              tags: existing.tags ?? undefined,
+              ...scopeFieldsFromEntry(existing),
+            });
+            ctx.factsDb.supersede(factId, stored.id);
+            pluginLogger.info(`memory-hybrid: fact ${factId} superseded by ${stored.id} via HTTP /fact/mutate`);
+            return toJson(200, {
+              ok: true,
+              superseded: factId,
+              newFact: ctx.factsDb.getById(stored.id, { scopeFilter }) ?? stored,
+            });
+          }
+
+          ctx.factsDb.supersede(factId, null);
+          pluginLogger.info(`memory-hybrid: fact ${factId} superseded (removed) via HTTP /fact/mutate`);
+          return toJson(200, { ok: true, superseded: factId });
+        }
+
+        if (action === "create") {
+          const text = typeof body.text === "string" ? body.text?.trim() : "";
+          if (!text) return toJson(400, { error: "missing text" });
+          const stored = ctx.factsDb.store({
+            text,
+            category: (typeof body.category === "string"
+              ? body.category
+              : "general") as import("../config.js").MemoryCategory,
+            importance: typeof body.importance === "number" ? body.importance : 0.5,
+            source: "wiki-create",
+            entity: typeof body.entity === "string" ? body.entity : null,
+            key: typeof body.key === "string" ? body.key : null,
+            value: typeof body.value === "string" ? body.value : null,
+            confidence: typeof body.confidence === "number" ? Math.max(0, Math.min(1, body.confidence)) : 0.8,
+            tags: Array.isArray(body.tags)
+              ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
+              : undefined,
+            ...scopeFieldsFromFilter(scopeFilter),
+          });
+          pluginLogger.info(`memory-hybrid: fact ${stored.id} created via HTTP /fact/mutate`);
+          return toJson(201, { ok: true, fact: ctx.factsDb.getById(stored.id, { scopeFilter }) ?? stored });
+        }
+
+        return toJson(400, { error: `unknown action: ${action}` });
+      } catch (err) {
+        return toJson(500, { error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+  }
 }

@@ -205,11 +205,7 @@ export class ProposalsDB extends BaseSqliteStore {
   }
 
   /** Targeted duplicate check for pipeline proposal creation (avoids full-table list scans). */
-  findPendingOrAppliedDuplicate(
-    targetFile: string,
-    suggestedChange: string,
-    excludeId?: string,
-  ): ProposalEntry | null {
+  findPendingOrAppliedDuplicate(targetFile: string, suggestedChange: string, excludeId?: string): ProposalEntry | null {
     const normalized = suggestedChange.toLowerCase().replace(/\s+/g, " ").trim();
     if (!normalized) return null;
     const rows = this.liveDb
@@ -297,18 +293,11 @@ export class ProposalsDB extends BaseSqliteStore {
           `UPDATE proposals SET suggested_change = ?, target_mtime_ms = ?, target_hash = ?, confidence = COALESCE(?, confidence)
            WHERE id = ? AND status = 'pending'`,
         )
-        .run(
-          suggestedChange,
-          snapshot.targetMtimeMs,
-          snapshot.targetHash,
-          snapshot.confidence ?? null,
-          id,
-        );
+        .run(suggestedChange, snapshot.targetMtimeMs, snapshot.targetHash, snapshot.confidence ?? null, id);
     } else {
-      this.liveDb.prepare("UPDATE proposals SET suggested_change = ? WHERE id = ? AND status = 'pending'").run(
-        suggestedChange,
-        id,
-      );
+      this.liveDb
+        .prepare("UPDATE proposals SET suggested_change = ? WHERE id = ? AND status = 'pending'")
+        .run(suggestedChange, id);
     }
     return this.get(id);
   }

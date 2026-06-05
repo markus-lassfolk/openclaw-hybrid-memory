@@ -10,7 +10,9 @@ import { reportMaintenanceFailureIssues } from "../../../services/maintenance-fa
 import { type Chainable, withExit } from "../../shared.js";
 import {
   validateMaintenanceExecution,
+  validateFromSummaryJson,
   generateCronStatusReport,
+  resolveValidateCronExitCode,
   type ExitValidationResult,
 } from "../../../services/cron-exit-validator.js";
 
@@ -28,6 +30,7 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
     .option("--log-path <path>", "Path to HM_LOG file")
     .requiredOption("--required-steps <steps...>", "Required step names (space-separated)")
     .option("--allow-skip", "Allow skip variants (e.g., distill-skipped) to count as success")
+    .option("--summary-path <path>", "Orchestrator summary.json (preferred when present)")
     .option("--json", "Output JSON result")
     .action(
       withExit(
@@ -36,14 +39,18 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
           logPath?: string;
           requiredSteps: string[];
           allowSkip?: boolean;
+          summaryPath?: string;
           json?: boolean;
         }) => {
-          const result = validateMaintenanceExecution(
-            opts.exitPath,
-            opts.logPath,
-            opts.requiredSteps,
-            !!opts.allowSkip,
-          );
+          const result = opts.summaryPath?.trim()
+            ? validateFromSummaryJson(
+                opts.summaryPath.trim(),
+                opts.exitPath,
+                opts.logPath,
+                opts.requiredSteps,
+                !!opts.allowSkip,
+              )
+            : validateMaintenanceExecution(opts.exitPath, opts.logPath, opts.requiredSteps, !!opts.allowSkip);
 
           if (opts.json) {
             console.log(generateCronStatusReport(result));
@@ -62,8 +69,9 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
             });
           }
 
-          if (result.maintenanceStatus === "failed" || result.maintenanceStatus === "partial") {
-            process.exitCode = 1;
+          const exitCode = resolveValidateCronExitCode(result);
+          if (exitCode !== 0) {
+            process.exitCode = exitCode;
           }
         },
       ),

@@ -177,8 +177,8 @@ describe("registerPublicApiRoutes", () => {
       exported.handler,
       fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`),
     );
-    expect(exportRes.status).toBe(200);
-    expect(JSON.parse(exportRes.body).manifest.counts.facts).toBeGreaterThanOrEqual(1);
+    expect(exportRes.status).toBe(403);
+    expect(JSON.parse(exportRes.body).error).toBe("authentication required");
 
     const fact = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`)!;
     const factRes = await invokeNodeHttpRoute(
@@ -533,6 +533,18 @@ describe("registerPublicApiRoutes", () => {
     expect(body.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
+  it("process-memory rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
   it("memory-diagnostics returns hybrid reregister metrics when vectorDb present", async () => {
     const { api, routes } = makeApi();
     const vectorDb = {
@@ -559,6 +571,96 @@ describe("registerPublicApiRoutes", () => {
     const body = JSON.parse(res.body);
     expect(body.hybridMemory.reregisterMetrics).toBeDefined();
     expect(body.process.nativeRssBytes).toBeGreaterThanOrEqual(0);
+    expect(body.facts.activeFacts).toBeNull();
+    expect(body.facts.topSources).toBeNull();
+    expect(body.startupAttribution).toEqual([]);
+    expect(body.disk.sqliteBytes).toBeNull();
+  });
+
+  it("memory-diagnostics rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(false),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
+  it("session observability rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}?sessionId=s-1`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
+  it("fact mutate rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes(
+      { cfg: makeCfg(false), factsDb, narrativesDb, factMutationsEnabled: true },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}/fact/mutate`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}/fact/mutate`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
+  it("export requires authentication", async () => {
+    factsDb.store({
+      text: "Export auth gate test fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`),
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body).manifest.counts.facts).toBeGreaterThanOrEqual(1);
+  });
+
+  it("active-tasks render rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}?render=1`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
   });
 
   it("does not register routes when health is disabled", () => {

@@ -432,7 +432,8 @@ function reviewProposals(workHome: string, log: string): TaskQualityReview {
   const createdThisRun = Number.parseInt(log.match(/Created (\d+) proposal\(s\)/i)?.[1] ?? "0", 10);
   if (/semantic_empty_with_gaps=true/i.test(log)) {
     findings.push("semantic_empty despite identity gaps — deterministic fallback should have fired");
-  } else if (/semantic_empty/i.test(log)) findings.push("LLM had insight input but parsed zero proposal items this run");
+  } else if (/semantic_empty/i.test(log))
+    findings.push("LLM had insight input but parsed zero proposal items this run");
   const gapScore = Number.parseFloat(log.match(/identity_gap_score=([0-9.]+)/i)?.[1] ?? "0");
   if (/semantic_empty/i.test(log) && gapScore >= 0.25) {
     findings.push(`identity_gap_score=${gapScore.toFixed(2)} — proposals should not be empty`);

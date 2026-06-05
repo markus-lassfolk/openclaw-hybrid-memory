@@ -177,6 +177,12 @@ export type HybridMemCliContext = {
     backupPath?: string;
     verify?: boolean;
   }) => EncryptVaultResult;
+  runRekeyVault: (opts: {
+    yes?: boolean;
+    backup?: boolean;
+    backupPath?: string;
+    verify?: boolean;
+  }) => import("./types.js").RekeyVaultResult;
   runVaultStatus: () => VaultStatusResult | null;
   runCredentialsList: () => Array<{
     service: string;
@@ -287,6 +293,7 @@ export type HybridMemCliContext = {
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
+    batchFailures?: number;
   }>;
   autoClassifyConfig: {
     model: string;

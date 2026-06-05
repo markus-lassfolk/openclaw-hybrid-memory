@@ -271,8 +271,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const entity =
             prepareMemoryMetadataForStorage(paramEntity) ?? prepareMemoryMetadataForStorage(extracted.entity);
           const key = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
-          const value =
-            prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
+          const value = prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
 
           if (factsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
             return {

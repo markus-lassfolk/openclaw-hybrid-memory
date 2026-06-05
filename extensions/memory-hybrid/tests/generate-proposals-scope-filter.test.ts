@@ -349,9 +349,7 @@ describe("generate-proposals — JSON retry (#1824)", () => {
 
     const result = await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
     expect(result.created).toBe(0);
-    expect(ctx.logger.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/semantic_empty.*identity_gap_score=/),
-    );
+    expect(ctx.logger.warn).toHaveBeenCalledWith(expect.stringMatching(/semantic_empty.*identity_gap_score=/));
   });
 
   it("logs pre-flight identity_gap_score when verbose is present only in argv", async () => {
@@ -370,16 +368,15 @@ describe("generate-proposals — JSON retry (#1824)", () => {
     };
 
     const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
-    await runGenerateProposalsForCli(
-      ctx,
-      { dryRun: false, verbose: false },
-      { resolvePath: (f) => f },
-      ["node", "openclaw", "hybrid-mem", "generate-proposals", "--verbose"],
-    );
+    await runGenerateProposalsForCli(ctx, { dryRun: false, verbose: false }, { resolvePath: (f) => f }, [
+      "node",
+      "openclaw",
+      "hybrid-mem",
+      "generate-proposals",
+      "--verbose",
+    ]);
 
-    expect(ctx.logger.info).toHaveBeenCalledWith(
-      expect.stringMatching(/identity_gap_score=.*pending=/),
-    );
+    expect(ctx.logger.info).toHaveBeenCalledWith(expect.stringMatching(/identity_gap_score=.*pending=/));
   });
 
   it("does not leak raw LLM response snippets in thrown/default error when verbose=false", async () => {

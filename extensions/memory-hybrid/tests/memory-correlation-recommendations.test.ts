@@ -8,33 +8,21 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { FactsDB } from "../backends/facts-db.js";
 import { IssueStore } from "../backends/issue-store.js";
-import {
-  autoLinkIssueToFacts,
-  createGraphLinksForIssueFacts,
-} from "../services/issue-fact-correlation.js";
-import {
-  getCriticalOpenIssueFactIds,
-  runIssueRetrievalStrategy,
-} from "../services/issue-retrieval.js";
+import { autoLinkIssueToFacts, createGraphLinksForIssueFacts } from "../services/issue-fact-correlation.js";
+import { getCriticalOpenIssueFactIds, runIssueRetrievalStrategy } from "../services/issue-retrieval.js";
 import {
   clearKnownEntitySurfacesCache,
   getFactIdsForEntitySurfaces,
   loadKnownEntitySurfaces,
   matchEntitySurfacesInText,
 } from "../services/entity-retrieval.js";
-import {
-  inferEntityFilterFromQuery,
-  inferRetrievalModeFromQuery,
-} from "../services/retrieval-mode-selector.js";
+import { inferEntityFilterFromQuery, inferRetrievalModeFromQuery } from "../services/retrieval-mode-selector.js";
 import {
   hasErrorKeywords,
   searchAmbientIssues,
   shouldTriggerIssueAmbientSearch,
 } from "../services/ambient-retrieval.js";
-import {
-  parseFactProvenanceJson,
-  resolveProvenanceSourceFacts,
-} from "../backends/facts-db/provenance-json.js";
+import { parseFactProvenanceJson, resolveProvenanceSourceFacts } from "../backends/facts-db/provenance-json.js";
 import { parseRulesFromModelResponse } from "../services/reflection/structured-output.js";
 import { resolveEntityForeignKeys } from "../backends/facts-db/entity-layer.js";
 import { packIntoBudget } from "../services/retrieval-orchestrator/packing.js";
@@ -445,12 +433,14 @@ describe("resolveEntityForeignKeys skip", () => {
       "en",
     );
     resolveEntityForeignKeys(factsDb.getRawDb(), fact.id, "Alice");
-    const afterFirst = factsDb.getRawDb()
+    const afterFirst = factsDb
+      .getRawDb()
       .prepare("SELECT entity_contact_id, entity_organization_id FROM facts WHERE id = ?")
       .get(fact.id) as { entity_contact_id: string | null; entity_organization_id: string | null };
 
     resolveEntityForeignKeys(factsDb.getRawDb(), fact.id, "Alice");
-    const afterSecond = factsDb.getRawDb()
+    const afterSecond = factsDb
+      .getRawDb()
       .prepare("SELECT entity_contact_id, entity_organization_id FROM facts WHERE id = ?")
       .get(fact.id) as { entity_contact_id: string | null; entity_organization_id: string | null };
 

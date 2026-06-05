@@ -1,6 +1,6 @@
 ---
 name: openclaw_hybrid_memory
-description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, contacts/org layer (memory_directory), multilingual NER when graph is on, memorySearch, and memory/ files. Goal stewardship (goal_* tools, heartbeat scheduling, OpenClaw cron jobs, verify/troubleshooting). Use whenever the user asks about saving or recalling information, memory_store or memory_recall, people or companies in memory, hybrid-mem CLI, MEMORY.md, goals, goal_assess, scheduled heartbeat pulses, pruning, distillation, embeddings, tuning recall, which memory settings are enabled, how to optimize or run maintenance (run-all, verify, config, enrich-entities, digest pipelines, cron order), or debugging missing recall—even if they do not say "hybrid memory" by name.
+description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, contacts/org layer (memory_directory), multilingual NER when graph is on, memorySearch, and memory/ files. Goal stewardship (goal_* tools, heartbeat scheduling, OpenClaw cron jobs, verify/troubleshooting). Maintenance orchestrator (maintenance nightly/cycle/full/steps, consolidated cron, run-all). Credentials vault (credential_* tools, credentials get --value-only). Generated skills (skills queue/telemetry/doctor). Workboard integration (bidirectional task/goal sync to Kanban UI). Wiki integration and Dreaming UI (memory-wiki bridge, corpus supplement, bidirectional fact editing, dream findings ingestion). Use whenever the user asks about saving or recalling information, memory_store or memory_recall, people or companies in memory, hybrid-mem CLI, MEMORY.md, goals, goal_assess, scheduled heartbeat pulses, pruning, distillation, embeddings, tuning recall, which memory settings are enabled, how to optimize or run maintenance, credential vault, crystallization, Workboard, wiki, Dreaming UI, or debugging missing recall—even if they do not say "hybrid memory" by name.
 ---
 
 # OpenClaw Hybrid Memory
@@ -83,14 +83,134 @@ For example, for goal `deploy-api`, name subagents `deploy-api-run-tests`, `depl
 
 **Docs:** `docs/GOAL-STEWARDSHIP-OPERATOR.md` (start here — user guide, cron examples, verify, logging), `docs/GOAL-STEWARDSHIP-AUDIT-PLAYBOOK.md`, `docs/GOAL-STEWARDSHIP-DESIGN.md`, `docs/TASK-HYGIENE.md`
 
-## CLI and health checks
+## Maintenance orchestrator (2026)
 
-- **`openclaw hybrid-mem verify [--fix]`** — Confirms SQLite, LanceDB, embedding config, maintenance jobs, and (when goal stewardship is enabled) **heartbeat vs `~/.openclaw/cron/jobs.json`** (see Goal Stewardship above). Use when memory seems broken after config or gateway changes, or when **scheduled goal pulses** never seem to fire.
-- **`openclaw hybrid-mem stats`** — Quick view of store state.
-- **`openclaw hybrid-mem enrich-entities`** — Backfill PERSON/ORG extraction for facts missing mention rows (after upgrades or bulk imports; uses LLM when graph features are on).
-- **`openclaw hybrid-mem active-tasks reconcile`** — Run before strategic or heartbeat jobs that trust `ACTIVE-TASKS.md`: moves **In progress** rows to **Completed** when the OpenClaw session transcript no longer exists (fixes stale subagent bookkeeping; issues #978, #981).
-- **`openclaw hybrid-mem task-queue-status`** — Prints `state/task-queue/current.json` as JSON for cron (no bare `cat`); use after **`task-queue-touch`** if the gateway has not yet created the idle placeholder (issues #981, #983). For shell-only hosts, use repo **`scripts/task-queue.sh`** (`touch`, `status`, `run`) so the file and PID lifecycle stay consistent ([#1000](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1000)).
-- Prefer plugin docs for full command lists (prune, distill, ingest-files, etc.).
+Maintenance is driven by a **48-step hybrid orchestrator** — not a pile of separate daily/weekly cron jobs. **Guards** (20h / 44h / 68h / 5d / 25d) decide when each step runs.
+
+| What you want | Command |
+| --- | --- |
+| See what's due / last run | `openclaw hybrid-mem maintenance steps` |
+| Normal nightly work (cron uses this) | `openclaw hybrid-mem maintenance nightly --verbose` |
+| Local lightweight steps (~hourly via gateway) | `openclaw hybrid-mem maintenance cycle` |
+| Full catch-up (cycle + nightly) | `openclaw hybrid-mem maintenance full --verbose` or **`run-all`** |
+| Force everything after long downtime | `... maintenance full --force --verbose` |
+
+**Automatic schedule (consolidated mode, default):**
+
+- **Gateway tick (~60 min):** `maintenance cycle` — prune, compact, sensor-sweep, etc.
+- **Daily 02:00 cron:** one job `hybrid-mem:maintenance-nightly` → `maintenance nightly --verbose`
+- **`verify --fix` / `install`:** ensures that cron job exists; legacy hybrid-mem crons are marked superseded
+
+Deep detail: bundled **`references/memory-optimization.md`** §3–5 and repo **`docs/MAINTENANCE-TASKS-MATRIX.md`**.
+
+## CLI quick reference
+
+**Discovery:** `openclaw hybrid-mem help` · `openclaw hybrid-mem examples maintenance` · `<group> --help`
+
+**Health & config (start here):**
+
+- **`verify [--fix]`** — SQLite, LanceDB, embeddings, maintenance cron, goal-stewardship heartbeat check
+- **`config`** / **`config-set <key> [value]`** — effective toggles and LLM tier choices
+- **`stats`** · **`health`** · **`doctor`** — store snapshot vs full diagnostics
+- **`maintenance steps`** — orchestrator registry (see above)
+
+**Grouped namespaces (preferred over flat aliases):**
+
+| Group | Examples |
+| --- | --- |
+| **`maintenance`** | `nightly`, `cycle`, `full`, `steps`, `run-all`, `cron-health` |
+| **`distill`** | `run`, `window`, `extract-daily`, `extract-procedures`, … |
+| **`reflect`** | `patterns`, `rules`, `meta`, `dream`, `identity` |
+| **`storage`** | `stats`, `compact`, `optimize`, `reembed`, `re-index` |
+| **`quality`** | `duplicates`, `consolidate`, `contradictions`, `classify`, `enrich-entities` |
+| **`learn`** | `self-correction`, `feedback`, `implicit` |
+
+Flat names (`run-all`, `extract-daily`, `stats`, …) still work; stderr may suggest the grouped form.
+
+**Daily use:** `search`, `lookup`, `store`, `ingest-files`, `enrich-entities`, `active-tasks reconcile`, `task-queue-status`, `goals …`, `skills …`, `credentials …`
+
+**Operator shortcuts:**
+
+- **`enrich-entities`** — backfill PERSON/ORG rows after upgrades or bulk imports
+- **`active-tasks reconcile`** — before heartbeat/strategic jobs: complete stale **In progress** rows when session transcripts are gone
+- **`task-queue-status`** / **`task-queue-touch`** — cron-safe task-queue JSON (prefer over bare `cat`); shell-only hosts: repo **`scripts/task-queue.sh`**
+
+**Workspace skill refresh:** Bundled files copy on first gateway start if missing. After upgrades, run **`openclaw hybrid-mem install`** to overwrite `{workspace}/skills/hybrid-memory/` and refresh the managed block in `TOOLS.md`.
+
+## Agent tools (by category)
+
+All tools use **underscore** names. Below is a compact index — not every deployment registers every tool (feature flags apply).
+
+| Category | Tools |
+| --- | --- |
+| **Core memory** | `memory_store`, `memory_recall`, `memory_forget`, `memory_directory`, `memory_link`, `memory_promote`, `memory_prune`, `memory_health`, `memory_gaps` |
+| **Episodes & timeline** | `memory_record_episode`, `memory_search_episodes`, `memory_recall_timeline`, `memory_checkpoint` |
+| **Procedures & reflection** | `memory_recall_procedures`, `memory_reflect`, `memory_reflect_rules`, `memory_reflect_meta`, `memory_procedure_feedback` |
+| **Graph & documents** | `memory_graph`, `memory_clusters`, `memory_ingest_document`, `memory_ingest_folder`, `memory_path` |
+| **Edicts & verification** | `memory_add_edict`, `memory_update_edict`, `memory_remove_edict`, `memory_list_edicts`, `memory_get_edicts`, `memory_edict_stats`, `memory_verify`, `memory_verification_status`, `memory_verified_list`, `memory_provenance` |
+| **Goals & tasks** | `goal_register`, `goal_assess`, `goal_update`, `goal_complete`, `goal_abandon`, `active_task_checkpoint`, `active_task_propose_goal` |
+| **Credentials vault** | `credential_store`, `credential_get`, `credential_list`, `credential_delete` — secrets stay in vault; memory holds pointers only |
+| **Crystallization & skills** | `memory_crystallize`, `memory_crystallize_list`, `memory_crystallize_approve`, `memory_crystallize_reject`, `memory_crystallize_skills_rescan`, `memory_workshop` |
+| **Issues & proposals** | `memory_issue_*`, `persona_propose`, `persona_proposals_list`, `memory_propose_tool`, `memory_tool_proposals`, `memory_tool_approve`, `memory_tool_reject` |
+| **Workflows & capture** | `memory_workflows`, `apitap_capture`, `apitap_list`, `apitap_peek`, `apitap_to_skill`, `memory_session_observability` |
+
+When vault is **off**, credential-like content is blocked from ordinary `memory_store`. When vault is **on**, use `credential_get` — recall returns pointers, not secrets.
+
+## Credentials vault (when `credentials.enabled: true`)
+
+| Task | CLI |
+| --- | --- |
+| Vault health | `openclaw hybrid-mem credentials vault-status` |
+| List entries (no values) | `credentials list [--service pattern]` |
+| Get secret | `credentials get --service <name> [--type api_key]` |
+| Scripting / piping | `credentials get --service <name> --value-only` (alias: `--quiet`) — value only, no trailing newline |
+| Migrate facts → vault | `credentials migrate-to-vault` |
+| Re-encrypt after key change | `credentials encrypt-vault --backup --verify --yes` |
+| Audit / clean | `credentials audit`, `credentials prune [--yes]` |
+
+**Encryption key:** `env:VAR`, `file:/absolute/path` (reads **file contents**), or inline secret. Legacy vaults encrypted with the literal string `file:…` still open with a one-time warning — see repo **`docs/CREDENTIALS.md`**.
+
+Agent tools: **`credential_store`**, **`credential_get`**, **`credential_list`**, **`credential_delete`**.
+
+## Generated skills lifecycle
+
+Procedures and crystallization produce skill proposals under the workspace. Operator CLI:
+
+| Task | Command |
+| --- | --- |
+| Proposal queue | `openclaw hybrid-mem skills queue [--status pending\|approved\|…]` |
+| Inspect one | `skills show <id>` · `skills validate <id>` |
+| Install / reject | `skills install <id>` · `skills reject <id> --reason "…"` |
+| On-disk health | `skills rescan` · `skills doctor` |
+| Telemetry | `skills telemetry summary` · `skills telemetry issues` |
+| Run crystallization cycle | `skills crystallize [--dry-run]` |
+
+Repo: **`docs/SKILL-PIPELINES.md`**. Agent tools: **`memory_crystallize*`**, **`memory_workshop`**.
+
+## Workboard integration (when `workboard.enabled: true`)
+
+When Workboard integration is enabled, active tasks and goals sync to OpenClaw's Workboard Kanban UI as cards. The sync is bidirectional: moving a card between columns in Workboard updates the task/goal status in hybrid-memory.
+
+- Sync runs automatically every N minutes (default: 5)
+- Cards are tagged with `hybrid-memory` for filtering
+- Status values map to Workboard columns (e.g. `in_progress` → "In Progress", `done` → "Done")
+- No extra agent tools needed — the sync is transparent
+
+Config: `workboard.enabled`, `workboard.syncTasks`, `workboard.syncGoals`, `workboard.bidirectional`, `workboard.columns.*`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md#workboard-integration-workboard).
+
+## Wiki integration and Dreaming UI (when `wikiIntegration.enabled: true`)
+
+Bridges hybrid-memory with the `memory-wiki` plugin and OpenClaw's Dreaming UI tab:
+
+- **Dreaming UI:** Facts appear in "Imported Insights" and "Memory Palace" sections
+- **Unified search:** Facts are included in `memory_search corpus=all` / `wiki_search corpus=all`
+- **Dream findings:** When the nightly dream cycle runs, discovered patterns and summaries are stored as tagged facts (`dream-finding`) and bridged to the Dreaming UI
+- **Workspace mirror:** When `workspaceExportIntervalMinutes` > 0, facts are also written to `{workspace}/memory/hybrid-wiki/` (human-readable; does not touch root `MEMORY.md`)
+- **Manual sync:** `openclaw hybrid-mem wiki export` · **Status:** `openclaw hybrid-mem wiki status`
+- **Verify:** `openclaw hybrid-mem verify` reports wiki/workboard connectivity when enabled
+- **Bidirectional editing:** When `mutations.enabled` is true, external clients (memory-wiki, WebUI) can create, update, supersede, and delete facts via `hybrid-mem.facts.*` Gateway RPC or HTTP endpoints
+
+Config: `wikiIntegration.enabled`, `wikiIntegration.publicArtifacts`, `wikiIntegration.corpusSupplement`, `wikiIntegration.workspaceExportIntervalMinutes` (0 = disable mirror), `wikiIntegration.mutations.enabled`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md#wiki-integration-wikiintegration).
 
 ## Configuration mindset
 
@@ -101,20 +221,26 @@ For example, for goal `deploy-api`, name subagents `deploy-api-run-tests`, `depl
 
 ## Progressive disclosure
 
-- For deep behavior (HyDE, RRF, procedures, crystallization, cron jobs), rely on **this skill for basics**, then read project docs or the plugin README when a task requires a specific subsystem.
+- For deep behavior (HyDE, RRF, procedures, crystallization, cron jobs), rely on **this skill for basics**, then read **`references/memory-optimization.md`** or repo docs when a task requires a specific subsystem.
 
 ## Optimizing memory (inspection, settings, task order)
 
-When the user wants **maximum memory quality**, **which toggles are on**, **what to enable next**, or a **step-by-step maintenance / digest / optimization run**:
+When the user wants **maximum memory quality**, **which toggles are on**, **what to enable next**, or a **maintenance / digest / optimization run**:
 
-1. Tell them to run **`openclaw hybrid-mem verify`** and **`openclaw hybrid-mem config`** first (ground truth for health + flags).
-2. For a **single bundled catch-up**, use **`openclaw hybrid-mem run-all`** (respects feature flags; see repo docs for what it includes vs cron-only tasks).
-3. For **manual ordering** (nightly → weekly → monthly mirrors) and **high-impact settings**, read the bundled reference:
-   **`references/memory-optimization.md`** (same folder as this `SKILL.md` under `{workspace}/skills/hybrid-memory/` — copied there on first gateway start if missing, or by `openclaw hybrid-mem install`)
-   That file covers: inspection commands, benefit-ranked settings, `run-all` vs one-by-one chains, and how cron maps to CLI — without duplicating the full repo manuals.
+1. **`openclaw hybrid-mem verify`** and **`openclaw hybrid-mem config`** — ground truth for health + flags.
+2. **`openclaw hybrid-mem maintenance steps`** — see which orchestrator steps are due.
+3. **Catch-up:** **`openclaw hybrid-mem maintenance full --verbose`** (same as **`run-all`**). Use **`--force`** after long downtime.
+4. **Nightly-only (mirrors cron):** **`maintenance nightly --verbose`**.
+
+Read the bundled reference for settings priorities, individual step overrides, and cron architecture:
+
+**`references/memory-optimization.md`** (under `{workspace}/skills/hybrid-memory/` — copied on first gateway start if missing, refreshed by **`openclaw hybrid-mem install`**)
 
 ## Reference
 
 - **Optimization guide (bundled):** `references/memory-optimization.md`
-- Upstream docs: [openclaw-hybrid-memory repository](https://github.com/markus-lassfolk/openclaw-hybrid-memory) (`docs/QUICKSTART.md`, `docs/CONFIGURATION.md`, `docs/GRAPH-MEMORY.md`, `docs/MULTILINGUAL-SUPPORT.md`, `docs/MAINTENANCE-TASKS-MATRIX.md`).
+- **Maintenance matrix (repo):** [MAINTENANCE-TASKS-MATRIX.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE-TASKS-MATRIX.md)
+- **Credentials:** [CREDENTIALS.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CREDENTIALS.md)
+- **Skills pipelines:** [SKILL-PIPELINES.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/SKILL-PIPELINES.md)
+- Upstream docs: [openclaw-hybrid-memory repository](https://github.com/markus-lassfolk/openclaw-hybrid-memory) (`docs/QUICKSTART.md`, `docs/CONFIGURATION.md`, `docs/GRAPH-MEMORY.md`, `docs/MULTILINGUAL-SUPPORT.md`).
 - OpenClaw skills layout: [Creating skills](https://docs.openclaw.ai/tools/creating-skills).

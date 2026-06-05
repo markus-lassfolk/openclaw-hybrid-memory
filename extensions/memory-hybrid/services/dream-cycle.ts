@@ -113,6 +113,12 @@ export interface DreamCycleConfig {
    * is skipped to avoid operating on a stale SQLite view.
    */
   walFlushFailed?: boolean;
+  /**
+   * When true, run the wiki dream ingester as a post-cycle step.
+   * Reads dream cycle artifacts and stores novel findings as facts.
+   * Default: false.
+   */
+  ingestDreamFindings?: boolean;
 }
 
 /** Optional bridge context for auto-proposing reflection output (Phase 4). */
@@ -164,6 +170,8 @@ export interface DreamCycleResult {
   success: boolean;
   /** Labels of core stages that failed (non-fatal stages still run afterward). */
   failedStages: string[];
+  /** Number of dream findings ingested as facts by the wiki dream ingester post-step. */
+  dreamFindingsIngested?: number;
 }
 
 // Minimum patterns stored in one cycle before we also run reflect-rules.
@@ -978,7 +986,9 @@ export async function runDreamCycle(
     });
     orphanVectorsRemoved = reconcile.orphanVectorsRemoved;
     if (reconcile.orphansFound > 0 && reconcile.orphanVectorsRemoved > 0) {
-      logger.info(`memory-hybrid: dream-cycle — removed ${reconcile.orphanVectorsRemoved} orphaned vector(s) from LanceDB`);
+      logger.info(
+        `memory-hybrid: dream-cycle — removed ${reconcile.orphanVectorsRemoved} orphaned vector(s) from LanceDB`,
+      );
     }
     if (reconcile.failed > 0) {
       logger.warn(
@@ -1464,6 +1474,38 @@ export async function runDreamCycle(
     });
   }
 
+  // Optional: Ingest dream cycle findings into facts for wiki surface
+  let dreamFindingsIngested = 0;
+  let dreamIngestSuccess = true;
+  if (config.ingestDreamFindings && config.stageArtifactDir && success) {
+    try {
+      const { ingestDreamFindings } = await import("./wiki-dream-ingester.js");
+      const ingesterResult = await ingestDreamFindings({
+        factsDb,
+        dreamCycleLogDir: config.stageArtifactDir.replace(/\/[^/]+$/, ""),
+        verbose: !!config.verbose,
+      });
+      dreamFindingsIngested = ingesterResult.findingsIngested;
+      if (ingesterResult.errors.length > 0) {
+        dreamIngestSuccess = false;
+        logger.warn(
+          `memory-hybrid: dream-cycle — dream findings ingest errors: ${ingesterResult.errors.slice(0, 3).join("; ")}`,
+        );
+      } else if (ingesterResult.findingsIngested > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — ingested ${ingesterResult.findingsIngested} finding(s) from ${ingesterResult.runsProcessed} run(s)`,
+        );
+      }
+    } catch (err) {
+      dreamIngestSuccess = false;
+      logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed: ${err}`);
+    }
+  }
+
+  const finalSuccess = success && dreamIngestSuccess;
+  const finalFailedStages =
+    dreamIngestSuccess || !config.ingestDreamFindings ? failedStages : [...failedStages, "dream-findings-ingest"];
+
   return {
     factsPruned,
     factsDecayed,
@@ -1478,8 +1520,9 @@ export async function runDreamCycle(
     decayReclassified,
     orphanVectorsRemoved,
     digestSummary,
+    dreamFindingsIngested,
     skipped: false,
-    success,
-    failedStages,
+    success: finalSuccess,
+    failedStages: finalFailedStages,
   };
 }

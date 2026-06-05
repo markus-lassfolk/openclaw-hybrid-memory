@@ -9,11 +9,7 @@
 import type { ToolProposal, ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { SelfExtensionConfig } from "../config/types/features.js";
 import type { HybridMemoryConfig } from "../config.js";
-import {
-  type ChangeFeedEmitOpts,
-  BROADCAST_CHANGE_SESSION_KEY,
-  emitToolProposed,
-} from "./change-feed-emit.js";
+import { type ChangeFeedEmitOpts, BROADCAST_CHANGE_SESSION_KEY, emitToolProposed } from "./change-feed-emit.js";
 import type { DetectedGap, GapDetector, GapDetectorOptions } from "./gap-detector.js";
 
 // ---------------------------------------------------------------------------
@@ -246,9 +242,7 @@ export class ToolProposer {
     }
     return {
       success: true,
-      message: reason
-        ? `Proposal "${proposal.name}" rejected: ${reason}`
-        : `Proposal "${proposal.name}" rejected.`,
+      message: reason ? `Proposal "${proposal.name}" rejected: ${reason}` : `Proposal "${proposal.name}" rejected.`,
       proposal: updated,
     };
   }

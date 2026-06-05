@@ -139,6 +139,40 @@ describe("registerProposalGatewayMethods", () => {
     expect(localMethods.map((m) => m.method)).toContain("hybrid-mem.proposals.list");
   });
 
+  it("registers gateway methods when cfg is health-only and cfgFull carries workshop config", async () => {
+    proposalsDb.create({
+      targetFile: "SOUL.md",
+      title: "Split-context register",
+      observation: "obs",
+      suggestedChange: "change",
+      confidence: 0.8,
+      evidenceSessions: [],
+    });
+    const localMethods: RegisteredMethod[] = [];
+    const api = {
+      registerGatewayMethod: (method: string, handler: RegisteredMethod["handler"]) => {
+        localMethods.push({ method, handler });
+      },
+      logger: { info: () => {}, warn: () => {}, debug: () => {} },
+    } as unknown as ClawdbotPluginApi;
+    registerProposalGatewayMethods({
+      cfg: { health: { enabled: true, authenticated: true } } as HybridMemoryConfig,
+      cfgFull: cfg,
+      factsDb,
+      proposalsDb,
+      crystallizationStore: null,
+      toolProposalStore: null,
+      workflowStore: null,
+      resolvedSqlitePath: join(tmpDir, "facts.db"),
+      changeFeed: null,
+      api,
+    });
+    expect(localMethods.map((m) => m.method)).toContain("hybrid-mem.proposals.list");
+    const list = await callMethod(localMethods, "hybrid-mem.proposals.list", { limit: 10 });
+    expect(list.ok).toBe(true);
+    expect((list.payload as { pendingCount: number }).pendingCount).toBeGreaterThan(0);
+  });
+
   it("hybrid-mem.proposals.reject rejects a pending persona proposal", async () => {
     const proposal = proposalsDb.create({
       targetFile: "SOUL.md",

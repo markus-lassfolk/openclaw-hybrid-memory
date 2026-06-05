@@ -427,9 +427,7 @@ export class WorkflowStore extends BaseSqliteStore {
         if (rows.length <= 1) continue;
 
         const canonicalId = backfillWorkflowTraceId(group.session_id, group.args_hash);
-        const keepId = rows.some((r) => r.id === canonicalId)
-          ? canonicalId
-          : rows[0].id;
+        const keepId = rows.some((r) => r.id === canonicalId) ? canonicalId : rows[0].id;
         kept += 1;
         for (const row of rows) {
           if (row.id === keepId) continue;
@@ -687,7 +685,9 @@ export class WorkflowStore extends BaseSqliteStore {
         const failureCount = c.outcomes.filter((o) => o === "failure").length;
         const successRate = totalCount > 0 ? successCount / totalCount : 0;
         const avgDurationMs = c.durations.length > 0 ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length : 0;
-        const uniqueGoals = [...new Set(c.goals.filter((g) => !excludeSystemGoals || !isSystemWorkflowGoal(g, excludeGoalPatterns)))].slice(0, 3);
+        const uniqueGoals = [
+          ...new Set(c.goals.filter((g) => !excludeSystemGoals || !isSystemWorkflowGoal(g, excludeGoalPatterns))),
+        ].slice(0, 3);
 
         return {
           toolSequence: c.representative,

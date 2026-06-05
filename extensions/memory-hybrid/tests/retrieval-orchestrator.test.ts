@@ -93,19 +93,12 @@ describe("runRetrievalPipeline explicit-deep + issueStore integration", () => {
       fts5TopK: 20,
     };
 
-    const result = await runRetrievalPipeline(
-      "zebra migration pattern",
-      null,
-      factsDb.getRawDb(),
-      vectorDb,
-      factsDb,
-      {
-        mode: RETRIEVAL_MODE.EXPLICIT_DEEP,
-        issueStore,
-        config,
-        budgetTokens: 2000,
-      },
-    );
+    const result = await runRetrievalPipeline("zebra migration pattern", null, factsDb.getRawDb(), vectorDb, factsDb, {
+      mode: RETRIEVAL_MODE.EXPLICIT_DEEP,
+      issueStore,
+      config,
+      budgetTokens: 2000,
+    });
 
     const ids = result.fused.map((r) => r.factId);
     expect(ids).toContain(unrelatedFact.id);

@@ -68,11 +68,7 @@ export function previewCrystallizationCycle(
     const candidates = detectCrystallizationCandidates(wfStore, cStore, previewCfg);
     const reasons: string[] = [];
     if (candidates.length === 0) {
-      if (
-        crystalCfg.excludeSystemGoals &&
-        rawPatterns.length > 0 &&
-        userFacingPatterns.length === 0
-      ) {
+      if (crystalCfg.excludeSystemGoals && rawPatterns.length > 0 && userFacingPatterns.length === 0) {
         reasons.push(
           "Patterns exist but excludeSystemGoals removed all cron/system traces — waiting for user-facing workflow data",
         );

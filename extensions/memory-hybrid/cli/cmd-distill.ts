@@ -62,6 +62,12 @@ import { getMaxMtime } from "./cmd-extract.js";
 import { buildPreFilterConfig, createProgressReporter } from "./cmd-install.js";
 import { extractTextFromSessionJsonl } from "./distill-session-jsonl.js";
 import type { HandlerContext } from "./handlers.js";
+import {
+  createLightJobRun,
+  finishLightJobRun,
+  type LightJobRunParams,
+} from "../services/maintenance-job-run/light-job-run-bridge.js";
+import type { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { DistillCliResult, DistillCliSink, DistillWindowResult, RecordDistillResult } from "./types.js";
@@ -217,6 +223,23 @@ export async function runDistillForCli(
   }
 
   try {
+    const distillFingerprint = `${opts.all ?? ""}:${opts.since ?? ""}:${opts.days ?? 3}:${opts.dryRun}`;
+    let jobRun: MaintenanceJobRun | null = null;
+    const withDistillJobRun = (result: DistillCliResult, extra?: Partial<LightJobRunParams>): DistillCliResult => {
+      if (result.skipped) return result;
+      if (!jobRun) jobRun = createLightJobRun("distill", distillFingerprint);
+      const finished = finishLightJobRun(jobRun, {
+        skipped: result.skipped,
+        dryRun: result.dryRun,
+        semanticEmpty: result.semanticEmpty ?? extra?.semanticEmpty,
+        partialFailure: result.partialFailure ?? extra?.partialFailure,
+        inputsProcessed: result.sessionsScanned,
+        outputsProduced: result.dryRun ? result.factsExtracted : result.stored,
+        ...extra,
+      });
+      return { ...result, jobRunId: finished.jobRunId, semanticOutcome: finished.semanticOutcome };
+    };
+
     const gatherOpts =
       useWatermark && cursor && cursor.lastSessionTs > 0
         ? { sinceTimestampMs: cursor.lastSessionTs }
@@ -237,7 +260,13 @@ export async function runDistillForCli(
         factsDb.updateScanCursor(SCAN_TYPE, 0, 0);
         clearScanLock(SCAN_TYPE);
       }
-      return { sessionsScanned: 0, factsExtracted: 0, stored: 0, dedupSkipped: 0, dryRun: opts.dryRun };
+      return withDistillJobRun({
+        sessionsScanned: 0,
+        factsExtracted: 0,
+        stored: 0,
+        dedupSkipped: 0,
+        dryRun: opts.dryRun,
+      });
     }
 
     // Two-tier pre-filter: use local Ollama to triage sessions before cloud LLM (Issue #290).
@@ -666,16 +695,20 @@ export async function runDistillForCli(
       );
     }
     const runSucceeded = batchFailures === 0 && !semanticEmpty;
-    const shouldAdvanceCursor = batchFailures === 0;
+    const shouldAdvanceCursor = batchFailures === 0 && !semanticEmpty;
     if (opts.dryRun) {
       sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
-      return {
-        sessionsScanned: filesToProcess.length,
-        factsExtracted: allFacts.length,
-        stored: 0,
-        dedupSkipped: 0,
-        dryRun: true,
-      };
+      return withDistillJobRun(
+        {
+          sessionsScanned: filesToProcess.length,
+          factsExtracted: allFacts.length,
+          stored: 0,
+          dedupSkipped: 0,
+          dryRun: true,
+          semanticEmpty,
+        },
+        { semanticEmpty },
+      );
     }
     const sourceDateSec = (s: string | null | undefined) => {
       if (!s || typeof s !== "string") return null;
@@ -846,10 +879,14 @@ export async function runDistillForCli(
       // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
       const lastSessionTs = getMaxMtime(allCandidatePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
+    } else if (!opts.dryRun && semanticEmpty) {
+      sink.warn(
+        `memory-hybrid: distill semantic_empty: scan cursor not advanced (${filesToProcess.length} session(s) remain eligible for retry)`,
+      );
     } else if (batchFailures > 0) {
       sink.warn(`memory-hybrid: distill partial failure: ${batchFailures} batch(es) failed; scan cursor not advanced`);
     }
-    return {
+    return withDistillJobRun({
       sessionsScanned: filesToProcess.length,
       factsExtracted: allFacts.length,
       stored,
@@ -858,7 +895,7 @@ export async function runDistillForCli(
       semanticEmpty,
       partialFailure: batchFailures > 0,
       batchFailures,
-    };
+    });
   } finally {
     if (shouldAcquireLock && !opts.dryRun) clearScanLock(SCAN_TYPE);
   }

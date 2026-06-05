@@ -226,14 +226,17 @@ describe("PR #1332 unresolved feedback remediation", () => {
         embedding: { provider: "openai", apiKey: "sk-test" },
         wal: { enabled: true, walPath },
       } as never,
-      { getCount: () => 1, getFtsConsistencySnapshot: () => ({
-        ftsTableExists: true,
-        hasTagsColumn: true,
-        hasWhyColumn: true,
-        ftsRowCount: 1,
-        factsRowCount: 1,
-        drift: 0,
-      }) } as never,
+      {
+        getCount: () => 1,
+        getFtsConsistencySnapshot: () => ({
+          ftsTableExists: true,
+          hasTagsColumn: true,
+          hasWhyColumn: true,
+          ftsRowCount: 1,
+          factsRowCount: 1,
+          drift: 0,
+        }),
+      } as never,
       { getAllIds: async () => ["v1"] } as never,
       wal as never,
     );

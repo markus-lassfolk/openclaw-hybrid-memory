@@ -14,7 +14,11 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { emitPersonaApplied, supersedeActiveProposedEvent } from "../services/change-feed-emit.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { writeProposalRollback, deleteProposalRollback } from "../services/proposal-rollback.js";
-import { enforceMaxPendingCap, resolveWorkshopMaxPending, type UnifiedProposalStores } from "../services/unified-proposals.js";
+import {
+  enforceMaxPendingCap,
+  resolveWorkshopMaxPending,
+  type UnifiedProposalStores,
+} from "../services/unified-proposals.js";
 import { resolveWorkshopAppliedSessionKey } from "../services/workshop-config.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { nowIso } from "../utils/dates.js";
@@ -145,10 +149,7 @@ const PROPOSAL_PROMPT_INJECTION_RE =
 const PROPOSAL_SECRET_OR_PRIVATE_RE =
   /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|token|password|secret)\s*[:=]|\bghp_[A-Za-z0-9_]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~+/-]{16,}/i;
 
-export type ProposalContentValidationFailure =
-  | "dangerous_content"
-  | "prompt_injection"
-  | "secret_or_private_data";
+export type ProposalContentValidationFailure = "dangerous_content" | "prompt_injection" | "secret_or_private_data";
 
 export function validateProposalContent(
   text: string,

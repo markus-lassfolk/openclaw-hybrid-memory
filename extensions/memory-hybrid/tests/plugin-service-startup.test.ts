@@ -209,9 +209,7 @@ describe("createPluginService startup — version check wiring", () => {
     await createPluginService(ctx).start();
 
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
-    const versionWarn = warnCalls.find(
-      (msg) => msg.includes(MIN_OPENCLAW_VERSION) && msg.includes("WARNING"),
-    );
+    const versionWarn = warnCalls.find((msg) => msg.includes(MIN_OPENCLAW_VERSION) && msg.includes("WARNING"));
     expect(versionWarn).toBeUndefined();
 
     const infoCalls = api.logger.info.mock.calls.map((c: unknown[]) => c[0] as string);

@@ -23,7 +23,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2026.6.52] - 2026-06-05
+## [2026.6.55] - 2026-06-05
 
 ### Added
 
@@ -40,7 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **Maintenance CLI overrides ([#1798](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1798), [#1799](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1799)):** scan-style commands share `--force` (preferred) and legacy `--full` to bypass 23h scan cooldown and incremental watermarks; `run-all` propagates overrides; cron QA harness injects `--force`.
-- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.52**.
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.55**.
 
 ---
 

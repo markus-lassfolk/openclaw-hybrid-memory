@@ -8,13 +8,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { FactsDB } from "../backends/facts-db.js";
 
 export type ChangeEventTier = "session" | "persistent";
-export type ChangeEventCategory =
-  | "frustration"
-  | "persona"
-  | "skill"
-  | "tool"
-  | "procedure-skill"
-  | "dream-cycle";
+export type ChangeEventCategory = "frustration" | "persona" | "skill" | "tool" | "procedure-skill" | "dream-cycle";
 export type ChangeEventAction = "detected" | "proposed" | "applied" | "reverted" | "rejected";
 export type ChangeEventActivation = "immediate" | "next-turn" | "next-reload";
 export type ChangeEventStatus = "active" | "reverted" | "superseded";
@@ -201,20 +195,15 @@ export class ChangeFeed {
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-    const orderBy =
-      opts?.sinceOrdinal != null ? "ordinal ASC" : "timestamp_ms DESC";
+    const orderBy = opts?.sinceOrdinal != null ? "ordinal ASC" : "timestamp_ms DESC";
     const rows = db
-      .prepare(
-        `SELECT * FROM change_events ${where} ORDER BY ${orderBy} LIMIT ?`,
-      )
+      .prepare(`SELECT * FROM change_events ${where} ORDER BY ${orderBy} LIMIT ?`)
       .all(...params, limit) as ChangeEventRow[];
     return rows.map(rowToEvent);
   }
 
   getById(id: string): ChangeEvent | null {
-    const row = this.getDb()
-      .prepare(`SELECT * FROM change_events WHERE id = ?`)
-      .get(id) as ChangeEventRow | undefined;
+    const row = this.getDb().prepare(`SELECT * FROM change_events WHERE id = ?`).get(id) as ChangeEventRow | undefined;
     return row ? rowToEvent(row) : null;
   }
 
@@ -237,22 +226,14 @@ export class ChangeFeed {
   }
 
   markReverted(id: string): void {
-    this.getDb()
-      .prepare(`UPDATE change_events SET status = 'reverted' WHERE id = ? AND status = 'active'`)
-      .run(id);
+    this.getDb().prepare(`UPDATE change_events SET status = 'reverted' WHERE id = ? AND status = 'active'`).run(id);
   }
 
   markSuperseded(id: string): void {
-    this.getDb()
-      .prepare(`UPDATE change_events SET status = 'superseded' WHERE id = ? AND status = 'active'`)
-      .run(id);
+    this.getDb().prepare(`UPDATE change_events SET status = 'superseded' WHERE id = ? AND status = 'active'`).run(id);
   }
 
-  markSupersededByProposalKey(
-    proposalKey: string,
-    action: ChangeEventAction = "applied",
-    exceptId?: string,
-  ): void {
+  markSupersededByProposalKey(proposalKey: string, action: ChangeEventAction = "applied", exceptId?: string): void {
     const rows = this.getDb()
       .prepare(
         `SELECT id FROM change_events
@@ -267,9 +248,7 @@ export class ChangeFeed {
   pruneOlderThan(days: number): number {
     if (days <= 0) return 0;
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    const result = this.getDb()
-      .prepare(`DELETE FROM change_events WHERE timestamp_ms < ?`)
-      .run(cutoff);
+    const result = this.getDb().prepare(`DELETE FROM change_events WHERE timestamp_ms < ?`).run(cutoff);
     return typeof result.changes === "number" ? result.changes : 0;
   }
 }

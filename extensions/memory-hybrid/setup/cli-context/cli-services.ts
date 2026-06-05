@@ -70,11 +70,7 @@ interface CliContextServices {
       status: "ok" | "partial" | "degraded";
     };
   }>;
-  runReflectionMeta: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     metaExtracted: number;
     metaStored: number;
     diagnostics?: import("../../services/reflection.js").ReflectionMetaDiagnostics;
@@ -89,6 +85,7 @@ interface CliContextServices {
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
+    batchFailures?: number;
   }>;
   runCompaction: (opts?: { apply?: boolean }) => Promise<{
     hot: number;
@@ -226,12 +223,18 @@ export function buildCliContextServices(
   return {
     runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
     runConsolidate: async (opts) => {
-      // Skip if OpenAI provider is configured but API key is missing
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
         api.logger.warn?.(
           "memory-hybrid: consolidate skipped — embedding.provider is openai but embedding.apiKey is missing",
         );
-        return { clustersFound: 0, merged: 0, deleted: 0 };
+        return {
+          clustersFound: 0,
+          merged: 0,
+          deleted: 0,
+          skipped: true,
+          skipReason: "missing_embedding_api_key",
+          semanticOutcome: "failed",
+        };
       }
       await guardWalUnlessDryRun("cli_consolidation", opts.dryRun);
       return runConsolidate(
@@ -298,11 +301,7 @@ export function buildCliContextServices(
         explicitModel ?? configuredModel,
       );
       const effectiveModel = explicitModel ?? configuredModel ?? defaultModel;
-      const modelSource = explicitModel
-        ? "--model"
-        : configuredModel
-          ? "reflection.model"
-          : "llm.maintenance[0]";
+      const modelSource = explicitModel ? "--model" : configuredModel ? "reflection.model" : "llm.maintenance[0]";
       return runReflectionRules(
         factsDb,
         vectorDb,
@@ -406,21 +405,21 @@ export function buildCliContextServices(
         await guardWal("cli_compaction_retier");
       }
       return factsDb.retier(
-          {
-            inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
-            hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
-            hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
-            coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
-            hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
-            hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
-            hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
-            hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
-            hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
-            structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
-            structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
-          },
-          opts?.apply !== false,
-        );
+        {
+          inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+          hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+          hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+          coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
+          hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
+          hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
+          hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
+          hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
+          hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
+          structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
+          structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
+        },
+        opts?.apply !== false,
+      );
     },
     runBuildLanguageKeywords: async (opts) => {
       await guardWalUnlessDryRun("cli_build_language_keywords", opts.dryRun);
@@ -495,6 +494,7 @@ export function buildCliContextServices(
           reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
           reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
           enableReflectionRules: cfg.nightlyCycle.enableReflectionRules,
+          ingestDreamFindings: cfg.nightlyCycle.ingestDreamFindings === true,
           verbose,
           episodicConsolidationEventTypes: {
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
@@ -513,7 +513,16 @@ export function buildCliContextServices(
         },
         logSink,
         provenanceService,
-        { cfg, proposalsDb: proposalsDb ?? null, crystallizationStore: ctx.crystallizationStore ?? null, toolProposalStore: ctx.toolProposalStore ?? null, workflowStore: ctx.workflowStore ?? null, api, changeFeed: ctx.changeFeed ?? null, resolvedSqlitePath },
+        {
+          cfg,
+          proposalsDb: proposalsDb ?? null,
+          crystallizationStore: ctx.crystallizationStore ?? null,
+          toolProposalStore: ctx.toolProposalStore ?? null,
+          workflowStore: ctx.workflowStore ?? null,
+          api,
+          changeFeed: ctx.changeFeed ?? null,
+          resolvedSqlitePath,
+        },
       );
     },
     runContinuousVerification: async (opts?: { verbose?: boolean }) => {
@@ -595,7 +604,11 @@ export function buildCliContextServices(
         },
         pluginLogger,
       );
-      return `stored=${result.factsStored} scanned=${result.sessionsScanned}`;
+      const summary = `stored=${result.factsStored} scanned=${result.sessionsScanned} errors=${result.errors} semantic=${result.errors > 0 ? "partial" : "success"}`;
+      if (result.errors > 0) {
+        throw new Error(`passive-observer errors=${result.errors} (${summary})`);
+      }
+      return summary;
     },
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,

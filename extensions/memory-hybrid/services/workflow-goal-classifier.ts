@@ -71,9 +71,7 @@ export function filterUserFacingGoals(
   if (opts?.excludeSystemGoals === false) {
     return goals.map((g) => g.trim()).filter((g) => g.length > 0);
   }
-  return goals
-    .map((g) => g.trim())
-    .filter((g) => g.length > 0 && !isSystemWorkflowGoal(g, opts?.excludeGoalPatterns));
+  return goals.map((g) => g.trim()).filter((g) => g.length > 0 && !isSystemWorkflowGoal(g, opts?.excludeGoalPatterns));
 }
 
 /**

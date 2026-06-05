@@ -7,6 +7,7 @@ import {
   getMaintenanceStep,
   resolveStepGuardIntervalMs,
   runMaintenanceOrchestrator,
+  toOrchestratorRunSummary,
 } from "../services/maintenance-orchestrator.js";
 import { readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -109,6 +110,26 @@ describe("maintenance-orchestrator", () => {
     expect(result.steps.find((s) => s.name === "reflect-rules")?.status).toBe("ok");
   });
 
+  it("builds orchestrator run summary with run metadata", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "pruned=1"]]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
+    );
+    expect(result.runId).toBeTruthy();
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    const summary = toOrchestratorRunSummary(result, {
+      runId: result.runId,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+    });
+    expect(summary.schemaVersion).toBe(1);
+    expect(summary.steps).toHaveLength(1);
+    expect(summary.counts.ok).toBe(1);
+  });
+
   it("writes step guard on success", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([["prune", async () => "done"]]);
@@ -117,6 +138,269 @@ describe("maintenance-orchestrator", () => {
       { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
     );
     expect(readStepGuardTimestampMs("prune", openclawDir)).not.toBeNull();
+  });
+
+  it("does not write step guard when runner reports failing semantic outcome", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      ["distill", async () => "stored=0 sessions=0 jobRunId=abc semantic=failed_semantic_empty"],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["distill"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(readStepGuardTimestampMs("distill", openclawDir)).toBeNull();
+  });
+
+  it("does not write step guard when runner reports legacy failed_partial semantic token", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      ["self-correction-run", async () => "incidents=2 analysed=1 jobRunId=abc semantic=failed_partial"],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["self-correction-run"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(readStepGuardTimestampMs("self-correction-run", openclawDir)).toBeNull();
+  });
+
+  it("does not write step guard when runner reports legacy failed_suspect_zero_parsed semantic token", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      ["self-correction-run", async () => "incidents=3 analysed=0 jobRunId=abc semantic=failed_suspect_zero_parsed"],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["self-correction-run"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(readStepGuardTimestampMs("self-correction-run", openclawDir)).toBeNull();
+  });
+
+  it("returns exit code 1 for partial semantic token in runner summary", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      ["distill", async () => "stored=1 sessions=2 jobRunId=abc semantic=partial"],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["distill"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from thrown runner error for summary metadata", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "reembed-vectorless",
+        async () => {
+          throw new Error("reembed-vectorless partial failure (embedded=0/1 failures=1 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["reembed-vectorless"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from repair-vectors orphan cleanup partial failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "repair-vectors",
+        async () => {
+          throw new Error(
+            "repair-vectors partial vector cleanup failure (reembedded=1/1 failures=0 orphans=2 orphan_cleanup_failed=1 semantic=partial)",
+          );
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["repair-vectors"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from active-tasks-maintain partial failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "active-tasks-maintain",
+        async () => {
+          throw new Error(
+            "active-tasks-maintain partial failure (status=partial reconciled=2 failed=1 semantic=partial)",
+          );
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["active-tasks-maintain"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from passive-observer error summary", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "passive-observer",
+        async () => {
+          throw new Error("passive-observer errors=2 (stored=1 scanned=3 errors=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      {
+        cfg: { ...minimalCfg(), passiveObserver: { enabled: true } } as HybridMemoryConfig,
+        runners,
+        openclawDir,
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["passive-observer"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from analyze-maintenance-logs strict failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "analyze-maintenance-logs",
+        async () => {
+          throw new Error("analyze-maintenance-logs strict findings (steps=3 findings=2 strict=fail semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["analyze-maintenance-logs"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from lifecycle-sync sync_errors failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "lifecycle-sync",
+        async () => {
+          throw new Error("lifecycle-sync partial failure (matched=1 expiredNow=0 sync_errors=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      {
+        cfg: {
+          ...minimalCfg(),
+          lifecycle: { adapters: { github: { enabled: true } } },
+        } as HybridMemoryConfig,
+        runners,
+        openclawDir,
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["lifecycle-sync"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from auto-classify batch failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "auto-classify",
+        async () => {
+          throw new Error("auto-classify partial batch failures (reclassified=0/20 batchFailures=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: { ...minimalCfg(), autoClassify: { enabled: true, batchSize: 20 } } as HybridMemoryConfig,
+        runners,
+        openclawDir,
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["auto-classify"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from resolve-contradictions degraded backlog", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "resolve-contradictions",
+        async () => {
+          throw new Error(
+            "resolve-contradictions degraded backlog (resolve-contradictions summary mode=auto auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 semantic=partial)",
+          );
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["resolve-contradictions"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from scope-promote partial failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "scope-promote",
+        async () => {
+          throw new Error("scope-promote partial failure (promoted=1/3 failed=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["scope-promote"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("fails reflect-rules when runner summary has parse_success=false without semantic token", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      ["reflect", async () => "patternsStored=1 facts=2"],
+      [
+        "reflect-rules",
+        async () =>
+          "rulesStored=0 rulesExtracted=0 parse_success=false zero_rules_reason=all_candidates_rejected status=partial",
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["reflect", "reflect-rules"] },
+    );
+    const reflectRules = result.steps.find((s) => s.name === "reflect-rules");
+    expect(reflectRules?.status).toBe("failed");
+    expect(result.exitCode).toBe(1);
+    expect(readStepGuardTimestampMs("reflect-rules", openclawDir)).toBeNull();
   });
 
   it("skips backfill-decay when one-time marker exists", async () => {
@@ -148,10 +432,13 @@ describe("maintenance-orchestrator", () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     let pruneCalls = 0;
     const runners = new Map<string, () => Promise<string>>([
-      ["prune", async () => {
-        pruneCalls++;
-        return "pruned=3";
-      }],
+      [
+        "prune",
+        async () => {
+          pruneCalls++;
+          return "pruned=3";
+        },
+      ],
     ]);
     const result = await runMaintenanceOrchestrator(
       {

@@ -37,10 +37,7 @@ import {
 import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardship.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runCredentialsPruneForCli } from "../cli/cmd-credentials.js";
-import {
-  analyzeMaintenanceSteps,
-  collectMaintenanceSteps,
-} from "../services/maintenance-log-analyzer.js";
+import { collectMaintenanceSteps, summarizeMaintenanceLogAnalysis } from "../services/maintenance-log-analyzer.js";
 import { runMaintenanceTiers } from "../services/maintenance-orchestrator.js";
 import { buildPluginCycleRunners } from "../cli/commands/manage/maintenance-step-runners.js";
 import { syncLifecycleFromGitHub } from "../services/lifecycle/github-adapter.js";
@@ -62,6 +59,7 @@ import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { integrationVerbose } from "../utils/integration-trace.js";
 import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   fetchLatestPublishedVersion,
@@ -392,6 +390,12 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger.warn(
             `memory-hybrid: startup vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
           );
+          capturePluginError(
+            new Error(
+              `startup vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+            ),
+            { operation: "plugin-startup-prune-expired", subsystem: "vector" },
+          );
         }
       }
 
@@ -467,6 +471,185 @@ export function createPluginService(ctx: PluginServiceContext) {
         api.logger.warn?.(`memory-hybrid: cron guard sync failed (non-fatal): ${err}`);
       }
 
+      // Wiki integration: register corpus supplement so facts appear in `memory_search corpus=all`
+      const uiIntegrationVerbose = integrationVerbose(cfg.verbosity);
+      if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.corpusSupplement) {
+        try {
+          const { createMemoryCorpusSupplement } = await import("../services/memory-corpus-supplement.js");
+          const supplement = createMemoryCorpusSupplement({
+            factsDb,
+            includeAllScopes: true,
+            verbose: uiIntegrationVerbose,
+          });
+          const registerCorpus = (api as { registerMemoryCorpusSupplement?: (s: unknown) => void })
+            .registerMemoryCorpusSupplement;
+          if (typeof registerCorpus === "function") {
+            registerCorpus(supplement);
+            api.logger.info("memory-hybrid: registered MemoryCorpusSupplement for wiki/search integration");
+          } else {
+            api.logger.debug?.(
+              "memory-hybrid: api.registerMemoryCorpusSupplement not available — corpus supplement skipped",
+            );
+          }
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: corpus supplement registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "corpus-supplement-register",
+          });
+        }
+      }
+
+      // Wiki integration: register publicArtifacts for memory-wiki bridge import
+      if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.publicArtifacts) {
+        try {
+          const { registerPublicArtifactsBestEffort } = await import("../services/public-artifacts-provider.js");
+          registerPublicArtifactsBestEffort(api as Parameters<typeof registerPublicArtifactsBestEffort>[0], factsDb, uiIntegrationVerbose);
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: publicArtifacts registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "public-artifacts-register",
+          });
+        }
+      }
+
+      // Wiki integration: optional workspace markdown mirror (supplement to publicArtifacts RPC)
+      if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.workspaceExportIntervalMinutes > 0) {
+        try {
+          const { syncWikiWorkspaceExport } = await import("../services/wiki-workspace-export.js");
+          const wikiWorkspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          let wikiExportInFlight = false;
+
+          const runWikiWorkspaceExport = (): void => {
+            if (shuttingDown || wikiExportInFlight) return;
+            wikiExportInFlight = true;
+            try {
+              syncWikiWorkspaceExport(factsDb, wikiWorkspaceRoot, uiIntegrationVerbose);
+            } catch (err) {
+              api.logger.warn?.(
+                `memory-hybrid: wiki workspace export failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            } finally {
+              wikiExportInFlight = false;
+            }
+          };
+
+          runWikiWorkspaceExport();
+          const wikiExportIntervalMs = cfg.wikiIntegration.workspaceExportIntervalMinutes * 60 * 1000;
+          (timers as Record<string, unknown>).wikiWorkspaceExport = {
+            value: setInterval(runWikiWorkspaceExport, wikiExportIntervalMs),
+          };
+          api.logger.info(
+            `memory-hybrid: wiki workspace mirror enabled — syncing to memory/hybrid-wiki/ every ${cfg.wikiIntegration.workspaceExportIntervalMinutes} min`,
+          );
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: wiki workspace export startup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "wiki-workspace-export-start",
+          });
+        }
+      }
+
+      // Workboard integration: start adapter for bidirectional task/goal sync
+      if (cfg.workboard?.enabled) {
+        try {
+          const { createWorkboardAdapter } = await import("../services/workboard-adapter.js");
+          const { loadTaskLedgerFromFacts } = await import("../services/task-ledger-facts.js");
+          const { listGoals } = await import("../services/goal-registry.js");
+          const { applyWorkboardTaskStatusUpdate, applyWorkboardGoalStatusUpdate } = await import(
+            "../services/workboard-facts-sync.js"
+          );
+
+          const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          const goalsDir = cfg.goalStewardship?.enabled
+            ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir)
+            : undefined;
+
+          const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN ?? undefined;
+
+          const adapter = createWorkboardAdapter({
+            cfg: {
+              ...cfg.workboard,
+              syncGoals: cfg.workboard.syncGoals && !!goalsDir,
+            },
+            loadTasks: () => loadTaskLedgerFromFacts(factsDb),
+            loadGoals: async () => {
+              if (!goalsDir) return [];
+              try {
+                return await listGoals(goalsDir);
+              } catch {
+                return [];
+              }
+            },
+            updateTaskStatus: (label, newStatus) =>
+              applyWorkboardTaskStatusUpdate(
+                factsDb,
+                vectorDb,
+                embeddings,
+                label,
+                newStatus as import("../services/active-task.js").ActiveTaskStatus,
+                api.logger,
+              ),
+            updateGoalStatus: goalsDir
+              ? (goalId, newStatus) =>
+                  applyWorkboardGoalStatusUpdate(
+                    goalsDir,
+                    goalId,
+                    newStatus as import("../services/goal-stewardship-types.js").GoalStatus,
+                  )
+              : undefined,
+            gatewayToken,
+            verbose: uiIntegrationVerbose,
+          });
+
+          const available = await adapter.isAvailable();
+          if (available) {
+            api.logger.info("memory-hybrid: Workboard adapter connected — starting initial sync");
+            const result = await adapter.sync();
+            if (result.errors.length > 0) {
+              api.logger.warn(`memory-hybrid: Workboard initial sync had errors: ${result.errors.join("; ")}`);
+            }
+
+            // Recurring sync timer
+            const intervalMs = cfg.workboard.syncIntervalMinutes * 60 * 1000;
+            (timers as Record<string, unknown>).workboardSync = {
+              value: setInterval(() => {
+                if (shuttingDown) return;
+                adapter.sync().then((syncResult) => {
+                  if (syncResult.errors.length > 0) {
+                    api.logger.warn?.(
+                      `memory-hybrid: Workboard sync tick errors: ${syncResult.errors.slice(0, 5).join("; ")}`,
+                    );
+                  }
+                }).catch((err) => {
+                  api.logger.warn?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
+                });
+              }, intervalMs),
+            };
+          } else {
+            api.logger.info(
+              "memory-hybrid: Workboard plugin not reachable — sync disabled (will retry on next maintenance cycle)",
+            );
+          }
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: Workboard adapter startup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "workboard-adapter-start",
+          });
+        }
+      }
+
       // Issue #309: Mission Control dashboard HTTP server
       if (cfg.dashboard.enabled) {
         try {
@@ -539,8 +722,8 @@ export function createPluginService(ctx: PluginServiceContext) {
               model: cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default"),
               dryRun: false,
             });
-            if (!result.ok) throw new Error(result.error);
-            return `languagesAdded=${result.languagesAdded}`;
+            if (!result.ok) throw new Error(`build-languages failed (${result.error ?? "unknown"} semantic=partial)`);
+            return `languagesAdded=${result.languagesAdded} semantic=success`;
           };
 
           const runPassiveObserverOnce = async () => {
@@ -572,7 +755,11 @@ export function createPluginService(ctx: PluginServiceContext) {
               },
               api.logger,
             );
-            return `stored=${result.factsStored} scanned=${result.sessionsScanned}`;
+            const summary = `stored=${result.factsStored} scanned=${result.sessionsScanned} errors=${result.errors} semantic=${result.errors > 0 ? "partial" : "success"}`;
+            if (result.errors > 0) {
+              throw new Error(`passive-observer errors=${result.errors} (${summary})`);
+            }
+            return summary;
           };
 
           const runLifecycleSync = async () => {
@@ -582,7 +769,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               config: github,
               apply: true,
             });
-            return `matched=${report.matched}`;
+            return `matched=${report.matched} expiredNow=${report.expiredNow} sync_errors=${report.errors.length} semantic=${report.errors.length > 0 ? "partial" : "success"}`;
           };
 
           const openclawDir = join(homedir(), ".openclaw");
@@ -591,19 +778,17 @@ export function createPluginService(ctx: PluginServiceContext) {
             const logDir = join(openclawDir, "logs", "cron-hybrid-mem");
             if (!existsSync(logDir)) return "skipped (no cron log dir)";
             const steps = collectMaintenanceSteps(logDir, "24h");
-            if (steps.length === 0) return "no log steps in 24h";
-            const findings = analyzeMaintenanceSteps(steps);
-            const errors = findings.filter((f) => f.severity === "critical" || f.severity === "high").length;
-            return `steps=${steps.length} findings=${findings.length} errors=${errors}`;
+            if (steps.length === 0) return "no log steps in 24h semantic=success";
+            return summarizeMaintenanceLogAnalysis(steps).summary;
           };
 
           const runCredentialsPrune =
             credentialsDb && cfg.credentials?.enabled
               ? async () =>
-                  runCredentialsPruneForCli(
-                    { credentialsDb } as import("../cli/handlers.js").HandlerContext,
-                    { dryRun: false, yes: true },
-                  )
+                  runCredentialsPruneForCli({ credentialsDb } as import("../cli/handlers.js").HandlerContext, {
+                    dryRun: false,
+                    yes: true,
+                  })
               : undefined;
 
           const runActiveTasksMaintain = async () => {
@@ -615,7 +800,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 flushOnComplete: cfg.activeTask.flushOnComplete !== false,
                 memoryDir: join(workspaceRoot, "memory"),
               });
-              return `reconciled=${r.reconciledLabels.length}`;
+              return `reconciled=${r.reconciledLabels.length} failed=${r.failed} semantic=${r.failed > 0 ? "partial" : "success"}`;
             }
             return "ledger=file (watchdog handles)";
           };
@@ -643,13 +828,13 @@ export function createPluginService(ctx: PluginServiceContext) {
             runCredentialsPrune,
           });
 
-          const result = await runMaintenanceTiers(
-            { cfg, runners, logger: api.logger, openclawDir },
-            ["cycle"],
-            { verbose: false },
-          );
+          const result = await runMaintenanceTiers({ cfg, runners, logger: api.logger, openclawDir }, ["cycle"], {
+            verbose: false,
+          });
           if (result.exitCode !== 0) {
-            api.logger.warn?.(`memory-hybrid: maintenance tick (${label}) exit=${result.exitCode}: ${result.summaryLine}`);
+            api.logger.warn?.(
+              `memory-hybrid: maintenance tick (${label}) exit=${result.exitCode}: ${result.summaryLine}`,
+            );
           }
         } catch (err) {
           api.logger.warn(`memory-hybrid: maintenance tick failed: ${err}`);

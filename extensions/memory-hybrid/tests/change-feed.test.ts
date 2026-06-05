@@ -18,7 +18,11 @@ import {
   syncProposalWithdrawnInChangeFeed,
 } from "../services/change-feed-emit.js";
 import { createFrustrationResetCallback, resolveChangeEventForRevert } from "../services/change-feed-revert.js";
-import { buildChangeNoticeBlock, collectPendingChangeEvents, trimEventsToBudget } from "../lifecycle/stage-change-notify.js";
+import {
+  buildChangeNoticeBlock,
+  collectPendingChangeEvents,
+  trimEventsToBudget,
+} from "../lifecycle/stage-change-notify.js";
 import { createSessionState } from "../lifecycle/session-state.js";
 import type { HybridMemoryConfig } from "../config.js";
 
@@ -124,9 +128,7 @@ describe("ChangeFeed", () => {
       rollbackAvailable: true,
       activation: "next-reload",
     });
-    expect(feed.findActiveByProposalKey("persona:cross", "applied")?.sessionKey).toBe(
-      BROADCAST_CHANGE_SESSION_KEY,
-    );
+    expect(feed.findActiveByProposalKey("persona:cross", "applied")?.sessionKey).toBe(BROADCAST_CHANGE_SESSION_KEY);
   });
 
   it("marks events reverted and lists since timestamp", () => {
@@ -154,19 +156,13 @@ describe("ChangeFeed", () => {
 describe("shouldNotifyChangeInChat", () => {
   it("respects notifyOn flags", () => {
     const cfg = makeCfg({ notifyOn: { ...makeCfg().liveChangeFeed.notifyOn, proposalCreated: false } });
-    expect(
-      shouldNotifyChangeInChat(cfg, { tier: "persistent", action: "proposed", category: "persona" }),
-    ).toBe(false);
-    expect(
-      shouldNotifyChangeInChat(cfg, { tier: "persistent", action: "applied", category: "persona" }),
-    ).toBe(true);
+    expect(shouldNotifyChangeInChat(cfg, { tier: "persistent", action: "proposed", category: "persona" })).toBe(false);
+    expect(shouldNotifyChangeInChat(cfg, { tier: "persistent", action: "applied", category: "persona" })).toBe(true);
   });
 
   it("does not notify unknown action types by default", () => {
     const cfg = makeCfg();
-    expect(
-      shouldNotifyChangeInChat(cfg, { tier: "persistent", action: "rejected", category: "persona" }),
-    ).toBe(false);
+    expect(shouldNotifyChangeInChat(cfg, { tier: "persistent", action: "rejected", category: "persona" })).toBe(false);
   });
 });
 
@@ -207,8 +203,8 @@ describe("buildChangeNoticeBlock", () => {
     expect(block).toContain("<memory-change-notice>");
     expect(block).toContain("#1 [session/session]");
     expect(block).toContain("#2 [system/persistent]");
-    expect(block).toContain('revert change 1');
-    expect(block).toContain('revert change 2');
+    expect(block).toContain("revert change 1");
+    expect(block).toContain("revert change 2");
   });
 });
 
@@ -533,10 +529,12 @@ describe("ChangeFeed concurrent append", () => {
     const sessionKey = "race-session";
     const workerCount = 12;
     const ordinals = await Promise.all(
-      Array.from({ length: workerCount }, () =>
-        new Promise<number>((resolve, reject) => {
-          const worker = new Worker(
-            `
+      Array.from(
+        { length: workerCount },
+        () =>
+          new Promise<number>((resolve, reject) => {
+            const worker = new Worker(
+              `
               const { parentPort, workerData } = require('node:worker_threads');
               const { DatabaseSync } = require('node:sqlite');
               const { randomUUID } = require('node:crypto');
@@ -578,15 +576,15 @@ describe("ChangeFeed concurrent append", () => {
                 parentPort.postMessage({ error: String(err) });
               }
             `,
-            { eval: true, workerData: { dbPath, sessionKey } },
-          );
-          worker.on("message", (msg: { ordinal?: number; error?: string }) => {
-            worker.terminate().catch(() => {});
-            if (msg.error) reject(new Error(msg.error));
-            else resolve(msg.ordinal!);
-          });
-          worker.on("error", reject);
-        }),
+              { eval: true, workerData: { dbPath, sessionKey } },
+            );
+            worker.on("message", (msg: { ordinal?: number; error?: string }) => {
+              worker.terminate().catch(() => {});
+              if (msg.error) reject(new Error(msg.error));
+              else resolve(msg.ordinal!);
+            });
+            worker.on("error", reject);
+          }),
       ),
     );
 

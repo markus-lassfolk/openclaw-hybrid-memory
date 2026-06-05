@@ -34,10 +34,7 @@ import type { CrystallizationConfig } from "../../config/types/features.js";
 import type { WorkflowPattern } from "../../backends/workflow-store.js";
 import { parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
 import { collectWorkflowToolsFromSessionFile } from "../../services/session-v3-parser.js";
-import {
-  countUsefulnessBuckets,
-  pickCrystallizationVerdict,
-} from "./crystallization-verdict.js";
+import { countUsefulnessBuckets, pickCrystallizationVerdict } from "./crystallization-verdict.js";
 import { redactMaintenancePrivateText } from "../../utils/maintenance-privacy.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -110,7 +107,10 @@ function detectSessionGaps(hist: Map<string, number>, windowDays: number): strin
   return gaps;
 }
 
-function backfillWorkflowTraces(wf: WorkflowStore, paths: string[]): {
+function backfillWorkflowTraces(
+  wf: WorkflowStore,
+  paths: string[],
+): {
   traces: number;
   skipped: number;
   noTools: number;
@@ -128,9 +128,7 @@ function backfillWorkflowTraces(wf: WorkflowStore, paths: string[]): {
       noTools++;
       continue;
     }
-    const goal = redactMaintenancePrivateText(
-      extractUserWorkflowGoal(messages, PROD_CFG.excludeGoalPatterns),
-    );
+    const goal = redactMaintenancePrivateText(extractUserWorkflowGoal(messages, PROD_CFG.excludeGoalPatterns));
     if (isSystemWorkflowGoal(goal, PROD_CFG.excludeGoalPatterns)) {
       skippedSystemGoals++;
       continue;
@@ -331,8 +329,7 @@ async function main(): Promise<void> {
   }
 
   const dataGapOk = gaps.length <= 2;
-  const unknownOutcomeShare =
-    backfill.traces > 0 ? (outcomes.unknown ?? 0) / backfill.traces : 0;
+  const unknownOutcomeShare = backfill.traces > 0 ? (outcomes.unknown ?? 0) / backfill.traces : 0;
   const verdict = pickCrystallizationVerdict({
     dataGapOk,
     liveProdCandidates,
@@ -371,7 +368,11 @@ async function main(): Promise<void> {
         .join(", ") || "(none)"
     }`,
     liveWfStats
-      ? `- Live workflow-traces.db on sandbox: total=${liveWfStats.total}, last ${days}d=${liveWfStats.sinceWindow}, user-facing=${Math.max(0, liveWfStats.sinceWindow - liveWfStats.systemGoalTraces)}, system-goal=${liveWfStats.systemGoalTraces}, outcomes: ${Object.entries(liveWfStats.outcomes).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`
+      ? `- Live workflow-traces.db on sandbox: total=${liveWfStats.total}, last ${days}d=${liveWfStats.sinceWindow}, user-facing=${Math.max(0, liveWfStats.sinceWindow - liveWfStats.systemGoalTraces)}, system-goal=${liveWfStats.systemGoalTraces}, outcomes: ${
+          Object.entries(liveWfStats.outcomes)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ") || "(none)"
+        }`
       : `- Live workflow-traces.db on sandbox: (not present — backfill-only analysis)`,
     `- Maeve config workflowTracking.enabled: **${cfg.workflowTracking.enabled}**`,
     `- Maeve config crystallization.enabled: **${cfg.crystallization.enabled}**`,
@@ -445,7 +446,9 @@ async function main(): Promise<void> {
   lines.push(`## Recommendations`, ``);
   let rec = 1;
   if (!cfg.workflowTracking.enabled) {
-    lines.push(`${rec++}. Enable \`workflowTracking.enabled\` on Maeve so traces record success/failure instead of backfill-only inference.`);
+    lines.push(
+      `${rec++}. Enable \`workflowTracking.enabled\` on Maeve so traces record success/failure instead of backfill-only inference.`,
+    );
   }
   if (liveWfStats && liveWfStats.systemGoalTraces > 0) {
     lines.push(

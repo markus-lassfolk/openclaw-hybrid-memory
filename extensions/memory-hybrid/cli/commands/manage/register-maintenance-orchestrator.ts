@@ -5,12 +5,14 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { atomicWriteFile } from "../../../utils/atomic-write.js";
 import {
   effectiveCadenceLabel,
   formatMaintenanceSummary,
   listMaintenanceSteps,
   resolveStepGuardIntervalMs,
   runMaintenanceOrchestrator,
+  toOrchestratorRunSummary,
 } from "../../../services/maintenance-orchestrator.js";
 import { readStepGuardTimestampMs, stepGuardEligible } from "../../../services/cron-guard.js";
 import { formatTimestampUtcFromMs } from "../../../utils/dates.js";
@@ -40,9 +42,16 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       include?: string;
       exclude?: string;
       maxRuntimeMin?: string;
+      json?: boolean;
+      summaryOut?: string;
     },
   ) => {
     const verbose = !!opts?.verbose;
+    const runStartedMs = Date.now();
+    const runStartedIso = new Date(runStartedMs).toISOString();
+    if (process.env.HM_RUN_ID) {
+      process.env.HM_ORCHESTRATOR_RUN_ID = process.env.HM_RUN_ID;
+    }
     const memoryDir = b.resolvedSqlitePath ? dirname(b.resolvedSqlitePath) : join(homedir(), ".openclaw", "memory");
     const backfillMarker = join(memoryDir, ".backfill-decay-done");
     const runners = buildCliMaintenanceRunners(b, {
@@ -55,12 +64,16 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
         ? Number(opts.maxRuntimeMin) * 60_000
         : undefined;
 
+    const isJsonMode = opts?.json || !!opts?.summaryOut?.trim() || !!process.env.HM_SUMMARY?.trim();
+    const log = isJsonMode ? (m: string) => console.error(m) : (m: string) => console.log(m);
+    const warn = (m: string) => console.error(m);
+
     const result = await runMaintenanceOrchestrator(
       {
         cfg: b.cfg,
         runners,
         openclawDir,
-        logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
+        logger: { info: log, warn },
         oneTimeMarkerExists: (path) => existsSync(join(memoryDir, path)),
       },
       {
@@ -74,9 +87,26 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       },
     );
 
-    const { summaryLine, lines } = formatMaintenanceSummary(result.tierLabel, result.steps);
-    console.log(summaryLine);
-    for (const line of lines) console.log(line);
+    const orchestratorSummary = toOrchestratorRunSummary(result, {
+      runId: result.runId,
+      job: process.env.HM_JOB,
+      startedAt: result.startedAt ?? runStartedIso,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs ?? Date.now() - runStartedMs,
+    });
+
+    const summaryOutPath = opts?.summaryOut?.trim() || process.env.HM_SUMMARY?.trim();
+    if (summaryOutPath) {
+      atomicWriteFile(summaryOutPath, `${JSON.stringify(orchestratorSummary, null, 2)}\n`);
+    }
+
+    if (opts?.json) {
+      console.log(JSON.stringify(orchestratorSummary, null, 2));
+    } else {
+      const { summaryLine, lines } = formatMaintenanceSummary(result.tierLabel, result.steps);
+      console.log(summaryLine);
+      for (const line of lines) console.log(line);
+    }
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
   };
 
@@ -88,33 +118,41 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
       .option("-v, --verbose", "Detailed per-step output")
       .option("--include <steps>", "Comma-separated step names to run only")
       .option("--exclude <steps>", "Comma-separated step names to skip")
-      .option("--max-runtime-min <n>", "Optional time budget in minutes");
+      .option("--max-runtime-min <n>", "Optional time budget in minutes")
+      .option("--json", "Emit orchestrator run summary as JSON")
+      .option("--summary-out <path>", "Write orchestrator run summary JSON to path");
 
   commonOptions(
     maintenance
       .command("cycle")
       .description("Run cycle-tier maintenance steps (local gateway-native work)")
-      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
-        await runTier(["cycle"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
-      })),
+      .action(
+        withExit(async (opts, cmd?: CommanderOptsParent) => {
+          await runTier(["cycle"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+        }),
+      ),
   );
 
   commonOptions(
     maintenance
       .command("nightly")
       .description("Run all non-cycle steps (staggered guards decide which execute)")
-      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
-        await runTier(["nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
-      })),
+      .action(
+        withExit(async (opts, cmd?: CommanderOptsParent) => {
+          await runTier(["nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+        }),
+      ),
   );
 
   commonOptions(
     maintenance
       .command("full")
       .description("Run cycle + nightly tiers in sequence")
-      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
-        await runTier(["cycle", "nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
-      })),
+      .action(
+        withExit(async (opts, cmd?: CommanderOptsParent) => {
+          await runTier(["cycle", "nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+        }),
+      ),
   );
 
   maintenance

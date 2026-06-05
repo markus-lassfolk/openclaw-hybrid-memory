@@ -100,7 +100,10 @@ export function detectProviderLeak(log: string, llmTask: boolean): { leak: boole
         !/disabledProviders|config-set|Example \(/.test(line) &&
         !/distill store failed for.*azure-foundry/i.test(line) &&
         !/using llm\.providers\["azure-foundry"\] for embeddings/i.test(line) &&
-        !(/azure-foundry/i.test(line) && /embed|embedding|Embedding provider|reflection-rules-embed|loadReflectionDedupeCorpusVectors/i.test(line)) &&
+        !(
+          /azure-foundry/i.test(line) &&
+          /embed|embedding|Embedding provider|reflection-rules-embed|loadReflectionDedupeCorpusVectors/i.test(line)
+        ) &&
         !/embedding\.endpoint|test-embeddings|Embedding provider/i.test(line),
     )
     .join("\n");

@@ -16,7 +16,11 @@ import {
   resolveQualifierToTable,
   runtimeSchemaFromDb,
 } from "./helpers/sql-schema-extract.js";
-import { getSchemaRegistry, resetSchemaRegistryCache, scanAllSqlGuardrailViolations } from "./helpers/sql-guardrails.js";
+import {
+  getSchemaRegistry,
+  resetSchemaRegistryCache,
+  scanAllSqlGuardrailViolations,
+} from "./helpers/sql-guardrails.js";
 
 const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -50,9 +54,7 @@ describe("sql schema extract", () => {
   });
 
   it("flags unknown qualified columns against the registry", () => {
-    const registry = new Map<string, Set<string>>([
-      ["verified_facts", new Set(["fact_id", "next_verification"])],
-    ]);
+    const registry = new Map<string, Set<string>>([["verified_facts", new Set(["fact_id", "next_verification"])]]);
     const bad = `
       db.prepare(\`
         SELECT vf.fact_id FROM verified_facts vf WHERE vf.tier = ?
@@ -64,9 +66,7 @@ describe("sql schema extract", () => {
   });
 
   it("ignores unresolved subquery aliases (no false positives)", () => {
-    const registry = new Map<string, Set<string>>([
-      ["verified_facts", new Set(["fact_id", "version"])],
-    ]);
+    const registry = new Map<string, Set<string>>([["verified_facts", new Set(["fact_id", "version"])]]);
     const ok = `
       db.prepare(\`
         SELECT latest.max_version

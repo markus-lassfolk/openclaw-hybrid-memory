@@ -349,9 +349,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
     // Auto-recall already injects query-relevant memories via before_agent_start; skip
     // recency-based list() injection to avoid duplicate/conflicting context (#908).
     if (cfg.autoRecall?.enabled) {
-      logger.debug?.(
-        "memory-hybrid: context-engine assemble skipped (autoRecall handles per-turn injection)",
-      );
+      logger.debug?.("memory-hybrid: context-engine assemble skipped (autoRecall handles per-turn injection)");
       return { messages: params.messages, estimatedTokens: 0 };
     }
 
@@ -540,11 +538,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       // Fetch top-N recent/important facts to seed the sub-agent's context
       const limit = cfg.autoRecall?.limit ?? 10;
       let topFacts = factsDb.list(Math.min(limit, 15));
-      topFacts = filterFactsNotYetInjected(
-        this.opts.injectedFactIdsBySession,
-        params.childSessionKey,
-        topFacts,
-      );
+      topFacts = filterFactsNotYetInjected(this.opts.injectedFactIdsBySession, params.childSessionKey, topFacts);
 
       if (topFacts.length === 0) {
         logger.debug?.(`memory-hybrid: prepareSubagentSpawn — no facts to inject for child=${params.childSessionKey}`);
@@ -566,9 +560,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         markFactsInjectedForSession(this.opts.injectedFactIdsBySession, params.childSessionKey, injectedIds);
       }
       const tokenBudget = Math.min(cfg.autoRecall?.maxTokens ?? 800, cfg.retrieval.ambientBudgetTokens);
-      const contextAddition = rawBlock
-        ? trimBlockToBudget(rawBlock, tokenBudget).text || null
-        : null;
+      const contextAddition = rawBlock ? trimBlockToBudget(rawBlock, tokenBudget).text || null : null;
 
       if (!contextAddition) {
         logger.debug?.(

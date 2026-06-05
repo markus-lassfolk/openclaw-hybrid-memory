@@ -11,7 +11,12 @@ import type { CrystallizationStore } from "../backends/crystallization-store.js"
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
-import { applyApprovedProposal, capProposalConfidence, findDuplicateProposal, validateProposalContent } from "../cli/proposals.js";
+import {
+  applyApprovedProposal,
+  capProposalConfidence,
+  findDuplicateProposal,
+  validateProposalContent,
+} from "../cli/proposals.js";
 import { type HybridMemoryConfig, PROPOSAL_STATUSES, isCompactVerbosity } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { emitPersonaApplied, emitPersonaProposed } from "../services/change-feed-emit.js";
@@ -83,8 +88,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
   const checkRateLimit = (): { allowed: boolean; count: number; limit: number } => {
     const weekInDays = 7;
     const excludeSelfCorrection = cfg.personaProposals.separateSelfCorrectionQuota !== false;
-    const count =
-      proposalsDb?.countRecentProposals(weekInDays, { excludeSelfCorrection }) ?? 0;
+    const count = proposalsDb?.countRecentProposals(weekInDays, { excludeSelfCorrection }) ?? 0;
     const limit = cfg.personaProposals.maxProposalsPerWeek;
     return { allowed: count < limit, count, limit };
   };
@@ -357,7 +361,9 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
           const approved = proposalsDb?.updateStatusIf(proposal.id, "approved", "pending");
           if (!approved) {
             return {
-              content: [{ type: "text", text: `Proposal ${proposal.id} could not be auto-approved (no longer pending).` }],
+              content: [
+                { type: "text", text: `Proposal ${proposal.id} could not be auto-approved (no longer pending).` },
+              ],
               details: { proposalId: proposal.id, status: "pending", autoApplyRace: true },
             };
           }

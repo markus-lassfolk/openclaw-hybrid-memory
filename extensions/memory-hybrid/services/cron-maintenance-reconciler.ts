@@ -7,8 +7,14 @@
  */
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-import { type ExitValidationResult, validateMaintenanceExecution } from "./cron-exit-validator.js";
+import { basename, dirname, join } from "node:path";
+import {
+  type ExitValidationResult,
+  validateFromSummaryJson,
+  validateMaintenanceExecution,
+} from "./cron-exit-validator.js";
+import { resolveMaintenanceSummaryPath } from "./maintenance-artifact-paths.js";
+import { semanticOutcomeBlocksOrchestratorGuard } from "./maintenance-job-run/semantic-outcome.js";
 
 export interface CronRunLedgerEntry {
   // Legacy format (action-based)
@@ -290,11 +296,22 @@ export function reconcileCronRunLedger(
       continue;
     }
 
-    // Validate the maintenance execution
-    const validation = validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);
+    const summaryPath = resolveMaintenanceSummaryPath(exitPath);
+    const validation = summaryPath
+      ? validateFromSummaryJson(summaryPath, exitPath, logPath, requiredSteps, true)
+      : validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);
 
-    // Check if this is a false-OK (status:ok but validation failed/partial)
-    if (validation.maintenanceStatus === "failed" || validation.maintenanceStatus === "partial") {
+    const hasBlockingSemanticStep = validation.steps.some(
+      (s) => s.reason != null && semanticOutcomeBlocksOrchestratorGuard(s.reason),
+    );
+    const isFalseOk =
+      validation.maintenanceStatus === "failed" ||
+      validation.maintenanceStatus === "partial" ||
+      (validation.maintenanceStatus === "success" && validation.semanticStatus === "semantic_fail") ||
+      (validation.maintenanceStatus === "success" && hasBlockingSemanticStep);
+
+    // Check if this is a false-OK (status:ok but validation failed/partial/semantic)
+    if (isFalseOk) {
       result.falseOk++;
 
       // Correct the entry

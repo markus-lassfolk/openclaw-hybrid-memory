@@ -105,18 +105,12 @@ export async function buildPostCompactionRecallSnippet(
         return null;
       }
 
-      candidates = await filterCandidatesByInteractiveGrading(
-        trimmed,
-        candidates,
-        ctx.cfg.documentGrading,
-        ctx.openai,
-      );
+      candidates = await filterCandidatesByInteractiveGrading(trimmed, candidates, ctx.cfg.documentGrading, ctx.openai);
 
       if (candidates.length === 0) return null;
 
       const budget =
-        tokenBudget ??
-        Math.min(ctx.cfg.autoRecall.maxTokens ?? 800, ctx.cfg.retrieval.ambientBudgetTokens ?? 2000);
+        tokenBudget ?? Math.min(ctx.cfg.autoRecall.maxTokens ?? 800, ctx.cfg.retrieval.ambientBudgetTokens ?? 2000);
       const edictReserve = Math.max(0, Math.floor(budget * 0.15));
       const memoryBudget = Math.max(80, budget - edictReserve);
       const lines: string[] = [];
@@ -137,9 +131,7 @@ export async function buildPostCompactionRecallSnippet(
 
       ctx.factsDb.refreshAccessedFacts(injectedIds);
 
-      const semanticMarker = pipelineStatusRef.semanticDegraded
-        ? "<!-- recall degraded: semantic -->"
-        : "";
+      const semanticMarker = pipelineStatusRef.semanticDegraded ? "<!-- recall degraded: semantic -->" : "";
       const inner = ["Recalled after context compaction (same query as your last turn):", ...lines].join("\n");
       const recalled = assembleRecallPrependContext(ctx, inner, {
         prefix: semanticMarker || undefined,

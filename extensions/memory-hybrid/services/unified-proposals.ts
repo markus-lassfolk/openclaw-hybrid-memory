@@ -13,10 +13,7 @@ import { parseTimestamp } from "../utils/dates.js";
 import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { readProposalRollback } from "./proposal-rollback.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
-import {
-  DEFAULT_WORKSHOP_MAX_PENDING,
-  resolveWorkshopMaxPending,
-} from "./workshop-config.js";
+import { DEFAULT_WORKSHOP_MAX_PENDING, resolveWorkshopMaxPending } from "./workshop-config.js";
 
 export {
   DEFAULT_WORKSHOP_LIST_LIMIT,
@@ -366,10 +363,7 @@ function buildProcedureSkillProposal(
   };
 }
 
-export function inspectUnifiedProposal(
-  stores: UnifiedProposalStores,
-  unifiedKey: string,
-): UnifiedProposal | null {
+export function inspectUnifiedProposal(stores: UnifiedProposalStores, unifiedKey: string): UnifiedProposal | null {
   const parsed = parseUnifiedKey(unifiedKey);
   if (!parsed) return null;
 
