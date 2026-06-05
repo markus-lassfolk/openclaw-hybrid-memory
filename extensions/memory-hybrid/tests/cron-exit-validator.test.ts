@@ -758,6 +758,29 @@ error: unknown command 'bar'
       );
     });
 
+    it("blocks guard updates when extract-reinforcement reports semantic empty", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "extract-reinforcement.exit.txt");
+      const logPath = join(tmpDir, "extract-reinforcement.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z extract-reinforcement exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: extract-reinforcement suspect: 4 incident(s) but zero parsed remediations\nextract-reinforcement sessions=12 jobRunId=abc semantic=failed_semantic_empty\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["extract-reinforcement"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "extract-reinforcement",
+          failureClass: "extract_reinforcement_semantic_empty",
+        }),
+      );
+    });
+
     it("detects extract-daily vector_failures on exit=0 and blocks guard", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "extract-daily.exit.txt");

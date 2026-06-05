@@ -196,6 +196,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
     };
     expect(payload.maintenanceStatus).toBe("failed");
     expect(payload.semanticStatus).toBe("semantic_fail");
+    expect(payload.recommendedExitCode).toBe(2);
     expect(payload.reportableIssues[0]?.fingerprint).toBe(
       "hybrid-memory-maintenance:weekly-reflection:reflect-rules:invalid_response_format_zero_stored",
     );

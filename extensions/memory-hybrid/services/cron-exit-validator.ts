@@ -657,8 +657,13 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const reinforcementDetected = isStepInValidationScope("extract-reinforcement", requiredSteps, ledgerSteps);
+  const reinforcementLog = reinforcementDetected ? extractStepLog(logContent, "extract-reinforcement") : "";
   const reinforcementDegraded =
-    /\bdegraded_model_or_parser\b/i.test(logContent) || /\bstatus=degraded_model_or_parser\b/i.test(logContent);
+    /\bdegraded_model_or_parser\b/i.test(reinforcementLog) ||
+    /\bstatus=degraded_model_or_parser\b/i.test(reinforcementLog);
+  const reinforcementSemanticEmpty =
+    /\bsemantic=failed_semantic_empty\b/i.test(reinforcementLog) ||
+    /extract-reinforcement suspect:[^\n]*zero parsed remediations/i.test(reinforcementLog);
   if (reinforcementDetected && reinforcementDegraded) {
     addMaintenanceIssue(
       issues,
@@ -670,6 +675,20 @@ function collectMaintenanceTelemetryIssues(params: {
         failureClass: "extract_reinforcement_parser_degraded",
         message: `${jobName}:extract-reinforcement LLM analysis degraded due to parser/model output issues`,
         semanticStatus: "degraded",
+      }),
+    );
+  }
+  if (reinforcementDetected && reinforcementSemanticEmpty) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "extract-reinforcement",
+        failureCategory: "semantic_failure",
+        failureClass: "extract_reinforcement_semantic_empty",
+        message: `${jobName}:extract-reinforcement found incidents but produced zero parsed remediations`,
+        semanticStatus: "semantic_fail",
       }),
     );
   }
@@ -1890,6 +1909,7 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
     {
       maintenanceStatus: validation.maintenanceStatus,
       semanticStatus: validation.semanticStatus,
+      recommendedExitCode: resolveValidateCronExitCode(validation),
       requiredSteps: validation.steps.map((s) => ({
         name: s.step,
         exit: s.exitCode,
