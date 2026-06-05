@@ -15,6 +15,9 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 import { capturePluginError } from "../services/error-reporter.js";
+import { isSystemWorkflowGoal } from "../services/workflow-goal-classifier.js";
+import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { backfillWorkflowTextTimestamps } from "../utils/timestamp-migration.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { readSchemaVersion, runVersionedSchemaMigration } from "./sqlite-schema-meta.js";
 
@@ -181,6 +184,8 @@ export class WorkflowStore extends BaseSqliteStore {
     similarityThreshold: number;
     minSuccessRate: number;
     resultLimit: number;
+    excludeSystemGoals: boolean;
+    excludeGoalPatternsKey: string;
     patterns: WorkflowPattern[];
   } | null = null;
 
@@ -211,7 +216,7 @@ export class WorkflowStore extends BaseSqliteStore {
         tool_count   INTEGER NOT NULL DEFAULT 0,
         duration_ms  INTEGER NOT NULL DEFAULT 0,
         session_id   TEXT NOT NULL DEFAULT '',
-        created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at   TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_wt_goal_keywords ON workflow_traces(goal_keywords);
@@ -221,6 +226,7 @@ export class WorkflowStore extends BaseSqliteStore {
     `);
 
     this.runSchemaMigrations();
+    backfillWorkflowTextTimestamps(this.liveDb);
   }
 
   protected getSubsystemName(): string {
@@ -249,7 +255,7 @@ export class WorkflowStore extends BaseSqliteStore {
 
   record(input: CreateWorkflowTraceInput): WorkflowTrace {
     const id = randomUUID();
-    const now = new Date().toISOString();
+    const now = nowIso();
     // Normalize explicit keywords the same way extractGoalKeywords does (lowercase, dedupe, filter)
     const keywords = input.goalKeywords
       ? [...new Set(input.goalKeywords.map((k) => k.toLowerCase().trim()).filter((k) => k.length > 0))]
@@ -302,7 +308,7 @@ export class WorkflowStore extends BaseSqliteStore {
     if (exists) return false;
 
     const id = backfillWorkflowTraceId(sessionId, argsHash);
-    const now = new Date().toISOString();
+    const now = nowIso();
     const keywords = input.goalKeywords
       ? [...new Set(input.goalKeywords.map((k) => k.toLowerCase().trim()).filter((k) => k.length > 0))]
       : extractGoalKeywords(input.goal);
@@ -341,6 +347,57 @@ export class WorkflowStore extends BaseSqliteStore {
    * Remove duplicate rows sharing the same session_id + args_hash (e.g. from repeated backfills).
    * Keeps the deterministic backfill id when present, otherwise the oldest created_at row.
    */
+  /** Count system vs user-facing goals (optionally within a time window). */
+  summarizeGoalKinds(opts?: { sinceSec?: number; excludeGoalPatterns?: string[] }): {
+    total: number;
+    systemGoals: number;
+    userFacing: number;
+  } {
+    return this.runSqliteOp("summarizeGoalKinds", () => {
+      const sinceSec = opts?.sinceSec;
+      const rows = (
+        sinceSec != null
+          ? this.liveDb
+              .prepare(
+                `SELECT goal FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch')`,
+              )
+              .all(sinceSec)
+          : this.liveDb.prepare("SELECT goal FROM workflow_traces").all()
+      ) as Array<{ goal: string }>;
+      let systemGoals = 0;
+      for (const row of rows) {
+        if (isSystemWorkflowGoal(row.goal, opts?.excludeGoalPatterns)) systemGoals++;
+      }
+      const total = rows.length;
+      return { total, systemGoals, userFacing: total - systemGoals };
+    });
+  }
+
+  /**
+   * Remove traces whose goal is a cron/system injection (retroactive cleanup).
+   */
+  purgeSystemGoalTraces(opts?: { dryRun?: boolean; excludeGoalPatterns?: string[] }): {
+    removed: number;
+    scanned: number;
+  } {
+    return this.runSqliteOp("purgeSystemGoalTraces", () => {
+      const rows = this.liveDb.prepare("SELECT id, goal FROM workflow_traces").all() as Array<{
+        id: string;
+        goal: string;
+      }>;
+      const dryRun = opts?.dryRun === true;
+      const deleteStmt = dryRun ? null : this.liveDb.prepare("DELETE FROM workflow_traces WHERE id = ?");
+      let removed = 0;
+      for (const row of rows) {
+        if (!isSystemWorkflowGoal(row.goal, opts?.excludeGoalPatterns)) continue;
+        if (!dryRun) deleteStmt!.run(row.id);
+        removed += 1;
+      }
+      if (!dryRun && removed > 0) this.invalidateWorkflowPatternsMemo();
+      return { removed, scanned: rows.length };
+    });
+  }
+
   dedupeBySessionAndArgsHash(opts?: { dryRun?: boolean }): {
     removed: number;
     kept: number;
@@ -514,12 +571,19 @@ export class WorkflowStore extends BaseSqliteStore {
     limit?: number;
     /** Cap rows scanned from `workflow_traces` (newest first). Default 2000. */
     traceSampleLimit?: number;
+    /** Skip traces whose goal looks like cron/system injection (default false). */
+    excludeSystemGoals?: boolean;
+    /** Extra regex patterns (case-insensitive) treated as system goals. */
+    excludeGoalPatterns?: string[];
   }): WorkflowPattern[] {
     return this.runSqliteOp("getPatterns", () => {
       const threshold = options?.similarityThreshold ?? 0.8;
       const traceSampleLimit = options?.traceSampleLimit ?? 2000;
       const minRate = options?.minSuccessRate ?? 0;
       const resultLimit = options?.limit ?? 20;
+      const excludeSystemGoals = options?.excludeSystemGoals === true;
+      const excludeGoalPatterns = options?.excludeGoalPatterns;
+      const excludeGoalPatternsKey = (excludeGoalPatterns ?? []).join("\0");
       const memo = this.workflowPatternsMemo;
       if (
         memo &&
@@ -527,7 +591,9 @@ export class WorkflowStore extends BaseSqliteStore {
         memo.traceSampleLimit === traceSampleLimit &&
         memo.similarityThreshold === threshold &&
         memo.minSuccessRate === minRate &&
-        memo.resultLimit === resultLimit
+        memo.resultLimit === resultLimit &&
+        memo.excludeSystemGoals === excludeSystemGoals &&
+        memo.excludeGoalPatternsKey === excludeGoalPatternsKey
       ) {
         return WorkflowStore.clonePatterns(memo.patterns);
       }
@@ -554,6 +620,8 @@ export class WorkflowStore extends BaseSqliteStore {
       }[] = [];
 
       for (const row of allRows) {
+        if (excludeSystemGoals && isSystemWorkflowGoal(row.goal, excludeGoalPatterns)) continue;
+
         let seq: string[];
         try {
           seq = JSON.parse(row.tool_sequence) as string[];
@@ -587,7 +655,7 @@ export class WorkflowStore extends BaseSqliteStore {
         const failureCount = c.outcomes.filter((o) => o === "failure").length;
         const successRate = totalCount > 0 ? successCount / totalCount : 0;
         const avgDurationMs = c.durations.length > 0 ? c.durations.reduce((a, b) => a + b, 0) / c.durations.length : 0;
-        const uniqueGoals = [...new Set(c.goals)].slice(0, 3);
+        const uniqueGoals = [...new Set(c.goals.filter((g) => !excludeSystemGoals || !isSystemWorkflowGoal(g, excludeGoalPatterns)))].slice(0, 3);
 
         return {
           toolSequence: c.representative,
@@ -609,6 +677,8 @@ export class WorkflowStore extends BaseSqliteStore {
         similarityThreshold: threshold,
         minSuccessRate: minRate,
         resultLimit,
+        excludeSystemGoals,
+        excludeGoalPatternsKey,
         patterns: WorkflowStore.clonePatterns(out),
       };
       return WorkflowStore.clonePatterns(out);
@@ -621,7 +691,7 @@ export class WorkflowStore extends BaseSqliteStore {
 
   prune(olderThanDays: number): number {
     return this.runSqliteOp("prune", () => {
-      const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+      const cutoff = cutoffIsoDaysAgo(olderThanDays);
       const result = this.liveDb.prepare("DELETE FROM workflow_traces WHERE created_at < ?").run(cutoff);
       if (Number(result.changes) > 0) this.invalidateWorkflowPatternsMemo();
       return Number(result.changes);

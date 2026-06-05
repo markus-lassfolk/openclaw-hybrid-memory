@@ -128,4 +128,36 @@ describe("dream-cycle proposal bridge", () => {
     expect(result.personaProposalsCreated).toBe(0);
     expect(proposalsDb.list().length).toBe(0);
   });
+
+  it("creates crystallization proposals for dream-cycle patterns", async () => {
+    const { CrystallizationStore } = await import("../backends/crystallization-store.js");
+    const crystallizationStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const pattern = factsDb.store({
+      text: "When debugging CI, always inspect the failing check logs before pushing fixes.",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "dream-cycle-test",
+    });
+    const result = runDreamCycleProposalBridge({
+      cfg: {
+        ...cfg,
+        crystallization: { enabled: true, maxCrystallized: 10 },
+      } as HybridMemoryConfig,
+      factsDb,
+      proposalsDb,
+      crystallizationStore,
+      patternsStored: 1,
+      rulesGenerated: 0,
+      newPatternFactIds: [pattern.id],
+      logger: { info: () => {}, warn: () => {} },
+      workspaceRoot: tmpDir,
+    });
+    expect(result.crystallizationProposalsCreated).toBe(1);
+    const pending = crystallizationStore.list({ status: "pending" });
+    expect(pending.length).toBeGreaterThan(0);
+    crystallizationStore.close();
+  });
 });

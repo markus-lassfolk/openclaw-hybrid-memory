@@ -70,7 +70,7 @@ import type {
   WorkflowTrackingConfig,
 } from "./features.js";
 
-import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
+import type { MultiAgentConfig, PersonaProposalsConfig, WorkshopConfig } from "./agents.js";
 
 import type { SensorSweepConfig } from "./sensors.js";
 
@@ -661,6 +661,8 @@ export type HybridMemoryConfig = {
   eventLog: EventLogConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
+  /** Unified proposal workshop queue (default: enabled when any proposal source is active). */
+  workshop?: WorkshopConfig;
   /** Passive observer — background fact extraction from session transcripts (default: disabled) */
   passiveObserver: PassiveObserverConfig;
   /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */

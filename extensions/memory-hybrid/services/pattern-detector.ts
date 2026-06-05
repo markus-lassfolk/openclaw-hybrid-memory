@@ -16,6 +16,7 @@ import {
   computePatternId,
   scorePattern,
 } from "./pattern-detector-hash.js";
+import { patternHasUserFacingGoal } from "./workflow-goal-classifier.js";
 
 export {
   computeEvidenceHash,
@@ -28,7 +29,7 @@ export {
 // Public types
 // ---------------------------------------------------------------------------
 
-interface CrystallizationCandidate {
+export interface CrystallizationCandidate {
   /** Stable hash of the tool sequence used as a pattern identifier */
   patternId: string;
   /** Stable hash of non-metric evidence (used to suppress immediate regen after rejection). */
@@ -59,8 +60,9 @@ export function detectCrystallizationCandidates(
     patterns = workflowStore.getPatterns({
       minSuccessRate: cfg.minSuccessRate,
       traceSampleLimit: 6000,
-      // Fetch more than needed to allow filtering by usage count
       limit: 200,
+      excludeSystemGoals: cfg.excludeSystemGoals,
+      excludeGoalPatterns: cfg.excludeGoalPatterns,
     });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -81,6 +83,15 @@ export function detectCrystallizationCandidates(
 
     // Must have at least one tool in sequence
     if (pattern.toolSequence.length === 0) continue;
+
+    if (
+      !patternHasUserFacingGoal(pattern.exampleGoals, {
+        excludeSystemGoals: cfg.excludeSystemGoals,
+        excludeGoalPatterns: cfg.excludeGoalPatterns,
+      })
+    ) {
+      continue;
+    }
 
     const patternId = computePatternId(pattern.toolSequence);
     const evidenceHash = computeEvidenceHash(pattern, {

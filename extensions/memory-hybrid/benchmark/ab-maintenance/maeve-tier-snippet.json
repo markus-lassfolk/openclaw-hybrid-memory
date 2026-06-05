@@ -44,6 +44,7 @@
     "runInNightlyCycle": true
   },
   "crystallization": {
-    "enabled": false
+    "enabled": false,
+    "excludeSystemGoals": true
   }
 }

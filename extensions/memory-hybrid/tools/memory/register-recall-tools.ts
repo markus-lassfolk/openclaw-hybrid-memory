@@ -34,6 +34,7 @@ import {
 } from "../../services/recalled-context-assembler.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { getSessionLogFileSuffix } from "../../utils/constants.js";
+import { formatDateUtc, formatTimestampUtc } from "../../utils/dates.js";
 import {
   getProgressiveIndexIds,
   resolveProgressiveIndexSessionKey,
@@ -320,8 +321,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               sessionId: summary.sessionId,
               sessionKey: summary.sessionId,
               sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`,
-              periodStart: new Date(summary.periodStart * 1000).toISOString(),
-              periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
+              periodStart: formatTimestampUtc(summary.periodStart),
+              periodEnd: formatTimestampUtc(summary.periodEnd),
               tag: summary.tag,
               text: summary.text,
               score: Number(summary.score.toFixed(3)),
@@ -602,7 +603,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
                   backend: "sqlite" as const,
                   tags: entry.tags?.length ? entry.tags : undefined,
                   sourceDate: entry.sourceDate
-                    ? new Date(entry.sourceDate * 1000).toISOString().slice(0, 10)
+                    ? formatDateUtc(entry.sourceDate)
                     : undefined,
                 },
               ],
@@ -1035,7 +1036,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         score: r.score,
         backend: r.backend,
         tags: r.entry.tags?.length ? r.entry.tags : undefined,
-        sourceDate: r.entry.sourceDate ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10) : undefined,
+        sourceDate: r.entry.sourceDate ? formatDateUtc(r.entry.sourceDate) : undefined,
         contradicted: contradictionStatus.get(r.entry.id) || undefined,
         accessCount: r.entry.accessCount ?? 0,
         lastAccessedAt: r.entry.lastAccessedAt ?? null,

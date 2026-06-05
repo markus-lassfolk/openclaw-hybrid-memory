@@ -29,6 +29,7 @@ import type { WorkflowStore } from "../../backends/workflow-store.js";
 import type { ProvenanceService } from "../../services/provenance.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
+import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { isValidGhRepoArg } from "../../utils/gh-repo-arg.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
@@ -189,6 +190,8 @@ export interface DashboardContext {
   toolProposalStore?: ToolProposalStore | null;
   /** Dream-cycle stage artifact directory for workshop log view. */
   dreamCycleLogDir?: string;
+  /** Live change feed for workshop approve/reject/undo sync. */
+  changeFeed?: import("../../services/change-feed.js").ChangeFeed | null;
 }
 
 interface MemoryStats {
@@ -534,8 +537,8 @@ async function collectCronJobs(): Promise<CronJobStatus[]> {
           name: String(job.name ?? ""),
           schedule: typeof schedule?.expr === "string" ? schedule.expr : "",
           enabled: job.enabled !== false,
-          lastRunAt: typeof state.lastRunAtMs === "number" ? new Date(state.lastRunAtMs).toISOString() : null,
-          nextRunAt: typeof state.nextRunAtMs === "number" ? new Date(state.nextRunAtMs).toISOString() : null,
+          lastRunAt: typeof state.lastRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.lastRunAtMs / 1000)) : null,
+          nextRunAt: typeof state.nextRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.nextRunAtMs / 1000)) : null,
           lastStatus:
             typeof state.lastStatus === "string"
               ? state.lastStatus
@@ -1260,7 +1263,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
   ]);
   const agentHealth = await collectAgentHealth(ctx, forge);
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     memory,
     cronJobs,
     taskQueue,

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { backfillFactsDbTextTimestamps } from "../../utils/timestamp-migration.js";
 import { normalizedHash } from "../../utils/tags.js";
 import { migrateEntityLayerTables } from "../facts-db/entity-layer.js";
 import { runProcedureMigrations } from "./procedures.js";
@@ -673,7 +674,7 @@ function migrateFactEmbeddingsTable(db: DatabaseSync): void {
       variant TEXT NOT NULL DEFAULT 'canonical',
       embedding BLOB NOT NULL,
       dimensions INTEGER NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL,
       UNIQUE(fact_id, model, variant),
       FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
     )
@@ -693,7 +694,7 @@ function migrateFactVariantsTable(db: DatabaseSync): void {
       fact_id TEXT NOT NULL,
       variant_type TEXT NOT NULL DEFAULT 'contextual',
       variant_text TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL,
       FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
     )
   `);
@@ -1492,6 +1493,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Entity FK normalization (#1802)
   migrateEntityForeignKeyColumns(db);
+
+  // Legacy TEXT timestamps → ISO UTC (idempotent)
+  backfillFactsDbTextTimestamps(db);
 }
 
 /**

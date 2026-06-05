@@ -6,6 +6,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statS
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { getEnv } from "../utils/env-manager.js";
+import { formatDateUtc, nowSec } from "../utils/dates.js";
 import { extractToolCallSequence, parseSessionMessagesFromLines } from "./session-signal-context.js";
 import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 
@@ -34,7 +35,7 @@ export type DailySessionSummaryInput = {
 };
 
 export function formatDailySessionSummary(input: DailySessionSummaryInput): string {
-  const date = input.date ?? new Date().toISOString().slice(0, 10);
+  const date = input.date ?? formatDateUtc(nowSec());
   const agent = input.agentId ?? "unknown";
   const tools =
     input.toolsUsed.length > 0
@@ -52,7 +53,7 @@ export function formatDailySessionSummary(input: DailySessionSummaryInput): stri
 export function appendDailySessionSummary(input: DailySessionSummaryInput): string {
   const memoryDir = resolveDailyMemoryDir();
   mkdirSync(memoryDir, { recursive: true });
-  const date = input.date ?? new Date().toISOString().slice(0, 10);
+  const date = input.date ?? formatDateUtc(nowSec());
   const filePath = join(memoryDir, `${date}.md`);
   const marker = sessionMarker(input.sessionKey);
   if (existsSync(filePath)) {
@@ -88,9 +89,9 @@ function inferOutcome(messages: Array<{ role: string; text: string }>): "success
 
 export function synthesizeDailyLogFromSessionFile(filePath: string, agentId?: string): string | null {
   const sessionKey = basename(filePath);
-  let date = new Date().toISOString().slice(0, 10);
+  let date = formatDateUtc(nowSec());
   try {
-    date = new Date(statSync(filePath).mtimeMs).toISOString().slice(0, 10);
+    date = formatDateUtc(Math.floor(statSync(filePath).mtimeMs / 1000));
   } catch {
     // keep today
   }

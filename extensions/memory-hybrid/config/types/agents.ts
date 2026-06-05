@@ -50,4 +50,16 @@ export type PersonaProposalsConfig = {
    * Default: true — prevents self-correction backlog from permanently blocking reflection-driven proposals.
    */
   separateSelfCorrectionQuota: boolean;
+  /** Unified workshop queue cap across persona, crystallization, tool, and procedure-skill backlogs (default: 50). */
+  workshopMaxPending?: number;
+};
+
+/** Unified memory workshop (proposal review queue). */
+export type WorkshopConfig = {
+  /** Master switch for workshop tool, HTTP/gateway routes, and dashboard tab integration. */
+  enabled?: boolean;
+  /** Max pending items across all proposal backlogs (default: 50, 0 = unlimited). */
+  maxPending?: number;
+  /** Session key for change-feed events from Mission Control / dashboard actions. */
+  sessionKey?: string;
 };

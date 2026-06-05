@@ -239,6 +239,33 @@ export class ProposalsDB extends BaseSqliteStore {
     return this.get(id);
   }
 
+  /** Atomically transition status only when the proposal is in `expectedStatus`. */
+  updateStatusIf(
+    id: string,
+    status: string,
+    expectedStatus: string,
+    reviewedBy?: string,
+    rejectionReason?: string,
+  ): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    const result =
+      status === "pending"
+        ? this.liveDb
+            .prepare(
+              `UPDATE proposals SET status = ?, reviewed_at = NULL, reviewed_by = NULL, rejection_reason = NULL
+               WHERE id = ? AND status = ?`,
+            )
+            .run(status, id, expectedStatus)
+        : this.liveDb
+            .prepare(
+              `UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ?
+               WHERE id = ? AND status = ?`,
+            )
+            .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id, expectedStatus);
+    if (result.changes === 0) return null;
+    return this.get(id);
+  }
+
   updateSuggestedChange(
     id: string,
     suggestedChange: string,
@@ -269,6 +296,15 @@ export class ProposalsDB extends BaseSqliteStore {
   markApplied(id: string): ProposalEntry | null {
     const now = Math.floor(Date.now() / 1000);
     this.liveDb.prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?").run(now, id);
+    return this.get(id);
+  }
+
+  markAppliedIfApproved(id: string): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    const result = this.liveDb
+      .prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ? AND status = 'approved'")
+      .run(now, id);
+    if (result.changes === 0) return null;
     return this.get(id);
   }
 

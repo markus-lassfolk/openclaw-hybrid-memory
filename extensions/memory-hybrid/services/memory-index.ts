@@ -5,6 +5,7 @@ import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
+import { formatDateUtc, nowIso } from "../utils/dates.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
   LLMRetryError,
@@ -69,7 +70,7 @@ type MemoryIndexSnapshot = {
 
 function toDateLabel(epochSeconds: number | null | undefined): string {
   if (!epochSeconds || !Number.isFinite(epochSeconds)) return "unknown";
-  return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
+  return formatDateUtc(epochSeconds);
 }
 
 function shortRef(id: string): string {
@@ -181,7 +182,7 @@ export function buildMemoryIndexSnapshot(
     }));
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     clusters,
     recentDecisions,
     keyEntities,

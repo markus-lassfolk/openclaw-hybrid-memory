@@ -23,6 +23,7 @@ import {
 } from "../../../services/procedure-promotion-policy.js";
 import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import { resolveWorkspacePath } from "../../../utils/path.js";
+import { formatTimestampUtc, formatTimestampUtcFromMs, nowIso } from "../../../utils/dates.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -89,9 +90,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
         console.log(
-          `  Last Validated: ${proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : "never"}`,
+          `  Last Validated: ${proc.lastValidated ? formatTimestampUtc(proc.lastValidated) : "never"}`,
         );
-        console.log(`  Last Failed:   ${proc.lastFailed ? new Date(proc.lastFailed * 1000).toISOString() : "never"}`);
+        console.log(`  Last Failed:   ${proc.lastFailed ? formatTimestampUtc(proc.lastFailed) : "never"}`);
 
         if (proc.avoidanceNotes && proc.avoidanceNotes.length > 0) {
           console.log("\n  Avoidance notes (all versions):");
@@ -119,7 +120,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         if (failures.length > 0) {
           console.log(`\n  Recent failures (${failures.length} total):`);
           for (const f of failures.slice(0, 10)) {
-            const when = new Date(f.timestamp * 1000).toISOString();
+            const when = formatTimestampUtc(f.timestamp);
             const step = f.failedAtStep !== null ? ` step ${f.failedAtStep}` : "";
             console.log(`    [${when}] v${f.versionNumber}${step}: ${f.context ?? "(no context)"}`);
           }
@@ -199,8 +200,8 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               reasons?: string[];
             }
           >) {
-            const validated = row.validatedAt ? new Date(row.validatedAt * 1000).toISOString() : "never";
-            const lastRecall = row.lastRecall ? new Date(row.lastRecall * 1000).toISOString() : "never";
+            const validated = row.validatedAt ? formatTimestampUtc(row.validatedAt) : "never";
+            const lastRecall = row.lastRecall ? formatTimestampUtc(row.lastRecall) : "never";
             console.log(
               `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${
                 row.promotionDecision ?? row.promotionBlockReason
@@ -562,7 +563,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               `${JSON.stringify(
                 {
                   ok: true,
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   backupDir: res.backupDir,
                   sqliteSize: res.sqliteSize,
                   lancedbSize: res.lancedbSize,
@@ -586,7 +587,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               `${JSON.stringify(
                 {
                   ok: false,
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   error: res.error,
                 },
                 null,
@@ -872,8 +873,8 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             name: wanted.label,
             pluginJobId: wanted.id,
             enabled,
-            lastRunAt: lastRunAtMs != null ? new Date(lastRunAtMs).toISOString() : null,
-            nextRunAt: nextRunAtMs != null ? new Date(nextRunAtMs).toISOString() : null,
+            lastRunAt: lastRunAtMs != null ? formatTimestampUtcFromMs(lastRunAtMs) : null,
+            nextRunAt: nextRunAtMs != null ? formatTimestampUtcFromMs(nextRunAtMs) : null,
             lastStatus,
             isStale,
             isMissing: false,

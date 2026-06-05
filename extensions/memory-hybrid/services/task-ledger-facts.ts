@@ -18,6 +18,7 @@ import { listActiveGoals, resolveGoalsDir } from "./goal-stewardship.js";
 import type { ActiveTaskProjectionConfig, HybridMemoryConfig, MemoryCategory } from "../config.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
+import { formatTimestampUtc, formatTimestampUtcFromMs, nowIso, parseTimestamp } from "../utils/dates.js";
 import { getEnv } from "../utils/env-manager.js";
 import { escapeRegExp } from "../utils/text.js";
 import { execFile } from "../utils/process-runner.js";
@@ -128,9 +129,8 @@ function rowToRecord(row: Map<string, MemoryEntry>): Record<string, string> {
 
 function parseIsoFromFactField(value: string | undefined): string | undefined {
   if (!value?.trim()) return undefined;
-  const ms = Date.parse(value.trim());
-  if (Number.isNaN(ms)) return undefined;
-  return new Date(ms).toISOString();
+  const sec = parseTimestamp(value.trim());
+  return sec != null ? formatTimestampUtc(sec) : undefined;
 }
 
 function createdBoundsFromKeyMap(keyMap: Map<string, MemoryEntry>): { minSec: number; maxSec: number } | null {
@@ -152,7 +152,7 @@ function resolveTaskStarted(f: Record<string, string>, bounds: ReturnType<typeof
     parseIsoFromFactField(f.started) ??
     parseIsoFromFactField(f.task_started) ??
     parseIsoFromFactField(f.created_at) ??
-    (bounds ? new Date(bounds.minSec * 1000).toISOString() : undefined) ??
+    (bounds ? formatTimestampUtc(bounds.minSec) : undefined) ??
     UNKNOWN_ACTIVE_TASK_TIME
   );
 }
@@ -162,7 +162,7 @@ function resolveTaskUpdated(f: Record<string, string>, bounds: ReturnType<typeof
     parseIsoFromFactField(f.task_updated) ??
     parseIsoFromFactField(f.updated) ??
     parseIsoFromFactField(f.updated_at) ??
-    (bounds ? new Date(bounds.maxSec * 1000).toISOString() : undefined) ??
+    (bounds ? formatTimestampUtc(bounds.maxSec) : undefined) ??
     UNKNOWN_ACTIVE_TASK_TIME
   );
 }
@@ -329,7 +329,7 @@ export async function markActiveTaskProjectionStale(
 ): Promise<void> {
   const markerPath = getActiveTaskProjectionStaleMarkerPath(filePath);
   const marker: ActiveTaskProjectionStaleMarker = {
-    staleAt: new Date().toISOString(),
+    staleAt: nowIso(),
     reason: reason.trim().length > 0 ? reason.trim() : "projection marked stale",
     ...(meta.source ? { source: meta.source } : {}),
     ...(meta.factId ? { factId: meta.factId } : {}),
@@ -362,7 +362,7 @@ export function getLatestProjectFactCreatedAtSec(factsDb: FactsDB, scopeFilter?:
 
 function toIsoOrNull(unixSeconds: number | null): string | null {
   if (unixSeconds === null) return null;
-  return new Date(unixSeconds * 1000).toISOString();
+  return formatTimestampUtc(unixSeconds);
 }
 
 export async function getActiveTaskProjectionStatus(
@@ -383,7 +383,7 @@ export async function getActiveTaskProjectionStatus(
     exists = fileStat.isFile();
     if (exists) {
       renderedMs = fileStat.mtimeMs;
-      renderedAt = new Date(fileStat.mtimeMs).toISOString();
+      renderedAt = formatTimestampUtcFromMs(fileStat.mtimeMs);
     }
   } catch {
     // no projection file
@@ -1389,7 +1389,7 @@ export async function applyActiveTaskHygieneFacts(
     return { appliedCount: 0 };
   }
 
-  const runAt = new Date().toISOString();
+  const runAt = nowIso();
   const { active } = loadTaskLedgerFromFacts(factsDb);
   const byLabel = new Map(active.map((task) => [task.label, task] as const));
   const latestByEntityKey = new Map<string, MemoryEntry>();
@@ -1707,7 +1707,7 @@ export async function consumePendingTaskSignalsFacts(
     try {
       const updatedTimestamp = (() => {
         const t = Date.parse(signal.timestamp);
-        return Number.isNaN(t) ? new Date().toISOString() : signal.timestamp;
+        return Number.isNaN(t) ? nowIso() : signal.timestamp;
       })();
 
       const existing = findMatchingTask(signal);
@@ -1904,7 +1904,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
       });
       continue;
     }
-    const now = new Date().toISOString();
+    const now = nowIso();
     const doneEntry: ActiveTaskEntry = {
       ...task,
       status: "Failed",
@@ -1970,7 +1970,7 @@ export async function reconcileActiveTaskInProgressSessionsFacts(
   }
   progress?.phaseComplete("fact-write", { factsWritten, failed });
 
-  const auditRunAt = new Date().toISOString();
+  const auditRunAt = nowIso();
   await recordActiveTaskSessionReconcileAudit(factsDb, vectorDb, embeddings, auditRunAt, successfullyWritten, opts.log);
 
   if (opts.flushOnComplete && opts.memoryDir) {
@@ -2227,7 +2227,7 @@ export async function reconcileActiveTaskLiveState(
     const isTerminal = state === "merged" || state === "closed";
     if (!isTerminal) continue;
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const terminalState = state === "merged" ? "merged" : "closed";
     const next = `Auto-reconciled from live GitHub (${ref.owner}/${ref.repo} ${ref.kind} #${ref.number}): ${terminalState}.`;
 

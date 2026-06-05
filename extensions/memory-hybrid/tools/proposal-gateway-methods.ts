@@ -10,9 +10,14 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { isWorkshopEnabled } from "../services/workshop-config.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import { revertChangeById, revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
+import type { SessionState } from "../lifecycle/types.js";
 import {
   type WorkshopServiceContext,
+  withWorkshopDefaults,
   workshopApprove,
   workshopInspect,
   workshopList,
@@ -20,6 +25,7 @@ import {
   workshopQuarantine,
   workshopReject,
   workshopRevise,
+  workshopUndo,
 } from "../services/workshop-service.js";
 
 export interface ProposalGatewayContext {
@@ -30,6 +36,8 @@ export interface ProposalGatewayContext {
   toolProposalStore?: ToolProposalStore | null;
   workflowStore?: WorkflowStore | null;
   resolvedSqlitePath: string;
+  changeFeed?: ChangeFeed | null;
+  sessionStateRef?: { value: SessionState | null };
   api: ClawdbotPluginApi;
 }
 
@@ -41,7 +49,7 @@ type GatewayHandler = (opts: {
 }) => void | Promise<void>;
 
 function workshopCtx(ctx: ProposalGatewayContext): WorkshopServiceContext {
-  return {
+  return withWorkshopDefaults({
     cfg: ctx.cfg,
     factsDb: ctx.factsDb,
     proposalsDb: ctx.proposalsDb ?? null,
@@ -49,11 +57,23 @@ function workshopCtx(ctx: ProposalGatewayContext): WorkshopServiceContext {
     toolProposalStore: ctx.toolProposalStore ?? null,
     workflowStore: ctx.workflowStore ?? null,
     resolvedSqlitePath: ctx.resolvedSqlitePath,
+    changeFeed: ctx.changeFeed ?? null,
     api: ctx.api,
-  };
+  });
+}
+
+function changeRevertCtx(ctx: ProposalGatewayContext, sessionKey = "default") {
+  return buildChangeRevertContext({
+    changeFeed: ctx.changeFeed!,
+    cfg: ctx.cfg,
+    workshopCtx: workshopCtx(ctx),
+    sessionKey,
+    sessionState: ctx.sessionStateRef?.value ?? null,
+  });
 }
 
 export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): void {
+  if (!isWorkshopEnabled(ctx.cfg)) return;
   if (!ctx.cfg.health.enabled) return;
   const register = (ctx.api as { registerGatewayMethod?: (method: string, handler: GatewayHandler) => void })
     .registerGatewayMethod;
@@ -66,7 +86,7 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
 
   register("hybrid-mem.proposals.list", async ({ params, respond }) => {
     const limit = typeof params.limit === "number" ? params.limit : 50;
-    respond(true, { proposals: workshopList(w(), { status: "pending", limit }) });
+    respond(true, { proposals: workshopList(w(), { status: "pending", limit, includeUndoable: true }) });
   });
 
   register("hybrid-mem.proposals.inspect", async ({ params, respond }) => {
@@ -110,6 +130,49 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
     respond(true, buildWorkshopDigestReport(w()));
   });
 
+    register("hybrid-mem.proposals.undo", async ({ params, respond }) => {
+    const id = typeof params.id === "string" ? params.id : "";
+    if (!id) return respond(false, undefined, { message: "missing id" });
+    const changeEventId = typeof params.changeEventId === "string" ? params.changeEventId : undefined;
+    const result = workshopUndo(w(), id, { changeEventId });
+    respond(result.ok, result.ok ? result : undefined, result.ok ? undefined : { message: result.error });
+  });
+
+  if (ctx.changeFeed) {
+    register("hybrid-mem.changes.list", async ({ params, respond }) => {
+      const limit = typeof params.limit === "number" ? params.limit : 50;
+      const since = typeof params.since === "number" ? params.since : undefined;
+      const sinceOrdinal = typeof params.sinceOrdinal === "number" ? params.sinceOrdinal : undefined;
+      const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey.trim() : "";
+      if (!sessionKey) {
+        return respond(false, undefined, {
+          message: "missing sessionKey (use __broadcast__ for system-wide changes)",
+        });
+      }
+      respond(true, {
+        changes: ctx.changeFeed!.listRecent({ sessionKey, since, sinceOrdinal, limit }),
+      });
+    });
+
+    register("hybrid-mem.changes.revert", async ({ params, respond }) => {
+      if (!ctx.changeFeed) return respond(false, undefined, { message: "change feed unavailable" });
+      const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "default";
+      const revertCtx = changeRevertCtx(ctx, sessionKey);
+      if (typeof params.ordinal === "number") {
+        const result = revertChangeByOrdinal(revertCtx, params.ordinal, sessionKey);
+        return respond(result.ok, result.ok ? result : undefined, result.ok ? undefined : { message: result.error });
+      }
+      const id = typeof params.id === "string" ? params.id : "";
+      if (!id) return respond(false, undefined, { message: "missing id or ordinal" });
+      const result = revertChangeById(revertCtx, id);
+      respond(result.ok, result.ok ? result : undefined, result.ok ? undefined : { message: result.error });
+    });
+  }
+
+  register("hybrid-mem.proposals.pendingCount", async ({ respond }) => {
+    respond(true, { pending: workshopPendingCount(w()) });
+  });
+
   const registerUi = (ctx.api as { registerControlUiDescriptor?: (d: Record<string, unknown>) => void })
     .registerControlUiDescriptor;
   if (typeof registerUi === "function") {
@@ -119,6 +182,7 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
       label: "Memory Workshop",
       description: "Pending skill, persona, and tool proposals from hybrid-memory",
       schema: { pendingCount: "number" },
+      state: { pendingCount: workshopPendingCount(w()) },
     });
   }
 

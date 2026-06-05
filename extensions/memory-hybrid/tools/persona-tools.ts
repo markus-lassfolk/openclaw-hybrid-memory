@@ -7,11 +7,18 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { applyApprovedProposal, capProposalConfidence, findDuplicateProposal, validateProposalContent } from "../cli/proposals.js";
 import { type HybridMemoryConfig, PROPOSAL_STATUSES, isCompactVerbosity } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitPersonaApplied, emitPersonaProposed } from "../services/change-feed-emit.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import { enforceMaxPendingCap, resolveWorkshopMaxPending } from "../services/unified-proposals.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
+import { nowIso } from "../utils/dates.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { stringEnum } from "../utils/typebox.js";
 
@@ -19,6 +26,10 @@ export interface PluginContext {
   proposalsDb?: ProposalsDB;
   cfg: HybridMemoryConfig;
   resolvedSqlitePath: string;
+  changeFeed?: ChangeFeed | null;
+  factsDb?: FactsDB;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
 }
 
 /**
@@ -26,7 +37,7 @@ export interface PluginContext {
  * Only registers if cfg.personaProposals.enabled && proposalsDb is available
  */
 export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi) {
-  const { proposalsDb, cfg, resolvedSqlitePath } = ctx;
+  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore } = ctx;
 
   // Only register if persona proposals are enabled and database is available
   if (!cfg.personaProposals.enabled || !proposalsDb) {
@@ -42,7 +53,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
   ) => {
     const auditDir = join(dirname(resolvedSqlitePath), "decisions");
     await mkdir(auditDir, { recursive: true });
-    const timestamp = new Date().toISOString();
+    const timestamp = nowIso();
     const entry = {
       timestamp,
       action,
@@ -281,6 +292,30 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             ? Math.floor(Date.now() / 1000) + cfg.personaProposals.proposalTTLDays * 24 * 3600
             : null;
 
+        if (factsDb) {
+          const cap = enforceMaxPendingCap(
+            {
+              cfg,
+              factsDb,
+              proposalsDb: proposalsDb ?? null,
+              crystallizationStore: crystallizationStore ?? null,
+              toolProposalStore: toolProposalStore ?? null,
+            },
+            resolveWorkshopMaxPending(cfg),
+          );
+          if (!cap.ok) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Workshop queue is full (${cap.pending}/${cap.maxPending} pending). Resolve existing proposals before creating new ones.`,
+                },
+              ],
+              details: { error: cap.error, pending: cap.pending, maxPending: cap.maxPending },
+            };
+          }
+        }
+
         // Create proposal
         const snapshot = getFileSnapshot(api.resolvePath(targetFile));
         const proposal = proposalsDb?.create({
@@ -310,8 +345,25 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
 
         api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
 
+        const sessionKey =
+          (api.context?.sessionKey as string | undefined) ??
+          (api.context?.sessionId as string | undefined) ??
+          "default";
+        emitPersonaProposed(changeFeed, cfg, {
+          sessionKey,
+          proposalId: proposal.id,
+          title,
+          targetFile,
+        });
+
         if (cfg.personaProposals.autoApply) {
-          proposalsDb?.updateStatus(proposal.id, "approved", "auto");
+          const approved = proposalsDb?.updateStatusIf(proposal.id, "approved", "pending");
+          if (!approved) {
+            return {
+              content: [{ type: "text", text: `Proposal ${proposal.id} could not be auto-approved (no longer pending).` }],
+              details: { proposalId: proposal.id, status: "pending", autoApplyRace: true },
+            };
+          }
           await auditProposal(
             "approved",
             proposal.id,
@@ -328,6 +380,8 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             cfg,
             resolvedSqlitePath,
             api: { logger: api.logger },
+            changeFeed,
+            sessionKey,
           };
           const applyResult = await applyApprovedProposal(applyCtx, proposal.id);
           const applyVerbosity = cfg.verbosity ?? "normal";
@@ -371,7 +425,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
               },
             };
           }
-          proposalsDb?.updateStatus(proposal.id, "pending");
+          proposalsDb?.updateStatusIf(proposal.id, "pending", "approved");
           await auditProposal(
             "apply_failed",
             proposal.id,

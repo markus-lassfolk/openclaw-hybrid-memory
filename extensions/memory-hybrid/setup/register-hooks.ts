@@ -195,6 +195,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       recallInFlightRef: ctx.recallInFlightRef,
       lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
       prependBudgetRef: ctx.prependBudgetRef,
+      changeFeed: ctx.changeFeed ?? null,
       registrationGeneration,
       currentRegistrationGenerationRef,
     };
@@ -216,10 +217,12 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     });
     throw err;
   }
+  ctx.sessionStateRef.value = hooks.sessionState;
   try {
     hooks.onAgentStart(guardedApi);
     hooks.onAgentEnd(guardedApi);
     hooks.onFrustrationDetect?.(guardedApi);
+    hooks.onChangeNotify?.(guardedApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",

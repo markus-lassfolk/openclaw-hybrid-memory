@@ -9,6 +9,7 @@ import { join } from "node:path";
 import type { GoalStewardshipAttentionWeights, GoalStewardshipConfig } from "../config/types/index.js";
 import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import type { Goal } from "./goal-stewardship-types.js";
+import { nowIso } from "../utils/dates.js";
 
 function sanitizeGoalField(text: string): string {
   return sanitizePromptInjection(text);
@@ -107,7 +108,7 @@ async function writeRoundRobin(goalsDir: string, state: StewardshipRoundRobinSta
   await mkdir(goalsDir, { recursive: true });
   await writeFile(
     join(goalsDir, RR_FILE),
-    JSON.stringify({ offset: state.offset, updatedAt: new Date().toISOString() }, null, 2),
+    JSON.stringify({ offset: state.offset, updatedAt: nowIso() }, null, 2),
     "utf-8",
   );
 }

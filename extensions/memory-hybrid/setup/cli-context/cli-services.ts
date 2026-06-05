@@ -175,6 +175,7 @@ export interface HybridMemCliRegistrationContext {
   identityReflectionStore: HandlerContext["identityReflectionStore"];
   personaStateStore: HandlerContext["personaStateStore"];
   crystallizationStore?: HandlerContext["crystallizationStore"];
+  toolProposalStore?: HandlerContext["toolProposalStore"];
   verificationStore?: import("../../services/verification-store.js").VerificationStore | null;
   provenanceService?: import("../../services/provenance.js").ProvenanceService | null;
   resolvedSqlitePath: string;
@@ -190,6 +191,7 @@ export interface HybridMemCliRegistrationContext {
   /** Audit log (Issue #790). */
   auditStore?: import("../../backends/audit-store.js").AuditStore | null;
   agentHealthStore?: import("../../backends/agent-health-store.js").AgentHealthStore | null;
+  changeFeed?: import("../../services/change-feed.js").ChangeFeed | null;
 }
 
 export function buildCliContextServices(
@@ -507,7 +509,7 @@ export function buildCliContextServices(
         },
         logSink,
         provenanceService,
-        { cfg, proposalsDb: proposalsDb ?? null, crystallizationStore: ctx.crystallizationStore ?? null, toolProposalStore: null, api },
+        { cfg, proposalsDb: proposalsDb ?? null, crystallizationStore: ctx.crystallizationStore ?? null, toolProposalStore: ctx.toolProposalStore ?? null, api, changeFeed: ctx.changeFeed ?? null },
       );
     },
     runContinuousVerification: async (opts?: { verbose?: boolean }) => {

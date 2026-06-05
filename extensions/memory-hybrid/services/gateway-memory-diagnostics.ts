@@ -6,6 +6,7 @@ import { resolveReregisterPolicy, reregisterMetrics } from "../setup/reregister-
 import { getStartupMemoryAttributionEntries } from "./startup-memory-attribution.js";
 import { collectVectorBackendObservability } from "./vector-backend-observability.js";
 import { getDirSize } from "../utils/fs.js";
+import { nowIso } from "../utils/dates.js";
 
 export type GatewayMemoryDiagnosticsContext = {
   factsDb: FactsDB;
@@ -182,7 +183,7 @@ export async function buildGatewayMemoryDiagnostics(
   });
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     uptimeSeconds: Math.floor(process.uptime()),
     process: {
       rssBytes: usage.rss,
@@ -225,7 +226,7 @@ export function buildProcessMemorySnapshot(): Pick<
 > {
   const usage = process.memoryUsage();
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     uptimeSeconds: Math.floor(process.uptime()),
     process: {
       rssBytes: usage.rss,

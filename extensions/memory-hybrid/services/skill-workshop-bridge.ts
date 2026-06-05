@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { getEnv } from "../utils/env-manager.js";
 import { homedir } from "node:os";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso } from "../utils/dates.js";
 
 export type SkillWorkshopBridgeInput = {
   name: string;
@@ -35,7 +36,7 @@ export function writeSkillWorkshopProposal(input: SkillWorkshopBridgeInput): { o
     const id = input.proposalId ?? randomUUID();
     const dir = join(skillWorkshopRoot(), id);
     mkdirSync(dir, { recursive: true });
-    const date = new Date().toISOString();
+    const date = nowIso();
     const frontmatter = [
       "---",
       `name: "${input.name.replace(/"/g, '\\"')}"`,

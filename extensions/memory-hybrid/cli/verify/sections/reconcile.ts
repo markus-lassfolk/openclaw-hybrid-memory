@@ -18,6 +18,7 @@ import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-
 import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecycle-audit.js";
 import { findOrphanVectorIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
+import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
@@ -198,7 +199,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
         if (resolvedSqlitePath) {
           appendVectorLifecycleAuditEvent(resolvedSqlitePath, {
             event: "reconcile_completed",
-            ts: new Date().toISOString(),
+            ts: nowIso(),
             details: {
               fix: opts.fix,
               reconcilePolicy,
@@ -250,7 +251,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           if (result.corrections.length > 0 && result.corrections.length <= 5) {
             for (const correction of result.corrections) {
               log(
-                `  • ${correction.jobId} @ ${new Date(correction.timestamp).toISOString()}: ${correction.validationResult.error || "validation failed"}`,
+                `  • ${correction.jobId} @ ${formatTimestampUtcFromMs(correction.timestamp)}: ${correction.validationResult.error || "validation failed"}`,
               );
             }
           } else if (result.corrections.length > 5) {

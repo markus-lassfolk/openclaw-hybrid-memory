@@ -8,6 +8,7 @@ import { resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-maintenance-llm.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitPipelinePersonaProposed } from "../services/change-feed-emit.js";
 import { scoreIdentityGaps } from "../services/identity-gap-scorer.js";
 import { runIdentityReflection } from "../services/identity-reflection.js";
 import {
@@ -16,8 +17,10 @@ import {
 } from "../services/persona-state-promotion.js";
 import { parseStructuredItemsAcceptingEmpty, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
+import { formatDateUtc } from "../utils/dates.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolvePipelineProposalTarget } from "./proposals.js";
+import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
 
 function isSelfCorrectionInsight(f: { source?: string | null; tags?: string[] | null }): boolean {
   return (
@@ -211,7 +214,7 @@ export async function runGenerateProposalsForCli(
     pendingProposals.length > 0
       ? pendingProposals
           .slice(0, 20)
-          .map((p) => `- ${p.title} -> ${p.targetFile} (pending since ${new Date(p.createdAt * 1000).toISOString().slice(0, 10)})`)
+          .map((p) => `- ${p.title} -> ${p.targetFile} (pending since ${formatDateUtc(p.createdAt)})`)
           .join("\n")
       : "(none)";
   const identityFilesContent: string[] = [];
@@ -398,6 +401,7 @@ export async function runGenerateProposalsForCli(
     { length: Math.max(1, cfg.personaProposals.minSessionEvidence) },
     () => "reflection-pipeline",
   );
+  const workshopStores = workshopStoresFromHandlerContext(ctx);
   let created = 0;
   for (const item of items) {
     if (recentCount + created >= limit) {
@@ -423,6 +427,7 @@ export async function runGenerateProposalsForCli(
       minConfidence: minConf,
       nowSec,
       proposalsDb,
+      workshopStores,
     });
     if (!resolved) {
       if (verbose) {
@@ -440,7 +445,7 @@ export async function runGenerateProposalsForCli(
       continue;
     }
     try {
-      proposalsDb.create({
+      const proposal = proposalsDb.create({
         targetFile: resolved.targetFile,
         title,
         observation,
@@ -451,6 +456,7 @@ export async function runGenerateProposalsForCli(
         targetMtimeMs: resolved.targetMtimeMs,
         targetHash: resolved.targetHash,
       });
+      emitPipelinePersonaProposed(ctx.changeFeed, cfg, proposal, observation);
       created++;
       if (verbose) ctx.logger.info?.(`memory-hybrid: proposal created: ${title} -> ${targetFile}`);
     } catch (err) {

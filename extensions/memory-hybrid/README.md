@@ -27,7 +27,7 @@ Useful follow-up commands: `openclaw hybrid-mem status` for a one-screen health 
 | Requirement | Notes |
 |-------------|--------|
 | **Node.js** | `>=22.16.0` (`engines` in `package.json`) |
-| **OpenClaw** | v2026.3.8+ (peer); current 2026.3.x recommended |
+| **OpenClaw** | **≥2026.5.0** required (peer); **≥2026.6.1** recommended (Skill Workshop, skills hot-reload, Dreaming tab) |
 | **Embeddings** | Required — OpenAI, Ollama, ONNX, or Google; see [LLM-AND-PROVIDERS.md](../../docs/LLM-AND-PROVIDERS.md) |
 | **Build toolchain** | For `@lancedb/lancedb`: C++ build tools + Python 3 on the install machine |
 

@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import type { EventLog } from "../backends/event-log.js";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
 import { getEnv } from "../utils/env-manager.js";
+import { nowIso } from "../utils/dates.js";
 import { appendGoalHistory, isTerminalStatus, listGoals, readGoal, updateGoal, writeGoal } from "./goal-registry.js";
 import type { Goal, GoalHistoryEntry, GoalPulseOutcome } from "./goal-stewardship-types.js";
 import { isPidAlive } from "./task-queue-watchdog.js";
@@ -40,10 +41,6 @@ export interface GoalHealthCheckResult {
     sessionKey?: string | null;
     runId?: string | null;
   }>;
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
 }
 
 interface GoalPulseOutcomeRecord {

@@ -9,6 +9,8 @@ import { countRecallEventsSince } from "./recall-events.js";
 import { countSessionMetadataSince } from "./session-metadata.js";
 import { countReflectionParseFailuresSince } from "./reflection-parse-log.js";
 import { countDailyLogFiles, resolveDailyMemoryDir } from "./daily-log-synthesizer.js";
+import { formatDateUtc } from "../utils/dates.js";
+import { WorkflowStore } from "../backends/workflow-store.js";
 
 export type MaintenanceCoverageReport = {
   days: number;
@@ -19,6 +21,8 @@ export type MaintenanceCoverageReport = {
   dailyLogFiles: number;
   sessionMetadataRows: number;
   workflowTraces: number;
+  workflowSystemTraces: number | null;
+  workflowUserFacingTraces: number | null;
   proposalRuns: number;
   reflectionWatermarkAgeSec: number | null;
   reflectionParseFailures: number;
@@ -48,7 +52,7 @@ export function buildMaintenanceCoverageReport(opts: {
 }): MaintenanceCoverageReport {
   const days = Math.max(1, opts.days ?? 7);
   const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
-  const sinceDate = new Date(sinceSec * 1000).toISOString().slice(0, 10);
+  const sinceDate = formatDateUtc(sinceSec);
 
   const factsDb = new DatabaseSync(opts.factsDbPath);
   try {
@@ -70,17 +74,29 @@ export function buildMaintenanceCoverageReport(opts: {
     }
 
     let workflowTraces = 0;
+    let workflowSystemTraces: number | null = null;
+    let workflowUserFacingTraces: number | null = null;
     if (opts.workflowDbPath && existsSync(opts.workflowDbPath)) {
-      const wfDb = new DatabaseSync(opts.workflowDbPath);
+      const wfStore = new WorkflowStore(opts.workflowDbPath);
       try {
-        if (tableExists(wfDb, "workflow_traces")) {
-          const row = wfDb
-            .prepare(`SELECT COUNT(*) AS cnt FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch')`)
-            .get(sinceSec) as { cnt: number } | undefined;
-          workflowTraces = row?.cnt ?? 0;
+        const summary = wfStore.summarizeGoalKinds({ sinceSec });
+        workflowTraces = summary.total;
+        workflowSystemTraces = summary.systemGoals;
+        workflowUserFacingTraces = summary.userFacing;
+      } catch {
+        const wfDb = new DatabaseSync(opts.workflowDbPath);
+        try {
+          if (tableExists(wfDb, "workflow_traces")) {
+            const row = wfDb
+              .prepare(`SELECT COUNT(*) AS cnt FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch')`)
+              .get(sinceSec) as { cnt: number } | undefined;
+            workflowTraces = row?.cnt ?? 0;
+          }
+        } finally {
+          wfDb.close();
         }
       } finally {
-        wfDb.close();
+        wfStore.close();
       }
     }
 
@@ -105,6 +121,8 @@ export function buildMaintenanceCoverageReport(opts: {
       dailyLogFiles: countDailyLogFiles(resolveDailyMemoryDir(), sinceDate),
       sessionMetadataRows: countSessionMetadataSince(factsDb, sinceSec),
       workflowTraces,
+      workflowSystemTraces,
+      workflowUserFacingTraces,
       proposalRuns,
       reflectionWatermarkAgeSec,
       reflectionParseFailures: countReflectionParseFailuresSince(factsDb, sinceSec),
@@ -135,7 +153,11 @@ export function formatMaintenanceCoverageReport(report: MaintenanceCoverageRepor
     `  feedback_trajectories: ${report.feedbackTrajectories}`,
     `  daily_log_files: ${report.dailyLogFiles}`,
     `  session_metadata: ${report.sessionMetadataRows}`,
-    `  workflow_traces: ${report.workflowTraces}`,
+    `  workflow_traces: ${report.workflowTraces}${
+      report.workflowUserFacingTraces != null
+        ? ` (user-facing=${report.workflowUserFacingTraces}, system=${report.workflowSystemTraces ?? 0})`
+        : ""
+    }`,
     `  proposal_runs: ${report.proposalRuns}`,
     `  reflection_parse_failures: ${report.reflectionParseFailures}`,
     `  reflection_watermark_age_sec: ${report.reflectionWatermarkAgeSec ?? "unset"}`,

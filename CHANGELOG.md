@@ -21,8 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.6.52] - 2026-06-05
+
 ### Added
 
+- **Two-tier OpenClaw version check**: `RECOMMENDED_OPENCLAW_VERSION` (**2026.6.1**) logs at startup when the gateway meets the **2026.5.0** floor but is below the recommended tier (Skill Workshop, skills snapshot hot-reload, Dreaming tab).
 - **Gateway memory diagnostics HTTP routes**: `GET /plugins/memory-public/process-memory` and `GET /plugins/memory-public/memory-diagnostics` (RSS/heap/native breakdown, reregister metrics, leak hints for monitoring).
 - **`docs/MEMORY-LEAK-OPERATIONS.md`**: production RCA summary and operational checklist.
 
@@ -30,10 +35,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **SQLite facts.db pragmas**: clamp `OPENCLAW_FACTS_CACHE_SIZE_KB` / `OPENCLAW_FACTS_MMAP_SIZE` to on-disk DB size to prevent multi-hundred-MB anonymous over-reservation.
 - **Lance shadow table cache**: cap at 4 entries during bulk re-index to avoid unbounded native handle growth.
+- **Maintenance backfill CLI migrations** and related workshop/proposal pipeline fixes on the maintenance branch.
 
 ### Changed
 
 - **Maintenance CLI overrides ([#1798](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1798), [#1799](https://github.com/markus-lassfolk/openclaw-hybrid-memory/pull/1799)):** scan-style commands share `--force` (preferred) and legacy `--full` to bypass 23h scan cooldown and incremental watermarks; `run-all` propagates overrides; cron QA harness injects `--force`.
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.52**.
 
 ---
 

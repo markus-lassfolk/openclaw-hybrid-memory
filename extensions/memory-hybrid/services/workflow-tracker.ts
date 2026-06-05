@@ -16,6 +16,10 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import { extractGoalKeywords } from "../backends/workflow-store.js";
 import type { WorkflowTrackingConfig } from "../config/types/features.js";
 import { capturePluginError } from "./error-reporter.js";
+import { formatDateUtc } from "../utils/dates.js";
+
+/** Crystallization needs multi-step workflows; single-tool traces add noise. */
+export const MIN_WORKFLOW_TOOLS_FOR_TRACE = 2;
 
 interface SessionBuffer {
   sessionId: string;
@@ -39,11 +43,11 @@ export class WorkflowTracker {
     private readonly cfg: WorkflowTrackingConfig,
     private readonly clock: () => Date = () => new Date(),
   ) {
-    this.rateLimitDay = this.clock().toISOString().slice(0, 10);
+    this.rateLimitDay = formatDateUtc(Math.floor(this.clock().getTime() / 1000));
   }
 
   private checkAndIncrementRateLimit(): boolean {
-    const today = this.clock().toISOString().slice(0, 10);
+    const today = formatDateUtc(Math.floor(this.clock().getTime() / 1000));
     if (today !== this.rateLimitDay) {
       this.rateLimitDay = today;
       this.rateLimitCount = 0;
@@ -77,7 +81,7 @@ export class WorkflowTracker {
   flush(sessionId: string, goal: string, outcome: "success" | "failure" | "unknown" = "unknown"): string | null {
     if (!this.cfg.enabled) return null;
     const buf = this.sessions.get(sessionId);
-    if (!buf || buf.toolCalls.length === 0) {
+    if (!buf || buf.toolCalls.length < MIN_WORKFLOW_TOOLS_FOR_TRACE) {
       this.sessions.delete(sessionId);
       return null;
     }

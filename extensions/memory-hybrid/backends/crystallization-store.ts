@@ -13,6 +13,8 @@ import type { SQLInputValue } from "node:sqlite";
 
 import type { SkillProposalValidationResult } from "../services/generated-skill-validation.js";
 import { computeEvidenceHash } from "../services/pattern-detector-hash.js";
+import { nowIso, parseTimestamp, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { backfillCrystallizationTextTimestamps } from "../utils/timestamp-migration.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import type { WorkflowPattern } from "./workflow-store.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
@@ -191,8 +193,8 @@ export class CrystallizationStore extends BaseSqliteStore {
         superseded_at    TEXT,
         superseded_by    TEXT,
         validation_result TEXT,
-        created_at       TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at       TEXT NOT NULL,
+        updated_at       TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_cp_status      ON crystallization_proposals(status);
@@ -201,6 +203,7 @@ export class CrystallizationStore extends BaseSqliteStore {
     `);
 
     this.runSchemaMigrations();
+    backfillCrystallizationTextTimestamps(this.liveDb);
   }
 
   protected getSubsystemName(): string {
@@ -209,7 +212,7 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   private registerSqlFunctions(): void {
     this.liveDb.function("normalizedCrystallizationTimestamp", { deterministic: true }, (primary, fallback) => {
-      return normalizeCrystallizationTimestamp(primary) ?? normalizeCrystallizationTimestamp(fallback) ?? 0;
+      return parseTimestamp(primary) ?? parseTimestamp(fallback) ?? 0;
     });
   }
 
@@ -258,7 +261,7 @@ export class CrystallizationStore extends BaseSqliteStore {
   create(input: CreateProposalInput): CrystallizationProposal {
     return this.runWithDb("create", () => {
       const id = randomUUID();
-      const now = new Date().toISOString();
+      const now = nowIso();
       this.insertProposalInternal(id, input, input.status ?? "drafted", now);
 
       // biome-ignore lint/style/noNonNullAssertion: Known to exist
@@ -279,7 +282,7 @@ export class CrystallizationStore extends BaseSqliteStore {
           }
 
           const id = randomUUID();
-          const now = new Date().toISOString();
+          const now = nowIso();
           this.insertProposalInternal(id, input, "approved", now, now);
           const proposal = this.getByIdInternal(id);
           if (!proposal) {
@@ -432,7 +435,7 @@ export class CrystallizationStore extends BaseSqliteStore {
     },
   ): CrystallizationProposal | null {
     return this.runWithDb("approve", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -487,7 +490,7 @@ export class CrystallizationStore extends BaseSqliteStore {
             return { kind: "limit-reached" };
           }
 
-          const now = new Date().toISOString();
+          const now = nowIso();
           const result = this.liveDb
             .prepare(
               `UPDATE crystallization_proposals
@@ -531,7 +534,7 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   saveValidationResult(id: string, validationResult: SkillProposalValidationResult): CrystallizationProposal | null {
     return this.runWithDb("saveValidationResult", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -560,7 +563,7 @@ export class CrystallizationStore extends BaseSqliteStore {
             return null;
           }
 
-          const now = new Date().toISOString();
+          const now = nowIso();
           this.liveDb
             .prepare(
               `UPDATE crystallization_proposals
@@ -594,7 +597,7 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   reject(id: string, reason?: string): CrystallizationProposal | null {
     return this.runWithDb("reject", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -614,7 +617,7 @@ export class CrystallizationStore extends BaseSqliteStore {
    */
   revertApproval(id: string): CrystallizationProposal | null {
     return this.runWithDb("revertApproval", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -634,9 +637,9 @@ export class CrystallizationStore extends BaseSqliteStore {
   pruneStalePendingProposals(maxAgeDays: number): number {
     return this.runWithDb("pruneStalePendingProposals", () => {
       if (maxAgeDays <= 0) return 0;
-      const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
+      const cutoff = cutoffIsoDaysAgo(maxAgeDays);
       const reason = `pruned: unused for ${maxAgeDays} days`;
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -652,7 +655,7 @@ export class CrystallizationStore extends BaseSqliteStore {
   /** Mark an installed proposal as quarantined (failed re-validation of on-disk SKILL.md). */
   quarantine(id: string, reason?: string): CrystallizationProposal | null {
     return this.runWithDb("quarantine", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -667,7 +670,7 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   updateOutputPath(id: string, outputPath: string): CrystallizationProposal | null {
     return this.runWithDb("updateOutputPath", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -683,7 +686,7 @@ export class CrystallizationStore extends BaseSqliteStore {
   /** Restore a quarantined proposal to installed (clears stale rejection reason). */
   restoreFromQuarantine(id: string, outputPath: string): CrystallizationProposal | null {
     return this.runWithDb("restoreFromQuarantine", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -840,7 +843,7 @@ export class CrystallizationStore extends BaseSqliteStore {
 
   supersede(id: string, supersededBy: string): CrystallizationProposal | null {
     return this.runWithDb("supersede", () => {
-      const now = new Date().toISOString();
+      const now = nowIso();
       const result = this.liveDb
         .prepare(
           `UPDATE crystallization_proposals
@@ -925,9 +928,10 @@ function migrateCrystallizationSchemaV1(db: DatabaseSync): void {
   }
 
   db.exec("UPDATE crystallization_proposals SET status = 'validated' WHERE status = 'pending' AND status IS NOT NULL");
-  db.exec(
-    "UPDATE crystallization_proposals SET status = 'installed', installed_at = COALESCE(installed_at, datetime('now')) WHERE status = 'approved' AND output_path IS NOT NULL AND TRIM(output_path) <> ''",
-  );
+  const migrationNow = nowIso();
+  db.prepare(
+    "UPDATE crystallization_proposals SET status = 'installed', installed_at = COALESCE(installed_at, ?) WHERE status = 'approved' AND output_path IS NOT NULL AND TRIM(output_path) <> ''",
+  ).run(migrationNow);
 
   db.exec(
     "UPDATE crystallization_proposals SET evidence_hash = pattern_id WHERE (evidence_hash IS NULL OR evidence_hash = '') AND pattern_id IS NOT NULL",
@@ -958,10 +962,10 @@ function migrateCrystallizationSchemaV1(db: DatabaseSync): void {
       `UPDATE crystallization_proposals
           SET status = 'superseded',
               superseded_by = ?,
-              superseded_at = COALESCE(superseded_at, datetime('now')),
-              updated_at = datetime('now')
+              superseded_at = COALESCE(superseded_at, ?),
+              updated_at = ?
         WHERE pattern_id = ? AND status = 'installed' AND id <> ?`,
-    ).run(keepId, row.pattern_id, keepId);
+    ).run(keepId, migrationNow, migrationNow, row.pattern_id, keepId);
   }
   db.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_cp_one_installed_per_pattern ON crystallization_proposals(pattern_id) WHERE status = 'installed'",
@@ -979,19 +983,4 @@ function parseValidationResult(value: unknown): SkillProposalValidationResult | 
   } catch {
     return undefined;
   }
-}
-
-function normalizeCrystallizationTimestamp(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value > 10_000_000_000 ? value / 1000 : value;
-  }
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const numeric = Number(trimmed);
-  if (Number.isFinite(numeric)) {
-    return numeric > 10_000_000_000 ? numeric / 1000 : numeric;
-  }
-  const parsed = Date.parse(trimmed.includes("T") ? trimmed : `${trimmed.replace(" ", "T")}Z`);
-  return Number.isFinite(parsed) ? parsed / 1000 : null;
 }

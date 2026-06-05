@@ -37,6 +37,7 @@ import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vect
 import { isWalWriteFailure } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
+import { nowIso } from "../../utils/dates.js";
 import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
 import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
@@ -232,7 +233,7 @@ export async function runCapture(
     try {
       ctx.eventLog.append({
         sessionId: sessionKey,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         eventType: "action_taken",
         content: { action: "session_end", agentId: ctx.currentAgentIdRef.value },
       });

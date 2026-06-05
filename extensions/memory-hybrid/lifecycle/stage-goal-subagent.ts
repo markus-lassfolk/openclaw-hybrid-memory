@@ -13,6 +13,7 @@ import {
 } from "../services/goal-stewardship.js";
 import { loadTaskLedgerFromFacts, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
 import { type SubagentEndedEvent, subagentEndedIsSuccess, taskLabelsMatch } from "../utils/subagent-ended-utils.js";
+import { nowIso } from "../utils/dates.js";
 import type { LifecycleContext } from "./types.js";
 
 async function syncGoalLinkedTaskToFactsLedger(
@@ -27,7 +28,7 @@ async function syncGoalLinkedTaskToFactsLedger(
   if (!ctx.cfg.activeTask.enabled || ctx.cfg.activeTask.ledger !== "facts") return;
   const { active } = loadTaskLedgerFromFacts(ctx.factsDb);
   const existing = active.find((t) => taskLabelsMatch(t.label, label));
-  const now = new Date().toISOString();
+  const now = nowIso();
   const reopeningFromTerminal =
     !!childOrSession && !overrides?.status && !!existing && isTerminalActiveTaskStatus(existing.status);
   const markingFailed = overrides?.status === "Failed";

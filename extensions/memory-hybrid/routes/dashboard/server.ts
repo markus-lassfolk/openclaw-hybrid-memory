@@ -51,9 +51,14 @@ import {
   collectDreamCycleLog,
   collectSkillTelemetry,
   collectWorkshopDigest,
+  collectWorkshopChanges,
   collectWorkshopProposalDetail,
   collectWorkshopProposals,
+  quarantineWorkshopProposal,
   rejectWorkshopProposal,
+  reviseWorkshopProposal,
+  revertWorkshopChange,
+  undoWorkshopProposal,
   type WorkshopDashboardContext,
 } from "./workshop-collectors.js";
 import { getDashboardHtml } from "./html.js";
@@ -68,6 +73,7 @@ function workshopCtx(ctx: DashboardContext): WorkshopDashboardContext | null {
     toolProposalStore: ctx.toolProposalStore ?? null,
     workflowStore: ctx.workflowStore ?? null,
     resolvedSqlitePath: ctx.resolvedSqlitePath,
+    changeFeed: ctx.changeFeed ?? null,
     dreamCycleLogDir: ctx.dreamCycleLogDir,
   };
 }
@@ -609,10 +615,12 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     const wctx = workshopCtx(ctx);
     const isWorkshopApi =
       pathname === "/api/workshop/proposals" ||
+      pathname === "/api/workshop/changes" ||
       pathname === "/api/workshop/digest" ||
       pathname === "/api/workshop/dream-log" ||
       pathname === "/api/workshop/skills" ||
-      pathname.startsWith("/api/workshop/proposals/");
+      pathname.startsWith("/api/workshop/proposals/") ||
+      pathname.startsWith("/api/workshop/changes/");
 
     if (isWorkshopApi && !wctx) {
       res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
@@ -629,6 +637,24 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       try {
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify({ proposals: collectWorkshopProposals(wctx) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/workshop/changes" && wctx) {
+      try {
+        const u = new URL(req.url ?? "", "http://127.0.0.1");
+        const limitRaw = u.searchParams.get("limit");
+        const limit = limitRaw ? Number(limitRaw) : 50;
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(
+          JSON.stringify({
+            changes: collectWorkshopChanges(wctx, Number.isFinite(limit) ? limit : 50),
+          }),
+        );
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
@@ -669,9 +695,28 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       return;
     }
 
+    if (pathname.startsWith("/api/workshop/changes/") && wctx && req.method === "POST") {
+      const suffix = pathname.slice("/api/workshop/changes/".length);
+      const revertMatch = suffix.match(/^(\d+)\/revert$/);
+      if (revertMatch) {
+        readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
+          .then(() => {
+            const ordinal = Number.parseInt(revertMatch[1] ?? "", 10);
+            const result = revertWorkshopChange(wctx, ordinal);
+            res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(result));
+          })
+          .catch((err: unknown) => {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+          });
+        return;
+      }
+    }
+
     if (pathname.startsWith("/api/workshop/proposals/") && wctx) {
       const suffix = pathname.slice("/api/workshop/proposals/".length);
-      const actionMatch = suffix.match(/^(.+)\/(approve|reject)$/);
+      const actionMatch = suffix.match(/^(.+)\/(approve|reject|undo|quarantine|revise)$/);
       if (req.method === "GET" && !actionMatch) {
         const id = parseUrlPathSegment(suffix);
         if (!id) {
@@ -701,6 +746,29 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           .then(async (body) => {
             if (action === "approve") {
               const result = await applyWorkshopProposal(wctx, id);
+              res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(result));
+              return;
+            }
+            if (action === "undo") {
+              const result = undoWorkshopProposal(wctx, id);
+              res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(result));
+              return;
+            }
+            if (action === "quarantine") {
+              const result = quarantineWorkshopProposal(
+                wctx,
+                id,
+                typeof body.reason === "string" ? body.reason : undefined,
+              );
+              res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(result));
+              return;
+            }
+            if (action === "revise") {
+              const revision = typeof body.revision === "string" ? body.revision : "";
+              const result = reviseWorkshopProposal(wctx, id, revision);
               res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
               res.end(JSON.stringify(result));
               return;
@@ -737,14 +805,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         "Cache-Control": "no-cache",
       });
       res.end(getDashboardHtml(false));
-    } else if (pathname === "/graph") {
-      // Serve the graph explorer visualization
-      const { graphExplorerHTML } = await import("../graph-explorer.js");
-      res.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
-      res.end(graphExplorerHTML);
     } else if (pathname === "/graphql" && req.method === "POST") {
       // Handle GraphQL API requests using the shared Yoga server created at dashboard startup.
       try {

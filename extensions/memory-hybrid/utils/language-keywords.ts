@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { capturePluginError } from "../services/error-reporter.js";
+import { nowIso } from "./dates.js";
 
 const LANG_FILE_NAME = ".language-keywords.json";
 
@@ -439,7 +440,7 @@ export function saveUserFeedbackPhrases(data: UserFeedbackPhrases): void {
   if (!filePath) return;
   const dir = dirname(filePath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const out = { ...data, updatedAt: new Date().toISOString(), initialRunDone: true };
+  const out = { ...data, updatedAt: nowIso(), initialRunDone: true };
   writeFileSync(filePath, JSON.stringify(out, null, 2), "utf-8");
   userFeedbackPhrasesCache = null;
 }

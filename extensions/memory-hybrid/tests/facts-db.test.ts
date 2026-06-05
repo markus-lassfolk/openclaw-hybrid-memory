@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
-const { FactsDB } = _testing;
+const { FactsDB, isIsoUtcTimestamp } = _testing;
 
 let tmpDir: string;
 let db: InstanceType<typeof FactsDB>;
@@ -3695,8 +3695,7 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(updated?.accessCount).toBe(1);
     expect(updated?.lastAccessedAt).toBeDefined();
     expect(updated?.lastAccessedAt).not.toBeNull();
-    // Must be strict UTC ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-    expect(updated?.lastAccessedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(isIsoUtcTimestamp(updated!.lastAccessedAt!)).toBe(true);
   });
 
   it("refreshAccessedFacts increments access_count cumulatively", () => {

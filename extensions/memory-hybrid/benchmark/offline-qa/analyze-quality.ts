@@ -6,6 +6,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { quickValidateSkillMarkdown } from "../../services/skill-creator-validator.js";
 import { SkillValidator } from "../../services/skill-validator.js";
+import { nowIso } from "../../utils/dates.js";
 
 export type QualityVerdict = "good" | "acceptable" | "weak" | "failed" | "n/a";
 
@@ -541,7 +542,7 @@ export function buildQualityReport(workHome: string, taskLogs: Record<string, st
   const blockers = tasks.filter((t) => t.verdict === "failed").map((t) => `${t.taskId}: ${t.summary}`);
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     workHome,
     tasks,
     blockers,

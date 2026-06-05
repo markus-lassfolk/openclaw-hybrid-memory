@@ -1,3 +1,5 @@
+import { nowIso } from "../utils/dates.js";
+
 type LoggerLike = {
   info?: (msg: string) => void;
 };
@@ -87,7 +89,7 @@ export function recordStartupMemoryCheckpoint(opts: {
   }
 
   const entry: StartupMemoryCheckpointEntry = {
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso(),
     owner: opts.owner ?? "hybrid-memory",
     subsystem: opts.subsystem,
     operation: opts.operation,

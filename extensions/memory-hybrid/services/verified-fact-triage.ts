@@ -2,6 +2,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import type { FactsDB } from "../backends/facts-db.js";
 import { rowToMemoryEntry } from "../backends/facts-db/index.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { formatTimestampUtcFromMs, cutoffIsoDaysAgo } from "../utils/dates.js";
 import {
   computePendingInputHash,
   createPendingAutopilotRunId,
@@ -273,10 +274,8 @@ export function listVerifiedFactTriageItems(
 ): VerifiedFactTriageItem[] {
   registerVerifiedChecksumFunction(db);
   const nowMs = opts.nowMs ?? Date.now();
-  const nowIso = new Date(nowMs).toISOString();
-  const cutoffIso = new Date(
-    nowMs - (opts.reverificationDays ?? DEFAULT_REVERIFICATION_DAYS) * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  const nowIso = formatTimestampUtcFromMs(nowMs);
+  const cutoffIso = cutoffIsoDaysAgo(opts.reverificationDays ?? DEFAULT_REVERIFICATION_DAYS, nowMs);
   const policy = opts.policy ?? "classify";
   const cursor = opts.cursor?.cursor ?? null;
   const cursorItemId = opts.cursor
@@ -614,7 +613,7 @@ export function classifyVerifiedFact(
   const fact = item.payload.fact;
   const nowMs = opts.nowMs ?? Date.now();
   const nowSec = Math.floor(nowMs / 1000);
-  const nowIso = new Date(nowMs).toISOString();
+  const nowIso = formatTimestampUtcFromMs(nowMs);
 
   if (!fact) {
     return {
@@ -1080,10 +1079,8 @@ function loadLiveVerifiedFactTriageItem(
 ): VerifiedFactTriageItem | null {
   registerVerifiedChecksumFunction(db);
   const nowMs = opts.nowMs ?? Date.now();
-  const nowIso = new Date(nowMs).toISOString();
-  const cutoffIso = new Date(
-    nowMs - (opts.reverificationDays ?? DEFAULT_REVERIFICATION_DAYS) * 24 * 60 * 60 * 1000,
-  ).toISOString();
+  const nowIso = formatTimestampUtcFromMs(nowMs);
+  const cutoffIso = cutoffIsoDaysAgo(opts.reverificationDays ?? DEFAULT_REVERIFICATION_DAYS, nowMs);
   const row = db
     .prepare(
       `SELECT vf.*

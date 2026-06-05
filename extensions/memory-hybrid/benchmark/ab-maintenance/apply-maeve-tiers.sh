@@ -20,26 +20,30 @@ if [[ "${APPLY:-}" != "1" ]]; then
   exit 0
 fi
 
-ssh -o BatchMode=yes "$MAEVE" 'python3 - <<'"'"'PY'"'"'
+REMOTE_SNIPPET="/tmp/openclaw-hybrid-memory-maeve-snippet.json"
+scp -o BatchMode=yes "$SNIPPET" "$MAEVE:$REMOTE_SNIPPET"
+
+ssh -o BatchMode=yes "$MAEVE" "python3 - <<'PY'
 import json, os, shutil
 from datetime import datetime, timezone
 
-snippet = json.loads(open("/dev/stdin").read())
-snippet.pop("_comment", None)
-oc_path = os.path.expanduser("~/.openclaw/openclaw.json")
+snippet_path = os.path.expanduser('$REMOTE_SNIPPET')
+snippet = json.load(open(snippet_path))
+snippet.pop('_comment', None)
+oc_path = os.path.expanduser('~/.openclaw/openclaw.json')
 cfg = json.load(open(oc_path))
-plugins = cfg.setdefault("plugins", {})
-entries = plugins.setdefault("entries", {})
+plugins = cfg.setdefault('plugins', {})
+entries = plugins.setdefault('entries', {})
 mem_key = next(
-    (k for k in entries if isinstance(k, str) and "hybrid" in k.lower() and "memory" in k.lower()),
-    "openclaw-hybrid-memory",
+    (k for k in entries if isinstance(k, str) and 'hybrid' in k.lower() and 'memory' in k.lower()),
+    'openclaw-hybrid-memory',
 )
-entry = entries.setdefault(mem_key, {"enabled": True, "config": {}})
+entry = entries.setdefault(mem_key, {'enabled': True, 'config': {}})
 if not isinstance(entry, dict):
-    raise SystemExit(f"Unexpected entry shape for {mem_key}")
-mem_cfg = entry.setdefault("config", {})
+    raise SystemExit(f'Unexpected entry shape for {mem_key}')
+mem_cfg = entry.setdefault('config', {})
 if not isinstance(mem_cfg, dict):
-    raise SystemExit(f"Unexpected config shape for {mem_key}")
+    raise SystemExit(f'Unexpected config shape for {mem_key}')
 
 def deep_merge(base, patch):
     for k, v in patch.items():
@@ -49,13 +53,14 @@ def deep_merge(base, patch):
             base[k] = v
 
 deep_merge(mem_cfg, snippet)
-backup = oc_path + ".bak-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+backup = oc_path + '.bak-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
 shutil.copy2(oc_path, backup)
-json.dump(cfg, open(oc_path, "w"), indent=2)
-print(f"Merged snippet into plugins.entries[{mem_key!r}].config")
-print(f"Backup: {backup}")
-print("workflowTracking.enabled:", mem_cfg.get("workflowTracking", {}).get("enabled"))
-print("crystallization.enabled:", mem_cfg.get("crystallization", {}).get("enabled"))
-PY' < "$SNIPPET"
+json.dump(cfg, open(oc_path, 'w'), indent=2)
+os.remove(snippet_path)
+print(f'Merged snippet into plugins.entries[{mem_key!r}].config')
+print(f'Backup: {backup}')
+print('workflowTracking.enabled:', mem_cfg.get('workflowTracking', {}).get('enabled'))
+print('crystallization.enabled:', mem_cfg.get('crystallization', {}).get('enabled'))
+PY"
 
 echo "==> Done. Restart OpenClaw gateway on Maeve to pick up config."

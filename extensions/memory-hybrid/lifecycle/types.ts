@@ -92,6 +92,8 @@ export interface LifecycleContext {
   prependBudgetRef?: PrependBudgetRef;
   /** Fact IDs already injected this turn (lifecycle + ContextEngine dedup). */
   injectedFactIdsBySession?: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
+  /** Live change feed for operator notifications. */
+  changeFeed?: ChangeFeed | null;
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */
@@ -100,6 +102,12 @@ export interface SessionState {
   ambientSeenFactsMap: Map<string, SessionSeenFacts>;
   ambientLastEmbeddingMap: Map<string, number[] | null>;
   frustrationStateMap: Map<string, { level: number; turns: FrustrationConversationTurn[] }>;
+  /** Last frustration adaptation band emitted to change feed per session. */
+  frustrationThresholdBandMap: Map<string, "none" | "medium" | "high" | "critical">;
+  /** Last ordinals through which change events were injected in-chat per session key. */
+  changeNotifyStateMap: Map<string, { lastNotifiedOrdinal: number; lastNotifiedBroadcastOrdinal: number }>;
+  /** Maps in-chat display numbers (#N in notices) to change event ids per chat session. */
+  displayRevertMap: Map<string, Map<number, string>>;
   authFailureRecallsThisSession: Map<string, number>;
   sessionLastActivity: Map<string, number>;
   capabilityHintsSessionsSeen: Set<string>;

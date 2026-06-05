@@ -1,4 +1,5 @@
 import type { MemoryEntry } from "../../types/memory.js";
+import { formatDateUtc } from "../../utils/dates.js";
 import { sanitizePromptInjection } from "../skill-prompt-injection.js";
 
 /** Approximate token count from character count (chars / 4). */
@@ -32,7 +33,7 @@ export function serializeFactForContext(
   parts.push(`category: ${sanitizePromptInjection(entry.category)}`);
   parts.push(`confidence: ${entry.confidence.toFixed(2)}`);
   const storedSec = entry.sourceDate ?? entry.createdAt;
-  const storedDate = new Date(storedSec * 1000).toISOString().slice(0, 10);
+  const storedDate = formatDateUtc(storedSec);
   parts.push(`stored: ${storedDate}`);
   if (options?.provenancePreview) {
     parts.push(`sources: ${sanitizePromptInjection(options.provenancePreview)}`);

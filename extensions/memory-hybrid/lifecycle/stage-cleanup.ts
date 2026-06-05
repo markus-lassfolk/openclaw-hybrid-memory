@@ -29,6 +29,7 @@ import {
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
+import { nowIso } from "../utils/dates.js";
 import {
   type SubagentEndedEvent,
   findActiveTaskForSubagentEnd,
@@ -187,7 +188,7 @@ async function consumePendingTaskSignals(
       try {
         const updatedTimestamp = (() => {
           const t = Date.parse(signal.timestamp);
-          return Number.isNaN(t) ? new Date().toISOString() : signal.timestamp;
+          return Number.isNaN(t) ? nowIso() : signal.timestamp;
         })();
 
         const existing = findMatchingTask(updatedActive, updatedCompleted, signal);
@@ -388,7 +389,7 @@ export function registerCleanupHandlers(
       const label = ev.label ?? childOrSession ?? `subagent-${Date.now()}`;
       const description = ev.task ?? `Subagent task (session: ${childOrSession ?? "unknown"})`;
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-      const now = new Date().toISOString();
+      const now = nowIso();
 
       if (!childOrSession) {
         api.logger.debug?.(
@@ -574,7 +575,7 @@ export function registerCleanupHandlers(
         return;
       }
 
-      const now = new Date().toISOString();
+      const now = nowIso();
       const newStatus = subagentEndedIsSuccess(ev) ? "Done" : "Failed";
       if (isTerminalActiveTaskStatus(taskAfterSignals.status)) {
         api.logger.debug?.(

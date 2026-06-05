@@ -17,6 +17,7 @@ import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { parseTimestamp } from "../utils/dates.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -28,9 +29,7 @@ function normalizeEdictText(text: string): string {
 }
 
 function parseIsoDateToUnixSeconds(iso: string): number | null {
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return null;
-  return Math.floor(ms / 1000);
+  return parseTimestamp(iso);
 }
 
 /** An edict entry — verified ground-truth fact */

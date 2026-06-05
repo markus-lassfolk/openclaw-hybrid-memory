@@ -94,6 +94,7 @@ export type HybridMemCliContext = {
   wal?: WriteAheadLog | null;
   aliasDb?: AliasDB | null;
   crystallizationStore?: CrystallizationStore | null;
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   versionInfo: {
     pluginVersion: string;
     memoryManagerVersion: string;
@@ -557,6 +558,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       crystallizationStore: ctx.crystallizationStore ?? null,
       cfg: ctx.cfg,
       factsDb: ctx.factsDb ?? null,
+      changeFeed: ctx.changeFeed ?? null,
     });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

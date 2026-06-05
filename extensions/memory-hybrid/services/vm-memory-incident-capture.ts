@@ -21,6 +21,7 @@ import { execFile } from "../utils/process-runner.js";
 import { getEnv } from "../utils/env-manager.js";
 import { capturePluginError } from "./error-reporter.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso } from "../utils/dates.js";
 
 /**
  * Promisified wrapper around execFile that correctly preserves the full
@@ -186,7 +187,7 @@ export async function captureLiveDiagnosticsToFile(
   opts: CaptureLiveDiagnosticsOptions,
 ): Promise<LiveDiagnosticsResult> {
   const { command, args = [], timeoutMs = 30_000, includeFallbackMemory = true } = opts;
-  const timestamp = new Date().toISOString();
+  const timestamp = nowIso();
 
   let result: LiveDiagnosticsResult;
 
@@ -301,7 +302,7 @@ export function repairZeroByteIncidentFile(filePath: string, context?: { command
     exitCode: -1,
     timedOut: false,
     fallbackMemory: captureFallbackMemory(),
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso(),
   };
 
   try {
@@ -381,7 +382,7 @@ export function writeIncidentManifest(bundleDir: string, opts?: WriteIncidentMan
   }
 
   const manifest: IncidentManifest = {
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso(),
     bundleDir,
     artifacts,
     warnings,

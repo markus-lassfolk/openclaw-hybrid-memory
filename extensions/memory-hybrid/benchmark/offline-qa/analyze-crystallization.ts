@@ -11,6 +11,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { formatDateUtc, nowIso } from "../../utils/dates.js";
 import { CrystallizationStore } from "../../backends/crystallization-store.js";
 import { WorkflowStore } from "../../backends/workflow-store.js";
 import { hybridConfigSchema } from "../../config.js";
@@ -23,6 +24,12 @@ import {
 import { detectCrystallizationCandidates } from "../../services/pattern-detector.js";
 import { GeneratedSkillValidationService } from "../../services/generated-skill-validation.js";
 import { crystallizeSkill } from "../../services/skill-crystallizer.js";
+import {
+  extractUserWorkflowGoal,
+  isSystemWorkflowGoal,
+  patternHasUserFacingGoal,
+} from "../../services/workflow-goal-classifier.js";
+import { inferWorkflowOutcomeFromMessages } from "../../services/workflow-message-utils.js";
 import type { CrystallizationConfig } from "../../config/types/features.js";
 import type { WorkflowPattern } from "../../backends/workflow-store.js";
 import { parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
@@ -53,12 +60,21 @@ const PROD_CFG: CrystallizationConfig = {
   maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
+  excludeSystemGoals: true,
 };
 
 const STRUCTURAL_CFG: CrystallizationConfig = {
   ...PROD_CFG,
   minSuccessRate: 0,
   minUsageCount: 3,
+  excludeSystemGoals: false,
+};
+
+const USER_FACING_CFG: CrystallizationConfig = {
+  ...PROD_CFG,
+  minSuccessRate: 0,
+  minUsageCount: 3,
+  excludeSystemGoals: true,
 };
 
 function log(line: string): void {
@@ -66,7 +82,7 @@ function log(line: string): void {
 }
 
 function utcDay(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
+  return formatDateUtc(Math.floor(ms / 1000));
 }
 
 function sessionDaysHistogram(paths: string[]): Map<string, number> {
@@ -89,21 +105,25 @@ function detectSessionGaps(hist: Map<string, number>, windowDays: number): strin
   for (let i = windowDays - 1; i >= 0; i--) {
     const d = new Date(end);
     d.setUTCDate(d.getUTCDate() - i);
-    const key = d.toISOString().slice(0, 10);
+    const key = formatDateUtc(Math.floor(d.getTime() / 1000));
     if ((hist.get(key) ?? 0) === 0) gaps.push(key);
   }
   return gaps;
 }
 
-function backfillWorkflowTraces(
-  wf: WorkflowStore,
-  paths: string[],
-): { traces: number; skipped: number; noTools: number } {
+function backfillWorkflowTraces(wf: WorkflowStore, paths: string[]): {
+  traces: number;
+  skipped: number;
+  noTools: number;
+  skippedSystemGoals: number;
+} {
   let traces = 0;
   let skipped = 0;
   let noTools = 0;
+  let skippedSystemGoals = 0;
   for (const p of paths) {
-    const messages = parseSessionMessagesFromLines(readFileSync(p, "utf-8").split("\n"), "crystallization-qa");
+    const rawLines = readFileSync(p, "utf-8").split("\n");
+    const messages = parseSessionMessagesFromLines(rawLines, "crystallization-qa");
     let tools = extractToolSequenceFromMessages(messages);
     const trajLines = readTrajectoryLines(p);
     if (trajLines) tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "crystallization-qa"));
@@ -112,16 +132,23 @@ function backfillWorkflowTraces(
       noTools++;
       continue;
     }
+    const goal = redactMaintenancePrivateText(
+      extractUserWorkflowGoal(messages, PROD_CFG.excludeGoalPatterns),
+    );
+    if (isSystemWorkflowGoal(goal, PROD_CFG.excludeGoalPatterns)) {
+      skippedSystemGoals++;
+      continue;
+    }
     const inserted = wf.recordBackfillIfAbsent({
-      goal: redactMaintenancePrivateText(messages.find((m) => m.role === "user")?.text.slice(0, 200) ?? "session"),
+      goal,
       toolSequence: tools,
-      outcome: "unknown",
+      outcome: inferWorkflowOutcomeFromMessages(messages),
       sessionId: basename(p),
     });
     if (inserted) traces++;
     else skipped++;
   }
-  return { traces, skipped, noTools };
+  return { traces, skipped, noTools, skippedSystemGoals };
 }
 
 function outcomeBreakdown(wfPath: string): Record<string, number> {
@@ -149,15 +176,7 @@ function topPatterns(wf: WorkflowStore, minSuccessRate: number, minUsage: number
 }
 
 function isCronOrSystemGoal(goal: string): boolean {
-  const g = goal.trim();
-  return (
-    /^\[cron:/i.test(g) ||
-    /^\[Retry after the previous model/i.test(g) ||
-    /^<!-- memory-hybrid:/i.test(g) ||
-    /^<recalled-context>/i.test(g) ||
-    /^\[Subagent Context\]/i.test(g) ||
-    /^\[Wed \d{4}-\d{2}-\d{2}/i.test(g)
-  );
+  return isSystemWorkflowGoal(goal);
 }
 
 function assessUsefulness(
@@ -168,7 +187,7 @@ function assessUsefulness(
   const userGoals = goals.filter((g) => !isCronOrSystemGoal(g));
 
   if (validation.approvalDecision === "deny") return "garbage — validation denied";
-  if (goals.every(isCronOrSystemGoal)) return "garbage — cron/system prompt patterns only";
+  if (!patternHasUserFacingGoal(pattern.exampleGoals)) return "garbage — cron/system prompt patterns only";
   if (pattern.toolSequence.length === 1) return "weak — single-tool pattern";
   if (userGoals.length === 0 && pattern.exampleGoals.every((g) => g.length < 12))
     return "weak — goals too terse/generic";
@@ -213,6 +232,11 @@ async function main(): Promise<void> {
   const wf = new WorkflowStore(wfPath);
   const backfill = backfillWorkflowTraces(wf, sessionPaths);
   const outcomes = outcomeBreakdown(wfPath);
+  const sampleUserGoals = wf
+    .list({ limit: 50 })
+    .filter((t) => !isSystemWorkflowGoal(t.goal, PROD_CFG.excludeGoalPatterns))
+    .map((t) => t.goal)
+    .slice(0, 8);
 
   const prodPatterns = topPatterns(wf, PROD_CFG.minSuccessRate, PROD_CFG.minUsageCount);
   const structuralPatterns = topPatterns(wf, 0, STRUCTURAL_CFG.minUsageCount);
@@ -220,6 +244,7 @@ async function main(): Promise<void> {
   const crystStore = new CrystallizationStore(propPath);
   const prodCandidates = detectCrystallizationCandidates(wf, crystStore, PROD_CFG);
   const structuralCandidates = detectCrystallizationCandidates(wf, crystStore, STRUCTURAL_CFG);
+  const userFacingCandidates = detectCrystallizationCandidates(wf, crystStore, USER_FACING_CFG);
 
   const validator = new GeneratedSkillValidationService();
   const structuralCfgForGen: CrystallizationConfig = { ...STRUCTURAL_CFG, outputDir: skillsOut };
@@ -271,7 +296,14 @@ async function main(): Promise<void> {
   }, {});
 
   const liveWfPath = join(home, ".openclaw/memory/workflow-traces.db");
-  let liveWfStats: { total: number; sinceWindow: number; outcomes: Record<string, number> } | null = null;
+  let liveWfStats: {
+    total: number;
+    sinceWindow: number;
+    outcomes: Record<string, number>;
+    systemGoalTraces: number;
+  } | null = null;
+  let liveProdCandidates = 0;
+  let liveProdPatterns = 0;
   if (existsSync(liveWfPath)) {
     const db = new DatabaseSync(liveWfPath);
     try {
@@ -286,29 +318,54 @@ async function main(): Promise<void> {
         .all(sinceIso) as Array<{ outcome: string; cnt: number }>;
       const outcomes: Record<string, number> = {};
       for (const r of rows) outcomes[r.outcome] = r.cnt;
-      liveWfStats = { total, sinceWindow, outcomes };
+      liveWfStats = { total, sinceWindow, outcomes, systemGoalTraces: 0 };
     } finally {
       db.close();
+    }
+    const liveWf = new WorkflowStore(liveWfPath);
+    const liveCryst = new CrystallizationStore(join(qaTmp, "live-crystallization-proposals.db"));
+    try {
+      const liveSummary = liveWf.summarizeGoalKinds({
+        sinceSec: Math.floor(Date.now() / 1000) - days * 86400,
+        excludeGoalPatterns: PROD_CFG.excludeGoalPatterns,
+      });
+      liveWfStats!.systemGoalTraces = liveSummary.systemGoals;
+      liveProdPatterns = topPatterns(liveWf, PROD_CFG.minSuccessRate, PROD_CFG.minUsageCount).length;
+      liveProdCandidates = detectCrystallizationCandidates(liveWf, liveCryst, PROD_CFG).length;
+    } finally {
+      liveWf.close();
+      liveCryst.close();
     }
   }
 
   const dataGapOk = gaps.length <= 2;
-  const verdict = !dataGapOk
-    ? "INCONCLUSIVE — session coverage has multi-day gaps in the window."
-    : prodCandidates.length === 0 && structuralCandidates.length === 0
-      ? "NOT READY — no repeatable tool patterns at minimum usage thresholds."
-      : prodCandidates.length === 0
-        ? "BLOCKED ON OUTCOMES — patterns exist but production minSuccessRate (0.7) eliminates all candidates because backfill traces use outcome=unknown. Enable workflowTracking on Maeve first."
-        : validationSummary.deny > validationSummary.allow
-          ? "MOSTLY GARBAGE — validation denies more samples than it allows."
-          : (usefulnessCounts.potentially ?? 0) >= 4
-            ? "PROMISING — several candidates look actionable with real goals."
-            : "MIXED — some structure, but many skills are generic boilerplate.";
+  const unknownOutcomeShare =
+    backfill.traces > 0 ? (outcomes.unknown ?? 0) / backfill.traces : 0;
+  const verdict =
+    !dataGapOk
+      ? "INCONCLUSIVE — session coverage has multi-day gaps in the window."
+      : liveProdCandidates > 0
+        ? "PROMISING WITH LIVE TRACES — production gates pass on Maeve workflow-traces.db; review proposals manually."
+        : userFacingCandidates.length === 0 && structuralCandidates.length > 0
+          ? "MOSTLY GARBAGE — repeatable patterns are cron/system prompts, not user-facing workflows."
+          : prodCandidates.length === 0 && structuralCandidates.length === 0
+            ? "NOT READY — no repeatable tool patterns at minimum usage thresholds."
+            : prodCandidates.length === 0 && liveWfStats && liveWfStats.sinceWindow > 0
+              ? "LOW SUCCESS RATE — live traces exist but minSuccessRate (0.7) eliminates all production candidates."
+              : prodCandidates.length === 0 && unknownOutcomeShare > 0.5
+                ? "BLOCKED ON OUTCOMES — most backfill traces still have outcome=unknown; rely on live workflowTracking."
+                : validationSummary.deny > validationSummary.allow
+                  ? "MOSTLY GARBAGE — validation denies more samples than it allows."
+                  : (usefulnessCounts.potentially ?? 0) >= 4
+                    ? "PROMISING — several candidates look actionable with real goals."
+                    : (usefulnessCounts.garbage ?? 0) >= 8
+                      ? "MOSTLY GARBAGE — top patterns are cron/system prompts despite passing validation."
+                      : "MIXED — some structure, but many skills are generic boilerplate.";
 
   const lines: string[] = [
     `# Crystallization analysis (Maeve offline QA)`,
     ``,
-    `Generated: ${new Date().toISOString()}`,
+    `Generated: ${nowIso()}`,
     `Sandbox HOME: ${home}`,
     `Manifest fetchedAt: ${manifestFetchedAt}`,
     `Window: last ${days} days`,
@@ -323,6 +380,7 @@ async function main(): Promise<void> {
     `- Session days with zero files: **${gaps.length}** ${gaps.length ? `(${gaps.join(", ")})` : ""}`,
     `- Data-gap gate (≤2 zero days): **${dataGapOk ? "PASS" : "FAIL"}**`,
     `- Sessions with <2 tools (no trace): **${backfill.noTools}**`,
+    `- Sessions skipped (system/cron goals only): **${backfill.skippedSystemGoals}**`,
     `- Workflow traces backfilled (isolated DB): **${backfill.traces}** (skipped dupes: ${backfill.skipped})`,
     `- Trace outcomes (backfill isolated DB): ${
       Object.entries(outcomes)
@@ -330,11 +388,7 @@ async function main(): Promise<void> {
         .join(", ") || "(none)"
     }`,
     liveWfStats
-      ? `- Live workflow-traces.db on sandbox: total=${liveWfStats.total}, last ${days}d=${liveWfStats.sinceWindow}, outcomes: ${
-          Object.entries(liveWfStats.outcomes)
-            .map(([k, v]) => `${k}=${v}`)
-            .join(", ") || "(none)"
-        }`
+      ? `- Live workflow-traces.db on sandbox: total=${liveWfStats.total}, last ${days}d=${liveWfStats.sinceWindow}, user-facing=${Math.max(0, liveWfStats.sinceWindow - liveWfStats.systemGoalTraces)}, system-goal=${liveWfStats.systemGoalTraces}, outcomes: ${Object.entries(liveWfStats.outcomes).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`
       : `- Live workflow-traces.db on sandbox: (not present — backfill-only analysis)`,
     `- Maeve config workflowTracking.enabled: **${cfg.workflowTracking.enabled}**`,
     `- Maeve config crystallization.enabled: **${cfg.crystallization.enabled}**`,
@@ -347,10 +401,22 @@ async function main(): Promise<void> {
     ``,
     `## Pattern detection`,
     ``,
-    `- Production thresholds (minUsage=${PROD_CFG.minUsageCount}, minSuccessRate=${PROD_CFG.minSuccessRate}): **${prodCandidates.length}** candidates, **${prodPatterns.length}** raw pattern clusters`,
-    `- Structural dry-run (minUsage=${STRUCTURAL_CFG.minUsageCount}, minSuccessRate=0 for unknown outcomes): **${structuralCandidates.length}** candidates, **${structuralPatterns.length}** raw pattern clusters`,
+    `- Production thresholds on session backfill DB: **${prodCandidates.length}** candidates, **${prodPatterns.length}** raw pattern clusters`,
+    liveWfStats
+      ? `- Production thresholds on live Maeve workflow-traces.db: **${liveProdCandidates}** candidates, **${liveProdPatterns}** raw pattern clusters`
+      : `- Production thresholds on live Maeve workflow-traces.db: (no live DB)`,
+    `- Structural dry-run (minUsage=${STRUCTURAL_CFG.minUsageCount}, all goals): **${structuralCandidates.length}** candidates, **${structuralPatterns.length}** raw pattern clusters`,
+    `- User-facing only (excludeSystemGoals=true): **${userFacingCandidates.length}** candidates from session backfill`,
     ``,
   ];
+
+  if (sampleUserGoals.length > 0) {
+    lines.push(`### User-facing backfill goals (sample)`, ``);
+    for (const g of sampleUserGoals) {
+      lines.push(`- ${JSON.stringify(g.slice(0, 120))}`);
+    }
+    lines.push(``);
+  }
 
   if (structuralPatterns.length > 0) {
     lines.push(`### Top structural patterns (by usage)`, ``);
@@ -394,27 +460,26 @@ async function main(): Promise<void> {
   }
 
   lines.push(`## Recommendations`, ``);
+  let rec = 1;
   if (!cfg.workflowTracking.enabled) {
+    lines.push(`${rec++}. Enable \`workflowTracking.enabled\` on Maeve so traces record success/failure instead of backfill-only inference.`);
+  }
+  if (liveWfStats && liveWfStats.systemGoalTraces > 0) {
     lines.push(
-      `1. Enable \`workflowTracking.enabled\` on Maeve so traces record success/failure instead of backfill-only \`unknown\`.`,
+      `${rec++}. Purge legacy cron/system traces from live DB: \`openclaw hybrid-mem purge-workflow-system-traces --dry-run\` then apply (currently ${liveWfStats.systemGoalTraces} system-goal row(s)).`,
     );
   }
-  if (prodCandidates.length === 0 && structuralCandidates.length > 0) {
+  if (backfill.traces < 20 || userFacingCandidates.length === 0) {
     lines.push(
-      `2. Re-run this analysis after 2 weeks of live workflow tracking; production gates need non-zero success rates.`,
+      `${rec++}. Keep \`crystallization.enabled: false\`; only ${backfill.traces} user-facing backfill trace(s) in this window. Re-run after 2–4 weeks of live tracking.`,
     );
   }
-  if (
-    structuralCandidates.length > 0 &&
-    (usefulnessCounts.mediocre ?? 0) + (usefulnessCounts.weak ?? 0) > (usefulnessCounts.potentially ?? 0)
-  ) {
+  lines.push(
+    `${rec++}. Preview production candidates anytime: \`openclaw hybrid-mem skills crystallize --dry-run\` (no proposals written).`,
+  );
+  if (dataGapOk && userFacingCandidates.length >= 3 && prodCandidates.length > 0) {
     lines.push(
-      `3. Expect many generic SKILL.md bodies until goals are richer — consider raising \`minUsageCount\` or tightening pattern similarity.`,
-    );
-  }
-  if (dataGapOk && structuralCandidates.length >= 5) {
-    lines.push(
-      `4. Optional pilot: enable \`crystallization.enabled\` with \`autoApprove: false\` and review the pending digest for 1–2 weeks.`,
+      `${rec++}. Optional pilot: enable \`crystallization.enabled\` with \`autoApprove: false\` and review pending proposals for 1–2 weeks.`,
     );
   }
 

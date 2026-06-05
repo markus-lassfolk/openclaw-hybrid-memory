@@ -25,7 +25,10 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { redactMaintenancePrivateText } from "../../../utils/maintenance-privacy.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
+import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../../../services/workflow-goal-classifier.js";
+import { inferWorkflowOutcomeFromMessages } from "../../../services/workflow-message-utils.js";
 import { type Chainable, withExit } from "../../shared.js";
+import type { HybridMemoryConfig } from "../../../config.js";
 import type { ManageBindings } from "./bindings.js";
 
 function backfillReflectionWatermark(factsDb: FactsDB): number {
@@ -41,15 +44,6 @@ function backfillReflectionWatermark(factsDb: FactsDB): number {
   return maxCreated;
 }
 
-function inferSessionOutcome(messages: Array<{ role: string; text: string }>): "success" | "failure" | "unknown" {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const t = messages[i].text.toLowerCase();
-    if (/\b(error|failed|failure)\b/.test(t)) return "failure";
-    if (/\b(done|success|completed|fixed)\b/.test(t)) return "success";
-  }
-  return "unknown";
-}
-
 function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
@@ -61,7 +55,12 @@ function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
   return normalizeWorkflowToolSequence(tools);
 }
 
-function backfillWorkflowTracesFromFile(_factsDb: FactsDB, workflowStore: WorkflowStore, filePath: string): number {
+function backfillWorkflowTracesFromFile(
+  _factsDb: FactsDB,
+  workflowStore: WorkflowStore,
+  filePath: string,
+  cfg: HybridMemoryConfig,
+): number {
   const tools = collectWorkflowToolsFromSessionFile(filePath);
   if (tools.length < 2) return 0;
 
@@ -69,15 +68,14 @@ function backfillWorkflowTracesFromFile(_factsDb: FactsDB, workflowStore: Workfl
   const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
 
   const sessionId = basename(filePath);
-  const goal =
-    messages
-      .find((m) => m.role === "user" && m.text.trim())
-      ?.text.trim()
-      .slice(0, 200) ?? "session workflow";
-  const outcome = inferSessionOutcome(messages);
+  const goal = redactMaintenancePrivateText(
+    extractUserWorkflowGoal(messages, cfg.crystallization?.excludeGoalPatterns),
+  );
+  if (isSystemWorkflowGoal(goal, cfg.crystallization?.excludeGoalPatterns)) return 0;
+  const outcome = inferWorkflowOutcomeFromMessages(messages);
   try {
     const inserted = workflowStore.recordBackfillIfAbsent({
-      goal: redactMaintenancePrivateText(goal),
+      goal,
       toolSequence: tools,
       outcome,
       sessionId,
@@ -182,11 +180,74 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
         let traces = 0;
         const paths = resolveExtractSessionFilePaths(cfg, days);
         for (const filePath of paths) {
-          traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath);
+          traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath, cfg);
         }
         const report = { files: paths.length, workflowTraces: traces, days };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
         else console.log(`backfill-workflow-traces: recorded ${traces} trace(s) from ${paths.length} session(s)`);
+      }),
+    );
+
+  mem
+    .command("workflow-trace-quality")
+    .description("Summarize user-facing vs system/cron workflow traces in workflow-traces.db")
+    .option("--days <n>", "Window in days", "30")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { days?: string; json?: boolean }) => {
+        const days = Number.parseInt(opts?.days ?? "30", 10);
+        const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
+        const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
+        try {
+          const summary = workflowStore.summarizeGoalKinds({
+            sinceSec,
+            excludeGoalPatterns: cfg.crystallization?.excludeGoalPatterns,
+          });
+          const report = { days, ...summary };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else {
+            console.log(
+              `workflow-trace-quality (last ${days}d): total=${summary.total}, user-facing=${summary.userFacing}, system=${summary.systemGoals}`,
+            );
+            if (summary.systemGoals > 0 && summary.userFacing === 0) {
+              console.log(
+                "All traces are system/cron goals — run purge-workflow-system-traces and collect fresh user-facing workflows.",
+              );
+            }
+          }
+        } finally {
+          workflowStore.close();
+        }
+      }),
+    );
+
+  mem
+    .command("purge-workflow-system-traces")
+    .description("Remove workflow_traces rows whose goal is a cron/system injection")
+    .option("--dry-run", "Report rows that would be deleted without mutating the DB")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { dryRun?: boolean; json?: boolean }) => {
+        const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
+        try {
+          const result = workflowStore.purgeSystemGoalTraces({
+            dryRun: !!opts?.dryRun,
+            excludeGoalPatterns: cfg.crystallization?.excludeGoalPatterns,
+          });
+          const report = { ...result, dryRun: !!opts?.dryRun };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else if (opts?.dryRun) {
+            console.log(
+              `purge-workflow-system-traces (dry-run): scanned ${result.scanned}, would remove ${result.removed} system-goal trace(s)`,
+            );
+          } else {
+            console.log(
+              `purge-workflow-system-traces: scanned ${result.scanned}, removed ${result.removed} system-goal trace(s)`,
+            );
+          }
+        } finally {
+          workflowStore.close();
+        }
       }),
     );
 

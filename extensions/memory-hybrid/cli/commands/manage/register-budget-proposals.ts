@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { formatTimestampUtc, nowIso } from "../../../utils/dates.js";
 import { stablePersonaProposalTriageJson } from "../../../services/persona-proposal-triage.js";
 import { buildAppliedContent, buildUnifiedDiff } from "../../proposals.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -173,7 +174,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
           const final = factsDb.getById(id);
           const preview = fact.text.length > 80 ? `${fact.text.slice(0, 80)}…` : fact.text;
           console.log(`Preserved: "${preview}"`);
-          const untilStr = final?.preserveUntil != null ? new Date(final.preserveUntil! * 1000).toISOString() : "null";
+          const untilStr = final?.preserveUntil != null ? formatTimestampUtc(final.preserveUntil!) : "null";
           console.log(`  preserveUntil: ${untilStr}`);
           console.log(`  preserveTags:  ${(final?.preserveTags ?? []).join(", ") || "(none)"}`);
           const tags = (fact.tags ?? []).map(String);
@@ -344,7 +345,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
         if (includeDiff) {
           try {
             const current = existsSync(targetPath) ? readFileSync(targetPath, "utf-8") : "";
-            const proposed = buildAppliedContent(current, proposal, new Date().toISOString()).content;
+            const proposed = buildAppliedContent(current, proposal, nowIso()).content;
             diffText = buildUnifiedDiff(current, proposed, proposal.targetFile);
           } catch {
             diffText = null;
@@ -354,7 +355,7 @@ Preserved (P0 — never trimmed, ${result.preserved.length} fact(s)):`);
           console.log(JSON.stringify({ ...proposal, diff: diffText }, null, 2));
           return;
         }
-        const created = new Date(proposal.createdAt * 1000).toISOString();
+        const created = formatTimestampUtc(proposal.createdAt);
         const evidenceCount = Array.isArray(proposal.evidenceSessions) ? proposal.evidenceSessions.length : 0;
         console.log(`Proposal: ${proposal.id}`);
         console.log(`Status: ${proposal.status}`);

@@ -11,12 +11,20 @@ import type { ProposalsDB } from "../../backends/proposals-db.js";
 import type { ToolProposalStore } from "../../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../../config.js";
-import { buildWorkshopDigestReport, listUnifiedProposals } from "../../services/unified-proposals.js";
+import type { ChangeFeed } from "../../services/change-feed.js";
+import { buildChangeRevertContext, revertChangeByOrdinal } from "../../services/change-feed-revert.js";
+import { buildWorkshopDigestReport } from "../../services/unified-proposals.js";
+import { resolveWorkshopSessionKey } from "../../services/workshop-config.js";
 import {
   type WorkshopServiceContext,
+  withWorkshopDefaults,
   workshopApprove,
   workshopInspect,
+  workshopQuarantine,
   workshopReject,
+  workshopRevise,
+  workshopUndo,
+  workshopList,
 } from "../../services/workshop-service.js";
 
 export type WorkshopDashboardContext = {
@@ -27,11 +35,12 @@ export type WorkshopDashboardContext = {
   toolProposalStore?: ToolProposalStore | null;
   workflowStore?: WorkflowStore | null;
   resolvedSqlitePath: string;
+  changeFeed?: ChangeFeed | null;
   dreamCycleLogDir?: string;
 };
 
 function wctx(ctx: WorkshopDashboardContext): WorkshopServiceContext {
-  return {
+  return withWorkshopDefaults({
     cfg: ctx.cfg,
     factsDb: ctx.factsDb,
     proposalsDb: ctx.proposalsDb ?? null,
@@ -39,11 +48,13 @@ function wctx(ctx: WorkshopDashboardContext): WorkshopServiceContext {
     toolProposalStore: ctx.toolProposalStore ?? null,
     workflowStore: ctx.workflowStore ?? null,
     resolvedSqlitePath: ctx.resolvedSqlitePath,
-  };
+    changeFeed: ctx.changeFeed ?? null,
+    sessionKey: resolveWorkshopSessionKey(ctx.cfg),
+  });
 }
 
 export function collectWorkshopProposals(ctx: WorkshopDashboardContext) {
-  return listUnifiedProposals(wctx(ctx), { status: "pending", limit: 100 });
+  return workshopList(wctx(ctx), { status: "pending", limit: 100, includeUndoable: true });
 }
 
 export function collectWorkshopProposalDetail(ctx: WorkshopDashboardContext, unifiedKey: string) {
@@ -58,8 +69,36 @@ export function rejectWorkshopProposal(ctx: WorkshopDashboardContext, unifiedKey
   return workshopReject(wctx(ctx), unifiedKey, reason);
 }
 
+export function quarantineWorkshopProposal(ctx: WorkshopDashboardContext, unifiedKey: string, reason?: string) {
+  return workshopQuarantine(wctx(ctx), unifiedKey, reason);
+}
+
+export function reviseWorkshopProposal(ctx: WorkshopDashboardContext, unifiedKey: string, revision: string) {
+  return workshopRevise(wctx(ctx), unifiedKey, revision);
+}
+
+export function undoWorkshopProposal(ctx: WorkshopDashboardContext, unifiedKey: string) {
+  return workshopUndo(wctx(ctx), unifiedKey);
+}
+
 export function collectWorkshopDigest(ctx: WorkshopDashboardContext) {
   return buildWorkshopDigestReport(wctx(ctx));
+}
+
+export function collectWorkshopChanges(ctx: WorkshopDashboardContext, limit = 50) {
+  if (!ctx.changeFeed || ctx.cfg.liveChangeFeed?.enabled === false) return [];
+  return ctx.changeFeed.listRecent({ limit, status: "active" });
+}
+
+export function revertWorkshopChange(ctx: WorkshopDashboardContext, ordinal: number) {
+  if (!ctx.changeFeed) return { ok: false as const, error: "change feed unavailable" };
+  const revertCtx = buildChangeRevertContext({
+    changeFeed: ctx.changeFeed,
+    cfg: ctx.cfg,
+    workshopCtx: wctx(ctx),
+    sessionKey: resolveWorkshopSessionKey(ctx.cfg),
+  });
+  return revertChangeByOrdinal(revertCtx, ordinal, resolveWorkshopSessionKey(ctx.cfg));
 }
 
 export function collectDreamCycleLog(ctx: WorkshopDashboardContext, limit = 5): Array<Record<string, unknown>> {

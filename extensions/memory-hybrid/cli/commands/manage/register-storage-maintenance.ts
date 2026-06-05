@@ -28,6 +28,7 @@ import { deleteVectorsForFactIds, reconcileOrphanVectors } from "../../../servic
 import type { MemoryEntry } from "../../../types/memory.js";
 import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
 import { getEnv } from "../../../utils/env-manager.js";
+import { nowIso } from "../../../utils/dates.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -1037,7 +1038,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             try {
               const slo = vectorSloRepairResult;
               writeReembedVectorlessMetrics(defaultReembedVectorlessMetricsPath(ctx.resolvedSqlitePath), {
-                ts: new Date().toISOString(),
+                ts: nowIso(),
                 embedded,
                 skipped,
                 embedFailures,
@@ -1239,7 +1240,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             if (ctx.resolvedSqlitePath) {
               appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
                 event: "reindex_started",
-                ts: new Date().toISOString(),
+                ts: nowIso(),
                 details: { totalFacts, batchSize, delayMsBetweenBatches, minFractionSuccess, shadowTableName },
               });
             }
@@ -1268,7 +1269,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
                   if (ctx.resolvedSqlitePath) {
                     appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
                       event: "reindex_progress",
-                      ts: new Date().toISOString(),
+                      ts: nowIso(),
                       details: { completed, total },
                     });
                   }
@@ -1294,7 +1295,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               if (ctx.resolvedSqlitePath) {
                 appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
                   event: "reindex_aborted",
-                  ts: new Date().toISOString(),
+                  ts: nowIso(),
                   details: {
                     migrated: result.migrated,
                     skipped: result.skipped,
@@ -1374,7 +1375,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             if (ctx.resolvedSqlitePath) {
               appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
                 event: "reindex_completed",
-                ts: new Date().toISOString(),
+                ts: nowIso(),
                 details: {
                   migrated: result.migrated,
                   skipped: result.skipped,
@@ -1429,7 +1430,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         const report = {
           policy,
           maxFixes,
-          startedAt: new Date().toISOString(),
+          startedAt: nowIso(),
           vectorlessBefore: factsDb.countVectorlessActiveFacts(),
           reembedded: 0,
           optimize: { compacted: 0, removedFragments: 0, freedBytes: 0 },
@@ -1510,7 +1511,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         }
 
         report.vectorlessAfter = factsDb.countVectorlessActiveFacts();
-        const finishedAt = new Date().toISOString();
+        const finishedAt = nowIso();
         if (ctx.resolvedSqlitePath) {
           appendVectorLifecycleAuditEvent(ctx.resolvedSqlitePath, {
             event: "repair_vectors_completed",

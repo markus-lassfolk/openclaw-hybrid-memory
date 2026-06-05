@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog, categoryToEventType } from "../../backends/event-log.js";
+import { nowIso } from "../../utils/dates.js";
 import type { BenchmarkContext, LatencyStats } from "../shadow-eval.js";
 import { measureLatency, shadowMeasure } from "../shadow-eval.js";
 
@@ -62,7 +63,7 @@ function createFixture(): EpisodeFixture {
   ];
 
   const sessions = Array.from({ length: 5 }, () => randomUUID());
-  const now = new Date().toISOString();
+  const now = nowIso();
 
   events.forEach((ev, i) => {
     log.append({

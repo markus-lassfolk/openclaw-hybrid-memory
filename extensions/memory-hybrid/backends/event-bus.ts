@@ -11,6 +11,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
+import { nowIso, cutoffIsoDaysAgo, cutoffIsoHoursAgo } from "../utils/dates.js";
+import { backfillEventBusTextTimestamps } from "../utils/timestamp-migration.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 type EventStatus = "raw" | "processed" | "surfaced" | "pushed" | "archived";
@@ -110,7 +112,7 @@ export class EventBus extends BaseSqliteStore {
         importance REAL NOT NULL DEFAULT 0.5 CHECK(importance >= 0.0 AND importance <= 1.0),
         status TEXT NOT NULL DEFAULT 'raw'
           CHECK(status IN ('raw','processed','surfaced','pushed','archived')),
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now', 'subsec')),
+        created_at TEXT NOT NULL,
         processed_at TEXT,
         fingerprint TEXT
       );
@@ -119,6 +121,7 @@ export class EventBus extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_events_created ON memory_events(created_at);
       CREATE INDEX IF NOT EXISTS idx_events_fingerprint ON memory_events(fingerprint);
     `);
+    backfillEventBusTextTimestamps(this.liveDb);
   }
 
   /**
@@ -134,12 +137,13 @@ export class EventBus extends BaseSqliteStore {
     if (!(importance >= 0 && importance <= 1)) {
       throw new RangeError(`EventBus: importance must be between 0 and 1, got ${importance}`);
     }
+    const createdAt = nowIso();
     const result = this.liveDb
       .prepare(
-        `INSERT INTO memory_events (event_type, source, payload, importance, fingerprint)
-         VALUES (?, ?, ?, ?, ?)`,
+        `INSERT INTO memory_events (event_type, source, payload, importance, fingerprint, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run(type, source, JSON.stringify(payload), importance, fingerprint ?? null);
+      .run(type, source, JSON.stringify(payload), importance, fingerprint ?? null, createdAt);
     return result.lastInsertRowid as number;
   }
 
@@ -177,7 +181,7 @@ export class EventBus extends BaseSqliteStore {
    * Throws if no event with the given id exists.
    */
   updateStatus(id: number, newStatus: EventStatus): void {
-    const processedAt = newStatus !== "raw" ? new Date().toISOString() : null;
+    const processedAt = newStatus !== "raw" ? nowIso() : null;
     const result = this.liveDb
       .prepare("UPDATE memory_events SET status = ?, processed_at = COALESCE(processed_at, ?) WHERE id = ?")
       .run(newStatus, processedAt, id);
@@ -191,7 +195,7 @@ export class EventBus extends BaseSqliteStore {
    * Returns true if a duplicate was found (caller should skip inserting).
    */
   dedup(fingerprint: string, cooldownHours = 3): boolean {
-    const cutoff = new Date(Date.now() - cooldownHours * 3600 * 1000).toISOString();
+    const cutoff = cutoffIsoHoursAgo(cooldownHours);
     const row = this.liveDb
       .prepare(
         `SELECT 1 FROM memory_events
@@ -206,7 +210,7 @@ export class EventBus extends BaseSqliteStore {
    * Delete archived events older than N days. Returns the number of rows deleted.
    */
   pruneArchived(olderThanDays = 30): number {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
+    const cutoff = cutoffIsoDaysAgo(olderThanDays);
     const result = this.liveDb
       .prepare(`DELETE FROM memory_events WHERE status = 'archived' AND created_at < ?`)
       .run(cutoff);

@@ -9,6 +9,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { nowIso } from "../../utils/dates.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
 import type { MemoryLinkType } from "./types.js";
@@ -92,7 +93,7 @@ export function recordContradiction(
   createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
 ): { id: string; oldFactOriginalConfidence: number } {
   const id = randomUUID();
-  const detectedAt = new Date().toISOString();
+  const detectedAt = nowIso();
   let oldFactOriginalConfidence = 1.0;
 
   const tx = createTransaction(db, () => {

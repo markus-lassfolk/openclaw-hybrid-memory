@@ -10,6 +10,7 @@ import { isNonActionableSubagentPlaceholderTask, isSubagentSession } from "./act
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
 import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import { getEnv } from "../utils/env-manager.js";
+import { nowIso as currentIsoUtc } from "../utils/dates.js";
 import { execFile } from "../utils/process-runner.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
@@ -310,7 +311,7 @@ export function detectLongRunningWorkflowProposal(
 
 export function buildLongRunningTaskDraft(
   proposal: LongRunningWorkflowProposal,
-  nowIso = new Date().toISOString(),
+  nowIso = currentIsoUtc(),
 ): ActiveTaskEntry {
   return {
     label: proposal.label,

@@ -174,6 +174,7 @@ describe("WorkflowTracker.flush", () => {
     const store = makeMockStore();
     const tracker = new WorkflowTracker(store, ENABLED_CFG);
     tracker.push("sess", "exec");
+    tracker.push("sess", "read");
     tracker.flush("sess", "some goal");
 
     const call = (store.record as ReturnType<typeof vi.fn>).mock.calls[0][0] as CreateWorkflowTraceInput;
@@ -184,7 +185,18 @@ describe("WorkflowTracker.flush", () => {
     const store = makeMockStore();
     const tracker = new WorkflowTracker(store, ENABLED_CFG);
     tracker.push("sess", "exec");
+    tracker.push("sess", "read");
     tracker.flush("sess", "goal");
+    expect(tracker.getBuffer("sess")).toEqual([]);
+  });
+
+  it("returns null when fewer than 2 tools were used", () => {
+    const store = makeMockStore();
+    const tracker = new WorkflowTracker(store, ENABLED_CFG);
+    tracker.push("sess", "exec");
+    const id = tracker.flush("sess", "single-tool task");
+    expect(id).toBeNull();
+    expect(store.record).not.toHaveBeenCalled();
     expect(tracker.getBuffer("sess")).toEqual([]);
   });
 
@@ -213,6 +225,7 @@ describe("WorkflowTracker.flush", () => {
     });
     const tracker = new WorkflowTracker(store, ENABLED_CFG);
     tracker.push("sess", "exec");
+    tracker.push("sess", "read");
     const id = tracker.flush("sess", "goal");
     expect(id).toBeNull();
   });
@@ -295,14 +308,17 @@ describe("WorkflowTracker — rate limiting", () => {
     const tracker = new WorkflowTracker(store, cfg);
 
     tracker.push("s1", "exec");
+    tracker.push("s1", "read");
     const id1 = tracker.flush("s1", "g1", "success");
     expect(id1).not.toBeNull();
 
     tracker.push("s2", "read");
+    tracker.push("s2", "write");
     const id2 = tracker.flush("s2", "g2", "success");
     expect(id2).not.toBeNull();
 
     tracker.push("s3", "write");
+    tracker.push("s3", "exec");
     const id3 = tracker.flush("s3", "g3", "success"); // over limit
     expect(id3).toBeNull();
 
@@ -317,15 +333,18 @@ describe("WorkflowTracker — rate limiting", () => {
     const tracker = new WorkflowTracker(store, cfg, () => currentDay);
 
     tracker.push("s1", "exec");
+    tracker.push("s1", "read");
     expect(tracker.flush("s1", "g1")).not.toBeNull(); // day 1, allowed
 
     tracker.push("s2", "exec");
+    tracker.push("s2", "read");
     expect(tracker.flush("s2", "g2")).toBeNull(); // day 1, rejected
 
     // Advance to day 2
     currentDay = new Date("2025-06-16T00:01:00Z");
 
     tracker.push("s3", "exec");
+    tracker.push("s3", "read");
     expect(tracker.flush("s3", "g3")).not.toBeNull(); // day 2, counter reset, allowed
     expect(store.record).toHaveBeenCalledTimes(2);
   });

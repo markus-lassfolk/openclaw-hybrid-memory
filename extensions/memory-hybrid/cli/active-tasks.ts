@@ -38,6 +38,7 @@ import {
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { formatDuration, parseDuration } from "../utils/duration.js";
+import { nowIso } from "../utils/dates.js";
 import { formatActiveTaskConfigLines } from "./config-feature-summaries.js";
 import type { Chainable } from "./shared.js";
 import type {
@@ -278,7 +279,7 @@ export async function runActiveTaskAdd(
     next?: string;
   },
 ): Promise<ActiveTaskAddResult> {
-  const now = new Date().toISOString();
+  const now = nowIso();
 
   if (ctx.ledger === "facts") {
     const { factsDb, vectorDb, embeddings } = requireFacts(ctx);
@@ -472,7 +473,7 @@ export async function runActiveTaskHygiene(
   const actionByLabel = new Map(plan.actions.map((action) => [action.label, action] as const));
   const newActive: ActiveTaskEntry[] = [];
   const newCompleted: ActiveTaskEntry[] = [...completed];
-  const now = new Date().toISOString();
+  const now = nowIso();
   const toFlush: ActiveTaskEntry[] = [];
   let appliedCount = 0;
   for (const task of active) {

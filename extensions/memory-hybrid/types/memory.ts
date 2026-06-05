@@ -10,6 +10,12 @@ export type { MemoryCategory, DecayClass };
 /** Memory tier for dynamic tiering (hot = always loaded, warm = semantic search, cold = archived). */
 export type MemoryTier = "hot" | "warm" | "cold" | "structural";
 
+/**
+ * Core fact record. Timestamp policy:
+ * - Most `*At` number fields are Unix epoch **seconds** (SQLite INTEGER, decay/TTL math).
+ * - `lastAccessedAt` is ISO 8601 UTC (`…Z`) dual-written with `lastAccessed` (#237).
+ * - API/CLI layers should serialize epoch fields via `formatTimestampUtc` / `formatDateUtc`.
+ */
 export type MemoryEntry = {
   id: string;
   text: string;

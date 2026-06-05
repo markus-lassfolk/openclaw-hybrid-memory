@@ -8,6 +8,7 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
+import { formatTimestampUtc } from "../utils/dates.js";
 
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -199,7 +200,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
           }
           const lines = items.map(
             (i) =>
-              `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${new Date(i.expires * 1000).toISOString()}]` : ""}`,
+              `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${formatTimestampUtc(i.expires)}]` : ""}`,
           );
           return {
             content: [{ type: "text", text: `Stored credentials:\n${lines.join("\n")}` }],

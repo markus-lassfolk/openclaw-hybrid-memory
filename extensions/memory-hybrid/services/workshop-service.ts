@@ -18,7 +18,9 @@ import {
 } from "../cli/proposals.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { existsSync, rmSync } from "node:fs";
 import { getEnv } from "../utils/env-manager.js";
+import { resolveWorkspacePath } from "../utils/path.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
 import { CrystallizationProposer } from "./crystallization-proposer.js";
 import { generateAutoSkillForProcedure } from "./procedure-skill-generator.js";
@@ -26,19 +28,47 @@ import {
   DEFAULT_WORKSHOP_MAX_PENDING,
   inspectUnifiedProposal,
   listUnifiedProposals,
+  listUndoablePersonaProposals,
+  mergeWorkshopListItems,
+  makeUnifiedKey,
   parseUnifiedKey,
+  type UnifiedProposal,
   type UnifiedProposalStores,
 } from "./unified-proposals.js";
+import { resolveWorkshopMaxPending, resolveWorkshopSessionKey } from "./workshop-config.js";
 import { readProposalRollback, undoProposalRollback, deleteProposalRollback } from "./proposal-rollback.js";
 import { GapDetector } from "./gap-detector.js";
 import { ToolProposer } from "./tool-proposer.js";
+import type { ChangeFeed } from "./change-feed.js";
+import {
+  emitChangeReverted,
+  emitCrystallizationProposed,
+  emitProcedureSkillProposed,
+  emitSkillApplied,
+  emitToolProposed,
+  supersedeActiveProposedEvent,
+  syncAppliedWithdrawnInChangeFeed,
+  syncProposalWithdrawnInChangeFeed,
+} from "./change-feed-emit.js";
 
 export type WorkshopServiceContext = UnifiedProposalStores & {
   resolvedSqlitePath: string;
   workflowStore?: WorkflowStore | null;
   api?: ClawdbotPluginApi;
   maxPending?: number;
+  changeFeed?: ChangeFeed | null;
+  sessionKey?: string;
 };
+
+export function withWorkshopDefaults(
+  ctx: Omit<WorkshopServiceContext, "maxPending"> & Partial<Pick<WorkshopServiceContext, "maxPending">>,
+): WorkshopServiceContext {
+  return {
+    ...ctx,
+    maxPending: ctx.maxPending ?? resolveWorkshopMaxPending(ctx.cfg),
+    sessionKey: ctx.sessionKey ?? resolveWorkshopSessionKey(ctx.cfg),
+  };
+}
 
 export type WorkshopActionResult = { ok: true; message: string; details?: Record<string, unknown> } | { ok: false; error: string };
 
@@ -48,12 +78,146 @@ function resolveKey(unifiedKey: string): { type: string; storeId: string } | { e
   return parsed;
 }
 
-export function workshopList(ctx: WorkshopServiceContext, opts?: { status?: "pending"; limit?: number }) {
-  return listUnifiedProposals(ctx, opts);
+export function workshopList(
+  ctx: WorkshopServiceContext,
+  opts?: { status?: "pending"; limit?: number; includeUndoable?: boolean },
+) {
+  const limit = opts?.limit ?? 100;
+  const status = opts?.status ?? "pending";
+  const pending = listUnifiedProposals(ctx, { status, limit });
+  ensureWorkshopProposedEvents(ctx, pending);
+  const includeUndoable = opts?.includeUndoable ?? true;
+  if (!includeUndoable || status !== "pending") return pending;
+  const undoable = listUndoablePersonaProposals(ctx, Math.min(20, limit));
+  return mergeWorkshopListItems(pending, undoable, limit);
 }
 
 export function workshopInspect(ctx: WorkshopServiceContext, unifiedKey: string) {
   return inspectUnifiedProposal(ctx, unifiedKey);
+}
+
+function workshopSessionKey(ctx: WorkshopServiceContext): string {
+  return (
+    ctx.sessionKey ??
+    (ctx.api?.context?.sessionKey as string | undefined) ??
+    (ctx.api?.context?.sessionId as string | undefined) ??
+    resolveWorkshopSessionKey(ctx.cfg)
+  );
+}
+
+function ensureWorkshopProposedEvents(ctx: WorkshopServiceContext, proposals: UnifiedProposal[]): void {
+  if (!ctx.changeFeed) return;
+  const sessionKey = workshopSessionKey(ctx);
+  for (const p of proposals) {
+    if (p.status !== "pending") continue;
+    if (ctx.changeFeed.findActiveByProposalKey(p.unifiedKey, "proposed")) continue;
+    switch (p.type) {
+      case "crystallization":
+        emitCrystallizationProposed(ctx.changeFeed, ctx.cfg, {
+          sessionKey,
+          proposalId: p.id,
+          skillName: p.title,
+          detail: p.preview,
+        });
+        break;
+      case "tool":
+        emitToolProposed(ctx.changeFeed, ctx.cfg, {
+          sessionKey,
+          proposalId: p.id,
+          toolName: p.title,
+          detail: p.preview,
+        });
+        break;
+      case "procedure-skill":
+        emitProcedureSkillProposed(ctx.changeFeed, ctx.cfg, {
+          sessionKey,
+          procedureId: p.id,
+          title: p.title,
+          detail: p.preview,
+        });
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+function dismissProcedureSkillProposal(
+  ctx: WorkshopServiceContext,
+  procedureId: string,
+  reason?: string,
+  opts?: { skipChangeFeed?: boolean },
+): WorkshopActionResult {
+  const proc = ctx.factsDb.getProcedureById(procedureId);
+  if (!proc) return { ok: false, error: "Procedure not found" };
+  if (proc.promotedToSkill === 1) return { ok: false, error: "Procedure skill is already promoted" };
+  const now = Math.floor(Date.now() / 1000);
+  const summary = reason ?? "dismissed via workshop";
+  const result = ctx.factsDb
+    .getRawDb()
+    .prepare(
+      `UPDATE procedures
+         SET skill_state = 'rejected',
+             skill_state_reason = ?,
+             skill_state_changed_at = ?,
+             updated_at = ?
+       WHERE id = ? AND promoted_to_skill = 0`,
+    )
+    .run(summary, now, now, procedureId);
+  if (result.changes === 0) return { ok: false, error: "Could not dismiss procedure skill proposal" };
+  if (!opts?.skipChangeFeed) {
+    syncProposalWithdrawnInChangeFeed(
+      ctx.changeFeed,
+      ctx.cfg,
+      makeUnifiedKey("procedure-skill", procedureId),
+      reason ? `Dismissed: ${reason}` : "Procedure skill promotion dismissed",
+    );
+  }
+  return { ok: true, message: "Procedure skill promotion dismissed" };
+}
+
+/** Withdraw an approved tool proposal (change-feed revert / operator undo). */
+export function workshopWithdrawTool(
+  ctx: WorkshopServiceContext,
+  unifiedKey: string,
+  reason?: string,
+  opts?: { skipChangeFeed?: boolean },
+): WorkshopActionResult {
+  const parsed = resolveKey(unifiedKey);
+  if ("error" in parsed) return { ok: false, error: parsed.error };
+  if (parsed.type !== "tool") return { ok: false, error: "Not a tool proposal" };
+  if (!ctx.toolProposalStore) return { ok: false, error: "Tool proposals not available" };
+  const proposal = ctx.toolProposalStore.getById(parsed.storeId);
+  if (!proposal) return { ok: false, error: "Proposal not found" };
+  const fromStatus = proposal.status === "approved" ? "approved" : proposal.status === "proposed" ? "proposed" : null;
+  if (!fromStatus) {
+    return { ok: false, error: `Tool proposal is ${proposal.status} — cannot withdraw` };
+  }
+  const updated = ctx.toolProposalStore.updateStatus(
+    parsed.storeId,
+    "rejected",
+    fromStatus,
+    reason ?? "withdrawn via workshop",
+  );
+  if (!updated) return { ok: false, error: "Could not withdraw tool proposal" };
+  if (!opts?.skipChangeFeed) {
+    if (fromStatus === "approved") {
+      syncAppliedWithdrawnInChangeFeed(
+        ctx.changeFeed,
+        ctx.cfg,
+        unifiedKey,
+        reason ? `Withdrawn: ${reason}` : "Tool proposal withdrawn",
+      );
+    } else {
+      syncProposalWithdrawnInChangeFeed(
+        ctx.changeFeed,
+        ctx.cfg,
+        unifiedKey,
+        reason ? `Rejected: ${reason}` : "Tool proposal rejected",
+      );
+    }
+  }
+  return { ok: true, message: "Tool proposal withdrawn" };
 }
 
 export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: string): Promise<WorkshopActionResult> {
@@ -71,13 +235,21 @@ export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: s
       if (p.status !== "pending") return { ok: false, error: `Proposal is ${p.status}` };
       const expiryError = getProposalExpiryError(p);
       if (expiryError) return { ok: false, error: expiryError };
-      ctx.proposalsDb.updateStatus(parsed.storeId, "approved");
+      const approved = ctx.proposalsDb.updateStatusIf(parsed.storeId, "approved", "pending");
+      if (!approved) return { ok: false, error: "Proposal is not pending" };
       const applyResult = await applyApprovedProposal(
-        { proposalsDb: ctx.proposalsDb, cfg: ctx.cfg, resolvedSqlitePath: ctx.resolvedSqlitePath, api: ctx.api },
+        {
+          proposalsDb: ctx.proposalsDb,
+          cfg: ctx.cfg,
+          resolvedSqlitePath: ctx.resolvedSqlitePath,
+          api: ctx.api,
+          changeFeed: ctx.changeFeed,
+          sessionKey: workshopSessionKey(ctx),
+        },
         parsed.storeId,
       );
       if (!applyResult.ok) {
-        ctx.proposalsDb.updateStatus(parsed.storeId, "pending");
+        ctx.proposalsDb.updateStatusIf(parsed.storeId, "pending", "approved");
         return { ok: false, error: applyResult.error };
       }
       return { ok: true, message: `Applied persona proposal to ${applyResult.targetFile}`, details: { targetFile: applyResult.targetFile } };
@@ -86,6 +258,16 @@ export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: s
       if (!ctx.crystallizationStore || !ctx.workflowStore) return { ok: false, error: "Crystallization not available" };
       const proposer = new CrystallizationProposer(ctx.workflowStore, ctx.crystallizationStore, ctx.cfg.crystallization);
       const result = proposer.approveProposal(parsed.storeId);
+      if (result.success) {
+        emitSkillApplied(ctx.changeFeed, ctx.cfg, {
+          sessionKey: workshopSessionKey(ctx),
+          proposalKey: unifiedKey,
+          title: `Skill installed: ${item.title}`,
+          detail: result.message,
+          category: "skill",
+        });
+        supersedeActiveProposedEvent(ctx.changeFeed, unifiedKey);
+      }
       return result.success
         ? { ok: true, message: result.message, details: { outputPath: result.outputPath } }
         : { ok: false, error: result.message };
@@ -95,6 +277,17 @@ export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: s
       const gapDetector = new GapDetector(ctx.workflowStore);
       const proposer = new ToolProposer(gapDetector, ctx.toolProposalStore, ctx.cfg.selfExtension);
       const result = proposer.approveProposal(parsed.storeId);
+      if (result.success) {
+        emitSkillApplied(ctx.changeFeed, ctx.cfg, {
+          sessionKey: workshopSessionKey(ctx),
+          proposalKey: unifiedKey,
+          title: `Tool proposal approved: ${item.title}`,
+          detail: result.message,
+          category: "tool",
+          rollbackAvailable: true,
+        });
+        supersedeActiveProposedEvent(ctx.changeFeed, unifiedKey);
+      }
       return result.success ? { ok: true, message: result.message } : { ok: false, error: result.message };
     }
     case "procedure-skill": {
@@ -114,6 +307,16 @@ export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: s
       if (!result.ok) {
         return { ok: false, error: "reason" in result ? result.reason : "procedure promotion failed" };
       }
+      if (!result.alreadyPromoted) {
+        const draftNote = result.enabled === false ? " (draft, enable manually after review)" : "";
+        emitSkillApplied(ctx.changeFeed, ctx.cfg, {
+          sessionKey: workshopSessionKey(ctx),
+          proposalKey: makeUnifiedKey("procedure-skill", parsed.storeId),
+          title: `Procedure skill draft written: ${item.title}${draftNote}`,
+          detail: result.skillPath ? `Written to ${result.skillPath}` : undefined,
+          category: "procedure-skill",
+        });
+      }
       return { ok: true, message: `Generated skill at ${result.skillPath ?? "skills/auto"}`, details: { skillPath: result.skillPath } };
     }
     default:
@@ -125,6 +328,7 @@ export function workshopReject(
   ctx: WorkshopServiceContext,
   unifiedKey: string,
   reason?: string,
+  opts?: { skipChangeFeed?: boolean },
 ): WorkshopActionResult {
   const parsed = resolveKey(unifiedKey);
   if ("error" in parsed) return { ok: false, error: parsed.error };
@@ -136,22 +340,68 @@ export function workshopReject(
     case "persona": {
       if (!ctx.proposalsDb) return { ok: false, error: "Persona proposals not available" };
       const p = ctx.proposalsDb.get(parsed.storeId);
-      if (!p || p.status !== "pending") return { ok: false, error: "Proposal not pending" };
-      ctx.proposalsDb.updateStatus(parsed.storeId, "rejected", undefined, reason);
+      if (!p) return { ok: false, error: `Proposal not found: ${unifiedKey}` };
+      if (p.status !== "pending") {
+        if (p.status === "rejected") return { ok: true, message: "Persona proposal already rejected" };
+        return { ok: false, error: "Proposal not pending" };
+      }
+      const rejected = ctx.proposalsDb.updateStatusIf(parsed.storeId, "rejected", "pending", undefined, reason);
+      if (!rejected) return { ok: false, error: "Proposal is not pending" };
+      if (!opts?.skipChangeFeed) {
+        syncProposalWithdrawnInChangeFeed(
+          ctx.changeFeed,
+          ctx.cfg,
+          unifiedKey,
+          reason ? `Rejected: ${reason}` : "Proposal rejected via workshop",
+        );
+      }
       return { ok: true, message: "Persona proposal rejected" };
     }
     case "crystallization": {
       if (!ctx.crystallizationStore || !ctx.workflowStore) return { ok: false, error: "Crystallization not available" };
+      const existing = ctx.crystallizationStore.getById(parsed.storeId);
+      if (!existing) return { ok: false, error: `Proposal not found: ${unifiedKey}` };
+      if (existing.status !== "pending") {
+        if (existing.status === "rejected") return { ok: true, message: "Crystallization proposal already rejected" };
+        return { ok: false, error: "Proposal not pending" };
+      }
       const proposer = new CrystallizationProposer(ctx.workflowStore, ctx.crystallizationStore, ctx.cfg.crystallization);
       const result = proposer.rejectProposal(parsed.storeId, reason);
-      return result.success ? { ok: true, message: result.message } : { ok: false, error: result.message };
+      if (!result.success) return { ok: false, error: result.message };
+      if (!opts?.skipChangeFeed) {
+        syncProposalWithdrawnInChangeFeed(
+          ctx.changeFeed,
+          ctx.cfg,
+          unifiedKey,
+          reason ? `Rejected: ${reason}` : "Proposal rejected via workshop",
+        );
+      }
+      return { ok: true, message: result.message };
     }
     case "tool": {
       if (!ctx.toolProposalStore || !ctx.workflowStore) return { ok: false, error: "Tool proposals not available" };
+      const existing = ctx.toolProposalStore.getById(parsed.storeId);
+      if (!existing) return { ok: false, error: `Proposal not found: ${unifiedKey}` };
+      if (existing.status !== "proposed") {
+        if (existing.status === "rejected") return { ok: true, message: "Tool proposal already rejected" };
+        return { ok: false, error: "Proposal not pending" };
+      }
       const gapDetector = new GapDetector(ctx.workflowStore);
       const proposer = new ToolProposer(gapDetector, ctx.toolProposalStore, ctx.cfg.selfExtension);
-      const result = proposer.rejectProposal(parsed.storeId);
-      return result.success ? { ok: true, message: result.message } : { ok: false, error: result.message };
+      const result = proposer.rejectProposal(parsed.storeId, reason);
+      if (!result.success) return { ok: false, error: result.message };
+      if (!opts?.skipChangeFeed) {
+        syncProposalWithdrawnInChangeFeed(
+          ctx.changeFeed,
+          ctx.cfg,
+          unifiedKey,
+          reason ? `Rejected: ${reason}` : "Proposal rejected via workshop",
+        );
+      }
+      return { ok: true, message: result.message };
+    }
+    case "procedure-skill": {
+      return dismissProcedureSkillProposal(ctx, parsed.storeId, reason, opts);
     }
     default:
       return { ok: false, error: `Reject not supported for type ${parsed.type}` };
@@ -162,6 +412,7 @@ export function workshopQuarantine(
   ctx: WorkshopServiceContext,
   unifiedKey: string,
   reason?: string,
+  opts?: { skipChangeFeed?: boolean },
 ): WorkshopActionResult {
   const parsed = resolveKey(unifiedKey);
   if ("error" in parsed) return { ok: false, error: parsed.error };
@@ -170,7 +421,22 @@ export function workshopQuarantine(
     if (!ctx.proposalsDb) return { ok: false, error: "Persona proposals not available" };
     const p = ctx.proposalsDb.get(parsed.storeId);
     if (!p || p.status !== "pending") return { ok: false, error: "Proposal not pending" };
-    ctx.proposalsDb.updateStatus(parsed.storeId, "rejected", undefined, reason ? `quarantine: ${reason}` : "quarantine");
+    const quarantined = ctx.proposalsDb.updateStatusIf(
+      parsed.storeId,
+      "rejected",
+      "pending",
+      undefined,
+      reason ? `quarantine: ${reason}` : "quarantine",
+    );
+    if (!quarantined) return { ok: false, error: "Proposal is not pending" };
+    if (!opts?.skipChangeFeed) {
+      syncProposalWithdrawnInChangeFeed(
+        ctx.changeFeed,
+        ctx.cfg,
+        unifiedKey,
+        reason ? `Quarantined: ${reason}` : "Proposal quarantined via workshop",
+      );
+    }
     return { ok: true, message: "Persona proposal quarantined (marked rejected with quarantine reason)" };
   }
 
@@ -184,27 +450,91 @@ export function workshopQuarantine(
         parsed.storeId,
         reason ? `quarantine: ${reason}` : "workshop quarantine",
       );
-      return result.success
-        ? { ok: true, message: "Crystallization proposal quarantined (rejected)" }
-        : { ok: false, error: result.message };
+      if (!result.success) return { ok: false, error: result.message };
+      if (!opts?.skipChangeFeed) {
+        syncProposalWithdrawnInChangeFeed(
+          ctx.changeFeed,
+          ctx.cfg,
+          unifiedKey,
+          reason ? `Quarantined: ${reason}` : "Proposal quarantined via workshop",
+        );
+      }
+      return { ok: true, message: "Crystallization proposal quarantined (rejected)" };
     }
     if (proposal.status === "installed") {
       const updated = ctx.crystallizationStore.quarantine(parsed.storeId, reason ?? "workshop quarantine");
-      return updated
-        ? { ok: true, message: "Crystallization proposal quarantined" }
-        : { ok: false, error: "Could not quarantine crystallization proposal" };
+      if (updated) {
+        if (!opts?.skipChangeFeed) {
+          syncAppliedWithdrawnInChangeFeed(
+            ctx.changeFeed,
+            ctx.cfg,
+            unifiedKey,
+            reason ? `Quarantined: ${reason}` : "Installed skill quarantined via workshop",
+          );
+        }
+        return { ok: true, message: "Crystallization proposal quarantined" };
+      }
+      return { ok: false, error: "Could not quarantine crystallization proposal" };
     }
     return { ok: false, error: `Cannot quarantine crystallization proposal in status ${proposal.status}` };
   }
 
   if (parsed.type === "tool" && ctx.toolProposalStore) {
-    const updated = ctx.toolProposalStore.updateStatus(parsed.storeId, "rejected", "proposed");
-    return updated
-      ? { ok: true, message: "Tool proposal quarantined (marked rejected)" }
-      : { ok: false, error: "Could not quarantine tool proposal" };
+    const updated = ctx.toolProposalStore.updateStatus(
+      parsed.storeId,
+      "rejected",
+      "proposed",
+      reason ? `quarantine: ${reason}` : "quarantine",
+    );
+    if (!updated) return { ok: false, error: "Could not quarantine tool proposal" };
+    if (!opts?.skipChangeFeed) {
+      syncProposalWithdrawnInChangeFeed(
+        ctx.changeFeed,
+        ctx.cfg,
+        unifiedKey,
+        reason ? `Quarantined: ${reason}` : "Proposal quarantined via workshop",
+      );
+    }
+    return { ok: true, message: "Tool proposal quarantined (marked rejected)" };
   }
 
   return { ok: false, error: "Quarantine not supported for this proposal type" };
+}
+
+/** Uninstall a promoted procedure skill (change-feed revert / operator undo). */
+export function workshopRevertProcedureSkill(
+  ctx: WorkshopServiceContext,
+  procedureId: string,
+  reason?: string,
+): WorkshopActionResult {
+  const proc = ctx.factsDb.getProcedureById(procedureId);
+  if (!proc) return { ok: false, error: "Procedure not found" };
+  if (proc.promotedToSkill !== 1 || !proc.skillPath?.trim()) {
+    return { ok: false, error: "Procedure skill is not installed" };
+  }
+  const skillPath = proc.skillPath.trim();
+  const now = Math.floor(Date.now() / 1000);
+  const summary = reason ?? "reverted via change feed";
+  ctx.factsDb.getRawDb()
+    .prepare(
+      `UPDATE procedures
+         SET promoted_to_skill = 0,
+             skill_state = 'uninstalled',
+             skill_state_reason = ?,
+             skill_state_changed_at = ?,
+             updated_at = ?
+       WHERE id = ?`,
+    )
+    .run(summary, now, now, procedureId);
+  try {
+    const absolutePath = resolveWorkspacePath(skillPath);
+    if (existsSync(absolutePath)) {
+      rmSync(absolutePath, { recursive: true, force: true });
+    }
+  } catch {
+    // DB state is authoritative; filesystem cleanup is best-effort.
+  }
+  return { ok: true, message: `Procedure skill uninstalled (${skillPath})` };
 }
 
 export function workshopRevise(
@@ -247,7 +577,11 @@ export function workshopRevise(
   return { ok: true, message: "Proposal revised in place" };
 }
 
-export function workshopUndo(ctx: WorkshopServiceContext, unifiedKey: string): WorkshopActionResult {
+export function workshopUndo(
+  ctx: WorkshopServiceContext,
+  unifiedKey: string,
+  opts?: { changeEventId?: string },
+): WorkshopActionResult {
   const parsed = resolveKey(unifiedKey);
   if ("error" in parsed) return { ok: false, error: parsed.error };
   if (parsed.type !== "persona") return { ok: false, error: "Undo is only supported for persona proposals" };
@@ -258,10 +592,28 @@ export function workshopUndo(ctx: WorkshopServiceContext, unifiedKey: string): W
   }
   const record = readProposalRollback(ctx.resolvedSqlitePath, parsed.storeId);
   if (!record) return { ok: false, error: "No rollback metadata found for this proposal" };
+  const claimed = ctx.proposalsDb.updateStatusIf(parsed.storeId, "pending", "applied");
+  if (!claimed) return { ok: false, error: "Proposal is not in applied state" };
   const result = undoProposalRollback(ctx.resolvedSqlitePath, parsed.storeId);
-  if (!result.ok) return { ok: false, error: result.error };
-  ctx.proposalsDb.updateStatus(parsed.storeId, "pending");
+  if (!result.ok) {
+    ctx.proposalsDb.updateStatusIf(parsed.storeId, "applied", "pending");
+    return { ok: false, error: result.error };
+  }
   deleteProposalRollback(ctx.resolvedSqlitePath, parsed.storeId);
+  if (ctx.changeFeed) {
+    let applied = opts?.changeEventId ? ctx.changeFeed.getById(opts.changeEventId) : null;
+    if (!applied || applied.status !== "active" || applied.proposalKey !== unifiedKey) {
+      applied = ctx.changeFeed.findActiveByProposalKey(unifiedKey, "applied");
+    }
+    if (applied && applied.status === "active" && applied.proposalKey === unifiedKey) {
+      ctx.changeFeed.markReverted(applied.id);
+      emitChangeReverted(ctx.changeFeed, ctx.cfg, {
+        sessionKey: applied.sessionKey,
+        originalEvent: applied,
+        detail: `Restored ${result.targetPath} and reverted proposal to pending`,
+      });
+    }
+  }
   return { ok: true, message: `Restored ${result.targetPath} and reverted proposal to pending` };
 }
 

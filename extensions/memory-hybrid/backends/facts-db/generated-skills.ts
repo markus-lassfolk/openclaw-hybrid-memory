@@ -12,6 +12,7 @@ import type {
   ProcedureEntry,
 } from "../../types/memory.js";
 import { resolveOpenClawWorkspaceRoot } from "../../utils/openclaw-workspace.js";
+import { formatTimestampUtc } from "../../utils/dates.js";
 import {
   DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
   effectiveDemoteThresholdsForRisk,
@@ -1137,7 +1138,7 @@ export function buildGeneratedSkillTelemetryReport(
     })
     .sort((a, b) => a.skillName.localeCompare(b.skillName));
   return {
-    generatedAt: new Date(now * 1000).toISOString(),
+    generatedAt: formatTimestampUtc(now),
     policy,
     totalSkills: rows.length,
     rows,
@@ -1253,7 +1254,7 @@ export function reconcileGeneratedSkillDiskState(
   }
 
   return {
-    checkedAt: new Date(now * 1000).toISOString(),
+    checkedAt: formatTimestampUtc(now),
     totalChecked,
     issues,
     fixedCount: fixedProcedureIds.length,

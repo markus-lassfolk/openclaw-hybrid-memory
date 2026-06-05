@@ -1,4 +1,5 @@
 import { getEnv } from "../utils/env-manager.js";
+import { nowIso } from "../utils/dates.js";
 /**
  * CLI: `openclaw benchmark run` — run the shadow evaluation benchmark suite.
  *
@@ -150,7 +151,7 @@ export function buildBenchmarkQualityReport(results: BenchmarkResult[]): Benchma
   const trackedUsd = results.reduce((sum, r) => sum + (r.costTrackedUsd ?? 0), 0);
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     metrics: {
       latency: {
         p50Ms: p50Avg == null ? null : toFixedNumber(p50Avg),

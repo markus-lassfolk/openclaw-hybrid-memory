@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
+import { formatTimestampUtcFromMs } from "../../utils/dates.js";
 
 const _execFile = promisify(execFileCb);
 const _require = createRequire(import.meta.url);
@@ -306,7 +307,7 @@ function renderAgentHealth(ah) {
     const badge = st === 'healthy' ? 'badge-green' : st === 'idle' ? 'badge-muted' : st === 'stale' ? 'badge-yellow' : st === 'degraded' ? 'badge-red' : 'badge-muted';
     html += '<div class="agent-row" style="flex-direction:column;align-items:flex-start;border:1px solid var(--border);border-radius:6px;padding:8px">';
     html += '<div style="display:flex;justify-content:space-between;width:100%;align-items:center"><span class="agent-name">' + escHtml(a.agentId) + '</span><span class="badge ' + badge + '">' + escHtml(st) + '</span></div>';
-    html += '<div class="task-meta">score ' + (typeof a.score === 'number' ? a.score.toFixed(1) : '—') + ' · ' + fmtDate(new Date(a.lastSeen).toISOString()) + '</div>';
+    html += '<div class="task-meta">score ' + (typeof a.score === 'number' ? a.score.toFixed(1) : '—') + ' · ' + fmtDate(formatTimestampUtcFromMs(a.lastSeen)) + '</div>';
     html += '<div class="agent-task">' + escHtml((a.lastTask || '').slice(0, 120)) + '</div></div>';
   });
   html += '</div>';
@@ -345,12 +346,12 @@ function renderAudit(a) {
 }
 
 function renderWorkshopProposals(proposals) {
-  let html = '<div class="card section-full"><div class="card-title"><span class="icon">🛠️</span> Pending Proposals</div>';
+  let html = '<div class="card section-full"><div class="card-title"><span class="icon">🛠️</span> Workshop Queue</div>';
   if (!proposals || proposals.length === 0) {
-    html += '<div class="empty">No pending proposals</div></div>';
+    html += '<div class="empty">No proposals in the workshop queue</div></div>';
     return html;
   }
-  html += '<table class="workshop-table"><thead><tr><th>Type</th><th>Title</th><th>Conf</th><th>Preview</th><th>Actions</th></tr></thead><tbody>';
+  html += '<table class="workshop-table"><thead><tr><th>Type</th><th>Status</th><th>Title</th><th>Conf</th><th>Preview</th><th>Actions</th></tr></thead><tbody>';
   proposals.forEach(p => {
     const actions = p.actions || {};
     let actionHtml = '';
@@ -360,7 +361,49 @@ function renderWorkshopProposals(proposals) {
     if (actions.rejectSupported) {
       actionHtml += '<button data-reject="' + escHtml(p.unifiedKey) + '">Reject</button>';
     }
-    html += '<tr><td>' + escHtml(p.type) + '</td><td>' + escHtml(p.title) + '</td><td>' + Number(p.confidence || 0).toFixed(2) + '</td><td>' + escHtml((p.preview || '').slice(0,120)) + '</td><td class="workshop-actions">' + actionHtml + '</td></tr>';
+    if (actions.quarantineSupported) {
+      actionHtml += '<button data-quarantine="' + escHtml(p.unifiedKey) + '">Quarantine</button>';
+    }
+    if (actions.reviseSupported) {
+      actionHtml += '<button data-revise="' + escHtml(p.unifiedKey) + '">Revise</button>';
+    }
+    if (actions.undoSupported) {
+      actionHtml += '<button data-undo="' + escHtml(p.unifiedKey) + '">Undo</button>';
+    }
+    html += '<tr><td>' + escHtml(p.type) + '</td><td>' + escHtml(p.status || 'pending') + '</td><td>' + escHtml(p.title) + '</td><td>' + Number(p.confidence || 0).toFixed(2) + '</td><td>' + escHtml((p.preview || '').slice(0,120)) + '</td><td class="workshop-actions">' + actionHtml + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function renderWorkshopDigest(digest) {
+  let html = '<div class="card"><div class="card-title"><span class="icon">📋</span> Workshop Digest</div>';
+  if (!digest || !digest.pendingReview) {
+    html += '<div class="empty">No digest data</div></div>';
+    return html;
+  }
+  const pr = digest.pendingReview;
+  html += '<div class="stat-row"><span class="stat-label">Persona pending</span><span class="stat-value">' + escHtml(String(pr.persona ?? 0)) + '</span></div>';
+  html += '<div class="stat-row"><span class="stat-label">Crystallization pending</span><span class="stat-value">' + escHtml(String(pr.crystallization ?? 0)) + '</span></div>';
+  html += '<div class="stat-row"><span class="stat-label">Tool pending</span><span class="stat-value">' + escHtml(String(pr.tools ?? 0)) + '</span></div>';
+  html += '<div class="stat-row"><span class="stat-label">Procedure-skill ready</span><span class="stat-value">' + escHtml(String(digest.procedures?.validatedNotPromoted ?? 0)) + '</span></div>';
+  html += '</div>';
+  return html;
+}
+
+function renderWorkshopChanges(changes) {
+  let html = '<div class="card section-full"><div class="card-title"><span class="icon">🔔</span> Change Feed</div>';
+  if (!changes || changes.length === 0) {
+    html += '<div class="empty">No active change-feed events</div></div>';
+    return html;
+  }
+  html += '<table class="workshop-table"><thead><tr><th>#</th><th>Action</th><th>Title</th><th>Revert</th></tr></thead><tbody>';
+  changes.forEach(c => {
+    const canRevert = c.rollbackAvailable !== false && (c.action === 'proposed' || c.action === 'applied');
+    const revertBtn = canRevert
+      ? '<button data-revert-change="' + escHtml(String(c.ordinal)) + '">Revert</button>'
+      : '—';
+    html += '<tr><td>#' + escHtml(String(c.ordinal)) + '</td><td>' + escHtml(c.action || '') + '</td><td>' + escHtml(c.title || '') + '</td><td>' + revertBtn + '</td></tr>';
   });
   html += '</tbody></table></div>';
   return html;
@@ -394,42 +437,106 @@ function renderSkillTelemetry(rows) {
 
 async function workshopAction(path, body) {
   const res = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.ok === false) {
+    throw new Error(data.error || data.message || 'Workshop action failed');
+  }
+  return data;
 }
 
 async function refreshWorkshop() {
   const grid = document.getElementById('grid');
   try {
-    const [proposalsRes, dreamRes, skillsRes] = await Promise.all([
+    const [proposalsRes, changesRes, digestRes, dreamRes, skillsRes] = await Promise.all([
       fetch('/api/workshop/proposals'),
+      fetch('/api/workshop/changes'),
+      fetch('/api/workshop/digest'),
       fetch('/api/workshop/dream-log'),
       fetch('/api/workshop/skills'),
     ]);
-    if (!proposalsRes.ok || !dreamRes.ok || !skillsRes.ok) {
-      const failed = [proposalsRes, dreamRes, skillsRes].find(r => !r.ok);
+    if (!proposalsRes.ok || !changesRes.ok || !digestRes.ok || !dreamRes.ok || !skillsRes.ok) {
+      const failed = [proposalsRes, changesRes, digestRes, dreamRes, skillsRes].find(r => !r.ok);
       const data = failed ? await failed.json().catch(() => ({})) : {};
       throw new Error(data.message || data.error || 'Workshop API error');
     }
     const proposals = (await proposalsRes.json()).proposals || [];
+    const changes = (await changesRes.json()).changes || [];
+    const digest = await digestRes.json();
     const dream = (await dreamRes.json()).runs || [];
     const skills = (await skillsRes.json()).skills || [];
     grid.innerHTML = [
       renderWorkshopProposals(proposals),
+      renderWorkshopDigest(digest),
+      renderWorkshopChanges(changes),
       renderDreamLog(dream),
       renderSkillTelemetry(skills),
     ].join('');
     grid.querySelectorAll('[data-approve]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-approve');
-        await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/approve', {});
-        refreshWorkshop();
+        try {
+          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/approve', {});
+          refreshWorkshop();
+        } catch (err) {
+          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+        }
       });
     });
     grid.querySelectorAll('[data-reject]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.getAttribute('data-reject');
-        await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/reject', { reason: 'dashboard reject' });
-        refreshWorkshop();
+        try {
+          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/reject', { reason: 'dashboard reject' });
+          refreshWorkshop();
+        } catch (err) {
+          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+        }
+      });
+    });
+    grid.querySelectorAll('[data-quarantine]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-quarantine');
+        try {
+          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/quarantine', { reason: 'dashboard quarantine' });
+          refreshWorkshop();
+        } catch (err) {
+          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+        }
+      });
+    });
+    grid.querySelectorAll('[data-revise]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-revise');
+        const revision = window.prompt('Revised suggested change:');
+        if (!revision) return;
+        try {
+          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/revise', { revision });
+          refreshWorkshop();
+        } catch (err) {
+          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+        }
+      });
+    });
+    grid.querySelectorAll('[data-revert-change]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ordinal = btn.getAttribute('data-revert-change');
+        try {
+          await workshopAction('/api/workshop/changes/' + encodeURIComponent(ordinal) + '/revert', {});
+          refreshWorkshop();
+        } catch (err) {
+          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+        }
+      });
+    });
+    grid.querySelectorAll('[data-undo]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.getAttribute('data-undo');
+        try {
+          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/undo', {});
+          refreshWorkshop();
+        } catch (err) {
+          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+        }
       });
     });
     document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();

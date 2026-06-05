@@ -134,6 +134,16 @@ export const QA_TASK_PLAN: QaTaskSpec[] = [
     llmTask: true,
     runAllGate: "Skipped if keywords updated <7d ago",
   },
+  {
+    id: "workflow-trace-quality",
+    args: ["workflow-trace-quality", "--days", "30"],
+    expectation: "Reports user-facing vs system workflow traces; system-only DB is not crystallization-ready.",
+  },
+  {
+    id: "purge-workflow-system-traces-dry-run",
+    args: ["purge-workflow-system-traces", "--dry-run"],
+    expectation: "Dry-run purge of cron/system workflow traces; non-zero removed indicates polluted DB.",
+  },
 ];
 
 export const QA_PHASE_TIMEOUT_MS = {

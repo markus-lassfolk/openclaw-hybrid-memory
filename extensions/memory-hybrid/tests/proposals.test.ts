@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProposalsDB } from "../backends/proposals-db.js";
+import { _testing } from "../index.js";
 import {
   applyApprovedProposal,
   buildAppliedContent,
@@ -343,6 +344,40 @@ describe("resolvePipelineProposalTarget", () => {
       proposalsDb,
     });
     proposalsDb.close();
+    expect(resolved).toBeNull();
+  });
+
+  it("returns null when unified workshop queue is at maxPending cap", () => {
+    const dbPath = join(tmpDir, "facts-cap.db");
+    const factsDb = new (_testing.FactsDB)(dbPath);
+    const proposalsDb = new ProposalsDB(join(tmpDir, "proposals-cap.db"));
+    for (let i = 0; i < 50; i++) {
+      proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: `Pending ${i}`,
+        observation: "obs",
+        suggestedChange: `Suggestion ${i}`,
+        confidence: 0.8,
+        evidenceSessions: ["s1"],
+      });
+    }
+    const resolved = resolvePipelineProposalTarget({
+      targetFile: "SOUL.md",
+      suggestedChange: "Brand new guidance",
+      allowedFiles: ["SOUL.md"],
+      workspaceRoot: tmpDir,
+      confidence: 0.9,
+      proposalTTLDays: 30,
+      workshopStores: {
+        cfg: { personaProposals: { enabled: true, workshopMaxPending: 50 } } as never,
+        factsDb,
+        proposalsDb,
+        crystallizationStore: null,
+        toolProposalStore: null,
+      },
+    });
+    proposalsDb.close();
+    factsDb.close();
     expect(resolved).toBeNull();
   });
 });

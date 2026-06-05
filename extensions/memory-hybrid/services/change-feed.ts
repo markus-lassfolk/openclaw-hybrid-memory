@@ -118,53 +118,65 @@ export class ChangeFeed {
   append(input: ChangeEventInput): ChangeEvent {
     const db = this.getDb();
     const sessionKey = input.sessionKey.trim() || "default";
-    const maxRow = db
-      .prepare(`SELECT MAX(ordinal) AS maxOrd FROM change_events WHERE session_key = ?`)
-      .get(sessionKey) as { maxOrd: number | null } | undefined;
-    const ordinal = (maxRow?.maxOrd ?? 0) + 1;
     const id = randomUUID();
-    const event: ChangeEvent = {
-      id,
-      ordinal,
-      sessionKey,
-      timestamp: input.timestamp,
-      tier: input.tier,
-      category: input.category,
-      action: input.action,
-      title: input.title,
-      detail: input.detail,
-      proposalKey: input.proposalKey,
-      rollbackAvailable: input.rollbackAvailable,
-      activation: input.activation,
-      status: input.status ?? "active",
-    };
-    db.prepare(
-      `INSERT INTO change_events (
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const maxRow = db
+        .prepare(`SELECT MAX(ordinal) AS maxOrd FROM change_events WHERE session_key = ?`)
+        .get(sessionKey) as { maxOrd: number | null } | undefined;
+      const ordinal = (maxRow?.maxOrd ?? 0) + 1;
+      const event: ChangeEvent = {
+        id,
+        ordinal,
+        sessionKey,
+        timestamp: input.timestamp,
+        tier: input.tier,
+        category: input.category,
+        action: input.action,
+        title: input.title,
+        detail: input.detail,
+        proposalKey: input.proposalKey,
+        rollbackAvailable: input.rollbackAvailable,
+        activation: input.activation,
+        status: input.status ?? "active",
+      };
+      db.prepare(
+        `INSERT INTO change_events (
         id, session_key, ordinal, timestamp_ms, tier, category, action,
         title, detail, proposal_key, rollback_available, activation, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      event.id,
-      event.sessionKey,
-      event.ordinal,
-      event.timestamp,
-      event.tier,
-      event.category,
-      event.action,
-      event.title,
-      event.detail,
-      event.proposalKey,
-      event.rollbackAvailable ? 1 : 0,
-      event.activation,
-      event.status,
-    );
-    return event;
+      ).run(
+        event.id,
+        event.sessionKey,
+        event.ordinal,
+        event.timestamp,
+        event.tier,
+        event.category,
+        event.action,
+        event.title,
+        event.detail,
+        event.proposalKey,
+        event.rollbackAvailable ? 1 : 0,
+        event.activation,
+        event.status,
+      );
+      db.exec("COMMIT");
+      return event;
+    } catch (err) {
+      try {
+        db.exec("ROLLBACK");
+      } catch {
+        // Ignore rollback failure; rethrow original error.
+      }
+      throw err;
+    }
   }
 
   listRecent(opts?: {
     sessionKey?: string;
     limit?: number;
     since?: number;
+    sinceOrdinal?: number;
     status?: ChangeEventStatus;
   }): ChangeEvent[] {
     const db = this.getDb();
@@ -176,7 +188,10 @@ export class ChangeFeed {
       clauses.push("session_key = ?");
       params.push(opts.sessionKey);
     }
-    if (opts?.since != null) {
+    if (opts?.sinceOrdinal != null) {
+      clauses.push("ordinal > ?");
+      params.push(opts.sinceOrdinal);
+    } else if (opts?.since != null) {
       clauses.push("timestamp_ms > ?");
       params.push(opts.since);
     }
@@ -186,9 +201,11 @@ export class ChangeFeed {
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+    const orderBy =
+      opts?.sinceOrdinal != null ? "ordinal ASC" : "timestamp_ms DESC";
     const rows = db
       .prepare(
-        `SELECT * FROM change_events ${where} ORDER BY timestamp_ms DESC LIMIT ?`,
+        `SELECT * FROM change_events ${where} ORDER BY ${orderBy} LIMIT ?`,
       )
       .all(...params, limit) as ChangeEventRow[];
     return rows.map(rowToEvent);
@@ -208,6 +225,17 @@ export class ChangeFeed {
     return row ? rowToEvent(row) : null;
   }
 
+  findActiveByProposalKey(proposalKey: string, action: ChangeEventAction = "applied"): ChangeEvent | null {
+    const row = this.getDb()
+      .prepare(
+        `SELECT * FROM change_events
+         WHERE proposal_key = ? AND action = ? AND status = 'active'
+         ORDER BY timestamp_ms DESC LIMIT 1`,
+      )
+      .get(proposalKey, action) as ChangeEventRow | undefined;
+    return row ? rowToEvent(row) : null;
+  }
+
   markReverted(id: string): void {
     this.getDb()
       .prepare(`UPDATE change_events SET status = 'reverted' WHERE id = ? AND status = 'active'`)
@@ -218,6 +246,22 @@ export class ChangeFeed {
     this.getDb()
       .prepare(`UPDATE change_events SET status = 'superseded' WHERE id = ? AND status = 'active'`)
       .run(id);
+  }
+
+  markSupersededByProposalKey(
+    proposalKey: string,
+    action: ChangeEventAction = "applied",
+    exceptId?: string,
+  ): void {
+    const rows = this.getDb()
+      .prepare(
+        `SELECT id FROM change_events
+         WHERE proposal_key = ? AND action = ? AND status = 'active'`,
+      )
+      .all(proposalKey, action) as Array<{ id: string }>;
+    for (const row of rows) {
+      if (row.id !== exceptId) this.markSuperseded(row.id);
+    }
   }
 
   pruneOlderThan(days: number): number {

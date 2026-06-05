@@ -43,6 +43,7 @@ import {
   type ContradictionProgressJsonSummary,
 } from "../../../services/contradiction-progress-summary.js";
 import { runCrystallizationProposalCycle } from "../../../services/crystallization-maintenance.js";
+import { formatTimestampUtc } from "../../../utils/dates.js";
 
 const CONTRADICTION_BUCKET_PREVIEW_TARGET_RATE = 0.8;
 
@@ -949,7 +950,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             await runFollowUpStageSafe(
               "crystallization proposals",
               async () => {
-                const crystalRes = runCrystallizationProposalCycle(cfg);
+                const crystalRes = runCrystallizationProposalCycle(cfg, {
+                  changeFeed: b.changeFeed ?? null,
+                });
                 if (crystalRes.skippedReason === "disabled") {
                   console.log("Crystallization: skipped (disabled).");
                   return;
@@ -1154,7 +1157,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
 
             if (lwwRes.groups.length > 0) {
               const formatEpochTimestamp = (t: number) =>
-                new Date(t * 1000).toISOString().replace("T", " ").slice(0, 19);
+                formatTimestampUtc(t).replace("T", " ").slice(0, 19);
               for (const group of lwwRes.groups) {
                 const scopeLabel =
                   group.scope && group.scope !== "global"

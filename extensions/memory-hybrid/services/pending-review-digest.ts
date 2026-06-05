@@ -7,6 +7,7 @@ import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { pluginLogger } from "../utils/logger.js";
+import { formatTimestampUtc } from "../utils/dates.js";
 import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 
 type FactsDbForPendingDigest = {
@@ -283,7 +284,7 @@ export function buildPendingReviewDigestReport(opts: {
 
   return {
     schemaVersion: 1,
-    generatedAt: now.toISOString(),
+    generatedAt: formatTimestampUtc(nowSec),
     sinceDays,
     pendingReview,
     procedures: {

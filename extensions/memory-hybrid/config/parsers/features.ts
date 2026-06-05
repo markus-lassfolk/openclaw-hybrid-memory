@@ -2,7 +2,7 @@ import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
 import { DEFAULT_PLACEHOLDER_EMAIL_DOMAINS } from "../../services/skill-validator.js";
 import { pluginLogger } from "../../utils/logger.js";
 import type { SectionDefinition, SectionTaxonomyOverrides } from "../skill-sections.js";
-import type { PersonaProposalsConfig } from "../types/agents.js";
+import type { PersonaProposalsConfig, WorkshopConfig } from "../types/agents.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type {
   AliasesConfig,
@@ -423,7 +423,26 @@ export function parsePersonaProposalsConfig(cfg: Record<string, unknown>): Perso
         : 10,
     requireScopeFilter: proposalsRaw?.requireScopeFilter === true,
     separateSelfCorrectionQuota: proposalsRaw?.separateSelfCorrectionQuota !== false,
+    workshopMaxPending:
+      typeof proposalsRaw?.workshopMaxPending === "number" && proposalsRaw.workshopMaxPending >= 0
+        ? Math.floor(proposalsRaw.workshopMaxPending)
+        : undefined,
   };
+}
+
+export function parseWorkshopConfig(cfg: Record<string, unknown>): WorkshopConfig | undefined {
+  const raw = cfg.workshop as Record<string, unknown> | undefined;
+  if (!raw) return undefined;
+  const out: WorkshopConfig = {};
+  if (raw.enabled === true) out.enabled = true;
+  if (raw.enabled === false) out.enabled = false;
+  if (typeof raw.maxPending === "number" && raw.maxPending >= 0) {
+    out.maxPending = Math.floor(raw.maxPending);
+  }
+  if (typeof raw.sessionKey === "string" && raw.sessionKey.trim().length > 0) {
+    out.sessionKey = raw.sessionKey.trim();
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function parseMultiAgentConfig(cfg: Record<string, unknown>): MultiAgentConfig {
@@ -652,6 +671,15 @@ export function parseCrystallizationConfig(cfg: Record<string, unknown>): Crysta
         .filter((d): d is string => typeof d === "string" && d.trim().length > 0)
         .map((d) => d.trim());
       return valid.length > 0 ? valid : [...DEFAULT_PLACEHOLDER_EMAIL_DOMAINS];
+    })(),
+    excludeSystemGoals: raw?.excludeSystemGoals !== false,
+    excludeGoalPatterns: (() => {
+      const rawPatterns = raw?.excludeGoalPatterns;
+      if (!Array.isArray(rawPatterns)) return undefined;
+      const valid = rawPatterns
+        .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+        .map((p) => p.trim());
+      return valid.length > 0 ? valid : undefined;
     })(),
   };
 }
@@ -1172,7 +1200,7 @@ export function parseLiveChangeFeedConfig(cfg: Record<string, unknown>): import(
       sessionAdaptation: parseLiveChangeFeedBoolean(notifyOnRaw?.sessionAdaptation, true),
       proposalCreated: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalCreated, true),
       proposalApplied: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalApplied, true),
-      proposalReverted: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalReverted, true),
+      proposalReverted: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalReverted, false),
       dreamCycleComplete: parseLiveChangeFeedBoolean(notifyOnRaw?.dreamCycleComplete, false),
     },
     maxInChatEventsPerTurn: parseLiveChangeFeedPositiveInt(raw?.maxInChatEventsPerTurn, 5, "maxInChatEventsPerTurn", 1, 20),

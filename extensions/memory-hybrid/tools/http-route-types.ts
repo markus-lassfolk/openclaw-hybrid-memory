@@ -18,6 +18,7 @@ export type HttpRequestHandler = (req: {
   method: string;
   url: string;
   headers: Record<string, string>;
+  body?: string;
 }) => Promise<{ status: number; headers?: Record<string, string>; body: string }>;
 
 /** Gateway `registerHttpRoute` auth mode (OpenClaw 2026.5+). */

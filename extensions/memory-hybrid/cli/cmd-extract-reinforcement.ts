@@ -26,6 +26,7 @@ import {
 } from "../services/reinforcement-batch-analyze.js";
 import { resolveSelfCorrectionBatchDelayMs } from "../services/self-correction-batch-analyze.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitPipelinePersonaProposed } from "../services/change-feed-emit.js";
 import {
   type AnnotationReasons,
   type ReinforcementAnnotationDiagnostic,
@@ -49,10 +50,12 @@ import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import { resolvePipelineProposalTarget } from "./proposals.js";
+import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso } from "../utils/dates.js";
 import type { ReinforcementIncident } from "../services/reinforcement-extract.js";
 
 const REINFORCEMENT_BATCH_STATE_VERSION = 1;
@@ -189,7 +192,7 @@ export function readReinforcementBatchState(statePath: string): ReinforcementBat
         truncations: Number.isFinite(diagnostics.truncations) ? diagnostics.truncations : 0,
         retries: Number.isFinite(diagnostics.retries) ? diagnostics.retries : 0,
       },
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : nowIso(),
     };
   } catch {
     return null;
@@ -197,7 +200,7 @@ export function readReinforcementBatchState(statePath: string): ReinforcementBat
 }
 
 function writeReinforcementBatchState(statePath: string, state: ReinforcementBatchState): void {
-  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: nowIso() }, null, 2)}\n`);
 }
 
 function removeReinforcementBatchState(statePath: string): void {
@@ -358,7 +361,7 @@ export async function runExtractReinforcementForCli(
             completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
             analysed,
             diagnostics,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso(),
           });
         };
 
@@ -713,9 +716,10 @@ export async function runExtractReinforcementForCli(
                 proposalTTLDays: cfg.personaProposals.proposalTTLDays,
                 minConfidence: cfg.personaProposals.minConfidence,
                 proposalsDb,
+                workshopStores: workshopStoresFromHandlerContext(ctx),
               });
               if (!resolved) continue;
-              proposalsDb.create({
+              const created = proposalsDb.create({
                 targetFile: resolved.targetFile,
                 title: `Reinforcement: ${a.category}`,
                 observation: "Positive signal from reinforcement analysis",
@@ -728,6 +732,7 @@ export async function runExtractReinforcementForCli(
                 targetMtimeMs: resolved.targetMtimeMs,
                 targetHash: resolved.targetHash,
               });
+              emitPipelinePersonaProposed(ctx.changeFeed, cfg, created);
             }
           }
         } catch (err) {

@@ -4,6 +4,7 @@
 
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { formatDateUtc, nowSec } from "../utils/dates.js";
 
 const QUARANTINE_DIR_NAME = "crystallization-quarantine";
 
@@ -26,7 +27,7 @@ export function quarantineCrystallizedSkillOnDisk(
 
   const skillDir = dirname(normalizedPath);
   const skillName = basename(skillDir);
-  const date = new Date().toISOString().slice(0, 10);
+  const date = formatDateUtc(nowSec());
   const quarantineRoot = join(quarantineRootForOutputDir(activeOutputDir), date);
   mkdirSync(quarantineRoot, { recursive: true });
   const destDir = join(quarantineRoot, skillName);

@@ -9,10 +9,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
-import type { IdentityFileType } from "../config.js";
+import type { IdentityFileType, HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import { writeProposalRollback } from "../services/proposal-rollback.js";
+import { emitPersonaApplied, supersedeActiveProposedEvent } from "../services/change-feed-emit.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import { writeProposalRollback, deleteProposalRollback } from "../services/proposal-rollback.js";
+import { enforceMaxPendingCap, resolveWorkshopMaxPending, type UnifiedProposalStores } from "../services/unified-proposals.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso } from "../utils/dates.js";
 import { spawnSync } from "../utils/process-runner.js";
 /** Resolve a proposal target file (e.g. SOUL.md) against the workspace directory. */
 function resolveProposalTarget(targetFile: string): string {
@@ -33,7 +37,7 @@ async function auditProposal(
 ): Promise<void> {
   const auditDir = join(dirname(resolvedSqlitePath), "decisions");
   await mkdir(auditDir, { recursive: true });
-  const timestamp = new Date().toISOString();
+  const timestamp = nowIso();
   const entry = {
     timestamp,
     action,
@@ -197,6 +201,9 @@ export function resolvePipelineProposalTarget(input: {
   minConfidence?: number;
   nowSec?: number;
   proposalsDb?: ProposalsDB;
+  /** When set, block pipeline proposal creation when the unified workshop queue is full. */
+  workshopStores?: UnifiedProposalStores;
+  maxPending?: number;
 }): {
   targetFile: string;
   confidence: number;
@@ -214,6 +221,13 @@ export function resolvePipelineProposalTarget(input: {
       suggestedChange: input.suggestedChange,
     });
     if (duplicate) return null;
+  }
+  if (input.workshopStores) {
+    const cap = enforceMaxPendingCap(
+      input.workshopStores,
+      input.maxPending ?? resolveWorkshopMaxPending(input.workshopStores.cfg),
+    );
+    if (!cap.ok) return null;
   }
   const snapshot = getFileSnapshot(join(input.workspaceRoot, targetFile));
   const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
@@ -323,9 +337,11 @@ function commitProposalChange(
 
 type ApplyProposalContext = {
   proposalsDb: ProposalsDB;
-  cfg: { personaProposals: { allowedFiles: string[] } };
+  cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed">;
   resolvedSqlitePath: string;
   api?: { logger?: { warn?: (msg: string) => void } };
+  changeFeed?: ChangeFeed | null;
+  sessionKey?: string;
 };
 
 /**
@@ -381,6 +397,9 @@ export async function applyApprovedProposal(
       error: `Proposal ${proposalId} is a full-file replace but has no target snapshot. Review and re-create the proposal.`,
     };
   }
+  let original = "";
+  let wroteRollback = false;
+  let wroteFile = false;
   try {
     const currentSnapshot = getFileSnapshot(targetPath);
     if (proposal.targetHash && currentSnapshot?.hash && proposal.targetHash !== currentSnapshot.hash) {
@@ -400,11 +419,11 @@ export async function applyApprovedProposal(
         error: `Target file ${proposal.targetFile} has changed since proposal creation (mtime mismatch). Review and re-approve.`,
       };
     }
-    const original = readFileSync(targetPath, "utf-8");
+    original = readFileSync(targetPath, "utf-8");
     const originalSnapshot = getFileSnapshot(targetPath);
     const backupPath = `${targetPath}.backup-${Date.now()}`;
     writeFileSync(backupPath, original);
-    const timestamp = new Date().toISOString();
+    const timestamp = nowIso();
     const applied = buildAppliedContent(original, proposal, timestamp);
     if (!applied.content.trim()) {
       return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
@@ -420,13 +439,16 @@ export async function applyApprovedProposal(
         appliedAt: timestamp,
         changeType: applied.changeType,
       });
+      wroteRollback = true;
     }
     atomicWriteFile(targetPath, applied.content);
+    wroteFile = true;
     // Only attempt git commit when the target is inside a git repo (issue #90: non-git workspace can still apply).
     if (isGitRepo(targetPath)) {
       const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
       if (!commitResult.ok) {
         atomicWriteFile(targetPath, original);
+        if (wroteRollback) deleteProposalRollback(ctx.resolvedSqlitePath, proposalId);
         const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
         if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
           const cwd = repoRoot.stdout.trim();
@@ -439,7 +461,12 @@ export async function applyApprovedProposal(
         };
       }
     }
-    ctx.proposalsDb.markApplied(proposalId);
+    const marked = ctx.proposalsDb.markAppliedIfApproved(proposalId);
+    if (!marked) {
+      if (wroteFile) atomicWriteFile(targetPath, original);
+      if (wroteRollback) deleteProposalRollback(ctx.resolvedSqlitePath, proposalId);
+      return { ok: false, error: `Proposal ${proposalId} is no longer approved` };
+    }
     await auditProposal(
       "applied",
       proposalId,
@@ -453,6 +480,14 @@ export async function applyApprovedProposal(
       },
       { error: console.error },
     );
+    emitPersonaApplied(ctx.changeFeed, ctx.cfg as HybridMemoryConfig, {
+      sessionKey: ctx.sessionKey ?? "system",
+      proposalId,
+      targetFile: proposal.targetFile,
+      title: proposal.title,
+      rollbackAvailable: wroteRollback,
+    });
+    supersedeActiveProposedEvent(ctx.changeFeed, `persona:${proposalId}`);
     return {
       ok: true,
       targetFile: proposal.targetFile,
@@ -460,6 +495,14 @@ export async function applyApprovedProposal(
       suggestedChange: proposal.suggestedChange,
     };
   } catch (err) {
+    if (wroteFile && original) {
+      try {
+        atomicWriteFile(targetPath, original);
+      } catch {
+        // Best-effort restore only.
+      }
+    }
+    if (wroteRollback) deleteProposalRollback(ctx.resolvedSqlitePath, proposalId);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "apply-proposal",
       subsystem: "proposals",

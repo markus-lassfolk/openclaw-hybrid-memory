@@ -4,11 +4,32 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitFrustrationDetected } from "../services/change-feed-emit.js";
 import { applyPrependBudget } from "../services/prepend-budget.js";
 import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
+import type { FrustrationDetectionConfig } from "../config.js";
 import { ToolEffectivenessStore, generateToolHint } from "../services/tool-effectiveness.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import type { LifecycleContext, SessionState } from "./types.js";
+
+type FrustrationBand = "none" | "medium" | "high" | "critical";
+
+const BAND_RANK: Record<FrustrationBand, number> = {
+  none: 0,
+  medium: 1,
+  high: 2,
+  critical: 3,
+};
+
+function resolveFrustrationBand(level: number, cfg?: FrustrationDetectionConfig): FrustrationBand {
+  const medium = cfg?.adaptationThresholds?.medium ?? 0.3;
+  const high = cfg?.adaptationThresholds?.high ?? 0.5;
+  const critical = cfg?.adaptationThresholds?.critical ?? 0.7;
+  if (level >= critical) return "critical";
+  if (level >= high) return "high";
+  if (level >= medium) return "medium";
+  return "none";
+}
 
 let cachedToolStore: ToolEffectivenessStore | null = null;
 let cachedToolStorePath: string | null = null;
@@ -29,7 +50,7 @@ export function registerFrustrationHandlers(
 ): void {
   if (ctx.cfg.frustrationDetection?.enabled === false) return;
   const fCfg = ctx.cfg.frustrationDetection;
-  const { resolveSessionKey, frustrationStateMap } = sessionState;
+  const { resolveSessionKey, frustrationStateMap, frustrationThresholdBandMap } = sessionState;
   const currentAgentIdRef = ctx.currentAgentIdRef;
 
   // Must use the two-argument hook signature so cron/embedded identity on hookCtx is visible (#1005).
@@ -62,6 +83,21 @@ export function registerFrustrationHandlers(
       const frustrationResult = detectFrustration(state.turns, fCfg, state.level);
       state.level = frustrationResult.level;
       frustrationStateMap.set(sessionKey, state);
+
+      const newBand = resolveFrustrationBand(frustrationResult.level, fCfg);
+      const prevBand = frustrationThresholdBandMap.get(sessionKey) ?? "none";
+      if (BAND_RANK[newBand] > BAND_RANK[prevBand] && newBand !== "none") {
+        emitFrustrationDetected(ctx.changeFeed, ctx.cfg, {
+          sessionKey,
+          level: frustrationResult.level,
+          trend: frustrationResult.trend,
+          adaptationAction: frustrationResult.suggestedAdaptation.action,
+          adaptationReasoning: frustrationResult.suggestedAdaptation.reasoning,
+        });
+        frustrationThresholdBandMap.set(sessionKey, newBand);
+      } else if (BAND_RANK[newBand] < BAND_RANK[prevBand]) {
+        frustrationThresholdBandMap.set(sessionKey, newBand);
+      }
 
       const implicitSignals = exportAsImplicitSignals(frustrationResult);
       if (implicitSignals.length > 0) {
@@ -113,8 +149,14 @@ export function registerFrustrationHandlers(
         }
       }
 
+      const adaptation = frustrationResult.suggestedAdaptation;
+      const adaptationLine =
+        adaptation.action !== "none"
+          ? `\nAdaptation: ${adaptation.action} — ${adaptation.reasoning}`
+          : "";
+
       const combinedPrepend = [
-        hint ? `\n<frustration-signal>${hint}</frustration-signal>\n` : "",
+        hint ? `\n<frustration-signal>${hint}${adaptationLine}</frustration-signal>\n` : "",
         toolHintText ? `\n<tool-hint>${toolHintText}</tool-hint>\n` : "",
       ].join("");
 

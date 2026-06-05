@@ -37,6 +37,7 @@ export type ManageContext = {
   parseSourceDate: (v: string | number | null | undefined) => number | null;
   getMemoryCategories: () => string[];
   cfg: HybridMemoryConfig;
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runBackfill: (
     opts: { dryRun: boolean; workspace?: string; limit?: number },

@@ -90,7 +90,23 @@ import {
 } from "./services/reflection.js";
 import { AliasDB, generateAliases, searchAliasStrategy, storeAliases } from "./services/retrieval-aliases.js";
 import { findSimilarByEmbedding } from "./services/vector-search.js";
-import { parseSourceDate } from "./utils/dates.js";
+import {
+  formatDateUtc,
+  formatTimestampUtc,
+  formatTimestampUtcFromMs,
+  cutoffIsoDaysAgo,
+  addDaysUtcIso,
+  cutoffIsoHoursAgo,
+  formatCompactRunIdUtc,
+  formatRunIdSlug,
+  isIsoUtcTimestamp,
+  normalizeToIsoUtc,
+  nowIso,
+  nowSec,
+  parseSourceDate,
+  parseTimestamp,
+  parseTimestampMs,
+} from "./utils/dates.js";
 import { calculateExpiry, classifyDecay } from "./utils/decay.js";
 import { isHybridMemJsonInvocation } from "./utils/hybrid-mem-json-cli.js";
 
@@ -162,6 +178,20 @@ export const _testing = {
   parseTags,
   tagsContains,
   parseSourceDate,
+  nowSec,
+  nowIso,
+  formatTimestampUtc,
+  formatTimestampUtcFromMs,
+  cutoffIsoDaysAgo,
+  addDaysUtcIso,
+  cutoffIsoHoursAgo,
+  formatCompactRunIdUtc,
+  formatRunIdSlug,
+  formatDateUtc,
+  parseTimestamp,
+  parseTimestampMs,
+  normalizeToIsoUtc,
+  isIsoUtcTimestamp,
   estimateTokens,
   estimateTokensForDisplay,
   formatProgressiveIndexLine,

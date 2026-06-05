@@ -24,6 +24,7 @@ import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-m
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitPipelinePersonaProposed } from "../services/change-feed-emit.js";
 import {
   appendUniqueRemediationsByIncidentIndex,
   attachOrderedItemsToIncidents,
@@ -49,6 +50,7 @@ import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { serializeWorkspaceSkillTargetsForPrompt } from "../utils/skill-discovery.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { formatDateUtc, nowIso } from "../utils/dates.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
 import { parseSelfCorrectionLLMResponse } from "../services/self-correction-llm-parser.js";
@@ -60,6 +62,7 @@ import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
 import { resolvePipelineProposalTarget } from "./proposals.js";
+import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
@@ -210,7 +213,7 @@ function readSelfCorrectionBatchState(statePath: string): SelfCorrectionBatchSta
         batchSplits: Number.isFinite(diagnostics.batchSplits) ? diagnostics.batchSplits : 0,
         truncations: Number.isFinite(diagnostics.truncations) ? diagnostics.truncations : 0,
       },
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : nowIso(),
     };
   } catch {
     return null;
@@ -218,7 +221,7 @@ function readSelfCorrectionBatchState(statePath: string): SelfCorrectionBatchSta
 }
 
 function writeSelfCorrectionBatchState(statePath: string, state: SelfCorrectionBatchState): void {
-  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: nowIso() }, null, 2)}\n`);
 }
 
 function chunkSelfCorrectionIncidents<T>(items: T[], batchSize: number): T[][] {
@@ -416,6 +419,7 @@ async function applySelfCorrectionRemediations(params: {
               proposalTTLDays: ctx.cfg.personaProposals.proposalTTLDays,
               minConfidence: ctx.cfg.personaProposals.minConfidence,
               proposalsDb,
+              workshopStores: workshopStoresFromHandlerContext(ctx),
             });
             if (!resolved) continue;
             const src =
@@ -429,7 +433,7 @@ async function applySelfCorrectionRemediations(params: {
             const evidenceSessions = src
               ? [src.sessionFile]
               : incidents.map((inc) => inc.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx);
-            proposalsDb.create({
+            const created = proposalsDb.create({
               targetFile: resolved.targetFile,
               title: `Self-correction: ${a.category ?? "behavior"}`,
               observation: incidentContext,
@@ -440,6 +444,7 @@ async function applySelfCorrectionRemediations(params: {
               targetMtimeMs: resolved.targetMtimeMs,
               targetHash: resolved.targetHash,
             });
+            emitPipelinePersonaProposed(ctx.changeFeed, ctx.cfg, created, incidentContext);
           } catch (err) {
             capturePluginError(err as Error, {
               subsystem: "cli",
@@ -658,7 +663,7 @@ export async function runSelfCorrectionRunForCli(
     const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
     const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
     const reportDir = join(workspaceRoot, "memory", "reports");
-    const today = new Date().toISOString().slice(0, 10);
+    const today = formatDateUtc(Math.floor(Date.now() / 1000));
     const reportPath = join(reportDir, `self-correction-${today}.md`);
     let incidents: CorrectionIncident[];
     if (opts.incidents !== undefined) {
@@ -833,7 +838,7 @@ export async function runSelfCorrectionRunForCli(
         completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
         analysed,
         diagnostics,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       });
     };
 

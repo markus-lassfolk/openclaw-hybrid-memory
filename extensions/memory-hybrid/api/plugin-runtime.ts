@@ -42,6 +42,8 @@ import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { VerificationStore } from "../services/verification-store.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import type { SessionState } from "../lifecycle/types.js";
 import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
 import type { ToolRegistrationHandle } from "../setup/register-tools.js";
 
@@ -87,6 +89,10 @@ export interface PluginRuntime {
   /** Cross-agent audit log (Issue #790). */
   auditStore: AuditStore | null;
   agentHealthStore: AgentHealthStore | null;
+  /** Live change feed for operator notifications. */
+  changeFeed: ChangeFeed | null;
+  /** Populated after lifecycle hooks register; used for frustration reset on revert. */
+  sessionStateRef: { value: SessionState | null };
 
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */

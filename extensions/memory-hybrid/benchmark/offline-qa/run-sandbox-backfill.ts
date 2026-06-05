@@ -24,6 +24,8 @@ import {
 } from "../../services/session-v3-parser.js";
 import { parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
 import { redactMaintenancePrivateText } from "../../utils/maintenance-privacy.js";
+import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../../services/workflow-goal-classifier.js";
+import { inferWorkflowOutcomeFromMessages } from "../../services/workflow-message-utils.js";
 
 const home = process.env.HOME ?? homedir();
 const cfgPath = join(home, ".openclaw/openclaw.json");
@@ -40,25 +42,32 @@ let recall = 0;
 let daily = 0;
 let langs = 0;
 let traces = 0;
+let skippedDupes = 0;
 const wf = new WorkflowStore(join(home, ".openclaw/memory/workflow-traces.db"));
 
 for (const p of paths) {
   recall += backfillRecallEventsFromSessionFile(factsDb.getRawDb(), p);
   if (synthesizeDailyLogFromSessionFile(p)) daily++;
   if (scanSessionFileForMetadata(factsDb.getRawDb(), p)) langs++;
-  const messages = parseSessionMessagesFromLines(readFileSync(p, "utf-8").split("\n"), "sandbox-backfill");
+  const rawLines = readFileSync(p, "utf-8").split("\n");
+  const messages = parseSessionMessagesFromLines(rawLines, "sandbox-backfill");
   let tools = extractToolSequenceFromMessages(messages);
   const trajLines = readTrajectoryLines(p);
   if (trajLines) tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "sandbox-backfill"));
   tools = normalizeWorkflowToolSequence(tools);
   if (tools.length >= 2) {
+    const goal = redactMaintenancePrivateText(
+      extractUserWorkflowGoal(messages, cfg.crystallization?.excludeGoalPatterns),
+    );
+    if (isSystemWorkflowGoal(goal, cfg.crystallization?.excludeGoalPatterns)) continue;
     const inserted = wf.recordBackfillIfAbsent({
-      goal: redactMaintenancePrivateText(messages.find((m) => m.role === "user")?.text.slice(0, 200) ?? "session"),
+      goal,
       toolSequence: tools,
-      outcome: "unknown",
+      outcome: inferWorkflowOutcomeFromMessages(messages),
       sessionId: basename(p),
     });
     if (inserted) traces++;
+    else skippedDupes++;
   }
 }
 
@@ -80,5 +89,7 @@ const cov = buildMaintenanceCoverageReport({
   days: 7,
 });
 
-console.log(JSON.stringify({ recall, daily, langs, traces, sessions: paths.length }, null, 2));
+console.log(
+  JSON.stringify({ recall, daily, langs, traces, skippedDupes, sessions: paths.length }, null, 2),
+);
 console.log(formatMaintenanceCoverageReport(cov));

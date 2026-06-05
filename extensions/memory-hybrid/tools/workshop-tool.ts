@@ -13,8 +13,12 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
+import { revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import type { SessionState } from "../lifecycle/types.js";
 import {
   type WorkshopServiceContext,
+  withWorkshopDefaults,
   workshopApprove,
   workshopInspect,
   workshopList,
@@ -32,10 +36,12 @@ export interface WorkshopToolsContext {
   toolProposalStore?: ToolProposalStore | null;
   workflowStore?: WorkflowStore | null;
   resolvedSqlitePath: string;
+  changeFeed?: ChangeFeed | null;
+  sessionStateRef?: { value: SessionState | null };
 }
 
 function buildWorkshopCtx(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): WorkshopServiceContext {
-  return {
+  return withWorkshopDefaults({
     cfg: ctx.cfg,
     factsDb: ctx.factsDb,
     proposalsDb: ctx.proposalsDb ?? null,
@@ -43,8 +49,9 @@ function buildWorkshopCtx(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): Wo
     toolProposalStore: ctx.toolProposalStore ?? null,
     workflowStore: ctx.workflowStore ?? null,
     resolvedSqlitePath: ctx.resolvedSqlitePath,
+    changeFeed: ctx.changeFeed ?? null,
     api,
-  };
+  });
 }
 
 export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): void {
@@ -52,7 +59,7 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
     name: "memory_workshop",
     label: "Memory Workshop",
     description:
-      "Unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, approve, reject, quarantine, revise, undo, digest.",
+      "Unified review queue for persona proposals, crystallization skills, tool proposals, and procedure-skill promotions. Actions: list, inspect, approve, reject, quarantine, revise, undo, revert_by_ordinal, digest.",
     parameters: Type.Object({
       action: Type.Union(
         [
@@ -63,11 +70,14 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
           Type.Literal("quarantine"),
           Type.Literal("revise"),
           Type.Literal("undo"),
+          Type.Literal("revert_by_ordinal"),
           Type.Literal("digest"),
         ],
         { description: "Workshop action to perform." },
       ),
       id: Type.Optional(Type.String({ description: "Unified proposal key (type:storeId) for inspect/approve/reject/etc." })),
+      ordinal: Type.Optional(Type.Integer({ minimum: 1, description: "Change feed ordinal (#N) for revert_by_ordinal." })),
+      sessionKey: Type.Optional(Type.String({ description: "Session key for revert_by_ordinal (defaults to current session)." })),
       reason: Type.Optional(Type.String({ description: "Rejection or quarantine reason." })),
       revision: Type.Optional(Type.String({ description: "Revised suggested_change body (persona proposals only)." })),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Max proposals for list (default 20)." })),
@@ -78,18 +88,22 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
       try {
         switch (action) {
           case "list": {
-            const items = workshopList(workshopCtx, { status: "pending", limit: (params.limit as number) ?? 20 });
+            const items = workshopList(workshopCtx, {
+              status: "pending",
+              limit: (params.limit as number) ?? 20,
+              includeUndoable: true,
+            });
             const lines = items.map(
               (p, i) =>
-                `${i + 1}. [${p.type}] ${p.title} (${p.unifiedKey}, conf=${p.confidence.toFixed(2)}, ${p.preview.slice(0, 80)})`,
+                `${i + 1}. [${p.type}] ${p.title} (${p.unifiedKey}, conf=${p.confidence.toFixed(2)}${p.actions.undoSupported ? ", undoable" : ""}, ${p.preview.slice(0, 80)})`,
             );
             return {
               content: [
                 {
                   type: "text",
                   text: items.length
-                    ? `Pending proposals (${items.length}):\n\n${lines.join("\n")}`
-                    : "No pending proposals in the unified workshop queue.",
+                    ? `Workshop queue (${items.length}):\n\n${lines.join("\n")}`
+                    : "No proposals in the unified workshop queue.",
                 },
               ],
               details: items,
@@ -148,6 +162,41 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
             const id = params.id as string | undefined;
             if (!id) return { content: [{ type: "text", text: "id is required for undo" }], details: { ok: false } };
             const result = workshopUndo(workshopCtx, id);
+            return {
+              content: [{ type: "text", text: result.ok ? result.message : result.error }],
+              details: result,
+            };
+          }
+          case "revert_by_ordinal": {
+            const ordinal = params.ordinal as number | undefined;
+            if (!ordinal || ordinal < 1) {
+              return {
+                content: [{ type: "text", text: "ordinal is required for revert_by_ordinal (positive integer)" }],
+                details: { ok: false },
+              };
+            }
+            if (!ctx.changeFeed) {
+              return {
+                content: [{ type: "text", text: "Change feed is not available" }],
+                details: { ok: false },
+              };
+            }
+            const sessionKey =
+              (params.sessionKey as string | undefined) ??
+              (api.context?.sessionKey as string | undefined) ??
+              (api.context?.sessionId as string | undefined) ??
+              "default";
+            const result = revertChangeByOrdinal(
+              buildChangeRevertContext({
+                changeFeed: ctx.changeFeed,
+                cfg: ctx.cfg,
+                workshopCtx,
+                sessionKey,
+                sessionState: ctx.sessionStateRef?.value ?? null,
+              }),
+              ordinal,
+              sessionKey,
+            );
             return {
               content: [{ type: "text", text: result.ok ? result.message : result.error }],
               details: result,

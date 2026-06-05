@@ -12,7 +12,7 @@ Get an agent that **remembers you** and **gets better at giving the right contex
 
 ## Prerequisites
 
-- **OpenClaw v2026.3.8+** (minimum — matches plugin peer dependency and startup warning): use a **recent 2026.3.x** release in practice; CI resolves a specific `openclaw` in `extensions/memory-hybrid/package-lock.json`.
+- **OpenClaw ≥2026.5.0** (required — matches `peerDependencies` and `MIN_OPENCLAW_VERSION`); **≥2026.6.1** recommended for Skill Workshop, skills hot-reload, and Dreaming tab integration (`RECOMMENDED_OPENCLAW_VERSION`). CI resolves a specific `openclaw` in `extensions/memory-hybrid/package-lock.json`.
 - **Embedding access** (required): configure `embedding.provider` and related settings so the plugin can generate embedding vectors. Four providers are supported:
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`).
   - **Ollama**: set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — Ollama must be running locally.

@@ -31,7 +31,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CrystallizationStore } from "../backends/crystallization-store.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
@@ -56,6 +56,7 @@ const BASE_CFG: CrystallizationConfig = {
   maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
+  excludeSystemGoals: true,
 };
 
 beforeEach(() => {
@@ -131,6 +132,21 @@ describe("CrystallizationProposer.runCycle — no candidates", () => {
     wfStore.record({ goal: "one-off task", toolSequence: ["exec"], outcome: "success" });
     const result = proposer.runCycle();
     expect(result.proposed).toBe(0);
+  });
+
+  it("explains when excludeSystemGoals filters all cron patterns", () => {
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: tmpDir, minUsageCount: 2, minSuccessRate: 0.5 };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    for (let i = 0; i < 4; i++) {
+      wfStore.record({
+        goal: `[cron:abc maintenance run ${i}]`,
+        toolSequence: ["exec", "read", "write"],
+        outcome: "success",
+      });
+    }
+    const result = proposer.runCycle();
+    expect(result.proposed).toBe(0);
+    expect(result.reasons.join(" ")).toMatch(/excludeSystemGoals|user-facing workflow data/i);
   });
 });
 
@@ -792,8 +808,8 @@ Bounded narrative body without YAML.
   });
 });
 
-describe("CrystallizationProposer — exec-only script install", () => {
-  it("writes scripts/run.sh for exec-only patterns on approve", () => {
+describe("CrystallizationProposer — install files", () => {
+  it("writes SKILL.md only (no placeholder exec scaffold) on approve", () => {
     const outputDir = join(tmpDir, "exec-script-skills");
     const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir, minUsageCount: 2 };
     const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
@@ -809,8 +825,8 @@ describe("CrystallizationProposer — exec-only script install", () => {
     }
     expect(result.success, result.message).toBe(true);
     const scriptPath = join(dirname(result.outputPath!), "scripts", "run.sh");
-    expect(existsSync(scriptPath)).toBe(true);
-    expect(readFileSync(scriptPath, "utf-8")).toContain("#!/usr/bin/env bash");
+    expect(existsSync(scriptPath)).toBe(false);
+    expect(existsSync(result.outputPath!)).toBe(true);
   });
 });
 
@@ -871,5 +887,35 @@ Bounded narrative body without YAML.
     expect(result.outputPath).toBe(join(outputDir, "legacy-restore", "SKILL.md"));
     expect(existsSync(result.outputPath!)).toBe(true);
     expect(cStore.getById(proposal.id)?.status).toBe("installed");
+  });
+
+  it("rolls back disk move when restoreFromQuarantine fails", () => {
+    const outputDir = join(tmpDir, "restore-rollback-skills");
+    mkdirSync(outputDir, { recursive: true });
+    const quarantineDir = join(outputDir, "..", "crystallization-quarantine", "2026-06-06", "rollback-skill");
+    mkdirSync(quarantineDir, { recursive: true });
+    const quarantineSkillPath = join(quarantineDir, "SKILL.md");
+    writeFileSync(quarantineSkillPath, "# Rollback test\n", "utf-8");
+
+    const proposal = cStore.create({
+      patternId: "rollback-pattern",
+      evidenceHash: "ev-rollback",
+      skillName: "rollback-skill",
+      skillContent: "# Rollback test\n",
+      patternSnapshot: "{}",
+      status: "quarantined",
+      rejectionReason: "stale validation: test",
+    });
+    cStore.updateOutputPath(proposal.id, quarantineSkillPath);
+
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir };
+    const proposer = new CrystallizationProposer(wfStore, cStore, cfg);
+    vi.spyOn(cStore, "restoreFromQuarantine").mockReturnValue(null);
+
+    const result = proposer.restoreProposal(proposal.id);
+    expect(result.success).toBe(false);
+    expect(existsSync(join(outputDir, "rollback-skill", "SKILL.md"))).toBe(false);
+    expect(existsSync(quarantineSkillPath)).toBe(true);
+    expect(cStore.getById(proposal.id)?.status).toBe("quarantined");
   });
 });

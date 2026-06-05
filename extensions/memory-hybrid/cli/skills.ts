@@ -11,9 +11,12 @@ import {
   assertCrystallizationQueueStatusFilter,
   CRYSTALLIZATION_QUEUE_STATUS_FILTERS,
 } from "../backends/crystallization-store.js";
-import type { HybridMemoryConfig } from "../config.js";
+import { formatTimestampUtc } from "../utils/dates.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
-import { runCrystallizationProposalCycle } from "../services/crystallization-maintenance.js";
+import {
+  previewCrystallizationCycle,
+  runCrystallizationProposalCycle,
+} from "../services/crystallization-maintenance.js";
 import {
   summarizeSkillProposalValidation,
   type SkillProposalValidationResult,
@@ -38,10 +41,11 @@ type SkillsCliContext = {
   crystallizationStore?: CrystallizationStore | null;
   cfg: HybridMemoryConfig;
   factsDb?: FactsDB | null;
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
 };
 
 function formatIso(ts: number | null | undefined): string {
-  return typeof ts === "number" && ts > 0 ? new Date(ts * 1000).toISOString() : "never";
+  return typeof ts === "number" && ts > 0 ? formatTimestampUtc(ts) : "never";
 }
 
 function formatRate(value: number | null | undefined): string {
@@ -604,10 +608,34 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
     .description(
       "Run one workflow crystallization cycle (detect patterns → validate → queue proposals). Requires crystallization.enabled.",
     )
+    .option("--dry-run", "Preview candidates without writing proposals (works when crystallization.enabled=false)")
     .option("--json", "Print JSON")
     .action(
-      withExit(async (opts: { json?: boolean }) => {
-        const result = runCrystallizationProposalCycle(ctx.cfg);
+      withExit(async (opts: { dryRun?: boolean; json?: boolean }) => {
+        if (opts.dryRun) {
+          const preview = previewCrystallizationCycle(ctx.cfg);
+          if (opts.json) {
+            console.log(JSON.stringify({ ok: preview.skippedReason !== "stores-unavailable", ...preview }, null, 2));
+            if (preview.skippedReason === "stores-unavailable") process.exitCode = 2;
+            return;
+          }
+          console.log(
+            `Preview: ${preview.candidates.length} candidate(s), patterns raw=${preview.patternCounts.raw} userFacing=${preview.patternCounts.userFacing}`,
+          );
+          for (const c of preview.candidates) {
+            console.log(
+              `  - score=${c.score.toFixed(1)} count=${c.totalCount} success=${Math.round(c.successRate * 100)}% seq=${c.toolSequence.join(" → ")}`,
+            );
+            for (const g of c.exampleGoals) console.log(`      goal: ${g.slice(0, 100)}`);
+          }
+          for (const r of preview.reasons) console.log(`  - ${r}`);
+          if (preview.skippedReason === "stores-unavailable") process.exitCode = 2;
+          return;
+        }
+
+        const result = runCrystallizationProposalCycle(ctx.cfg, {
+          changeFeed: ctx.changeFeed ?? null,
+        });
         if (opts.json) {
           console.log(JSON.stringify({ ok: result.skippedReason !== "stores-unavailable", ...result }, null, 2));
           if (result.skippedReason === "stores-unavailable") process.exitCode = 2;

@@ -11,6 +11,7 @@ import { capturePluginError } from "../../../services/error-reporter.js";
 import { countActivePatternFactsForMaintenance } from "../../../services/reflection.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import { getLanguageKeywordsFilePath } from "../../../utils/language-keywords.js";
+import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "../../maintenance-overrides.js";
 import { type Chainable, withExit } from "../../shared.js";
@@ -63,7 +64,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
           if (filter && v.agentId !== filter) continue;
           any = true;
           console.log(
-            `${v.agentId}\t${v.status}\tscore=${v.score.toFixed(1)}\tlast=${new Date(v.lastSeen).toISOString()}\t${v.lastTask.slice(0, 120)}`,
+            `${v.agentId}\t${v.status}\tscore=${v.score.toFixed(1)}\tlast=${formatTimestampUtcFromMs(v.lastSeen)}\t${v.lastTask.slice(0, 120)}`,
           );
         }
         if (!any) {
@@ -93,7 +94,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
         const sinceMs = Date.now() - hours * 3600 * 1000;
         const rows = auditStore.query({ sinceMs, agentId: agent, limit: 200 });
         for (const r of rows) {
-          const ts = new Date(r.timestamp).toISOString();
+          const ts = formatTimestampUtcFromMs(r.timestamp);
           console.log(`${ts}\t${r.action}\t${r.outcome}\t${r.target ?? ""}`);
         }
         if (rows.length === 0) {
@@ -139,7 +140,7 @@ export function registerManageAgentsAuditRunall(mem: Chainable, b: ManageBinding
               log(`Backfilled decay for ${total} facts.`);
               if (backfillDonePath) {
                 try {
-                  writeFileSync(backfillDonePath, `${new Date().toISOString()}\n`);
+                  writeFileSync(backfillDonePath, `${nowIso()}\n`);
                 } catch (err) {
                   capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                     subsystem: "cli",

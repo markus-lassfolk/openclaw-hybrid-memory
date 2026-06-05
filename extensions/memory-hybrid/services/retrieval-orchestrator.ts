@@ -17,6 +17,7 @@ import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { isTierAllowedForWarmSearch } from "../utils/tier-filter.js";
 import { pluginLogger } from "../utils/logger.js";
+import { formatDateUtc } from "../utils/dates.js";
 import { DocumentGrader } from "./document-grader.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
@@ -826,7 +827,7 @@ export async function runExplicitDeepRetrieval(
             factId: result.factId,
             text: entry.text,
             confidence: entry.confidence,
-            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+            storedDate: formatDateUtc(storedSec),
             finalScore: rrfScoreMap.get(result.factId) ?? 0,
           },
         ];
@@ -1183,7 +1184,7 @@ export async function runExplicitDeepRetrieval(
             factId,
             text: entry.text,
             confidence: entry.confidence,
-            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+            storedDate: formatDateUtc(storedSec),
             finalScore: rrfScoreMap.get(factId) ?? 0,
           };
         });

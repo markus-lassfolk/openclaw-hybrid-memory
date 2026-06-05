@@ -38,6 +38,7 @@ import { isWalWriteFailure } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
+import { nowIso } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import {
   isSubstantiveMemoryText,
@@ -987,7 +988,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 const eventType = categoryToEventType(category);
                 eventLog.append({
                   sessionId: api.context?.sessionId ?? "unknown",
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   eventType,
                   content: {
                     text: textToStore.slice(0, 500),
@@ -1032,7 +1033,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               if (eventLog) {
                 eventLog.append({
                   sessionId: api.context?.sessionId ?? "unknown",
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   eventType: "correction",
                   content: {
                     type: "contradiction_detected",

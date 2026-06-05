@@ -10,6 +10,7 @@ import type { ProcedurePromotionBlockReason } from "../../../backends/facts-db/p
 import { type GraphExpansionStats, expandGraph, resolveGraphHubDegreeCap } from "../../../services/graph-retrieval.js";
 import type { MemoryEntry } from "../../../types/memory.js";
 import { isEntityStopWord } from "../../../utils/entity-stopwords.js";
+import { nowIso } from "../../../utils/dates.js";
 import { SQL_IMPLICIT_TRAJECTORY_LESSON_FILTER } from "../../cmd-feedback.js";
 import type { ManageBindings } from "./bindings.js";
 /** Max rows sampled for implicit-feedback prefix histogram (#1193); keeps audit bounded on huge pattern tables. */
@@ -990,7 +991,7 @@ export function buildAuditHealthReport(
 
   return {
     schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     status,
     ok: warnings.length === 0 && errors.length === 0,
     warningCount: warnings.length,

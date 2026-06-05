@@ -13,6 +13,8 @@ describe("tool installers", () => {
       "optional:provenance",
       "optional:credentials",
       "optional:persona",
+      "optional:workshop",
+      "optional:proposalRoutes",
       "optional:documents",
       "optional:verification",
       "optional:issues",
@@ -21,6 +23,7 @@ describe("tool installers", () => {
       "optional:selfExtension",
       "optional:apitap",
       "optional:dashboard",
+      "optional:health",
       "optional:publicApi",
     ]);
   });

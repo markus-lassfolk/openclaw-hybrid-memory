@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type WALEntry, WAL_ENTRY_SCHEMA_VERSION, type WriteAheadLog } from "../backends/wal.js";
+import { nowIso } from "../utils/dates.js";
 import { capturePluginError } from "./error-reporter.js";
 
 const WAL_FAILURE_THRESHOLD = 10;
@@ -74,7 +75,7 @@ function persistWalDisabledSentinel(walPath: string, err: unknown): string {
     reason: "wal-circuit-breaker-threshold",
     threshold: WAL_FAILURE_THRESHOLD,
     failureCount: walFailureCount,
-    trippedAt: new Date().toISOString(),
+    trippedAt: nowIso(),
     error: err instanceof Error ? err.message : String(err),
   };
   writeFileSync(sentinelPath, `${JSON.stringify(payload, null, 2)}\n`, "utf-8");

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { resolveDreamCycleLogDir } from "../utils/dream-cycle-paths.js";
+import { nowIso } from "../utils/dates.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { clearRuntimeTimers } from "../api/plugin-runtime.js";
@@ -93,6 +94,7 @@ export interface PluginServiceContext {
   narrativesDb?: NarrativesDB | null;
   crystallizationStore?: import("../backends/crystallization-store.js").CrystallizationStore | null;
   toolProposalStore?: import("../backends/tool-proposal-store.js").ToolProposalStore | null;
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -144,6 +146,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     narrativesDb,
     crystallizationStore,
     toolProposalStore,
+    changeFeed,
   } = ctx;
 
   let observerRunning = false;
@@ -322,7 +325,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           let cacheEntry: VersionCheckCacheEntry = {
             latestVersion: latestPublished.latestVersion,
             source: latestPublished.source,
-            checkedAt: new Date().toISOString(),
+            checkedAt: nowIso(),
             lastNudgedAt: cachedVersionCheck?.lastNudgedAt,
           };
 
@@ -376,6 +379,17 @@ export function createPluginService(ctx: PluginServiceContext) {
           api.logger.warn(
             `memory-hybrid: startup vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
           );
+        }
+      }
+
+      if (ctx.changeFeed && cfg.liveChangeFeed?.enabled !== false) {
+        try {
+          const prunedChanges = ctx.changeFeed.pruneOlderThan(cfg.liveChangeFeed?.retentionDays ?? 90);
+          if (prunedChanges > 0) {
+            api.logger.info(`memory-hybrid: pruned ${prunedChanges} old change-feed event(s)`);
+          }
+        } catch (err) {
+          api.logger.debug?.(`memory-hybrid: change-feed prune failed (non-fatal): ${String(err)}`);
         }
       }
 
@@ -446,6 +460,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               crystallizationStore: crystallizationStore ?? null,
               toolProposalStore: toolProposalStore ?? null,
               dreamCycleLogDir: resolveDreamCycleLogDir(),
+              changeFeed: changeFeed ?? null,
             },
             cfg.dashboard.port,
           );

@@ -8,6 +8,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import { type HybridMemoryConfig, getCronModelConfig, getDefaultCronModel, getLLMModelPreference } from "../config.js";
 import type { EpisodeOutcome, MemoryEntry, ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
+import { nowIso, formatTimestampUtcFromMs } from "../utils/dates.js";
 import { getEnv } from "../utils/env-manager.js";
 import { escapeRegExp } from "../utils/text.js";
 import {
@@ -239,7 +240,7 @@ function normalizeCheckpointInput(
       } else {
         // Accept past timestamps so missed reminders can be caught up by the cron scanner.
         resumeAtDate = parsed;
-        resumeAtIso = parsed.toISOString();
+        resumeAtIso = formatTimestampUtcFromMs(parsed.getTime());
       }
     }
   }
@@ -505,7 +506,7 @@ async function scheduleActiveTaskWakeReminder(
     const jobs = store.jobs as Array<Record<string, unknown>>;
     const entitySlug = slugify(input.entity) || "task";
     const entityKey = wakeEntityKey(input.entity);
-    const resumeAtIso = input.resumeAt.toISOString();
+    const resumeAtIso = formatTimestampUtcFromMs(input.resumeAt.getTime());
     const resumeEpochSec = Math.floor(input.resumeAt.getTime() / 1000);
     const jobId = `${ACTIVE_TASK_WAKE_JOB_PREFIX}${entityKey}:${resumeEpochSec}`;
 
@@ -546,7 +547,7 @@ async function scheduleActiveTaskWakeReminder(
         source: "active_task_checkpoint",
         entity: input.entity,
         resumeAt: resumeAtIso,
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso(),
       },
     };
 
@@ -699,7 +700,7 @@ export async function runActiveTaskCheckpoint(
     checkpoint.relatedSession ?? getLatestProjectValue(latestProjectFacts, checkpoint.entity, "related_session") ?? "";
   const existingResumeAt = getLatestProjectValue(latestProjectFacts, checkpoint.entity, "resume_at");
   const terminalStatus = isTerminalCheckpointStatus(resolvedStatus);
-  const taskUpdated = now.toISOString();
+  const taskUpdated = formatTimestampUtcFromMs(now.getTime());
   const errors: ActiveTaskCheckpointError[] = [];
   const updatedKeys: string[] = [];
   const failedKeys: string[] = [];

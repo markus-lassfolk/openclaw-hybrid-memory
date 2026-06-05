@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import OpenAI from "openai";
+import { formatRunIdSlug } from "../../utils/dates.js";
 import { MODELS, type AbTaskId, type AbRunResult } from "./types.js";
 import { loadCorpus, writeCorpusSnapshot } from "./corpus.js";
 import { writeThinkingProbeReport } from "./probe-thinking.js";
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const timestamp = formatRunIdSlug();
   const outDir = join(FIXTURES_ROOT, "out", timestamp);
   mkdirSync(outDir, { recursive: true });
 

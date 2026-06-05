@@ -9,15 +9,22 @@ import { getEnv } from "../utils/env-manager.js";
  * When autoApprove=true the proposer immediately writes the skill to disk.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { atomicWriteFile, atomicWriteSkillDir } from "../utils/atomic-write.js";
 import { bumpSkillsSnapshotBestEffort } from "./bump-skills-snapshot.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import {
+  type ChangeFeedEmitOpts,
+  BROADCAST_CHANGE_SESSION_KEY,
+  emitCrystallizationProposed,
+} from "./change-feed-emit.js";
 import { escapeRegExp, stripLeadingHtmlComments } from "../utils/text.js";
+import { nowIso } from "../utils/dates.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -26,6 +33,7 @@ import {
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
 import { detectCrystallizationCandidates } from "./pattern-detector.js";
+import { filterUserFacingGoals } from "./workflow-goal-classifier.js";
 import {
   buildCrystallizationInstallFiles,
   CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH,
@@ -132,6 +140,7 @@ export class CrystallizationProposer {
     private readonly workflowStore: WorkflowStore | null,
     private readonly crystallizationStore: CrystallizationStore,
     private readonly cfg: CrystallizationConfig,
+    private readonly changeFeedEmit?: ChangeFeedEmitOpts,
   ) {
     this.validator = new GeneratedSkillValidationService(
       cfg.placeholderEmailDomains?.length
@@ -201,6 +210,26 @@ export class CrystallizationProposer {
 
     const candidates = detectCrystallizationCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
     if (candidates.length === 0) {
+      if (this.cfg.excludeSystemGoals) {
+        const rawPatterns = this.workflowStore.getPatterns({
+          minSuccessRate: 0,
+          limit: 10,
+          traceSampleLimit: 6000,
+          excludeSystemGoals: false,
+        });
+        const filteredPatterns = this.workflowStore.getPatterns({
+          minSuccessRate: 0,
+          limit: 10,
+          traceSampleLimit: 6000,
+          excludeSystemGoals: true,
+          excludeGoalPatterns: this.cfg.excludeGoalPatterns,
+        });
+        if (rawPatterns.length > 0 && filteredPatterns.length === 0) {
+          reasons.push(
+            "Patterns exist but excludeSystemGoals removed all cron/system traces — waiting for user-facing workflow data",
+          );
+        }
+      }
       return { proposed: 0, skipped: 0, reasons: reasons.length > 0 ? reasons : ["No new candidates found"] };
     }
     const autoApprove = opts?.autoApproveOverride ?? this.cfg.autoApprove;
@@ -219,6 +248,15 @@ export class CrystallizationProposer {
 
     for (const candidate of batch) {
       try {
+        if (
+          this.cfg.excludeSystemGoals !== false &&
+          filterUserFacingGoals(candidate.pattern.exampleGoals, this.cfg).length === 0
+        ) {
+          skipped++;
+          reasons.push(`Skipped pattern ${candidate.patternId.slice(0, 8)}: no user-facing example goals`);
+          continue;
+        }
+
         const result = crystallizeSkill(
           {
             patternId: candidate.patternId,
@@ -318,7 +356,15 @@ export class CrystallizationProposer {
         }
 
         // Store as validated proposal (awaiting human approval)
-        this.crystallizationStore.create(proposalInput);
+        const created = this.crystallizationStore.create(proposalInput);
+        if (this.changeFeedEmit) {
+          emitCrystallizationProposed(this.changeFeedEmit.changeFeed, this.changeFeedEmit.cfg, {
+            sessionKey: this.changeFeedEmit.sessionKey ?? BROADCAST_CHANGE_SESSION_KEY,
+            proposalId: created.id,
+            skillName: created.skillName,
+            detail: created.description ?? undefined,
+          });
+        }
 
         if (autoApprove && gsv.approvalDecision !== "allow") {
           reasons.push(
@@ -637,8 +683,23 @@ export class CrystallizationProposer {
 
     const restored = this.crystallizationStore.restoreFromQuarantine(proposalId, restoreResult.outputPath);
     if (!restored) {
+      const activeDir = join(activeOutputDir, proposal.skillName);
+      try {
+        if (existsSync(activeDir)) {
+          mkdirSync(dirname(located.skillDir), { recursive: true });
+          renameSync(activeDir, located.skillDir);
+        }
+      } catch {
+        removeCrystallizedSkillDir(restoreResult.outputPath);
+      }
       return { success: false, message: "Failed to update proposal status to installed" };
     }
+
+    this.trySupersedeOlderInstalls(proposal.patternId, proposalId);
+    void bumpSkillsSnapshotBestEffort({
+      changedPath: restoreResult.outputPath,
+      reason: "hybrid-memory-crystallization-restore",
+    });
 
     return {
       success: true,
@@ -1012,7 +1073,7 @@ function locateProposalSkillOnDisk(
 function failedProposalValidation(message: string): SkillProposalValidationResult {
   return {
     schemaVersion: 1,
-    validatedAt: new Date().toISOString(),
+    validatedAt: nowIso(),
     overallStatus: "failed",
     approvalDecision: "deny",
     staticValidation: {

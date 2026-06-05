@@ -19,9 +19,11 @@ import {
   type SectionTaxonomyOverrides,
 } from "../config/skill-sections.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { nowIso } from "../utils/dates.js";
 import { discoverCompletedSkillDirs } from "../utils/skill-discovery.js";
 import { stripLeadingHtmlComments } from "../utils/text.js";
 import { normalizeSkillName } from "./skill-crystallizer.js";
+import { isSystemWorkflowGoal } from "./workflow-goal-classifier.js";
 import {
   NON_PLACEHOLDER_EMAIL_PATTERN,
   PEM_PRIVATE_KEY_PATTERN,
@@ -210,8 +212,35 @@ export class GeneratedSkillValidationService {
     input: ValidateGeneratedSkillInput,
     options?: { legacyQueuedCrystallization?: boolean },
   ): SkillProposalValidationResult {
-    const validatedAt = new Date().toISOString();
+    const validatedAt = nowIso();
     const legacy = options?.legacyQueuedCrystallization === true;
+    const cronOnlyPattern =
+      !legacy &&
+      (input.pattern?.exampleGoals?.length ?? 0) > 0 &&
+      (input.pattern?.exampleGoals ?? []).every((g) => isSystemWorkflowGoal(g));
+    if (cronOnlyPattern) {
+      return {
+        schemaVersion: 1,
+        validatedAt,
+        overallStatus: "failed",
+        approvalDecision: "deny",
+        staticValidation: {
+          status: "failed",
+          violations: ["Pattern example goals are cron/system prompts only"],
+          frontmatter: parseSkillFrontmatter(input.skillContent),
+          safeOutputPath: resolve(input.outputDir, input.skillName, "SKILL.md"),
+        },
+        dryLoadValidation: { status: "failed", violations: ["Skipped — cron/system-only pattern"], discovered: {} },
+        syntheticActivationEval: {
+          status: "failed",
+          score: 0,
+          cases: { positive: "", negative: "", edge: "" },
+          results: { positiveMatched: false, negativeMatched: false, edgeMatched: false },
+          notes: ["Skipped — cron/system-only pattern"],
+        },
+        canarySession: { status: "not-run" },
+      };
+    }
     const frontmatter = parseSkillFrontmatter(input.skillContent);
     const staticValidation = this.validateStatic(input, frontmatter, legacy);
     const dryLoadValidation = legacy
@@ -339,7 +368,7 @@ export class GeneratedSkillValidationService {
       mkdirSync(skillDir, { recursive: true });
       const skillPath = join(skillDir, "SKILL.md");
       writeFileSync(skillPath, skillContent, "utf-8");
-      writeFileSync(join(skillDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
+      writeFileSync(join(skillDir, SKILL_COMPLETE_MARKER), nowIso(), "utf-8");
 
       const skillDirStat = lstatSync(skillDir);
       const skillPathStat = lstatSync(skillPath);
@@ -537,6 +566,7 @@ function buildSyntheticActivationContext(
 ): SyntheticActivationContext {
   const positive =
     input.pattern?.exampleGoals
+      .filter((goal) => goal.trim().length > 0 && !isSystemWorkflowGoal(goal))
       .find((goal) => goal.trim().length > 0)
       ?.replace(/\s+/g, " ")
       .trim() ?? `Please use the ${input.skillName} workflow for the matching task.`;

@@ -4,6 +4,7 @@
 
 import { isTerminalStatus, listActiveGoals, readGoal, readGoalByLabel, updateGoal } from "./goal-registry.js";
 import type { Goal } from "./goal-stewardship-types.js";
+import { nowIso } from "../utils/dates.js";
 import { taskLabelsMatch } from "../utils/subagent-ended-utils.js";
 
 export type GoalSubagentSpawnEvent = {
@@ -15,10 +16,6 @@ export type GoalSubagentSpawnEvent = {
   goalId?: string;
   metadata?: Record<string, unknown>;
 };
-
-function nowIso(): string {
-  return new Date().toISOString();
-}
 
 export async function resolveGoalForSpawn(event: GoalSubagentSpawnEvent, goalsDir: string): Promise<string | null> {
   const metaGoal =

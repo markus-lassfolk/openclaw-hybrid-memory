@@ -20,6 +20,7 @@ import { getCronModelConfig, getDefaultCronModel, hybridConfigSchema } from "../
 import { readGuardTimestampMs } from "../../services/cron-guard.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { runPersonaProposalTriage, validatePersonaPolicy } from "../../services/persona-proposal-triage.js";
+import { syncProposalWithdrawnInChangeFeed } from "../../services/change-feed-emit.js";
 import {
   applyParsedCorrectionRules,
   parseReportProposedSections,
@@ -275,7 +276,7 @@ function buildListCommands(
   ctx: HandlerContext,
   api: ClawdbotPluginApi,
 ): NonNullable<HybridMemCliContext["listCommands"]> {
-  const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
+  const { factsDb, proposalsDb, cfg, resolvedSqlitePath, changeFeed } = ctx;
   const workspaceRoot = (workspace?: string) => resolveCliWorkspaceRoot({ workspace });
   const reportDir = (workspace?: string) => join(workspaceRoot(workspace), "memory", "reports");
 
@@ -325,10 +326,11 @@ function buildListCommands(
       if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
       const expiryError = getProposalExpiryError(p);
       if (expiryError) return { ok: false, error: expiryError };
-      proposalsDb.updateStatus(id, "approved");
-      const applyResult = await applyApprovedProposal({ proposalsDb, cfg, resolvedSqlitePath, api }, id);
+      const approved = proposalsDb.updateStatusIf(id, "approved", "pending");
+      if (!approved) return { ok: false, error: "Proposal is not pending" };
+      const applyResult = await applyApprovedProposal({ proposalsDb, cfg, resolvedSqlitePath, api, changeFeed }, id);
       if (!applyResult.ok) {
-        proposalsDb.updateStatus(id, "pending");
+        proposalsDb.updateStatusIf(id, "pending", "approved");
         return { ok: false, error: applyResult.error };
       }
       return { ok: true };
@@ -338,7 +340,9 @@ function buildListCommands(
       const p = proposalsDb.get(id);
       if (!p) return { ok: false, error: `Proposal ${id} not found` };
       if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
-      proposalsDb.updateStatus(id, "rejected", undefined, reason);
+      const rejected = proposalsDb.updateStatusIf(id, "rejected", "pending", undefined, reason);
+      if (!rejected) return { ok: false, error: "Proposal is not pending" };
+      syncProposalWithdrawnInChangeFeed(changeFeed, cfg, `persona:${id}`, reason ?? "Rejected via CLI");
       return { ok: true };
     },
     listCorrections: async (opts: { workspace?: string }) => {
@@ -404,6 +408,8 @@ function buildListCommands(
         max: opts.max,
         stateDbPath: opts.stateDb,
         workspace: opts.workspace,
+        changeFeed: ctx.changeFeed,
+        resolvedSqlitePath: ctx.resolvedSqlitePath,
       });
     },
   };
@@ -452,6 +458,7 @@ export function createHybridMemCliContext(
     wal: handlerCtx.wal,
     aliasDb: handlerCtx.aliasDb,
     crystallizationStore: handlerCtx.crystallizationStore ?? null,
+    changeFeed: handlerCtx.changeFeed ?? null,
     versionInfo: services.versionInfo,
     embeddings: handlerCtx.embeddings,
     mergeResults: services.mergeResults,

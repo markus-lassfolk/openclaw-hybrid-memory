@@ -13,10 +13,12 @@ import { capturePluginError } from "../services/error-reporter.js";
 
 interface WorkflowToolsContext {
   workflowStore: WorkflowStore;
+  excludeSystemGoals?: boolean;
+  excludeGoalPatterns?: string[];
 }
 
 export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPluginApi): void {
-  const { workflowStore } = ctx;
+  const { workflowStore, excludeSystemGoals, excludeGoalPatterns } = ctx;
 
   // -------------------------------------------------------------------------
   // memory_workflows — query recorded workflow patterns
@@ -60,6 +62,8 @@ export function registerWorkflowTools(ctx: WorkflowToolsContext, api: ClawdbotPl
         const patterns = workflowStore.getPatterns({
           minSuccessRate: minSuccessRate ?? 0,
           limit: hasGoalFilter ? undefined : (limit ?? 20),
+          excludeSystemGoals: excludeSystemGoals === true,
+          excludeGoalPatterns,
         });
 
         // If goal supplied, further filter by keyword overlap

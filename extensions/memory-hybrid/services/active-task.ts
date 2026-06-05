@@ -25,6 +25,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
+import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { escapeRegExp } from "../utils/text.js";
@@ -541,7 +542,7 @@ export function upsertTask(
   preserveUpdated = false,
 ): ActiveTaskEntry[] {
   const idx = active.findIndex((t) => t.label === entry.label);
-  const updatedTimestamp = preserveUpdated ? entry.updated : new Date().toISOString();
+  const updatedTimestamp = preserveUpdated ? entry.updated : nowIso();
   if (idx >= 0) {
     const updated = [...active];
     updated[idx] = { ...active[idx], ...entry, updated: updatedTimestamp };
@@ -563,7 +564,7 @@ export function completeTask(
     ...active[idx],
     status: "Done",
     subagent: "",
-    updated: new Date().toISOString(),
+    updated: nowIso(),
   };
   clearActiveTaskHandoff(task);
   const updated = active.filter((_, i) => i !== idx);
@@ -721,7 +722,7 @@ export function buildStaleWarningInjection(
  * Creates the file if it doesn't exist.
  */
 export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDir: string): Promise<string> {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = formatDateUtc(nowSec());
   const filePath = join(memoryDir, `${date}.md`);
 
   await mkdir(memoryDir, { recursive: true });
@@ -924,7 +925,7 @@ export function createOctaveTaskHandoffArtifact(signal: TaskSignal): OctaveTaskH
     payload: signal,
     auditTrail: [
       {
-        at: new Date().toISOString(),
+        at: nowIso(),
         by: signal.agent,
         action: "created",
       },
@@ -1314,7 +1315,7 @@ export async function reconcileActiveTaskInProgressSessions(
       continue;
     }
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const completedEntry: ActiveTaskEntry = {
       ...task,
       status: "Failed",

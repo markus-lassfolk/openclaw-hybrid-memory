@@ -227,6 +227,12 @@ export type CrystallizationConfig = {
    * not flagged as real addresses. Default: ["example.com", "localhost", "test.com", "example.org"].
    */
   placeholderEmailDomains: string[];
+  /**
+   * Skip crystallization when all example goals look like cron/system injections (default: true).
+   */
+  excludeSystemGoals: boolean;
+  /** Extra regex patterns (case-insensitive) treated as system goals when excludeSystemGoals is true. */
+  excludeGoalPatterns?: string[];
 };
 
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */

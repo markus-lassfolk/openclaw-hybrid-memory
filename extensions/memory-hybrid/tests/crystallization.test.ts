@@ -50,6 +50,7 @@ const DEFAULT_CRYSTALLIZATION_CFG = {
   maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
+  excludeSystemGoals: true,
 };
 
 function _makeTmpOutputDir(): string {
@@ -622,6 +623,29 @@ describe("detectCrystallizationCandidates", () => {
     expect(detectCrystallizationCandidates(wfStore, cStore, cfg)).toEqual([]);
   });
 
+  it("filters out system-only goals when excludeSystemGoals is true (default)", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: "[cron:904dd937 openclaw-hybrid-memory-pr-stewardship",
+        toolSequence: ["exec", "read"],
+        outcome: "success",
+      });
+    }
+    expect(detectCrystallizationCandidates(wfStore, cStore, DEFAULT_CRYSTALLIZATION_CFG)).toEqual([]);
+  });
+
+  it("allows system-only goals when excludeSystemGoals is false", () => {
+    for (let i = 0; i < 3; i++) {
+      wfStore.record({
+        goal: "[cron:904dd937 openclaw-hybrid-memory-pr-stewardship",
+        toolSequence: ["exec", "read"],
+        outcome: "success",
+      });
+    }
+    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, excludeSystemGoals: false };
+    expect(detectCrystallizationCandidates(wfStore, cStore, cfg).length).toBeGreaterThan(0);
+  });
+
   it("skips patterns already proposed (pending/approved)", () => {
     for (let i = 0; i < 3; i++) {
       wfStore.record({
@@ -886,7 +910,7 @@ describe("crystallizeSkill", () => {
     expect(result.proposedOutputPath).toContain("/tmp/skills");
   });
 
-  it("generates shell script for exec-only patterns", () => {
+  it("does not emit placeholder exec scripts until trace commands are available", () => {
     const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "/tmp/skills" };
     const pattern = {
       toolSequence: ["exec", "exec"],
@@ -898,9 +922,25 @@ describe("crystallizeSkill", () => {
       exampleGoals: ["Run bash script"],
     };
     const result = crystallizeSkill({ patternId: "xyz999", evidenceHash: "ev1", pattern }, cfg);
-    expect(result.hasScript).toBe(true);
-    expect(result.scriptContent).toContain("#!/usr/bin/env bash");
-    expect(result.scriptContent).toContain("xyz999");
+    expect(result.hasScript).toBe(false);
+    expect(result.scriptContent).toBeUndefined();
+  });
+
+  it("filters cron goals from generated SKILL.md content", () => {
+    const cfg = { ...DEFAULT_CRYSTALLIZATION_CFG, outputDir: "/tmp/skills" };
+    const pattern = {
+      toolSequence: ["read", "exec"],
+      totalCount: 5,
+      successCount: 4,
+      failureCount: 1,
+      successRate: 0.8,
+      avgDurationMs: 400,
+      exampleGoals: ["[cron:abc maintenance pulse]", "Review PR #1043 blockers and summarize"],
+    };
+    const result = crystallizeSkill({ patternId: "mixed-goals", evidenceHash: "ev-mixed", pattern }, cfg);
+    expect(result.skillContent).toContain("Review PR #1043");
+    expect(result.skillContent).not.toContain("[cron:abc");
+    expect(result.skillName.toLowerCase()).toContain("review");
   });
 
   it("does not generate shell script for mixed patterns", () => {
@@ -1658,6 +1698,7 @@ describe("parseCrystallizationConfig", () => {
     expect(cfg.crystallization.pruneUnusedDays).toBe(30);
     expect(cfg.crystallization.maxPendingProposals).toBe(100);
     expect(cfg.crystallization.evidenceCountBucketSize).toBe(5);
+    expect(cfg.crystallization.excludeSystemGoals).toBe(true);
   });
 
   it("ignores invalid minSuccessRate outside 0-1 range", async () => {

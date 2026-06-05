@@ -6,6 +6,7 @@ import { getCorrectionSignalRegex, getReinforcementSignalRegex } from "../../uti
 import type { CorrectionIncident } from "../../services/self-correction-extract.js";
 import type { ReinforcementIncident } from "../../services/reinforcement-extract.js";
 import type { AbCorpusMeta } from "./types.js";
+import { nowIso } from "../../utils/dates.js";
 
 export type FactsSample = {
   facts: Array<{
@@ -94,7 +95,7 @@ export async function loadCorpus(fixturesRoot: string, incidentCap = 40): Promis
     factsCount: factsSample.facts.length,
     consolidationClusters: factsSample.consolidationClusters.length,
     distillChars: distillText.length,
-    extractedAt: new Date().toISOString(),
+    extractedAt: nowIso(),
   };
 
   return {

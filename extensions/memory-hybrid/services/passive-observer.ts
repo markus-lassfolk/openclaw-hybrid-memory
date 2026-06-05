@@ -23,6 +23,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, ReinforcementConfig } from "../config.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { chunkTextByChars } from "../utils/text.js";
+import { nowIso } from "../utils/dates.js";
 import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -704,7 +705,7 @@ export async function runPassiveObserver(
           try {
             eventId = opts.eventLog.append({
               sessionId,
-              timestamp: new Date().toISOString(),
+              timestamp: nowIso(),
               eventType: categoryToEventType(fact.category),
               content: {
                 text: storedText,

@@ -20,6 +20,7 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso, formatCompactRunIdUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
@@ -31,6 +32,7 @@ import {
   runReflectionRules,
 } from "./reflection.js";
 import { runDreamCycleProposalBridge, type DreamCycleProposalBridgeInput } from "./dream-cycle-proposal-bridge.js";
+import { emitDreamCycleComplete, syncProcedureSkillWorkshopProposals } from "./change-feed-emit.js";
 import { cleanupEvictedVector, deleteVectorsForFactIds, reconcileOrphanVectors } from "./vector-maintenance.js";
 
 /** Prune modes for the dream cycle. */
@@ -114,7 +116,7 @@ export interface DreamCycleConfig {
 /** Optional bridge context for auto-proposing reflection output (Phase 4). */
 export type DreamCycleBridgeOpts = Pick<
   DreamCycleProposalBridgeInput,
-  "cfg" | "proposalsDb" | "api" | "crystallizationStore" | "toolProposalStore"
+  "cfg" | "proposalsDb" | "api" | "crystallizationStore" | "toolProposalStore" | "changeFeed"
 >;
 
 /** Result returned by a single dream cycle run. */
@@ -176,10 +178,7 @@ const STAGE_LABEL_MAX_LENGTH = 60;
  * Format: `YYYYMMDDTHHmmssZ-<pid>` e.g. `20260602T061400Z-12345`.
  */
 export function makeDreamCycleRunId(): string {
-  return `${new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}Z$/, "Z")}-${process.pid}`;
+  return `${formatCompactRunIdUtc()}-${process.pid}`;
 }
 const EPISODIC_PROGRESS_GROUP_INTERVAL = 25;
 const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
@@ -774,7 +773,7 @@ export async function runDreamCycle(
     const stageNumber = ++stageCounter;
     const startedAt = Date.now();
     logger.info(`memory-hybrid: dream-cycle — stage ${stageNumber} start: ${label}`);
-    writeStageArtifact(stageNumber, label, { status: "started", startedAt: new Date(startedAt).toISOString() });
+    writeStageArtifact(stageNumber, label, { status: "started", startedAt: formatTimestampUtcFromMs(startedAt) });
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     if (v && opts?.heartbeat === true) {
       heartbeat = setInterval(() => {
@@ -798,8 +797,8 @@ export async function runDreamCycle(
         );
         writeStageArtifact(stageNumber, label, {
           status: "succeeded",
-          startedAt: new Date(startedAt).toISOString(),
-          completedAt: new Date().toISOString(),
+          startedAt: formatTimestampUtcFromMs(startedAt),
+          completedAt: nowIso(),
           elapsedSec,
           ...(summary != null ? { summary } : {}),
         });
@@ -810,8 +809,8 @@ export async function runDreamCycle(
         logger.warn(`memory-hybrid: dream-cycle — stage ${stageNumber} failed after ${elapsedSec}s: ${label}: ${err}`);
         writeStageArtifact(stageNumber, label, {
           status: "failed",
-          startedAt: new Date(startedAt).toISOString(),
-          completedAt: new Date().toISOString(),
+          startedAt: formatTimestampUtcFromMs(startedAt),
+          completedAt: nowIso(),
           elapsedSec,
           error: String(err),
           ...(summary != null ? { summary } : {}),
@@ -1245,6 +1244,10 @@ export async function runDreamCycle(
     }
   }
 
+  let bridgePersonaCreated = 0;
+  let bridgeCrystallizationCreated = 0;
+  let bridgeSkillBridged = 0;
+
   if (bridge?.cfg?.nightlyCycle?.autoPropose === true) {
     try {
       const newPatternFactIds = factsDb
@@ -1267,10 +1270,14 @@ export async function runDreamCycle(
         newPatternFactIds,
         logger,
         api: bridge.api,
+        changeFeed: bridge.changeFeed,
       });
-      if (bridgeResult.personaProposalsCreated > 0 || bridgeResult.skillWorkshopBridged > 0) {
+      bridgePersonaCreated = bridgeResult.personaProposalsCreated;
+      bridgeCrystallizationCreated = bridgeResult.crystallizationProposalsCreated;
+      bridgeSkillBridged = bridgeResult.skillWorkshopBridged;
+      if (bridgePersonaCreated > 0 || bridgeCrystallizationCreated > 0 || bridgeSkillBridged > 0) {
         logger.info(
-          `memory-hybrid: dream-cycle auto-propose — persona=${bridgeResult.personaProposalsCreated} skillWorkshop=${bridgeResult.skillWorkshopBridged}`,
+          `memory-hybrid: dream-cycle auto-propose — persona=${bridgePersonaCreated} crystallization=${bridgeCrystallizationCreated} skillWorkshop=${bridgeSkillBridged}`,
         );
       }
     } catch (err) {
@@ -1412,6 +1419,34 @@ export async function runDreamCycle(
     logger.warn(
       `memory-hybrid: dream-cycle — finished with ${failedStages.length} failed stage(s) in ${totalElapsedSec}s. ${digestSummary}`,
     );
+  }
+
+  if (bridge?.changeFeed && bridge?.cfg) {
+    if (bridge.cfg.liveChangeFeed?.enabled !== false) {
+      try {
+        const pruned = bridge.changeFeed.pruneOlderThan(bridge.cfg.liveChangeFeed?.retentionDays ?? 90);
+        if (pruned > 0) {
+          logger.info(`memory-hybrid: dream-cycle — pruned ${pruned} old change-feed event(s)`);
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — change-feed prune failed (non-fatal): ${err}`);
+      }
+      try {
+        const synced = syncProcedureSkillWorkshopProposals(bridge.changeFeed, bridge.cfg, bridge.factsDb);
+        if (synced > 0) {
+          logger.info(`memory-hybrid: dream-cycle — synced ${synced} procedure-skill proposed change event(s)`);
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — procedure-skill change-feed sync failed (non-fatal): ${err}`);
+      }
+    }
+    emitDreamCycleComplete(bridge.changeFeed, bridge.cfg, {
+      success,
+      digestSummary,
+      personaProposalsCreated: bridgePersonaCreated,
+      crystallizationProposalsCreated: bridgeCrystallizationCreated,
+      skillWorkshopBridged: bridgeSkillBridged,
+    });
   }
 
   return {
