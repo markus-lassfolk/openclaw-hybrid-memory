@@ -75,7 +75,7 @@ function logConsolidatedOrchestratorModules(
   const OFF = noEmoji ? "off" : "○ off";
 
   log(
-    `\n  Orchestrator: \`maintenance nightly\` runs ${nightlyStepCount} steps with per-step guards (~20h daily, ~5d weekly, ~25d monthly).`,
+    `\n  Orchestrator: \`maintenance nightly\` runs ${nightlyStepCount} steps with staggered per-step guards (e.g. ~20h / ~44h / ~68h / ~5d / ~25d).`,
   );
   log("  No separate per-task cron jobs are required in consolidated mode.");
   log("\n  Config-gated modules (formerly standalone cron jobs):");
