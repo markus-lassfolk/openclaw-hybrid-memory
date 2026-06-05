@@ -586,6 +586,9 @@ export async function runExtractReinforcementForCli(
         ) {
           result.partialBatchFailure = true;
         }
+        if (jobRun) {
+          jobRun.endPhase("analyze", "failed", `error=${String(e).slice(0, 100)}`);
+        }
         capturePluginError(e as Error, {
           subsystem: "cli",
           operation: "runExtractReinforcementForCli:llm-analysis",
