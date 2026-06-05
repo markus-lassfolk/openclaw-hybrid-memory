@@ -51,6 +51,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
+import { formatDateUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
 import { getEnv } from "../utils/env-manager.js";
 import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
 import { resolveTierPreferenceWithSources } from "../utils/llm-selection.js";
@@ -113,7 +114,8 @@ export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boole
   const memoryDir = dirname(resolvedSqlitePath);
   const distillLastRunPath = join(memoryDir, ".distill_last_run");
   const now = new Date();
-  const today = now.toISOString().slice(0, 10);
+  const nowMs = now.getTime();
+  const today = formatDateUtc(Math.floor(nowMs / 1000));
   let mode: "full" | "incremental";
   let startDate: string;
   const endDate = today;
@@ -123,7 +125,7 @@ export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boole
     mode = "full";
     const start = new Date(now);
     start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-    startDate = start.toISOString().slice(0, 10);
+    startDate = formatDateUtc(Math.floor(start.getTime() / 1000));
     mtimeDays = FULL_DISTILL_MAX_DAYS;
   } else {
     try {
@@ -132,7 +134,7 @@ export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boole
         mode = "full";
         const start = new Date(now);
         start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-        startDate = start.toISOString().slice(0, 10);
+        startDate = formatDateUtc(Math.floor(start.getTime() / 1000));
         mtimeDays = FULL_DISTILL_MAX_DAYS;
       } else {
         const lastRun = new Date(line);
@@ -140,14 +142,14 @@ export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boole
           mode = "full";
           const start = new Date(now);
           start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-          startDate = start.toISOString().slice(0, 10);
+          startDate = formatDateUtc(Math.floor(start.getTime() / 1000));
           mtimeDays = FULL_DISTILL_MAX_DAYS;
         } else {
           mode = "incremental";
-          const lastRunDate = lastRun.toISOString().slice(0, 10);
+          const lastRunDate = formatDateUtc(Math.floor(lastRun.getTime() / 1000));
           const threeDaysAgo = new Date(now);
           threeDaysAgo.setDate(threeDaysAgo.getDate() - INCREMENTAL_MIN_DAYS);
-          const threeDaysAgoStr = threeDaysAgo.toISOString().slice(0, 10);
+          const threeDaysAgoStr = formatDateUtc(Math.floor(threeDaysAgo.getTime() / 1000));
           startDate = lastRunDate < threeDaysAgoStr ? lastRunDate : threeDaysAgoStr;
           const start = new Date(startDate);
           mtimeDays = Math.ceil((now.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
@@ -159,7 +161,7 @@ export function runDistillWindowForCli(ctx: HandlerContext, _opts: { json: boole
       mode = "full";
       const start = new Date(now);
       start.setDate(start.getDate() - FULL_DISTILL_MAX_DAYS);
-      startDate = start.toISOString().slice(0, 10);
+      startDate = formatDateUtc(Math.floor(start.getTime() / 1000));
       mtimeDays = FULL_DISTILL_MAX_DAYS;
     }
   }
@@ -174,7 +176,7 @@ export function runRecordDistillForCli(ctx: HandlerContext): RecordDistillResult
   const memoryDir = dirname(resolvedSqlitePath);
   mkdirSync(memoryDir, { recursive: true });
   const path = join(memoryDir, ".distill_last_run");
-  const ts = new Date().toISOString();
+  const ts = nowIso();
   try {
     writeFileSync(path, `${ts}\n`, "utf-8");
     return { path, timestamp: ts };
@@ -222,7 +224,7 @@ export async function runDistillForCli(
 
     if (useWatermark && cursor && cursor.lastSessionTs > 0) {
       logger.info?.(
-        `memory-hybrid: distill incremental — sessions since last run (${new Date(cursor.lastSessionTs).toISOString()})`,
+        `memory-hybrid: distill incremental — sessions since last run (${formatTimestampUtcFromMs(cursor.lastSessionTs)})`,
       );
     }
 

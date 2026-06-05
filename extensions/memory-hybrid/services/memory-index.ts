@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
-import { getEnv } from "../utils/env-manager.js";
+import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
+import { formatDateUtc, nowIso } from "../utils/dates.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import {
   LLMRetryError,
@@ -69,7 +70,7 @@ type MemoryIndexSnapshot = {
 
 function toDateLabel(epochSeconds: number | null | undefined): string {
   if (!epochSeconds || !Number.isFinite(epochSeconds)) return "unknown";
-  return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
+  return formatDateUtc(epochSeconds);
 }
 
 function shortRef(id: string): string {
@@ -181,7 +182,7 @@ export function buildMemoryIndexSnapshot(
     }));
 
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     clusters,
     recentDecisions,
     keyEntities,
@@ -296,7 +297,7 @@ async function synthesizeMemoryIndex(
 
 function resolveOutputPath(options: Pick<MemoryIndexOptions, "workspaceRoot" | "outputPath">): string {
   if (options.outputPath) return options.outputPath;
-  const workspaceRoot = options.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const workspaceRoot = options.workspaceRoot ?? resolveOpenClawWorkspaceRoot();
   return join(workspaceRoot, "MEMORY_INDEX.md");
 }
 

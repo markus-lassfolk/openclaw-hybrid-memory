@@ -16,6 +16,7 @@ import type { EmbeddingProvider } from "../../services/embeddings.js";
 import type { ProvenanceService } from "../../services/provenance.js";
 import type { AliasDB } from "../../services/retrieval-aliases.js";
 import type { VerificationStore } from "../../services/verification-store.js";
+import type { IssueStore } from "../../backends/issue-store.js";
 
 export type BoundWalWriteFn = (
   operation: "store" | "update",
@@ -61,6 +62,8 @@ export interface MemoryToolsContext {
   provenanceService?: ProvenanceService | null;
   verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
+  progressiveIndexBySession: Map<string, string[]>;
+  lastAutoRecallPromptBySession: Map<string, string>;
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   variantQueue?: VariantGenerationQueue | null;
@@ -71,6 +74,8 @@ export interface MemoryToolsContext {
   findSimilarByEmbedding: FindSimilarByEmbeddingFn;
   /** Cross-agent audit trail (Issue #790). */
   auditStore?: AuditStore | null;
+  /** Issue lifecycle store for issue-aware recall (#1802). */
+  issueStore?: IssueStore | null;
 }
 
 type LegacyMemoryToolsContext = Omit<

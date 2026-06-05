@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "../../utils/process-runner.js";
+import { formatRunIdSlug, nowIso } from "../../utils/dates.js";
 import { analyzeTaskResult, renderTaskAnalysisMarkdown, type TaskAnalysis } from "./analyze.js";
 import { buildQualityReport, renderQualityMarkdown } from "./analyze-quality.js";
 import { loadOfflineQaSecrets } from "./load-secrets.js";
@@ -77,17 +78,18 @@ function loadState(): QaState | null {
 }
 
 function saveState(state: QaState): void {
-  state.updatedAt = new Date().toISOString();
+  state.updatedAt = nowIso();
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
   writeReport(state);
 }
 
 function initState(phase: QaPhase, workHome: string): QaState {
-  const runId = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const runId = formatRunIdSlug();
+  const startedAt = nowIso();
   return {
     runId,
-    startedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    startedAt,
+    updatedAt: startedAt,
     phase,
     workHome,
     pluginDir: PLUGIN_ROOT,

@@ -21,6 +21,7 @@ import type { AuditStore } from "../backends/audit-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
+import { formatTimestampUtcFromMs } from "../utils/dates.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -116,7 +117,7 @@ export interface SessionObservabilityReport {
 // ---------------------------------------------------------------------------
 
 function formatTs(ms: number): string {
-  return new Date(ms).toISOString();
+  return formatTimestampUtcFromMs(ms);
 }
 
 function makeEntry(

@@ -147,7 +147,8 @@ describe("runVerifyForCli --reconcile", () => {
       category: "fact",
     });
 
-    vi.spyOn(vectorDb, "delete").mockResolvedValue(true);
+    // VectorDB prefers deleteMany(); mock success without removing rows so post-check reports incomplete.
+    vi.spyOn(vectorDb, "deleteMany").mockResolvedValue(1);
 
     const { runVerifyForCli } = await import("../cli/handlers.js");
     const lines: string[] = [];

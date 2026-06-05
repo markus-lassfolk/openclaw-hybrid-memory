@@ -19,7 +19,7 @@
  *   runner processes the queue on startup.
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -37,6 +37,38 @@ function getGuardDir(openclawDir?: string): string {
  */
 export function getGuardFilePath(jobName: string, openclawDir?: string): string {
   return join(getGuardDir(openclawDir), `${jobName}.ms`);
+}
+
+/** Per-step orchestrator guard file: `step--{name}.ms` */
+export function getStepGuardFilePath(stepName: string, openclawDir?: string): string {
+  return join(getGuardDir(openclawDir), `step--${stepName}.ms`);
+}
+
+export function readStepGuardTimestampMs(stepName: string, openclawDir?: string): number | null {
+  return readGuardTimestampMs(`step--${stepName}`, openclawDir);
+}
+
+export function writeStepGuardTimestampMs(stepName: string, timestampMs: number, openclawDir?: string): void {
+  const guardDir = getGuardDir(openclawDir);
+  mkdirSync(guardDir, { recursive: true });
+  writeFileSync(getStepGuardFilePath(stepName, openclawDir), String(timestampMs), "utf-8");
+}
+
+export function stepGuardEligible(
+  stepName: string,
+  guardIntervalMs: number,
+  openclawDir?: string,
+  nowMs = Date.now(),
+): { eligible: boolean; lastRunMs: number | null; nextEligibleMs: number | null } {
+  if (guardIntervalMs <= 0) {
+    return { eligible: true, lastRunMs: null, nextEligibleMs: null };
+  }
+  const lastRunMs = readStepGuardTimestampMs(stepName, openclawDir);
+  if (lastRunMs === null) {
+    return { eligible: true, lastRunMs: null, nextEligibleMs: null };
+  }
+  const nextEligibleMs = lastRunMs + guardIntervalMs;
+  return { eligible: nowMs >= nextEligibleMs, lastRunMs, nextEligibleMs };
 }
 
 /**

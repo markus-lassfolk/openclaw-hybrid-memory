@@ -846,3 +846,319 @@ describe("Memory Viewer API (Issue #1023)", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Workshop API (Mission Control Phase 3)
+// ---------------------------------------------------------------------------
+
+describeCreateDashboardServer("Workshop API", () => {
+  async function withWorkshopServer(
+    fn: (ctx: ReturnType<typeof makeContext> & { proposalsDb: import("../backends/proposals-db.js").ProposalsDB }, port: number) => Promise<void>,
+    opts?: { withChangeFeed?: boolean },
+  ) {
+    const td = mkdtempSync(join(tmpdir(), "workshop-dash-"));
+    const { ProposalsDB } = await import("../backends/proposals-db.js");
+    const { setEnv: setWorkspaceEnv } = await import("../utils/env-manager.js");
+    const { writeFileSync: writeSoul } = await import("node:fs");
+    setWorkspaceEnv("OPENCLAW_WORKSPACE", td);
+    writeSoul(join(td, "SOUL.md"), "# SOUL\nInitial.\n", "utf-8");
+    const ctx = makeContext(td) as ReturnType<typeof makeContext> & {
+      proposalsDb: InstanceType<typeof ProposalsDB>;
+      hybridCfg: import("../config.js").HybridMemoryConfig;
+    };
+    ctx.proposalsDb = new ProposalsDB(join(td, "proposals.db"));
+    ctx.hybridCfg = {
+      personaProposals: {
+        enabled: true,
+        autoApply: false,
+        allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md"],
+        maxProposalsPerWeek: 50,
+        minConfidence: 0.5,
+        proposalTTLDays: 30,
+        minSessionEvidence: 1,
+        requireScopeFilter: false,
+        separateSelfCorrectionQuota: true,
+      },
+      procedures: { enabled: false },
+      crystallization: { enabled: false },
+      selfExtension: { enabled: false },
+      liveChangeFeed: { enabled: true },
+    } as import("../config.js").HybridMemoryConfig;
+    if (opts?.withChangeFeed) {
+      const { ChangeFeed } = await import("../services/change-feed.js");
+      ctx.changeFeed = new ChangeFeed(ctx.factsDb);
+    }
+
+    const srv = await createDashboardServer(ctx, 0);
+    try {
+      await fn(ctx, srv.port);
+    } finally {
+      ctx.proposalsDb.close();
+      ctx.factsDb.close();
+      ctx.vectorDb.close();
+      srv.close();
+      rmSync(td, { recursive: true, force: true });
+    }
+  }
+
+  it("GET /api/workshop/proposals returns pending proposals", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "Dashboard list",
+        observation: "obs",
+        suggestedChange: "Add guidance.",
+        confidence: 0.9,
+        evidenceSessions: [],
+      });
+      const { status, body } = await httpGet(port, "/api/workshop/proposals");
+      expect(status).toBe(200);
+      const data = JSON.parse(body) as { proposals: Array<{ title: string }> };
+      expect(data.proposals.some((p) => p.title === "Dashboard list")).toBe(true);
+    });
+  });
+
+  it("POST reject rejects a pending proposal with encoded unified key", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "To reject",
+        observation: "obs",
+        suggestedChange: "Add guidance.",
+        confidence: 0.9,
+        evidenceSessions: [],
+      });
+      const key = makeUnifiedKey("persona", proposal.id);
+      const { status, body } = await httpPost(
+        port,
+        `/api/workshop/proposals/${encodeURIComponent(key)}/reject`,
+        JSON.stringify({ reason: "dashboard test" }),
+      );
+      expect(status).toBe(200);
+      expect(JSON.parse(body).ok).toBe(true);
+      expect(ctx.proposalsDb.get(proposal.id)?.status).toBe("rejected");
+    });
+  });
+
+  it("POST approve applies a pending persona proposal", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "To approve",
+        observation: "obs",
+        suggestedChange: "Prefer evidence-backed replies.",
+        confidence: 0.9,
+        evidenceSessions: [],
+      });
+      const key = makeUnifiedKey("persona", proposal.id);
+      const { status, body } = await httpPost(
+        port,
+        `/api/workshop/proposals/${encodeURIComponent(key)}/approve`,
+        "{}",
+      );
+      expect(status).toBe(200);
+      expect(JSON.parse(body).ok).toBe(true);
+      expect(ctx.proposalsDb.get(proposal.id)?.status).toBe("applied");
+    });
+  });
+
+  it("POST approve emits change feed event when changeFeed is wired", async () => {
+    await withWorkshopServer(
+      async (ctx, port) => {
+        const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+        const proposal = ctx.proposalsDb.create({
+          targetFile: "SOUL.md",
+          title: "Feed emit",
+          observation: "obs",
+          suggestedChange: "Emit on approve.",
+          confidence: 0.9,
+          evidenceSessions: [],
+        });
+        const key = makeUnifiedKey("persona", proposal.id);
+        const { status } = await httpPost(
+          port,
+          `/api/workshop/proposals/${encodeURIComponent(key)}/approve`,
+          "{}",
+        );
+        expect(status).toBe(200);
+        const applied = ctx.changeFeed!.listRecent({ limit: 10 }).find((e) => e.action === "applied");
+        expect(applied?.proposalKey).toBe(key);
+      },
+      { withChangeFeed: true },
+    );
+  });
+
+  it("POST undo restores an applied persona proposal", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const { createHash } = await import("node:crypto");
+      const { readFileSync, writeFileSync: writeFile } = await import("node:fs");
+      const { getEnv } = await import("../utils/env-manager.js");
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const { writeProposalRollback } = await import("../services/proposal-rollback.js");
+      const workspaceDir = getEnv("OPENCLAW_WORKSPACE") ?? "";
+      const soulPath = join(workspaceDir, "SOUL.md");
+      const originalContent = readFileSync(soulPath, "utf-8");
+      const appliedContent = `${originalContent}\n\nApplied guidance.\n`;
+      writeFile(soulPath, appliedContent, "utf-8");
+
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "To undo",
+        observation: "obs",
+        suggestedChange: "Applied guidance.",
+        confidence: 0.9,
+        evidenceSessions: [],
+      });
+      ctx.proposalsDb.updateStatusIf(proposal.id, "approved", "pending");
+      ctx.proposalsDb.markAppliedIfApproved(proposal.id);
+      writeProposalRollback(ctx.resolvedSqlitePath, {
+        proposalId: proposal.id,
+        proposalType: "persona",
+        targetPath: soulPath,
+        originalHash: createHash("sha256").update(originalContent).digest("hex"),
+        originalContent,
+        appliedHash: createHash("sha256").update(appliedContent).digest("hex"),
+        appliedAt: new Date().toISOString(),
+      });
+
+      const key = makeUnifiedKey("persona", proposal.id);
+      const { status, body } = await httpPost(
+        port,
+        `/api/workshop/proposals/${encodeURIComponent(key)}/undo`,
+        "{}",
+      );
+      expect(status).toBe(200);
+      expect(JSON.parse(body).ok).toBe(true);
+      expect(readFileSync(soulPath, "utf-8")).toBe(originalContent);
+      expect(ctx.proposalsDb.get(proposal.id)?.status).toBe("pending");
+    });
+  });
+
+  it("GET proposal detail resolves encoded unified keys with colons", async () => {
+    await withWorkshopServer(async (ctx, port) => {
+      const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+      const proposal = ctx.proposalsDb.create({
+        targetFile: "SOUL.md",
+        title: "Inspect me",
+        observation: "obs",
+        suggestedChange: "Guidance.",
+        confidence: 0.8,
+        evidenceSessions: [],
+      });
+      const key = makeUnifiedKey("persona", proposal.id);
+      const { status, body } = await httpGet(
+        port,
+        `/api/workshop/proposals/${encodeURIComponent(key)}`,
+      );
+      expect(status).toBe(200);
+      const detail = JSON.parse(body) as { id: string; title: string };
+      expect(detail.id).toBe(proposal.id);
+      expect(detail.title).toBe("Inspect me");
+    });
+  });
+
+  it("POST /api/workshop/changes/revert reverts by change event id", async () => {
+    await withWorkshopServer(
+      async (ctx, port) => {
+        const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+        const proposal = ctx.proposalsDb.create({
+          targetFile: "SOUL.md",
+          title: "Revert via id",
+          observation: "obs",
+          suggestedChange: "Add guidance.",
+          confidence: 0.9,
+          evidenceSessions: [],
+        });
+        const key = makeUnifiedKey("persona", proposal.id);
+        const event = ctx.changeFeed!.append({
+          sessionKey: "mission-control",
+          timestamp: Date.now(),
+          tier: "persistent",
+          category: "persona",
+          action: "proposed",
+          title: "Persona proposal pending",
+          detail: "Awaiting review",
+          proposalKey: key,
+          rollbackAvailable: false,
+          activation: "next-reload",
+        });
+        const { status, body } = await httpPost(
+          port,
+          "/api/workshop/changes/revert",
+          JSON.stringify({ id: event.id }),
+        );
+        expect(status).toBe(200);
+        expect(JSON.parse(body).ok).toBe(true);
+        expect(ctx.proposalsDb.get(proposal.id)?.status).toBe("rejected");
+        expect(ctx.changeFeed!.getById(event.id)?.status).toBe("reverted");
+      },
+      { withChangeFeed: true },
+    );
+  });
+
+  it("returns 503 when workshop is explicitly disabled", async () => {
+    const td = mkdtempSync(join(tmpdir(), "workshop-disabled-"));
+    const ctx = makeContext(td) as ReturnType<typeof makeContext> & {
+      hybridCfg: import("../config.js").HybridMemoryConfig;
+    };
+    ctx.hybridCfg = {
+      workshop: { enabled: false },
+      procedures: { enabled: false },
+      personaProposals: { enabled: false },
+      crystallization: { enabled: false },
+      selfExtension: { enabled: false },
+    } as import("../config.js").HybridMemoryConfig;
+    const srv = await createDashboardServer(ctx, 0);
+    try {
+      const { status, body } = await httpGet(srv.port, "/api/workshop/proposals");
+      expect(status).toBe(503);
+      expect(JSON.parse(body).error).toBe("workshop_unavailable");
+    } finally {
+      ctx.factsDb.close();
+      ctx.vectorDb.close();
+      srv.close();
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
+  it("allows workshop API when only procedures promotion is enabled", async () => {
+    const td = mkdtempSync(join(tmpdir(), "workshop-procedures-"));
+    const ctx = makeContext(td) as ReturnType<typeof makeContext> & {
+      hybridCfg: import("../config.js").HybridMemoryConfig;
+    };
+    ctx.hybridCfg = {
+      procedures: { enabled: true },
+      personaProposals: { enabled: false },
+      crystallization: { enabled: false },
+      selfExtension: { enabled: false },
+    } as import("../config.js").HybridMemoryConfig;
+    const srv = await createDashboardServer(ctx, 0);
+    try {
+      const { status } = await httpGet(srv.port, "/api/workshop/proposals");
+      expect(status).toBe(200);
+    } finally {
+      ctx.factsDb.close();
+      ctx.vectorDb.close();
+      srv.close();
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 503 when workshop context is unavailable", async () => {
+    const td = mkdtempSync(join(tmpdir(), "workshop-503-"));
+    const ctx = makeContext(td);
+    const srv = await createDashboardServer(ctx, 0);
+    try {
+      const { status, body } = await httpGet(srv.port, "/api/workshop/proposals");
+      expect(status).toBe(503);
+      expect(JSON.parse(body).error).toBe("workshop_unavailable");
+    } finally {
+      ctx.factsDb.close();
+      ctx.vectorDb.close();
+      srv.close();
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+});

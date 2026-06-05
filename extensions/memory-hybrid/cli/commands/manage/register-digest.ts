@@ -97,6 +97,7 @@ export function registerManageDigest(mem: Chainable, b: ManageBindings): void {
           max,
           stateDbPath: opts?.stateDb,
           workspace: opts?.workspace,
+          resolvedSqlitePath: b.cfg.sqlitePath,
         });
         process.stdout.write(opts?.json ? stablePendingDigestAutopilotJson(result) : `${result.humanSummary}\n`);
       }),

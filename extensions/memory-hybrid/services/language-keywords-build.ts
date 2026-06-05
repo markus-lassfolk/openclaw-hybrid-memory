@@ -21,6 +21,7 @@ import {
 import { parseFirstJsonObjectValue, tryParseFirstJsonArray } from "../utils/llm-json-array.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { capturePluginError } from "./error-reporter.js";
+import { nowIso } from "../utils/dates.js";
 import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 
@@ -446,7 +447,7 @@ export async function runBuildLanguageKeywords(
 
   const data: LanguageKeywordsFile & { _langHash?: string } = {
     version: 2,
-    detectedAt: new Date().toISOString(),
+    detectedAt: nowIso(),
     topLanguages: topLanguages.length > 0 ? topLanguages : ["en"],
     translations,
     triggerStructures: Object.keys(triggerStructures).length > 0 ? triggerStructures : undefined,

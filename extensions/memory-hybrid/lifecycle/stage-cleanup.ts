@@ -29,6 +29,7 @@ import {
   syncActiveTaskEntryToFacts,
 } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
+import { nowIso } from "../utils/dates.js";
 import {
   type SubagentEndedEvent,
   findActiveTaskForSubagentEnd,
@@ -187,7 +188,7 @@ async function consumePendingTaskSignals(
       try {
         const updatedTimestamp = (() => {
           const t = Date.parse(signal.timestamp);
-          return Number.isNaN(t) ? new Date().toISOString() : signal.timestamp;
+          return Number.isNaN(t) ? nowIso() : signal.timestamp;
         })();
 
         const existing = findMatchingTask(updatedActive, updatedCompleted, signal);
@@ -316,13 +317,14 @@ async function consumePendingTaskSignals(
   }
 }
 
-function sweepStaleSessions(sessionState: SessionState): number {
+function sweepStaleSessions(sessionState: SessionState, injectedFactIdsBySession?: Map<string, Set<string>>): number {
   const now = Date.now();
   const cutoff = now - STALE_SESSION_TTL_MS;
   let swept = 0;
   for (const [sessionKey, lastActive] of sessionState.sessionLastActivity) {
     if (lastActive < cutoff) {
       sessionState.clearSessionState(sessionKey);
+      sessionState.clearInjectedFactIdsForSession(injectedFactIdsBySession, sessionKey);
       sessionState.capabilityHintsSessionsSeen.delete(sessionKey);
       swept++;
     }
@@ -333,10 +335,13 @@ function sweepStaleSessions(sessionState: SessionState): number {
 /**
  * Start the periodic stale session sweep timer. Returns the timer handle for dispose.
  */
-export function createStaleSweepTimer(sessionState: SessionState): ReturnType<typeof setInterval> {
+export function createStaleSweepTimer(
+  sessionState: SessionState,
+  injectedFactIdsBySession?: Map<string, Set<string>>,
+): ReturnType<typeof setInterval> {
   return setInterval(() => {
     try {
-      sweepStaleSessions(sessionState);
+      sweepStaleSessions(sessionState, injectedFactIdsBySession);
     } catch (err) {
       // Suppress expected database connection errors during shutdown
       const e = err instanceof Error ? err : new Error(String(err));
@@ -353,10 +358,14 @@ export function createStaleSweepTimer(sessionState: SessionState): ReturnType<ty
 /**
  * Return a dispose function that clears the sweep timer and all session maps.
  */
-export function getDispose(timerRef: ReturnType<typeof setInterval> | null, sessionState: SessionState): () => void {
+export function getDispose(
+  timerRef: ReturnType<typeof setInterval> | null,
+  sessionState: SessionState,
+  injectedFactIdsBySession?: Map<string, Set<string>>,
+): () => void {
   return () => {
     if (timerRef) clearInterval(timerRef);
-    sessionState.clearAll?.();
+    sessionState.clearAll?.(injectedFactIdsBySession);
   };
 }
 
@@ -380,7 +389,7 @@ export function registerCleanupHandlers(
       const label = ev.label ?? childOrSession ?? `subagent-${Date.now()}`;
       const description = ev.task ?? `Subagent task (session: ${childOrSession ?? "unknown"})`;
       const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-      const now = new Date().toISOString();
+      const now = nowIso();
 
       if (!childOrSession) {
         api.logger.debug?.(
@@ -566,7 +575,7 @@ export function registerCleanupHandlers(
         return;
       }
 
-      const now = new Date().toISOString();
+      const now = nowIso();
       const newStatus = subagentEndedIsSuccess(ev) ? "Done" : "Failed";
       if (isTerminalActiveTaskStatus(taskAfterSignals.status)) {
         api.logger.debug?.(

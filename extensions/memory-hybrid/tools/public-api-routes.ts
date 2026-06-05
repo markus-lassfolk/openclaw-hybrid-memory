@@ -16,6 +16,7 @@ import {
 } from "../services/task-ledger-facts.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
+import { nowIso } from "../utils/dates.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { versionInfo } from "../versionInfo.js";
 import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
@@ -253,7 +254,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     }
 
     return toJson(200, {
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso(),
       facts: {
         active: scopedFacts.length,
         expired: 0,
@@ -399,7 +400,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     }
 
     return toJson(200, {
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso(),
       source: "category:project",
       staleThresholdMinutes: staleMinutes,
       ledger: activeTaskCfg.ledger,

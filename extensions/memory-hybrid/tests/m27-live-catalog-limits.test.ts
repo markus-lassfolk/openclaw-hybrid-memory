@@ -110,7 +110,7 @@ live("live MiniMax M2.7 catalog limits", () => {
     });
     expect(fail.status).toBe(400);
     expect(fail.json.error?.message ?? fail.json.base_resp?.status_msg ?? "").toMatch(/context window exceeds limit/i);
-  }, 180_000);
+  }, 300_000);
 
   it("rejects provider-prefixed model id on direct api.minimax.io", async () => {
     const { status, json } = await chatCompletion({

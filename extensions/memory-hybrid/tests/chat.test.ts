@@ -150,7 +150,7 @@ describe("chatComplete", () => {
 
   it("chatCompleteDetailed surfaces finishReason and usage", async () => {
     vi.mocked(mockOpenai.chat.completions.create).mockResolvedValue({
-      choices: [{ message: { content: "[]" }, finish_reason: "stop" }],
+      choices: [{ message: { content: "analysis complete" }, finish_reason: "stop" }],
       usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
     } as any);
     const { chatCompleteDetailed } = await import("../services/chat.js");
@@ -159,7 +159,7 @@ describe("chatComplete", () => {
       content: "test",
       openai: mockOpenai,
     });
-    expect(detail.text).toBe("[]");
+    expect(detail.text).toBe("analysis complete");
     expect(detail.finishReason).toBe("stop");
     expect(detail.usage?.totalTokens).toBe(12);
   });

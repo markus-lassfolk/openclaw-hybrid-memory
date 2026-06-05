@@ -15,6 +15,9 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { ClustersConfig, RerankingConfig, RetrievalConfig } from "../config.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
 import { stableStringify } from "../utils/stable-stringify.js";
+import { isTierAllowedForWarmSearch } from "../utils/tier-filter.js";
+import { pluginLogger } from "../utils/logger.js";
+import { formatDateUtc } from "../utils/dates.js";
 import { DocumentGrader } from "./document-grader.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
@@ -45,6 +48,13 @@ import {
 } from "./rrf-fusion.js";
 import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
 import { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import {
+  getCriticalOpenIssueFactIds,
+  runIssueRetrievalStrategy,
+} from "./issue-retrieval.js";
+import { parseFactProvenanceJson, resolveProvenanceSourceFacts } from "../backends/facts-db/provenance-json.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 export { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
 
 // ---------------------------------------------------------------------------
@@ -471,6 +481,7 @@ function buildSemanticCacheFilterKey(config: RetrievalConfig, options: Retrieval
     embeddingRegistry: describeEmbeddingRegistry(options.embeddingRegistry),
     embeddingFactsEnabled: Boolean(options.factsDbForEmbeddings),
     constrainedFilters: options.constrainedFilters ?? null,
+    warmTierOnly: options.warmTierOnly ?? false,
     graphHubDegreeCap: options.graphHubDegreeCap ?? null,
     graphHubScorePenalty: options.graphHubScorePenalty ?? null,
   });
@@ -524,7 +535,20 @@ function buildOrchestratorResult(
   budgetTokens: number,
 ): OrchestratorResult {
   const contradictedIds = collectContradictedIds(factsDb, orderedEntries);
-  const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, { contradictedIds });
+  const provenanceByFactId = new Map<string, string>();
+  for (const { factId, entry } of orderedEntries) {
+    const provenance = parseFactProvenanceJson(entry.provenanceJson);
+    const sourceFacts = resolveProvenanceSourceFacts(factsDb, provenance, 3);
+    if (sourceFacts.length === 0) continue;
+    const preview = sourceFacts
+      .map((s) => sanitizePromptInjection(s.text).slice(0, 40))
+      .join("; ");
+    provenanceByFactId.set(factId, `${sourceFacts.length} src: ${preview}`.slice(0, 120));
+  }
+  const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, {
+    contradictedIds,
+    provenanceByFactId,
+  });
   const packedFactIds = orderedEntries.slice(0, packed.length).map((entry) => entry.factId);
   return {
     fused,
@@ -539,7 +563,13 @@ function buildCachedResult(
   factsDb: FactLookup,
   factIds: string[],
   budgetTokens: number,
-  options: { includeSuperseded?: boolean; scopeFilter?: unknown; asOf?: number; nowSec: number },
+  options: {
+    includeSuperseded?: boolean;
+    scopeFilter?: unknown;
+    asOf?: number;
+    nowSec: number;
+    warmTierOnly?: boolean;
+  },
 ): OrchestratorResult {
   const getByIdOpts =
     options.scopeFilter || options.asOf != null ? { scopeFilter: options.scopeFilter, asOf: options.asOf } : undefined;
@@ -552,6 +582,7 @@ function buildCachedResult(
   for (const factId of factIds) {
     const entry = factsDb.getById(factId, getByIdOpts);
     if (!entry) continue;
+    if (options.warmTierOnly && !isTierAllowedForWarmSearch(entry.tier)) continue;
     if (!options.includeSuperseded) {
       if (entry.supersededAt != null) continue;
       if (entry.expiresAt != null && entry.expiresAt <= effectiveNow) continue;
@@ -641,6 +672,12 @@ export interface RetrievalPipelineOptions {
   graphHubDegreeCap?: number | null;
   /** Mirrors `graph.hubScorePenalty` for GraphRAG expansion (Issue #1192). */
   graphHubScorePenalty?: number | null;
+  /** Issue store for issue-aware RRF strategy and critical-issue candidate expansion (#1802). */
+  issueStore?: IssueStore | null;
+  /** Pre-filter fact IDs from NER entity-layer matching (#1802). Intersected with structured filters when both present. */
+  entityLayerCandidateIds?: string[];
+  /** When true, semantic cache entries and hydration exclude cold/structural tiers. */
+  warmTierOnly?: boolean;
 }
 
 /**
@@ -713,6 +750,9 @@ export async function runExplicitDeepRetrieval(
     constrainedFilters,
     graphHubDegreeCap,
     graphHubScorePenalty,
+    issueStore,
+    entityLayerCandidateIds,
+    warmTierOnly,
   } = options;
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
@@ -733,10 +773,35 @@ export async function runExplicitDeepRetrieval(
   let candidateIds: Set<string> | null = null;
   if (policy.mode === "constrained-recall" && constrainedFilters) {
     const ids = getCandidateIdsByStructuredFilters(db, constrainedFilters, { limit: 1000, nowSec });
-    if (ids.length === 0) {
+    if (ids.length === 1000) {
+      pluginLogger.warn(
+        "memory-hybrid: constrained-recall candidate set hit 1000 cap — results may be incomplete",
+      );
+    }
+    if (ids.length === 0 && !issueStore && !(entityLayerCandidateIds?.length)) {
       return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
     }
     candidateIds = new Set(ids);
+  }
+
+  if (entityLayerCandidateIds && entityLayerCandidateIds.length > 0) {
+    const layerSet = new Set(entityLayerCandidateIds);
+    if (!candidateIds) {
+      candidateIds = layerSet;
+    } else {
+      // Intersect only — do not widen constrained set when entity layer does not overlap.
+      candidateIds = new Set([...candidateIds].filter((id) => layerSet.has(id)));
+    }
+  }
+
+  // Expand constrained candidate set with facts linked to open critical/high issues.
+  // Never set candidateIds in explicit-deep — that would restrict semantic/FTS to a tiny set.
+  if (issueStore && policy.mode === "constrained-recall") {
+    const issueFactIds = getCriticalOpenIssueFactIds(issueStore, 15);
+    if (issueFactIds.length > 0) {
+      if (!candidateIds) candidateIds = new Set(issueFactIds);
+      else for (const id of issueFactIds) candidateIds.add(id);
+    }
   }
 
   const applyConditionalReranking = async (
@@ -762,7 +827,7 @@ export async function runExplicitDeepRetrieval(
             factId: result.factId,
             text: entry.text,
             confidence: entry.confidence,
-            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+            storedDate: formatDateUtc(storedSec),
             finalScore: rrfScoreMap.get(result.factId) ?? 0,
           },
         ];
@@ -820,6 +885,7 @@ export async function runExplicitDeepRetrieval(
           scopeFilter,
           asOf,
           nowSec,
+          warmTierOnly,
         });
         if (cachedResult.fused.length > 0) {
           return {
@@ -862,6 +928,16 @@ export async function runExplicitDeepRetrieval(
     if (strategies.includes("semantic") && currentQueryVector) {
       strategyPromises.push(
         safeStrategy("semantic", () => runSemanticStrategy(vectorDb, currentQueryVector, semanticTopK, candidateIds)),
+      );
+    }
+
+    if (issueStore && (policy as ExplicitDeepRetrievalPolicy).mode !== "interactive-recall") {
+      strategyPromises.push(
+        safeStrategy("issues", () => {
+          const results = runIssueRetrievalStrategy(queryText, issueStore, semanticTopK, factsDb);
+          const filtered = candidateIds ? results.filter((r) => candidateIds!.has(r.factId)) : results;
+          return filtered.map((r, i) => ({ ...r, rank: i + 1 }));
+        }),
       );
     }
 
@@ -1088,7 +1164,7 @@ export async function runExplicitDeepRetrieval(
       if (grades.length > 0) {
         if (grades.every((grade) => !grade.relevant)) {
           return {
-            result: buildOrchestratorResult(factsDb, scopedFused, orderedEntries, budgetTokens),
+            result: buildOrchestratorResult(factsDb, scopedFused, [], budgetTokens),
             shouldRewrite: true,
             fromCache: false,
           };
@@ -1108,7 +1184,7 @@ export async function runExplicitDeepRetrieval(
             factId,
             text: entry.text,
             confidence: entry.confidence,
-            storedDate: new Date(storedSec * 1000).toISOString().slice(0, 10),
+            storedDate: formatDateUtc(storedSec),
             finalScore: rrfScoreMap.get(factId) ?? 0,
           };
         });

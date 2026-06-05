@@ -8,8 +8,10 @@ import { existsSync, unlinkSync } from "node:fs";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getRestartPendingPath } from "../utils/constants.js";
+import { nowIso } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { withTimeout } from "../utils/timeout.js";
+import { clearSessionInjectionDedup } from "../services/session-injection-dedup.js";
 import { formatSessionKeyTruncated, resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "./types.js";
 
@@ -30,10 +32,15 @@ async function runSetup(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<void> {
-  const { currentAgentIdRef, restartPendingClearedRef } = ctx;
+  const { currentAgentIdRef, restartPendingClearedRef, prependBudgetRef } = ctx;
   const { touchSession, resolveSessionKey } = sessionState;
 
+  if (prependBudgetRef) {
+    prependBudgetRef.value = null;
+  }
+
   const touchKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+  clearSessionInjectionDedup(ctx.injectedFactIdsBySession, touchKey);
   touchSession(touchKey);
 
   if (!restartPendingClearedRef.value && existsSync(getRestartPendingPath())) {
@@ -75,7 +82,7 @@ async function runSetup(
     try {
       ctx.eventLog.append({
         sessionId,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         eventType: "action_taken",
         content: { action: "session_start", agentId: currentAgentIdRef.value },
       });

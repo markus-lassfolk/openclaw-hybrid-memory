@@ -204,6 +204,26 @@ export class ProposalsDB extends BaseSqliteStore {
     return this.rowToEntry(row);
   }
 
+  /** Targeted duplicate check for pipeline proposal creation (avoids full-table list scans). */
+  findPendingOrAppliedDuplicate(
+    targetFile: string,
+    suggestedChange: string,
+    excludeId?: string,
+  ): ProposalEntry | null {
+    const normalized = suggestedChange.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!normalized) return null;
+    const rows = this.liveDb
+      .prepare("SELECT * FROM proposals WHERE target_file = ? AND status IN ('pending', 'applied')")
+      .all(targetFile) as unknown as ProposalRow[];
+    for (const row of rows) {
+      const entry = this.rowToEntry(row);
+      if (excludeId && entry.id === excludeId) continue;
+      const candidate = entry.suggestedChange.toLowerCase().replace(/\s+/g, " ").trim();
+      if (candidate === normalized) return entry;
+    }
+    return null;
+  }
+
   list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
     let query = "SELECT * FROM proposals WHERE 1=1";
     const params: string[] = [];
@@ -224,6 +244,14 @@ export class ProposalsDB extends BaseSqliteStore {
   }
 
   updateStatus(id: string, status: string, reviewedBy?: string, rejectionReason?: string): ProposalEntry | null {
+    if (status === "pending") {
+      this.liveDb
+        .prepare(
+          "UPDATE proposals SET status = ?, reviewed_at = NULL, reviewed_by = NULL, rejection_reason = NULL WHERE id = ?",
+        )
+        .run(status, id);
+      return this.get(id);
+    }
     const now = Math.floor(Date.now() / 1000);
     this.liveDb
       .prepare("UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?")
@@ -231,9 +259,72 @@ export class ProposalsDB extends BaseSqliteStore {
     return this.get(id);
   }
 
+  /** Atomically transition status only when the proposal is in `expectedStatus`. */
+  updateStatusIf(
+    id: string,
+    status: string,
+    expectedStatus: string,
+    reviewedBy?: string,
+    rejectionReason?: string,
+  ): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    const result =
+      status === "pending"
+        ? this.liveDb
+            .prepare(
+              `UPDATE proposals SET status = ?, reviewed_at = NULL, reviewed_by = NULL, rejection_reason = NULL
+               WHERE id = ? AND status = ?`,
+            )
+            .run(status, id, expectedStatus)
+        : this.liveDb
+            .prepare(
+              `UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ?
+               WHERE id = ? AND status = ?`,
+            )
+            .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id, expectedStatus);
+    if (result.changes === 0) return null;
+    return this.get(id);
+  }
+
+  updateSuggestedChange(
+    id: string,
+    suggestedChange: string,
+    snapshot?: { targetMtimeMs: number | null; targetHash: string | null; confidence?: number },
+  ): ProposalEntry | null {
+    if (snapshot) {
+      this.liveDb
+        .prepare(
+          `UPDATE proposals SET suggested_change = ?, target_mtime_ms = ?, target_hash = ?, confidence = COALESCE(?, confidence)
+           WHERE id = ? AND status = 'pending'`,
+        )
+        .run(
+          suggestedChange,
+          snapshot.targetMtimeMs,
+          snapshot.targetHash,
+          snapshot.confidence ?? null,
+          id,
+        );
+    } else {
+      this.liveDb.prepare("UPDATE proposals SET suggested_change = ? WHERE id = ? AND status = 'pending'").run(
+        suggestedChange,
+        id,
+      );
+    }
+    return this.get(id);
+  }
+
   markApplied(id: string): ProposalEntry | null {
     const now = Math.floor(Date.now() / 1000);
     this.liveDb.prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ?").run(now, id);
+    return this.get(id);
+  }
+
+  markAppliedIfApproved(id: string): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    const result = this.liveDb
+      .prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ? AND status = 'approved'")
+      .run(now, id);
+    if (result.changes === 0) return null;
     return this.get(id);
   }
 

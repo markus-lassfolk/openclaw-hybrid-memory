@@ -7,6 +7,7 @@ import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { readExitLedger, validateMaintenanceExecution } from "./cron-exit-validator.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "./hybrid-mem-cron-default-job-steps.js";
 import { isCanonicalMaintenanceLog, isUnderAuxiliaryDir } from "./maintenance-log-analyzer.js";
+import { nowIso, formatTimestampUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
 
 const HYBRID_MEM_PLUGIN_JOB_ID_PREFIX = "hybrid-mem:";
 const GOAL_STEWARDSHIP_HEARTBEAT_JOB_ID = "goal-stewardship-heartbeat";
@@ -99,6 +100,15 @@ interface MaintenanceInventoryOptions {
  * back to the operator-facing job name while still exposing the stored ID.
  */
 const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
+  {
+    jobKey: "maintenance-nightly",
+    name: "maintenance-nightly",
+    pluginJobId: "hybrid-mem:maintenance-nightly",
+    aliases: [],
+    lockKey: "sqlite+lancedb",
+    collisionGroups: ["sqlite-writer", "lancedb-writer", "memory-facts-writer"],
+    mutates: { sqlite: true, lancedb: true, github: false, memoryFacts: true },
+  },
   {
     jobKey: "nightly-memory-sweep",
     name: "nightly-memory-sweep",
@@ -482,7 +492,7 @@ function deriveArtifactStatus(
   if (!artifact?.latestExitPath) {
     return {};
   }
-  const exitAt = artifact.latestExitMtimeMs ? new Date(artifact.latestExitMtimeMs).toISOString() : undefined;
+  const exitAt = artifact.latestExitMtimeMs ? formatTimestampUtcFromMs(artifact.latestExitMtimeMs) : undefined;
   const pluginJobIdForSteps = actualPluginJobId ?? entry.pluginJobId;
   const requiredSteps = pluginJobIdForSteps ? HYBRID_MEM_CRON_DEFAULT_JOB_STEPS[pluginJobIdForSteps] : undefined;
   if (requiredSteps && requiredSteps.length > 0 && artifact.latestLogPath) {
@@ -525,7 +535,7 @@ function pickLastRun(
   }
   candidates.sort((a, b) => b.ts - a.ts);
   return {
-    lastRunAt: new Date(candidates[0].ts).toISOString(),
+    lastRunAt: formatTimestampUtcFromMs(candidates[0].ts),
     lastRunSource: candidates[0].source,
   };
 }
@@ -741,7 +751,7 @@ export function collectMaintenanceInventory(
 
   return {
     schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     openclawDir,
     cronStorePath,
     logRoot,

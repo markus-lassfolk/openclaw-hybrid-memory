@@ -25,9 +25,11 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
+import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { escapeRegExp } from "../utils/text.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import type { ActiveTaskReconcileProgressReporter } from "./active-task-reconcile-progress.js";
 
@@ -540,7 +542,7 @@ export function upsertTask(
   preserveUpdated = false,
 ): ActiveTaskEntry[] {
   const idx = active.findIndex((t) => t.label === entry.label);
-  const updatedTimestamp = preserveUpdated ? entry.updated : new Date().toISOString();
+  const updatedTimestamp = preserveUpdated ? entry.updated : nowIso();
   if (idx >= 0) {
     const updated = [...active];
     updated[idx] = { ...active[idx], ...entry, updated: updatedTimestamp };
@@ -562,7 +564,7 @@ export function completeTask(
     ...active[idx],
     status: "Done",
     subagent: "",
-    updated: new Date().toISOString(),
+    updated: nowIso(),
   };
   clearActiveTaskHandoff(task);
   const updated = active.filter((_, i) => i !== idx);
@@ -597,10 +599,12 @@ export function buildActiveTaskInjection(
   let injectedCount = 0;
 
   for (const task of activeTasks) {
-    const summary = [`- [${task.label}] ${task.description} (${task.status})`];
-    if (task.next) summary.push(`  Next: ${task.next}`);
-    if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
-    if (task.relatedGoal?.trim()) summary.push(`  Related goal: ${task.relatedGoal.trim()}`);
+    const label = sanitizePromptInjection(task.label);
+    const description = sanitizePromptInjection(task.description);
+    const summary = [`- [${label}] ${description} (${task.status})`];
+    if (task.next) summary.push(`  Next: ${sanitizePromptInjection(task.next)}`);
+    if (task.subagent) summary.push(`  Subagent: ${sanitizePromptInjection(task.subagent)}`);
+    if (task.relatedGoal?.trim()) summary.push(`  Related goal: ${sanitizePromptInjection(task.relatedGoal.trim())}`);
     const block = summary.join("\n");
     if (used + block.length > charBudget) break;
     lines.push(block);
@@ -664,8 +668,8 @@ export function buildStaleWarningInjection(
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
       const hoursAgo = Number.isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
-      const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
-      const nextPart = task.next ? `, Next: ${task.next}` : "";
+      const line1 = `- [${sanitizePromptInjection(task.label)}]: ${sanitizePromptInjection(task.description)} — last updated ${task.updated} (${hoursAgo}h ago)`;
+      const nextPart = task.next ? `, Next: ${sanitizePromptInjection(task.next)}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;
       const blockSize = line1.length + line2.length + 2;
       if (maxChars != null && usedChars + blockSize > maxChars) break;
@@ -694,7 +698,7 @@ export function buildStaleWarningInjection(
     usedChars += headerSize;
 
     for (const task of inProgressWithSubagent) {
-      const line = `- [${task.label}]: ${task.description} (subagent: ${task.subagent})`;
+      const line = `- [${sanitizePromptInjection(task.label)}]: ${sanitizePromptInjection(task.description)} (subagent: ${sanitizePromptInjection(task.subagent ?? "")})`;
       if (maxChars != null && usedChars + line.length + 1 > maxChars) break;
       lines.push(line);
       usedChars += line.length + 1;
@@ -718,7 +722,7 @@ export function buildStaleWarningInjection(
  * Creates the file if it doesn't exist.
  */
 export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDir: string): Promise<string> {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = formatDateUtc(nowSec());
   const filePath = join(memoryDir, `${date}.md`);
 
   await mkdir(memoryDir, { recursive: true });
@@ -921,7 +925,7 @@ export function createOctaveTaskHandoffArtifact(signal: TaskSignal): OctaveTaskH
     payload: signal,
     auditTrail: [
       {
-        at: new Date().toISOString(),
+        at: nowIso(),
         by: signal.agent,
         action: "created",
       },
@@ -1311,7 +1315,7 @@ export async function reconcileActiveTaskInProgressSessions(
       continue;
     }
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const completedEntry: ActiveTaskEntry = {
       ...task,
       status: "Failed",

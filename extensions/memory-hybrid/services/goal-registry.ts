@@ -18,6 +18,7 @@ import type {
   GoalIndex,
   GoalStatus,
 } from "./goal-stewardship-types.js";
+import { nowIso } from "../utils/dates.js";
 
 const INDEX_FILENAME = "_index.json";
 const TERMINAL: GoalStatus[] = ["completed", "failed", "abandoned"];
@@ -40,10 +41,6 @@ export function validateGoalLabel(label: string): { ok: true } | { ok: false; er
   if (t.length > 64) return { ok: false, error: "label exceeds 64 characters" };
   if (!LABEL_RE.test(t)) return { ok: false, error: "label must be alphanumeric, underscore, or hyphen only" };
   return { ok: true };
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
 }
 
 const GOAL_LOCK_RETRY_MS = 25;

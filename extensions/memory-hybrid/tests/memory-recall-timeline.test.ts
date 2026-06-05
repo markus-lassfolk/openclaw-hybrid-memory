@@ -16,8 +16,13 @@ import { registerMemoryTools } from "../tools/memory-tools.js";
 function makeMockApi() {
   const tools = new Map<string, { execute: (...args: unknown[]) => unknown }>();
   return {
-    registerTool(opts: Record<string, unknown>) {
-      tools.set(opts.name as string, { execute: opts.execute as (...args: unknown[]) => unknown });
+    registerTool(...args: unknown[]) {
+      for (const arg of args) {
+        if (arg && typeof arg === "object" && "name" in arg && "execute" in arg) {
+          const tool = arg as { name: string; execute: (...a: unknown[]) => unknown };
+          tools.set(tool.name, { execute: tool.execute });
+        }
+      }
     },
     getTool(name: string) {
       return tools.get(name);
@@ -158,6 +163,52 @@ describe("memory_recall_timeline tool", () => {
     );
 
     const tool = api.getTool("memory_recall_timeline");
+    await expect(tool?.execute("tool-call", { sessionId: "other-session" })).rejects.toThrow(
+      /must match the authenticated session context/i,
+    );
+  });
+});
+
+describe("memory_session_observability tool", () => {
+  let tmpDir: string;
+  let factsDb: FactsDB;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "session-observability-"));
+    factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  });
+
+  afterEach(() => {
+    factsDb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects caller-supplied sessionId that does not match authenticated context", async () => {
+    const api = makeMockApi();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        narrativesDb: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_session_observability");
     await expect(tool?.execute("tool-call", { sessionId: "other-session" })).rejects.toThrow(
       /must match the authenticated session context/i,
     );

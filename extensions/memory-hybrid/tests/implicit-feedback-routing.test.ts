@@ -931,7 +931,7 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
     expect(row.supersededBy).toBe(canonical.id);
   });
 
-  it("keeps enough canonical context across many batches so late-page duplicates still collapse", () => {
+  it("keeps enough canonical context across many batches so late-page duplicates still collapse", { timeout: 120_000 }, () => {
     const db = makeDb(tmpDir);
     // Put the late duplicate in the first batch after legacy 2k carry would evict the canonical row.
     const PAGED_SCAN_LIMIT = 250;

@@ -3,6 +3,7 @@
  */
 import { existsSync, statSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { nowIso } from "../../utils/dates.js";
 
 export function bufferToFloat32Array(buf: Buffer): Float32Array {
   const byteLen = buf.byteLength;
@@ -12,12 +13,13 @@ export function bufferToFloat32Array(buf: Buffer): Float32Array {
 }
 
 export function storeVariant(db: DatabaseSync, factId: string, variantType: string, variantText: string): number {
+  const createdAt = nowIso();
   const result = db
     .prepare(
-      `INSERT INTO fact_variants (fact_id, variant_type, variant_text)
-       VALUES (?, ?, ?)`,
+      `INSERT INTO fact_variants (fact_id, variant_type, variant_text, created_at)
+       VALUES (?, ?, ?, ?)`,
     )
-    .run(factId, variantType, variantText);
+    .run(factId, variantType, variantText, createdAt);
   return result.lastInsertRowid as number;
 }
 
@@ -60,14 +62,15 @@ export function storeEmbedding(
   dimensions: number,
 ): void {
   const blob = Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
+  const createdAt = nowIso();
   db.prepare(
-    `INSERT INTO fact_embeddings (fact_id, model, variant, embedding, dimensions)
-     VALUES (?, ?, ?, ?, ?)
+    `INSERT INTO fact_embeddings (fact_id, model, variant, embedding, dimensions, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(fact_id, model, variant) DO UPDATE SET
        embedding = excluded.embedding,
        dimensions = excluded.dimensions,
-       created_at = datetime('now')`,
-  ).run(factId, model, variant, blob, dimensions);
+       created_at = ?`,
+  ).run(factId, model, variant, blob, dimensions, createdAt, createdAt);
 }
 
 export function getEmbeddings(

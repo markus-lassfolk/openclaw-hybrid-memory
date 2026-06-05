@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { GUARD_SUBDIR } from "../services/cron-guard.js";
 import { collectMaintenanceInventory, renderMaintenanceInventoryMarkdown } from "../services/maintenance-inventory.js";
+import { formatTimestampUtcFromMs } from "../utils/dates.js";
 
 function makeOpenclawDir(): string {
   const dir = join(tmpdir(), `maintenance-inventory-${randomUUID()}`);
@@ -119,7 +120,7 @@ describe("collectMaintenanceInventory", () => {
     const gatewayReflection = report.jobs.find((job) => job.inventoryId === "gateway-cron:weekly-reflection");
     expect(gatewayReflection?.timezone).toBe("UTC");
     expect(gatewayReflection?.lastRunSource).toBe("guard");
-    expect(gatewayReflection?.lastRunAt).toBe(new Date(recentGuardMs).toISOString());
+    expect(gatewayReflection?.lastRunAt).toBe(formatTimestampUtcFromMs(recentGuardMs));
     expect(gatewayReflection?.prompt).toContain("Weekly reflection pipeline.");
 
     const stewardshipPulse = report.jobs.find((job) => job.inventoryId === "gateway-cron:goal-stewardship-heartbeat");

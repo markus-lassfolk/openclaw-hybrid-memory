@@ -2,7 +2,7 @@
  * CLI: skill proposal queue (crystallization lifecycle) and generated-skill telemetry.
  *
  * Commands:
- * - hybrid-mem skills queue | show | validate | reject | install | rescan | telemetry …
+ * - hybrid-mem skills queue | show | validate | reject | install | rescan | restore | crystallize | telemetry …
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
@@ -11,8 +11,12 @@ import {
   assertCrystallizationQueueStatusFilter,
   CRYSTALLIZATION_QUEUE_STATUS_FILTERS,
 } from "../backends/crystallization-store.js";
-import type { HybridMemoryConfig } from "../config.js";
+import { formatTimestampUtc } from "../utils/dates.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import {
+  previewCrystallizationCycle,
+  runCrystallizationProposalCycle,
+} from "../services/crystallization-maintenance.js";
 import {
   summarizeSkillProposalValidation,
   type SkillProposalValidationResult,
@@ -37,10 +41,11 @@ type SkillsCliContext = {
   crystallizationStore?: CrystallizationStore | null;
   cfg: HybridMemoryConfig;
   factsDb?: FactsDB | null;
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
 };
 
 function formatIso(ts: number | null | undefined): string {
-  return typeof ts === "number" && ts > 0 ? new Date(ts * 1000).toISOString() : "never";
+  return typeof ts === "number" && ts > 0 ? formatTimestampUtc(ts) : "never";
 }
 
 function formatRate(value: number | null | undefined): string {
@@ -577,6 +582,75 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
       }),
     );
 
+  (skills.command("restore") as ArgumentChainable)
+    .description(
+      "Restore a quarantined crystallization skill after re-validation (moves files back to the active output tree)",
+    )
+    .argument("<id>", "Proposal id")
+    .option("--override-warnings", "Bypass activation warnings when validation returns allow-with-override")
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (id: string, opts: { overrideWarnings?: boolean; json?: boolean }) => {
+        const store = requireStore(ctx);
+        const proposer = new CrystallizationProposer(null, store, ctx.cfg.crystallization);
+        const result = proposer.restoreProposal(id, { overrideWarnings: opts.overrideWarnings });
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: result.success, ...result }, null, 2));
+          if (!result.success) process.exitCode = 1;
+          return;
+        }
+        console.log(result.success ? `✓ ${result.message}` : `✗ ${result.message}`);
+        if (!result.success) process.exitCode = 1;
+      }),
+    );
+
+  (skills.command("crystallize") as ArgumentChainable)
+    .description(
+      "Run one workflow crystallization cycle (detect patterns → validate → queue proposals). Requires crystallization.enabled.",
+    )
+    .option("--dry-run", "Preview candidates without writing proposals (works when crystallization.enabled=false)")
+    .option("--json", "Print JSON")
+    .action(
+      withExit(async (opts: { dryRun?: boolean; json?: boolean }) => {
+        if (opts.dryRun) {
+          const preview = previewCrystallizationCycle(ctx.cfg);
+          if (opts.json) {
+            console.log(JSON.stringify({ ok: preview.skippedReason !== "stores-unavailable", ...preview }, null, 2));
+            if (preview.skippedReason === "stores-unavailable") process.exitCode = 2;
+            return;
+          }
+          console.log(
+            `Preview: ${preview.candidates.length} candidate(s), patterns raw=${preview.patternCounts.raw} userFacing=${preview.patternCounts.userFacing}`,
+          );
+          for (const c of preview.candidates) {
+            console.log(
+              `  - score=${c.score.toFixed(1)} count=${c.totalCount} success=${Math.round(c.successRate * 100)}% seq=${c.toolSequence.join(" → ")}`,
+            );
+            for (const g of c.exampleGoals) console.log(`      goal: ${g.slice(0, 100)}`);
+          }
+          for (const r of preview.reasons) console.log(`  - ${r}`);
+          if (preview.skippedReason === "stores-unavailable") process.exitCode = 2;
+          return;
+        }
+
+        const result = runCrystallizationProposalCycle(ctx.cfg, {
+          changeFeed: ctx.changeFeed ?? null,
+        });
+        if (opts.json) {
+          console.log(JSON.stringify({ ok: result.skippedReason !== "stores-unavailable", ...result }, null, 2));
+          if (result.skippedReason === "stores-unavailable") process.exitCode = 2;
+          return;
+        }
+        if (result.skippedReason === "disabled") {
+          console.log("Crystallization is disabled (set crystallization.enabled=true).");
+          return;
+        }
+        console.log(`Proposed: ${result.proposed}, skipped: ${result.skipped}`);
+        for (const r of result.reasons) console.log(`  - ${r}`);
+        if (result.skippedReason === "stores-unavailable") process.exitCode = 2;
+      }),
+    );
+
   (skills.command("rescan") as ArgumentChainable)
     .description(
       "Re-validate on-disk SKILL.md for each installed crystallization proposal; quarantine rows that fail generated-skill validation",
@@ -593,7 +667,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
           return;
         }
         console.log(
-          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`,
+          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, disk-moved: ${result.diskQuarantined}, skipped (no path): ${result.skipped}`,
         );
         for (const line of result.messages) console.log(`  ${line}`);
         for (const line of result.errors) console.error(`  error: ${line}`);

@@ -13,6 +13,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { formatRunIdSlug } from "../../utils/dates.js";
 import { hybridConfigSchema, resolveReflectionModelAndFallbacks, resolveReflectionThinkingMode } from "../../config.js";
 import {
   runDistillForCli,
@@ -93,7 +94,7 @@ function phase(name: string, fn: () => Promise<QaPhaseResult>): Promise<QaPhaseR
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const timestamp = formatRunIdSlug();
   const outDir = join(QA_ROOT, "out", timestamp);
   mkdirSync(outDir, { recursive: true });
 

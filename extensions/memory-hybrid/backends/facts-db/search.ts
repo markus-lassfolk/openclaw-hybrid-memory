@@ -1,9 +1,11 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import type { ScopeFilter, SearchResult } from "../../types/memory.js";
+import { formatTimestampUtc } from "../../utils/dates.js";
 import { applyConsolidationRetrievalControls } from "../../utils/consolidation-controls.js";
 import { INTERACTIVE_FTS_MAX_OR_TERMS } from "../../utils/constants.js";
 import { computeDynamicSalience } from "../../utils/salience.js";
+import { capturePluginError } from "../../services/error-reporter.js";
 import type { SupersededTextsCache } from "./cache-manager.js";
 import { refreshAccessedFacts } from "./crud.js";
 import { buildFactsSearchFtsOrClause, fetchSupersededFactTextsLower } from "./fact-queries.js";
@@ -78,6 +80,8 @@ export function searchFacts(
     reinforcementBoost?: number;
     diversityWeight?: number;
     interactiveFtsFastPath?: boolean;
+    /** When true, skip recall_count bump — caller refreshes access only after injection (#1559). */
+    deferAccessRefresh?: boolean;
   } = {},
 ): SearchResult[] {
   const {
@@ -90,6 +94,7 @@ export function searchFacts(
     reinforcementBoost = 0.1,
     diversityWeight = 1.0,
     interactiveFtsFastPath = false,
+    deferAccessRefresh = false,
   } = options;
 
   const safeQuery = interactiveFtsFastPath
@@ -216,10 +221,12 @@ export function searchFacts(
   });
   const topResults = results.slice(0, limit);
 
-  refreshAccessedFacts(
-    db,
-    topResults.map((r) => r.entry.id),
-  );
+  if (!deferAccessRefresh) {
+    refreshAccessedFacts(
+      db,
+      topResults.map((r) => r.entry.id),
+    );
+  }
 
   return topResults;
 }
@@ -234,6 +241,7 @@ export function lookupFacts(
     asOf?: number;
     scopeFilter?: ScopeFilter | null;
     limit?: number;
+    deferAccessRefresh?: boolean;
   },
 ): SearchResult[] {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -284,10 +292,12 @@ export function lookupFacts(
     };
   });
 
-  refreshAccessedFacts(
-    db,
-    results.map((r) => r.entry.id),
-  );
+  if (!options?.deferAccessRefresh) {
+    refreshAccessedFacts(
+      db,
+      results.map((r) => r.entry.id),
+    );
+  }
 
   return results;
 }
@@ -470,12 +480,22 @@ export function getCandidateIdsByStructuredFilters(
     params.push(`%${escapeSqlLike(filters.sourceSession)}%`);
   }
 
-  // Handle verified_facts JOIN for verificationTier
+  // Enrolled in verified_facts (latest version, not overdue). Tier value is not persisted on
+  // verified_facts; any non-empty verificationTier means "must be actively verified".
   if (filters.verificationTier) {
     conditions.push(
-      "id IN (SELECT fact_id FROM verified_facts WHERE tier = ? AND (next_verification IS NULL OR next_verification > ?))",
+      `id IN (
+        SELECT vf.fact_id
+        FROM verified_facts vf
+        INNER JOIN (
+          SELECT fact_id, MAX(version) AS max_version
+          FROM verified_facts
+          GROUP BY fact_id
+        ) latest ON vf.fact_id = latest.fact_id AND vf.version = latest.max_version
+        WHERE vf.next_verification IS NULL OR vf.next_verification > ?
+      )`,
     );
-    params.push(filters.verificationTier, nowSec);
+    params.push(formatTimestampUtc(nowSec));
   }
 
   const sql = `SELECT id FROM facts WHERE ${conditions.join(" AND ")} ORDER BY confidence DESC, COALESCE(source_date, created_at) DESC LIMIT ?`;
@@ -484,8 +504,12 @@ export function getCandidateIdsByStructuredFilters(
   try {
     const rows = db.prepare(sql).all(...finalParams) as Array<{ id: string }>;
     return rows.map((r) => r.id);
-  } catch (_err) {
-    // Graceful degradation — malformed filter never blocks retrieval
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "getCandidateIdsByStructuredFilters",
+      severity: "info",
+      subsystem: "facts",
+    });
     return [];
   }
 }

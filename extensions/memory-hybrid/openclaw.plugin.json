@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.6.41",
+  "version": "2026.6.52",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -67,6 +67,7 @@
       "memory_verification_status",
       "memory_verified_list",
       "memory_verify",
+      "memory_workshop",
       "memory_workflows",
       "persona_propose",
       "persona_proposals_list"
@@ -1411,9 +1412,34 @@
           "requireScopeFilter": {
             "type": "boolean",
             "description": "When true, generate-proposals throws an error if autoRecall.scopeFilter is not set and non-global scoped facts exist (default: false)"
+          },
+          "workshopMaxPending": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Max pending items across the unified workshop queue (persona, crystallization, tool, procedure-skill; default: 50, 0 = unlimited)"
           }
         },
         "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
+      },
+      "workshop": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch for memory_workshop tool and proposal HTTP/gateway routes (default: enabled when any proposal source is active)"
+          },
+          "maxPending": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Max pending items across the unified workshop queue (default: 50, 0 = unlimited). Overrides personaProposals.workshopMaxPending when set."
+          },
+          "sessionKey": {
+            "type": "string",
+            "description": "Change-feed session key for Mission Control / dashboard workshop actions (default: mission-control)"
+          }
+        },
+        "description": "Unified memory workshop — proposal review queue across persona, crystallization, tool, and procedure-skill backlogs"
       },
       "identityReflection": {
         "type": "object",
@@ -1589,6 +1615,10 @@
           "skillsAutoPath": {
             "type": "string",
             "description": "Path for auto-generated skills (default: skills/auto)"
+          },
+          "skillsPendingPath": {
+            "type": "string",
+            "description": "Pending skills awaiting human promote (default: memory/skills-pending)"
           },
           "requireApprovalForPromote": {
             "type": "boolean",
@@ -1843,6 +1873,10 @@
               "type": "string"
             },
             "description": "Extra event_type deny list merged with built-in session/heartbeat filter (#1185)"
+          },
+          "autoPropose": {
+            "type": "boolean",
+            "description": "When true, dream-cycle reflection output is auto-enqueued as governed proposals (default: false)"
           }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"
@@ -1963,6 +1997,9 @@
           "pruneUnusedDays": {
             "type": "number"
           },
+          "maxPendingProposals": {
+            "type": "number"
+          },
           "evidenceCountBucketSize": {
             "type": "number"
           },
@@ -1994,6 +2031,15 @@
             "description": "Project-level SKILL.md required-section taxonomy overrides keyed by category; use 'default' for the fallback taxonomy. Each configured array replaces the inherited list."
           },
           "placeholderEmailDomains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excludeSystemGoals": {
+            "type": "boolean"
+          },
+          "excludeGoalPatterns": {
             "type": "array",
             "items": {
               "type": "string"

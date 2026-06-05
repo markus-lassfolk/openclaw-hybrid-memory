@@ -3,12 +3,15 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GenerateAutoSkillsResult } from "../cli/register.js";
 import { MAX_SKILL_FILE_BYTES, utf8ByteLength } from "../config/skill-size-limits.js";
 import type { MemoryEntry, MemoryScope, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { atomicWriteSkillDir, SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
+import { bumpSkillsSnapshotBestEffort } from "./bump-skills-snapshot.js";
+import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { resolveWorkspacePath, toWorkspaceRelativePath } from "../utils/path.js";
 import { escapeRegExp, stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -238,6 +241,10 @@ function promotionWriteFailureReason(err: unknown): string {
 
 type GenerateAutoSkillsOptions = {
   skillsAutoPath: string;
+  /** Pending output when requireApprovalForPromote is true (default: memory/skills-pending). */
+  skillsPendingPath?: string;
+  /** When true (default), write drafts outside the live skills/ loader tree until promoted. */
+  requireApprovalForPromote?: boolean;
   validationThreshold: number;
   skillTTLDays: number;
   maxPerRun?: number;
@@ -252,6 +259,23 @@ type GenerateAutoSkillsOptions = {
   bypassDuplicateSkillCache?: boolean;
 };
 
+function resolveSkillWritePaths(options: GenerateAutoSkillsOptions): {
+  writeRelativePath: string;
+  basePath: string;
+  autoPathAbs: string;
+  pendingPathAbs: string;
+  existingSkillDirs: string[];
+} {
+  const requirePending = options.requireApprovalForPromote !== false;
+  const pendingRel = options.skillsPendingPath ?? "memory/skills-pending";
+  const writeRelativePath = requirePending ? pendingRel : options.skillsAutoPath;
+  const basePath = resolveSkillsPath(writeRelativePath);
+  const autoPathAbs = resolveSkillsPath(options.skillsAutoPath);
+  const pendingPathAbs = resolveSkillsPath(pendingRel);
+  const existingSkillDirs = [autoPathAbs, pendingPathAbs].filter((p, i, arr) => arr.indexOf(p) === i);
+  return { writeRelativePath, basePath, autoPathAbs, pendingPathAbs, existingSkillDirs };
+}
+
 /**
  * Generate quarantined draft skills for procedures that pass #1328 promotion gates.
  * Dry-run is non-mutating: it does not write skills and does not mark procedures promoted.
@@ -264,7 +288,13 @@ export function generateAutoSkills(
   const maxPerRun = options.maxPerRun ?? MAX_SKILLS_PER_RUN;
   const dryRun = options.dryRun ?? options.apply !== true;
   const policy = parseProcedurePromotionPolicy(resolveBatchPromotionPolicy(options.policy, options.apply));
-  const basePath = resolveSkillsPath(options.skillsAutoPath);
+  const pathInfo = resolveSkillWritePaths(options);
+  const { writeRelativePath, basePath, autoPathAbs, pendingPathAbs, existingSkillDirs } = pathInfo;
+  if (!dryRun && options.requireApprovalForPromote !== false) {
+    logger.info(
+      `procedure-skill-generator: requireApprovalForPromote=true — writing to ${writeRelativePath} (promote to ${options.skillsAutoPath} manually)`,
+    );
+  }
   const runId = `procedure-promotion-${Date.now()}`;
   const procedures = factsDb.getProceduresReadyForSkill(options.validationThreshold, maxPerRun, options.skillTTLDays);
   const paths: string[] = [];
@@ -287,7 +317,7 @@ export function generateAutoSkills(
       relatedByRepresentative.set(c.representative.procedure.id, c.relatedProcedureIds);
     }
   }
-  const baselineDescriptions = loadExistingSkillDescriptions(basePath);
+  const baselineDescriptions = loadExistingSkillDescriptions(autoPathAbs, pendingPathAbs);
   const itemsByProcedureId = new Map(promotionItems.map((item) => [item.procedure.id, item]));
   const resolvedSlugByProcedureId = new Map<string, string>();
   const reservedSlugsForPreview = new Set<string>();
@@ -322,6 +352,7 @@ export function generateAutoSkills(
     const clusterMerge = clusterDeferMap.get(proc.id);
     const evaluation = evaluateProcedureForPromotion(item, policy, {
       skillsAutoPath: basePath,
+      existingSkillDirs: existingSkillDirs.filter((p) => p !== basePath),
       validationThreshold: options.validationThreshold,
       resolvedSlug,
       inRunSkillCandidates: [...(options.inRunSkillCandidates ?? []), ...inRunSkillCandidates],
@@ -414,7 +445,7 @@ export function generateAutoSkills(
 
     let allocated: AllocatedSkillDir | null = null;
     try {
-      allocated = allocateDraftSkillDir(basePath, options.skillsAutoPath, item.payload.skillSlug);
+      allocated = allocateDraftSkillDir(basePath, writeRelativePath, item.payload.skillSlug);
       // Update reservation tracking if allocation resolved to a different slug
       if (allocated.slug !== resolvedSlug) {
         reservedSlugs.delete(resolvedSlug);
@@ -428,6 +459,10 @@ export function generateAutoSkills(
         reservedCandidate.slug = allocated.slug;
       }
       writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
+      void bumpSkillsSnapshotBestEffort({
+        changedPath: join(allocated.skillDir, "SKILL.md"),
+        reason: "hybrid-memory-procedure-skill-draft",
+      });
       // #1328: generated skills are draft/quarantine artifacts and are not enabled. The
       // existing promoted marker is used as a churn guard only after all auto-safe gates pass.
       factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
@@ -522,7 +557,8 @@ export function generateAutoSkillForProcedure(
   const proc = factsDb.getProcedureById(options.procedureId);
   if (!proc) return { ok: false, reason: "not-found" };
 
-  const basePath = resolveSkillsPath(options.skillsAutoPath);
+  const pathInfo = resolveSkillWritePaths(options);
+  const { writeRelativePath, basePath, autoPathAbs, pendingPathAbs, existingSkillDirs } = pathInfo;
 
   if (proc.skillPath && proc.promotedToSkill) {
     const absoluteExisting = resolveWorkspacePath(proc.skillPath);
@@ -543,7 +579,7 @@ export function generateAutoSkillForProcedure(
   const item = createProcedurePromotionItem(proc, policy);
   const resolvedSlug = ensureUniqueSlug(basePath, item.payload.skillSlug);
   const evidence = collectProcedurePromotionEvidence(factsDb, proc);
-  const baselineDescriptions = loadExistingSkillDescriptions(basePath);
+  const baselineDescriptions = loadExistingSkillDescriptions(autoPathAbs, pendingPathAbs);
   // Single-procedure promotion should evaluate only the requested procedure.
   // Batch promotion performs cross-procedure clustering; doing the same here
   // needlessly loads and clusters up to 200 unrelated ready procedures.
@@ -569,6 +605,7 @@ export function generateAutoSkillForProcedure(
   const clusterMerge = clusterDeferMap.get(proc.id);
   const evaluation = evaluateProcedureForPromotion(item, policy, {
     skillsAutoPath: basePath,
+    existingSkillDirs: existingSkillDirs.filter((p) => p !== basePath),
     validationThreshold: options.requireValidation === false ? 1 : options.validationThreshold,
     resolvedSlug,
     evidence,
@@ -616,7 +653,7 @@ export function generateAutoSkillForProcedure(
 
   const skillDir = join(basePath, resolvedSlug);
   const skillPath = join(skillDir, "SKILL.md");
-  const relativePath = toWorkspaceRelativePath(join(options.skillsAutoPath, resolvedSlug));
+  const relativePath = toWorkspaceRelativePath(join(writeRelativePath, resolvedSlug));
 
   if (dryRun) {
     logger.info(`[dry-run] Would generate draft skill: ${skillPath}`);
@@ -634,6 +671,10 @@ export function generateAutoSkillForProcedure(
   try {
     allocated = allocateDraftSkillDir(basePath, options.skillsAutoPath, item.payload.skillSlug);
     writeDraftSkill(allocated.skillDir, rebaseDraftSlug(evaluation.draft, allocated.slug, allocated.relativePath));
+    void bumpSkillsSnapshotBestEffort({
+      changedPath: join(allocated.skillDir, "SKILL.md"),
+      reason: "hybrid-memory-procedure-skill-draft",
+    });
     factsDb.markProcedurePromoted(proc.id, allocated.relativePath);
   } catch (err) {
     rollbackDraftSkill(allocated?.skillDir ?? skillDir);
@@ -735,7 +776,8 @@ function resolveBatchPromotionPolicy(policy: string | undefined, apply: boolean 
 }
 
 function resolveSkillsPath(skillsAutoPath: string): string {
-  return resolveWorkspacePath(skillsAutoPath);
+  if (isAbsolute(skillsAutoPath)) return skillsAutoPath;
+  return join(resolveCliWorkspaceRoot(), skillsAutoPath);
 }
 
 function writeDraftSkill(
@@ -872,24 +914,30 @@ function evaluateClusterRepresentativeEligible(
   return evaluation.eligible;
 }
 
-function loadExistingSkillDescriptions(skillsBasePath: string): string[] {
+function loadExistingSkillDescriptions(...skillsBasePaths: string[]): string[] {
   const descriptions: string[] = [];
-  if (!existsSync(skillsBasePath)) return descriptions;
-  try {
-    for (const entry of readdirSync(skillsBasePath, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const skillMdPath = join(skillsBasePath, entry.name, "SKILL.md");
-      if (!existsSync(skillMdPath)) continue;
-      const raw = readFileSync(skillMdPath, "utf8");
-      const stripped = stripLeadingHtmlComments(raw);
-      const fm = stripped.match(/^---\n([\s\S]*?)\n---/);
-      if (!fm) continue;
-      const keys = parseSkillFrontmatterKeys(fm[1]);
-      const desc = keys.get("description");
-      if (desc) descriptions.push(desc);
+  const seen = new Set<string>();
+  for (const skillsBasePath of skillsBasePaths) {
+    if (!existsSync(skillsBasePath)) continue;
+    try {
+      for (const entry of readdirSync(skillsBasePath, { withFileTypes: true })) {
+        if (!entry.isDirectory() || isAtomicSkillWriteScratchDir(entry.name)) continue;
+        const skillMdPath = join(skillsBasePath, entry.name, "SKILL.md");
+        if (!existsSync(skillMdPath)) continue;
+        const raw = readFileSync(skillMdPath, "utf8");
+        const stripped = stripLeadingHtmlComments(raw);
+        const fm = stripped.match(/^---\n([\s\S]*?)\n---/);
+        if (!fm) continue;
+        const keys = parseSkillFrontmatterKeys(fm[1]);
+        const desc = keys.get("description");
+        if (desc && !seen.has(desc)) {
+          seen.add(desc);
+          descriptions.push(desc);
+        }
+      }
+    } catch {
+      continue;
     }
-  } catch {
-    return descriptions;
   }
   return descriptions;
 }

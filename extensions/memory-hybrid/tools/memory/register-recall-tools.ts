@@ -8,7 +8,6 @@
 import { Type } from "@sinclair/typebox";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
-import { filterByScope, mergeResults } from "../../services/merge-results.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { QueryExpander } from "../../services/query-expander.js";
 import {
@@ -17,8 +16,29 @@ import {
   type ExplicitDeepRetrievalPolicy,
 } from "../../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
+import {
+  inferEntityFilterFromQuery,
+  inferRetrievalModeFromQuery,
+} from "../../services/retrieval-mode-selector.js";
+import {
+  getFactIdsForEntitySurfaces,
+  loadKnownEntitySurfaces,
+  matchEntitySurfacesInText,
+} from "../../services/entity-retrieval.js";
+import {
+  formatMemoryRecallToolLine,
+  memoryRecallToolBoundaryPrefix,
+  sanitizeMemoryField,
+  sanitizeProcedureText,
+} from "../../services/recalled-context-assembler.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { getSessionLogFileSuffix } from "../../utils/constants.js";
+import { formatDateUtc, formatTimestampUtc } from "../../utils/dates.js";
+import {
+  getProgressiveIndexIds,
+  resolveProgressiveIndexSessionKey,
+} from "../../utils/progressive-index-session.js";
 import { parseSourceDate } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import type { MemoryToolRuntime } from "./runtime.js";
@@ -39,6 +59,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     embeddingRegistry,
     verificationStore,
     lastProgressiveIndexIds,
+    progressiveIndexBySession,
     currentAgentIdRef,
     pendingLLMWarnings,
     variantQueue,
@@ -50,6 +71,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     api,
     auditAppend,
     agentIdForAudit,
+    issueStore,
     maybeRefreshProjectActiveTaskProjection,
     storeActiveCanonicalVector,
     storeRegistryEmbeddings,
@@ -299,8 +321,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               sessionId: summary.sessionId,
               sessionKey: summary.sessionId,
               sessionLogPath: `~/.openclaw/agents/${currentAgentIdRef.value || "main"}/sessions/${summary.sessionId}${getSessionLogFileSuffix()}`,
-              periodStart: new Date(summary.periodStart * 1000).toISOString(),
-              periodEnd: new Date(summary.periodEnd * 1000).toISOString(),
+              periodStart: formatTimestampUtc(summary.periodStart),
+              periodEnd: formatTimestampUtc(summary.periodEnd),
               tag: summary.tag,
               text: summary.text,
               score: Number(summary.score.toFixed(3)),
@@ -335,8 +357,19 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const sessionId =
+        const requestedSessionId =
           typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
+        const contextSessionId =
+          typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
+            ? api.context.sessionId.trim()
+            : null;
+        if (!contextSessionId) {
+          throw new Error("memory_session_observability requires an authenticated session context");
+        }
+        if (requestedSessionId && requestedSessionId !== contextSessionId) {
+          throw new Error("memory_session_observability sessionId must match the authenticated session context");
+        }
+        const sessionId = contextSessionId;
         const agentId =
           typeof params.agentId === "string" && params.agentId.trim().length > 0 ? params.agentId.trim() : null;
         const limit =
@@ -507,21 +540,23 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       }
     };
 
-    // Fetch by id (fact id or 1-based index from last progressive index)
+    // Fetch by id (fact id or 1-based index from last progressive index for this session)
     if (idParam !== undefined && idParam !== null && idParam !== "") {
+      const progressiveSessionKey = resolveProgressiveIndexSessionKey(api);
+      const sessionProgressiveIndexIds = getProgressiveIndexIds(progressiveIndexBySession, progressiveSessionKey);
       let factId: string | null = null;
       if (typeof idParam === "number") {
         const idx = Math.floor(idParam);
-        if (idx >= 1 && idx <= lastProgressiveIndexIds.length) {
-          factId = lastProgressiveIndexIds[idx - 1] ?? null;
+        if (idx >= 1 && idx <= sessionProgressiveIndexIds.length) {
+          factId = sessionProgressiveIndexIds[idx - 1] ?? null;
         }
       } else if (typeof idParam === "string" && idParam.trim().length > 0) {
         const trimmed = idParam.trim();
         // Check if it's a numeric string (progressive index position)
         if (/^\d+$/.test(trimmed)) {
           const idx = Number.parseInt(trimmed, 10);
-          if (idx >= 1 && idx <= lastProgressiveIndexIds.length) {
-            factId = lastProgressiveIndexIds[idx - 1] ?? null;
+          if (idx >= 1 && idx <= sessionProgressiveIndexIds.length) {
+            factId = sessionProgressiveIndexIds[idx - 1] ?? null;
           }
         } else {
           // Treat as fact ID
@@ -538,8 +573,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           // Access boost — update recall_count and last_accessed on fetch by id
           factsDb.refreshAccessedFacts([entry.id]);
           logRecall(true);
-          const text = `[${entry.category}] ${entry.text}`;
-          const whyLine = entry.why ? `\nWhy: ${entry.why}` : "";
+          const line = formatMemoryRecallToolLine(entry);
           auditAppend({
             agentId: agentIdForAudit(),
             action: "memory_recall",
@@ -552,7 +586,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
             content: [
               {
                 type: "text",
-                text: `Memory (id: ${entry.id}):\n\n${text}${whyLine}`,
+                text: `${memoryRecallToolBoundaryPrefix()}Memory (id: ${entry.id}):\n\n${line}`,
               },
             ],
             details: {
@@ -560,16 +594,16 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               memories: [
                 {
                   id: entry.id,
-                  text: entry.text,
-                  why: entry.why ?? undefined,
-                  category: entry.category,
-                  entity: entry.entity,
+                  text: sanitizeMemoryField(entry.text),
+                  why: entry.why ? sanitizeMemoryField(entry.why) : undefined,
+                  category: sanitizeMemoryField(entry.category),
+                  entity: entry.entity ? sanitizeMemoryField(entry.entity) : entry.entity,
                   importance: entry.importance,
                   score: 1,
                   backend: "sqlite" as const,
                   tags: entry.tags?.length ? entry.tags : undefined,
                   sourceDate: entry.sourceDate
-                    ? new Date(entry.sourceDate * 1000).toISOString().slice(0, 10)
+                    ? formatDateUtc(entry.sourceDate)
                     : undefined,
                 },
               ],
@@ -592,7 +626,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
             type: "text",
             text:
               typeof idParam === "number"
-                ? `No memory at index ${idParam}. Use a number between 1 and ${lastProgressiveIndexIds.length} from the index, or provide a fact id.`
+                ? `No memory at index ${idParam}. Use a number between 1 and ${sessionProgressiveIndexIds.length} from the index, or provide a fact id.`
                 : `No memory found with id: ${idParam}.`,
           },
         ],
@@ -634,12 +668,25 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     const hasAdditionalConstrainedFilters = Boolean(
       category || source || verificationTier || validFromSec != null || validUntilSec != null || sourceSession,
     );
+    const inferredMode = inferRetrievalModeFromQuery(query, {
+      entity,
+      tag,
+      category,
+      source,
+      verificationTier,
+      sourceSession,
+      validFromSec,
+      validUntilSec,
+    });
+    const inferredEntity = entity ?? inferEntityFilterFromQuery(query);
     const shouldUseConstrainedMode =
-      retrievalMode === "constrained-recall" || (!retrievalMode && hasAdditionalConstrainedFilters);
-    const effectiveMode = shouldUseConstrainedMode ? "constrained-recall" : retrievalMode;
+      retrievalMode === "constrained-recall" ||
+      (!retrievalMode && (hasAdditionalConstrainedFilters || inferredMode === "constrained-recall"));
+    const effectiveMode =
+      shouldUseConstrainedMode ? "constrained-recall" : (retrievalMode ?? inferredMode ?? "explicit-deep");
     const constrainedFilters = shouldUseConstrainedMode
       ? {
-          ...(entity ? { entity } : {}),
+          ...(inferredEntity ? { entity: inferredEntity } : {}),
           ...(tag ? { tag } : {}),
           ...(category ? { category } : {}),
           ...(source ? { source } : {}),
@@ -650,9 +697,37 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         }
       : undefined;
 
+    if (shouldUseConstrainedMode && Object.keys(constrainedFilters ?? {}).length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text:
+              "constrained-recall requires at least one filter (entity, tag, category, source, verificationTier, sourceSession, or validFrom/validUntil).",
+          },
+        ],
+        details: { count: 0, error: "missing_constrained_filters" },
+      };
+    }
+
+    // Entity-layer pre-filter: when NER tables match query surfaces, narrow constrained candidates.
+    let entityLayerFactIds: string[] | undefined;
+    if (shouldUseConstrainedMode && typeof factsDb.getRawDb === "function") {
+      try {
+        const surfaces = loadKnownEntitySurfaces(factsDb.getRawDb(), 300);
+        const matched = matchEntitySurfacesInText(query, surfaces);
+        if (matched.length > 0) {
+          entityLayerFactIds = getFactIdsForEntitySurfaces(factsDb.getRawDb(), matched, 80);
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
+
     // Entity-targeted lookup is useful for legacy explicit recall, but it bypasses
     // filter → rank → hydrate semantics, so disable it in constrained mode.
     let entityResults: SearchResult[] = [];
+    let recallOutcome: "success" | "degraded_fallback" = "success";
     if (entity && !shouldUseConstrainedMode) {
       entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
     }
@@ -678,7 +753,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
             ? resolveConstrainedRetrievalPolicy(rrfConfig)
             : resolveExplicitDeepRetrievalPolicy(rrfConfig)
           : undefined;
-      if (!useLegacyTagShortcut && effectivePolicy !== undefined) {
+      const embedPolicy =
+        effectivePolicy ??
+        (effectiveMode === "interactive-recall" && rrfStrategies.includes("semantic")
+          ? resolveExplicitDeepRetrievalPolicy(rrfConfig)
+          : undefined);
+      if (!useLegacyTagShortcut && embedPolicy) {
         const vectorPrep = await buildExplicitSemanticQueryVector({
           query,
           cfg,
@@ -686,7 +766,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           openai,
           pendingLLMWarnings,
           logger: api.logger,
-          policy: effectivePolicy as ExplicitDeepRetrievalPolicy,
+          policy:
+            embedPolicy.mode === "constrained-recall"
+              ? resolveExplicitDeepRetrievalPolicy(rrfConfig)
+              : (embedPolicy as ExplicitDeepRetrievalPolicy),
         });
         queryVector = vectorPrep.queryVector;
         semanticWarning = vectorPrep.warning;
@@ -724,6 +807,9 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         rerankingOpenai: openai,
         adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
         documentGradingConfig: cfg.documentGrading,
+        issueStore: issueStore ?? null,
+        ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
+        warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
       });
 
       // Merge entity-lookup results first, then append RRF results (deduped).
@@ -751,24 +837,33 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       results.sort((a, b) => b.score - a.score);
       results = results.slice(0, limit);
     } catch (err) {
-      // Fallback: use legacy FTS + vector merge if RRF pipeline fails
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "search",
         operation: "rrf-pipeline",
         phase: "runtime",
       });
-      api.logger.warn(`memory-hybrid: RRF pipeline failed, falling back to legacy merge: ${err}`);
-      const ftsResults = factsDb.search(query, limit, {
-        ...recallOpts,
-        reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
-        diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
-      });
-      let lanceResults: SearchResult[] = [];
-      if (queryVector) {
-        lanceResults = await vectorDb.search(queryVector, limit * 3, 0.3);
-        lanceResults = filterByScope(lanceResults, (id, opts) => factsDb.getById(id, opts), scopeFilter);
+      if (shouldUseConstrainedMode) {
+        api.logger.warn(
+          `memory-hybrid: constrained-recall pipeline failed — not falling back to full-corpus search: ${err}`,
+        );
+        results = [...entityResults];
+      } else {
+        api.logger.warn(`memory-hybrid: RRF pipeline failed, falling back to scoped FTS+vector merge: ${err}`);
+        recallOutcome = "degraded_fallback";
+        results = await runScopedFtsVectorFallback({
+          query,
+          limit,
+          queryVector,
+          factsDb,
+          vectorDb,
+          recallOpts,
+          scopeFilter,
+          warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
+          seedResults: entityResults,
+          reinforcementBoost: cfg.distill?.reinforcementBoost ?? 0.1,
+          diversityWeight: cfg.reinforcement?.diversityWeight ?? 1.0,
+        });
       }
-      results = mergeResults([...entityResults, ...ftsResults], lanceResults, limit, factsDb);
     }
 
     // Exclude COLD tier when includeCold is false (Lance results may include cold facts)
@@ -918,10 +1013,14 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         const meta = expansionMeta.get(r.entry.id);
         const expansionSuffix =
           meta && meta.expansionSource === "graph"
-            ? ` [graph+${meta.hopCount}hop${meta.linkPath ? `: ${meta.linkPath}` : ""}]`
+            ? ` [graph+${meta.hopCount}hop${meta.linkPath ? `: ${sanitizeMemoryField(meta.linkPath)}` : ""}]`
             : "";
-        const whySuffix = r.entry.why ? `\n   Why: ${r.entry.why}` : "";
-        return `${i + 1}. [${r.backend}/${r.entry.category}] ${contradictedPrefix}${tamperedPrefix}${r.entry.text} (${(r.score * 100).toFixed(0)}%)${expansionSuffix}${whySuffix}`;
+        return formatMemoryRecallToolLine(r.entry, {
+          backend: r.backend,
+          linePrefix: `${i + 1}. ${contradictedPrefix}${tamperedPrefix}`,
+          scorePct: `${(r.score * 100).toFixed(0)}%`,
+          extraSuffix: expansionSuffix,
+        });
       })
       .join("\n");
 
@@ -929,15 +1028,15 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       const meta = expansionMeta.get(r.entry.id);
       return {
         id: r.entry.id,
-        text: r.entry.text,
-        why: r.entry.why ?? undefined,
-        category: r.entry.category,
-        entity: r.entry.entity,
+        text: sanitizeMemoryField(r.entry.text),
+        why: r.entry.why ? sanitizeMemoryField(r.entry.why) : undefined,
+        category: sanitizeMemoryField(r.entry.category),
+        entity: r.entry.entity ? sanitizeMemoryField(r.entry.entity) : r.entry.entity,
         importance: r.entry.importance,
         score: r.score,
         backend: r.backend,
         tags: r.entry.tags?.length ? r.entry.tags : undefined,
-        sourceDate: r.entry.sourceDate ? new Date(r.entry.sourceDate * 1000).toISOString().slice(0, 10) : undefined,
+        sourceDate: r.entry.sourceDate ? formatDateUtc(r.entry.sourceDate) : undefined,
         contradicted: contradictionStatus.get(r.entry.id) || undefined,
         accessCount: r.entry.accessCount ?? 0,
         lastAccessedAt: r.entry.lastAccessedAt ?? null,
@@ -955,17 +1054,20 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       agentId: agentIdForAudit(),
       action: "memory_recall",
       target: query ? `query="${query.slice(0, 160)}"` : undefined,
-      outcome: "success",
+      outcome: recallOutcome,
       durationMs: Date.now() - recallStartedAt,
       sessionId: api.context?.sessionId ?? undefined,
-      context: { count: results.length },
+      context: {
+        count: results.length,
+        ...(recallOutcome === "degraded_fallback" ? { degradedFallback: true } : {}),
+      },
     });
 
     return {
       content: [
         {
           type: "text",
-          text: `${retrievalExplanationText ? `${retrievalExplanationText}\n\n` : ""}Found ${results.length} memories:\n\n${text}${semanticWarning ? `\n\n⚠️ ${semanticWarning}` : ""}`,
+          text: `${retrievalExplanationText ? `${retrievalExplanationText}\n\n` : ""}${memoryRecallToolBoundaryPrefix()}Found ${results.length} memories:\n\n${text}${semanticWarning ? `\n\n⚠️ ${semanticWarning}` : ""}`,
         },
       ],
       details: {
@@ -1074,22 +1176,28 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
                 }
                 const steps = Array.isArray(recipe)
                   ? (recipe as Array<{ tool?: string; args?: Record<string, unknown> }>)
-                      .map(
-                        (s) =>
-                          s.tool +
-                          (s.args && Object.keys(s.args).length > 0 ? `(${JSON.stringify(s.args).slice(0, 80)}…)` : ""),
-                      )
+                      .map((s) => {
+                        const tool = sanitizeProcedureText(String(s.tool ?? ""));
+                        if (!tool) return "";
+                        const args =
+                          s.args && Object.keys(s.args).length > 0
+                            ? `(${sanitizeProcedureText(JSON.stringify(s.args).slice(0, 80))}…)`
+                            : "";
+                        return `${tool}${args}`;
+                      })
+                      .filter(Boolean)
                       .join(" → ")
-                  : p.recipeJson.slice(0, 200);
+                  : sanitizeProcedureText(p.recipeJson.slice(0, 200));
                 const rate = p.successRate !== undefined ? `, rate ${(p.successRate * 100).toFixed(0)}%` : "";
                 const ver = p.version !== undefined ? `, v${p.version}` : "";
                 const outcome = p.lastOutcome === "failure" ? " ⚠️" : p.lastOutcome === "success" ? " ✅" : "";
+                const pattern = sanitizeProcedureText(p.taskPattern);
                 lines.push(
-                  `- ${p.taskPattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x${rate}${ver}${outcome})`,
+                  `- ${pattern.slice(0, 80)}…: ${steps} (validated ${p.successCount}x${rate}${ver}${outcome})`,
                 );
                 if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
                   for (const note of p.avoidanceNotes.slice(0, 2)) {
-                    lines.push(`  ⚠ ${note}`);
+                    lines.push(`  ⚠ ${sanitizeProcedureText(note)}`);
                   }
                 }
               }
@@ -1111,15 +1219,16 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
                 }
                 const steps = Array.isArray(recipe)
                   ? (recipe as Array<{ tool?: string }>)
-                      .map((s) => s.tool)
+                      .map((s) => sanitizeProcedureText(String(s.tool ?? "")))
                       .filter(Boolean)
                       .join(" → ")
                   : "";
                 const ver = p.version !== undefined ? ` (v${p.version})` : "";
-                lines.push(`- ${p.taskPattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}${ver}`);
+                const pattern = sanitizeProcedureText(p.taskPattern);
+                lines.push(`- ${pattern.slice(0, 80)}… ${steps ? `(${steps})` : ""}${ver}`);
                 if (p.avoidanceNotes && p.avoidanceNotes.length > 0) {
                   for (const note of p.avoidanceNotes.slice(0, 2)) {
-                    lines.push(`  ⚠ ${note}`);
+                    lines.push(`  ⚠ ${sanitizeProcedureText(note)}`);
                   }
                 }
               }
@@ -1131,7 +1240,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
               };
             }
             return {
-              content: [{ type: "text" as const, text: lines.join("\n") }],
+              content: [
+                {
+                  type: "text" as const,
+                  text: `${memoryRecallToolBoundaryPrefix()}${lines.join("\n")}`,
+                },
+              ],
               details: {
                 count: positiveList.length + negatives.length,
                 procedures: positiveList.length,

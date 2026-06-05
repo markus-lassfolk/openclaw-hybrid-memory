@@ -1,11 +1,18 @@
 /**
  * Structured recall event capture and JSONL backfill for reinforcement linkage.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { extractRecalledMemoryIds, parseSessionMessagesFromLines } from "./session-signal-context.js";
+import {
+  type ParsedRecallEvent,
+  extractFactIdsFromToolResultPayload,
+  extractRecallEventsFromMessages,
+  extractRecallEventsFromTrajectoryLines,
+  readTrajectoryLines,
+} from "./session-v3-parser.js";
+import { parseSessionMessagesFromLines } from "./session-signal-context.js";
 import { timestampFromFilename } from "../utils/text.js";
 
 export type RecallEventSource = "tool" | "auto-recall" | "backfill";
@@ -20,6 +27,46 @@ export type RecallEventInput = {
   source: RecallEventSource;
 };
 
+/** Stable primary key for backfilled recall rows (session + occurrence + query + fact set). */
+export function backfillRecallEventId(input: {
+  sessionKey: string;
+  occurredAtSec: number;
+  query: string | null;
+  factIds: string[];
+}): string {
+  const factSig = [...input.factIds].sort().join(",");
+  const payload = `backfill\0${input.sessionKey}\0${input.occurredAtSec}\0${input.query ?? ""}\0${factSig}`;
+  const hex = createHash("sha256").update(payload).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** Insert a recall event; returns true when a new row was written. */
+export function insertRecallEvent(db: DatabaseSync, input: RecallEventInput, opts?: { id?: string }): boolean {
+  const id = opts?.id ?? randomUUID();
+  const occurredAt = input.occurredAtSec ?? Math.floor(Date.now() / 1000);
+  const factIdsJson = JSON.stringify([...input.factIds].sort().slice(0, 100));
+  const result = db
+    .prepare(
+      `INSERT OR IGNORE INTO recall_events (id, occurred_at, session_key, agent_id, query, fact_ids, hit, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      occurredAt,
+      input.sessionKey ?? null,
+      input.agentId ?? null,
+      input.query ?? null,
+      factIdsJson,
+      input.hit ? 1 : 0,
+      input.source,
+    );
+  return (result.changes ?? 0) > 0;
+}
+
+export function logRecallEvent(db: DatabaseSync, input: RecallEventInput): boolean {
+  return insertRecallEvent(db, input);
+}
+
 export type RecallEventRow = {
   id: string;
   occurredAt: number;
@@ -30,25 +77,6 @@ export type RecallEventRow = {
   hit: boolean;
   source: RecallEventSource;
 };
-
-export function logRecallEvent(db: DatabaseSync, input: RecallEventInput): void {
-  const id = randomUUID();
-  const occurredAt = input.occurredAtSec ?? Math.floor(Date.now() / 1000);
-  const factIdsJson = JSON.stringify(input.factIds.slice(0, 100));
-  db.prepare(
-    `INSERT INTO recall_events (id, occurred_at, session_key, agent_id, query, fact_ids, hit, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    occurredAt,
-    input.sessionKey ?? null,
-    input.agentId ?? null,
-    input.query ?? null,
-    factIdsJson,
-    input.hit ? 1 : 0,
-    input.source,
-  );
-}
 
 export function countRecallEventsSince(db: DatabaseSync, sinceSec: number): number {
   const row = db.prepare("SELECT COUNT(*) AS cnt FROM recall_events WHERE occurred_at >= ?").get(sinceSec) as
@@ -120,6 +148,7 @@ type ParsedRecallFromContent = {
   query?: string;
   factIds: string[];
   hit: boolean;
+  toolCallId?: string;
 };
 
 /** Extract memory_recall tool_use + tool_result pairs from assistant content blocks. */
@@ -131,12 +160,14 @@ export function extractRecallEventsFromAssistantContent(content: unknown): Parse
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
     const type = (block as { type?: string }).type;
-    if (type === "tool_use") {
+    if (type === "tool_use" || type === "toolCall") {
       const name = (block as { name?: string }).name;
       if (name !== "memory_recall") continue;
       const toolId = (block as { id?: string }).id;
       const input = (block as { input?: Record<string, unknown> }).input;
-      const query = typeof input?.query === "string" ? input.query : undefined;
+      const args = (block as { arguments?: Record<string, unknown> }).arguments;
+      const querySource = input ?? args;
+      const query = typeof querySource?.query === "string" ? querySource.query : undefined;
       if (toolId) pending.set(toolId, { query });
       continue;
     }
@@ -145,16 +176,48 @@ export function extractRecallEventsFromAssistantContent(content: unknown): Parse
       if (!toolUseId || !pending.has(toolUseId)) continue;
       const meta = pending.get(toolUseId)!;
       pending.delete(toolUseId);
-      const factIds = extractRecalledMemoryIds([block]);
+      const payload = (block as { content?: unknown }).content;
+      const factIds = extractFactIdsFromToolResultPayload(payload, block);
       events.push({
         query: meta.query,
         factIds,
         hit: factIds.length > 0,
+        toolCallId: toolUseId,
       });
     }
   }
 
   return events;
+}
+
+/** Collect recall events from session JSONL and optional trajectory sidecar without double-counting. */
+function collectRecallEventsFromSession(
+  filePath: string,
+  messages: ReturnType<typeof parseSessionMessagesFromLines>,
+  subsystem: string,
+): ParsedRecallEvent[] {
+  const seenToolCallIds = new Set<string>();
+  const out: ParsedRecallEvent[] = [];
+  const add = (events: Array<ParsedRecallEvent | ParsedRecallFromContent>): void => {
+    for (const ev of events) {
+      if (ev.toolCallId) {
+        if (seenToolCallIds.has(ev.toolCallId)) continue;
+        seenToolCallIds.add(ev.toolCallId);
+      }
+      out.push(ev);
+    }
+  };
+
+  const trajLines = readTrajectoryLines(filePath);
+  if (trajLines) {
+    add(extractRecallEventsFromTrajectoryLines(trajLines, subsystem));
+  }
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    add(extractRecallEventsFromAssistantContent(msg.content));
+  }
+  add(extractRecallEventsFromMessages(messages));
+  return out;
 }
 
 function filenameToEpochSec(name: string, fallbackMtimeSec: number): number {
@@ -180,21 +243,27 @@ export function backfillRecallEventsFromSessionFile(db: DatabaseSync, filePath: 
   let inserted = 0;
   let turnIndex = 0;
 
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
+  const events = collectRecallEventsFromSession(filePath, messages, "backfill-recall-events");
+  for (const ev of events) {
     turnIndex++;
-    const parsed = extractRecallEventsFromAssistantContent(msg.content);
-    for (const ev of parsed) {
-      logRecallEvent(db, {
-        occurredAtSec: occurredBase + turnIndex,
+    const occurredAtSec = occurredBase + turnIndex;
+    const query = ev.query ?? null;
+    const insertedRow = insertRecallEvent(
+      db,
+      {
+        occurredAtSec,
         sessionKey,
-        query: ev.query ?? null,
+        query,
         factIds: ev.factIds,
         hit: ev.hit,
         source: "backfill",
-      });
-      inserted++;
-    }
+      },
+      {
+        id: backfillRecallEventId({ sessionKey, occurredAtSec, query, factIds: ev.factIds }),
+      },
+    );
+    if (insertedRow) inserted++;
   }
+
   return inserted;
 }

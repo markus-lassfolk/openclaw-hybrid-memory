@@ -26,6 +26,7 @@ import {
 } from "../services/reinforcement-batch-analyze.js";
 import { resolveSelfCorrectionBatchDelayMs } from "../services/self-correction-batch-analyze.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitPipelinePersonaProposed } from "../services/change-feed-emit.js";
 import {
   type AnnotationReasons,
   type ReinforcementAnnotationDiagnostic,
@@ -34,8 +35,10 @@ import {
   runReinforcementExtract,
 } from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { insertRulesUnderSection, ruleExistsInContent } from "../services/tools-md-section.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
@@ -46,10 +49,13 @@ import { resolveExtractSessionFilePaths } from "../services/extract-session-path
 import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
+import { resolvePipelineProposalTarget } from "./proposals.js";
+import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso } from "../utils/dates.js";
 import type { ReinforcementIncident } from "../services/reinforcement-extract.js";
 
 const REINFORCEMENT_BATCH_STATE_VERSION = 1;
@@ -186,7 +192,7 @@ export function readReinforcementBatchState(statePath: string): ReinforcementBat
         truncations: Number.isFinite(diagnostics.truncations) ? diagnostics.truncations : 0,
         retries: Number.isFinite(diagnostics.retries) ? diagnostics.retries : 0,
       },
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : nowIso(),
     };
   } catch {
     return null;
@@ -194,7 +200,7 @@ export function readReinforcementBatchState(statePath: string): ReinforcementBat
 }
 
 function writeReinforcementBatchState(statePath: string, state: ReinforcementBatchState): void {
-  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: nowIso() }, null, 2)}\n`);
 }
 
 function removeReinforcementBatchState(statePath: string): void {
@@ -248,7 +254,7 @@ export async function runExtractReinforcementForCli(
     } else {
       filePaths = resolveExtractSessionFilePaths(cfg, days);
     }
-    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
     // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
@@ -355,7 +361,7 @@ export async function runExtractReinforcementForCli(
             completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
             analysed,
             diagnostics,
-            updatedAt: new Date().toISOString(),
+            updatedAt: nowIso(),
           });
         };
 
@@ -576,18 +582,18 @@ export async function runExtractReinforcementForCli(
               typeof a.remediationContent === "string"
                 ? a.remediationContent
                 : ((a.remediationContent as { text?: string })?.text ?? "");
-            if (!line.trim()) continue;
+            const trimmedRule = line.trim();
+            if (!trimmedRule) continue;
 
-            // Exact text dedup: skip if the rule already appears in TOOLS.md
             if (existsSync(toolsPath)) {
               const currentTools = readFileSync(toolsPath, "utf-8");
-              if (currentTools.includes(line.trim())) continue;
+              if (ruleExistsInContent(currentTools, trimmedRule)) continue;
             }
 
             let ruleVec: number[] | null = null;
             if (semanticDedup) {
               try {
-                ruleVec = await embeddings.embed(line.trim());
+                ruleVec = await embeddings.embed(trimmedRule);
                 if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
                   logger?.info?.(
                     `memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`,
@@ -602,24 +608,22 @@ export async function runExtractReinforcementForCli(
               }
             }
 
-            if (existsSync(toolsPath)) {
-              insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
+            insertRulesUnderSection(toolsPath, positiveRulesSection, [trimmedRule]);
 
-              if (ruleVec) {
-                try {
-                  await vectorDb.store({
-                    text: line.trim(),
-                    vector: ruleVec,
-                    importance: CLI_STORE_IMPORTANCE,
-                    category: "technical",
-                    id: `positive-rule-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-                  });
-                } catch (err) {
-                  capturePluginError(err as Error, {
-                    subsystem: "cli",
-                    operation: "reinforcement:positive-rule-vector-store",
-                  });
-                }
+            if (ruleVec) {
+              try {
+                await vectorDb.store({
+                  text: trimmedRule,
+                  vector: ruleVec,
+                  importance: CLI_STORE_IMPORTANCE,
+                  category: "technical",
+                  id: `positive-rule-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                });
+              } catch (err) {
+                capturePluginError(err as Error, {
+                  subsystem: "cli",
+                  operation: "reinforcement:positive-rule-vector-store",
+                });
               }
             }
           } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
@@ -659,6 +663,7 @@ export async function runExtractReinforcementForCli(
               value: text.slice(0, 200),
               source: "reinforcement-analysis",
               tags,
+              suppressVectorFallbackWarning: true,
             });
             if (storeResult.skipped) {
               continue;
@@ -702,16 +707,32 @@ export async function runExtractReinforcementForCli(
             const suggestedChange = obj.suggestedChange ?? (typeof c === "string" ? c : "");
             const targetFile = obj.targetFile ?? inferTargetFile(suggestedChange);
             if (suggestedChange.trim()) {
-              proposalsDb.create({
+              const resolved = resolvePipelineProposalTarget({
                 targetFile,
+                suggestedChange,
+                allowedFiles: cfg.personaProposals.allowedFiles,
+                workspaceRoot,
+                confidence: 0.7,
+                proposalTTLDays: cfg.personaProposals.proposalTTLDays,
+                minConfidence: cfg.personaProposals.minConfidence,
+                proposalsDb,
+                workshopStores: workshopStoresFromHandlerContext(ctx),
+              });
+              if (!resolved) continue;
+              const created = proposalsDb.create({
+                targetFile: resolved.targetFile,
                 title: `Reinforcement: ${a.category}`,
                 observation: "Positive signal from reinforcement analysis",
                 suggestedChange: suggestedChange.trim(),
-                confidence: 0.7,
+                confidence: resolved.confidence,
                 evidenceSessions: result.incidents
                   .map((i) => i.sessionFile)
                   .filter((v, idx, arr) => arr.indexOf(v) === idx),
+                expiresAt: resolved.expiresAt,
+                targetMtimeMs: resolved.targetMtimeMs,
+                targetHash: resolved.targetHash,
               });
+              emitPipelinePersonaProposed(ctx.changeFeed, cfg, created);
             }
           }
         } catch (err) {
@@ -732,9 +753,53 @@ export async function runExtractReinforcementForCli(
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const incident of result.incidents) {
         if (incident.recalledMemoryIds.length === 0) {
-          annotationReasons.noRecalledIds++;
-          // Store standalone praise signal when no memory_recall IDs (sparse recall usage).
-          if (!opts.dryRun && incident.confidence >= 0.55) {
+          let reinforcedViaSimilarity = false;
+          let praiseStored = false;
+          // Embedding-similarity fallback when agent did not call memory_recall (#1802).
+          try {
+            const contextText = [incident.agentBehavior, incident.precedingUserMessage, incident.userMessage]
+              .filter(Boolean)
+              .join(" ")
+              .slice(0, 500);
+            if (contextText.trim().length >= 20) {
+              const vector = await embeddings.embed(contextText);
+              const similar = await findSimilarByEmbedding(vectorDb, factsDb, vector, 1, 0.55);
+              if (similar.length > 0) {
+                const entry = similar[0];
+                const nowSec = Math.floor(Date.now() / 1000);
+                if (entry.expiresAt == null || entry.expiresAt > nowSec) {
+                  const context: ReinforcementContext = {
+                    querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
+                    topic: analysisCategory,
+                    toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
+                    sessionFile: incident.sessionFile,
+                  };
+                  const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
+                  const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
+                  const diversityScore = factsDb.calculateDiversityScore(entry.id);
+                  const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+                  const ok = factsDb.reinforceFact(entry.id, incident.userMessage, context, {
+                    trackContext,
+                    maxEventsPerFact,
+                    boostAmount: effectiveBoost,
+                  });
+                  if (ok) {
+                    reinforcedViaSimilarity = true;
+                    annotated++;
+                    annotationReasons.reinforced++;
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              subsystem: "cli",
+              operation: "runExtractReinforcementForCli:similarity-fallback",
+            });
+          }
+
+          // Store standalone praise signal when similarity fallback found nothing.
+          if (!reinforcedViaSimilarity && incident.confidence >= 0.55) {
             try {
               const praiseText = redactMaintenancePrivateText(
                 `[Reinforcement praise] User: "${incident.userMessage.slice(0, 180)}" — praised behavior: ${incident.agentBehavior.slice(0, 180)}`,
@@ -751,8 +816,10 @@ export async function runExtractReinforcementForCli(
                   confidence: incident.confidence,
                   tags: ["reinforcement", "praise", "no-recall-ids"],
                   decayClass: "normal",
+                  suppressVectorFallbackWarning: true,
                 });
                 if (!storeResult.skipped && (storeResult.newlyStored || storeResult.embeddingStale)) {
+                  praiseStored = true;
                   annotated++;
                   annotationReasons.reinforced++;
                   await cleanupEvictedVector({
@@ -794,6 +861,9 @@ export async function runExtractReinforcementForCli(
               subsystem: "cli",
               operation: "runExtractReinforcementForCli:procedure-boost",
             });
+          }
+          if (!reinforcedViaSimilarity && !praiseStored) {
+            annotationReasons.noRecalledIds++;
           }
           continue;
         }

@@ -1,3 +1,5 @@
+import { nowIso } from "../utils/dates.js";
+
 export type AuditHealthExitReason =
   | "ok"
   | "warnings"
@@ -94,7 +96,7 @@ export function buildAuditFailureArtifact(
   const allWarnings = [...(preReportWarnings ?? [])];
   return {
     schemaVersion: 1,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     ok: false,
     status: "failed",
     exitCode: 2,

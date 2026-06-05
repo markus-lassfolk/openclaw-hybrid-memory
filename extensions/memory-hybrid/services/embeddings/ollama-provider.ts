@@ -4,6 +4,7 @@
 
 import { OLLAMA_COOLDOWN_MS, OLLAMA_MAX_FAILS } from "../../utils/constants.js";
 import { pluginLogger } from "../../utils/logger.js";
+import { formatTimestampUtcFromMs } from "../../utils/dates.js";
 import type { EmbeddingProvider } from "./types.js";
 
 /**
@@ -68,7 +69,7 @@ export class OllamaEmbeddingProvider implements EmbeddingProvider {
     const circuit = _getOllamaCircuit(this.endpoint);
     if (Date.now() < circuit.disabledUntil) {
       throw new Error(
-        `Ollama circuit breaker open — disabled until ${new Date(circuit.disabledUntil).toISOString()} (endpoint: ${this.endpoint})`,
+        `Ollama circuit breaker open — disabled until ${formatTimestampUtcFromMs(circuit.disabledUntil)} (endpoint: ${this.endpoint})`,
       );
     }
 

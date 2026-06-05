@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { normalizeExitStepName } from "./cron-exit-validator.js";
 import { capturePluginError } from "./error-reporter.js";
+import { nowIso, formatTimestampUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
 import {
   collectMaintenanceNoiseWarnings,
   isBenignNoiseOnlyMaintenanceStep,
@@ -376,7 +377,7 @@ function buildOrchestrationSyntheticStep(params: {
   markerBits.push(`progress-marker=${hasProgress ? "present" : "missing"}`);
   if (kind === "empty-exit") markerBits.push(`stale=${stale ? "yes" : "no"}`);
 
-  const iso = new Date(latestActivityMs || nowMs).toISOString();
+  const iso = formatTimestampUtcFromMs(latestActivityMs || nowMs);
   return {
     occurredAt: Math.floor((latestActivityMs || nowMs) / 1000),
     iso,
@@ -1022,11 +1023,11 @@ function renderFindingSection(title: string, findings: MaintenanceFinding[]): st
           ? "🚨"
           : "⚠️";
     lines.push(
-      `${icon} **${f.job}** — ${f.step} exit=${f.exitCode} at ${new Date(f.occurredAt * 1000).toISOString()}. Class: ${f.classification}. Action: ${f.actionTaken}. Fingerprint: ${f.fingerprint}.`,
+      `${icon} **${f.job}** — ${f.step} exit=${f.exitCode} at ${formatTimestampUtc(f.occurredAt)}. Class: ${f.classification}. Action: ${f.actionTaken}. Fingerprint: ${f.fingerprint}.`,
     );
     if ((f.occurrenceCount ?? 1) > 1) {
-      const firstSeen = typeof f.firstSeenAt === "number" ? new Date(f.firstSeenAt * 1000).toISOString() : "unknown";
-      const lastSeen = typeof f.lastSeenAt === "number" ? new Date(f.lastSeenAt * 1000).toISOString() : "unknown";
+      const firstSeen = typeof f.firstSeenAt === "number" ? formatTimestampUtc(f.firstSeenAt) : "unknown";
+      const lastSeen = typeof f.lastSeenAt === "number" ? formatTimestampUtc(f.lastSeenAt) : "unknown";
       lines.push(`Seen ${f.occurrenceCount} times since ${firstSeen}; last seen ${lastSeen}.`);
     }
     lines.push(`Suggested: ${f.suggestedAction}`);
@@ -1135,7 +1136,7 @@ export function buildMaintenanceAnalysisReport(opts: {
   const noiseWarnings = opts.noiseWarnings ?? collectMaintenanceNoiseWarnings(opts.steps);
   const base = {
     schemaVersion: 1 as const,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     root: opts.root,
     since: opts.since ?? "24h",
     totalSteps: opts.steps.length,

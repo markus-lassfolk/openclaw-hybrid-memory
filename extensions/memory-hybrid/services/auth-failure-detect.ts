@@ -6,6 +6,8 @@
  * (hostname, IP, URL domain, service name) for memory recall.
  */
 
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
+
 export type AuthFailurePattern = {
   regex: RegExp;
   type: "ssh" | "http" | "api" | "generic";
@@ -153,9 +155,18 @@ export function formatCredentialHint(
     const f = facts[i];
     // Show only metadata to prevent credential leaks
     const parts: string[] = [];
-    if (f.entity) parts.push(`entity: ${f.entity}`);
-    if (f.key) parts.push(`key: ${f.key}`);
-    if (f.category && f.category !== "technical") parts.push(`[${f.category}]`);
+    if (f.entity) {
+      const entity = sanitizePromptInjection(f.entity);
+      if (entity) parts.push(`entity: ${entity}`);
+    }
+    if (f.key) {
+      const key = sanitizePromptInjection(f.key);
+      if (key) parts.push(`key: ${key}`);
+    }
+    if (f.category && f.category !== "technical") {
+      const category = sanitizePromptInjection(f.category);
+      if (category) parts.push(`[${category}]`);
+    }
 
     const metadata = parts.length > 0 ? parts.join(", ") : "stored credential";
     lines.push(`  ${i + 1}. ${metadata}`);

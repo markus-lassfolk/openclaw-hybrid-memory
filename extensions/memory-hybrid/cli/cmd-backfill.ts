@@ -25,6 +25,7 @@ import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens }
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
@@ -186,6 +187,8 @@ export type SessionJsonlUserMessageExtraction = {
   texts: string[];
   /** First 1-based line number that failed JSON.parse, if any. */
   firstMalformedLine: number | null;
+  /** Non-empty lines that parsed as JSON objects (user messages optional). */
+  validLineCount: number;
 };
 
 /** Extract user message texts and record the first malformed JSONL line (best-effort per line). */
@@ -193,6 +196,7 @@ export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const texts: string[] = [];
   let firstMalformedLine: number | null = null;
+  let validLineCount = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
@@ -203,6 +207,7 @@ export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string
         message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
       };
       if (!obj || typeof obj !== "object") continue;
+      validLineCount++;
       if (obj.type !== "message" || !obj.message || obj.message.role !== "user") continue;
       const content = obj.message.content;
       if (!Array.isArray(content)) continue;
@@ -215,7 +220,7 @@ export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string
       if (firstMalformedLine === null) firstMalformedLine = i + 1;
     }
   }
-  return { texts, firstMalformedLine };
+  return { texts, firstMalformedLine, validLineCount };
 }
 
 /** Extract raw user message texts from a session file (for regex/sentiment). */
@@ -379,7 +384,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   let firstSessionParseError: string | null = null;
   for (const { path: fp } of sessionFiles) {
     try {
-      const { texts, firstMalformedLine } = extractUserMessageTextsFromSessionJsonlWithMeta(fp);
+      const { texts, firstMalformedLine, validLineCount } = extractUserMessageTextsFromSessionJsonlWithMeta(fp);
       if (firstMalformedLine !== null) {
         logger.warn?.(
           `memory-hybrid: Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}, continuing with valid lines`,
@@ -388,7 +393,8 @@ export async function runAnalyzeFeedbackPhrasesForCli(
           firstSessionParseError = `Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}`;
         }
       }
-      if (texts.length > 0) {
+      // Count sessions with at least one parseable JSONL line (user text optional).
+      if (validLineCount > 0) {
         successfullyScannedSessions++;
       }
       allTexts.push(...texts);
@@ -609,7 +615,7 @@ export async function runIngestFilesForCli(
   sink: IngestFilesSink,
 ): Promise<IngestFilesResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
-  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
   const ingestCfg = cfg.ingest;
   const patterns = opts.paths?.length ? opts.paths : ingestCfg?.paths?.length ? ingestCfg.paths : DEFAULT_INGEST_PATHS;
   const chunkSize = ingestCfg?.chunkSize ?? 800;

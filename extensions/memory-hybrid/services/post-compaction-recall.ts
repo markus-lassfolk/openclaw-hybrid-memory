@@ -6,11 +6,15 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { LifecycleContext } from "../lifecycle/types.js";
 import type { ScopeFilter } from "../types/memory.js";
+import { trimBlockToBudget } from "./context-block-trim.js";
+import { formatSanitizedMemoryPreview } from "./recalled-context-assembler.js";
+import { estimateTokens, sanitizeRecallFactText } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
 import { capturePluginError } from "./error-reporter.js";
+import { filterCandidatesByInteractiveGrading } from "./interactive-recall-grader.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "./recall-pipeline.js";
+import { assembleRecallPrependContext } from "./recalled-context-assembler.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "./retrieval-mode-policy.js";
-
 const POST_COMPACTION_RECALL_TIMEOUT_MS = 120_000;
 
 function buildScopeFilter(ctx: LifecycleContext): ScopeFilter | undefined {
@@ -44,6 +48,7 @@ export async function buildPostCompactionRecallSnippet(
   ctx: LifecycleContext,
   api: ClawdbotPluginApi,
   prompt: string,
+  tokenBudget?: number,
 ): Promise<string | null> {
   const trimmed = prompt.trim();
   if (trimmed.length < 5) return null;
@@ -59,10 +64,12 @@ export async function buildPostCompactionRecallSnippet(
         reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
         diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
         interactiveFtsFastPath: true,
+        deferAccessRefresh: true,
       };
       const limit = Math.min(ctx.cfg.autoRecall.limit ?? 10, 15);
       const minScore = ctx.cfg.autoRecall.minScore ?? 0.3;
       const hydeUsedRef = { value: false };
+      const pipelineStatusRef = { semanticDegraded: false };
       const pipelineDeps: RecallPipelineDeps = {
         factsDb: ctx.factsDb,
         vectorDb: ctx.vectorDb,
@@ -88,6 +95,7 @@ export async function buildPostCompactionRecallSnippet(
           policy: DEFAULT_INTERACTIVE_RECALL_POLICY,
           timingSpan: "post-compaction",
           timingOp: "post-compaction-recall",
+          pipelineStatusRef,
         });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -97,21 +105,53 @@ export async function buildPostCompactionRecallSnippet(
         return null;
       }
 
+      candidates = await filterCandidatesByInteractiveGrading(
+        trimmed,
+        candidates,
+        ctx.cfg.documentGrading,
+        ctx.openai,
+      );
+
       if (candidates.length === 0) return null;
 
-      const lines = candidates.slice(0, limit).map((r) => {
-        const text = (r.entry.summary || r.entry.text).replace(/\s+/g, " ").trim();
-        const preview = text.length > 220 ? `${text.slice(0, 220)}…` : text;
-        return `- [${r.entry.category}] ${preview}`;
-      });
+      const budget =
+        tokenBudget ??
+        Math.min(ctx.cfg.autoRecall.maxTokens ?? 800, ctx.cfg.retrieval.ambientBudgetTokens ?? 2000);
+      const edictReserve = Math.max(0, Math.floor(budget * 0.15));
+      const memoryBudget = Math.max(80, budget - edictReserve);
+      const lines: string[] = [];
+      const injectedIds: string[] = [];
+      let used = estimateTokens("Recalled after context compaction:\n");
+      for (const r of candidates.slice(0, limit)) {
+        const raw = sanitizeRecallFactText(r.entry.summary || r.entry.text);
+        const line = formatSanitizedMemoryPreview(raw, { category: r.entry.category, maxChars: 220 });
+        if (!line) continue;
+        const lineTokens = estimateTokens(`${line}\n`);
+        if (used + lineTokens > memoryBudget) break;
+        lines.push(line);
+        injectedIds.push(r.entry.id);
+        used += lineTokens;
+      }
 
-      return [
+      if (lines.length === 0) return null;
+
+      ctx.factsDb.refreshAccessedFacts(injectedIds);
+
+      const semanticMarker = pipelineStatusRef.semanticDegraded
+        ? "<!-- recall degraded: semantic -->"
+        : "";
+      const inner = ["Recalled after context compaction (same query as your last turn):", ...lines].join("\n");
+      const recalled = assembleRecallPrependContext(ctx, inner, {
+        prefix: semanticMarker || undefined,
+        edictMaxTokens: edictReserve,
+      });
+      if (!recalled) return null;
+
+      const block = [
         "<!-- memory-hybrid: post-compaction recall (re-matched to last user prompt; issue #957) -->",
-        "<recalled-context>",
-        "Recalled after context compaction (same query as your last turn):",
-        ...lines,
-        "</recalled-context>",
+        recalled.trimEnd(),
       ].join("\n");
+      return trimBlockToBudget(block, budget).text || null;
     },
     null,
   );

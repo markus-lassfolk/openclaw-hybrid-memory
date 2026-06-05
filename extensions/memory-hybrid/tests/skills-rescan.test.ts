@@ -3,7 +3,7 @@
  * and quarantines rows that fail generated-skill validation.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -21,6 +21,7 @@ const CFG_BASE: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
 };
@@ -95,8 +96,11 @@ Contact admin@realdomain.com
 
     expect(result.scanned).toBe(1);
     expect(result.quarantined).toBe(1);
+    expect(result.diskQuarantined).toBe(1);
+    expect(existsSync(outputPath)).toBe(false);
     const row = store.getById(p.id);
     expect(row?.status).toBe("quarantined");
+    expect(row?.outputPath).toContain("crystallization-quarantine");
     expect(row?.rejectionReason ?? "").toMatch(/^stale validation:/);
   });
 

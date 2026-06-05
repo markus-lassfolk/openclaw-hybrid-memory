@@ -33,5 +33,18 @@
   "reflection": {
     "model": "minimax/MiniMax-M3",
     "thinking": "adaptive"
+  },
+  "workflowTracking": {
+    "enabled": true,
+    "maxTracesPerDay": 500,
+    "retentionDays": 90
+  },
+  "toolEffectiveness": {
+    "enabled": true,
+    "runInNightlyCycle": true
+  },
+  "crystallization": {
+    "enabled": false,
+    "excludeSystemGoals": true
   }
 }

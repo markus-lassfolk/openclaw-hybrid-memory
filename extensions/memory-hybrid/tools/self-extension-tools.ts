@@ -15,16 +15,28 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { GapDetector } from "../services/gap-detector.js";
+import { BROADCAST_CHANGE_SESSION_KEY } from "../services/change-feed-emit.js";
+import type { ChangeFeed } from "../services/change-feed.js";
 import { ToolProposer } from "../services/tool-proposer.js";
 
 interface SelfExtensionToolsContext {
   toolProposalStore: ToolProposalStore;
   workflowStore: WorkflowStore;
   cfg: HybridMemoryConfig;
+  changeFeed?: ChangeFeed | null;
+}
+
+function toolProposer(ctx: SelfExtensionToolsContext): ToolProposer {
+  const gapDetector = new GapDetector(ctx.workflowStore);
+  const changeFeedEmit =
+    ctx.changeFeed && ctx.cfg.liveChangeFeed?.enabled !== false
+      ? { changeFeed: ctx.changeFeed, cfg: ctx.cfg, sessionKey: BROADCAST_CHANGE_SESSION_KEY }
+      : undefined;
+  return new ToolProposer(gapDetector, ctx.toolProposalStore, ctx.cfg.selfExtension, changeFeedEmit);
 }
 
 export function registerSelfExtensionTools(ctx: SelfExtensionToolsContext, api: ClawdbotPluginApi): void {
-  const { toolProposalStore, workflowStore, cfg } = ctx;
+  const { toolProposalStore, cfg } = ctx;
 
   // -------------------------------------------------------------------------
   // memory_propose_tool — trigger gap analysis and generate proposals
@@ -55,8 +67,7 @@ export function registerSelfExtensionTools(ctx: SelfExtensionToolsContext, api: 
       };
 
       try {
-        const gapDetector = new GapDetector(workflowStore);
-        const proposer = new ToolProposer(gapDetector, toolProposalStore, cfg.selfExtension);
+        const proposer = toolProposer(ctx);
         const result = proposer.runCycle({
           ...(minFrequency !== undefined ? { minFrequency } : {}),
           ...(minToolSavings !== undefined ? { minToolSavings } : {}),
@@ -196,8 +207,7 @@ export function registerSelfExtensionTools(ctx: SelfExtensionToolsContext, api: 
       const { id } = params as { id: string };
 
       try {
-        const gapDetector = new GapDetector(workflowStore);
-        const proposer = new ToolProposer(gapDetector, toolProposalStore, cfg.selfExtension);
+        const proposer = toolProposer(ctx);
         const result = proposer.approveProposal(id);
 
         return {
@@ -232,14 +242,14 @@ export function registerSelfExtensionTools(ctx: SelfExtensionToolsContext, api: 
       id: Type.String({
         description: "The proposal ID to reject (from memory_tool_proposals).",
       }),
+      reason: Type.Optional(Type.String({ description: "Optional rejection reason." })),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
-      const { id } = params as { id: string };
+      const { id, reason } = params as { id: string; reason?: string };
 
       try {
-        const gapDetector = new GapDetector(workflowStore);
-        const proposer = new ToolProposer(gapDetector, toolProposalStore, cfg.selfExtension);
-        const result = proposer.rejectProposal(id);
+        const proposer = toolProposer(ctx);
+        const result = proposer.rejectProposal(id, reason);
 
         return {
           content: [

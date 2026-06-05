@@ -13,6 +13,8 @@ describe("tool installers", () => {
       "optional:provenance",
       "optional:credentials",
       "optional:persona",
+      "optional:workshop",
+      "optional:proposalRoutes",
       "optional:documents",
       "optional:verification",
       "optional:issues",
@@ -21,6 +23,7 @@ describe("tool installers", () => {
       "optional:selfExtension",
       "optional:apitap",
       "optional:dashboard",
+      "optional:health",
       "optional:publicApi",
     ]);
   });
@@ -79,10 +82,13 @@ describe("tool installers", () => {
       "eventLog",
       "factsDb",
       "findSimilarByEmbedding",
+      "issueStore",
+      "lastAutoRecallPromptBySession",
       "lastProgressiveIndexIds",
       "narrativesDb",
       "openai",
       "pendingLLMWarnings",
+      "progressiveIndexBySession",
       "provenanceService",
       "variantQueue",
       "vectorDb",
@@ -91,7 +97,7 @@ describe("tool installers", () => {
       "walWrite",
     ]);
     expect(selected).not.toHaveProperty("wal");
-    expect(selected).not.toHaveProperty("issueStore");
+    expect(selected.issueStore).toEqual({ kind: "issues" });
     expect(selected).not.toHaveProperty("workflowStore");
 
     const logger = { warn: vi.fn() };

@@ -142,6 +142,10 @@ export function parseProceduresConfig(cfg: Record<string, unknown>): ProceduresC
       typeof proceduresRaw?.skillsAutoPath === "string" && proceduresRaw.skillsAutoPath.length > 0
         ? proceduresRaw.skillsAutoPath
         : "skills/auto",
+    skillsPendingPath:
+      typeof proceduresRaw?.skillsPendingPath === "string" && proceduresRaw.skillsPendingPath.length > 0
+        ? proceduresRaw.skillsPendingPath
+        : "memory/skills-pending",
     requireApprovalForPromote: proceduresRaw?.requireApprovalForPromote !== false,
     maxInjectionTokens:
       typeof proceduresRaw?.maxInjectionTokens === "number" &&

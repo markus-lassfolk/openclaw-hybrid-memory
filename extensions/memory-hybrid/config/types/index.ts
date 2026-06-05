@@ -50,6 +50,7 @@ import type {
   CrystallizationConfig,
   DashboardConfig,
   DigestConfig,
+  LiveChangeFeedConfig,
   DocumentsConfig,
   EntityExtractionConfig,
   FrequencyCaptureConfig,
@@ -69,7 +70,7 @@ import type {
   WorkflowTrackingConfig,
 } from "./features.js";
 
-import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
+import type { MultiAgentConfig, PersonaProposalsConfig, WorkshopConfig } from "./agents.js";
 
 import type { SensorSweepConfig } from "./sensors.js";
 
@@ -660,6 +661,8 @@ export type HybridMemoryConfig = {
   eventLog: EventLogConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
+  /** Unified proposal workshop queue (default: enabled when any proposal source is active). */
+  workshop?: WorkshopConfig;
   /** Passive observer — background fact extraction from session transcripts (default: disabled) */
   passiveObserver: PassiveObserverConfig;
   /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
@@ -807,6 +810,8 @@ export type HybridMemoryConfig = {
   humanizer: HumanizerConfig;
   /** Weekly digest delivery for cron + operator review (Issue #1197). */
   digest: DigestConfig;
+  /** Live change feed for operator notifications (session + persistent mutations). */
+  liveChangeFeed: LiveChangeFeedConfig;
   /** Entity lifecycle adapters — GitHub Phase 2 stub (Issue #1196). */
   lifecycle: LifecycleAdaptersConfig;
   /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */

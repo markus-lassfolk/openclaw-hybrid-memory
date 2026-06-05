@@ -21,6 +21,10 @@ import type { HandlerContext } from "../cli/handlers.js";
 import { clearScanLock } from "../cli/shared.js";
 import * as adaptiveLlm from "../services/adaptive-maintenance-llm.js";
 
+vi.mock("../services/vector-search.js", () => ({
+  findSimilarByEmbedding: vi.fn().mockResolvedValue([]),
+}));
+
 // ---------------------------------------------------------------------------
 // Shared setup
 // ---------------------------------------------------------------------------
@@ -258,10 +262,16 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "reinf-zero-ann-test-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
   proposalsDb = new ProposalsDB(join(tmpDir, "proposals.db"));
+  vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+    content: "[]",
+  } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
+  // Block standalone praise-signal writes (#1802) so #1639 zero-annotation semantics remain testable.
+  vi.spyOn(factsDb, "hasDuplicate").mockReturnValue(true);
 });
 
 afterEach(() => {
   clearScanLock("extract-reinforcement");
+  vi.restoreAllMocks();
   factsDb.close();
   proposalsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
@@ -374,6 +384,9 @@ describe("LLM failure → degraded_model_or_parser (#1639)", () => {
   });
 
   it("annotationStatus is degraded_model_or_parser when LLM returns unparseable output", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "No JSON available.",
+    } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeSessionWithoutMemoryRecall(sessionFile);
 
@@ -388,30 +401,14 @@ describe("LLM failure → degraded_model_or_parser (#1639)", () => {
   });
 
   it("annotationStatus is degraded_model_or_parser when native tool_calls payload is unparseable", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "",
+      toolCalls: [{ name: "annotate", arguments: "not json" }],
+    } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeSessionWithoutMemoryRecall(sessionFile);
 
-    const openai = {
-      chat: {
-        completions: {
-          create: vi.fn().mockResolvedValue({
-            choices: [
-              {
-                message: {
-                  content: "",
-                  tool_calls: [
-                    {
-                      type: "function",
-                      function: { name: "annotate", arguments: "not json" },
-                    },
-                  ],
-                },
-              },
-            ],
-          }),
-        },
-      },
-    } as any;
+    const openai = makeOpenAIMock("[]");
     const ctx = makeCtx(openai);
     const result = await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
 

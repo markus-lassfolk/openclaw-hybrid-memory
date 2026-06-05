@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync 
 import { join } from "node:path";
 import { MAX_SKILL_FILE_BYTES } from "../config/skill-size-limits.js";
 import { SkillValidator } from "./skill-validator.js";
+import { formatDateUtc, nowSec } from "../utils/dates.js";
 
 export type AutoSkillAuditEntry = {
   slug: string;
@@ -101,7 +102,7 @@ export function quarantineAutoSkills(
   entries: AutoSkillAuditEntry[],
   options?: { onlyOversized?: boolean; onlySuspicious?: boolean },
 ): QuarantineResult {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = formatDateUtc(nowSec());
   const quarantineRoot = join(skillsAutoPath, "..", "auto-quarantine", date);
   const quarantined: string[] = [];
   const errors: string[] = [];

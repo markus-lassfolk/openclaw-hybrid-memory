@@ -448,15 +448,42 @@ const ERROR_KEYWORDS = [
   "fault",
   "failure",
   "down",
+  "regression",
+  "regressed",
+  "broken build",
+  "ci fail",
+  "flaky",
+  "incident",
+  "outage",
+  "severity",
+  "critical",
+  "blocker",
+  "hotfix",
+  "rollback",
+];
+
+/** Additional triggers beyond error vocabulary (PR/issue refs, regression language). */
+const ISSUE_AMBIENT_PATTERNS = [
+  /\b(?:pr|pull request)\s*#?\d+/i,
+  /\bissue\s*#?\d+/i,
+  /\bgh-\d+/i,
+  /\bregress(?:ion|ed|ing)\b/i,
+  /\b(?:re|de)-?introduc(?:e|ed|ing)\b/i,
 ];
 
 /**
  * Detect whether a message text contains error-like keywords that suggest
  * the user is dealing with an active problem.
  */
-function hasErrorKeywords(text: string): boolean {
+export function hasErrorKeywords(text: string): boolean {
   const lower = text.toLowerCase();
   return ERROR_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
+/** Whether ambient issue search should run for this message (broader than error keywords alone). */
+export function shouldTriggerIssueAmbientSearch(text: string): boolean {
+  if (hasErrorKeywords(text)) return true;
+  return ISSUE_AMBIENT_PATTERNS.some((re) => re.test(text));
 }
 
 interface IssueAmbientResult {
@@ -468,37 +495,45 @@ interface IssueAmbientResult {
 
 /**
  * Search the issue store for issues relevant to the current conversation message.
- * Called when the message contains error-like keywords.
  *
- * - Searches open issues so the user knows about known active problems.
- * - Searches resolved/verified issues to surface past resolutions that may help.
+ * - Always includes open **critical** issues (small cap) regardless of keywords.
+ * - On error/regression/PR triggers, searches keyword-matched open + resolved issues.
  *
- * Returns at most 3 open + 3 resolved issues.
+ * Returns at most 3 open + 3 resolved issues (plus always-on critical open issues).
  */
 export function searchAmbientIssues(message: string, issueStore: IssueStore): IssueAmbientResult {
-  if (!hasErrorKeywords(message)) {
-    return { openIssues: [], resolvedIssues: [] };
-  }
-
-  const lower = message.toLowerCase();
-  const keywords: string[] = [];
-  for (const kw of ERROR_KEYWORDS) {
-    if (lower.includes(kw)) {
-      keywords.push(kw);
-    }
-  }
-  const words = message.match(/\b[a-zA-Z0-9_-]{3,}\b/g) || [];
-  for (const word of words.slice(0, 5)) {
-    if (!ERROR_KEYWORDS.includes(word.toLowerCase())) {
-      keywords.push(word);
-    }
-  }
-
   const allMatches = new Map<string, Issue>();
-  for (const keyword of keywords.slice(0, 3)) {
-    const matches = issueStore.search(keyword);
-    for (const match of matches) {
-      allMatches.set(match.id, match);
+
+  // Always surface open critical issues — high-impact context even without error keywords.
+  const criticalOpen = issueStore.list({
+    status: ["open", "diagnosed", "fix-attempted"],
+    severity: ["critical"],
+    limit: 3,
+  });
+  for (const issue of criticalOpen) {
+    allMatches.set(issue.id, issue);
+  }
+
+  if (shouldTriggerIssueAmbientSearch(message)) {
+    const lower = message.toLowerCase();
+    const keywords: string[] = [];
+    for (const kw of ERROR_KEYWORDS) {
+      if (lower.includes(kw)) {
+        keywords.push(kw);
+      }
+    }
+    const words = message.match(/\b[a-zA-Z0-9_-]{3,}\b/g) || [];
+    for (const word of words.slice(0, 5)) {
+      if (!ERROR_KEYWORDS.includes(word.toLowerCase())) {
+        keywords.push(word);
+      }
+    }
+
+    for (const keyword of keywords.slice(0, 3)) {
+      const matches = issueStore.search(keyword);
+      for (const match of matches) {
+        allMatches.set(match.id, match);
+      }
     }
   }
 

@@ -12,6 +12,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { extractEventText } from "../services/dream-cycle.js";
 import type { ProvenanceEdgeType, ProvenanceService, ProvenanceSourceType } from "../services/provenance.js";
+import { formatTimestampUtc } from "../utils/dates.js";
 
 interface PluginContext {
   factsDb: FactsDB;
@@ -127,7 +128,7 @@ function buildProvenanceChain(
 
   const chain = provenanceService.getProvenance(factId, factsDb.getRawDb());
   const factEntry = factsDb.getById(factId);
-  const sourceTimestamp = factEntry ? new Date(factEntry.createdAt * 1000).toISOString() : undefined;
+  const sourceTimestamp = factEntry ? formatTimestampUtc(factEntry.createdAt) : undefined;
 
   const factText = chain.fact.text || fallbackText || "";
 

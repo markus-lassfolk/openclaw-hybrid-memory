@@ -95,6 +95,29 @@ export function formatContinuousVerificationAssessmentLine(
   ].join(" ");
 }
 
+/** Record a dream-cycle follow-up failure and mark the CLI exit code degraded. */
+export function recordDreamCycleFollowUpFailure(
+  failures: Array<{ phase: string; error: string }>,
+  phase: string,
+  error: unknown,
+): void {
+  failures.push({
+    phase,
+    error: error instanceof Error ? error.message : String(error),
+  });
+  process.exitCode = 2;
+}
+
+export function applyDreamCyclePipelineExitCode(options: {
+  coreSuccess: boolean;
+  coreFailedStages: readonly string[];
+  followUpFailures: readonly { phase: string; error: string }[];
+}): void {
+  if (!options.coreSuccess || options.coreFailedStages.length > 0 || options.followUpFailures.length > 0) {
+    process.exitCode = 2;
+  }
+}
+
 export async function runVerboseFollowUp<T>(
   label: string,
   verbose: boolean,
@@ -111,4 +134,23 @@ export async function runVerboseFollowUp<T>(
     logPrefix: "[dream-cycle]",
     progressSeparator: " — ",
   });
+}
+
+/** Skip follow-ups when the core cycle was skipped or WAL replay failed before mutation. */
+export function shouldSkipDreamCycleFollowUps(result: {
+  skipped: boolean;
+  failedStages: readonly string[];
+}): boolean {
+  return result.skipped || result.failedStages.includes("wal pre-flush");
+}
+
+export function dreamCycleFollowUpSkipReason(result: {
+  skipped: boolean;
+  failedStages: readonly string[];
+}): string | null {
+  if (result.skipped) return "dream cycle skipped";
+  if (result.failedStages.includes("wal pre-flush")) {
+    return "WAL pre-flush failed (SQLite state may be stale)";
+  }
+  return null;
 }

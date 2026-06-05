@@ -57,8 +57,13 @@ describe("PRESET_OVERRIDES (config/utils.ts) — invariants for CONFIGURATION-MO
       expect(p.workflowTracking).toEqual({ enabled: false });
       expect(p.nightlyCycle).toEqual({ enabled: false });
       expect(p.passiveObserver).toEqual({ enabled: false });
-      expect(p.verification).toEqual({ enabled: false });
-      expect(p.provenance).toEqual({ enabled: false });
+      if (mode === "enhanced") {
+        expect(p.verification).toEqual({ enabled: true });
+        expect(p.provenance).toEqual({ enabled: true });
+      } else {
+        expect(p.verification).toEqual({ enabled: false });
+        expect(p.provenance).toEqual({ enabled: false });
+      }
       expect(p.documents).toEqual({ enabled: false });
       expect(p.aliases).toEqual({ enabled: false });
       expect(p.crossAgentLearning).toEqual({ enabled: false });

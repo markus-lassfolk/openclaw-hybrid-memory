@@ -20,7 +20,8 @@ export const REFLECTION_RULES_JSON_INSTRUCTION = `
 Respond with JSON only (no markdown fences). Use this schema:
 {"rules":["<imperative one-line rule>", "..."],"noAction":false}
 When there are no actionable rules, return {"rules":[],"noAction":true}.
-Each rule must be a single imperative line under 80 characters.`;
+Each rule must be a single imperative line under 80 characters.
+Do not echo schema placeholders — every rules[] entry must be a real imperative rule derived from the patterns.`;
 
 export const REFLECTION_META_JSON_INSTRUCTION = `
 
@@ -90,7 +91,10 @@ function normalizeRuleCandidate(text: string): {
   }
   if (
     /^<[^>]+>$/i.test(candidate) ||
-    /^<imperative\s+one-line\s+rule>/i.test(candidate)
+    /^<imperative\s+one-line\s+rule>/i.test(candidate) ||
+    /^<(?:imperative|one-line|rule)[^>]*>$/i.test(candidate) ||
+    /^(?:<)?imperative one-line rule(?:>)?$/i.test(candidate) ||
+    /^rule\s*#?\d*[:.]?\s*$/i.test(candidate)
   ) {
     return { text: candidate, rejectedLowConfidence: false, rejectedLength: true };
   }

@@ -9,9 +9,11 @@ import { applyDedupe, hasGlobalDuplicateProbe, resolveDedupeProfile } from "../.
 import { isPromptArtifactOrReasoningTrace } from "../../services/capture-utils.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
+import { formatDateUtc, formatTimestampUtc } from "../../utils/dates.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
+import { resolveEntityForeignKeys } from "./entity-layer.js";
 
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
 const SQLITE_BUSY_STORE_BACKOFF_BASE_MS = 50;
@@ -268,7 +270,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const sourceForPolicy = entry.source ?? "conversation";
   const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
   const nowSec = Math.floor(Date.now() / 1000);
-  const day = new Date(nowSec * 1000).toISOString().slice(0, 10);
+  const day = formatDateUtc(nowSec);
 
   // Normalized-hash + lexical Jaccard dedupe (per-source profiles) before daily quota.
   const dedupe = applyDedupe(
@@ -561,6 +563,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   if (!loaded) {
     throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
   }
+  try {
+    resolveEntityForeignKeys(ctx.db, id, loaded.entity);
+  } catch {
+    /* non-fatal */
+  }
   return { entry: loaded, evictedFactId, embeddingStale: false, newlyStored: true, preMergeText: null };
 }
 
@@ -572,6 +579,7 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
 export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
   if (ids.length === 0) return;
   const nowSec = Math.floor(Date.now() / 1000);
+  const nowIsoAt = formatTimestampUtc(nowSec);
   const BATCH_SIZE = 500;
 
   const tx = createTransaction(db, () => {
@@ -595,8 +603,8 @@ export function refreshAccessedFacts(db: DatabaseSync, ids: string[]): void {
       );
 
       db.prepare(
-        `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id IN (${placeholders})`,
-      ).run(nowSec, nowSec, ...batch);
+        `UPDATE facts SET recall_count = recall_count + 1, last_accessed = ?, access_count = access_count + 1, last_accessed_at = ? WHERE id IN (${placeholders})`,
+      ).run(nowSec, nowIsoAt, ...batch);
     }
   });
   tx();

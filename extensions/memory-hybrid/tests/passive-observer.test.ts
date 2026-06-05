@@ -65,6 +65,11 @@ describe("isPassiveObserverTranscriptCandidate", () => {
     ).toBe(false);
   });
 
+  it("rejects OpenClaw trajectory sidecars (multi-MB compiled context lines)", () => {
+    expect(isPassiveObserverTranscriptCandidate("2b6529d2-4306-4ac8-a0cc-805b2e6d1df9.trajectory.jsonl")).toBe(false);
+    expect(isPassiveObserverTranscriptCandidate("session.trajectory.jsonl")).toBe(false);
+  });
+
   it("rejects deleted tombstones", () => {
     expect(isPassiveObserverTranscriptCandidate(".deleted-someid.jsonl")).toBe(false);
   });

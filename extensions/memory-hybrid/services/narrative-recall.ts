@@ -1,5 +1,6 @@
 import type { EventLog, EventLogEntry } from "../backends/event-log.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
+import { parseTimestamp, formatTimestampUtc } from "../utils/dates.js";
 
 const DEFAULT_LOOKBACK_DAYS = 14;
 const DEFAULT_SCAN_LIMIT = 24;
@@ -69,7 +70,7 @@ interface NarrativeSummaryMatch {
 }
 
 export function formatNarrativeRange(periodStart: number, periodEnd: number): string {
-  return `${new Date(periodStart * 1000).toISOString()}..${new Date(periodEnd * 1000).toISOString()}`;
+  return `${formatTimestampUtc(periodStart)}..${formatTimestampUtc(periodEnd)}`;
 }
 
 export function recallNarrativeSummaries(options: RecallNarrativeSummariesOptions): NarrativeSummaryMatch[] {
@@ -161,10 +162,10 @@ function collectEventMatches(
     const events = eventLog.getBySession(options.sessionId, 200);
     if (events.length > 0) sessionEvents.set(options.sessionId, events);
   } else {
-    const fromIso = new Date(
-      (options.sinceSec ?? options.nowSec - DEFAULT_LOOKBACK_DAYS * 86_400) * 1000,
-    ).toISOString();
-    const toIso = new Date(options.nowSec * 1000).toISOString();
+    const fromIso = formatTimestampUtc(
+      options.sinceSec ?? options.nowSec - DEFAULT_LOOKBACK_DAYS * 86_400,
+    );
+    const toIso = formatTimestampUtc(options.nowSec);
     const maxSessions = Math.max(1, options.limit);
     const maxEventsPerSession = Math.max(1, options.maxEventsPerSession);
     const maxEventsGlobal = maxSessions * maxEventsPerSession;
@@ -208,15 +209,15 @@ function collectEventMatches(
         id: `event-log:${sessionId}`,
         source: "event-log" as const,
         sessionId,
-        periodStart: toSec(first?.timestamp),
-        periodEnd: toSec(last?.timestamp),
+        periodStart: parseTimestamp(first?.timestamp) ?? 0,
+        periodEnd: parseTimestamp(last?.timestamp) ?? 0,
         tag: "event-log",
         text: summaryText,
         score: scoreCandidate(
           `${sessionId} ${summaryText}`,
           options.query,
           options.queryTerms,
-          toSec(last?.timestamp),
+          parseTimestamp(last?.timestamp) ?? 0,
           options.nowSec,
         ),
       };
@@ -311,10 +312,4 @@ function compareMatches(a: NarrativeSummaryMatch, b: NarrativeSummaryMatch): num
   const timeDelta = b.periodEnd - a.periodEnd;
   if (timeDelta !== 0) return timeDelta;
   return a.sessionId.localeCompare(b.sessionId);
-}
-
-function toSec(iso: string | undefined): number {
-  if (!iso) return 0;
-  const ts = Date.parse(iso);
-  return Number.isFinite(ts) ? Math.floor(ts / 1000) : 0;
 }

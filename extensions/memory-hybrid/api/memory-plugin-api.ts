@@ -35,6 +35,8 @@ import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { VerificationStore } from "../services/verification-store.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import type { SessionState } from "../lifecycle/types.js";
 import type { RunReflectionFn, RunReflectionMetaFn, RunReflectionRulesFn } from "../tools/utility-tools.js";
 import type { MemoryEntry, MemoryScope, ScopeFilter } from "../types/memory.js";
 
@@ -82,6 +84,9 @@ export interface MemoryPluginAPI {
   resolvedSqlitePath: string;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
+  progressiveIndexBySession: Map<string, string[]>;
+  lastAutoRecallPromptBySession: Map<string, string>;
+  injectedFactIdsBySession: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
   pendingLLMWarnings: PendingLLMWarnings;
 
   // --- Optional core (nullable) ---
@@ -105,12 +110,18 @@ export interface MemoryPluginAPI {
   auditStore: AuditStore | null;
   /** Per-agent health snapshots (Issue #789). */
   agentHealthStore: AgentHealthStore | null;
+  /** Live change feed for operator notifications. */
+  changeFeed: ChangeFeed | null;
+  /** Populated after lifecycle hooks register; used for frustration reset on revert. */
+  sessionStateRef: { value: SessionState | null };
 
   // --- Refs (lifecycle / degradation) ---
   restartPendingClearedRef: { value: boolean };
   recallInFlightRef: { value: number };
   /** Last prompt used for before_agent_start recall; used to re-match memories after compaction (#957). */
   lastAutoRecallPromptRef: { value: string | null };
+  /** Per-turn shared prepend token budget across before_agent_start hooks. */
+  prependBudgetRef: import("../services/prepend-budget.js").PrependBudgetRef;
   /** Monotonic lifecycle registration generation for stale-hook guards. */
   registrationGeneration?: number;
   /** Global generation ref updated on each plugin re-registration. */

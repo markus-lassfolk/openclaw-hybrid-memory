@@ -19,6 +19,7 @@ import { cleanupEvictedVector, deleteVectorForFactId } from "../services/vector-
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
+import { formatDateUtc } from "../utils/dates.js";
 import { extractTags } from "../utils/tags.js";
 import type { HandlerContext } from "./handlers.js";
 import type { ExtractDailyResult, ExtractDailySink } from "./types.js";
@@ -200,7 +201,7 @@ export async function runExtractDailyForCli(
   for (let d = 0; d < daysBack; d++) {
     const date = new Date();
     date.setDate(date.getDate() - d);
-    const dateStr = date.toISOString().split("T")[0];
+    const dateStr = formatDateUtc(Math.floor(date.getTime() / 1000));
     const filePath = join(memoryDir, `${dateStr}.md`);
     if (!existsSync(filePath)) continue;
     const content = readFileSync(filePath, "utf-8");

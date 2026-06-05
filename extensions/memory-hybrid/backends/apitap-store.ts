@@ -14,6 +14,8 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { nowIso, addDaysUtcIso, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { backfillApitapTextTimestamps } from "../utils/timestamp-migration.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -91,11 +93,11 @@ export class ApitapStore extends BaseSqliteStore {
         sample_response TEXT NOT NULL DEFAULT '',
         content_type    TEXT NOT NULL DEFAULT '',
         session_id      TEXT NOT NULL DEFAULT '',
-        captured_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        captured_at     TEXT NOT NULL,
         expires_at      TEXT,
         status          TEXT NOT NULL DEFAULT 'pending',
-        created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at      TEXT NOT NULL,
+        updated_at      TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_apitap_site_url  ON apitap_endpoints(site_url);
@@ -103,6 +105,7 @@ export class ApitapStore extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_apitap_status    ON apitap_endpoints(status);
       CREATE INDEX IF NOT EXISTS idx_apitap_expires   ON apitap_endpoints(expires_at);
     `);
+    backfillApitapTextTimestamps(this.liveDb);
   }
 
   protected getSubsystemName(): string {
@@ -115,7 +118,7 @@ export class ApitapStore extends BaseSqliteStore {
 
   create(input: CreateApitapEndpointInput): ApitapEndpoint {
     const id = randomUUID();
-    const now = new Date().toISOString();
+    const now = nowIso();
 
     // Serialize parameters/sampleResponse objects to JSON strings for SQLite
     const parametersStr =
@@ -126,7 +129,7 @@ export class ApitapStore extends BaseSqliteStore {
     // Compute expiresAt: explicit value wins; endpointTtlDays computes if no explicit expiresAt
     let expiresAt: string | null = input.expiresAt !== undefined ? (input.expiresAt ?? null) : null;
     if (expiresAt === null && !("expiresAt" in input) && input.endpointTtlDays && input.endpointTtlDays > 0) {
-      expiresAt = new Date(Date.now() + input.endpointTtlDays * 24 * 60 * 60_000).toISOString();
+      expiresAt = addDaysUtcIso(input.endpointTtlDays);
     }
 
     this.liveDb
@@ -189,7 +192,8 @@ export class ApitapStore extends BaseSqliteStore {
       params.push(filter.status);
     }
     if (!filter?.includeExpired) {
-      query += " AND (expires_at IS NULL OR expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))";
+      query += " AND (expires_at IS NULL OR expires_at > ?)";
+      params.push(nowIso());
     }
 
     query += " ORDER BY created_at DESC";
@@ -208,7 +212,7 @@ export class ApitapStore extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   updateStatus(id: string, status: ApitapEndpointStatus): ApitapEndpoint | null {
-    const now = new Date().toISOString();
+    const now = nowIso();
     const result = this.liveDb
       .prepare("UPDATE apitap_endpoints SET status = ?, updated_at = ? WHERE id = ?")
       .run(status, now, id);
@@ -223,10 +227,8 @@ export class ApitapStore extends BaseSqliteStore {
 
   deleteExpired(): number {
     const result = this.liveDb
-      .prepare(
-        "DELETE FROM apitap_endpoints WHERE expires_at IS NOT NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-      )
-      .run();
+      .prepare("DELETE FROM apitap_endpoints WHERE expires_at IS NOT NULL AND expires_at <= ?")
+      .run(nowIso());
     return Number(result.changes);
   }
 

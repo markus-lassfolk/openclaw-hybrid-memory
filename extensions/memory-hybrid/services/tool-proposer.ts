@@ -8,6 +8,12 @@
 
 import type { ToolProposal, ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { SelfExtensionConfig } from "../config/types/features.js";
+import type { HybridMemoryConfig } from "../config.js";
+import {
+  type ChangeFeedEmitOpts,
+  BROADCAST_CHANGE_SESSION_KEY,
+  emitToolProposed,
+} from "./change-feed-emit.js";
 import type { DetectedGap, GapDetector, GapDetectorOptions } from "./gap-detector.js";
 
 // ---------------------------------------------------------------------------
@@ -105,6 +111,7 @@ export class ToolProposer {
     private readonly gapDetector: GapDetector,
     private readonly proposalStore: ToolProposalStore,
     private readonly cfg: SelfExtensionConfig,
+    private readonly changeFeedEmit?: ChangeFeedEmitOpts,
   ) {}
 
   /**
@@ -168,6 +175,14 @@ export class ToolProposer {
 
       result.proposed++;
       result.proposals.push(proposal);
+      if (this.changeFeedEmit) {
+        emitToolProposed(this.changeFeedEmit.changeFeed, this.changeFeedEmit.cfg, {
+          sessionKey: this.changeFeedEmit.sessionKey ?? BROADCAST_CHANGE_SESSION_KEY,
+          proposalId: proposal.id,
+          toolName: proposal.name,
+          detail: proposal.rationale,
+        });
+      }
       result.reasons.push(
         `Proposed "${gap.suggestedToolName}" (gap score: ${gap.score.toFixed(2)}, saves ${gap.toolSavings} tool calls).`,
       );
@@ -211,7 +226,7 @@ export class ToolProposer {
   /**
    * Reject a pending proposal (marks it as rejected).
    */
-  rejectProposal(id: string): { success: boolean; message: string; proposal?: ToolProposal } {
+  rejectProposal(id: string, reason?: string): { success: boolean; message: string; proposal?: ToolProposal } {
     const proposal = this.proposalStore.getById(id);
     if (!proposal) {
       return { success: false, message: `Proposal "${id}" not found.` };
@@ -222,7 +237,7 @@ export class ToolProposer {
         message: `Proposal "${id}" is already ${proposal.status} — cannot reject.`,
       };
     }
-    const updated = this.proposalStore.updateStatus(id, "rejected", "proposed");
+    const updated = this.proposalStore.updateStatus(id, "rejected", "proposed", reason ?? null);
     if (!updated) {
       return {
         success: false,
@@ -231,7 +246,9 @@ export class ToolProposer {
     }
     return {
       success: true,
-      message: `Proposal "${proposal.name}" rejected.`,
+      message: reason
+        ? `Proposal "${proposal.name}" rejected: ${reason}`
+        : `Proposal "${proposal.name}" rejected.`,
       proposal: updated,
     };
   }

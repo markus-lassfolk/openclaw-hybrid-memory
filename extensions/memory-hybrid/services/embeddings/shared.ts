@@ -110,6 +110,18 @@ export class AsyncSemaphore {
   }
 }
 
+/** Shared gate serializing embedding API calls and LanceDB writes (Phase 6 / #840). */
+export const embedWriteSemaphore = new AsyncSemaphore(1);
+
+export async function withEmbedWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  await embedWriteSemaphore.acquire();
+  try {
+    return await fn();
+  } finally {
+    embedWriteSemaphore.release();
+  }
+}
+
 /**
  * OpenAI embedding models have a hard limit of 8192 tokens per input.
  * Using ~4 chars/token heuristic (consistent with estimateTokens in utils/text.ts),

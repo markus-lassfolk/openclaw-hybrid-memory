@@ -10,7 +10,7 @@ All commands are available via `openclaw hybrid-mem <command>`.
 
 If you are new here, start with [TASKS.md](TASKS.md) for the task-based map and [COMMON-TASKS-CHEATSHEET.md](COMMON-TASKS-CHEATSHEET.md) for copy/paste commands.
 
-> **Note:** Below OpenClaw **v2026.3.8** the plugin **warns** at startup (peer + `MIN_OPENCLAW_VERSION`); CLI subcommands and `api.version` may be missing. Prefer a **current 2026.3.x** gateway; CI uses the `openclaw` version in `extensions/memory-hybrid/package-lock.json`.
+> **Note:** Below OpenClaw **v2026.5.0** the plugin **warns** at startup (`MIN_OPENCLAW_VERSION`); CLI subcommands, `contracts.tools`, and `api.version` may be missing. Gateways **≥2026.5.0** but **&lt;2026.6.1** log an **info** at startup (`RECOMMENDED_OPENCLAW_VERSION`) — core memory works; Skill Workshop integration and related features are feature-detected. Prefer **OpenClaw 2026.6.1+**; CI uses the `openclaw` version in `extensions/memory-hybrid/package-lock.json`.
 
 ---
 

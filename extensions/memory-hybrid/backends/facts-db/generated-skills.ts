@@ -11,7 +11,8 @@ import type {
   MemoryScope,
   ProcedureEntry,
 } from "../../types/memory.js";
-import { getEnv } from "../../utils/env-manager.js";
+import { resolveOpenClawWorkspaceRoot } from "../../utils/openclaw-workspace.js";
+import { formatTimestampUtc } from "../../utils/dates.js";
 import {
   DEFAULT_GENERATED_SKILL_LIFECYCLE_POLICY,
   effectiveDemoteThresholdsForRisk,
@@ -1137,7 +1138,7 @@ export function buildGeneratedSkillTelemetryReport(
     })
     .sort((a, b) => a.skillName.localeCompare(b.skillName));
   return {
-    generatedAt: new Date(now * 1000).toISOString(),
+    generatedAt: formatTimestampUtc(now),
     policy,
     totalSkills: rows.length,
     rows,
@@ -1179,14 +1180,14 @@ export type GeneratedSkillDoctorReport = {
  * remain rejected because that terminal operator decision must not be overwritten by
  * disk reconciliation.
  *
- * @param workspaceRoot  Absolute path used to resolve relative skill paths. Defaults to `OPENCLAW_WORKSPACE` env var, then `process.cwd()`.
+ * @param workspaceRoot  Absolute path used to resolve relative skill paths. Defaults to canonical OpenClaw workspace resolution.
  * @param fix            When true, update missing rows to `uninstalled` in the DB.
  */
 export function reconcileGeneratedSkillDiskState(
   db: DatabaseSync,
   opts: { workspaceRoot?: string; fix?: boolean; now?: number } = {},
 ): GeneratedSkillDoctorReport {
-  const workspaceRoot = opts.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const workspaceRoot = opts.workspaceRoot ?? resolveOpenClawWorkspaceRoot();
   const fix = opts.fix ?? false;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const procedures = listGeneratedSkillProcedures(db);
@@ -1253,7 +1254,7 @@ export function reconcileGeneratedSkillDiskState(
   }
 
   return {
-    checkedAt: new Date(now * 1000).toISOString(),
+    checkedAt: formatTimestampUtc(now),
     totalChecked,
     issues,
     fixedCount: fixedProcedureIds.length,

@@ -16,6 +16,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
+import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { parseTimestamp } from "../utils/dates.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -27,9 +29,7 @@ function normalizeEdictText(text: string): string {
 }
 
 function parseIsoDateToUnixSeconds(iso: string): number | null {
-  const ms = Date.parse(iso);
-  if (!Number.isFinite(ms)) return null;
-  return Math.floor(ms / 1000);
+  return parseTimestamp(iso);
 }
 
 /** An edict entry — verified ground-truth fact */
@@ -99,7 +99,9 @@ function renderEdictLine(edict: EdictEntry): string {
   // Edicts are intended to be short and declarative, but cap pathological cases so
   // forced injection cannot explode prompt size.
   const MAX_EDICT_PROMPT_TEXT_CHARS = 1000;
-  const tagStr = edict.tags.length > 0 ? `[${edict.tags[0]}] ` : "";
+  const tag =
+    edict.tags.length > 0 ? sanitizePromptInjection(edict.tags[0] ?? "") : "";
+  const tagStr = tag ? `[${tag}] ` : "";
   const text =
     edict.text.length > MAX_EDICT_PROMPT_TEXT_CHARS
       ? `${edict.text.slice(0, MAX_EDICT_PROMPT_TEXT_CHARS)}…`

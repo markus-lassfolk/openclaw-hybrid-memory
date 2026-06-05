@@ -30,6 +30,8 @@ export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api:
     embeddingRegistry,
     verificationStore,
     lastProgressiveIndexIds,
+    progressiveIndexBySession,
+    lastAutoRecallPromptBySession,
     currentAgentIdRef,
     pendingLLMWarnings,
     variantQueue,

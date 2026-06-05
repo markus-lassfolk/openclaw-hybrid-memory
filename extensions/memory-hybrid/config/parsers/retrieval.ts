@@ -487,6 +487,12 @@ export function parseDocumentGradingConfig(cfg: Record<string, unknown>): Docume
   const enabled = dgRaw?.enabled === true;
   const model = typeof dgRaw?.model === "string" && dgRaw.model.trim().length > 0 ? dgRaw.model.trim() : undefined;
 
+  const interactiveRecall = dgRaw?.interactiveRecall === true;
+  const interactiveTopN =
+    typeof dgRaw?.interactiveTopN === "number" && dgRaw.interactiveTopN > 0
+      ? Math.floor(dgRaw.interactiveTopN)
+      : undefined;
+
   const rawTimeoutRaw = dgRaw?.timeoutMs;
   // Treat 0 or negative as an explicit "no config-level floor" bypass: caller receives undefined
   // and chatComplete falls back to its own internal default timeout.
@@ -495,6 +501,8 @@ export function parseDocumentGradingConfig(cfg: Record<string, unknown>): Docume
       enabled,
       model,
       timeoutMs: undefined,
+      interactiveRecall,
+      interactiveTopN,
     };
   }
 
@@ -507,5 +515,7 @@ export function parseDocumentGradingConfig(cfg: Record<string, unknown>): Docume
     enabled,
     model,
     timeoutMs: rawTimeout !== null ? rawTimeout : 10000,
+    interactiveRecall,
+    interactiveTopN,
   };
 }

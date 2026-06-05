@@ -14,8 +14,12 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
 import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange } from "../cli/proposals.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { emitPersonaApplied, supersedeActiveProposedEvent, syncProposalWithdrawnInChangeFeed } from "./change-feed-emit.js";
+import type { ChangeFeed } from "./change-feed.js";
+import { writeProposalRollback } from "./proposal-rollback.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { nowIso } from "../utils/dates.js";
 import {
   type AutopilotMode,
   type PendingAutopilotCursor,
@@ -45,7 +49,7 @@ export type PersonaProposalTargetFile = (typeof PERSONA_PROPOSAL_CRITICAL_TARGET
 
 export interface PersonaProposalTriageOptions {
   proposalsDb: ProposalsDB;
-  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed">;
   stateDbPath?: string;
   workspace?: string;
   mode?: AutopilotMode;
@@ -58,6 +62,9 @@ export interface PersonaProposalTriageOptions {
   now?: Date;
   runLifecycle?: "standalone" | "embedded";
   store?: PendingAutopilotStore;
+  changeFeed?: ChangeFeed | null;
+  sessionKey?: string;
+  resolvedSqlitePath?: string;
 }
 
 export interface PersonaProposalTriageResult {
@@ -257,6 +264,9 @@ export async function runPersonaProposalTriage(
           decision,
           workspace,
           cfg: opts.cfg,
+          changeFeed: opts.changeFeed,
+          sessionKey: opts.sessionKey ?? "autopilot",
+          resolvedSqlitePath: opts.resolvedSqlitePath,
         });
         if (decision.action === "failed-validation") {
           store.recordDecision(decision);
@@ -666,7 +676,10 @@ function applyPersonaDecisionWithLock(input: {
   item: PersonaProposalPendingItem;
   decision: PendingDecision;
   workspace: string;
-  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed">;
+  changeFeed?: ChangeFeed | null;
+  sessionKey?: string;
+  resolvedSqlitePath?: string;
 }): PendingDecision {
   const owner = `${input.decision.runId}:persona-triage`;
   const locked = input.store.acquireLock({
@@ -737,7 +750,7 @@ function applyPersonaDecisionWithLock(input: {
         return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
       }
       const original = readFileSync(currentTarget.path, "utf-8");
-      const applied = buildAppliedContent(original, current, new Date().toISOString());
+      const applied = buildAppliedContent(original, current, nowIso());
       if (!applied.content.trim()) {
         return validationFailure(
           input.decision,
@@ -765,6 +778,7 @@ function applyPersonaDecisionWithLock(input: {
     }
 
     const decisionForMutation = preparedApply ? withPersonaApplyAudit(input.decision, preparedApply) : input.decision;
+    let wroteRollback = false;
     const ok = input.store.mutateWithLockAndAudit({
       decision: decisionForMutation,
       owner,
@@ -774,11 +788,41 @@ function applyPersonaDecisionWithLock(input: {
         if (decisionForMutation.action === "rejected") {
           input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", decisionForMutation.reasonCode);
         } else if (decisionForMutation.action === "applied" && preparedApply) {
+          if (input.resolvedSqlitePath) {
+            writeProposalRollback(input.resolvedSqlitePath, {
+              proposalId: input.item.id,
+              proposalType: "persona",
+              targetPath: preparedApply.targetPath,
+              originalHash: preparedApply.preHash,
+              originalContent: preparedApply.original,
+              appliedHash: preparedApply.postHash,
+              appliedAt: nowIso(),
+            });
+            wroteRollback = true;
+          }
           applyPreparedPersonaChange(preparedApply, () => input.proposalsDb.markApplied(input.item.id));
         }
       },
     });
     if (!ok) return validationFailure(input.decision, "input-hash-mismatch", "Lock/CAS/audit mutation rejected.");
+    if (decisionForMutation.action === "rejected") {
+      syncProposalWithdrawnInChangeFeed(
+        input.changeFeed,
+        input.cfg as HybridMemoryConfig,
+        `persona:${input.item.id}`,
+        decisionForMutation.reasonCode ?? "Rejected via autopilot triage",
+      );
+    } else if (decisionForMutation.action === "applied" && preparedApply) {
+      const current = input.proposalsDb.get(input.item.id);
+      emitPersonaApplied(input.changeFeed, input.cfg as HybridMemoryConfig, {
+        sessionKey: input.sessionKey ?? "autopilot",
+        proposalId: input.item.id,
+        targetFile: current?.targetFile ?? "unknown",
+        title: current?.title,
+        rollbackAvailable: wroteRollback,
+      });
+      supersedeActiveProposedEvent(input.changeFeed, `persona:${input.item.id}`);
+    }
     return decisionForMutation;
   } finally {
     input.store.releaseLock({

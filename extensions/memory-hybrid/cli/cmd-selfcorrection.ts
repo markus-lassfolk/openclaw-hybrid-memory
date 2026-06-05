@@ -24,6 +24,7 @@ import { chatCompleteWithAdaptiveMaintenanceRetry } from "../services/adaptive-m
 import { maintenanceMaxOutputTokens } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitPipelinePersonaProposed } from "../services/change-feed-emit.js";
 import {
   appendUniqueRemediationsByIncidentIndex,
   attachOrderedItemsToIncidents,
@@ -43,8 +44,13 @@ import { type CorrectionIncident, collectHeuristicFeedbackCandidates, mergeCorre
 import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { applyToolsMdRules } from "../services/tools-md-rewrite.js";
+import { formatSkillUpdateProposal } from "../services/corrections-report.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
+import { serializeWorkspaceSkillTargetsForPrompt } from "../utils/skill-discovery.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { formatDateUtc, nowIso } from "../utils/dates.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getCorrectionSignalRegex } from "../utils/language-keywords.js";
 import { parseSelfCorrectionLLMResponse } from "../services/self-correction-llm-parser.js";
@@ -55,6 +61,8 @@ import { gatherSessionFiles } from "./cmd-distill.js";
 import { getMaxMtime } from "./cmd-extract-sessions.js";
 import { buildPreFilterConfig } from "./cmd-install.js";
 import { inferTargetFile } from "./cmd-store.js";
+import { resolvePipelineProposalTarget } from "./proposals.js";
+import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
@@ -205,7 +213,7 @@ function readSelfCorrectionBatchState(statePath: string): SelfCorrectionBatchSta
         batchSplits: Number.isFinite(diagnostics.batchSplits) ? diagnostics.batchSplits : 0,
         truncations: Number.isFinite(diagnostics.truncations) ? diagnostics.truncations : 0,
       },
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : nowIso(),
     };
   } catch {
     return null;
@@ -213,7 +221,7 @@ function readSelfCorrectionBatchState(statePath: string): SelfCorrectionBatchSta
 }
 
 function writeSelfCorrectionBatchState(statePath: string, state: SelfCorrectionBatchState): void {
-  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+  atomicWriteFile(statePath, `${JSON.stringify({ ...state, updatedAt: nowIso() }, null, 2)}\n`);
 }
 
 function chunkSelfCorrectionIncidents<T>(items: T[], batchSize: number): T[][] {
@@ -350,6 +358,7 @@ async function applySelfCorrectionRemediations(params: {
           value: text.slice(0, 200),
           source: "self-correction",
           tags: Array.isArray(obj.tags) ? obj.tags : [],
+          suppressVectorFallbackWarning: true,
         });
         if (storeResult.skipped) continue;
         if (storeResult.newlyStored === false && !storeResult.embeddingStale) continue;
@@ -387,7 +396,11 @@ async function applySelfCorrectionRemediations(params: {
           ? a.remediationContent
           : ((a.remediationContent as { text?: string })?.text ?? "");
       if (line.trim()) {
-        proposals.push(`[${a.remediationType}] ${line.trim()}`);
+        const proposalLine =
+          a.remediationType === "SKILL_UPDATE"
+            ? formatSkillUpdateProposal(line, workspaceRoot)
+            : `[${a.remediationType}] ${line.trim()}`;
+        proposals.push(proposalLine);
         if (
           a.remediationType === "AGENTS_RULE" &&
           proposalsDb &&
@@ -395,7 +408,20 @@ async function applySelfCorrectionRemediations(params: {
           !opts.dryRun
         ) {
           try {
-            const targetFile = inferTargetFile(line);
+            const lineText = line.trim();
+            const targetFile = inferTargetFile(lineText);
+            const resolved = resolvePipelineProposalTarget({
+              targetFile,
+              suggestedChange: lineText,
+              allowedFiles: ctx.cfg.personaProposals.allowedFiles,
+              workspaceRoot,
+              confidence: 0.7,
+              proposalTTLDays: ctx.cfg.personaProposals.proposalTTLDays,
+              minConfidence: ctx.cfg.personaProposals.minConfidence,
+              proposalsDb,
+              workshopStores: workshopStoresFromHandlerContext(ctx),
+            });
+            if (!resolved) continue;
             const src =
               a.sourceIncident ??
               (typeof a.incidentIndex === "number" && incidents[a.incidentIndex]
@@ -407,14 +433,18 @@ async function applySelfCorrectionRemediations(params: {
             const evidenceSessions = src
               ? [src.sessionFile]
               : incidents.map((inc) => inc.sessionFile).filter((v, idx, arr) => arr.indexOf(v) === idx);
-            proposalsDb.create({
-              targetFile,
+            const created = proposalsDb.create({
+              targetFile: resolved.targetFile,
               title: `Self-correction: ${a.category ?? "behavior"}`,
               observation: incidentContext,
-              suggestedChange: line.trim(),
-              confidence: 0.7,
+              suggestedChange: lineText,
+              confidence: resolved.confidence,
               evidenceSessions,
+              expiresAt: resolved.expiresAt,
+              targetMtimeMs: resolved.targetMtimeMs,
+              targetHash: resolved.targetHash,
             });
+            emitPipelinePersonaProposed(ctx.changeFeed, ctx.cfg, created, incidentContext);
           } catch (err) {
             capturePluginError(err as Error, {
               subsystem: "cli",
@@ -428,12 +458,12 @@ async function applySelfCorrectionRemediations(params: {
 
   const noApplyTools = opts.applyTools === false;
   const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !noApplyTools;
-  if (toolsSuggestions.length > 0 && !opts.dryRun) {
-    if (scCfg.autoRewriteTools && shouldApplyTools && existsSync(toolsPath)) {
-      try {
-        const currentTools = readFileSync(toolsPath, "utf-8");
+  if (toolsSuggestions.length > 0 && shouldApplyTools) {
+    try {
+      if (scCfg.autoRewriteTools) {
+        const currentTools = existsSync(toolsPath) ? readFileSync(toolsPath, "utf-8") : "";
         const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
-          current_tools: currentTools,
+          current_tools: currentTools || "# TOOLS\n",
           new_rules: toolsSuggestions.join("\n"),
         });
         const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
@@ -455,31 +485,33 @@ async function applySelfCorrectionRemediations(params: {
           enabled: adaptiveEnabled,
           thinkingMode: resolveSelfCorrectionThinkingMode(ctx.cfg),
         });
-        const cleaned = detail.content
-          .trim()
-          .replace(/^```\w*\n?|```\s*$/g, "")
-          .trim();
-        if (cleaned.length > 50) {
-          if (existsSync(toolsPath) && lstatSync(toolsPath).isSymbolicLink()) {
-            writeFileSync(toolsPath, cleaned, "utf-8");
-          } else {
-            atomicWriteFile(toolsPath, cleaned);
-          }
-          toolsApplied = 1;
-          autoFixed += 1;
+        const applyResult = applyToolsMdRules({
+          toolsPath,
+          sectionTitle: toolsSection,
+          newRules: toolsSuggestions,
+          autoRewrite: true,
+          rewrittenContent: detail.content,
+        });
+        if (applyResult.rewriteRejectedReasons?.length) {
+          logger.warn?.(
+            `memory-hybrid: self-correction TOOLS rewrite rejected (${applyResult.rewriteRejectedReasons.join("; ")}); used section insert`,
+          );
         }
-      } catch (err) {
-        logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:tools-rewrite" });
+        toolsApplied = applyResult.toolsApplied;
+        autoFixed += applyResult.toolsApplied;
+      } else {
+        const applyResult = applyToolsMdRules({
+          toolsPath,
+          sectionTitle: toolsSection,
+          newRules: toolsSuggestions,
+          autoRewrite: false,
+        });
+        toolsApplied = applyResult.toolsApplied;
+        autoFixed += applyResult.toolsApplied;
       }
-    } else if (shouldApplyTools && existsSync(toolsPath)) {
-      try {
-        const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
-        toolsApplied = inserted;
-        autoFixed += inserted;
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
-      }
+    } catch (err) {
+      logger.warn?.(`memory-hybrid: self-correction TOOLS apply failed: ${err}`);
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
     }
   }
 
@@ -628,10 +660,10 @@ export async function runSelfCorrectionRunForCli(
   }
 
   try {
-    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
     const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
     const reportDir = join(workspaceRoot, "memory", "reports");
-    const today = new Date().toISOString().slice(0, 10);
+    const today = formatDateUtc(Math.floor(Date.now() / 1000));
     const reportPath = join(reportDir, `self-correction-${today}.md`);
     let incidents: CorrectionIncident[];
     if (opts.incidents !== undefined) {
@@ -806,7 +838,7 @@ export async function runSelfCorrectionRunForCli(
         completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
         analysed,
         diagnostics,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       });
     };
 
@@ -861,6 +893,7 @@ export async function runSelfCorrectionRunForCli(
         };
       };
 
+      const availableSkillsJson = serializeWorkspaceSkillTargetsForPrompt(workspaceRoot);
       const analyzeDeps = {
         model,
         modelSource,
@@ -871,6 +904,7 @@ export async function runSelfCorrectionRunForCli(
         adaptiveEnabled,
         adaptiveStatePath,
         logger,
+        availableSkillsJson,
         onTransientRetry: (info: { attempt: number; delayMs: number; error: Error }) => {
           logTransientRetry(-1, info.attempt, info.delayMs, info.error);
         },
@@ -944,6 +978,7 @@ export async function runSelfCorrectionRunForCli(
                   llmCall: async (spawnBatch, _batchLabel, maxTokensOverride) => {
                     const prompt = fillPrompt(loadPrompt("self-correction-analyze"), {
                       incidents_json: serializeIncidentsForBatchPrompt(spawnBatch),
+                      available_skills_json: availableSkillsJson,
                     });
                     const outputBudget = maxTokensOverride ?? maxTokens;
                     if (maxTokensOverride != null && maxTokensOverride !== maxTokens) {

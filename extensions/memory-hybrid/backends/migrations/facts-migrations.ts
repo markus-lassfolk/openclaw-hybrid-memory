@@ -1,5 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
+import { backfillFactsDbTextTimestamps } from "../../utils/timestamp-migration.js";
 import { normalizedHash } from "../../utils/tags.js";
 import { migrateEntityLayerTables } from "../facts-db/entity-layer.js";
 import { runProcedureMigrations } from "./procedures.js";
@@ -673,7 +674,7 @@ function migrateFactEmbeddingsTable(db: DatabaseSync): void {
       variant TEXT NOT NULL DEFAULT 'canonical',
       embedding BLOB NOT NULL,
       dimensions INTEGER NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL,
       UNIQUE(fact_id, model, variant),
       FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
     )
@@ -693,7 +694,7 @@ function migrateFactVariantsTable(db: DatabaseSync): void {
       fact_id TEXT NOT NULL,
       variant_type TEXT NOT NULL DEFAULT 'contextual',
       variant_text TEXT NOT NULL,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL,
       FOREIGN KEY (fact_id) REFERENCES facts(id) ON DELETE CASCADE
     )
   `);
@@ -885,6 +886,62 @@ function migrateImplicitSignalsTable(db: DatabaseSync): void {
   db.exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_is_unique ON implicit_signals(session_file, signal_type, user_message, polarity)",
   );
+}
+
+/** Structured recall events for reinforcement linkage (session JSONL backfill + runtime). */
+function migrateRecallEventsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recall_events (
+      id TEXT PRIMARY KEY,
+      occurred_at INTEGER NOT NULL,
+      session_key TEXT,
+      agent_id TEXT,
+      query TEXT,
+      fact_ids TEXT NOT NULL DEFAULT '[]',
+      hit INTEGER NOT NULL DEFAULT 0,
+      source TEXT NOT NULL DEFAULT 'backfill'
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recall_events_time ON recall_events(occurred_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_recall_events_session ON recall_events(session_key)");
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_recall_events_backfill_identity
+    ON recall_events(session_key, occurred_at, query, fact_ids)
+    WHERE source = 'backfill'
+  `);
+}
+
+/** Per-session language metadata from runtime hooks and JSONL backfill. */
+function migrateSessionMetadataTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_metadata (
+      session_file TEXT PRIMARY KEY,
+      detected_lang TEXT NOT NULL,
+      user_char_count INTEGER NOT NULL DEFAULT 0,
+      sample_snippet TEXT,
+      scanned_at INTEGER NOT NULL
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_scanned ON session_metadata(scanned_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_session_metadata_lang ON session_metadata(detected_lang)");
+}
+
+/** Durable parse audit for reflection maintenance tasks. */
+function migrateReflectionParseLogTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS reflection_parse_log (
+      id TEXT PRIMARY KEY,
+      run_at INTEGER NOT NULL,
+      task TEXT NOT NULL,
+      model TEXT,
+      raw_response_chars INTEGER NOT NULL DEFAULT 0,
+      zero_reason TEXT,
+      stored INTEGER NOT NULL DEFAULT 0,
+      parse_success INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_reflection_parse_run_at ON reflection_parse_log(run_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_reflection_parse_task ON reflection_parse_log(task)");
 }
 
 /** LLM feedback signal classification audit trail. */
@@ -1311,6 +1368,19 @@ function migrateDerivedFromLinksToProvenanceJson(db: DatabaseSync): void {
   tx();
 }
 
+/** Optional FK from facts.entity to normalized contacts/orgs (#1802). */
+function migrateEntityForeignKeyColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "entity_contact_id")) {
+    db.exec("ALTER TABLE facts ADD COLUMN entity_contact_id TEXT");
+  }
+  if (!cols.some((c) => c.name === "entity_organization_id")) {
+    db.exec("ALTER TABLE facts ADD COLUMN entity_organization_id TEXT");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_entity_contact_id ON facts(entity_contact_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_entity_organization_id ON facts(entity_organization_id)");
+}
+
 export function runFactsMigrations(db: DatabaseSync): void {
   // Column migrations (depend on base facts table existing)
   migrateDecayColumns(db);
@@ -1375,6 +1445,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Implicit/behavioral feedback
   migrateImplicitSignalsTable(db);
+  migrateRecallEventsTable(db);
+  migrateSessionMetadataTable(db);
+  migrateReflectionParseLogTable(db);
   migrateSignalClassificationsTable(db);
   migrateFeedbackTrajectoriesTable(db);
   migrateFeedbackEffectivenessTable(db);
@@ -1417,6 +1490,12 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Denormalized degree columns for hub guard (#1192)
   migrateFactDegreeColumns(db);
+
+  // Entity FK normalization (#1802)
+  migrateEntityForeignKeyColumns(db);
+
+  // Legacy TEXT timestamps → ISO UTC (idempotent)
+  backfillFactsDbTextTimestamps(db);
 }
 
 /**

@@ -11,6 +11,8 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
 import { expandTilde } from "../utils/path.js";
+import { nowIso, addDaysUtcIso } from "../utils/dates.js";
+import { backfillVerifiedFactsTextTimestamps } from "../utils/timestamp-migration.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { VAULT_POINTER_PREFIX } from "./auto-capture.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -81,20 +83,6 @@ function containsHostname(text: string): boolean {
   }
   return false;
 }
-
-function toISODate(d: Date): string {
-  return d.toISOString();
-}
-
-function addDays(date: Date, days: number): Date {
-  const result = new Date(date.getTime());
-  result.setDate(result.getDate() + days);
-  return result;
-}
-
-// ---------------------------------------------------------------------------
-// Raw row type returned from SQLite queries
-// ---------------------------------------------------------------------------
 
 export interface VerifiedFactRow {
   id: string;
@@ -237,6 +225,7 @@ export class VerificationStore {
       CREATE INDEX IF NOT EXISTS idx_verified_facts_fact_id ON verified_facts(fact_id);
       CREATE INDEX IF NOT EXISTS idx_verified_facts_next_verification ON verified_facts(next_verification);
     `);
+    backfillVerifiedFactsTextTimestamps(this.db);
   }
 
   // -------------------------------------------------------------------------
@@ -250,8 +239,8 @@ export class VerificationStore {
     }
 
     const id = randomUUID();
-    const now = toISODate(new Date());
-    const nextVerification = toISODate(addDays(new Date(), this.reverificationDays));
+    const now = nowIso();
+    const nextVerification = addDaysUtcIso(this.reverificationDays);
     const checksum = computeChecksum(text);
 
     this.db
@@ -335,8 +324,8 @@ export class VerificationStore {
   // -------------------------------------------------------------------------
 
   listDueForReverification(): VerifiedFact[] {
-    const now = toISODate(new Date());
-    const cutoff = toISODate(addDays(new Date(), -this.reverificationDays));
+    const now = nowIso();
+    const cutoff = addDaysUtcIso(-this.reverificationDays);
     const rows = this.db
       .prepare(
         `SELECT vf.*
@@ -402,8 +391,8 @@ export class VerificationStore {
     }
 
     const newId = randomUUID();
-    const now = toISODate(new Date());
-    const nextVerification = toISODate(addDays(new Date(), this.reverificationDays));
+    const now = nowIso();
+    const nextVerification = addDaysUtcIso(this.reverificationDays);
     const checksum = computeChecksum(newText);
     const newVersion = existing.version + 1;
 

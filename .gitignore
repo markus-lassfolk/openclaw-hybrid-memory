@@ -53,5 +53,15 @@ extensions/memory-hybrid/.ab-fixtures/
 # Offline QA sandbox (full Maeve memory copy; never commit)
 extensions/memory-hybrid/.offline-qa/
 
+# Maeve maintenance QA logs (real Maeve data; never commit)
+extensions/memory-hybrid/.maeve-qa/
+
+# Local memory sandbox (offline QA / dev runs; never commit)
+extensions/memory-hybrid/.openclaw/
+
+# Fetched Maeve API keys (also under .offline-qa/; belt-and-suspenders)
+secrets.env
+**/secrets.env
+
 # Local git purge archives (patches + recovery notes; see wip/archive/README.md)
 wip/archive/

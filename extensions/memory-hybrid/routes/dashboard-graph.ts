@@ -5,6 +5,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { GraphConnectedStats } from "../backends/facts-db/links.js";
 import { expandGraph, resolveGraphHubDegreeCap, type GraphExpansionStats } from "../services/graph-retrieval.js";
+import { nowIso } from "../utils/dates.js";
 
 interface MemoryGraphNode {
   id: string;
@@ -77,7 +78,7 @@ export function collectGraphPayload(factsDb: FactsDB, days: number, maxNodes: nu
     provenance: parseProvenance(r.provenance_json),
   }));
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     nodes,
     edges: edges.map((e) => ({
       source: e.source,
@@ -107,7 +108,7 @@ export function collectGraphRecallPayload(
 ): GraphRecallPayload {
   const q = query.trim();
   if (!q) {
-    return { generatedAt: new Date().toISOString(), nodes: [], edges: [], activated: [] };
+    return { generatedAt: nowIso(), nodes: [], edges: [], activated: [] };
   }
   const results = factsDb.search(q, 12, {
     includeSuperseded: false,
@@ -141,7 +142,7 @@ export function collectGraphRecallPayload(
   const allEdges = factsDb.getAllEdges(10000);
   const edges = allEdges.filter((e) => nodeIdSet.has(e.source) && nodeIdSet.has(e.target)).slice(0, 2000);
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     nodes,
     edges: edges.map((e) => ({
       source: e.source,

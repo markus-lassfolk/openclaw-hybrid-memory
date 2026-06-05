@@ -10,6 +10,8 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
+import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { backfillProvenanceTextTimestamps } from "../utils/timestamp-migration.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,6 +105,7 @@ export class ProvenanceService extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_provenance_source_id ON provenance_edges(source_id);
       CREATE INDEX IF NOT EXISTS idx_provenance_created_at ON provenance_edges(created_at);
     `);
+    backfillProvenanceTextTimestamps(this.liveDb);
   }
 
   // -------------------------------------------------------------------------
@@ -111,7 +114,7 @@ export class ProvenanceService extends BaseSqliteStore {
 
   addEdge(factId: string, edge: ProvenanceEdge): string {
     const id = randomUUID();
-    const now = new Date().toISOString();
+    const now = nowIso();
     this.liveDb
       .prepare(
         `INSERT INTO provenance_edges (id, fact_id, edge_type, source_type, source_id, source_text, created_at)
@@ -213,7 +216,7 @@ export class ProvenanceService extends BaseSqliteStore {
   // -------------------------------------------------------------------------
 
   prune(retentionDays: number): number {
-    const cutoff = new Date(Date.now() - retentionDays * 24 * 3600 * 1000).toISOString();
+    const cutoff = cutoffIsoDaysAgo(retentionDays);
     const result = this.liveDb.prepare("DELETE FROM provenance_edges WHERE created_at < ?").run(cutoff);
     return Number(result.changes);
   }

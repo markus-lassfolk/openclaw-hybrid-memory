@@ -464,6 +464,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
        * until top matches are chosen (reduces WhatsApp/gateway stalls from huge MATCH + wide SELECT f.*).
        */
       interactiveFtsFastPath?: boolean;
+      deferAccessRefresh?: boolean;
     } = {},
   ): SearchResult[] {
     return searchFacts(this.liveDb, query, limit, options);
@@ -478,6 +479,7 @@ export class FactsDBLayer1 extends BaseSqliteStore {
       asOf?: number;
       scopeFilter?: ScopeFilter | null;
       limit?: number;
+      deferAccessRefresh?: boolean;
     },
   ): SearchResult[] {
     return lookupFacts(this.liveDb, entity, key, tag, options);

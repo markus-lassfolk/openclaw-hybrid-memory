@@ -1,35 +1,41 @@
 # Maintenance tasks: when they run
 
-This matrix shows **which maintenance tasks run** in each context (installation, update, restart, scheduled jobs, and `run-all`). Use it to see gaps or overlaps and decide if you need to adjust schedules or run `run-all` manually.
+This matrix shows **which maintenance tasks run** in each context (installation, update, restart, scheduled jobs, and `run-all`). The **hybrid orchestrator** (48 steps, staggered per-step guards) replaces the previous 18 separate cron jobs.
+
+Use `openclaw hybrid-mem maintenance steps` to inspect guard intervals and eligibility.
 
 ---
 
-## Summary table
+## Architecture (hybrid)
 
-| Task                                     | After install | After update                             | After restart (gateway)                             | Scheduled (cron)                                     | In run-all                        |
-| ---------------------------------------- | ------------- | ---------------------------------------- | --------------------------------------------------- | ---------------------------------------------------- | --------------------------------- |
-| **Prune** (expired facts)                | No            | No                                       | Yes (startup + every 60 min)                        | Yes (nightly job step 1)                             | Yes                               |
-| **WAL recovery**                         | No            | No                                       | Yes (once at startup)                               | No                                                   | No                                |
-| **Startup prune**                        | No            | No                                       | Yes (once at startup)                               | No                                                   | No                                |
-| **Tier compaction** (hot/warm/cold)      | No            | No                                       | On session end (if enabled)                         | Yes (weekly-deep-maintenance)                        | Yes                               |
-| **Auto-classify** ("other" → categories) | No            | No                                       | Yes (5 min delay, then every 24 h if enabled)       | No                                                   | No                                |
-| **Proposals prune** (expired)            | No            | No                                       | Yes (every 24 h if personaProposals enabled)        | No                                                   | No                                |
-| **Language keywords build**              | No            | No                                       | Yes (3s if no file, then every N days if autoBuild) | Yes (monthly-consolidation step 2)                   | Yes                               |
-| **Session distill** (facts from logs)    | No            | No                                       | No                                                  | Yes (nightly-memory-sweep step 2)                    | Yes (1 day window in default cron, if distill enabled)  |
-| **Extract-daily**                        | No            | No                                       | No                                                  | Yes (nightly-memory-sweep step 3)                    | Yes (7 days, if enabled)          |
-| **Extract-directives**                   | No            | No                                       | No                                                  | Yes (weekly-extract-procedures step 2)               | Yes (7 days, if enabled)          |
-| **Extract-reinforcement**                | No            | No                                       | No                                                  | Yes (weekly-extract-procedures step 3)               | Yes (7 days, if enabled)          |
-| **Extract-procedures**                   | No            | Yes (post-upgrade)                       | Yes (post-upgrade if version changed)               | Yes (weekly-extract-procedures step 1)               | Yes (7 days, if enabled)          |
-| **Generate-auto-skills**                 | No            | Yes (post-upgrade)                       | Yes (post-upgrade if version changed)               | Yes (weekly-extract-procedures step 4)               | Yes (if enabled)                  |
-| **Reflect** (patterns)                   | No            | Yes (post-upgrade if reflection.enabled) | Yes (post-upgrade if version changed)               | Yes (weekly-reflection step 1)                       | Yes                               |
-| **Reflect-rules**                        | No            | Yes (post-upgrade if reflection.enabled) | Yes (post-upgrade if version changed)               | Yes (weekly-reflection step 2)                       | Yes                               |
-| **Reflect-meta**                         | No            | Yes (post-upgrade if reflection.enabled) | Yes (post-upgrade if version changed)               | Yes (weekly-reflection step 3)                       | Yes                               |
-| **Generate-proposals**                   | No            | No                                       | No                                                  | Yes (weekly-persona-proposals)                       | Yes (if personaProposals enabled) |
-| **Self-correction-run**                  | No            | Yes (post-upgrade)                       | Yes (post-upgrade if version changed)               | Yes (self-correction-analysis)                       | Yes                               |
-| **Consolidate**                          | No            | No                                       | No                                                  | Yes (monthly-consolidation step 1)                   | No                                |
-| **Backfill-decay**                       | No            | No                                       | No                                                  | Yes (monthly-consolidation step 3)                   | Yes (once, marker file)           |
-| **Scope promote**                        | No            | No                                       | No                                                  | Yes (weekly-deep-maintenance step 2)                 | No                                |
-| **Sensor sweep** (Tier 1 + Tier 2)       | No            | No                                       | No                                                  | Yes (sensor-sweep, every 4h, if sensorSweep.enabled) | No                                |
+| Layer | Trigger | What runs |
+| ----- | ------- | --------- |
+| **Gateway tick** | Every 60 min (+ startup delay) | `maintenance cycle` tier — local steps (prune, compact, sensor-sweep, …) |
+| **Consolidated cron** | Daily 02:00 (`hybrid-mem:maintenance-nightly`) | `openclaw hybrid-mem maintenance nightly --verbose` — LLM-heavy steps with staggered guards |
+| **Manual** | `run-all` / `maintenance full` | Cycle + nightly tiers (alias for orchestrator) |
+
+**Guards control cadence**, not separate weekly/monthly cron jobs. Weekly/monthly-frequency steps use 5d/25d guards and are checked every nightly run.
+
+---
+
+## Summary table (selected tasks)
+
+| Task | After install | After update + restart | Gateway tick (cycle) | Nightly orchestrator | In run-all |
+| ---- | ------------- | ---------------------- | -------------------- | -------------------- | ---------- |
+| **Prune** | No | Startup + cycle tick | Yes (1h guard) | No | Yes |
+| **Compact** | No | Session end (if tiering) | Yes (20h guard) | No | Yes |
+| **Auto-classify** | No | — | Yes (20h, if enabled) | No | Yes |
+| **Sensor sweep** | No | — | Yes (3h, if enabled) | No | Yes |
+| **Proposals prune** | No | — | Yes (20h) | No | Yes |
+| **Build-languages** | No | Post-upgrade | Yes (5d guard) | Yes (5d guard) | Yes |
+| **Distill** | No | — | No | Yes (20h guard) | Yes |
+| **Extract-daily** | No | — | No | Yes (20h guard) | Yes |
+| **Dream-cycle (core)** | No | — | No | Yes (68h guard) | Yes |
+| **Reflect chain** | No | Post-upgrade | No | Yes (5d guards) | Yes |
+| **Self-correction-run** | No | Post-upgrade | No | Yes (44h guard) | Yes |
+| **Backfill-decay** | No | — | No | Yes (once, marker) | Yes (once) |
+
+See `maintenance steps` for the full 48-step registry.
 
 ---
 
@@ -37,93 +43,63 @@ This matrix shows **which maintenance tasks run** in each context (installation,
 
 ### After installation (`openclaw hybrid-mem install`)
 
-- **Writes** `~/.openclaw/openclaw.json` with full defaults (memory slot, plugin config, compaction prompts, bootstrap limits, etc.).
-- **Creates** `~/.openclaw/memory` and **ensures maintenance cron job definitions** in `~/.openclaw/cron/jobs.json`: any of the **10** canonical jobs that are missing are added (existing jobs are left as-is; disabled jobs are **not** re-enabled). The jobs are **not executed** by install; the scheduler (OpenClaw or system cron) runs them later.
-- **Does not run** any maintenance tasks (no prune, distill, reflect, etc.). User should restart the gateway and optionally run `verify [--fix]` and/or `run-all` manually.
+- Writes `~/.openclaw/openclaw.json` and ensures **one consolidated cron job** (`hybrid-mem:maintenance-nightly`) in `~/.openclaw/cron/jobs.json`.
+- On **upgrade/verify --fix** with consolidated mode (default), legacy hybrid-mem cron jobs are marked `superseded: true` and disabled.
+- Does **not** run maintenance tasks. Restart the gateway and run `verify [--fix]` or `maintenance full --dry-run`.
 
-### After update (`openclaw hybrid-mem upgrade` + gateway restart)
+Set `maintenance.orchestrator.consolidatedCronJobs: false` to keep legacy per-task cron jobs.
 
-- **Upgrade command:** Reinstalls the plugin (e.g. via `npx openclaw-hybrid-memory-install`). It does **not** run any maintenance.
-- **After restart:** On first gateway start with a **new plugin version**, the **post-upgrade pipeline** runs once (after 20s delay):  
-  `build-languages` (if no lang file) → `self-correction-run` → `reflect` + `reflect-rules` (if reflection.enabled) → `extract-procedures` → `generate-auto-skills` → writes `.last-post-upgrade-version`.
-- So **after update + restart**, the tasks that run are: normal **startup** behavior (prune, WAL recovery, timers) **plus** the post-upgrade sequence above.
+### After restart (gateway)
 
-### After restart (gateway start / plugin load)
+| What | When |
+| ---- | ---- |
+| Startup prune + WAL recovery | Once at startup |
+| **Maintenance tick** | Every 60 min → orchestrator `cycle` tier |
+| Post-upgrade pipeline | Once after 20s if plugin version changed |
+| Watchdog | Separate 5 min timer (unchanged) |
 
-| What                      | When                                                                                                                       |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| **Startup prune**         | Once, synchronously (remove expired facts).                                                                                |
-| **WAL recovery**          | Once, synchronously (replay uncommitted store/update from previous run).                                                   |
-| **Periodic prune**        | Every **60 minutes** (expired + soft decay).                                                                               |
-| **Auto-classify**         | If `autoClassify.enabled`: once after **5 min**, then every **24 h**.                                                      |
-| **Proposals prune**       | If `personaProposals.enabled`: every **24 h**.                                                                             |
-| **Language keywords**     | If `languageKeywords.autoBuild`: once after **3 s** if no `.language-keywords.json`, then every `weeklyIntervalDays` days. |
-| **Post-upgrade pipeline** | Once after **20 s** if plugin version changed (see “After update” above).                                                  |
-| **Tier compaction**       | Not at startup; runs **on agent session end** if `memoryTiering.enabled` and `memoryTiering.compactionOnSessionEnd`.       |
+Replaced timers (now in cycle tier): prune, auto-classify, language-keywords, passive-observer, proposals-prune.
 
-### Scheduled (cron jobs)
+### Scheduled (cron)
 
-The plugin **ensures** these job definitions exist in `~/.openclaw/cron/jobs.json` on **install**, **upgrade**, and **verify --fix**: missing jobs are added, existing ones can be normalized (schedule/pluginJobId). **Disabled jobs are never re-enabled** so user choices are honored. The jobs run only when your OpenClaw job runner or system cron runs them.
+| Job | Schedule | Command |
+| --- | -------- | ------- |
+| **maintenance-nightly** | Daily 02:00 | `openclaw hybrid-mem maintenance nightly --verbose` |
 
-| Job name                      | Schedule           | Steps (what the job message tells the agent to run)                                          |
-| ----------------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| **nightly-memory-sweep**      | Daily 02:00        | 1. prune 2. distill --days 1 3. extract-daily (7d) 4. resolve-contradictions --auto 5. enrich-entities (default cron message: bash harness + file logs under `~/.openclaw/logs/cron-hybrid-mem/`)   |
-| **self-correction-analysis**  | Daily 02:30        | self-correction-run. Exit 0 if selfCorrection disabled.                                      |
-| **nightly-dream-cycle**       | Daily 02:45        | dream-cycle (prune → consolidate → reflect). Exit 0 if nightlyCycle.enabled false.           |
-| **weekly-reflection**         | Sun 03:00          | reflect → reflect-rules → reflect-meta. Exit 0 if reflection.enabled false.                  |
-| **weekly-extract-procedures** | Sun 04:00          | extract-procedures → extract-directives → extract-reinforcement → generate-auto-skills       |
-| **weekly-deep-maintenance**   | Sat 04:00          | compact → scope promote                                                                      |
-| **weekly-persona-proposals**  | Sun 10:00          | generate-proposals (and notify if pending). Exit 0 if personaProposals disabled.             |
-| **monthly-consolidation**     | 1st of month 05:00 | consolidate --threshold 0.92 → build-languages → backfill-decay → enrich-entities              |
-| **sensor-sweep**              | Every 4h           | sensor-sweep --tier 1 → sensor-sweep --tier 2 (no LLM). Exit 0 if sensorSweep.enabled false. |
+The orchestrator runs due steps only (staggered guards: 20h / 44h / 68h / 5d / 25d). Typical night: ~5–7 LLM steps instead of all 14+.
 
-### Scan override flags (`--force` / `--full`)
+### CLI commands
 
-Scan-style maintenance commands share one operator contract ([#1798](https://github.com/markus-lassfolk/openclaw-hybrid-memory/issues/1798)):
+| Command | Description |
+| ------- | ----------- |
+| `maintenance cycle` | Local gateway-native steps |
+| `maintenance nightly` | All non-cycle steps (guards decide which run) |
+| `maintenance full` | Cycle + nightly |
+| `maintenance steps` | List steps, guard intervals, last run, eligibility |
+| `run-all` | Alias for `maintenance full` |
+
+### Scan windows
+
+Cursor-driven commands (`distill`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `extract-implicit`, `self-correction-run`) use **scan cursors** — the orchestrator does not pass `--days` except:
+
+- `extract-daily`: `--days 7`
+- `self-correction-run`: `--days 1`
+
+### Override flags (`--force` / `--full`)
 
 | Flag | Effect |
-|------|--------|
-| **`--force`** | Preferred: bypass 23h scan cooldown and incremental `scan_cursors` watermark for this invocation |
-| **`--full`** | Legacy alias (same effect as `--force` on scan commands) |
+| ---- | ------ |
+| `--force` | Bypass per-step guards and scan cooldowns/watermarks |
+| `--full` | Legacy alias for `--force` on scan commands |
 
-**Commands:** `distill`, `extract-procedures`, `extract-directives`, `extract-reinforcement`, `extract-implicit`, `self-correction-run`. `extract-daily` accepts the flags for CLI/`run-all` parity (no scan cursor). `reflect*` accept the flags for CLI parity (no scan guards).
+**Orchestrator / run-all:** `--force` bypasses per-step guard files (`~/.openclaw/memory/step--{name}.ms`).
 
-**`run-all`:** pass `--force` or `--full` once; overrides propagate to the scan-style steps above.
-
-**Cron QA bypass:** when `HYBRID_MEM_QA_FORCE=1`, `QA_FORCE=1`, or `HYBRID_MEM_CLI_JOB_GUARD_WINDOW_MS=0`, the cron bash harness appends `--force` to guarded `hybrid-mem` steps (`distill`, `extract-*`, `self-correction-run`, `extract-implicit`).
-
-**Different semantics (unchanged):** `record-storage-sample --force` (once-per-UTC-day guard), `procedure promote --force` (validation threshold), `generate-auto-skills --bypass-skill-duplicate-cache`.
-
----
-
-### In `run-all` (`openclaw hybrid-mem run-all`)
-
-Order of steps (feature flags may omit some). Optional **`--force`** / **`--full`** propagates to scan-style steps (see above):
-
-
-1. **backfill-decay** (once per install, marker `.backfill-decay-done`)
-2. **prune**
-3. **compact**
-4. **distill** (3 days) — if distill enabled
-5. **extract-daily** (7 days) — if enabled
-6. **extract-directives** (7 days) — if enabled
-7. **extract-reinforcement** (7 days) — if enabled
-8. **extract-procedures** (7 days) — if enabled
-9. **generate-auto-skills** — if enabled
-10. **reflect**
-11. **reflect-rules**
-12. **reflect-meta**
-13. **generate-proposals** — if personaProposals enabled
-14. **self-correction-run**
-15. **build-languages**
-
-**Not in run-all:** consolidate, scope promote, sensor-sweep, WAL recovery, startup prune, periodic prune, auto-classify, proposals prune. Use cron jobs or one-off CLI for those.
+Automated runs (cron, gateway tick) never use `--force` or `--dry-run`.
 
 ---
 
 ## Possible adjustments
 
-- **Consolidate / backfill-decay / scope promote** only run from **scheduled** jobs (monthly or weekly-deep-maintenance), not from **run-all** or post-upgrade. If you want them after update or in a single manual pass, add them to the post-upgrade pipeline or run `run-all` plus `consolidate`, `backfill-decay`, `scope promote` manually.
-- **run-all** does not include **consolidate** or **scope promote**; the scheduled **monthly-consolidation** and **weekly-deep-maintenance** jobs cover those.
-- **After install:** no maintenance runs automatically. Consider recommending `openclaw hybrid-mem verify [--fix]` and optionally `run-all` (or at least backfill, prune, compact) after first install.
-- **Post-upgrade** does not run: prune, compact, distill, extract-daily, extract-directives, extract-reinforcement, consolidate, backfill-decay, scope promote, generate-proposals. So a full “catch-up” after upgrade may still require a scheduled run or manual `run-all` plus the monthly/weekly steps you care about.
+- Run `maintenance steps` to see which steps are due and their stagger cadence.
+- Use `maintenance full --force` for a manual catch-up after long downtime.
+- Disable consolidated cron with `maintenance.orchestrator.consolidatedCronJobs: false` if you need the legacy 18-job layout.

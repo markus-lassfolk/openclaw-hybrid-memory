@@ -24,6 +24,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HealthConfig } from "../config/types/maintenance.js";
 import type { HttpRouteOptions } from "./http-route-types.js";
 import { type SafeRouteLogger, createSafeRegisterHttpRoute } from "./safe-register-http-route.js";
+import { nowIso } from "../utils/dates.js";
 
 export interface DashboardRoutesContext {
   cfg: Pick<{ health: HealthConfig }, "health">;
@@ -85,7 +86,7 @@ export function registerDashboardHttpRoutes(ctx: DashboardRoutesContext, api: Cl
     async (_req) => ({
       status: 200,
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "ok", generatedAt: new Date().toISOString() }),
+      body: JSON.stringify({ status: "ok", generatedAt: nowIso() }),
     }),
     routeOpts,
   );

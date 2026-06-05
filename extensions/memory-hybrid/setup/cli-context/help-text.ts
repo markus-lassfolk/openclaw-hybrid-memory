@@ -5,9 +5,10 @@ Commands by category:
   Getting Started (new users start here!)
     setup                Interactive setup wizard for first-time configuration
     demo                 Try the system with sample data (shows semantic search, FTS, categories)
+    help                 Curated guide to common workflows (like git help)
     examples [category]  Show common command examples (basics, setup, maintenance, advanced)
     providers            List available embedding providers and their status
-    health               Quick health check with traffic-light indicators 🟢🟡🔴
+    health               Quick health check with traffic-light indicators
     doctor               Run full diagnostics and detect common issues
 
   Setup & installation
@@ -15,24 +16,23 @@ Commands by category:
     verify               Verify infrastructure and functionality (DBs, embedding API, jobs); use --fix to apply defaults
     config               Show current configuration and feature toggles (use config-set to change)
 
-  Maintenance (run regularly or use run-all)
-    run-all              Run all maintenance tasks in optimal order (see below)
-    tier-compact         Tier compaction: move facts between hot/warm/cold/structural
-    vectordb-optimize    Compact LanceDB fragments and prune old versions (reclaims disk space)
-    prune                Remove expired (decayed) facts
-    checkpoint           Checkpoint vector DB to disk
-    re-index             Reset LanceDB and re-embed all facts (after changing embedding model)
-    backfill-decay       Backfill decay fields (one-time migration)
-    backfill             Seed memory from workspace Markdown/text files
+  Grouped namespaces (preferred — use <group> --help for subcommands)
+    distill              Session distillation and extraction (run, window, record, extract-*)
+    reflect              Reflection pipeline (patterns, rules, meta, identity, dream)
+    storage              Vector and SQLite storage (stats, compact, optimize, reembed, re-index, …)
+    quality              Data quality (duplicates, consolidate, contradictions, classify, enrich, …)
+    learn                Self-correction and feedback learning (self-correction, feedback, implicit, …)
+    maintenance          Cron, backfill, run-all, coverage, analyze-logs, cron-health, …
 
-  Stats & query
-    stats                Show memory statistics (--efficiency adds token estimate in rich output)
-    test                 Run memory diagnostics (structured/semantic/hybrid/auto-recall)
-    context-audit        Report token usage per injected context source
+  Daily use
     search <query>       Hybrid search (vector + SQL)
     lookup <id>          Get fact by ID
-    list                 List recent facts (--limit, --category, --tier, etc.)
     show <id>            Show fact or proposal by ID
+    store <text>         Store a fact (options: --category, --entity, --key, --value)
+    status               Unified health dashboard
+
+  Stats & query
+    dashboard            Memory dashboard summary
     dump                 Print rows from a SQLite table (--type, --limit, --order, --json)
     categories           List categories present in memory
 
@@ -42,43 +42,16 @@ Commands by category:
     proposals approve/reject <id>
     corrections list     List pending corrections from last report
     corrections approve-all   Apply all TOOLS/AGENTS rules from report
-    review               Show proposals and corrections with actions
 
   Store & ingestion
-    store <text>         Store a fact (options: --category, --entity, --key, --value)
     ingest-files         Ingest workspace files (--paths for specific files)
-    distill              Extract facts from session logs (--days, --model)
-    distill-window       Show date range available for distill
-    record-distill       Record last distill run for cron
-    extract-daily        Extract daily summaries from sessions
-    extract-procedures   Extract procedures from sessions (--days)
-    extract-directives   Extract directive rules from sessions
-    extract-reinforcement  Extract reinforcement from praise
-    generate-auto-skills   Generate skills from procedures
-    skills telemetry [name]  Report generated skill activation telemetry
-    skills demote <name>   Demote an over-triggering generated skill
-    generate-proposals    Generate persona proposals from reflection (--dry-run, --verbose)
-
-  Reflection & classification
-    reflect              Analyze recent facts, extract patterns
-    reflect-rules        Extract rules from patterns
-    reflect-meta         Extract meta-patterns
-    classify             Reclassify facts with LLM
-    build-languages      Build language keywords for self-correction
-    enrich-entities      Backfill typed entity extraction for facts missing NER rows
-    entity-mentions audit|cleanup   Audit/cleanup mention quality and duplicates
-
-  Dedup & consolidation
-    find-duplicates      Find near-duplicate facts (--threshold)
-    consolidate          Merge duplicates via LLM (--dry-run first)
-
-  Self-correction
-    self-correction-extract  Extract incidents from sessions
-    self-correction-run      Analyze and remediate (TOOLS.md, memory)
+    backfill             Seed memory from workspace Markdown/text files
+    generate-auto-skills Generate skills from procedures
+    generate-proposals   Generate persona proposals from reflection (--dry-run, --verbose)
+    skills …             Generated skill management (see skills --help)
 
   Export & config
     export               Export to MEMORY.md / memory/ (--output)
-    config               View configuration and feature toggles
     config-mode <mode>   Set memory mode
     config-set <key> <value>
 
@@ -86,15 +59,15 @@ Commands by category:
     credentials migrate-to-vault
     scope list|stats|prune|promote
 
-  Sensor sweep (requires sensorSweep.enabled: true)
-    sensor-sweep         Run sensor data collection (Garmin, GitHub, memory patterns, sessions)
-    sensor-events        Query events written to the Event Bus
-
   Plugin lifecycle
     upgrade [version]    Upgrade to version or latest
     uninstall            Remove plugin (--clean-all, --leave-config)
     backup               Create a point-in-time snapshot (SQLite + LanceDB)
     backup verify        Check SQLite integrity without creating a backup
+
+  Deprecated flat aliases (still work; stderr warning only)
+    run-all, stats, tier-compact, reflect, find-duplicates, extract-daily, backfill-*-*, …
+    Prefer grouped names: maintenance run-all, storage stats, reflect patterns, quality duplicates, …
 `;
 
 export const HYBRID_MEM_HELP_ACTIVE_TASKS = `

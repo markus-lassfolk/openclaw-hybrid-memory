@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { GoalStewardshipConfig } from "../config/types/index.js";
+import { nowIso } from "../utils/dates.js";
 import type { GoalDefaults } from "./goal-stewardship-types.js";
 
 export * from "./goal-stewardship-types.js";
@@ -63,7 +64,7 @@ function readPersistedDispatchWindow(goalsDir: string): { timestamps: number[]; 
 function writePersistedDispatchTimestamps(goalsDir: string, timestamps: number[]): void {
   mkdirSync(goalsDir, { recursive: true });
   const path = persistedDispatchPath(goalsDir);
-  const payload = JSON.stringify({ timestamps, updatedAt: new Date().toISOString() }, null, 2);
+  const payload = JSON.stringify({ timestamps, updatedAt: nowIso() }, null, 2);
   const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmpPath, payload, "utf-8");
   renameSync(tmpPath, path);
@@ -77,7 +78,7 @@ function withPersistedDispatchLock<T>(goalsDir: string, fn: () => T): T {
     try {
       const fd = openSync(lockPath, "wx");
       try {
-        writeFileSync(fd, `${process.pid}\n${new Date().toISOString()}\n`, "utf-8");
+        writeFileSync(fd, `${process.pid}\n${nowIso()}\n`, "utf-8");
       } finally {
         closeSync(fd);
       }

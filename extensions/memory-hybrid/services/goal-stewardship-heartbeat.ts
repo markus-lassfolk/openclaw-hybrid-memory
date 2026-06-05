@@ -7,7 +7,13 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { GoalStewardshipAttentionWeights, GoalStewardshipConfig } from "../config/types/index.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import type { Goal } from "./goal-stewardship-types.js";
+import { nowIso } from "../utils/dates.js";
+
+function sanitizeGoalField(text: string): string {
+  return sanitizePromptInjection(text);
+}
 
 const RR_FILE = "_stewardship_rr.json";
 const RR_LOCK_DIR = ".stewardship-rr.lock";
@@ -102,7 +108,7 @@ async function writeRoundRobin(goalsDir: string, state: StewardshipRoundRobinSta
   await mkdir(goalsDir, { recursive: true });
   await writeFile(
     join(goalsDir, RR_FILE),
-    JSON.stringify({ offset: state.offset, updatedAt: new Date().toISOString() }, null, 2),
+    JSON.stringify({ offset: state.offset, updatedAt: nowIso() }, null, 2),
     "utf-8",
   );
 }
@@ -168,10 +174,22 @@ export function heuristicNeedsHeavyAttention(goals: Goal[]): boolean {
 }
 
 export function buildStewardshipBlockFull(goal: Goal, allActive: number): string {
-  const criteria = goal.acceptanceCriteria.map((c, i) => `  ${i + 1}. ${c}`).join("\n");
-  const blockers = goal.currentBlockers.length > 0 ? goal.currentBlockers.map((b) => `  - ${b}`).join("\n") : "  none";
+  const label = sanitizeGoalField(goal.label);
+  const description = sanitizeGoalField(goal.description);
+  const criteria = goal.acceptanceCriteria
+    .map((c, i) => `  ${i + 1}. ${sanitizeGoalField(c)}`)
+    .join("\n");
+  const blockers =
+    goal.currentBlockers.length > 0
+      ? goal.currentBlockers.map((b) => `  - ${sanitizeGoalField(b)}`).join("\n")
+      : "  none";
   const linked =
-    goal.linkedTasks.length > 0 ? goal.linkedTasks.map((t) => `  - ${t.label}: ${t.status}`).join("\n") : "  (none)";
+    goal.linkedTasks.length > 0
+      ? goal.linkedTasks
+          .map((t) => `  - ${sanitizeGoalField(t.label)}: ${sanitizeGoalField(t.status)}`)
+          .join("\n")
+      : "  (none)";
+  const lastOutcome = goal.lastOutcome ? sanitizeGoalField(goal.lastOutcome) : "none";
   let directive = "Assess progress toward acceptance criteria; dispatch work or call goal_assess.";
   if (goal.status === "verifying") {
     directive = "Verify all criteria are met; call goal_complete if done.";
@@ -179,15 +197,15 @@ export function buildStewardshipBlockFull(goal: Goal, allActive: number): string
     directive = "Address blockers; update via goal_assess.";
   }
   return `<goal-stewardship>
-## Active Goal: ${goal.label} (priority: ${goal.priority}, id: ${goal.id})
+## Active Goal: ${label} (priority: ${goal.priority}, id: ${goal.id})
 
-**Description:** ${goal.description}
+**Description:** ${description}
 
 **Acceptance Criteria:**
 ${criteria}
 
 **State:** ${goal.status} | assessments ${goal.assessmentCount}/${goal.maxAssessments} | dispatches ${goal.dispatchCount}/${goal.maxDispatches}
-**Last outcome:** ${goal.lastOutcome ?? "none"}
+**Last outcome:** ${lastOutcome}
 **Blockers:**
 ${blockers}
 

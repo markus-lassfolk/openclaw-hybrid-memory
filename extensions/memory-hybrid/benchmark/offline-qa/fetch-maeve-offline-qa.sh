@@ -129,7 +129,8 @@ for f in "${SIDEcars[@]}"; do
 done
 
 if [ "$FULL" = "1" ]; then
-  for db in proposals.db identity-reflections.db persona-state.db edicts.db provenance.db narratives.db; do
+  for db in proposals.db identity-reflections.db persona-state.db edicts.db provenance.db narratives.db \
+            workflow-traces.db crystallization-proposals.db; do
     rsync -az "$MAEVE:~/.openclaw/memory/$db" "$MEMORY/$db" 2>/dev/null || true
   done
 fi

@@ -27,6 +27,18 @@ import { expandQueryWithHyde } from "./hyde-helper.js";
 import { createRecallSpan, createRecallTimingLogger } from "./recall-timing.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
 import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
+import { isTierAllowedForWarmSearch } from "../utils/tier-filter.js";
+
+function linkAbortSignal(source: AbortSignal | undefined, controller: AbortController): (() => void) | undefined {
+  if (!source) return undefined;
+  if (source.aborted) {
+    controller.abort();
+    return undefined;
+  }
+  const onAbort = (): void => controller.abort();
+  source.addEventListener("abort", onAbort, { once: true });
+  return () => source.removeEventListener("abort", onAbort);
+}
 
 function isStalePipelineDbError(deps: RecallPipelineDeps, err: unknown): boolean {
   const gen = deps.registrationGeneration;
@@ -81,12 +93,19 @@ export interface RecallSearchOpts {
   diversityWeight: number;
   /** Passed to `FactsDB.search` — bounded FTS + two-phase fetch on interactive recall. */
   interactiveFtsFastPath?: boolean;
+  /** Defer recall_count until injection confirms exposure (#1559). */
+  deferAccessRefresh?: boolean;
 }
 
 /** All explicit dependencies consumed by `runRecallPipelineQuery`. */
+type VectorDbWithDiagnostics = Pick<VectorDB, "search"> & {
+  getLastSearchFailReason?: () => string | null;
+  getDegradedState?: () => { active: boolean; reason: string | null };
+};
+
 export interface RecallPipelineDeps {
   factsDb: Pick<FactsDB, "search" | "getById" | "lookup" | "getSupersededTexts">;
-  vectorDb: Pick<VectorDB, "search">;
+  vectorDb: VectorDbWithDiagnostics;
   embeddings: Pick<EmbeddingProvider, "embed">;
   openai: OpenAI;
   cfg: RecallPipelineCfg;
@@ -125,6 +144,10 @@ export async function runRecallPipelineQuery(
     policy?: InteractiveRecallPolicy;
     timingSpan?: string;
     timingOp?: string;
+    /** Set to true when semantic/vector step failed, timed out, or LanceDB is unavailable. */
+    pipelineStatusRef?: { semanticDegraded: boolean };
+    /** Parent recall stage abort — skips vector/HyDE and returns partial FTS results when fired. */
+    stageSignal?: AbortSignal;
   },
 ): Promise<SearchResult[]> {
   const { factsDb, vectorDb, embeddings, openai, cfg, recallOpts, minScore, pendingLLMWarnings, logger } = deps;
@@ -133,6 +156,7 @@ export async function runRecallPipelineQuery(
 
   const trimmed = query.trim();
   if (!trimmed) return [];
+  if (opts?.stageSignal?.aborted) return [];
 
   const useSemantic = cfg.retrievalStrategies.includes("semantic");
   const recallTiming = createRecallTimingLogger({
@@ -230,10 +254,31 @@ export async function runRecallPipelineQuery(
         );
       }
       await yieldEventLoop();
+      if (opts?.stageSignal?.aborted) return sqliteResults;
     } else {
+      const vectorDegraded = vectorDb.getDegradedState?.()?.active === true;
+      if (vectorDegraded) {
+        probeStage = "fts_search";
+        vectorStepStatus = "fts-only-degraded";
+        probeDebug(`memory-hybrid: recall-probe id=${probeId} stage=fts_search start semantic=degraded`);
+        const ftsStartedAt = recallTiming.phaseStarted("fts_search", { limit: limitNum, vector_degraded: true });
+        const t0 = Date.now();
+        const ftsOut = runFtsSearchSync();
+        stageMs.fts = Date.now() - t0;
+        sqliteResults = ftsOut.sqliteResults;
+        ftsRowCount = ftsOut.ftsRowCount;
+        recallTiming.phaseCompleted("fts_search", ftsStartedAt, {
+          fts_rows: ftsOut.ftsRowCount,
+          entity_lookup_rows: ftsOut.entityLookupRows,
+          sqlite_rows: ftsOut.sqliteResults.length,
+          vector_degraded: true,
+        });
+        if (opts?.pipelineStatusRef) opts.pipelineStatusRef.semanticDegraded = true;
+      } else {
       const vectorStepStartedAt = recallTiming.phaseStarted("vector_step");
       vectorStepStatus = "ok";
       const directiveAbort = new AbortController();
+      const unlinkStageAbort = linkAbortSignal(opts?.stageSignal, directiveAbort);
 
       // --- Phase 1: Kick off async I/O (HyDE / embed) BEFORE scheduling FTS ---
       // FTS runs synchronously inside setImmediate and can block the event loop for
@@ -329,6 +374,7 @@ export async function runRecallPipelineQuery(
       try {
         ftsRows = await ftsPromise;
       } catch (ftsErr) {
+        unlinkStageAbort?.();
         // Embed was started before FTS; if FTS fails first, fire-and-forget the
         // embed promise so a fast network rejection cannot surface as an unhandled
         // rejection, without blocking the error path on embed settling.
@@ -336,6 +382,13 @@ export async function runRecallPipelineQuery(
           /* intentionally ignored */
         });
         throw ftsErr;
+      }
+
+      if (opts?.stageSignal?.aborted) {
+        unlinkStageAbort?.();
+        sqliteResults = ftsRows;
+        if (opts?.pipelineStatusRef) opts.pipelineStatusRef.semanticDegraded = true;
+        return sqliteResults.slice(0, limitNum);
       }
 
       const vectorStepPromise = (async (): Promise<SearchResult[]> => {
@@ -471,6 +524,7 @@ export async function runRecallPipelineQuery(
 
       sqliteResults = ftsRows;
       lanceResults = await vectorRacePromise;
+      unlinkStageAbort?.();
       recallTiming.phaseCompleted("vector_step", vectorStepStartedAt, {
         status: vectorStepStatus,
         hits: lanceResults.length,
@@ -488,9 +542,17 @@ export async function runRecallPipelineQuery(
           });
         }
       });
+      }
     }
 
     await yieldEventLoop();
+    if (opts?.stageSignal?.aborted) {
+      if (opts?.pipelineStatusRef && useSemantic) {
+        opts.pipelineStatusRef.semanticDegraded = true;
+      }
+      const partial = mergeResults(sqliteResults, lanceResults, limitNum, factsDb);
+      return partial.slice(0, limitNum);
+    }
 
     probeStage = "merge_results";
     const mergeStartedAt = recallTiming.phaseStarted("merge_results");
@@ -524,9 +586,24 @@ export async function runRecallPipelineQuery(
       results = results
         .filter((r) => {
           const full = factsDb.getById(r.entry.id);
-          return full && full.tier !== "cold";
+          return full && isTierAllowedForWarmSearch(full.tier);
         })
         .slice(0, limitNum);
+    }
+
+    if (opts?.pipelineStatusRef && useSemantic) {
+      const vectorFailed = vectorStepStatus === "timeout" || vectorStepStatus === "error";
+      const vectorDbDiag = vectorDb as VectorDbWithDiagnostics;
+      const lanceDegraded =
+        vectorDbDiag.getDegradedState?.().active === true ||
+        vectorDbDiag.getLastSearchFailReason?.() != null;
+      const semanticMiss =
+        lanceResults.length === 0 &&
+        sqliteResults.length > 0 &&
+        vectorDbDiag.getLastSearchFailReason?.() != null;
+      if (vectorFailed || lanceDegraded || semanticMiss) {
+        opts.pipelineStatusRef.semanticDegraded = true;
+      }
     }
 
     const wallClockMs = Date.now() - pipelineWallT0;

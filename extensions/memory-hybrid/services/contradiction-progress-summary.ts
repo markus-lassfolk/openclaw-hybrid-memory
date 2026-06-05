@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getEnv } from "../utils/env-manager.js";
+import { nowIso } from "../utils/dates.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 
 export const DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD = 200;
@@ -77,7 +78,7 @@ export function persistConsecutiveNoProgressState(
         consecutiveNoProgressRuns: evaluation.consecutiveNoProgressRuns,
         lastAmbiguous: metrics.ambiguous,
         lastAutoResolved: metrics.autoResolved,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       } satisfies PersistedNoProgressState,
       null,
       2,

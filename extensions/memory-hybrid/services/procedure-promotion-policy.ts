@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { ProcedureEntry } from "../types/memory.js";
 import { toWorkspaceRelativePath } from "../utils/path.js";
+import { formatDateUtc, formatTimestampUtc } from "../utils/dates.js";
 import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js";
 import { slugifyForSkill, stripLeadingHtmlComments, titleCase } from "../utils/text.js";
 import {
@@ -595,7 +596,7 @@ export function evaluateProcedureForPromotion(
     lifecycleState: "experimental",
     telemetryCommand,
     falsePositiveCommandTemplate: 'openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"',
-    lastVerifiedAt: new Date(now * 1000).toISOString(),
+    lastVerifiedAt: formatTimestampUtc(now),
   };
   if (finalDraft) {
     finalDraft.verificationJson = `${JSON.stringify(redactAutopilotValue(metadata), null, 2)}\n`;
@@ -921,7 +922,8 @@ function buildProcedureSkillDraft(
   const telemetryCommand = `openclaw hybrid-mem skills record ${slug}`;
   const telemetryRequestSummaryArg = shellQuote(redactedTask.redacted);
   const antiPatterns = buildAntiPatternsForProcedure(proc);
-  const generatedAt = new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString().slice(0, 10);
+  const nowSec = options.now ?? Math.floor(Date.now() / 1000);
+  const generatedAt = formatDateUtc(nowSec);
   const description = buildPushySkillDescription({
     taskPattern: redactedTask.redacted,
     keyword,
@@ -1026,7 +1028,7 @@ ${examplesSection}${antiPatternsBlock}
     lifecycleState: "experimental",
     telemetryCommand,
     falsePositiveCommandTemplate: 'openclaw hybrid-mem skills correct <activation-id> --reason "user rejected skill"',
-    lastVerifiedAt: new Date((options.now ?? Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+    lastVerifiedAt: formatTimestampUtc(options.now ?? Math.floor(Date.now() / 1000)),
   };
   const evalsJson = buildLegacyEvalsJson({
     shouldTrigger: triggerEval.shouldTrigger,
@@ -1047,7 +1049,7 @@ ${examplesSection}${antiPatternsBlock}
     sourceProcedureId: proc.id,
     successCount: proc.successCount,
     failureCount: proc.failureCount,
-    lastValidated: proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : null,
+    lastValidated: proc.lastValidated ? formatTimestampUtc(proc.lastValidated) : null,
   };
   return {
     slug,

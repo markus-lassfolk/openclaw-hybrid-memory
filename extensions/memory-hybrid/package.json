@@ -1,6 +1,6 @@
 {
   "name": "openclaw-hybrid-memory",
-  "version": "2026.6.41",
+  "version": "2026.6.52",
   "type": "module",
   "description": "Give your OpenClaw agent lasting memory: structured facts, semantic search, auto-capture & recall, decay, optional credential vault. Part of Hybrid Memory v3.",
   "files": [
@@ -91,7 +91,8 @@
     "offline-qa:finalize-report": "node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/finalize-report.ts",
     "offline-qa:verify": "node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/verify-fixtures.ts",
     "offline-qa:backfill": "HOME=.offline-qa/sandbox-work node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/run-sandbox-backfill.ts",
-    "maintenance:backfill": "node ../../scripts/run-with-supported-node.mjs openclaw hybrid-mem backfill-daily-logs --days 60 && node ../../scripts/run-with-supported-node.mjs openclaw hybrid-mem backfill-session-languages --days 60 && node ../../scripts/run-with-supported-node.mjs openclaw hybrid-mem backfill-recall-events --days 60",
+    "offline-qa:crystallization": "HOME=.offline-qa/sandbox-work node ../../scripts/run-with-supported-node.mjs node node_modules/.bin/jiti benchmark/offline-qa/analyze-crystallization.ts",
+    "maintenance:backfill": "node ../../scripts/run-with-supported-node.mjs openclaw hybrid-mem maintenance backfill --all --days 60",
     "lint:arch": "bash scripts/lint-arch.sh",
     "postinstall": "node scripts/postinstall-rebuild.cjs",
     "prepack": "npm run build && node scripts/manage-shrinkwrap.cjs create",

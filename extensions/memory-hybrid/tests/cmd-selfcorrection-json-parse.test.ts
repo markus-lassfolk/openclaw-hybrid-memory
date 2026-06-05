@@ -14,11 +14,12 @@
  *  - First-batch non-parse LLM failure → status: "failed", zero batches completed
  */
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import { ProposalsDB } from "../backends/proposals-db.js";
 import {
   runSelfCorrectionRunForCli,
   resolveSelfCorrectionBatchStateDir,
@@ -26,6 +27,7 @@ import {
 } from "../cli/cmd-selfcorrection.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import type { CorrectionIncident } from "../services/self-correction-extract.js";
+import * as adaptiveLlm from "../services/adaptive-maintenance-llm.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -33,6 +35,7 @@ import type { CorrectionIncident } from "../services/self-correction-extract.js"
 
 let tmpDir: string;
 let factsDb: FactsDB;
+let proposalsDb: ProposalsDB;
 
 const SAMPLE_INCIDENT: CorrectionIncident = {
   userMessage: "That was wrong — you should have verified first.",
@@ -119,6 +122,12 @@ function makeOpenAIFailoverMock(
   } as any;
 }
 
+function mockAdaptiveLlm(content: string): void {
+  vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+    content,
+  } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
+}
+
 function makeCtx(openai: any): HandlerContext {
   return {
     factsDb,
@@ -131,7 +140,7 @@ function makeCtx(openai: any): HandlerContext {
       modelName: "test-model",
     } as any,
     openai,
-    proposalsDb: null,
+    proposalsDb,
     cfg: {
       procedures: { sessionsDir: tmpDir },
       distill: {},
@@ -148,6 +157,14 @@ function makeCtx(openai: any): HandlerContext {
       llm: { default: ["test-model"], heavy: ["test-model"], _source: undefined },
       store: { classifyBeforeWrite: false },
       autoRecall: { enabled: false },
+      personaProposals: {
+        enabled: true,
+        allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"],
+        proposalTTLDays: 30,
+        minConfidence: 0.5,
+        maxProposalsPerWeek: 5,
+        autoApply: false,
+      },
     } as any,
     credentialsDb: null,
     aliasDb: null,
@@ -165,10 +182,13 @@ function makeCtx(openai: any): HandlerContext {
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "sc-json-parse-test-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  proposalsDb = new ProposalsDB(join(tmpDir, "proposals.db"));
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   factsDb.close();
+  proposalsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -870,17 +890,18 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
   });
 
   it("AGENTS_RULE proposal uses source incident from batch order", async () => {
+    writeFileSync(join(tmpDir, "SOUL.md"), "# Soul\n\n", "utf-8");
     const agentsRule = {
+      incidentIndex: 0,
       category: "behavior",
       severity: "medium",
       remediationType: "AGENTS_RULE",
-      remediationContent: "Always verify in AGENTS.md",
+      remediationContent: "When a sub-agent completes, immediately continue with next task without waiting.",
     };
-    const openai = makeOpenAIMock(JSON.stringify([agentsRule]));
-    const create = vi.fn();
-    const proposalsDb = { create };
+    const llmResponse = JSON.stringify([agentsRule]);
+    const openai = makeOpenAIMock(llmResponse);
+    mockAdaptiveLlm(llmResponse);
     const ctx = makeCtx(openai);
-    (ctx as any).proposalsDb = proposalsDb;
     (ctx.cfg as any).selfCorrection = {
       ...(ctx.cfg as any).selfCorrection,
       agentsRuleToProposals: true,
@@ -896,9 +917,10 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
       workspace: tmpDir,
     });
 
-    expect(create).toHaveBeenCalled();
-    const arg = create.mock.calls[0][0];
-    expect(arg.observation).toContain("Unique incident text");
-    expect(arg.evidenceSessions).toEqual([incident.sessionFile]);
+    const proposals = proposalsDb.list();
+    const prop = proposals.find((p) => p.suggestedChange.includes("sub-agent"));
+    expect(prop).toBeDefined();
+    expect(prop?.observation).toContain("Unique incident text");
+    expect(prop?.evidenceSessions).toEqual([incident.sessionFile]);
   });
 });

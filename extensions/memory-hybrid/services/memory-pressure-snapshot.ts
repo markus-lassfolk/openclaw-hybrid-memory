@@ -18,6 +18,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
 import { getEnv } from "../utils/env-manager.js";
 import { parseDuration } from "../utils/duration.js";
+import { nowIso } from "../utils/dates.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -377,7 +378,7 @@ export async function captureMemoryPressureSnapshot(
     };
 
     const snapshot: MemoryPressureSnapshot = {
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       memory: memSnapshot,
       activeHandles:
         typeof (process as unknown as { _getActiveHandles?: () => unknown[] })._getActiveHandles === "function"

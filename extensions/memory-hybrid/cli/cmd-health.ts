@@ -11,6 +11,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
+import { nowIso } from "../utils/dates.js";
 
 interface HealthIndicator {
   name: string;
@@ -286,7 +287,7 @@ export function registerHealthCommand(
                   ? "unhealthy"
                   : "degraded",
               indicators,
-              timestamp: new Date().toISOString(),
+              timestamp: nowIso(),
             },
             null,
             2,

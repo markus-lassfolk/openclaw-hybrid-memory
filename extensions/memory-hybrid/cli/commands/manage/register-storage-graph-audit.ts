@@ -15,6 +15,7 @@ import { repairEventHubs } from "../../../services/event-hub-repair.js";
 import { hasAnyScopeFilter } from "../../../backends/scope-filter-sql.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { atomicWriteFile } from "../../../utils/atomic-write.js";
+import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -406,7 +407,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
             return;
           }
           for (const r of rows) {
-            const ts = new Date(r.timestamp).toISOString().replace("T", " ").slice(0, 19);
+            const ts = formatTimestampUtcFromMs(r.timestamp).replace("T", " ").slice(0, 19);
             const dur = r.durationMs != null ? ` [${r.durationMs}ms]` : "";
             const tgt = r.target ? ` ${r.target}` : "";
             const err = r.error ? ` err=${r.error.slice(0, 80)}` : "";
@@ -526,7 +527,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           .map(([action, count]) => ({ action, count }));
         const summary = {
           schemaVersion: 1,
-          generatedAt: new Date().toISOString(),
+          generatedAt: nowIso(),
           localFirst: true,
           reporting: {
             enabled: cfg.errorReporting.enabled === true,
@@ -603,7 +604,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
             {
               schemaVersion: 1,
               type: "hybrid-memory-sync-export",
-              exportedAt: new Date().toISOString(),
+              exportedAt: nowIso(),
               metadata: {
                 factsExported: exportResult.factsExported,
                 proceduresExported: exportResult.proceduresExported,
@@ -625,7 +626,7 @@ export function registerManageStorageGraphAudit(mem: Chainable, b: ManageBinding
           const envelope = {
             schemaVersion: 1,
             type: "hybrid-memory-sync-bundle",
-            encryptedAt: new Date().toISOString(),
+            encryptedAt: nowIso(),
             alg: "aes-256-gcm",
             kdf: "pbkdf2-sha256",
             iterations,

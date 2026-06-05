@@ -214,6 +214,7 @@ describe("PR #1332 unresolved feedback remediation", () => {
     const wal = {
       getPath: () => walPath,
       readAll: vi.fn().mockResolvedValue([]),
+      readAllRecoverable: vi.fn().mockResolvedValue({ entries: [], hadCorruption: false }),
       getValidEntries: vi.fn().mockResolvedValue([]),
       write: vi.fn().mockResolvedValue(undefined),
       remove: vi.fn().mockResolvedValue(undefined),
@@ -225,13 +226,22 @@ describe("PR #1332 unresolved feedback remediation", () => {
         embedding: { provider: "openai", apiKey: "sk-test" },
         wal: { enabled: true, walPath },
       } as never,
-      { getCount: () => 1 } as never,
+      { getCount: () => 1, getFtsConsistencySnapshot: () => ({
+        ftsTableExists: true,
+        hasTagsColumn: true,
+        hasWhyColumn: true,
+        ftsRowCount: 1,
+        factsRowCount: 1,
+        drift: 0,
+      }) } as never,
       { getAllIds: async () => ["v1"] } as never,
       wal as never,
     );
     const doctor = command.children.find((child) => child.name === "doctor");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as typeof process.exit);
     await doctor?.handler?.();
+    exitSpy.mockRestore();
     const output = log.mock.calls.map((call) => String(call[0])).join("\n");
     expect(output).toContain("WAL Circuit Breaker");
     expect(output).toContain("WAL Journal");

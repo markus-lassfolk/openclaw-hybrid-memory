@@ -33,6 +33,7 @@ import { loadPrompt } from "../utils/prompt-loader.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import type { CorrectionIncident } from "../services/self-correction-extract.js";
 import { getEnv } from "../utils/env-manager.js";
+import { formatDateUtc, nowSec, formatTimestampUtcFromMs, formatTimestampUtc } from "../utils/dates.js";
 import { runSelfCorrectionRunForCli } from "./cmd-selfcorrection.js";
 import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import type { HandlerContext } from "./handlers.js";
@@ -174,11 +175,12 @@ function markImplicitFeedbackLessonRecalled(
   factId: string,
 ): void {
   const nowSec = Math.floor(Date.now() / 1000);
+  const nowIsoAt = formatTimestampUtc(nowSec);
   rawDb
     ?.prepare(
-      "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+      "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_accessed = ?, last_accessed_at = ? WHERE id = ?",
     )
-    .run(nowSec, nowSec, factId);
+    .run(nowSec, nowIsoAt, factId);
 }
 
 /** Rows matching this OR-branch are legacy implicit-feedback bloat (category=pattern). Use with --include-legacy collapse. */
@@ -299,8 +301,9 @@ export function cleanupImplicitFeedbackDuplicates(
     }
   }
   const nowSec = Math.floor(Date.now() / 1000);
+  const nowIsoAt = formatTimestampUtc(nowSec);
   const reinforce = rawDb.prepare(
-    "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+    "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = ? WHERE id = ?",
   );
   const supersedeStmt = rawDb.prepare(
     "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
@@ -366,7 +369,7 @@ export function cleanupImplicitFeedbackDuplicates(
       const sup = supersedeStmt.run(nowSec, match.id, nowSec, row.id);
       if ((sup.changes ?? 0) > 0) {
         supersededAny = true;
-        reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
+        reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowIsoAt, match.id);
         collapsed++;
       }
       if (scanned % reportEvery === 0 || scanned === rows.length) {
@@ -975,7 +978,7 @@ export async function runExtractImplicitFeedbackForCli(
             precedingAssistant: sig.context.agentMessage,
             followingAssistant: followingAssistant.slice(0, 500),
             sessionFile: sig.context.sessionFile,
-            timestamp: new Date(sig.context.timestamp).toISOString(),
+            timestamp: formatTimestampUtcFromMs(sig.context.timestamp),
           });
         }
         if (wallClockLimitReached()) {
@@ -1760,7 +1763,7 @@ export async function runToolEffectivenessForCli(
     const report = await computeToolEffectiveness(workflowDbPath, effStore, teCfg ?? {}, ctx.logger ?? {});
 
     // Gap 3 (#263): Generate monthly report, gated to once per calendar month
-    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const month = formatDateUtc(nowSec()).slice(0, 7); // YYYY-MM
     const monthlyKey = `tool-effectiveness-monthly-${month}`;
     try {
       const rawDb = ctx.factsDb.getRawDb();

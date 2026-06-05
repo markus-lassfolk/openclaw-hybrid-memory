@@ -10,11 +10,25 @@ import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
 import "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { chatCompletionTokenParams } from "../services/model-capabilities.js";
-import { extractAssistantMessageText } from "../utils/llm-message.js";
+import { trimBlockToBudget } from "../services/context-block-trim.js";
+import { consumePrependBudget } from "../services/prepend-budget.js";
+import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
+import {
+  assembleRecallPrependContext,
+  buildEdictBlock,
+  DEFAULT_EDICT_BUDGET_FRACTION,
+} from "../services/recalled-context-assembler.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
-import { sanitizePromptInjection, RECALLED_CONTEXT_BOUNDARY } from "../services/skill-prompt-injection.js";
-import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
-import { withTimeout } from "../utils/timeout.js";
+import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
+import {
+  estimateTokens,
+  estimateTokensForDisplay,
+  formatProgressiveIndexLine,
+  sanitizeRecallFactText,
+} from "../utils/text.js";
+import { markFactsInjectedForSession } from "../services/session-injection-dedup.js";
+import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 
@@ -56,38 +70,80 @@ function strengthenHebbianLinks(
   });
 }
 
+type InjectionSideEffects = {
+  accessedIds?: string[];
+  indexedIds?: string[];
+};
+
+function applyInjectionSideEffects(
+  ctx: LifecycleContext,
+  api: ClawdbotPluginApi,
+  ambientSeenFacts: RecallResult["ambientSeenFacts"],
+  sessionKey: string,
+  sideEffects: InjectionSideEffects,
+): void {
+  const accessedIds = sideEffects.accessedIds ?? [];
+  const indexedIds = sideEffects.indexedIds ?? [];
+  if (accessedIds.length > 0) ctx.factsDb.refreshAccessedFacts(accessedIds);
+  if (indexedIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexedIds);
+  const seenIds = [...accessedIds, ...indexedIds];
+  markFactsInjectedForSession(ctx.injectedFactIdsBySession, sessionKey, seenIds);
+  if (ambientSeenFacts && seenIds.length > 0) ambientSeenFacts.markSeen(seenIds);
+  if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && accessedIds.length >= 2) {
+    strengthenHebbianLinks(accessedIds, ctx.factsDb, api.logger);
+  }
+}
+
 export async function runInjectionStage(
   recallResult: RecallResult,
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   event: unknown,
 ): Promise<{ prependContext: string } | undefined> {
-  return withTimeout(INJECTION_STAGE_TIMEOUT_MS, () => runInjection(recallResult, api, ctx, event), undefined);
+  const emitGate = { emitted: false };
+  const injectionAbort = new AbortController();
+  let primarySettled = false;
+
+  const primary = runInjection(recallResult, api, ctx, event, {
+    emitGate,
+    abortSignal: injectionAbort.signal,
+  }).then((result) => {
+    primarySettled = true;
+    return result;
+  });
+
+  let injectionTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutFallback = new Promise<{ prependContext: string } | undefined>((resolve) => {
+    injectionTimeoutId = setTimeout(() => {
+      if (primarySettled || emitGate.emitted) {
+        resolve(undefined);
+        return;
+      }
+      injectionAbort.abort();
+      api.logger.warn?.("memory-hybrid: injection stage timed out — returning unsummarized partial injection");
+      void runInjection(recallResult, api, ctx, event, { skipLlmSummarize: true, emitGate }).then(resolve);
+    }, INJECTION_STAGE_TIMEOUT_MS);
+  });
+
+  return Promise.race([primary, timeoutFallback]).finally(() => {
+    if (injectionTimeoutId !== undefined) clearTimeout(injectionTimeoutId);
+  });
 }
 
-/** Get the edict block for forced prompt injection (always preserved, never trimmed). */
-function buildEdictBlock(ctx: LifecycleContext): string {
-  try {
-    const { renderForPrompt } = ctx.edictStore.getEdicts({ format: "prompt" });
-    return renderForPrompt;
-  } catch (err) {
-    const e = err instanceof Error ? err : new Error(String(err));
-    // Expected when the plugin is shutting down or the edict DB closed mid-hook (#1162).
-    if (!/database connection is not open/i.test(e.message)) {
-      capturePluginError(e, {
-        subsystem: "stage-injection",
-        operation: "get-edicts",
-      });
-    }
-    return "";
-  }
-}
+type RunInjectionOptions = {
+  skipLlmSummarize?: boolean;
+  /** Prevents double prepend emission when primary and timeout paths race. */
+  emitGate?: { emitted: boolean };
+  /** Aborted when injection stage timeout wins — skips LLM summarize on primary path. */
+  abortSignal?: AbortSignal;
+};
 
 async function runInjection(
   r: RecallResult,
   api: ClawdbotPluginApi,
   ctx: LifecycleContext,
   event: unknown,
+  options: RunInjectionOptions = {},
 ): Promise<{ prependContext: string } | undefined> {
   const recallTiming = createRecallTimingLogger({
     logger: api.logger,
@@ -99,26 +155,19 @@ async function runInjection(
   const agentId = resolveAgentIdFromHookEvent(event, api);
   const injectionStart = Date.now();
 
-  const wrapRecalledContext = (edicts: string, memoryContent: string): string => {
-    if (!edicts && !memoryContent) return "";
-    const parts: string[] = ["<recalled-context>"];
-    if (edicts) parts.push(edicts);
-    if (memoryContent) {
-      parts.push(RECALLED_CONTEXT_BOUNDARY);
-      parts.push(memoryContent);
-    }
-    parts.push("</recalled-context>");
-    return parts.join("\n");
-  };
-
   const markDegradedLatency = (content: string): string => {
+    let out = content;
     if (r.degradationMaxLatencyMs > 0 && Date.now() - r.recallStartMs > r.degradationMaxLatencyMs) {
       api.logger.debug?.(
         `memory-hybrid: recall degraded (latency ${Date.now() - r.recallStartMs}ms > ${r.degradationMaxLatencyMs}ms)`,
       );
-      return `<!-- recall degraded: latency -->\n${content}`;
+      out = `<!-- recall degraded: latency -->\n${out}`;
     }
-    return content;
+    if (r.semanticDegraded) {
+      api.logger.debug?.("memory-hybrid: recall degraded (semantic/vector step unavailable — FTS-only results)");
+      out = `<!-- recall degraded: semantic -->\n${out}`;
+    }
+    return out;
   };
 
   const {
@@ -137,13 +186,42 @@ async function runInjection(
     summarizeModel,
     groupByCategory,
     pinnedRecallThreshold,
-    lastProgressiveIndexIdsRef,
+    progressiveIndexSessionKey,
+    progressiveIndexBySession,
     ambientCfg: _ambientCfg,
     ambientSeenFacts,
   } = r;
-  const edictBlock = buildEdictBlock(ctx);
   const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
-  const baseContext = edictBlock;
+
+  const edictMaxTokens = Math.max(
+    0,
+    Math.min(maxTokens, Math.floor((r.totalBudget ?? maxTokens) * DEFAULT_EDICT_BUDGET_FRACTION)),
+  );
+  const edictBlock = (() => {
+    const raw = buildEdictBlock(ctx);
+    if (!raw) return "";
+    if (edictMaxTokens <= 0) return "";
+    return trimBlockToBudget(raw, edictMaxTokens).text;
+  })();
+  const memoryTokenBudget = Math.max(0, maxTokens - estimateTokens(edictBlock));
+  const effectiveIndexCap = Math.min(indexCap, memoryTokenBudget);
+
+  const finishPrepend = (
+    memoryContent: string,
+    prefix?: string,
+    sideEffects?: InjectionSideEffects,
+  ): { prependContext: string } | undefined => {
+    if (options.emitGate?.emitted) return undefined;
+    const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(memoryContent), {
+      prefix,
+      edictBlock,
+    });
+    if (!prepend) return undefined;
+    if (options.emitGate) options.emitGate.emitted = true;
+    consumePrependBudget(ctx.prependBudgetRef, prepend);
+    if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, progressiveIndexSessionKey, sideEffects);
+    return { prependContext: prepend };
+  };
 
   const withAmbient = (s: string) => (recalledAmbient ? `${recalledAmbient}${s}` : s);
 
@@ -173,17 +251,18 @@ async function runInjection(
       if (x.entry.key) {
         title = sanitizePromptInjection(`${x.entry.entity ? `${x.entry.entity}: ` : ""}${x.entry.key}`);
       } else if (x.entry.summary) {
-        title = sanitizePromptInjection(x.entry.summary);
+        title = sanitizePromptInjection(sanitizeRecallFactText(x.entry.summary));
       } else {
         const truncated = x.entry.text.length > 60 ? `${x.entry.text.slice(0, 60).trim()}…` : x.entry.text;
-        title = sanitizePromptInjection(truncated);
+        title = sanitizePromptInjection(sanitizeRecallFactText(truncated));
       }
       const tokenCost = estimateTokensForDisplay(x.entry.summary || x.entry.text);
       const pos = startPosition + indexEntries.length;
-      const line = formatProgressiveIndexLine(x.entry.category, title, tokenCost, pos);
+      const category = sanitizePromptInjection(x.entry.category);
+      const line = formatProgressiveIndexLine(category, title, tokenCost, pos);
       const lineTokens = estimateTokens(`${line}\n`);
       if (usedTokens + lineTokens > cap) break;
-      indexEntries.push({ line, id: x.entry.id, category: x.entry.category, position: pos });
+      indexEntries.push({ line, id: x.entry.id, category, position: pos });
       usedTokens += lineTokens;
     }
     const ids = indexEntries.map((e) => e.id);
@@ -214,24 +293,7 @@ async function runInjection(
     const pinned: typeof candidates = [];
     const rest: typeof candidates = [];
     for (const x of candidates) {
-      const recallCount = x.entry.recallCount ?? 0;
-      const indexedCount = x.entry.indexedCount ?? 0;
-      // Pin by recall_count ONLY when last_accessed is recent (within 14 days) to prevent
-      // garbage artifacts (high recall_count from repeated index exposure) from being pinned (#1559).
-      const lastAccessed = x.entry.lastAccessed ?? 0;
-      const lastAccessedDaysAgo = lastAccessed > 0 ? (Date.now() / 1000 - lastAccessed) / 86400 : Infinity;
-      const isRecentlyAccessed = lastAccessedDaysAgo < 14;
-
-      // Exclude facts with disproportionate index exposure (indexed_count >> recall_count)
-      // which indicates garbage that was repeatedly shown in progressive index but never
-      // actually recalled (#1559).
-      const indexInflationRatio = recallCount > 0 ? indexedCount / recallCount : indexedCount;
-      const likelyIndexGarbage = indexInflationRatio > 10 && indexedCount > 50;
-
-      if (
-        x.entry.decayClass === "permanent" ||
-        (recallCount >= pinnedRecallThreshold && isRecentlyAccessed && !likelyIndexGarbage)
-      ) {
+      if (shouldPinFactForInjection(x.entry, pinnedRecallThreshold)) {
         pinned.push(x);
       } else {
         rest.push(x);
@@ -241,12 +303,13 @@ async function runInjection(
     const pinnedPart: string[] = [];
     const injectedPinnedIds: string[] = [];
     let pinnedTokens = estimateTokens(pinnedHeader);
-    const pinnedBudget = Math.min(maxTokens, Math.floor(maxTokens * 0.6));
+    const pinnedBudget = Math.min(memoryTokenBudget, Math.floor(memoryTokenBudget * 0.6));
     for (const x of pinned) {
       let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
       if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
         text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
-      const line = `- [${x.backend}/${x.entry.category}] ${text}`;
+      const category = sanitizePromptInjection(x.entry.category);
+      const line = `- [${x.backend}/${category}] ${text}`;
       const lineTokens = estimateTokens(`${line}\n`);
       if (pinnedTokens + lineTokens > pinnedBudget) break;
       pinnedPart.push(line);
@@ -258,54 +321,43 @@ async function runInjection(
         ? `\nOther memories (index — use memory_recall(id: N) or memory_recall("query") to fetch):\n`
         : `<relevant-memories format="index">\n`;
     const indexFooter = `\n→ Use memory_recall("query"), memory_recall(id: N), or entity/key to fetch full details.\n</relevant-memories>`;
-    const indexBudget = indexCap - estimateTokens(pinnedHeader + pinnedPart.join("\n") + indexIntro + indexFooter);
+    const fixedOverhead = estimateTokens(
+      (pinnedPart.length > 0 ? pinnedHeader + pinnedPart.join("\n") : "") + indexIntro + indexFooter,
+    );
+    const indexBudget = Math.min(effectiveIndexCap, Math.max(0, memoryTokenBudget - pinnedTokens - fixedOverhead));
     if (indexBudget <= 0) {
-      lastProgressiveIndexIdsRef.length = 0;
+      setProgressiveIndexIds(progressiveIndexBySession, progressiveIndexSessionKey, []);
       api.logger.debug?.(
         `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`,
       );
       if (pinnedPart.length > 0) {
-        ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
-        if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedPinnedIds);
-        if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedPinnedIds.length >= 2) {
-          strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger);
-        }
         const fullContent = `${pinnedHeader}${pinnedPart.join("\n")}\n</relevant-memories>`;
         api.logger.info?.(
           `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, no index (~${pinnedTokens} tokens)`,
         );
         emitAudit(pinnedTokens);
-        return {
-          prependContext: markDegradedLatency(
-            wrapRecalledContext(baseContext, withAmbient(withProcedures(fullContent))),
-          ),
-        };
+        return (
+          finishPrepend(withAmbient(withProcedures(fullContent)), undefined, {
+            accessedIds: injectedPinnedIds,
+          }) ?? undefined
+        );
       }
       if (procedureBlock) {
-        emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
+        emitAudit(estimateTokens(recalledAmbient + procedureBlock));
+        return finishPrepend(withAmbient(procedureBlock)) ?? undefined;
       }
       if (recalledAmbient) {
-        emitAudit(estimateTokens(baseContext + recalledAmbient));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+        emitAudit(estimateTokens(recalledAmbient));
+        return finishPrepend(recalledAmbient) ?? undefined;
       }
-      if (baseContext) {
-        emitAudit(estimateTokens(baseContext));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
+      if (edictBlock) {
+        emitAudit(estimateTokens(edictBlock));
+        return finishPrepend("") ?? undefined;
       }
       return undefined;
     }
     const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, indexBudget, 1);
-    lastProgressiveIndexIdsRef.length = 0;
-    lastProgressiveIndexIdsRef.push(...indexIds);
-    if (injectedPinnedIds.length > 0) ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
-    // Index-only exposures must NOT inflate recall_count (#1559)
-    if (indexIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexIds);
-    const allIds = [...injectedPinnedIds, ...indexIds];
-    if (ambientSeenFacts && allIds.length > 0) ambientSeenFacts.markSeen(allIds);
-    if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && allIds.length >= 2) {
-      strengthenHebbianLinks(allIds, ctx.factsDb, api.logger);
-    }
+    setProgressiveIndexIds(progressiveIndexBySession, progressiveIndexSessionKey, indexIds);
     const indexContent = indexLines.join("\n");
     const fullContent =
       pinnedPart.length > 0
@@ -316,9 +368,12 @@ async function runInjection(
       `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${totalTokens} tokens)`,
     );
     emitAudit(totalTokens);
-    return {
-      prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(withProcedures(fullContent)))),
-    };
+    return (
+      finishPrepend(withAmbient(withProcedures(fullContent)), undefined, {
+        accessedIds: injectedPinnedIds,
+        indexedIds: indexIds,
+      }) ?? undefined
+    );
   }
 
   if (injectionFormat === "progressive") {
@@ -328,40 +383,33 @@ async function runInjection(
       lines: indexLines,
       ids: indexIds,
       usedTokens: indexTokens,
-    } = buildProgressiveIndex(candidates, indexCap - estimateTokens(indexHeader + indexFooter), 1);
+    } = buildProgressiveIndex(candidates, effectiveIndexCap - estimateTokens(indexHeader + indexFooter), 1);
     if (indexLines.length === 0) {
       if (procedureBlock) {
-        emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
+        emitAudit(estimateTokens(recalledAmbient + procedureBlock));
+        return finishPrepend(withAmbient(procedureBlock)) ?? undefined;
       }
       if (recalledAmbient) {
-        emitAudit(estimateTokens(baseContext + recalledAmbient));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+        emitAudit(estimateTokens(recalledAmbient));
+        return finishPrepend(recalledAmbient) ?? undefined;
       }
-      if (baseContext) {
-        emitAudit(estimateTokens(baseContext));
-        return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
+      if (edictBlock) {
+        emitAudit(estimateTokens(edictBlock));
+        return finishPrepend("") ?? undefined;
       }
       return undefined;
     }
-    lastProgressiveIndexIdsRef.length = 0;
-    lastProgressiveIndexIdsRef.push(...indexIds);
-    // Index-only exposures must NOT inflate recall_count (#1559)
-    ctx.factsDb.refreshIndexedFacts(indexIds);
-    if (ambientSeenFacts && indexIds.length > 0) ambientSeenFacts.markSeen(indexIds);
-    if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && indexIds.length >= 2) {
-      strengthenHebbianLinks(indexIds, ctx.factsDb, api.logger);
-    }
+    setProgressiveIndexIds(progressiveIndexBySession, progressiveIndexSessionKey, indexIds);
     const indexContent = indexLines.join("\n");
     api.logger.info?.(
       `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
     );
     emitAudit(indexTokens);
-    return {
-      prependContext: markDegradedLatency(
-        wrapRecalledContext(baseContext, withAmbient(withProcedures(`${indexHeader}${indexContent}${indexFooter}`))),
-      ),
-    };
+    return (
+      finishPrepend(withAmbient(withProcedures(`${indexHeader}${indexContent}${indexFooter}`)), undefined, {
+        indexedIds: indexIds,
+      }) ?? undefined
+    );
   }
 
   const header = "<relevant-memories>\nThe following memories may be relevant:\n";
@@ -372,14 +420,15 @@ async function runInjection(
   for (const x of candidates) {
     let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
     if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
+    const category = sanitizePromptInjection(x.entry.category);
     const line =
       injectionFormat === "minimal"
         ? `- ${text}`
         : injectionFormat === "short"
-          ? `- ${x.entry.category}: ${text}`
-          : `- [${x.backend}/${x.entry.category}] ${text}`;
+          ? `- ${category}: ${text}`
+          : `- [${x.backend}/${category}] ${text}`;
     const lineTokens = estimateTokens(`${line}\n`);
-    if (usedTokens + lineTokens > maxTokens) break;
+    if (usedTokens + lineTokens > memoryTokenBudget) break;
     lines.push(line);
     injectedIds.push(x.entry.id);
     usedTokens += lineTokens;
@@ -387,29 +436,29 @@ async function runInjection(
 
   if (lines.length === 0) {
     if (procedureBlock) {
-      emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
+      emitAudit(estimateTokens(recalledAmbient + procedureBlock));
+      return finishPrepend(withAmbient(procedureBlock)) ?? undefined;
     }
     if (recalledAmbient) {
-      emitAudit(estimateTokens(baseContext + recalledAmbient));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+      emitAudit(estimateTokens(recalledAmbient));
+      return finishPrepend(recalledAmbient) ?? undefined;
     }
-    if (baseContext) {
-      emitAudit(estimateTokens(baseContext));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
+    if (edictBlock) {
+      emitAudit(estimateTokens(edictBlock));
+      return finishPrepend("") ?? undefined;
     }
     return undefined;
   }
 
-  ctx.factsDb.refreshAccessedFacts(injectedIds);
-  if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedIds);
-  if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedIds.length >= 2) {
-    strengthenHebbianLinks(injectedIds, ctx.factsDb, api.logger);
-  }
-
   let memoryContext = lines.join("\n");
+  let accessRefreshIds = injectedIds;
 
-  if (summarizeWhenOverBudget && lines.length < candidates.length) {
+  if (
+    !options.skipLlmSummarize &&
+    !options.abortSignal?.aborted &&
+    summarizeWhenOverBudget &&
+    lines.length < candidates.length
+  ) {
     const summarizeStartedAt = recallTiming.phaseStarted("injection_summarize", {
       candidate_count: candidates.length,
     });
@@ -418,19 +467,23 @@ async function runInjection(
         let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
         if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
           text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
+        const category = sanitizePromptInjection(x.entry.category);
         return injectionFormat === "minimal"
           ? `- ${text}`
           : injectionFormat === "short"
-            ? `- ${x.entry.category}: ${text}`
-            : `- [${x.backend}/${x.entry.category}] ${text}`;
+            ? `- ${category}: ${text}`
+            : `- [${x.backend}/${category}] ${text}`;
       })
       .join("\n");
     try {
       const { withLLMRetry } = await import("../services/chat.js");
       const injectionSummarizeModel = summarizeModel ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "nano");
       const resp = await withLLMRetry(
-        () =>
-          ctx.openai.chat.completions.create({
+        () => {
+          if (options.abortSignal?.aborted) {
+            throw Object.assign(new Error("injection stage aborted"), { name: "AbortError" });
+          }
+          return ctx.openai.chat.completions.create({
             model: injectionSummarizeModel,
             messages: [
               {
@@ -440,18 +493,37 @@ async function runInjection(
             ],
             temperature: 0,
             ...chatCompletionTokenParams(injectionSummarizeModel, 200),
-          }),
+          });
+        },
         { maxRetries: 2 },
       );
       const summary = extractAssistantMessageText(resp.choices[0]?.message).text;
       if (summary) {
-        memoryContext = summary;
-        usedTokens = estimateTokens(header + memoryContext + footer);
-        api.logger.info?.(`memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`);
-        recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, {
-          status: "ok",
-          summary_chars: summary.length,
-        });
+        let sanitizedSummary = sanitizePromptInjection(summary);
+        let summaryTokens = estimateTokens(header + sanitizedSummary + footer);
+        if (summaryTokens > memoryTokenBudget) {
+          const maxSummaryChars = Math.max(80, memoryTokenBudget * 3);
+          sanitizedSummary =
+            sanitizedSummary.length > maxSummaryChars
+              ? `${sanitizedSummary.slice(0, maxSummaryChars).trim()}…`
+              : sanitizedSummary;
+          summaryTokens = estimateTokens(header + sanitizedSummary + footer);
+        }
+        if (summaryTokens <= memoryTokenBudget) {
+          memoryContext = sanitizedSummary;
+          usedTokens = summaryTokens;
+          accessRefreshIds = candidates.map((c) => c.entry.id);
+          api.logger.info?.(`memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`);
+          recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, {
+            status: "ok",
+            summary_chars: sanitizedSummary.length,
+          });
+        } else {
+          recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, {
+            status: "over_budget",
+            summary_chars: sanitizedSummary.length,
+          });
+        }
       } else {
         recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, {
           status: "empty",
@@ -470,29 +542,29 @@ async function runInjection(
 
   if (!memoryContext) {
     if (procedureBlock) {
-      emitAudit(estimateTokens(baseContext + recalledAmbient + procedureBlock));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, withAmbient(procedureBlock))) };
+      emitAudit(estimateTokens(recalledAmbient + procedureBlock));
+      return finishPrepend(withAmbient(procedureBlock)) ?? undefined;
     }
     if (recalledAmbient) {
-      emitAudit(estimateTokens(baseContext + recalledAmbient));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, recalledAmbient)) };
+      emitAudit(estimateTokens(recalledAmbient));
+      return finishPrepend(recalledAmbient) ?? undefined;
     }
-    if (baseContext) {
-      emitAudit(estimateTokens(baseContext));
-      return { prependContext: markDegradedLatency(wrapRecalledContext(baseContext, "")) };
+    if (edictBlock) {
+      emitAudit(estimateTokens(edictBlock));
+      return finishPrepend("") ?? undefined;
     }
     return undefined;
   }
 
-  if (!summarizeWhenOverBudget || lines.length >= candidates.length) {
+  if (!options.skipLlmSummarize && (!summarizeWhenOverBudget || lines.length >= candidates.length)) {
     api.logger.info?.(`memory-hybrid: injecting ${lines.length} memories (~${usedTokens} tokens)`);
   }
 
   emitAudit(usedTokens);
 
-  return {
-    prependContext: markDegradedLatency(
-      wrapRecalledContext(baseContext, withAmbient(withProcedures(`${header}${memoryContext}${footer}`))),
-    ),
-  };
+  return (
+    finishPrepend(withAmbient(withProcedures(`${header}${memoryContext}${footer}`)), undefined, {
+      accessedIds: accessRefreshIds,
+    }) ?? undefined
+  );
 }

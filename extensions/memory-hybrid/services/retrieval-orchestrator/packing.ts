@@ -1,4 +1,5 @@
 import type { MemoryEntry } from "../../types/memory.js";
+import { formatDateUtc } from "../../utils/dates.js";
 import { sanitizePromptInjection } from "../skill-prompt-injection.js";
 
 /** Approximate token count from character count (chars / 4). */
@@ -22,15 +23,21 @@ export function estimateTokenCount(text: string): number {
  * so that stored user-authored or web-ingested content cannot escalate into
  * instructions in the assembled prompt (Issue #1579).
  */
-export function serializeFactForContext(entry: MemoryEntry, options?: { isContradicted?: boolean }): string {
+export function serializeFactForContext(
+  entry: MemoryEntry,
+  options?: { isContradicted?: boolean; provenancePreview?: string },
+): string {
   const parts: string[] = [];
 
-  if (entry.entity) parts.push(`entity: ${entry.entity}`);
-  parts.push(`category: ${entry.category}`);
+  if (entry.entity) parts.push(`entity: ${sanitizePromptInjection(entry.entity)}`);
+  parts.push(`category: ${sanitizePromptInjection(entry.category)}`);
   parts.push(`confidence: ${entry.confidence.toFixed(2)}`);
   const storedSec = entry.sourceDate ?? entry.createdAt;
-  const storedDate = new Date(storedSec * 1000).toISOString().slice(0, 10);
+  const storedDate = formatDateUtc(storedSec);
   parts.push(`stored: ${storedDate}`);
+  if (options?.provenancePreview) {
+    parts.push(`sources: ${sanitizePromptInjection(options.provenancePreview)}`);
+  }
 
   const header = `[${parts.join(" | ")}]`;
   const sanitizedText = sanitizePromptInjection(entry.text);
@@ -48,7 +55,7 @@ export function serializeFactForContext(entry: MemoryEntry, options?: { isContra
 export function packIntoBudget(
   entries: Array<{ factId: string; entry: MemoryEntry }>,
   budgetTokens: number,
-  options?: { contradictedIds?: Set<string> },
+  options?: { contradictedIds?: Set<string>; provenanceByFactId?: Map<string, string> },
 ): { packed: string[]; tokensUsed: number } {
   const packed: string[] = [];
   let tokensUsed = 0;
@@ -56,6 +63,7 @@ export function packIntoBudget(
   for (const { factId, entry } of entries) {
     const serialized = serializeFactForContext(entry, {
       isContradicted: options?.contradictedIds?.has(factId) ?? false,
+      provenancePreview: options?.provenanceByFactId?.get(factId),
     });
     const tokens = estimateTokenCount(serialized);
     if (tokensUsed + tokens > budgetTokens) break;

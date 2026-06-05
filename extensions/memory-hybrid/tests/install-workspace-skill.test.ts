@@ -136,7 +136,7 @@ describe("workspace skill install", () => {
     expect(readFileSync(dest, "utf-8")).toContain("memory_store");
   });
 
-  it("ensureHybridMemoryWorkspaceSkillIfMissing skips when destination dir exists without SKILL.md", () => {
+  it("ensureHybridMemoryWorkspaceSkillIfMissing repairs partial dir by copying missing SKILL.md", () => {
     const pluginRoot = PLUGIN_ROOT;
     const destRoot = join(tmp, "ws-ensure-partial");
     const destDir = join(destRoot, "skills", "hybrid-memory");
@@ -146,8 +146,8 @@ describe("workspace skill install", () => {
       mergedOpenclawConfig: { agents: { defaults: { workspace: destRoot } } },
       pluginRootDir: pluginRoot,
     });
-    expect(r.deployed).toBe(false);
-    expect(r.skippedReason).toBe("destination_dir_exists");
+    expect(r.deployed).toBe(true);
+    expect(readFileSync(join(destDir, "SKILL.md"), "utf-8")).toContain("memory_store");
     expect(readFileSync(join(destDir, "notes.txt"), "utf-8")).toBe("keep\n");
   });
 

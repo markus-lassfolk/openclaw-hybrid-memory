@@ -17,6 +17,11 @@ import { type AgentHealthView, mergeAgentHealthDashboard } from "../../backends/
 import type { AuditStore } from "../../backends/audit-store.js";
 import type { EdictStore } from "../../backends/edict-store.js";
 import type { FactsDB } from "../../backends/facts-db.js";
+import type { ProposalsDB } from "../../backends/proposals-db.js";
+import type { CrystallizationStore } from "../../backends/crystallization-store.js";
+import type { ToolProposalStore } from "../../backends/tool-proposal-store.js";
+import type { HybridMemoryConfig } from "../../config.js";
+import { escapeLikeLiteralForBackslashEscape } from "../../backends/facts-db/entity-layer.js";
 import type { IssueStore } from "../../backends/issue-store.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { VectorDB } from "../../backends/vector-db.js";
@@ -24,6 +29,7 @@ import type { WorkflowStore } from "../../backends/workflow-store.js";
 import type { ProvenanceService } from "../../services/provenance.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
+import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { isValidGhRepoArg } from "../../utils/gh-repo-arg.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
@@ -177,6 +183,15 @@ export interface DashboardContext {
   graphHubDegreeCap?: number | null;
   /** Mirrors `graph.hubScorePenalty` for dashboard graph recall (#1192). */
   graphHubScorePenalty?: number | null;
+  /** Workshop tab: full plugin config. */
+  hybridCfg?: HybridMemoryConfig;
+  proposalsDb?: ProposalsDB | null;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
+  /** Dream-cycle stage artifact directory for workshop log view. */
+  dreamCycleLogDir?: string;
+  /** Live change feed for workshop approve/reject/undo sync. */
+  changeFeed?: import("../../services/change-feed.js").ChangeFeed | null;
 }
 
 interface MemoryStats {
@@ -522,8 +537,8 @@ async function collectCronJobs(): Promise<CronJobStatus[]> {
           name: String(job.name ?? ""),
           schedule: typeof schedule?.expr === "string" ? schedule.expr : "",
           enabled: job.enabled !== false,
-          lastRunAt: typeof state.lastRunAtMs === "number" ? new Date(state.lastRunAtMs).toISOString() : null,
-          nextRunAt: typeof state.nextRunAtMs === "number" ? new Date(state.nextRunAtMs).toISOString() : null,
+          lastRunAt: typeof state.lastRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.lastRunAtMs / 1000)) : null,
+          nextRunAt: typeof state.nextRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.nextRunAtMs / 1000)) : null,
           lastStatus:
             typeof state.lastStatus === "string"
               ? state.lastStatus
@@ -1093,6 +1108,92 @@ export function collectMemoryViewerProvenance(ctx: DashboardContext, factId: str
   }
 }
 
+/** Collect unified entity → facts → issues → episodes correlation view (#1802). */
+export type MemoryViewerCorrelation = {
+  entityKey: string;
+  facts: Array<{ id: string; text: string; category: string; entity: string | null }>;
+  issues: Array<{ id: string; title: string; status: string; severity: string }>;
+  episodes: Array<{ id: string; event: string; outcome: string }>;
+  links: Array<{ from: string; to: string; type: string }>;
+};
+
+export function collectMemoryViewerCorrelation(ctx: DashboardContext, entityKey: string): MemoryViewerCorrelation {
+  const key = entityKey.trim().toLowerCase();
+  const empty: MemoryViewerCorrelation = { entityKey: key, facts: [], issues: [], episodes: [], links: [] };
+  if (!key) return empty;
+
+  try {
+    const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
+    if (!roDb) return empty;
+
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const factRows = roDb
+        .prepare(
+          `SELECT id, text, category, entity FROM facts
+             WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+               AND (lower(entity) = ? OR id IN (
+                 SELECT fact_id FROM fact_entity_mentions WHERE normalized_surface = ?
+               ))
+             ORDER BY importance DESC, created_at DESC LIMIT 30`,
+        )
+        .all(nowSec, key, key) as Array<{ id: string; text: string; category: string; entity: string | null }>;
+
+      const factIds = factRows.map((r) => r.id);
+      let links: MemoryViewerCorrelation["links"] = [];
+      if (factIds.length > 0) {
+        const placeholders = factIds.map(() => "?").join(",");
+        const linkRows = roDb
+          .prepare(
+            `SELECT source_fact_id, target_fact_id, link_type FROM memory_links
+               WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})
+               LIMIT 100`,
+          )
+          .all(...factIds, ...factIds) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string }>;
+        links = linkRows.map((r) => ({ from: r.source_fact_id, to: r.target_fact_id, type: r.link_type }));
+      }
+
+      const issues: MemoryViewerCorrelation["issues"] = [];
+      if (ctx.issueStore) {
+        const matched = ctx.issueStore.search(key).slice(0, 20);
+        for (const issue of matched) {
+          issues.push({
+            id: issue.id,
+            title: issue.title,
+            status: issue.status,
+            severity: issue.severity,
+          });
+        }
+      }
+
+      let episodes: MemoryViewerCorrelation["episodes"] = [];
+      try {
+        const likeKey = `%${escapeLikeLiteralForBackslashEscape(key)}%`;
+        const epRows = roDb
+          .prepare(
+            `SELECT id, event, outcome FROM episodes
+               WHERE lower(event) LIKE ? ESCAPE '\\' OR lower(context) LIKE ? ESCAPE '\\'
+               ORDER BY timestamp DESC LIMIT 15`,
+          )
+          .all(likeKey, likeKey) as Array<{ id: string; event: string; outcome: string }>;
+        episodes = epRows;
+      } catch {
+        /* episodes table may be absent on older stores */
+      }
+
+      return { entityKey: key, facts: factRows, issues, episodes, links };
+    } finally {
+      try {
+        roDb.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    return empty;
+  }
+}
+
 /** Collect fact links from the memory_links table. */
 export function collectMemoryViewerLinks(ctx: DashboardContext, limit = 5000): MemoryViewerLinks[] {
   try {
@@ -1162,7 +1263,7 @@ export async function collectStatus(ctx: DashboardContext): Promise<DashboardSta
   ]);
   const agentHealth = await collectAgentHealth(ctx, forge);
   return {
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
     memory,
     cronJobs,
     taskQueue,

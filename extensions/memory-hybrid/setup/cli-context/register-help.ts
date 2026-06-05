@@ -14,13 +14,19 @@ import type { ActiveTaskContext } from "../../cli/active-tasks.js";
 import { runBackup as runBackupFn, runBackupVerify as runBackupVerifyFn } from "../../cli/backup.js";
 import type { HandlerContext } from "../../cli/handlers.js";
 import * as handlers from "../../cli/handlers.js";
-import { applyApprovedProposal } from "../../cli/proposals.js";
+import { applyApprovedProposal, getProposalExpiryError } from "../../cli/proposals.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import { getCronModelConfig, getDefaultCronModel, hybridConfigSchema } from "../../config.js";
 import { readGuardTimestampMs } from "../../services/cron-guard.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { runPersonaProposalTriage, validatePersonaPolicy } from "../../services/persona-proposal-triage.js";
-import { insertRulesUnderSection } from "../../services/tools-md-section.js";
+import { syncProposalWithdrawnInChangeFeed } from "../../services/change-feed-emit.js";
+import {
+  applyParsedCorrectionRules,
+  parseReportProposedSections,
+  parseReportRulesForApply,
+} from "../../services/corrections-report.js";
+import { resolveCliWorkspaceRoot } from "../../utils/cli-workspace-root.js";
 import { parseDuration } from "../../utils/duration.js";
 import { resetPluginLogger, restoreDefaultLogger } from "../../utils/logger.js";
 
@@ -270,66 +276,12 @@ function buildListCommands(
   ctx: HandlerContext,
   api: ClawdbotPluginApi,
 ): NonNullable<HybridMemCliContext["listCommands"]> {
-  const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
-  const workspaceRoot = () => getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-  const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
+  const { factsDb, proposalsDb, cfg, resolvedSqlitePath, changeFeed } = ctx;
+  const workspaceRoot = (workspace?: string) => resolveCliWorkspaceRoot({ workspace });
+  const reportDir = (workspace?: string) => join(workspaceRoot(workspace), "memory", "reports");
 
-  function parseReportProposedSections(content: string): string[] {
-    const lines = content.split("\n");
-    const items: string[] = [];
-    let inSection = false;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith("## Suggested TOOLS.md rules") || trimmed === "## Proposed (review before applying)") {
-        inSection = true;
-        continue;
-      }
-      if (trimmed.startsWith("## ")) {
-        inSection = false;
-        continue;
-      }
-      if (inSection && trimmed.startsWith("- ") && trimmed.length > 2) items.push(trimmed.slice(2).trim());
-    }
-    return items;
-  }
-
-  function parseReportRulesForApply(content: string): { toolsRules: string[]; agentsRules: string[] } {
-    const toolsRules: string[] = [];
-    const agentsRules: string[] = [];
-    const lines = content.split("\n");
-    let inSuggested = false;
-    let inProposed = false;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith("## Suggested TOOLS.md rules")) {
-        inSuggested = true;
-        inProposed = false;
-        continue;
-      }
-      if (trimmed === "## Proposed (review before applying)") {
-        inSuggested = false;
-        inProposed = true;
-        continue;
-      }
-      if (trimmed.startsWith("## ")) {
-        inSuggested = false;
-        inProposed = false;
-        continue;
-      }
-      if (trimmed.startsWith("- ") && trimmed.length > 2) {
-        const text = trimmed.slice(2).trim();
-        if (inSuggested) {
-          toolsRules.push(text);
-        } else if (inProposed) {
-          if (text.startsWith("[AGENTS_RULE]") || text.startsWith("[SKILL_UPDATE]")) {
-            agentsRules.push(text.replace(/^\[(AGENTS_RULE|SKILL_UPDATE)\]\s*/i, "").trim());
-          } else {
-            toolsRules.push(text.replace(/^\[TOOLS_RULE\]\s*/i, "").trim());
-          }
-        }
-      }
-    }
-    return { toolsRules, agentsRules };
+  function parseReportProposedSectionsLocal(content: string): string[] {
+    return parseReportProposedSections(content);
   }
 
   function getLatestCorrectionReport(workspace?: string): { path: string; content: string } | null {
@@ -372,10 +324,13 @@ function buildListCommands(
       const p = proposalsDb.get(id);
       if (!p) return { ok: false, error: `Proposal ${id} not found` };
       if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
-      proposalsDb.updateStatus(id, "approved");
-      const applyResult = await applyApprovedProposal({ proposalsDb, cfg, resolvedSqlitePath, api }, id);
+      const expiryError = getProposalExpiryError(p);
+      if (expiryError) return { ok: false, error: expiryError };
+      const approved = proposalsDb.updateStatusIf(id, "approved", "pending");
+      if (!approved) return { ok: false, error: "Proposal is not pending" };
+      const applyResult = await applyApprovedProposal({ proposalsDb, cfg, resolvedSqlitePath, api, changeFeed }, id);
       if (!applyResult.ok) {
-        proposalsDb.updateStatus(id, "pending");
+        proposalsDb.updateStatusIf(id, "pending", "approved");
         return { ok: false, error: applyResult.error };
       }
       return { ok: true };
@@ -385,41 +340,43 @@ function buildListCommands(
       const p = proposalsDb.get(id);
       if (!p) return { ok: false, error: `Proposal ${id} not found` };
       if (p.status !== "pending") return { ok: false, error: `Proposal is already ${p.status}` };
-      proposalsDb.updateStatus(id, "rejected", undefined, reason);
+      const rejected = proposalsDb.updateStatusIf(id, "rejected", "pending", undefined, reason);
+      if (!rejected) return { ok: false, error: "Proposal is not pending" };
+      syncProposalWithdrawnInChangeFeed(changeFeed, cfg, `persona:${id}`, reason ?? "Rejected via CLI");
       return { ok: true };
     },
     listCorrections: async (opts: { workspace?: string }) => {
       const report = getLatestCorrectionReport(opts.workspace);
       if (!report) return { reportPath: null, items: [] };
-      const items = parseReportProposedSections(report.content);
+      const items = parseReportProposedSectionsLocal(report.content);
       return { reportPath: report.path, items };
     },
     correctionsApproveAll: async (opts: { workspace?: string }) => {
       const report = getLatestCorrectionReport(opts.workspace);
       if (!report) return { applied: 0, error: "No self-correction report found" };
-      const { toolsRules, agentsRules } = parseReportRulesForApply(report.content);
-      const totalRules = toolsRules.length + agentsRules.length;
-      if (totalRules === 0)
-        return { applied: 0, error: "No suggested TOOLS or AGENTS rules in report (run self-correction-run first)" };
-      const root = opts.workspace ?? workspaceRoot();
+      const root = workspaceRoot(opts.workspace);
+      const parsed = parseReportRulesForApply(report.content, root);
+      const totalRules =
+        parsed.toolsRules.length +
+        [...parsed.agentsRulesByFile.values()].reduce((n, rules) => n + rules.length, 0) +
+        parsed.skillUpdates.length;
+      if (totalRules === 0 && parsed.unresolvedSkillUpdates.length === 0) {
+        return { applied: 0, error: "No suggested TOOLS, persona, or skill rules in report (run self-correction-run first)" };
+      }
       const scCfg = cfg.selfCorrection ?? { toolsSection: "Self-correction rules" };
       const section =
         typeof scCfg === "object" && scCfg && "toolsSection" in scCfg
           ? (scCfg.toolsSection as string)
           : "Self-correction rules";
-      let applied = 0;
-      if (toolsRules.length > 0) {
-        const toolsPath = join(root, "TOOLS.md");
-        if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
-        const { inserted } = insertRulesUnderSection(toolsPath, section, toolsRules);
-        applied += inserted;
+      const { applied, errors } = applyParsedCorrectionRules({
+        workspaceRoot: root,
+        toolsSection: section,
+        parsed,
+      });
+      if (errors.length > 0 && applied === 0) {
+        return { applied: 0, error: errors.join("; ") };
       }
-      if (agentsRules.length > 0) {
-        const agentsPath = join(root, "AGENTS.md");
-        const { inserted } = insertRulesUnderSection(agentsPath, section, agentsRules, "# AGENTS");
-        applied += inserted;
-      }
-      return { applied };
+      return { applied, error: errors.length > 0 ? errors.join("; ") : undefined };
     },
     showItem: async (id: string) => {
       const fact = factsDb.getById(id);
@@ -451,6 +408,8 @@ function buildListCommands(
         max: opts.max,
         stateDbPath: opts.stateDb,
         workspace: opts.workspace,
+        changeFeed: ctx.changeFeed,
+        resolvedSqlitePath: ctx.resolvedSqlitePath,
       });
     },
   };
@@ -499,6 +458,7 @@ export function createHybridMemCliContext(
     wal: handlerCtx.wal,
     aliasDb: handlerCtx.aliasDb,
     crystallizationStore: handlerCtx.crystallizationStore ?? null,
+    changeFeed: handlerCtx.changeFeed ?? null,
     versionInfo: services.versionInfo,
     embeddings: handlerCtx.embeddings,
     mergeResults: services.mergeResults,
@@ -541,6 +501,9 @@ export function createHybridMemCliContext(
     runResolveContradictions: services.runResolveContradictions,
     runResolveContradictionsDryRun: services.runResolveContradictionsDryRun,
     runResolveContradictionsProjectStateLww: services.runResolveContradictionsProjectStateLww,
+    runResolveContradictionsAuto: services.runResolveContradictionsAuto,
+    runApplyContradictionReviewDecisions: services.runApplyContradictionReviewDecisions,
+    requireWalFlushBeforeMutation: services.requireWalFlushBeforeMutation,
     reflectionConfig: {
       ...handlerCtx.cfg.reflection,
       model: handlerCtx.cfg.reflection.model ?? getDefaultCronModel(getCronModelConfig(handlerCtx.cfg), "maintenance"),
@@ -563,6 +526,17 @@ export function createHybridMemCliContext(
     runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
     runCostReport: (opts, sink) => handlers.runCostReportForCli(handlerCtx, opts, sink),
     pruneCostLog: (retainDays) => (handlerCtx.costTracker ? handlerCtx.costTracker.pruneOldEntries(retainDays) : 0),
+    runPassiveObserverOnce: services.runPassiveObserverOnce,
+    runActiveTasksMaintain: handlerCtx.cfg.activeTask?.enabled
+      ? async () => {
+          const activeCtx = buildActiveTaskCliContext(handlerCtx);
+          if (!activeCtx) return "skipped (activeTask context unavailable)";
+          const { runActiveTaskMaintain } = await import("../../cli/active-tasks.js");
+          const result = await runActiveTaskMaintain(activeCtx, handlerCtx.cfg, { apply: true, jsonMode: true });
+          const reconciled = result.reconcile?.reconciled ?? 0;
+          return `status=${result.status} reconciled=${reconciled}`;
+        }
+      : undefined,
     runExport: services.runExport,
     richStatsExtras: buildRichStatsExtras(handlerCtx),
     listCommands: buildListCommands(handlerCtx, api),
@@ -583,6 +557,7 @@ export function createHybridMemCliContext(
     eventBus: handlerCtx.eventBus ?? null,
     auditStore: handlerCtx.auditStore ?? null,
     agentHealthStore: handlerCtx.agentHealthStore ?? null,
+    proposalsDb: handlerCtx.proposalsDb ?? null,
   };
 }
 

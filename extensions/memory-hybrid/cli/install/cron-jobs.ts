@@ -165,6 +165,39 @@ const MIN_INTERVAL_MS: Record<string, number> = {
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
 };
 
+/** Single consolidated nightly job — orchestrator handles staggered per-step guards. */
+const CONSOLIDATED_CRON_JOBS: Array<
+  Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
+> = [
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}maintenance-nightly`,
+    sessionTarget: "isolated",
+    name: "maintenance-nightly",
+    schedule: { kind: "cron", expr: "0 2 * * *" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("maintenance-nightly", {
+      preamble:
+        "Unified hybrid-memory maintenance. The orchestrator runs due nightly/weekly/monthly steps with staggered per-step guards. Report summary counts.",
+      steps: [{ name: "maintenance-nightly", cmd: "openclaw hybrid-mem maintenance nightly --verbose" }],
+    }),
+    isolated: true,
+    modelTier: "heavy",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.daily,
+  },
+];
+
+export function isConsolidatedMaintenanceCronEnabled(options: { consolidatedCronJobs?: boolean } = {}): boolean {
+  return options.consolidatedCronJobs !== false;
+}
+
+/** Read orchestrator.consolidatedCronJobs from plugin or hybrid config (default: consolidated). */
+export function readConsolidatedCronJobsFlag(
+  cfg?: { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } },
+): boolean | undefined {
+  return cfg?.maintenance?.orchestrator?.consolidatedCronJobs;
+}
+
 function ensureHybridMemCronMessageHasEnvSanitizer(message: string): string | null {
   if (message.includes(HYBRID_MEM_CRON_ENV_SANITIZER_MARKER)) return null;
   if (!/openclaw\s+hybrid-mem\b/.test(message) && !/\bhm_step\b/.test(message)) return null;
@@ -281,6 +314,25 @@ const MAINTENANCE_CRON_JOBS: Array<
     modelTier: "nano",
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
+  },
+
+  // Sunday 04:15 | weekly-crystallization-skills-rescan | re-validate installed crystallized SKILL.md
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-crystallization-skills-rescan`,
+    sessionTarget: "isolated",
+    name: "weekly-crystallization-skills-rescan",
+    schedule: { kind: "cron", expr: "15 4 * * 0" },
+    channel: "system",
+    message: buildHybridMemCronTaskMessage("weekly-crystallization-skills-rescan", {
+      preamble:
+        "Re-validate installed crystallization SKILL.md files. If crystallization.enabled is false, skip and do not update the guard file. Report scanned/quarantined counts.",
+      steps: [{ name: "skills-rescan", cmd: "openclaw hybrid-mem skills rescan" }],
+    }),
+    isolated: true,
+    modelTier: "nano",
+    enabled: true,
+    minIntervalMs: MIN_INTERVAL_MS.weekly,
+    featureGate: "crystallization.enabled",
   },
 
   // Daily 04:05 | daily-storage-growth-sample | record-storage-sample (7d deltas in audit-health)
@@ -657,6 +709,8 @@ export function ensureMaintenanceCronJobs(
     messageOverrides?: Record<string, string>;
     featureGates?: Record<string, boolean>;
     digestWeeklyDelivery?: DigestWeeklyDeliveryConfig;
+    /** When true (default), install single consolidated maintenance-nightly job. */
+    consolidatedCronJobs?: boolean;
   } = {},
 ): { added: string[]; normalized: string[] } {
   const {
@@ -666,7 +720,10 @@ export function ensureMaintenanceCronJobs(
     messageOverrides,
     featureGates,
     digestWeeklyDelivery,
+    consolidatedCronJobs,
   } = options;
+  const useConsolidated = isConsolidatedMaintenanceCronEnabled({ consolidatedCronJobs });
+  const activeJobDefs = useConsolidated ? CONSOLIDATED_CRON_JOBS : MAINTENANCE_CRON_JOBS;
   const added: string[] = [];
   const normalized: string[] = [];
   const openclawConfigPath = join(openclawDir, "openclaw.json");
@@ -689,7 +746,24 @@ export function ensureMaintenanceCronJobs(
   if (!Array.isArray(store.jobs)) store.jobs = [];
   const jobsArr = store.jobs as Array<Record<string, unknown>>;
   let jobsChanged = false;
-  for (const def of MAINTENANCE_CRON_JOBS) {
+
+  if (normalizeExisting && useConsolidated) {
+    for (const job of jobsArr) {
+      if (typeof job !== "object" || job === null) continue;
+      const pluginJobId = String(job.pluginJobId ?? "");
+      if (!pluginJobId.startsWith(PLUGIN_JOB_ID_PREFIX)) continue;
+      if (pluginJobId === `${PLUGIN_JOB_ID_PREFIX}maintenance-nightly`) continue;
+      if (job.enabled !== false || job.superseded !== true) {
+        job.enabled = false;
+        job.superseded = true;
+        jobsChanged = true;
+        const legacyName = String(job.name ?? pluginJobId);
+        if (!normalized.includes(legacyName)) normalized.push(legacyName);
+      }
+    }
+  }
+
+  for (const def of activeJobDefs) {
     const id = def.pluginJobId as string;
     const name = def.name as string;
     const scheduleExpr = scheduleOverrides?.[id];

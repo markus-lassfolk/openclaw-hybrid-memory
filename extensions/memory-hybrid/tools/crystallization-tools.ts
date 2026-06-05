@@ -17,6 +17,8 @@ import {
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
+import { BROADCAST_CHANGE_SESSION_KEY } from "../services/change-feed-emit.js";
+import type { ChangeFeed } from "../services/change-feed.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { summarizeSkillProposalValidation } from "../services/generated-skill-validation.js";
 
@@ -24,10 +26,15 @@ interface CrystallizationToolsContext {
   crystallizationStore: CrystallizationStore;
   workflowStore: WorkflowStore;
   cfg: HybridMemoryConfig;
+  changeFeed?: ChangeFeed | null;
 }
 
 export function registerCrystallizationTools(ctx: CrystallizationToolsContext, api: ClawdbotPluginApi): void {
-  const { crystallizationStore, workflowStore, cfg } = ctx;
+  const { crystallizationStore, workflowStore, cfg, changeFeed } = ctx;
+  const changeFeedEmit =
+    changeFeed && cfg.liveChangeFeed?.enabled !== false
+      ? { changeFeed, cfg, sessionKey: BROADCAST_CHANGE_SESSION_KEY }
+      : undefined;
 
   // -------------------------------------------------------------------------
   // memory_crystallize — trigger a crystallization cycle
@@ -40,7 +47,12 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
     parameters: Type.Object({}),
     async execute(_toolCallId: string, _params: Record<string, unknown>) {
       try {
-        const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
+        const proposer = new CrystallizationProposer(
+          workflowStore,
+          crystallizationStore,
+          cfg.crystallization,
+          changeFeedEmit,
+        );
         // Issue: skill proposal lifecycle — tool-triggered crystallization should never install directly.
         const result = proposer.runCycle({ autoApproveOverride: false });
 
@@ -317,6 +329,46 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
   });
 
   api.registerTool({
+    name: "memory_crystallize_restore",
+    label: "Restore Quarantined Crystallization Skill",
+    description:
+      "Restore a quarantined crystallization proposal after re-validation. Moves skill files back to the active output tree and marks the proposal installed.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Proposal id to restore" }),
+      overrideWarnings: Type.Optional(
+        Type.Boolean({ description: "Allow restore when validation returns allow-with-override" }),
+      ),
+    }),
+    async execute(_toolCallId: string, params: Record<string, unknown>) {
+      const id = typeof params.id === "string" ? params.id.trim() : "";
+      if (!id) {
+        return { content: [{ type: "text", text: "❌ Missing proposal id" }] };
+      }
+      const overrideWarnings = params.overrideWarnings === true;
+      try {
+        const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
+        const result = proposer.restoreProposal(id, { overrideWarnings });
+        return {
+          content: [
+            {
+              type: "text",
+              text: result.success ? `✅ ${result.message}` : `❌ ${result.message}`,
+            },
+          ],
+          details: result,
+        };
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "crystallization",
+          operation: "memory-crystallize-restore",
+          phase: "runtime",
+        });
+        throw err;
+      }
+    },
+  });
+
+  api.registerTool({
     name: "memory_crystallize_skills_rescan",
     label: "Rescan Installed Crystallization Skills",
     description:
@@ -327,7 +379,7 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
         const proposer = new CrystallizationProposer(workflowStore, crystallizationStore, cfg.crystallization);
         const result = proposer.rescanInstalledSkills();
         const lines: string[] = [
-          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, skipped (no path): ${result.skipped}`,
+          `Scanned: ${result.scanned}, quarantined: ${result.quarantined}, disk-moved: ${result.diskQuarantined}, skipped (no path): ${result.skipped}`,
         ];
         for (const m of result.messages) lines.push(`  ${m}`);
         for (const e of result.errors) lines.push(`  error: ${e}`);

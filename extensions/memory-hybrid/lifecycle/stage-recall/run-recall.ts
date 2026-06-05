@@ -14,22 +14,68 @@ import {
   generateAmbientQueries,
   searchAmbientIssues,
 } from "../../services/ambient-retrieval.js";
+import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../services/entity-retrieval.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
+import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
+import { trimBlockToBudget } from "../../services/context-block-trim.js";
+import { consumePrependBudget, getRemainingPrependTokens, initPrependBudget } from "../../services/prepend-budget.js";
+import {
+  assembleRecallPrependContext,
+  edictMaxTokensForBudget,
+  edictMaxTokensFromPrependBudget,
+  promptMentionsEntity,
+  sanitizeProcedureText,
+} from "../../services/recalled-context-assembler.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
-import { RECALLED_CONTEXT_BOUNDARY, sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
+import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
+import { isTierAllowedForWarmSearch } from "../../utils/tier-filter.js";
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
+import { raceWithAbortSignal } from "../../utils/signal-race.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
 import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../../utils/registration-superseded.js";
 import { estimateTokens, sanitizeRecallFactText } from "../../utils/text.js";
 import type { LifecycleContext, RecallResult, RecallStageResult, SessionState } from "../types.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
+import {
+  buildDegradedFtsHotRecallStage,
+  buildFixedBlocksRecallStage,
+  resolveRecallScopeFilter,
+} from "./degraded-recall.js";
+
+function finishEmptyRecallPrepend(ctx: LifecycleContext, combinedContext: string): RecallStageResult {
+  const trimmed = combinedContext.trim();
+  if (!trimmed) return { kind: "empty", prependContext: undefined };
+  const total = ctx.prependBudgetRef?.value?.totalTokens ?? 0;
+  const remaining = getRemainingPrependTokens(ctx.prependBudgetRef);
+  const edictCap =
+    remaining !== undefined
+      ? Math.min(edictMaxTokensForBudget(total), remaining)
+      : (edictMaxTokensFromPrependBudget(ctx) ?? 0);
+  const innerCap = remaining !== undefined ? Math.max(0, remaining - edictCap) : undefined;
+  const inner = innerCap !== undefined ? trimBlockToBudget(trimmed, innerCap).text : trimmed;
+  const prepend = assembleRecallPrependContext(ctx, inner, {
+    edictMaxTokens: edictCap,
+  });
+  if (prepend) consumePrependBudget(ctx.prependBudgetRef, prepend);
+  return { kind: "empty", prependContext: prepend ?? undefined };
+}
+
+function finishPartialFixedBlocksRecall(
+  ctx: LifecycleContext,
+  issueBlock: string,
+  narrativeBlock: string,
+  hotBlock: string,
+  procedureBlock: string,
+): RecallStageResult {
+  return finishEmptyRecallPrepend(ctx, issueBlock + narrativeBlock + hotBlock + procedureBlock);
+}
 
 function emptyRecallStage(): RecallStageResult {
   return { kind: "empty", prependContext: undefined };
@@ -168,8 +214,16 @@ export async function runRecall(
   signal?: AbortSignal,
 ): Promise<RecallStageResult> {
   const e = event as { prompt?: string };
-  if (!e.prompt || e.prompt.length < 5) {
+  if (!e.prompt) {
     return { kind: "empty", prependContext: undefined };
+  }
+  if (e.prompt.length < 5) {
+    ctx.recallInFlightRef.value++;
+    try {
+      return await buildFixedBlocksRecallStage(event, api, ctx, sessionState);
+    } finally {
+      ctx.recallInFlightRef.value--;
+    }
   }
   const promptText = e.prompt;
 
@@ -186,6 +240,12 @@ export async function runRecall(
   };
 
   ctx.recallInFlightRef.value++;
+  // Global ref supports plugin drain/shutdown; per-session recallInFlightBySession drives degradation.
+  const trackedSessionScopeKey = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+  sessionState.recallInFlightBySession.set(
+    trackedSessionScopeKey,
+    (sessionState.recallInFlightBySession.get(trackedSessionScopeKey) ?? 0) + 1,
+  );
   const recallStartMs = Date.now();
   const recallProbeId = `recall-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   let recallProbePhase = "start";
@@ -233,16 +293,25 @@ export async function runRecall(
     if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const { currentAgentIdRef } = ctx;
-    const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen } =
-      sessionState;
+    const {
+      resolveSessionKey,
+      ambientSeenFactsMap,
+      ambientLastEmbeddingMap,
+      pruneSessionMaps,
+      sessionStartSeen,
+      recallInFlightBySession,
+    } = sessionState;
+    const sessionScopeKey = trackedSessionScopeKey;
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
     api.logger.debug?.(
-      `memory-hybrid: recall-probe id=${recallProbeId} enter promptChars=${promptText.length} inFlight=${ctx.recallInFlightRef.value}`,
+      `memory-hybrid: recall-probe id=${recallProbeId} enter promptChars=${promptText.length} inFlight=${ctx.recallInFlightRef.value} sessionInFlight=${recallInFlightBySession.get(sessionScopeKey) ?? 0}`,
     );
 
-    if (e.prompt.length >= 5 && ctx.lastAutoRecallPromptRef) {
-      ctx.lastAutoRecallPromptRef.value = e.prompt.trim().slice(0, 12_000);
+    if (e.prompt.length >= 5) {
+      const trimmedPrompt = e.prompt.trim().slice(0, 12_000);
+      ctx.lastAutoRecallPromptBySession?.set(sessionScopeKey, trimmedPrompt);
+      if (ctx.lastAutoRecallPromptRef) ctx.lastAutoRecallPromptRef.value = trimmedPrompt;
     }
 
     // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
@@ -258,25 +327,7 @@ export async function runRecall(
     const limit = searchLimit;
     const tierFilter: "warm" | "all" = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
 
-    let scopeFilter: ScopeFilter | undefined;
-    if (currentAgentIdRef.value && currentAgentIdRef.value !== ctx.cfg.multiAgent.orchestratorId) {
-      scopeFilter = {
-        userId: ctx.cfg.autoRecall.scopeFilter?.userId ?? null,
-        agentId: currentAgentIdRef.value,
-        sessionId: ctx.cfg.autoRecall.scopeFilter?.sessionId ?? null,
-      };
-    } else if (
-      ctx.cfg.autoRecall.scopeFilter &&
-      (ctx.cfg.autoRecall.scopeFilter.userId ||
-        ctx.cfg.autoRecall.scopeFilter.agentId ||
-        ctx.cfg.autoRecall.scopeFilter.sessionId)
-    ) {
-      scopeFilter = {
-        userId: ctx.cfg.autoRecall.scopeFilter.userId ?? null,
-        agentId: ctx.cfg.autoRecall.scopeFilter.agentId ?? null,
-        sessionId: ctx.cfg.autoRecall.scopeFilter.sessionId ?? null,
-      };
-    }
+    let scopeFilter: ScopeFilter | undefined = resolveRecallScopeFilter(ctx);
 
     const interactivePolicy = resolveInteractiveRecallPolicy(
       ctx.cfg.autoRecall,
@@ -287,137 +338,21 @@ export async function runRecall(
       `memory-hybrid: interactive enrichment=${interactivePolicy.interactiveEnrichment} (HyDE=${interactivePolicy.allowHyde}, ambientMulti=${interactivePolicy.allowAmbientMultiQuery})`,
     );
     const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
-    const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
+    const sessionKeyForBudget = sessionScopeKey;
+    if (ctx.prependBudgetRef) {
+      initPrependBudget(ctx.prependBudgetRef, interactivePolicy.contextBudgetTokens, sessionKeyForBudget);
+    }
+    const sessionInFlight = recallInFlightBySession.get(sessionScopeKey) ?? 0;
+    const forceDegraded = degradationQueueDepth > 0 && sessionInFlight > degradationQueueDepth;
 
     if (forceDegraded) {
       setRecallProbePhase("degraded_fts_only");
-      const recallOpts = {
-        tierFilter: ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const),
-        scopeFilter,
-        reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
-        diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
-        interactiveFtsFastPath: true,
-      };
-      const degradedLimit = ctx.cfg.autoRecall.limit;
-      const trimmed = e.prompt.trim();
       await yieldEventLoop();
       if (shouldAbortRecall()) return completeStage(emptyRecallStage());
-      const ftsOnly = ctx.factsDb.search(trimmed, degradedLimit, recallOpts);
-      const totalBudget = interactivePolicy.contextBudgetTokens;
-      const {
-        hotMaxTokens: hotBlockCapCfg,
-        narrativeMaxTokens: narrativeBlockCapCfg,
-        procedureMaxTokens: procedureBlockCapCfg,
-        activeTaskMaxTokens: activeTaskReserveCapCfg,
-        staleWarningMaxTokens: staleWarningReserveCapCfg,
-      } = ctx.cfg.autoRecall;
-      const hasNarrativesDb = ctx.narrativesDb != null || ctx.eventLog != null;
-      const narrativeCapTokens =
-        narrativeBlockCapCfg ?? (hasNarrativesDb ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
-      const hotCapTokens = hotBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.25));
-      const activeTaskReserveTokens =
-        activeTaskReserveCapCfg ??
-        (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.injectionBudget > 0
-          ? Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2)))
-          : 0);
-      const staleWarningReserveTokens =
-        staleWarningReserveCapCfg ??
-        (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning?.enabled
-          ? Math.max(40, Math.floor(totalBudget * 0.08))
-          : 0);
-      const budgetState: BudgetState = {
-        remainingBudget: totalBudget,
-        audit: [],
-      };
-      let narrativePart = "";
-      if (ctx.narrativesDb || ctx.eventLog) {
-        try {
-          const recentNarratives = recallNarrativeSummaries({
-            narrativesDb: ctx.narrativesDb,
-            eventLog: ctx.eventLog,
-            query: e.prompt,
-            limit: 1,
-          });
-          if (recentNarratives.length > 0) {
-            const narrative = recentNarratives[0];
-            const narrativeBlock = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(sanitizePromptInjection(narrative.text))}\n</recent-history-narratives>\n\n`;
-            narrativePart = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens, budgetState);
-          }
-        } catch {
-          // Non-fatal.
-        }
-      }
-      let hotPart = "";
-      if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
-        const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
-        if (hotResults.length > 0) {
-          const hotLines = hotResults
-            .map((r) => {
-              const text = sanitizePromptInjection(sanitizeRecallFactText(r.entry.summary || r.entry.text));
-              if (!text) return "";
-              const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
-              return `- [hot/${r.entry.category}] ${clipped}`;
-            })
-            .filter(Boolean);
-          if (hotLines.length > 0) {
-            const hotBlock = `Hot memories:\n${hotLines.join("\n")}\n\n`;
-            hotPart = capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
-          }
-        }
-      }
-      reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled, budgetState);
-      reserveAndTrackBlock(
-        "stale-warning",
-        staleWarningReserveTokens,
-        ctx.cfg.activeTask.enabled && (ctx.cfg.activeTask.staleWarning?.enabled ?? false),
-        budgetState,
-      );
-      const memoryLines = ftsOnly
-        .slice(0, degradedLimit)
-        .map((r) => {
-          const text = sanitizePromptInjection(sanitizeRecallFactText(r.entry.summary || r.entry.text));
-          if (!text) return "";
-          const clipped = `${text.slice(0, 200)}${text.length > 200 ? "…" : ""}`;
-          return `- [${r.backend}/${r.entry.category}] ${clipped}`;
-        })
-        .filter(Boolean);
-      const recallBlock = memoryLines.length ? `Recalled (FTS-only):\n${memoryLines.join("\n")}` : "";
-      const { text: recallPart, usedTokens: recallUsedTokens } = trimBlockToBudget(
-        recallBlock,
-        budgetState.remainingBudget,
-      );
-      budgetState.remainingBudget = Math.max(0, budgetState.remainingBudget - recallUsedTokens);
-      const inner = narrativePart + hotPart + recallPart;
-      const block = inner ? `<recalled-context>\n${RECALLED_CONTEXT_BOUNDARY}\n${inner}\n</recalled-context>` : "";
-      const degradedMarker = "<!-- recall degraded: queue -->\n";
-      const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
-      const fixedBlocksTokens = totalBudget - budgetState.remainingBudget;
-      const blockSummary = budgetState.audit
-        .map((b) => `${b.block}:${b.injectedTokens}/${b.capTokens}${b.reserved ? "r" : ""}${b.truncated ? "!" : ""}`)
-        .join(", ");
-      if (ctx.cfg.autoRecall.recallTiming === "basic" || ctx.cfg.autoRecall.recallTiming === "verbose") {
-        api.logger.info?.(
-          `memory-hybrid: context-audit (degraded) fixed=${fixedBlocksTokens}/${totalBudget} recall=${budgetState.remainingBudget} blocks=[${blockSummary}]`,
-        );
-      }
-      ctx.auditStore?.append({
-        agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
-        action: "recall:context-budget",
-        outcome: budgetState.remainingBudget === 0 ? "partial" : "success",
-        sessionId: sessionKey,
-        tokens: fixedBlocksTokens,
-        context: {
-          totalBudget,
-          recallBudget: budgetState.remainingBudget,
-          blocks: budgetState.audit,
-          degraded: true,
-        },
-      });
       api.logger.debug?.(
-        `memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`,
+        `memory-hybrid: recall degraded (session queue depth ${sessionInFlight} > ${degradationQueueDepth}), using FTS-only + HOT`,
       );
-      if (block) return completeStage({ kind: "degraded", prependContext: `${degradedMarker + block}\n\n` });
-      return completeStage({ kind: "degraded", prependContext: `${degradedMarker}\n\n` });
+      return completeStage(await buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "queue"));
     }
 
     // Procedural memory (skip expensive FTS when injection budget is zero — issue #863)
@@ -440,16 +375,18 @@ export async function runRecall(
         for (const p of positiveFiltered.slice(0, 3)) {
           try {
             const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>)
-              .map((s) => s.tool)
+              .map((s) => sanitizeProcedureText(String(s.tool ?? "")))
               .filter(Boolean)
               .join(" → ");
             const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
             const confidence = Math.round(p.relevanceScore * 100);
-            procLines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 50)}… (${steps})`);
+            const pattern = sanitizeProcedureText(p.taskPattern);
+            procLines.push(`- ${emoji} [${confidence}%] ${pattern.slice(0, 50)}… (${steps})`);
           } catch {
             const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
             const confidence = Math.round(p.relevanceScore * 100);
-            procLines.push(`- ${emoji} [${confidence}%] ${p.taskPattern.slice(0, 70)}…`);
+            const pattern = sanitizeProcedureText(p.taskPattern);
+            procLines.push(`- ${emoji} [${confidence}%] ${pattern.slice(0, 70)}…`);
           }
         }
       }
@@ -460,14 +397,16 @@ export async function runRecall(
             const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
             const confidence = Math.round(n.relevanceScore * 100);
             const steps = (JSON.parse(n.recipeJson) as Array<{ tool?: string }>)
-              .map((s) => s.tool)
+              .map((s) => sanitizeProcedureText(String(s.tool ?? "")))
               .filter(Boolean)
               .join(" → ");
-            procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 50)}… (${steps})`);
+            const pattern = sanitizeProcedureText(n.taskPattern);
+            procLines.push(`- ${emoji} [${confidence}%] ${pattern.slice(0, 50)}… (${steps})`);
           } catch {
             const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
             const confidence = Math.round(n.relevanceScore * 100);
-            procLines.push(`- ${emoji} [${confidence}%] ${n.taskPattern.slice(0, 70)}…`);
+            const pattern = sanitizeProcedureText(n.taskPattern);
+            procLines.push(`- ${emoji} [${confidence}%] ${pattern.slice(0, 70)}…`);
           }
         }
       }
@@ -493,8 +432,10 @@ export async function runRecall(
     setRecallProbePhase("hot_facts_block");
     const hotFactsStartedAt = recallTiming.phaseStarted("hot_facts_block");
     let hotBlock = "";
+    const hotFactIds = new Set<string>();
     if (ctx.cfg.memoryTiering.enabled && ctx.cfg.memoryTiering.hotMaxTokens > 0) {
       const hotResults = ctx.factsDb.getHotFacts(ctx.cfg.memoryTiering.hotMaxTokens, scopeFilter);
+      for (const r of hotResults) hotFactIds.add(r.entry.id);
       if (hotResults.length > 0) {
         const hotLines = hotResults
           .map((r) => {
@@ -520,6 +461,7 @@ export async function runRecall(
       reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
       diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
       interactiveFtsFastPath: true,
+      deferAccessRefresh: true,
     };
     const hydeUsedRef = { value: false };
     const pipelineDeps: RecallPipelineDeps = {
@@ -540,10 +482,14 @@ export async function runRecall(
       logger: api.logger,
       registrationGeneration: ctx.registrationGeneration,
     };
+    const recallPipeline = (
+      query: string,
+      limitNum: number,
+      extra?: Omit<NonNullable<Parameters<typeof runRecallPipelineQuery>[4]>, "stageSignal">,
+    ) => runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
 
     const ambientCfg = ctx.cfg.ambient;
-    const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
-    const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
+    const sessionKey = sessionScopeKey;
     if (!ambientSeenFactsMap.has(sessionScopeKey)) {
       ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
       ambientLastEmbeddingMap.set(sessionScopeKey, null);
@@ -570,7 +516,7 @@ export async function runRecall(
       ctx.cfg.retrieval.strategies.includes("semantic")
     ) {
       try {
-        promptEmbedding = await ctx.embeddings.embed(e.prompt);
+        promptEmbedding = await raceWithAbortSignal(ctx.embeddings.embed(e.prompt), signal, null);
       } catch {
         // Non-fatal
       }
@@ -582,7 +528,9 @@ export async function runRecall(
 
     setRecallProbePhase("main_pipeline");
     const mainPipelineStartedAt = recallTiming.phaseStarted("main_pipeline");
-    let candidates = await runRecallPipelineQuery(e.prompt, limit, pipelineDeps, hydeUsedRef, {
+    const pipelineStatusRef = { semanticDegraded: false };
+    let skipPostMainRecallEnrichment = false;
+    let candidates = await recallPipeline(e.prompt, limit, {
       probeId: `${recallProbeId}:main`,
       hydeLabel: "HyDE",
       errorPrefix: "auto-recall-",
@@ -590,12 +538,24 @@ export async function runRecall(
       policy: interactivePolicy,
       timingSpan: recallSpan,
       timingOp: "auto-recall-main",
+      pipelineStatusRef,
     });
     recallTiming.phaseCompleted("main_pipeline", mainPipelineStartedAt, { candidates: candidates.length });
 
-    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
-
-    if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
+    if (shouldAbortRecall()) {
+      if (isRecallContextSuperseded(ctx)) {
+        return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+      }
+      if (candidates.length > 0) {
+        skipPostMainRecallEnrichment = true;
+      }
+    }
+    if (
+      !skipPostMainRecallEnrichment &&
+      interactivePolicy.allowAmbientMultiQuery &&
+      ambientCfg.enabled &&
+      ambientCfg.multiQuery
+    ) {
       setRecallProbePhase("ambient_multi_query");
       const ambientStartedAt = recallTiming.phaseStarted("ambient_multi_query");
       let ambientQueriesRun = 0;
@@ -607,12 +567,24 @@ export async function runRecall(
         if (isTopicShift) api.logger.info?.("memory-hybrid: topic shift detected — re-running ambient retrieval");
         if (promptEmbedding !== null) ambientLastEmbeddingMap.set(sessionScopeKey, promptEmbedding);
         const knownEntities = ctx.factsDb.getKnownEntities ? ctx.factsDb.getKnownEntities() : [];
+        let mergedKnownEntities = knownEntities;
+        if (ctx.cfg.autoRecall.entityLookup?.enabled && typeof ctx.factsDb.getRawDb === "function") {
+          try {
+            const surfaces = loadKnownEntitySurfaces(ctx.factsDb.getRawDb(), 200);
+            const matched = matchEntitySurfacesInText(e.prompt, surfaces);
+            if (matched.length > 0) {
+              mergedKnownEntities = [...new Set([...knownEntities, ...matched.map((s) => s.key)])];
+            }
+          } catch {
+            /* non-fatal */
+          }
+        }
         const ambientSessionKey = resolveSessionKey(e, api);
         const ambientQueries = generateAmbientQueries(
           e.prompt,
           ambientCfg,
           { userId: api.context?.userId, channelId: ambientSessionKey ?? undefined, nowMs: Date.now() },
-          knownEntities,
+          mergedKnownEntities,
         );
         const extraQueries = ambientQueries.filter((q) => q.type !== "message");
         if (extraQueries.length > 0) {
@@ -623,11 +595,14 @@ export async function runRecall(
                 status: "aborted",
                 queries_run: ambientQueriesRun,
               });
-              return completeStage(emptyRecallStage());
+              if (isRecallContextSuperseded(ctx)) {
+                return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+              }
+              break;
             }
             await yieldEventLoop();
             try {
-              const qResults = await runRecallPipelineQuery(q.text, Math.ceil(limit / 2), pipelineDeps, hydeUsedRef, {
+              const qResults = await recallPipeline(q.text, Math.ceil(limit / 2), {
                 probeId: `${recallProbeId}:ambient:${q.type}:${ambientQueriesRun + 1}`,
                 entity: q.type === "entity" ? q.entity : undefined,
                 hydeLabel: "HyDE",
@@ -649,7 +624,10 @@ export async function runRecall(
                   status: "aborted",
                   queries_run: ambientQueriesRun,
                 });
-                return completeStage(emptyRecallStage());
+                if (isRecallContextSuperseded(ctx)) {
+                  return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+                }
+                break;
               }
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: `ambient-query-${q.type}`,
@@ -676,17 +654,20 @@ export async function runRecall(
             status: "aborted",
             queries_run: ambientQueriesRun,
           });
-          return completeStage(emptyRecallStage());
+          if (isRecallContextSuperseded(ctx)) {
+            return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+          }
+        } else {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "ambient-multi-query",
+            subsystem: "auto-recall",
+          });
+          api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+          recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+            status: "error",
+            queries_run: ambientQueriesRun,
+          });
         }
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "ambient-multi-query",
-          subsystem: "auto-recall",
-        });
-        api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
-        recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
-          status: "error",
-          queries_run: ambientQueriesRun,
-        });
       }
     }
 
@@ -703,7 +684,9 @@ export async function runRecall(
             issueLines.push("<known-issues>");
             for (const issue of issueResults.openIssues) {
               const sanitizedTitle = sanitizePromptInjection(issue.title);
-              issueLines.push(`- [${issue.severity}] ${sanitizedTitle} (status: ${issue.status})`);
+              const severity = sanitizePromptInjection(issue.severity);
+              const status = sanitizePromptInjection(issue.status);
+              issueLines.push(`- [${severity}] ${sanitizedTitle} (status: ${status})`);
             }
             issueLines.push("</known-issues>");
           }
@@ -712,7 +695,8 @@ export async function runRecall(
             for (const issue of issueResults.resolvedIssues) {
               const sanitizedTitle = sanitizePromptInjection(issue.title);
               const resolution = issue.fix ? ` — Fix: ${sanitizePromptInjection(issue.fix).slice(0, 100)}` : "";
-              issueLines.push(`- [${issue.severity}] ${sanitizedTitle}${resolution}`);
+              const severity = sanitizePromptInjection(issue.severity);
+              issueLines.push(`- [${severity}] ${sanitizedTitle}${resolution}`);
             }
             issueLines.push("</resolved-issues>");
           }
@@ -742,13 +726,16 @@ export async function runRecall(
           narrativesDb: ctx.narrativesDb,
           eventLog: ctx.eventLog,
           query: e.prompt,
+          sessionId: sessionKey,
           limit: 2,
         });
         if (recentNarratives.length > 0) {
           const lines = recentNarratives.map((n) => {
             const sanitized = sanitizePromptInjection(n.text);
             const clipped = clipNarrativeText(sanitized);
-            return `- [${n.source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${n.sessionId})\n${clipped}`;
+            const source = sanitizePromptInjection(n.source);
+            const sessionId = sanitizePromptInjection(n.sessionId);
+            return `- [${source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${sessionId})\n${clipped}`;
           });
           narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
         }
@@ -769,7 +756,9 @@ export async function runRecall(
     recallTiming.phaseCompleted("narrative_block", narrativeStartedAt, { injected: narrativeBlock.length > 0 });
 
     await yieldEventLoop();
-    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
+    if (isRecallContextSuperseded(ctx)) {
+      return completeStage(finishPartialFixedBlocksRecall(ctx, issueBlock, narrativeBlock, hotBlock, procedureBlock));
+    }
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
@@ -781,11 +770,12 @@ export async function runRecall(
       if (entityLookupNames.length > 0) {
         const seenIds = new Set(candidates.map((c) => c.entry.id));
         for (const entity of entityLookupNames) {
-          if (!promptLower.includes(entity.toLowerCase())) continue;
+          if (!promptMentionsEntity(e.prompt, entity)) continue;
           const entityResults = ctx.factsDb
-            .lookup(entity, undefined, undefined, { scopeFilter })
+            .lookup(entity, undefined, undefined, { scopeFilter, deferAccessRefresh: true })
             .slice(0, entityLookup.maxFactsPerEntity);
           for (const r of entityResults) {
+            if (ctx.cfg.memoryTiering.enabled && !isTierAllowedForWarmSearch(r.entry.tier)) continue;
             if (!seenIds.has(r.entry.id)) {
               seenIds.add(r.entry.id);
               candidates.push(r);
@@ -844,23 +834,24 @@ export async function runRecall(
       });
       // Preserve fixed blocks that were already built
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
-      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+      return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     };
-    if (directivesCfg.enabled) {
+    if (directivesCfg.enabled && !skipPostMainRecallEnrichment) {
       try {
-        if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+        if (isRecallContextSuperseded(ctx)) {
           return abortDirectives();
         }
         if (directivesCfg.entityMentioned && entityLookup.enabled) {
           const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
           if (entityLookupNames.length > 0) {
             for (const entity of entityLookupNames) {
-              if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+              if (isRecallContextSuperseded(ctx)) {
                 return abortDirectives();
               }
-              if (!promptLower.includes(entity.toLowerCase())) continue;
+              if (recallAborted(signal)) break;
+              if (!promptMentionsEntity(e.prompt, entity)) continue;
               if (!canRunDirective()) break;
-              const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
+              const results = await recallPipeline(entity, directiveLimit, {
                 probeId: `${recallProbeId}:directive:entity:${entity}`,
                 entity,
                 hydeLabel: "HyDE",
@@ -877,12 +868,13 @@ export async function runRecall(
         }
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
-            if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+            if (isRecallContextSuperseded(ctx)) {
               return abortDirectives();
             }
+            if (recallAborted(signal)) break;
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
-            const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
+            const results = await recallPipeline(keyword, directiveLimit, {
               probeId: `${recallProbeId}:directive:keyword:${keyword}`,
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
@@ -896,12 +888,13 @@ export async function runRecall(
           }
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
-          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+          if (isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
+          if (recallAborted(signal)) break;
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
-          const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
+          const results = await recallPipeline(taskType, directiveLimit, {
             probeId: `${recallProbeId}:directive:task:${taskType}`,
             hydeLabel: "HyDE",
             errorPrefix: "directive-",
@@ -914,11 +907,13 @@ export async function runRecall(
           addDirectiveResults(results, `taskType:${taskType}`);
         }
         if (directivesCfg.sessionStart) {
-          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+          if (isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
-          if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
-            const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
+          if (recallAborted(signal)) {
+            // skip session-start directive on stage timeout
+          } else if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
+            const results = await recallPipeline("session start", directiveLimit, {
               probeId: `${recallProbeId}:directive:session-start`,
               hydeLabel: "HyDE",
               errorPrefix: "directive-",
@@ -993,6 +988,17 @@ export async function runRecall(
     });
     boosted.sort((a, b) => b.score - a.score);
     candidates = boosted;
+    if (hotFactIds.size > 0) {
+      candidates = candidates.filter((r) => !hotFactIds.has(r.entry.id));
+    }
+
+    if (!shouldAbortRecall()) {
+      candidates = await raceWithAbortSignal(
+        filterCandidatesByInteractiveGrading(e.prompt, candidates, ctx.cfg.documentGrading, ctx.openai, { signal }),
+        signal,
+        candidates,
+      );
+    }
 
     const {
       maxPerMemoryChars,
@@ -1005,14 +1011,15 @@ export async function runRecall(
       hotMaxTokens: hotBlockCapCfg,
       narrativeMaxTokens: narrativeBlockCapCfg,
       procedureMaxTokens: procedureBlockCapCfg,
-      activeTaskMaxTokens: activeTaskReserveCapCfg,
-      staleWarningMaxTokens: staleWarningReserveCapCfg,
+      activeTaskMaxTokens: activeTaskBlockCapCfg,
+      staleWarningMaxTokens: staleWarningBlockCapCfg,
     } = ctx.cfg.autoRecall;
     // Enforce retrieval.ambientBudgetTokens as a hard total-token cap (#581).
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
     // ceiling — the injected context must not exceed either.
     const totalBudget = interactivePolicy.contextBudgetTokens;
-    const issueCapTokens = Math.max(80, Math.floor(totalBudget * 0.15));
+    const issueCapTokens =
+      totalBudget < 80 ? Math.max(0, Math.floor(totalBudget * 0.15)) : Math.max(80, Math.floor(totalBudget * 0.15));
     const narrativeCapTokens =
       narrativeBlockCapCfg ?? (narrativeBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
     const hotCapTokens = hotBlockCapCfg ?? (hotBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.25)) : 0);
@@ -1022,19 +1029,9 @@ export async function runRecall(
       (ctx.cfg.procedures.enabled
         ? Math.min(ctx.cfg.procedures.maxInjectionTokens ?? defaultProcedureCap, defaultProcedureCap)
         : 0);
-    const defaultActiveTaskReserve =
-      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.injectionBudget > 0
-        ? Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2)))
-        : 0;
-    const activeTaskReserveTokens = activeTaskReserveCapCfg ?? defaultActiveTaskReserve;
-    const staleWarningReserveTokens =
-      staleWarningReserveCapCfg ??
-      (ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning?.enabled
-        ? Math.max(40, Math.floor(totalBudget * 0.08))
-        : 0);
-
+    const edictReserve = edictMaxTokensForBudget(totalBudget);
     const budgetState: BudgetState = {
-      remainingBudget: totalBudget,
+      remainingBudget: Math.max(0, totalBudget - edictReserve),
       audit: [],
     };
 
@@ -1042,13 +1039,17 @@ export async function runRecall(
     narrativeBlock = capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens, budgetState);
     hotBlock = capAndTrackBlock("hot", hotBlock, hotCapTokens, budgetState);
     procedureBlock = capAndTrackBlock("procedure", procedureBlock, procedureCapTokens, budgetState);
-    reserveAndTrackBlock("active-task", activeTaskReserveTokens, ctx.cfg.activeTask.enabled, budgetState);
-    reserveAndTrackBlock(
-      "stale-warning",
-      staleWarningReserveTokens,
-      ctx.cfg.activeTask.enabled && (ctx.cfg.activeTask.staleWarning?.enabled ?? false),
-      budgetState,
-    );
+
+    const activeTaskReserveCap = ctx.cfg.activeTask.enabled
+      ? (activeTaskBlockCapCfg ??
+        Math.min(ctx.cfg.activeTask.injectionBudget, Math.max(80, Math.floor(totalBudget * 0.2))))
+      : 0;
+    const staleWarningReserveCap =
+      ctx.cfg.activeTask.enabled && ctx.cfg.activeTask.staleWarning.enabled
+        ? (staleWarningBlockCapCfg ?? Math.max(40, Math.floor(totalBudget * 0.08)))
+        : 0;
+    reserveAndTrackBlock("activeTask", activeTaskReserveCap, activeTaskReserveCap > 0, budgetState);
+    reserveAndTrackBlock("staleWarning", staleWarningReserveCap, staleWarningReserveCap > 0, budgetState);
 
     const fixedBlocksTokens = totalBudget - budgetState.remainingBudget;
     const maxTokens = Math.max(0, budgetState.remainingBudget);
@@ -1099,11 +1100,11 @@ export async function runRecall(
         },
       });
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
-      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+      return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
     if (shouldAbortRecall()) {
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
-      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+      return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
 
     setRecallProbePhase("finalize");
@@ -1113,7 +1114,7 @@ export async function runRecall(
 
     if (isRecallContextSuperseded(ctx)) {
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
-      return completeStage({ kind: "empty", prependContext: combinedContext || undefined });
+      return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
 
     const result: RecallResult = {
@@ -1135,9 +1136,12 @@ export async function runRecall(
       summarizeModel,
       groupByCategory,
       pinnedRecallThreshold,
-      lastProgressiveIndexIdsRef: ctx.lastProgressiveIndexIds,
+      progressiveIndexSessionKey: sessionKey,
+      progressiveIndexBySession: ctx.progressiveIndexBySession,
       ambientCfg: { enabled: ambientCfg.enabled, multiQuery: ambientCfg.multiQuery },
       ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
+      semanticDegraded: pipelineStatusRef.semanticDegraded,
+      totalBudget,
     };
     return completeStage({ kind: "full", result });
   } catch (err) {
@@ -1165,6 +1169,9 @@ export async function runRecall(
     throw err;
   } finally {
     ctx.recallInFlightRef.value--;
+    const sessionCount = sessionState.recallInFlightBySession.get(trackedSessionScopeKey) ?? 1;
+    if (sessionCount <= 1) sessionState.recallInFlightBySession.delete(trackedSessionScopeKey);
+    else sessionState.recallInFlightBySession.set(trackedSessionScopeKey, sessionCount - 1);
     clearRecallProbeWatchdog();
     api.logger.debug?.(
       `memory-hybrid: recall-probe id=${recallProbeId} exit elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase} completed=${recallStageCompleted}`,

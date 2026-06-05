@@ -14,6 +14,8 @@ import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
 
 import { BaseSqliteStore } from "./base-sqlite-store.js";
+import { nowIso } from "../utils/dates.js";
+import { backfillToolProposalTextTimestamps } from "../utils/timestamp-migration.js";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -32,6 +34,7 @@ export interface ToolProposal {
   sourcePatterns: string;
   implementationHint: string;
   status: ToolProposalStatus;
+  rejectionReason?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -71,13 +74,21 @@ export class ToolProposalStore extends BaseSqliteStore {
         source_patterns      TEXT NOT NULL DEFAULT '[]',
         implementation_hint  TEXT NOT NULL DEFAULT '',
         status               TEXT NOT NULL DEFAULT 'proposed',
-        created_at           TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at           TEXT NOT NULL,
+        updated_at           TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_tp_status ON tool_proposals(status);
       CREATE INDEX IF NOT EXISTS idx_tp_name   ON tool_proposals(name);
     `);
+    backfillToolProposalTextTimestamps(this.liveDb);
+    this.migrateRejectionReasonColumn();
+  }
+
+  private migrateRejectionReasonColumn(): void {
+    const cols = this.liveDb.prepare("PRAGMA table_info(tool_proposals)").all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "rejection_reason")) return;
+    this.liveDb.exec("ALTER TABLE tool_proposals ADD COLUMN rejection_reason TEXT");
   }
 
   protected getSubsystemName(): string {
@@ -90,7 +101,7 @@ export class ToolProposalStore extends BaseSqliteStore {
 
   create(input: CreateToolProposalInput): ToolProposal {
     const id = randomUUID();
-    const now = new Date().toISOString();
+    const now = nowIso();
 
     this.liveDb
       .prepare(
@@ -158,14 +169,26 @@ export class ToolProposalStore extends BaseSqliteStore {
   // updateStatus — change proposal status
   // -------------------------------------------------------------------------
 
-  updateStatus(id: string, status: ToolProposalStatus, fromStatus?: ToolProposalStatus): ToolProposal | null {
-    const now = new Date().toISOString();
+  updateStatus(
+    id: string,
+    status: ToolProposalStatus,
+    fromStatus?: ToolProposalStatus,
+    rejectionReason?: string | null,
+  ): ToolProposal | null {
+    const now = nowIso();
     const result =
       fromStatus !== undefined
         ? this.liveDb
-            .prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-            .run(status, now, id, fromStatus)
-        : this.liveDb.prepare("UPDATE tool_proposals SET status = ?, updated_at = ? WHERE id = ?").run(status, now, id);
+            .prepare(
+              `UPDATE tool_proposals SET status = ?, updated_at = ?, rejection_reason = COALESCE(?, rejection_reason)
+               WHERE id = ? AND status = ?`,
+            )
+            .run(status, now, rejectionReason ?? null, id, fromStatus)
+        : this.liveDb
+            .prepare(
+              `UPDATE tool_proposals SET status = ?, updated_at = ?, rejection_reason = COALESCE(?, rejection_reason) WHERE id = ?`,
+            )
+            .run(status, now, rejectionReason ?? null, id);
 
     if (result.changes === 0) return null;
     return this.getById(id);
@@ -211,6 +234,7 @@ export class ToolProposalStore extends BaseSqliteStore {
       sourcePatterns: row.source_patterns as string,
       implementationHint: row.implementation_hint as string,
       status: row.status as ToolProposalStatus,
+      rejectionReason: (row.rejection_reason as string | null | undefined) ?? null,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };

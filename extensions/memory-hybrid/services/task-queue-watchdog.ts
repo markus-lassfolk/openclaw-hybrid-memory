@@ -22,6 +22,7 @@ import { readJsonFile } from "../utils/fs.js";
 import { execFile as execFileCb } from "../utils/process-runner.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { capturePluginError } from "./error-reporter.js";
+import { nowIso } from "../utils/dates.js";
 import { expireDispatchLeases, transitionDispatchLease } from "./task-queue-leases.js";
 
 const execFile = promisify(execFileCb);
@@ -263,7 +264,7 @@ export async function ensureTaskQueueIdlePlaceholder(
  * Format: YYYY-MM-DDTHH-MM-SS-{suffix}.json
  */
 function buildHistoryFilename(suffix: string): string {
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const ts = nowIso().replace(/[:.]/g, "-").slice(0, 19);
   return `${ts}-${suffix}.json`;
 }
 
@@ -349,7 +350,7 @@ export async function runTaskQueueWatchdog(
       return { action: "ok", item: recheckBefore ?? item };
     }
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const degenerateReason =
       "current.json has no recognizable task-queue payload (metadata-only shell or unknown shape; issue #1037)";
     await mkdir(historyDir, { recursive: true });
@@ -422,7 +423,7 @@ export async function runTaskQueueWatchdog(
   const isExhausted = previousRetries >= maxRetries || historyCount >= maxRetries;
 
   const action: WatchdogAction = isExhausted ? "quarantined" : "cleared";
-  const now = new Date().toISOString();
+  const now = nowIso();
 
   // If we can identify a lease for this issue, force it terminal so dispatch
   // dedupe does not depend on GitHub branch propagation.

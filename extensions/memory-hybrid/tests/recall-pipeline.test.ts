@@ -528,6 +528,39 @@ describe("runRecallPipelineQuery — memory tiering", () => {
     expect(ids).not.toContain("cold");
   });
 
+  it("removes structural-tier results when memoryTieringEnabled = true", async () => {
+    const warmResult = makeSearchResult("warm", 0.9, { tier: "warm" });
+    const structuralResult = makeSearchResult("structural", 0.85, { tier: "structural" });
+
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["fts5"],
+        memoryTieringEnabled: true,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([warmResult, structuralResult]);
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) => {
+      if (id === "warm") return makeEntry("warm", { tier: "warm" });
+      if (id === "structural") return makeEntry("structural", { tier: "structural" });
+      return null;
+    });
+
+    const result = await runRecallPipelineQuery("query", 10, deps, { value: false });
+
+    const ids = result.map((r) => r.entry.id);
+    expect(ids).toContain("warm");
+    expect(ids).not.toContain("structural");
+  });
+
   it("returns all results when memoryTieringEnabled = false", async () => {
     const warmResult = makeSearchResult("warm", 0.9, { tier: "warm" });
     const coldResult = makeSearchResult("cold", 0.8, { tier: "cold" });
@@ -687,9 +720,47 @@ describe("runRecallPipelineQuery — HyDE fallback, FTS/embed ordering, vector t
 
     const result = await runRecallPipelineQuery("timeout test", 5, deps, { value: false });
 
-    // Vector results should be present (FTS didn't starve the timeout)
     expect(deps.vectorDb.search).toHaveBeenCalled();
     expect(result.map((r) => r.entry.id)).toContain("vec-1");
+  });
+
+  it("sets pipelineStatusRef when vector step times out", async () => {
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+    });
+
+    (deps.factsDb.search as ReturnType<typeof vi.fn>).mockReturnValue([makeSearchResult("fts-1")]);
+    (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
+      id === "fts-1" ? makeEntry("fts-1") : null,
+    );
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => undefined),
+    );
+
+    const pipelineStatusRef = { semanticDegraded: false };
+    await runRecallPipelineQuery(
+      "timeout semantic",
+      5,
+      deps,
+      { value: false },
+      {
+        policy: { ...DEFAULT_INTERACTIVE_RECALL_POLICY, vectorStepTimeoutMs: 50 },
+        pipelineStatusRef,
+      },
+    );
+
+    expect(pipelineStatusRef.semanticDegraded).toBe(true);
   });
 });
 
@@ -1016,5 +1087,72 @@ describe("runRecallPipelineQuery — probe logs", () => {
     );
     expect(debugCalls.some((line) => line.includes("recall-probe id=probe-123 stage=lancedb_search start"))).toBe(true);
     expect(debugCalls.some((line) => line.includes("recall-probe id=probe-123 pipeline-exit"))).toBe(true);
+  });
+});
+
+describe("runRecallPipelineQuery — stage abort signal", () => {
+  it("returns empty when stageSignal is already aborted before pipeline starts", async () => {
+    const deps = makeDeps({
+      factsDb: {
+        search: vi.fn(() => [makeSearchResult("fts-1")]),
+        getById: vi.fn((id: string) => makeEntry(id)),
+        lookup: vi.fn(() => []),
+        getSupersededTexts: vi.fn(() => new Set<string>()),
+      },
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    const result = await runRecallPipelineQuery("hello", 5, deps, { value: false }, {
+      stageSignal: controller.signal,
+    });
+
+    expect(result).toEqual([]);
+    expect(deps.factsDb.search).not.toHaveBeenCalled();
+  });
+
+  it("returns FTS-only partial results when stageSignal aborts after FTS in semantic mode", async () => {
+    const ftsHit = makeSearchResult("fts-partial", 0.9);
+    const deps = makeDeps({
+      cfg: {
+        queryExpansion: {
+          enabled: false,
+          maxVariants: 4,
+          cacheSize: 100,
+          timeoutMs: 15_000,
+          skipForInteractiveTurns: true,
+        },
+        retrievalStrategies: ["semantic", "fts5"],
+        memoryTieringEnabled: false,
+        rawCfg: { llm: undefined } as unknown as RecallPipelineDeps["cfg"]["rawCfg"],
+      },
+      factsDb: {
+        search: vi.fn(() => [ftsHit]),
+        getById: vi.fn((id: string) => makeEntry(id)),
+        lookup: vi.fn(() => []),
+        getSupersededTexts: vi.fn(() => new Set<string>()),
+      },
+      embeddings: {
+        embed: vi.fn(async () => new Promise<number[]>(() => undefined)),
+      },
+      vectorDb: {
+        search: vi.fn(async () => [makeSearchResult("vec-1", 0.95, {}, "lancedb")]),
+      },
+    });
+    const controller = new AbortController();
+    const statusRef = { semanticDegraded: false };
+
+    const pending = runRecallPipelineQuery("semantic query", 5, deps, { value: false }, {
+      stageSignal: controller.signal,
+      policy: DEFAULT_INTERACTIVE_RECALL_POLICY,
+      pipelineStatusRef: statusRef,
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    controller.abort();
+    const result = await pending;
+
+    expect(result.map((r) => r.entry.id)).toEqual(["fts-partial"]);
+    expect(deps.vectorDb.search).not.toHaveBeenCalled();
+    expect(statusRef.semanticDegraded).toBe(true);
   });
 });

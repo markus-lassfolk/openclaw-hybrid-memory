@@ -3,6 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { nowIso } from "../../utils/dates.js";
 import { analyzeTaskResult, renderTaskAnalysisMarkdown } from "./analyze.js";
 import { buildQualityReport, renderQualityMarkdown } from "./analyze-quality.js";
 import { QA_TASK_PLAN } from "./qa-tasks.js";
@@ -54,7 +55,7 @@ for (const task of state.tasks) {
   }
 }
 
-state.updatedAt = new Date().toISOString();
+state.updatedAt = nowIso();
 writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 
 const passed = state.tasks.filter((t) => t.status === "passed").length;

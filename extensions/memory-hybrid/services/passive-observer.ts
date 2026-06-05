@@ -23,11 +23,17 @@ import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, ReinforcementConfig } from "../config.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { chunkTextByChars } from "../utils/text.js";
+import { nowIso } from "../utils/dates.js";
 import { LLMRetryError, chatCompleteWithRetry } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import {
+  isSubstantiveMemoryText,
+  prepareMemoryMetadataForStorage,
+  prepareMemoryTextForStorage,
+} from "./recalled-context-assembler.js";
 import type { ProvenanceService } from "./provenance.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
@@ -77,7 +83,12 @@ const isEnoent = (err: unknown): boolean => (err as NodeJS.ErrnoException).code 
  * and `.deleted*` tombstones (same convention as procedure-extractor).
  */
 export function isPassiveObserverTranscriptCandidate(basename: string): boolean {
-  return basename.endsWith(".jsonl") && !basename.startsWith(".deleted") && !basename.includes(".checkpoint.");
+  return (
+    basename.endsWith(".jsonl") &&
+    !basename.startsWith(".deleted") &&
+    !basename.includes(".checkpoint.") &&
+    !basename.includes(".trajectory.")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -584,12 +595,19 @@ export async function runPassiveObserver(
       result.factsExtracted += filtered.length;
 
       for (const fact of filtered) {
+        const storedText = prepareMemoryTextForStorage(fact.text, config.maxCharsPerChunk);
+        if (!storedText || !isSubstantiveMemoryText(storedText)) continue;
+        const storedCategory =
+          (prepareMemoryMetadataForStorage(fact.category) as MemoryCategory | undefined) ?? fact.category;
+
         // Embed new fact for dedup check
         let vec: number[];
         try {
-          vec = await embeddings.embed(fact.text);
+          vec = await embeddings.embed(storedText);
         } catch (err) {
-          logger.warn(`memory-hybrid: passive-observer — embed failed for fact: ${fact.text.slice(0, 80)}... (${err})`);
+          logger.warn(
+            `memory-hybrid: passive-observer — embed failed for fact: ${storedText.slice(0, 80)}... (${err})`,
+          );
           // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
           if (!shouldSuppressEmbeddingError(err)) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -672,7 +690,7 @@ export async function runPassiveObserver(
 
         if (opts.dryRun) {
           logger.info(
-            `memory-hybrid: passive-observer [dry-run] would store: ${fact.text.slice(0, 60)}... (importance=${fact.importance.toFixed(2)}, category=${fact.category})`,
+            `memory-hybrid: passive-observer [dry-run] would store: ${storedText.slice(0, 60)}... (importance=${fact.importance.toFixed(2)}, category=${storedCategory})`,
           );
           result.factsStored++;
           dryRunVectors.push(normalizedVec);
@@ -687,11 +705,11 @@ export async function runPassiveObserver(
           try {
             eventId = opts.eventLog.append({
               sessionId,
-              timestamp: new Date().toISOString(),
+              timestamp: nowIso(),
               eventType: categoryToEventType(fact.category),
               content: {
-                text: fact.text,
-                category: fact.category,
+                text: storedText,
+                category: storedCategory,
                 importance: fact.importance,
                 source: "passive-observer",
               },
@@ -703,15 +721,15 @@ export async function runPassiveObserver(
 
         // Identity fact promotion (Issue #306): if this fact describes the agent itself,
         // store it as global/permanent so it persists across sessions.
-        const identity = isIdentityFact(fact.text, opts.agentName);
+        const identity = isIdentityFact(storedText, opts.agentName);
         if (identity) {
-          logger.info(`passive-observer: promoting identity fact to global/permanent: "${fact.text.slice(0, 60)}..."`);
+          logger.info(`passive-observer: promoting identity fact to global/permanent: "${storedText.slice(0, 60)}..."`);
         }
 
         // Store to SQLite — tag with session scope so facts can be scoped to session lifecycle
         const storeResult = factsDb.storeWithResult({
-          text: fact.text,
-          category: fact.category as MemoryCategory,
+          text: storedText,
+          category: storedCategory,
           importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
           confidence: 0.6,
           entity: null,
@@ -746,7 +764,7 @@ export async function runPassiveObserver(
               edgeType: "DERIVED_FROM",
               sourceType: "event_log",
               sourceId: eventId ?? sessionId,
-              sourceText: fact.text,
+              sourceText: storedText,
             });
           } catch (err) {
             capturePluginError(err instanceof Error ? err : new Error(String(err)), {

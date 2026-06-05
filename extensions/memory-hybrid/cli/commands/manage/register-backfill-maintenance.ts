@@ -14,14 +14,16 @@ import {
   defaultWorkflowDbPath,
   formatMaintenanceCoverageReport,
 } from "../../../services/maintenance-coverage.js";
-import {
-  extractToolCallSequence,
-  parseSessionMessagesFromLines,
-} from "../../../services/session-signal-context.js";
+import { parseSessionMessagesFromLines } from "../../../services/session-signal-context.js";
+import { collectWorkflowToolsFromSessionFile } from "../../../services/session-v3-parser.js";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { redactMaintenancePrivateText } from "../../../utils/maintenance-privacy.js";
+import { capturePluginError } from "../../../services/error-reporter.js";
+import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../../../services/workflow-goal-classifier.js";
+import { inferWorkflowOutcomeFromMessages } from "../../../services/workflow-message-utils.js";
 import { type Chainable, withExit } from "../../shared.js";
+import type { HybridMemoryConfig } from "../../../config.js";
 import type { ManageBindings } from "./bindings.js";
 
 function backfillReflectionWatermark(factsDb: FactsDB): number {
@@ -37,57 +39,181 @@ function backfillReflectionWatermark(factsDb: FactsDB): number {
   return maxCreated;
 }
 
-function inferSessionOutcome(messages: Array<{ role: string; text: string }>): "success" | "failure" | "unknown" {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const t = messages[i].text.toLowerCase();
-    if (/\b(error|failed|failure)\b/.test(t)) return "failure";
-    if (/\b(done|success|completed|fixed)\b/.test(t)) return "success";
-  }
-  return "unknown";
-}
-
 function backfillWorkflowTracesFromFile(
-  factsDb: FactsDB,
+  _factsDb: FactsDB,
   workflowStore: WorkflowStore,
   filePath: string,
-): { traces: number; proceduresUpdated: number } {
+  cfg: HybridMemoryConfig,
+): number {
+  const tools = collectWorkflowToolsFromSessionFile(filePath, "backfill-workflow-traces");
+  if (tools.length < 2) return 0;
+
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
-  const tools: string[] = [];
-  for (const msg of messages) {
-    tools.push(...extractToolCallSequence(msg.content));
-  }
-  if (tools.length < 2) return { traces: 0, proceduresUpdated: 0 };
 
   const sessionId = basename(filePath);
-  const goal =
-    messages.find((m) => m.role === "user" && m.text.trim())?.text.trim().slice(0, 200) ?? "session workflow";
-  const outcome = inferSessionOutcome(messages);
-  workflowStore.record({
-    goal: redactMaintenancePrivateText(goal),
-    toolSequence: tools,
-    outcome,
-    sessionId,
-  });
-
-  let proceduresUpdated = 0;
-  const taskPattern = tools.join(" -> ");
-  const normalizedPattern = redactMaintenancePrivateText(taskPattern);
-  const matches = factsDb.searchProcedures(normalizedPattern, 3);
-  for (const proc of matches) {
-    const updated = factsDb.procedureFeedback({
-      procedureId: proc.id,
-      success: outcome === "success",
+  const goal = redactMaintenancePrivateText(
+    extractUserWorkflowGoal(messages, cfg.crystallization?.excludeGoalPatterns),
+  );
+  if (isSystemWorkflowGoal(goal, cfg.crystallization?.excludeGoalPatterns)) return 0;
+  const outcome = inferWorkflowOutcomeFromMessages(messages);
+  try {
+    const inserted = workflowStore.recordBackfillIfAbsent({
+      goal,
+      toolSequence: tools,
+      outcome,
       sessionId,
-      context: `backfill-workflow-traces:${sessionId}`,
     });
-    if (updated) proceduresUpdated++;
+    return inserted ? 1 : 0;
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: "backfill-workflow-traces:record",
+      severity: "warn",
+      subsystem: "maintenance",
+      context: sessionId,
+    });
+    return 0;
   }
-  return { traces: 1, proceduresUpdated };
 }
 
-export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBindings): void {
+export type BackfillRegistrationOptions = {
+  /** When true, register only session/workflow backfill subcommands (not workflow QA / coverage). */
+  onlyBackfill?: boolean;
+  /** When true, register only workflow-trace QA commands (flat operator tools). */
+  onlyWorkflowQa?: boolean;
+  /** When true, parent accepts `--all` to run standard offline QA backfills. */
+  groupedBackfillParent?: boolean;
+};
+
+function registerWorkflowTraceQaCommands(mem: Chainable, b: ManageBindings): void {
+  const { cfg } = b;
+  mem
+    .command("workflow-trace-quality")
+    .description("Summarize user-facing vs system/cron workflow traces in workflow-traces.db")
+    .option("--days <n>", "Window in days", "30")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { days?: string; json?: boolean }) => {
+        const days = Number.parseInt(opts?.days ?? "30", 10);
+        const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
+        const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
+        try {
+          const summary = workflowStore.summarizeGoalKinds({
+            sinceSec,
+            excludeGoalPatterns: cfg.crystallization?.excludeGoalPatterns,
+          });
+          const report = { days, ...summary };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else {
+            console.log(
+              `workflow-trace-quality (last ${days}d): total=${summary.total}, user-facing=${summary.userFacing}, system=${summary.systemGoals}`,
+            );
+            if (summary.systemGoals > 0 && summary.userFacing === 0) {
+              console.log(
+                "All traces are system/cron goals — run purge-workflow-system-traces and collect fresh user-facing workflows.",
+              );
+            }
+          }
+        } finally {
+          workflowStore.close();
+        }
+      }),
+    );
+
+  mem
+    .command("purge-workflow-system-traces")
+    .description("Remove workflow_traces rows whose goal is a cron/system injection")
+    .option("--dry-run", "Report rows that would be deleted without mutating the DB")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { dryRun?: boolean; json?: boolean }) => {
+        const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
+        try {
+          const result = workflowStore.purgeSystemGoalTraces({
+            dryRun: !!opts?.dryRun,
+            excludeGoalPatterns: cfg.crystallization?.excludeGoalPatterns,
+          });
+          const report = { ...result, dryRun: !!opts?.dryRun };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else if (opts?.dryRun) {
+            console.log(
+              `purge-workflow-system-traces (dry-run): scanned ${result.scanned}, would remove ${result.removed} system-goal trace(s)`,
+            );
+          } else {
+            console.log(
+              `purge-workflow-system-traces: scanned ${result.scanned}, removed ${result.removed} system-goal trace(s)`,
+            );
+          }
+        } finally {
+          workflowStore.close();
+        }
+      }),
+    );
+
+  mem
+    .command("dedupe-workflow-traces")
+    .description("Remove duplicate workflow_traces rows with the same session_id and args_hash")
+    .option("--dry-run", "Report duplicates without deleting")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { dryRun?: boolean; json?: boolean }) => {
+        const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
+        try {
+          const result = workflowStore.dedupeBySessionAndArgsHash({ dryRun: !!opts?.dryRun });
+          const report = { ...result, dryRun: !!opts?.dryRun };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else if (opts?.dryRun) {
+            console.log(
+              `dedupe-workflow-traces (dry-run): ${result.duplicateGroups} duplicate group(s), would remove ${result.removed} row(s)`,
+            );
+          } else {
+            console.log(
+              `dedupe-workflow-traces: removed ${result.removed} duplicate row(s), kept ${result.kept} canonical row(s)`,
+            );
+          }
+        } finally {
+          workflowStore.close();
+        }
+      }),
+    );
+}
+
+export function registerBackfillMaintenanceCommands(
+  mem: Chainable,
+  b: ManageBindings,
+  opts?: BackfillRegistrationOptions,
+): void {
+  if (opts?.onlyWorkflowQa) {
+    registerWorkflowTraceQaCommands(mem, b);
+    return;
+  }
+
   const { factsDb, cfg } = b;
+  const onlyBackfill = opts?.onlyBackfill ?? false;
+
+  if (opts?.groupedBackfillParent) {
+    mem
+      .option("--all", "Run daily-logs, session-languages, and recall-events backfills")
+      .option("--days <n>", "Scan sessions modified in the last N days (--all only)", "60")
+      .action(
+        withExit(async (opts?: { all?: boolean; days?: string }) => {
+          if (!opts?.all) return;
+          const days = Number.parseInt(opts.days ?? "60", 10);
+          let dailyLogs = 0;
+          let sessionLanguages = 0;
+          let recallEvents = 0;
+          const paths = resolveExtractSessionFilePaths(cfg, days);
+          for (const filePath of paths) {
+            if (synthesizeDailyLogFromSessionFile(filePath)) dailyLogs++;
+            if (scanSessionFileForMetadata(factsDb.getRawDb(), filePath)) sessionLanguages++;
+            recallEvents += backfillRecallEventsFromSessionFile(factsDb.getRawDb(), filePath);
+          }
+          console.log(
+            `maintenance backfill --all: scanned ${paths.length} session(s); daily-logs=${dailyLogs}, session-languages=${sessionLanguages}, recall-events=${recallEvents}`,
+          );
+        }),
+      );
+  }
 
   mem
     .command("backfill-recall-events")
@@ -136,7 +262,10 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
         }
         const report = { files: paths.length, dailyLogsWritten: written, days };
         if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else console.log(`backfill-daily-logs: wrote/updated ${written} daily log section(s) from ${paths.length} session(s)`);
+        else
+          console.log(
+            `backfill-daily-logs: wrote/updated ${written} daily log section(s) from ${paths.length} session(s)`,
+          );
       }),
     );
 
@@ -161,30 +290,36 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
 
   mem
     .command("backfill-workflow-traces")
-    .description("Extract tool sequences from session JSONL into workflow-traces.db and update procedure outcomes")
+    .description("Extract tool sequences from session JSONL into workflow-traces.db")
     .option("--days <n>", "Scan sessions modified in the last N days", "60")
     .option("--json", "Emit JSON")
     .action(
       withExit(async (opts?: { days?: string; json?: boolean }) => {
         const days = Number.parseInt(opts?.days ?? "60", 10);
         const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
-        let traces = 0;
-        let proceduresUpdated = 0;
-        const paths = resolveExtractSessionFilePaths(cfg, days);
-        for (const filePath of paths) {
-          const result = backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath);
-          traces += result.traces;
-          proceduresUpdated += result.proceduresUpdated;
+        try {
+          let traces = 0;
+          const paths = resolveExtractSessionFilePaths(cfg, days);
+          for (const filePath of paths) {
+            traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath, cfg);
+          }
+          const report = { files: paths.length, workflowTraces: traces, days };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else console.log(`backfill-workflow-traces: recorded ${traces} trace(s) from ${paths.length} session(s)`);
+        } finally {
+          workflowStore.close();
         }
-        const report = { files: paths.length, workflowTraces: traces, proceduresUpdated, days };
-        if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else
-          console.log(
-            `backfill-workflow-traces: recorded ${traces} trace(s), updated ${proceduresUpdated} procedure(s) from ${paths.length} session(s)`,
-          );
       }),
     );
 
+  if (!onlyBackfill) {
+    registerWorkflowTraceQaCommands(mem, b);
+    registerMaintenanceCoverageCommand(mem, b);
+  }
+}
+
+export function registerMaintenanceCoverageCommand(mem: Chainable, b: ManageBindings): void {
+  const { factsDb } = b;
   mem
     .command("maintenance-coverage")
     .description("Print maintenance data coverage counts for offline QA diagnostics")

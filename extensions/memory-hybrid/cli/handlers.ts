@@ -20,6 +20,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { IdentityReflectionStore } from "../backends/identity-reflection-store.js";
 import type { PersonaStateStore } from "../backends/persona-state-store.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
@@ -39,6 +40,7 @@ export interface HandlerContext {
   identityReflectionStore: IdentityReflectionStore | null;
   personaStateStore: PersonaStateStore | null;
   crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
   resolvedSqlitePath: string;
   resolvedLancePath: string;
   pluginId: string;
@@ -54,6 +56,8 @@ export interface HandlerContext {
   /** Cross-agent audit log (Issue #790). */
   auditStore?: AuditStore | null;
   agentHealthStore?: AgentHealthStore | null;
+  /** Live change feed for operator notifications (CLI pipeline emit). */
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
 }
 
 // ---------------------------------------------------------------------------

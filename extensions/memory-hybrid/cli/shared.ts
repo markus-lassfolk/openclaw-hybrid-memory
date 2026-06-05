@@ -39,6 +39,36 @@ export type Chainable = {
   alias?(name: string): Chainable;
 };
 
+/** One-time deprecation warnings per process (stderr only). */
+const DEPRECATED_ALIAS_WARNINGS = new Set<string>();
+
+/** Emit a one-time stderr deprecation notice for a flat CLI alias. */
+export function warnDeprecatedAlias(oldPath: string, newPath: string): void {
+  const key = `${oldPath}=>${newPath}`;
+  if (DEPRECATED_ALIAS_WARNINGS.has(key)) return;
+  DEPRECATED_ALIAS_WARNINGS.add(key);
+  console.error(
+    `[hybrid-mem] Warning: "openclaw hybrid-mem ${oldPath}" is deprecated. Use "openclaw hybrid-mem ${newPath}" instead.`,
+  );
+}
+
+/** Wrap an action handler to emit a deprecation warning before running. */
+export function withDeprecationWarning<A extends unknown[]>(
+  oldPath: string,
+  newPath: string,
+  fn: (...args: A) => void | Promise<void>,
+): (...args: A) => void | Promise<void> {
+  return (...args: A) => {
+    warnDeprecatedAlias(oldPath, newPath);
+    return fn(...args);
+  };
+}
+
+/** Create a named subcommand group on the parent Commander node. */
+export function createCommandGroup(parent: Chainable, name: string, description: string): Chainable {
+  return parent.command(name).description(description);
+}
+
 function isStandaloneCliProcess(argv = process.argv): boolean {
   const executable = basename(argv[1] ?? "");
   return executable === "openclaw" || executable === "hybrid-mem";

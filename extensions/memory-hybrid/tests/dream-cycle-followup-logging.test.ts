@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assessContinuousVerificationResult,
+  applyDreamCyclePipelineExitCode,
+  dreamCycleFollowUpSkipReason,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
+  recordDreamCycleFollowUpFailure,
+  shouldSkipDreamCycleFollowUps,
   runVerboseFollowUp,
 } from "../cli/commands/manage/dream-cycle-followup.js";
 
@@ -146,5 +150,50 @@ describe("dream-cycle follow-up heartbeat logging", () => {
     expect(formatContinuousVerificationAssessmentLine(result, assessment)).toBe(
       "status=degraded reason=errors_present checked=5 confirmed=0 stale=0 uncertain=5 errors=5",
     );
+  });
+
+  it("records follow-up failures and sets exit code", () => {
+    const failures: Array<{ phase: string; error: string }> = [];
+    const previousExitCode = process.exitCode;
+    recordDreamCycleFollowUpFailure(failures, "extract implicit feedback", new Error("boom"));
+    expect(failures).toEqual([{ phase: "extract implicit feedback", error: "boom" }]);
+    expect(process.exitCode).toBe(2);
+    process.exitCode = previousExitCode;
+  });
+
+  it("applyDreamCyclePipelineExitCode marks degraded runs", () => {
+    const previousExitCode = process.exitCode;
+    applyDreamCyclePipelineExitCode({
+      coreSuccess: false,
+      coreFailedStages: ["reflection (patterns)"],
+      followUpFailures: [],
+    });
+    expect(process.exitCode).toBe(2);
+    process.exitCode = previousExitCode;
+  });
+
+  it("skips follow-ups when WAL pre-flush failed in core cycle", () => {
+    expect(
+      shouldSkipDreamCycleFollowUps({
+        skipped: false,
+        failedStages: ["wal pre-flush", "episodic consolidation"],
+      }),
+    ).toBe(true);
+    expect(
+      dreamCycleFollowUpSkipReason({
+        skipped: false,
+        failedStages: ["wal pre-flush"],
+      }),
+    ).toContain("WAL pre-flush failed");
+  });
+
+  it("does not skip follow-ups when core succeeded", () => {
+    expect(
+      shouldSkipDreamCycleFollowUps({
+        skipped: false,
+        failedStages: [],
+      }),
+    ).toBe(false);
+    expect(dreamCycleFollowUpSkipReason({ skipped: false, failedStages: [] })).toBeNull();
   });
 });

@@ -7,6 +7,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { MemoryEntry, ProcedureEntry, ScopeFilter } from "../../types/memory.js";
 import type { GeneratedSkillLifecycleState, GeneratedSkillTelemetryEntry } from "../../types/memory.js";
 import {
+  filterActiveFactIds as filterActiveFactIdsImpl,
   getAllIds as getAllIdsImpl,
   getAll as getAllImpl,
   getBatch as getBatchImpl,
@@ -150,6 +151,11 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
    */
   getAllIds(): string[] {
     return getAllIdsImpl(this.liveDb);
+  }
+
+  /** Chunked active-fact membership check (same filter as {@link getAllIds}). */
+  filterActiveFactIds(ids: readonly string[]): Set<string> {
+    return filterActiveFactIdsImpl(this.liveDb, ids);
   }
 
   /**

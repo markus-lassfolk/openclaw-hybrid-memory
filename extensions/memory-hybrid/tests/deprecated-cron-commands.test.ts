@@ -63,6 +63,7 @@ describe("deprecated-cron-commands", () => {
       const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
         normalizeExisting: true,
         reEnableDisabled: false,
+        consolidatedCronJobs: false,
       });
       expect(result.normalized).toContain("monthly-consolidation");
 
@@ -124,6 +125,7 @@ describe("deprecated-cron-commands", () => {
       const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
         normalizeExisting: true,
         reEnableDisabled: false,
+        consolidatedCronJobs: false,
       });
       expect(result.normalized).toContain("nightly-dream-cycle");
 
@@ -136,6 +138,60 @@ describe("deprecated-cron-commands", () => {
       const msg = String(payload?.message ?? job?.message ?? "");
       expect(msg).toContain("openclaw hybrid-mem dream-cycle");
       expect(msg).not.toContain("consolidate-episodes");
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
+  it("consolidated mode disables legacy jobs and adds maintenance-nightly", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
+    try {
+      mkdirSync(join(openclawDir, "cron"), { recursive: true });
+      writeFileSync(join(openclawDir, "openclaw.json"), "{}", "utf-8");
+
+      const jobsPath = join(openclawDir, "cron", "jobs.json");
+      writeFileSync(
+        jobsPath,
+        JSON.stringify(
+          {
+            jobs: [
+              {
+                pluginJobId: "hybrid-mem:nightly-distill",
+                name: "nightly-memory-sweep",
+                schedule: { kind: "cron", expr: "0 2 * * *" },
+                enabled: true,
+                payload: { kind: "agentTurn", message: "legacy sweep" },
+              },
+              {
+                pluginJobId: "hybrid-mem:weekly-reflection",
+                name: "weekly-reflection",
+                schedule: { kind: "cron", expr: "0 3 * * 0" },
+                enabled: true,
+                payload: { kind: "agentTurn", message: "legacy reflect" },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
+        normalizeExisting: true,
+        reEnableDisabled: false,
+        consolidatedCronJobs: true,
+      });
+      expect(result.added).toContain("maintenance-nightly");
+      expect(result.normalized).toContain("nightly-memory-sweep");
+      expect(result.normalized).toContain("weekly-reflection");
+
+      const next = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs: Array<Record<string, unknown>> };
+      const legacy = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:nightly-distill");
+      expect(legacy?.enabled).toBe(false);
+      expect(legacy?.superseded).toBe(true);
+      const consolidated = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:maintenance-nightly");
+      expect(consolidated?.enabled).not.toBe(false);
     } finally {
       rmSync(openclawDir, { recursive: true, force: true });
     }

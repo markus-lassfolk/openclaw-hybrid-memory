@@ -220,7 +220,11 @@ export async function runContextAudit(opts: {
     ? Math.min(cfg.autoRecall.maxTokens, cfg.retrieval.ambientBudgetTokens)
     : 0;
   const autoRecallHasBudget = cfg.autoRecall.enabled && autoRecallBudget > 0;
-  const issueCapTokens = autoRecallHasBudget ? Math.max(80, Math.floor(autoRecallBudget * 0.15)) : 0;
+  const issueCapTokens = autoRecallHasBudget
+    ? autoRecallBudget < 80
+      ? Math.max(0, Math.floor(autoRecallBudget * 0.15))
+      : Math.max(80, Math.floor(autoRecallBudget * 0.15))
+    : 0;
   const narrativeMaxTokens = autoRecallHasBudget
     ? (cfg.autoRecall.narrativeMaxTokens ?? Math.max(100, Math.floor(autoRecallBudget * 0.2)))
     : 0;
@@ -248,21 +252,25 @@ export async function runContextAudit(opts: {
 
   const issueEstimateTokens = 0;
   const narrativeEstimateTokens = 0;
-  const activeTaskEstimateTokens = cfg.activeTask.enabled ? activeTaskMaxTokens : 0;
-  const staleWarningEstimateTokens =
-    cfg.activeTask.enabled && cfg.activeTask.staleWarning.enabled ? staleWarningMaxTokens : 0;
+  const measuredActiveTaskTokens = Math.min(
+    activeTasksTokens + staleWarningTokens,
+    activeTaskMaxTokens > 0 ? activeTaskMaxTokens + staleWarningMaxTokens : activeTasksTokens + staleWarningTokens,
+  );
   const fixedBlockEstimatedTokens =
     issueEstimateTokens +
     narrativeEstimateTokens +
     Math.min(hotTokens, hotMaxTokens) +
-    Math.min(proceduresTokens, procedureMaxTokens) +
-    activeTaskEstimateTokens +
-    staleWarningEstimateTokens;
-  const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens);
-  const wouldExhaustRecall = cfg.autoRecall.enabled && autoRecallBudget > 0 && remainingForRecall === 0;
+    Math.min(proceduresTokens, procedureMaxTokens);
+  const downstreamHookTokens = measuredActiveTaskTokens;
+  const remainingForRecall = Math.max(0, autoRecallBudget - fixedBlockEstimatedTokens - downstreamHookTokens);
+  const wouldExhaustRecall =
+    cfg.autoRecall.enabled && autoRecallBudget > 0 && fixedBlockEstimatedTokens >= autoRecallBudget;
 
   const totalTokens =
-    autoRecallBudget + hotTokens + proceduresTokens + activeTasksTokens + staleWarningTokens + workspaceTokens;
+    workspaceTokens +
+    (cfg.autoRecall.enabled
+      ? autoRecallBudget
+      : hotTokens + proceduresTokens + activeTasksTokens + staleWarningTokens);
 
   const recommendations: string[] = [];
   if (workspaceTokens > 3000) {
@@ -273,7 +281,12 @@ export async function runContextAudit(opts: {
   }
   if (wouldExhaustRecall) {
     recommendations.push(
-      "Fixed block caps consume the full recall budget. Lower hot/narrative/procedure/activeTask caps or increase autoRecall.maxTokens.",
+      "Fixed block caps consume the full recall budget. Lower hot/narrative/procedure caps or increase autoRecall.maxTokens.",
+    );
+  }
+  if (cfg.autoRecall.enabled && remainingForRecall === 0 && downstreamHookTokens > 0) {
+    recommendations.push(
+      "Recall fixed blocks plus active-task injection leave no room for query recall. Lower fixed-block caps or activeTask.injectionBudget.",
     );
   }
   if (cfg.activeTask.enabled && activeTasksTokens > cfg.activeTask.injectionBudget) {
@@ -312,8 +325,8 @@ export async function runContextAudit(opts: {
           narrative: narrativeEstimateTokens,
           hot: Math.min(hotTokens, hotMaxTokens),
           procedures: Math.min(proceduresTokens, procedureMaxTokens),
-          activeTasks: activeTaskEstimateTokens,
-          staleWarnings: staleWarningEstimateTokens,
+          activeTasks: Math.min(activeTasksTokens, activeTaskMaxTokens),
+          staleWarnings: Math.min(staleWarningTokens, staleWarningMaxTokens),
           total: fixedBlockEstimatedTokens,
           remainingForRecall,
           wouldExhaustRecall,

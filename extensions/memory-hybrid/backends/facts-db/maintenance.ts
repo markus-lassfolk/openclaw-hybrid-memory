@@ -10,6 +10,7 @@ import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags } from "../../utils/tags.js";
+import { nowIso } from "../../utils/dates.js";
 import type { StoreFactInput } from "./crud.js";
 import { preserveTagsColumnExcludesFromTrimSql } from "./fact-queries.js";
 import { isLikelyGarbage } from "./fact-read-queries.js";
@@ -800,7 +801,7 @@ export function saveCheckpoint(
 ): string {
   const data = JSON.stringify({
     ...context,
-    savedAt: new Date().toISOString(),
+    savedAt: nowIso(),
   });
 
   return store({

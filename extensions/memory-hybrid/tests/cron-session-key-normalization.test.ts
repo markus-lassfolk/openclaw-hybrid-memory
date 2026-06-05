@@ -19,7 +19,7 @@ function writeJobs(openclawDir: string, jobs: Array<Record<string, unknown>>): v
 }
 
 function seedMaintenanceJobs(openclawDir: string): void {
-  ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+  ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 }
 
 describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
@@ -40,7 +40,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
 
   it("publishes the weekly audit health maintenance job", () => {
     const openclawDir = newOpenclawDir();
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const jobs = readJobs(openclawDir);
     const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:weekly-audit-health");
@@ -51,7 +51,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
 
   it("publishes the weekly pending digest maintenance job", () => {
     const openclawDir = newOpenclawDir();
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const jobs = readJobs(openclawDir);
     const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:weekly-pending-digest");
@@ -63,7 +63,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
 
   it("publishes the weekly pending digest autopilot maintenance job", () => {
     const openclawDir = newOpenclawDir();
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const jobs = readJobs(openclawDir);
     const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:weekly-pending-digest-autopilot");
@@ -75,7 +75,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
 
   it("publishes monthly consolidation with a bounded enrich-entities default limit", () => {
     const openclawDir = newOpenclawDir();
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const jobs = readJobs(openclawDir);
     const target = jobs.find((j) => j.pluginJobId === "hybrid-mem:monthly-consolidation");
@@ -94,7 +94,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
 
   it("adds hybrid-mem maintenance jobs without top-level sessionKey", () => {
     const openclawDir = newOpenclawDir();
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const jobs = readJobs(openclawDir).filter((j) => String(j.pluginJobId ?? "").startsWith("hybrid-mem:"));
     expect(jobs.length).toBeGreaterThan(0);
@@ -114,7 +114,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     target!.sessionKey = "agent:main:main";
     writeJobs(openclawDir, jobs);
 
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const after = readJobs(openclawDir);
     const fixed = after.find((j) => j.pluginJobId === "hybrid-mem:nightly-distill");
@@ -140,7 +140,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     target!.sessionKey = "agent:main:main";
     writeJobs(openclawDir, jobs);
 
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const after = readJobs(openclawDir);
     const fixed = after.find((j) => j.pluginJobId === "hybrid-mem:self-correction-analysis");
@@ -159,7 +159,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     target!.sessionKey = "agent:main:main";
     writeJobs(openclawDir, jobs);
 
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const after = readJobs(openclawDir);
     const fixed = after.find((j) => j.pluginJobId === "hybrid-mem:weekly-reflection");
@@ -179,7 +179,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     target!.sessionKey = "agent:main:main";
     writeJobs(openclawDir, jobs);
 
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const after = readJobs(openclawDir);
     const unchanged = after.find((j) => j.pluginJobId === "hybrid-mem:monthly-consolidation");
@@ -198,10 +198,10 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     target!.sessionKey = "agent:main:main";
     writeJobs(openclawDir, jobs);
 
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
     const once = readFileSync(join(openclawDir, "cron", "jobs.json"), "utf-8");
 
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
     const twice = readFileSync(join(openclawDir, "cron", "jobs.json"), "utf-8");
 
     expect(twice).toBe(once);
@@ -237,7 +237,7 @@ describe("ensureMaintenanceCronJobs sessionKey normalization (#977)", () => {
     }
     writeJobs(openclawDir, jobs);
 
-    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true });
+    ensureMaintenanceCronJobs(openclawDir, undefined, { normalizeExisting: true, consolidatedCronJobs: false });
 
     const after = readJobs(openclawDir);
     const fixed = after.find((j) => j.pluginJobId === "hybrid-mem:nightly-distill");
