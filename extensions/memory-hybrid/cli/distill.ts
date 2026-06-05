@@ -408,14 +408,21 @@ function registerDistillCommandsOnParent(
             return;
           }
           const s = result.summary;
+          const failedValidation = s?.failedValidation ?? 0;
+          const failedEval = s?.failedEval ?? 0;
+          const partial = failedValidation > 0 || failedEval > 0;
           const counts = s
-            ? `candidates=${s.candidates}, eligible=${s.eligible}, drafted=${s.drafted}, rejected=${s.rejected}, deferred=${s.deferred}, failedValidation=${s.failedValidation}, failedEval=${s.failedEval}`
+            ? `candidates=${s.candidates}, eligible=${s.eligible}, drafted=${s.drafted}, rejected=${s.rejected}, deferred=${s.deferred}, failedValidation=${failedValidation}, failedEval=${failedEval}`
             : `generated=${result.generated}, skipped=${result.skipped}`;
+          const semanticSuffix = ` semantic=${partial ? "partial" : "success"}`;
           if (result.dryRun) {
-            console.log(`\n[dry-run] Procedure skill promotion summary: ${counts}`);
+            console.log(`\n[dry-run] Procedure skill promotion summary: ${counts}${semanticSuffix}`);
           } else {
-            console.log(`\nProcedure skill promotion summary: ${counts}`);
+            console.log(`\nProcedure skill promotion summary: ${counts}${semanticSuffix}`);
             for (const p of result.paths) console.log(`  ${p}`);
+          }
+          if (partial) {
+            process.exitCode = 2;
           }
         },
       ),

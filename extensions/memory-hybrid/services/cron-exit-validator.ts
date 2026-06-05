@@ -869,6 +869,134 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const generateAutoSkillsDetected =
+    requiredSteps.includes("generate-auto-skills") || /\bgenerate-auto-skills\b/i.test(logContent);
+  const generateAutoSkillsFailedValidation = parsePositiveMetric(logContent, "failedValidation");
+  const generateAutoSkillsFailedEval = parsePositiveMetric(logContent, "failedEval");
+  if (
+    generateAutoSkillsDetected &&
+    ((typeof generateAutoSkillsFailedValidation === "number" && generateAutoSkillsFailedValidation > 0) ||
+      (typeof generateAutoSkillsFailedEval === "number" && generateAutoSkillsFailedEval > 0))
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "generate-auto-skills",
+        failureCategory: "semantic_failure",
+        failureClass: "generate_auto_skills_validation_failures",
+        message: `${jobName}:generate-auto-skills had skill validation or eval failures despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const scopePromoteDetected =
+    requiredSteps.includes("scope-promote") ||
+    /\bscope-promote\b/i.test(logContent) ||
+    /\bscope promote\b/i.test(logContent);
+  const scopePromoteFailed = parsePositiveMetric(logContent, "failed");
+  const scopePromotePartial =
+    /\bscope-promote\b[\s\S]{0,120}\bsemantic=partial\b/i.test(logContent) ||
+    (/\bpromoted=\d+/i.test(logContent) && /\bfailed=\d+/i.test(logContent));
+  if (
+    scopePromoteDetected &&
+    ((typeof scopePromoteFailed === "number" && scopePromoteFailed > 0) || scopePromotePartial)
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "scope-promote",
+        failureCategory: "semantic_failure",
+        failureClass: "scope_promote_partial",
+        message: `${jobName}:scope-promote failed to promote one or more session facts`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const repairVectorsDetected =
+    requiredSteps.includes("repair-vectors") || /\brepair-vectors\b/i.test(logContent);
+  const repairOrphanCleanupFailed = parsePositiveMetric(logContent, "orphan_cleanup_failed");
+  const repairVectorsPartial =
+    /\brepair-vectors\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    (typeof repairOrphanCleanupFailed === "number" && repairOrphanCleanupFailed > 0);
+  if (repairVectorsDetected && repairVectorsPartial) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "repair-vectors",
+        failureCategory: "semantic_failure",
+        failureClass: "repair_vectors_partial",
+        message: `${jobName}:repair-vectors had re-embed or orphan cleanup failures despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const pruneDetected = requiredSteps.includes("prune") || /\bprune\b/i.test(logContent);
+  const pruneVectorFailures = parsePositiveMetric(logContent, "vector_failures");
+  if (pruneDetected && typeof pruneVectorFailures === "number" && pruneVectorFailures > 0) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "prune",
+        failureCategory: "semantic_failure",
+        failureClass: "prune_vector_cleanup_partial",
+        message: `${jobName}:prune had vector cleanup failures despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const extractDirectivesDetected =
+    requiredSteps.includes("extract-directives") || /\bextract-directives\b/i.test(logContent);
+  const extractDirectivesPartial =
+    /\bextract-directives\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    /\bcursorBlockedReason=/i.test(logContent);
+  if (extractDirectivesDetected && extractDirectivesPartial) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "extract-directives",
+        failureCategory: "semantic_failure",
+        failureClass: "extract_directives_partial",
+        message: `${jobName}:extract-directives blocked cursor advance or had dedupe degradation`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const reembedVectorlessDetected =
+    requiredSteps.includes("reembed-vectorless") || /\breembed-vectorless\b/i.test(logContent);
+  const reembedStoreFailures = parsePositiveMetric(logContent, "storeFailures");
+  const reembedPartial =
+    /\breembed-vectorless\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    (typeof reembedStoreFailures === "number" && reembedStoreFailures > 0);
+  if (reembedVectorlessDetected && reembedPartial) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "reembed-vectorless",
+        failureCategory: "semantic_failure",
+        failureClass: "reembed_vectorless_partial",
+        message: `${jobName}:reembed-vectorless had vector store failures despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected =
@@ -1009,7 +1137,13 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "enrich-entities" ||
     issue.stepName === "consolidate" ||
     issue.stepName === "reflect-identity" ||
-    issue.stepName === "resolve-contradictions"
+    issue.stepName === "resolve-contradictions" ||
+    issue.stepName === "generate-auto-skills" ||
+    issue.stepName === "scope-promote" ||
+    issue.stepName === "repair-vectors" ||
+    issue.stepName === "prune" ||
+    issue.stepName === "extract-directives" ||
+    issue.stepName === "reembed-vectorless"
   );
 }
 

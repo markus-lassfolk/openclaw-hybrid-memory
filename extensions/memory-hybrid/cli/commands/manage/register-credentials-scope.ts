@@ -467,7 +467,12 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
             promoted++;
           }
         }
-        console.log(`Promoted ${promoted} facts from session to global scope.`);
+        const failed = candidates.length - promoted;
+        const summary = `scope-promote promoted=${promoted}/${candidates.length} failed=${failed} semantic=${failed > 0 ? "partial" : "success"}`;
+        console.log(summary);
+        if (failed > 0) {
+          process.exitCode = 2;
+        }
       }),
     );
 }

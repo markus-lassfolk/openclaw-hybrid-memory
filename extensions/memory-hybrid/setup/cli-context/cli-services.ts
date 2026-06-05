@@ -223,12 +223,18 @@ export function buildCliContextServices(
   return {
     runFindDuplicates: (opts) => runFindDuplicates(factsDb, vectorDb, embeddings, opts, api.logger),
     runConsolidate: async (opts) => {
-      // Skip if OpenAI provider is configured but API key is missing
       if (cfg.embedding?.provider === "openai" && !cfg.embedding?.apiKey) {
         api.logger.warn?.(
           "memory-hybrid: consolidate skipped — embedding.provider is openai but embedding.apiKey is missing",
         );
-        return { clustersFound: 0, merged: 0, deleted: 0 };
+        return {
+          clustersFound: 0,
+          merged: 0,
+          deleted: 0,
+          skipped: true,
+          skipReason: "missing_embedding_api_key",
+          semanticOutcome: "failed",
+        };
       }
       await guardWalUnlessDryRun("cli_consolidation", opts.dryRun);
       return runConsolidate(

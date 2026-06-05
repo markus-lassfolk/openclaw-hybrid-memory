@@ -1225,9 +1225,15 @@ function registerManageStorageMaintenanceOnParent(
             },
           });
           const after = factsDb.count();
+          const vectorFailures = vectorCleanup.failed;
+          const semantic = vectorFailures > 0 ? "partial" : "success";
           console.log(
-            `Pruned ${pruned} expired facts. Before: ${before}, After: ${after}. Vector cleanup: ${vectorCleanup.deleted}/${vectorCleanup.attempted} deleted${vectorCleanup.failed > 0 ? ` (${vectorCleanup.failed} failed)` : ""}.`,
+            `Pruned ${pruned} expired facts. Before: ${before}, After: ${after}. Vector cleanup: ${vectorCleanup.deleted}/${vectorCleanup.attempted} deleted${vectorFailures > 0 ? ` (${vectorFailures} failed)` : ""}.`,
           );
+          console.log(`prune pruned=${pruned} vector_failures=${vectorFailures} semantic=${semantic}`);
+          if (vectorFailures > 0) {
+            process.exitCode = 2;
+          }
         }),
       ),
     );

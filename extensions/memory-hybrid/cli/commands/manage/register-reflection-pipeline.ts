@@ -348,6 +348,16 @@ export function registerManageReflectionPipeline(
             console.log(
               `Consolidation complete: ${res.clustersFound} clusters found, ${res.merged} merged, ${res.deleted} deleted ${dryRun ? "(dry-run)" : ""}`,
             );
+            const clustersFailed = res.clustersFailed ?? 0;
+            const vectorFailures = res.vectorFailures ?? 0;
+            const semantic =
+              res.semanticOutcome ??
+              (res.skipped ? "failed" : clustersFailed > 0 || vectorFailures > 0 ? "partial" : "success");
+            const summary = `merged=${res.merged} clusters=${res.clustersFound} clustersFailed=${clustersFailed} vector_failures=${vectorFailures} semantic=${semantic}`;
+            console.log(summary);
+            if (semantic === "partial" || semantic === "failed") {
+              process.exitCode = 2;
+            }
           },
         ),
       );
@@ -1778,9 +1788,17 @@ export function registerManageReflectionPipeline(
             const estimatedRunsRemaining =
               res.estimatedRunsRemaining ?? (mode === "all" ? 0 : Math.ceil(remainingTotal / Math.max(1, limit)));
             const limitLabel = mode === "all" ? "all" : String(res.effectiveLimit ?? limit);
-            const hasPartialFailure = res.llmFailures && res.llmFailures > 0;
+            const incompleteCatchUp =
+              res.stopReason === "exhausted" ||
+              res.stopReason === "time_budget" ||
+              res.stopReason === "provider_budget";
+            const hasPartialFailure = (res.llmFailures ?? 0) > 0 || incompleteCatchUp;
             const exitCode = hasPartialFailure ? 2 : 0;
-            const exitReason = hasPartialFailure ? "partial_llm_failures" : "success";
+            const exitReason = hasPartialFailure
+              ? (res.llmFailures ?? 0) > 0
+                ? "partial_llm_failures"
+                : "incomplete_catchup"
+              : "success";
             const jsonReport = {
               dryRun,
               mode,
@@ -1876,7 +1894,10 @@ export function registerManageReflectionPipeline(
                   `Entity enrichment stopped: provider pressure budget reached (rate limits/timeouts; processed=${res.processed}, remaining=${remainingTotal}).`,
                 );
               }
-              if (res.llmFailures && res.llmFailures > 0) {
+              console.log(
+                `enrich-entities processed=${res.processed} enriched=${res.factsEnriched} llmFailures=${res.llmFailures ?? 0} stopReason=${res.stopReason ?? "completed"} remaining=${remainingTotal} semantic=${hasPartialFailure ? "partial" : "success"}`,
+              );
+              if (hasPartialFailure) {
                 process.exitCode = 2;
               }
             }

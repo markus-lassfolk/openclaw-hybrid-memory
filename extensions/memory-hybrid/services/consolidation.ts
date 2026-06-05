@@ -42,6 +42,8 @@ interface ConsolidateResult {
   clustersFailed?: number;
   vectorFailures?: number;
   semanticOutcome?: string;
+  skipped?: boolean;
+  skipReason?: string;
 }
 
 /**

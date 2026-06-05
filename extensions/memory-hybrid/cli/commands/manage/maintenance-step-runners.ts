@@ -698,10 +698,14 @@ export function buildCliMaintenanceRunners(
     });
     const clustersFailed = (r as { clustersFailed?: number }).clustersFailed ?? 0;
     const vectorFailures = (r as { vectorFailures?: number }).vectorFailures ?? 0;
+    const skipped = (r as { skipped?: boolean }).skipped === true;
     const semantic =
       (r as { semanticOutcome?: string }).semanticOutcome ??
-      (clustersFailed > 0 || vectorFailures > 0 ? "partial" : "success");
+      (skipped ? "failed" : clustersFailed > 0 || vectorFailures > 0 ? "partial" : "success");
     const summary = `merged=${r.merged} clusters=${r.clustersFound} clustersFailed=${clustersFailed} vector_failures=${vectorFailures} semantic=${semantic}`;
+    if (skipped) {
+      throw new Error(`consolidate skipped (${(r as { skipReason?: string }).skipReason ?? "unavailable"}): ${summary}`);
+    }
     assertSemanticOutcomeDoesNotBlockStep("consolidate", semantic, summary);
     return summary;
   });
