@@ -51,6 +51,7 @@ interface IdentityReflectionResult {
   insightsExtracted: number;
   insightsStored: number;
   questionsAsked: number;
+  semanticOutcome?: string;
 }
 
 function normalizeForDedupe(text: string): string {
@@ -175,14 +176,24 @@ export async function runIdentityReflection(
       subsystem: "openai",
       retryAttempt,
     });
-    return { insightsExtracted: 0, insightsStored: 0, questionsAsked: config.questions.length };
+    return {
+      insightsExtracted: 0,
+      insightsStored: 0,
+      questionsAsked: config.questions.length,
+      semanticOutcome: "failed",
+    };
   }
 
   const parsed = parseIdentityReflectionResponse(rawResponse)
     .filter((x) => questionKeys.has(x.questionKey))
     .slice(0, config.maxInsightsPerRun);
   if (parsed.length === 0) {
-    return { insightsExtracted: 0, insightsStored: 0, questionsAsked: config.questions.length };
+    return {
+      insightsExtracted: 0,
+      insightsStored: 0,
+      questionsAsked: config.questions.length,
+      semanticOutcome: rawResponse.trim().length > 0 ? "failed" : "success",
+    };
   }
 
   let stored = 0;
@@ -217,5 +228,10 @@ export async function runIdentityReflection(
       );
     }
   }
-  return { insightsExtracted: parsed.length, insightsStored: stored, questionsAsked: config.questions.length };
+  return {
+    insightsExtracted: parsed.length,
+    insightsStored: stored,
+    questionsAsked: config.questions.length,
+    semanticOutcome: "success",
+  };
 }

@@ -160,6 +160,61 @@ function assertPassiveObserverSummaryDoesNotBlock(summary: string): string {
   return summary;
 }
 
+function formatEntityEnrichmentSummary(r: {
+  processed: number;
+  factsEnriched: number;
+  llmFailures?: number;
+  stopReason?: string;
+  remainingTotal?: number;
+}): string {
+  const llmFailures = r.llmFailures ?? 0;
+  const stopReason = r.stopReason ?? "completed";
+  const incompleteCatchUp =
+    stopReason === "exhausted" || stopReason === "time_budget" || stopReason === "provider_budget";
+  const partial = llmFailures > 0 || incompleteCatchUp;
+  return `processed=${r.processed} enriched=${r.factsEnriched} llmFailures=${llmFailures} stopReason=${stopReason} remaining=${r.remainingTotal ?? 0} semantic=${partial ? "partial" : "success"}`;
+}
+
+function assertEntityEnrichmentNotPartial(r: {
+  llmFailures?: number;
+  stopReason?: string;
+}, summary: string): void {
+  const llmFailures = r.llmFailures ?? 0;
+  const stopReason = r.stopReason ?? "completed";
+  const incompleteCatchUp =
+    stopReason === "exhausted" || stopReason === "time_budget" || stopReason === "provider_budget";
+  if (llmFailures > 0 || incompleteCatchUp) {
+    throw new Error(`entity enrichment partial failure (${summary})`);
+  }
+}
+
+function assertAnalyzeMaintenanceLogsSummaryDoesNotBlock(summary: string): string {
+  const strictFail = /\bstrict=fail\b/i.test(summary);
+  const semantic = parseSemanticTokenFromSummary(summary);
+  if (strictFail || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
+    throw new Error(`analyze-maintenance-logs strict findings (${summary})`);
+  }
+  return summary;
+}
+
+function assertLifecycleSyncSummaryDoesNotBlock(summary: string): string {
+  const syncErrors = Number.parseInt(summary.match(/\bsync_errors=(\d+)\b/i)?.[1] ?? "0", 10);
+  const semantic = parseSemanticTokenFromSummary(summary);
+  if (syncErrors > 0 || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
+    const semanticSummary = summary.includes("semantic=") ? summary : `${summary} semantic=partial`;
+    throw new Error(`lifecycle-sync partial failure (${semanticSummary})`);
+  }
+  return summary;
+}
+
+function assertRecordStorageSampleSummaryDoesNotBlock(summary: string): string {
+  if (/\breason=storage_unavailable\b/i.test(summary)) {
+    const semanticSummary = summary.includes("semantic=") ? summary : `${summary} semantic=partial`;
+    throw new Error(`record-storage-sample storage unavailable (${semanticSummary})`);
+  }
+  return summary;
+}
+
 export function buildCliMaintenanceRunners(
   b: ManageBindings,
   opts: BuildCliRunnersOptions = {},
@@ -192,7 +247,12 @@ export function buildCliMaintenanceRunners(
 
   set("auto-classify", async () => {
     const r = await b.runClassify({ dryRun: false, limit: b.cfg.autoClassify.batchSize ?? 20 });
-    return `reclassified=${r.reclassified}/${r.total}`;
+    const batchFailures = r.batchFailures ?? 0;
+    const summary = `reclassified=${r.reclassified}/${r.total} batchFailures=${batchFailures} semantic=${batchFailures > 0 ? "partial" : "success"}`;
+    if (batchFailures > 0) {
+      throw new Error(`auto-classify partial batch failures (${summary})`);
+    }
+    return summary;
   });
 
   set("record-storage-sample", async () => {
@@ -204,12 +264,13 @@ export function buildCliMaintenanceRunners(
       /* non-fatal */
     }
     const r = recordStorageGrowthSample(b.factsDb, lanceBytes, {});
-    return `status=${r.status}`;
+    const summary = `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "partial" : "success"}`;
+    return assertRecordStorageSampleSummaryDoesNotBlock(summary);
   });
 
   set("analyze-maintenance-logs", async () => {
-    await runAnalyzeMaintenanceLogs({ since: "24h", format: "md", out: "-" }, b);
-    return "analyzed last 24h";
+    const result = await runAnalyzeMaintenanceLogs({ since: "24h", format: "md", out: "-", noPersist: true }, b);
+    return assertAnalyzeMaintenanceLogsSummaryDoesNotBlock(result.summary);
   });
 
   set("lifecycle-sync", async () => {
@@ -219,7 +280,8 @@ export function buildCliMaintenanceRunners(
       config: github,
       apply: true,
     });
-    return `matched=${report.matched} expiredNow=${report.expiredNow}`;
+    const summary = `matched=${report.matched} expiredNow=${report.expiredNow} sync_errors=${report.errors.length} semantic=${report.errors.length > 0 ? "partial" : "success"}`;
+    return assertLifecycleSyncSummaryDoesNotBlock(summary);
   });
 
   set("passive-observer", async () => {
@@ -292,7 +354,9 @@ export function buildCliMaintenanceRunners(
       adaptiveCatchUp: true,
       verbose,
     });
-    return `processed=${r.processed} enriched=${r.factsEnriched}`;
+    const summary = formatEntityEnrichmentSummary(r);
+    assertEntityEnrichmentNotPartial(r, summary);
+    return summary;
   });
 
   set("extract-implicit", async () => {
@@ -394,7 +458,11 @@ export function buildCliMaintenanceRunners(
       window: b.reflectionConfig.defaultWindow,
       verbose,
     });
-    return `insightsStored=${r.insightsStored}`;
+    const summary = `insightsStored=${r.insightsStored} insightsExtracted=${r.insightsExtracted} semantic=${r.semanticOutcome ?? "success"}`;
+    if (r.semanticOutcome === "failed") {
+      throw new Error(`reflect-identity semantic failure (${summary})`);
+    }
+    return summary;
   });
 
   set("extract-procedures", async () => {
@@ -414,7 +482,12 @@ export function buildCliMaintenanceRunners(
   set("extract-directives", async () => {
     if (!b.runExtractDirectives) throw new Error("extract-directives unavailable");
     const r = await b.runExtractDirectives({ dryRun: false, verbose, ...scanFlags });
-    return `sessions=${r.sessionsScanned}`;
+    const partial = r.partial === true || r.dedupeDegraded === true;
+    const summary = `sessions=${r.sessionsScanned} stored=${r.stored ?? 0} partial=${partial} dedupeDegraded=${r.dedupeDegraded ?? false} semantic=${partial ? "partial" : "success"}`;
+    if (partial) {
+      throw new Error(`extract-directives partial failure (${r.cursorBlockedReason ?? "dedupe"}): ${summary}`);
+    }
+    return summary;
   });
 
   set("extract-reinforcement", async () => {
@@ -430,8 +503,15 @@ export function buildCliMaintenanceRunners(
 
   set("generate-auto-skills", async () => {
     if (!b.runGenerateAutoSkills) throw new Error("generate-auto-skills unavailable");
-    const r = await b.runGenerateAutoSkills({ dryRun: false, verbose });
-    return `generated=${r.generated}`;
+    const r = await b.runGenerateAutoSkills({ dryRun: false, verbose, apply: true });
+    const failedValidation = r.summary?.failedValidation ?? 0;
+    const failedEval = r.summary?.failedEval ?? 0;
+    const partial = failedValidation > 0 || failedEval > 0;
+    const summary = `generated=${r.generated} failedValidation=${failedValidation} failedEval=${failedEval} semantic=${partial ? "partial" : "success"}`;
+    if (partial) {
+      throw new Error(`generate-auto-skills validation failures (${summary})`);
+    }
+    return summary;
   });
 
   set("repair-vectors", async () => {
@@ -577,7 +657,14 @@ export function buildCliMaintenanceRunners(
       limit: 10,
       model,
     });
-    return `merged=${r.merged} clusters=${r.clustersFound}`;
+    const clustersFailed = (r as { clustersFailed?: number }).clustersFailed ?? 0;
+    const vectorFailures = (r as { vectorFailures?: number }).vectorFailures ?? 0;
+    const semantic =
+      (r as { semanticOutcome?: string }).semanticOutcome ??
+      (clustersFailed > 0 || vectorFailures > 0 ? "partial" : "success");
+    const summary = `merged=${r.merged} clusters=${r.clustersFound} clustersFailed=${clustersFailed} vector_failures=${vectorFailures} semantic=${semantic}`;
+    assertSemanticOutcomeDoesNotBlockStep("consolidate", semantic, summary);
+    return summary;
   });
 
   set("backfill-decay", async () => {
@@ -616,7 +703,9 @@ export function buildCliMaintenanceRunners(
 
   set("enrich-entities-deep", async () => {
     const r = await b.runEntityEnrichment({ limit: 25, dryRun: false, verbose, adaptiveCatchUp: true });
-    return `processed=${r.processed} enriched=${r.factsEnriched}`;
+    const summary = formatEntityEnrichmentSummary(r);
+    assertEntityEnrichmentNotPartial(r, summary);
+    return summary;
   });
 
   return runners;
@@ -689,11 +778,16 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   if (deps.cfg.autoClassify?.enabled) {
     runners.set("auto-classify", async () => {
-      await runAutoClassify(deps.factsDb, deps.openai, deps.cfg.autoClassify, deps.logger, {
+      const r = await runAutoClassify(deps.factsDb, deps.openai, deps.cfg.autoClassify, deps.logger, {
         discoveredCategoriesPath: discoveredPath,
         model: deps.cfg.autoClassify?.model,
       });
-      return "auto-classify complete";
+      const batchFailures = r.batchFailures ?? 0;
+      const summary = `reclassified=${r.reclassified} batchFailures=${batchFailures} semantic=${batchFailures > 0 ? "partial" : "success"}`;
+      if (batchFailures > 0) {
+        throw new Error(`auto-classify partial batch failures (${summary})`);
+      }
+      return summary;
     });
   }
 
@@ -712,11 +806,20 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   runners.set("record-storage-sample", async () => {
     const r = recordStorageGrowthSample(deps.factsDb, null, {});
-    return `status=${r.status}`;
+    const summary = `status=${r.status} reason=${r.reason ?? "none"} semantic=${r.reason === "storage_unavailable" ? "partial" : "success"}`;
+    return assertRecordStorageSampleSummaryDoesNotBlock(summary);
   });
 
-  if (deps.runAnalyzeLogs) runners.set("analyze-maintenance-logs", deps.runAnalyzeLogs);
-  if (deps.runLifecycleSync) runners.set("lifecycle-sync", deps.runLifecycleSync);
+  if (deps.runAnalyzeLogs) {
+    runners.set("analyze-maintenance-logs", async () =>
+      assertAnalyzeMaintenanceLogsSummaryDoesNotBlock(await deps.runAnalyzeLogs!()),
+    );
+  }
+  if (deps.runLifecycleSync) {
+    runners.set("lifecycle-sync", async () =>
+      assertLifecycleSyncSummaryDoesNotBlock(await deps.runLifecycleSync!()),
+    );
+  }
   if (deps.runPassiveObserverOnce) {
     runners.set("passive-observer", async () =>
       assertPassiveObserverSummaryDoesNotBlock(await deps.runPassiveObserverOnce!()),

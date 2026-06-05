@@ -422,7 +422,7 @@ const MAINTENANCE_CRON_JOBS: Array<
       steps: [
         {
           name: "analyze-maintenance-logs",
-          cmd: "openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md",
+          cmd: "openclaw hybrid-mem analyze-maintenance-logs --since 24h --auto-fix --glitchtip --digest md --strict",
         },
       ],
     }),

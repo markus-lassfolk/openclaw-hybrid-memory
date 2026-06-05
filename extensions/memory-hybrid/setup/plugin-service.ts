@@ -37,7 +37,7 @@ import {
 import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardship.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runCredentialsPruneForCli } from "../cli/cmd-credentials.js";
-import { analyzeMaintenanceSteps, collectMaintenanceSteps } from "../services/maintenance-log-analyzer.js";
+import { collectMaintenanceSteps, summarizeMaintenanceLogAnalysis } from "../services/maintenance-log-analyzer.js";
 import { runMaintenanceTiers } from "../services/maintenance-orchestrator.js";
 import { buildPluginCycleRunners } from "../cli/commands/manage/maintenance-step-runners.js";
 import { syncLifecycleFromGitHub } from "../services/lifecycle/github-adapter.js";
@@ -389,6 +389,12 @@ export function createPluginService(ctx: PluginServiceContext) {
         if (vectorCleanup.failed > 0) {
           api.logger.warn(
             `memory-hybrid: startup vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+          );
+          capturePluginError(
+            new Error(
+              `startup vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+            ),
+            { operation: "plugin-startup-prune-expired", subsystem: "vector" },
           );
         }
       }
@@ -763,7 +769,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               config: github,
               apply: true,
             });
-            return `matched=${report.matched}`;
+            return `matched=${report.matched} expiredNow=${report.expiredNow} sync_errors=${report.errors.length} semantic=${report.errors.length > 0 ? "partial" : "success"}`;
           };
 
           const openclawDir = join(homedir(), ".openclaw");
@@ -772,10 +778,8 @@ export function createPluginService(ctx: PluginServiceContext) {
             const logDir = join(openclawDir, "logs", "cron-hybrid-mem");
             if (!existsSync(logDir)) return "skipped (no cron log dir)";
             const steps = collectMaintenanceSteps(logDir, "24h");
-            if (steps.length === 0) return "no log steps in 24h";
-            const findings = analyzeMaintenanceSteps(steps);
-            const errors = findings.filter((f) => f.severity === "critical" || f.severity === "high").length;
-            return `steps=${steps.length} findings=${findings.length} errors=${errors}`;
+            if (steps.length === 0) return "no log steps in 24h semantic=success";
+            return summarizeMaintenanceLogAnalysis(steps).summary;
           };
 
           const runCredentialsPrune =

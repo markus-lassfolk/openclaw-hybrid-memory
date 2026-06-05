@@ -276,6 +276,73 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it("parses semantic token from analyze-maintenance-logs strict failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "analyze-maintenance-logs",
+        async () => {
+          throw new Error("analyze-maintenance-logs strict findings (steps=3 findings=2 strict=fail semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["analyze-maintenance-logs"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from lifecycle-sync sync_errors failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "lifecycle-sync",
+        async () => {
+          throw new Error("lifecycle-sync partial failure (matched=1 expiredNow=0 sync_errors=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      {
+        cfg: {
+          ...minimalCfg(),
+          lifecycle: { adapters: { github: { enabled: true } } },
+        } as HybridMemoryConfig,
+        runners,
+        openclawDir,
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["lifecycle-sync"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from auto-classify batch failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "auto-classify",
+        async () => {
+          throw new Error("auto-classify partial batch failures (reclassified=0/20 batchFailures=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: { ...minimalCfg(), autoClassify: { enabled: true, batchSize: 20 } } as HybridMemoryConfig,
+        runners,
+        openclawDir,
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["auto-classify"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
   it("fails reflect-rules when runner summary has parse_success=false without semantic token", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([

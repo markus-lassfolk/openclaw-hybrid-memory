@@ -124,6 +124,7 @@ export type ManageContext = {
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
+    batchFailures?: number;
   }>;
   autoClassifyConfig: { model: string; batchSize: number; suggestCategories?: boolean };
   runCompaction: (opts?: { apply?: boolean }) => Promise<{

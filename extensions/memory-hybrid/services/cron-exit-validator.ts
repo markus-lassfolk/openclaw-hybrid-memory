@@ -666,6 +666,101 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const extractDailyDetected =
+    requiredSteps.includes("extract-daily") || /\bextract-daily\b/i.test(logContent);
+  const extractDailyVectorFailures = parsePositiveMetric(logContent, "vector_failures");
+  if (extractDailyDetected && typeof extractDailyVectorFailures === "number" && extractDailyVectorFailures > 0) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "extract-daily",
+        failureCategory: "semantic_failure",
+        failureClass: "extract_daily_vector_partial",
+        message: `${jobName}:extract-daily stored facts but had ${extractDailyVectorFailures} vector failure(s)`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const extractProceduresDetected =
+    requiredSteps.includes("extract-procedures") || /\bextract-procedures\b/i.test(logContent);
+  const extractProceduresReadFailures = parsePositiveMetric(logContent, "readFailures");
+  const extractProceduresReadFailureLog = /\bsession read failure\(s\)/i.test(logContent);
+  if (
+    extractProceduresDetected &&
+    ((typeof extractProceduresReadFailures === "number" && extractProceduresReadFailures > 0) ||
+      extractProceduresReadFailureLog)
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "extract-procedures",
+        failureCategory: "semantic_failure",
+        failureClass: "extract_procedures_read_failures",
+        message: `${jobName}:extract-procedures had session read failure(s) and did not advance cursor safely`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const reflectDetected =
+    requiredSteps.includes("reflect") ||
+    (/\breflect\b/i.test(logContent) && /\bpatternsStored=\d+/i.test(logContent));
+  const reflectEmbedFailuresMatch = logContent.match(/(\d+)\s+new-pattern embed failure\(s\)/i);
+  const reflectEmbedFailures =
+    reflectEmbedFailuresMatch != null ? Number.parseInt(reflectEmbedFailuresMatch[1] ?? "0", 10) : 0;
+  const reflectSemanticPartial =
+    /\breflect\b[\s\S]{0,120}\bsemantic=partial\b/i.test(logContent) ||
+    (/\bpatternsStored=\d+/i.test(logContent) && /\bsemantic=partial\b/i.test(logContent));
+  if (reflectDetected && (reflectEmbedFailures > 0 || reflectSemanticPartial)) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "reflect",
+        failureCategory: "semantic_failure",
+        failureClass: "reflect_embed_partial",
+        message: `${jobName}:reflect had partial pattern embed failure(s) despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const reflectMetaDetected =
+    requiredSteps.includes("reflect-meta") || /\breflect-meta\b/i.test(logContent);
+  const reflectMetaStatusPartial =
+    /\breflect-meta\b[\s\S]{0,120}\bstatus=(partial|degraded)\b/i.test(logContent) ||
+    (/\bmetaStored=\d+/i.test(logContent) && /\bstatus=(partial|degraded)\b/i.test(logContent));
+  const reflectMetaEmbedFailuresMatch = logContent.match(/reflect-meta — finished:[\s\S]*?(\d+) embed failure\(s\)/i);
+  const reflectMetaEmbedFailures =
+    reflectMetaEmbedFailuresMatch != null ? Number.parseInt(reflectMetaEmbedFailuresMatch[1] ?? "0", 10) : 0;
+  const reflectMetaValidSkip =
+    /\bzero_metas_reason\s*[=:]\s*valid_no_actionable_metas\b/i.test(logContent) ||
+    /\bzero_metas_reason\s*[=:]\s*insufficient_patterns\b/i.test(logContent);
+  if (
+    reflectMetaDetected &&
+    !reflectMetaValidSkip &&
+    (reflectMetaStatusPartial || reflectMetaEmbedFailures > 0)
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "reflect-meta",
+        failureCategory: "semantic_failure",
+        failureClass: reflectMetaStatusPartial ? "reflect_meta_degraded" : "reflect_meta_embed_partial",
+        message: `${jobName}:reflect-meta had partial meta-pattern storage despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected =
@@ -798,7 +893,11 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "reflect-rules" ||
     issue.stepName === "self-correction-run" ||
     issue.stepName === "generate-proposals" ||
-    issue.stepName === "extract-reinforcement"
+    issue.stepName === "extract-reinforcement" ||
+    issue.stepName === "extract-daily" ||
+    issue.stepName === "extract-procedures" ||
+    issue.stepName === "reflect" ||
+    issue.stepName === "reflect-meta"
   );
 }
 

@@ -34,6 +34,7 @@ import {
   reportGlitchTipFindings,
   shouldMaintenanceStrictFail,
   summarizeMaintenanceFindings,
+  summarizeMaintenanceLogAnalysis,
   weekOverWeekTrend,
 } from "../services/maintenance-log-analyzer.js";
 
@@ -804,6 +805,21 @@ describe("maintenance log analyzer", () => {
     expect(findings.filter((f) => f.glitchtipEventId === "event-1")).toHaveLength(2);
     expect(shouldMaintenanceStrictFail(findings)).toBe(true);
     expect(shouldMaintenanceStrictFail([findings[3]])).toBe(false);
+  });
+
+  it("summarizeMaintenanceLogAnalysis marks strict=fail when findings include strict classes", () => {
+    const root = tmpRoot();
+    const exitPath = join(root, "nightly-memory-sweep-20260511T030000Z-555.exit.txt");
+    const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
+    writeFileSync(exitPath, "2026-05-11T03:00:00Z nightly-memory-sweep/distill exit=1\n");
+    writeFileSync(logPath, "TypeError: Cannot read properties of undefined (reading 'foo')");
+
+    const steps = collectMaintenanceSteps(root, "24h", Date.UTC(2026, 4, 11, 4, 0, 0));
+    const result = summarizeMaintenanceLogAnalysis(steps);
+    expect(result.findingsCount).toBeGreaterThan(0);
+    expect(result.strictFailed).toBe(true);
+    expect(result.summary).toContain("strict=fail");
+    expect(result.summary).toContain("semantic=partial");
   });
 
   it("collapses repeated fingerprints into new/still-failing sections and suppresses stale historical noise", () => {

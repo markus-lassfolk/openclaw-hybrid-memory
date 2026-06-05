@@ -742,6 +742,69 @@ error: unknown command 'bar'
       );
     });
 
+    it("detects extract-daily vector_failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "extract-daily.exit.txt");
+      const logPath = join(tmpDir, "extract-daily.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z extract-daily exit=0\n");
+      writeFileSync(logPath, "extract-daily stored=3 vector_failures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["extract-daily"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "extract-daily",
+          failureClass: "extract_daily_vector_partial",
+        }),
+      );
+    });
+
+    it("detects extract-procedures readFailures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "extract-procedures.exit.txt");
+      const logPath = join(tmpDir, "extract-procedures.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z extract-procedures exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-procedures sessions=2 readFailures=1 semantic=partial\nmemory-hybrid: extract-procedures — 1 session read failure(s); scan cursor not advanced\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["extract-procedures"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "extract-procedures",
+          failureClass: "extract_procedures_read_failures",
+        }),
+      );
+    });
+
+    it("detects reflect embed partial on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect.exit.txt");
+      const logPath = join(tmpDir, "reflect.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect exit=0\n");
+      writeFileSync(
+        logPath,
+        "patternsStored=2 facts=40 semantic=partial\nmemory-hybrid: reflection — finished: 2 pattern(s) stored, 0 skipped, 3 new-pattern embed failure(s), 5 candidate(s) total\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect",
+          failureClass: "reflect_embed_partial",
+        }),
+      );
+    });
+
     it("detects degraded implicit-feedback collapse backlogs that change nothing", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "weekly-implicit-feedback-collapse-20260508T021500Z-111.exit.txt");

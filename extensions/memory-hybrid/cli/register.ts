@@ -287,6 +287,7 @@ export type HybridMemCliContext = {
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
+    batchFailures?: number;
   }>;
   autoClassifyConfig: {
     model: string;

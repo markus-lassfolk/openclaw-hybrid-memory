@@ -85,6 +85,7 @@ interface CliContextServices {
     reclassified: number;
     total: number;
     breakdown?: Record<string, number>;
+    batchFailures?: number;
   }>;
   runCompaction: (opts?: { apply?: boolean }) => Promise<{
     hot: number;

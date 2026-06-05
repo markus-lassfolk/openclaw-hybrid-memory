@@ -167,6 +167,15 @@ function resolveScopeFilter(req: { headers?: Record<string, string> }): ScopeFil
   return { userId: userId ?? undefined, agentId: agentId ?? undefined, sessionId: sessionId ?? undefined };
 }
 
+function rejectWhenUnauthenticated(
+  authenticated: boolean,
+): { status: number; headers: Record<string, string>; body: string } | null {
+  if (!authenticated) {
+    return toJson(403, { error: "authentication required" });
+  }
+  return null;
+}
+
 export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {
   if (!ctx.cfg.health.enabled) return;
   if (typeof api.registerHttpRoute !== "function") return;
@@ -283,6 +292,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   });
 
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`, async (req) => {
+    const authReject = rejectWhenUnauthenticated(ctx.cfg.health.authenticated);
+    if (authReject) return authReject;
+
     const url = parseReqUrl(req.url);
     const limit = parseLimitParam(url.searchParams.get("limit"), 100, 1000);
     const narrativeLimit = parseLimitParam(url.searchParams.get("narrativeLimit"), 20, 500);
@@ -358,6 +370,10 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`, async (req) => {
     const url = parseReqUrl(req.url);
     const renderRequested = parseBooleanParam(url.searchParams.get("render"));
+    if (renderRequested) {
+      const authReject = rejectWhenUnauthenticated(ctx.cfg.health.authenticated);
+      if (authReject) return authReject;
+    }
     const includeCompleted = parseBooleanParam(url.searchParams.get("includeCompleted"));
     const scopeFilter = resolveScopeFilter(req);
 

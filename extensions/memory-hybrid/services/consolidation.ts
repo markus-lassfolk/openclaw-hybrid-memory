@@ -39,6 +39,9 @@ interface ConsolidateResult {
   clustersFound: number;
   merged: number;
   deleted: number;
+  clustersFailed?: number;
+  vectorFailures?: number;
+  semanticOutcome?: string;
 }
 
 /**
@@ -189,6 +192,8 @@ export async function runConsolidate(
 
   let merged = 0;
   let deleted = 0;
+  let clustersFailed = 0;
+  let vectorFailures = 0;
   let storeDedupeVectorFallbackSuppressed = 0;
   const consolidationRunId = provenanceService ? randomUUID() : null;
   for (const clusterIds of clusters) {
@@ -221,9 +226,13 @@ export async function runConsolidate(
         subsystem: "openai",
         clusterSize: clusterIds.length,
       });
+      clustersFailed++;
       continue;
     }
-    if (!mergedText) continue;
+    if (!mergedText) {
+      clustersFailed++;
+      continue;
+    }
 
     const clusterFacts = clusterIds.map((id) => factsDb.getById(id)).filter(Boolean) as MemoryEntry[];
     const first = clusterFacts[0];
@@ -279,12 +288,14 @@ export async function runConsolidate(
       logger.warn(
         `memory-hybrid: consolidate skipped merge store (pre-store guard blocked): "${mergedText.slice(0, 80)}..."`,
       );
+      clustersFailed++;
       continue;
     }
     if (storeResult.newlyStored === false) {
       logger.warn(
         `memory-hybrid: consolidate skipped merge store (dedupe resolved to existing fact ${storeResult.entry.id.slice(0, 8)}): "${mergedText.slice(0, 80)}..."`,
       );
+      clustersFailed++;
       continue;
     }
     const entry = storeResult.entry;
@@ -314,6 +325,7 @@ export async function runConsolidate(
       vector = await embeddings.embed(mergedText);
     } catch (err) {
       logger.warn(`memory-hybrid: consolidate embed failed: ${err}`);
+      vectorFailures++;
       // AllEmbeddingProvidersFailed is expected when all providers are unavailable — don't report (#486)
       if (!shouldSuppressEmbeddingError(err)) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -329,6 +341,7 @@ export async function runConsolidate(
         factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
       } catch (err) {
         logger.warn(`memory-hybrid: consolidate vector store failed: ${err}`);
+        vectorFailures++;
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "consolidate-vector-store",
           subsystem: "vector",
@@ -376,5 +389,12 @@ export async function runConsolidate(
       `memory-hybrid: consolidate — store dedupe used lexical-only for ${storeDedupeVectorFallbackSuppressed} store(s) (vectors are embedded/stored after insert in this pipeline)`,
     );
   }
-  return { clustersFound: clusters.length, merged, deleted };
+  return {
+    clustersFound: clusters.length,
+    merged,
+    deleted,
+    clustersFailed: clustersFailed > 0 ? clustersFailed : undefined,
+    vectorFailures: vectorFailures > 0 ? vectorFailures : undefined,
+    semanticOutcome: clustersFailed > 0 || vectorFailures > 0 ? "partial" : "success",
+  };
 }

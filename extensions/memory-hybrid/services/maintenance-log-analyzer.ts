@@ -1219,6 +1219,21 @@ export function shouldMaintenanceStrictFail(findings: MaintenanceFinding[]): boo
   return findings.some((f) => STRICT_CLASSES.has(f.classification));
 }
 
+/** Build orchestrator/cron step summary from analyzed maintenance log steps. */
+export function summarizeMaintenanceLogAnalysis(steps: MaintenanceLogStep[]): {
+  summary: string;
+  strictFailed: boolean;
+  findingsCount: number;
+} {
+  const findings = analyzeMaintenanceSteps(steps);
+  const strictFailed = shouldMaintenanceStrictFail(findings);
+  return {
+    findingsCount: findings.length,
+    strictFailed,
+    summary: `steps=${steps.length} findings=${findings.length} strict=${strictFailed ? "fail" : "ok"} semantic=${strictFailed ? "partial" : "success"}`,
+  };
+}
+
 export function writeMaintenanceAnalysisOutput(report: MaintenanceAnalysisReport, format: string, outPath = "-"): void {
   const content = format === "json" ? `${JSON.stringify(report, null, 2)}\n` : `${report.digestMd}\n`;
   if (outPath === "-") {

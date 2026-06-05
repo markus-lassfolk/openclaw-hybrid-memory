@@ -177,8 +177,8 @@ describe("registerPublicApiRoutes", () => {
       exported.handler,
       fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`),
     );
-    expect(exportRes.status).toBe(200);
-    expect(JSON.parse(exportRes.body).manifest.counts.facts).toBeGreaterThanOrEqual(1);
+    expect(exportRes.status).toBe(403);
+    expect(JSON.parse(exportRes.body).error).toBe("authentication required");
 
     const fact = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.fact}`)!;
     const factRes = await invokeNodeHttpRoute(
@@ -625,6 +625,39 @@ describe("registerPublicApiRoutes", () => {
     const res = await invokeNodeHttpRoute(
       route.handler,
       fakeReq(`${PUBLIC_API_PREFIX}/fact/mutate`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
+  it("export requires authentication", async () => {
+    factsDb.store({
+      text: "Export auth gate test fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "conversation",
+    });
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(true), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.export}?limit=10`),
+    );
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body).manifest.counts.facts).toBeGreaterThanOrEqual(1);
+  });
+
+  it("active-tasks render rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.activeTasks}?render=1`),
     );
     expect(res.status).toBe(403);
     expect(JSON.parse(res.body).error).toBe("authentication required");
