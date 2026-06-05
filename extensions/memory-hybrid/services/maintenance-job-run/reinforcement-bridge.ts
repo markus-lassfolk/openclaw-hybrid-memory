@@ -20,9 +20,9 @@ export function reinforcementRunToJobRunOutcome(opts: {
   if (opts.partialBatchFailure) return "partial";
   if (opts.incidentsCount === 0) return "empty";
   if (opts.llmAnalysisFailed) return "failed";
-  if (opts.incidentsCount > 0 && opts.analysedCount === 0) return "failed_semantic_empty";
   if (opts.annotated !== undefined && opts.annotated === 0 && opts.incidentsCount > 0) {
     return "success_with_review";
   }
+  if (opts.incidentsCount > 0 && opts.analysedCount === 0) return "failed_semantic_empty";
   return "success";
 }
