@@ -893,6 +893,47 @@ error: unknown command 'bar'
       );
     });
 
+    it("detects generate-auto-skills validation failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "generate-auto-skills.exit.txt");
+      const logPath = join(tmpDir, "generate-auto-skills.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z generate-auto-skills exit=0\n");
+      writeFileSync(
+        logPath,
+        "generate-auto-skills failedValidation=2 failedEval=1 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["generate-auto-skills"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "generate-auto-skills",
+          failureClass: "generate_auto_skills_validation_failures",
+        }),
+      );
+    });
+
+    it("detects prune vector_failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "prune.exit.txt");
+      const logPath = join(tmpDir, "prune.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z prune exit=0\n");
+      writeFileSync(logPath, "prune pruned=3 vector_failures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "prune",
+          failureClass: "prune_vector_cleanup_partial",
+        }),
+      );
+    });
+
     it("detects degraded implicit-feedback collapse backlogs that change nothing", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "weekly-implicit-feedback-collapse-20260508T021500Z-111.exit.txt");
