@@ -1153,13 +1153,14 @@ export function collectMemoryViewerCorrelation(ctx: DashboardContext, entityKey:
 
       let episodes: MemoryViewerCorrelation["episodes"] = [];
       try {
+        const escapedKey = key.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
         const epRows = roDb
           .prepare(
             `SELECT id, event, outcome FROM episodes
-               WHERE lower(event) LIKE ? OR lower(context) LIKE ?
+               WHERE lower(event) LIKE ? ESCAPE '\\' OR lower(context) LIKE ? ESCAPE '\\'
                ORDER BY timestamp DESC LIMIT 15`,
           )
-          .all(`%${key}%`, `%${key}%`) as Array<{ id: string; event: string; outcome: string }>;
+          .all(`%${escapedKey}%`, `%${escapedKey}%`) as Array<{ id: string; event: string; outcome: string }>;
         episodes = epRows;
       } catch {
         /* episodes table may be absent on older stores */
