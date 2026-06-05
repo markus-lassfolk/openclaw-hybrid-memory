@@ -27,7 +27,6 @@ import { quarantineCrystallizedSkillOnDisk } from "./crystallization-disk.js";
 import { generateAutoSkillForProcedure } from "./procedure-skill-generator.js";
 import {
   DEFAULT_WORKSHOP_MAX_PENDING,
-  DEFAULT_WORKSHOP_LIST_LIMIT,
   inspectUnifiedProposal,
   listUnifiedProposals,
   listUndoablePersonaProposals,
@@ -37,7 +36,13 @@ import {
   type UnifiedProposal,
   type UnifiedProposalStores,
 } from "./unified-proposals.js";
-import { resolveWorkshopMaxPending, resolveWorkshopSessionKey, resolveWorkshopProposedSessionKey, resolveWorkshopAppliedSessionKey } from "./workshop-config.js";
+import {
+  DEFAULT_WORKSHOP_LIST_LIMIT,
+  resolveWorkshopMaxPending,
+  resolveWorkshopSessionKey,
+  resolveWorkshopProposedSessionKey,
+  resolveWorkshopAppliedSessionKey,
+} from "./workshop-config.js";
 import { readProposalRollback, undoProposalRollback, deleteProposalRollback } from "./proposal-rollback.js";
 import { GapDetector } from "./gap-detector.js";
 import { ToolProposer } from "./tool-proposer.js";

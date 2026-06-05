@@ -18,7 +18,11 @@ import {
   resolveWorkshopMaxPending,
 } from "./workshop-config.js";
 
-export { DEFAULT_WORKSHOP_MAX_PENDING, resolveWorkshopMaxPending } from "./workshop-config.js";
+export {
+  DEFAULT_WORKSHOP_LIST_LIMIT,
+  DEFAULT_WORKSHOP_MAX_PENDING,
+  resolveWorkshopMaxPending,
+} from "./workshop-config.js";
 
 export function workshopStoresFromHandlerContext(ctx: {
   cfg: HybridMemoryConfig;

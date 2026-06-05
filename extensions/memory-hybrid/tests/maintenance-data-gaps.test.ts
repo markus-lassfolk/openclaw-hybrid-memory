@@ -194,6 +194,26 @@ describe("maintenance data gaps", { timeout: 60_000 }, () => {
     db.close();
   });
 
+  it("backfill recall_events preserves repeated recalls with different tool call ids", () => {
+    const db = openTestDb();
+    const dir = mkdtempSync(join(tmpdir(), "sess-repeat-"));
+    const memoryId = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+    const sessionFile = join(dir, "2026-06-04-repeat.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        `{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"memory_recall","arguments":{"query":"prefs"}}]}}`,
+        `{"type":"message","message":{"role":"toolResult","toolCallId":"t1","toolName":"memory_recall","content":[{"type":"text","text":"Memory (id: ${memoryId})"}]}}`,
+        `{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"t2","name":"memory_recall","arguments":{"query":"prefs"}}]}}`,
+        `{"type":"message","message":{"role":"toolResult","toolCallId":"t2","toolName":"memory_recall","content":[{"type":"text","text":"Memory (id: ${memoryId})"}]}}`,
+      ].join("\n"),
+    );
+    expect(backfillRecallEventsFromSessionFile(db, sessionFile)).toBe(2);
+    const row = db.prepare("SELECT COUNT(*) AS cnt FROM recall_events").get() as { cnt: number };
+    expect(row.cnt).toBe(2);
+    db.close();
+  });
+
   it("backfill recall_events is idempotent on rerun", () => {
     const db = openTestDb();
     const dir = mkdtempSync(join(tmpdir(), "sess-idem-"));

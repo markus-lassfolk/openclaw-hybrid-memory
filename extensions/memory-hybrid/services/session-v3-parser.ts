@@ -18,6 +18,8 @@ export type ParsedRecallEvent = {
   query?: string;
   factIds: string[];
   hit: boolean;
+  /** When present, used to dedupe the same recall mirrored in trajectory + session JSONL. */
+  toolCallId?: string;
 };
 
 export type TrajectoryToolEvent = {
@@ -122,6 +124,7 @@ export function extractRecallEventsFromMessages(messages: SessionMessage[]): Par
       query: meta?.query,
       factIds,
       hit: factIds.length > 0,
+      toolCallId: toolCallId ?? undefined,
     });
   }
 
@@ -184,6 +187,7 @@ export function extractRecallEventsFromTrajectoryLines(lines: string[], subsyste
         query: meta.query,
         factIds,
         hit: factIds.length > 0,
+        toolCallId,
       });
     }
   }

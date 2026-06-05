@@ -148,6 +148,7 @@ type ParsedRecallFromContent = {
   query?: string;
   factIds: string[];
   hit: boolean;
+  toolCallId?: string;
 };
 
 /** Extract memory_recall tool_use + tool_result pairs from assistant content blocks. */
@@ -181,15 +182,12 @@ export function extractRecallEventsFromAssistantContent(content: unknown): Parse
         query: meta.query,
         factIds,
         hit: factIds.length > 0,
+        toolCallId: toolUseId,
       });
     }
   }
 
   return events;
-}
-
-function recallEventFingerprint(ev: ParsedRecallEvent): string {
-  return `${ev.query ?? ""}\0${[...ev.factIds].sort().join(",")}\0${ev.hit ? 1 : 0}`;
 }
 
 /** Collect recall events from session JSONL and optional trajectory sidecar without double-counting. */
@@ -198,13 +196,14 @@ function collectRecallEventsFromSession(
   messages: ReturnType<typeof parseSessionMessagesFromLines>,
   subsystem: string,
 ): ParsedRecallEvent[] {
-  const seen = new Set<string>();
+  const seenToolCallIds = new Set<string>();
   const out: ParsedRecallEvent[] = [];
-  const add = (events: ParsedRecallEvent[]): void => {
+  const add = (events: Array<ParsedRecallEvent | ParsedRecallFromContent>): void => {
     for (const ev of events) {
-      const fp = recallEventFingerprint(ev);
-      if (seen.has(fp)) continue;
-      seen.add(fp);
+      if (ev.toolCallId) {
+        if (seenToolCallIds.has(ev.toolCallId)) continue;
+        seenToolCallIds.add(ev.toolCallId);
+      }
       out.push(ev);
     }
   };

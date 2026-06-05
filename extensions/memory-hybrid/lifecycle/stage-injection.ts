@@ -112,8 +112,9 @@ export async function runInjectionStage(
     return result;
   });
 
+  let injectionTimeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutFallback = new Promise<{ prependContext: string } | undefined>((resolve) => {
-    setTimeout(() => {
+    injectionTimeoutId = setTimeout(() => {
       if (primarySettled || emitGate.emitted) {
         resolve(undefined);
         return;
@@ -124,7 +125,9 @@ export async function runInjectionStage(
     }, INJECTION_STAGE_TIMEOUT_MS);
   });
 
-  return Promise.race([primary, timeoutFallback]);
+  return Promise.race([primary, timeoutFallback]).finally(() => {
+    if (injectionTimeoutId !== undefined) clearTimeout(injectionTimeoutId);
+  });
 }
 
 type RunInjectionOptions = {

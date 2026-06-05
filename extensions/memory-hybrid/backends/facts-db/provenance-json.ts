@@ -103,10 +103,10 @@ export function resolveProvenanceSourceFacts(
       if (!row?.id || seen.has(row.id)) continue;
       seen.add(row.id);
       const entry = factsDb.getById(row.id);
-      if (entry && !isLiveFact(entry)) continue;
+      if (!entry || !isLiveFact(entry)) continue;
       out.push({
         id: row.id,
-        text: row.text ?? entry?.text ?? row.id,
+        text: entry.text,
         category: row.category,
         source: row.source,
       });

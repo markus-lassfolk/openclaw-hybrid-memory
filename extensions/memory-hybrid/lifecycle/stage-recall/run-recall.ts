@@ -1102,7 +1102,7 @@ export async function runRecall(
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
-    if (isRecallContextSuperseded(ctx)) {
+    if (shouldAbortRecall()) {
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }

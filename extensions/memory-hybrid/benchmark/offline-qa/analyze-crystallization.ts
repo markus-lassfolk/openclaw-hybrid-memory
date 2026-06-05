@@ -474,6 +474,6 @@ async function main(): Promise<void> {
 }
 
 main().catch(() => {
-  console.error("offline-qa:crystallization failed.");
+  console.error("offline-qa:crystallization failed");
   process.exit(1);
 });
