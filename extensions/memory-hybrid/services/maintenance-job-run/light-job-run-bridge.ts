@@ -15,11 +15,12 @@ export type LightJobRunParams = {
 export function resolveLightJobRunOutcome(params: LightJobRunParams): JobRunSemanticOutcome {
   if (params.skipped) return "skipped";
   if (params.dryRun) return "skipped";
-  if (params.partialFailure) return "partial";
   if (params.semanticEmpty) return "failed_semantic_empty";
+  if (params.partialFailure) return "partial";
   const inputs = params.inputsProcessed ?? 0;
   const outputs = params.outputsProduced ?? 0;
   if (inputs === 0) return "empty";
+  if (inputs > 0 && outputs === 0) return "success";
   if (outputs === 0) return "empty";
   return "success";
 }

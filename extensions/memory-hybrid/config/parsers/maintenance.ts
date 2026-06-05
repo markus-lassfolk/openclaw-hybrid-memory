@@ -109,6 +109,7 @@ export function parseNightlyCycleConfig(cfg: Record<string, unknown>): NightlyCy
     consolidationEventTypeDeny: parseStringList(nightlyCycleRaw?.consolidationEventTypeDeny),
     enableReflectionRules: nightlyCycleRaw?.enableReflectionRules !== false,
     autoPropose: nightlyCycleRaw?.autoPropose === true,
+    ingestDreamFindings: nightlyCycleRaw?.ingestDreamFindings === true,
   };
 }
 

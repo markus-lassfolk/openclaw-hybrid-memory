@@ -60,7 +60,7 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
         const findings = extractFindingsFromRun(join(ctx.dreamCycleLogDir, runDir));
         for (const finding of findings) {
           try {
-            ctx.factsDb.store({
+            const storeResult = ctx.factsDb.storeWithResult({
               text: finding.text,
               category: finding.category as MemoryCategory,
               importance: finding.importance,
@@ -70,7 +70,9 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
               confidence: 0.7,
               tags: ["dream-finding", `run:${runId}`],
             });
-            result.findingsIngested++;
+            if (!storeResult.skipped) {
+              result.findingsIngested++;
+            }
           } catch (err) {
             result.errors.push(`Failed to store finding: ${err instanceof Error ? err.message : String(err)}`);
           }
@@ -168,7 +170,12 @@ function extractPatterns(artifact: Record<string, unknown>): Finding[] {
   const patterns = artifact.patterns ?? artifact.patternsFound;
   if (Array.isArray(patterns)) {
     for (const p of patterns) {
-      const text = typeof p === "string" ? p : typeof (p as Record<string, unknown>)?.text === "string" ? (p as Record<string, unknown>).text as string : null;
+      const text =
+        typeof p === "string"
+          ? p
+          : typeof (p as Record<string, unknown>)?.text === "string"
+            ? ((p as Record<string, unknown>).text as string)
+            : null;
       if (text && text.length > 10) {
         findings.push({
           text: `Pattern discovered: ${text}`,

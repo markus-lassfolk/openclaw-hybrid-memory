@@ -1877,6 +1877,10 @@
           "autoPropose": {
             "type": "boolean",
             "description": "When true, dream-cycle reflection output is auto-enqueued as governed proposals (default: false)"
+          },
+          "ingestDreamFindings": {
+            "type": "boolean",
+            "description": "When true, run the wiki dream findings ingester as a post-cycle step (default: false)"
           }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"
@@ -2578,14 +2582,32 @@
           "columns": {
             "type": "object",
             "properties": {
-              "taskInProgress": { "type": "string", "description": "Column for in-progress tasks. Default: In Progress." },
+              "taskInProgress": {
+                "type": "string",
+                "description": "Column for in-progress tasks. Default: In Progress."
+              },
               "taskDone": { "type": "string", "description": "Column for completed tasks. Default: Done." },
-              "taskFailed": { "type": ["string", "null"], "description": "Column for failed tasks (null to skip). Default: Failed." },
-              "taskStale": { "type": ["string", "null"], "description": "Column for stale tasks (null to skip). Default: Backlog." },
-              "taskParked": { "type": ["string", "null"], "description": "Column for parked tasks (null to skip). Default: Backlog." },
+              "taskFailed": {
+                "type": ["string", "null"],
+                "description": "Column for failed tasks (null to skip). Default: Failed."
+              },
+              "taskStale": {
+                "type": ["string", "null"],
+                "description": "Column for stale tasks (null to skip). Default: Backlog."
+              },
+              "taskParked": {
+                "type": ["string", "null"],
+                "description": "Column for parked tasks (null to skip). Default: Backlog."
+              },
               "goalActive": { "type": "string", "description": "Column for active goals. Default: In Progress." },
-              "goalBlocked": { "type": ["string", "null"], "description": "Column for blocked goals (null to skip). Default: Blocked." },
-              "goalStalled": { "type": ["string", "null"], "description": "Column for stalled goals (null to skip). Default: Backlog." },
+              "goalBlocked": {
+                "type": ["string", "null"],
+                "description": "Column for blocked goals (null to skip). Default: Blocked."
+              },
+              "goalStalled": {
+                "type": ["string", "null"],
+                "description": "Column for stalled goals (null to skip). Default: Backlog."
+              },
               "goalCompleted": { "type": "string", "description": "Column for completed goals. Default: Done." }
             },
             "description": "Workboard column mapping for hybrid-memory statuses."

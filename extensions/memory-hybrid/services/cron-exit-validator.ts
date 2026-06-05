@@ -254,8 +254,7 @@ function detectDegradedContinuousVerificationStatus(logContent: string): Degrade
   return null;
 }
 
-const DREAM_CYCLE_CORE_STAGE_FAILED_RE =
-  /memory-hybrid:\s*dream-cycle\s*[—-]\s*(?:stage\s+\d+\s+)?failed after \d+s:/i;
+const DREAM_CYCLE_CORE_STAGE_FAILED_RE = /memory-hybrid:\s*dream-cycle\s*[—-]\s*(?:stage\s+\d+\s+)?failed after \d+s:/i;
 const DREAM_CYCLE_FINISHED_WITH_ERRORS_RE = /Dream cycle finished with errors:/i;
 const DREAM_CYCLE_CORE_STAGE_FAILURES_RE = /Core stage failures:/i;
 const DREAM_CYCLE_FOLLOW_UP_FAILURES_RE = /follow-up-failures=([1-9]\d*)/i;
@@ -1101,8 +1100,7 @@ export function validateFromSummaryJson(
     }
 
     const stepFailed = (s: OrchestratorRunSummary["steps"][number]): boolean =>
-      s.status === "failed" ||
-      (s.semanticOutcome != null && jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome));
+      s.status === "failed" || (s.semanticOutcome != null && jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome));
 
     const stepExitCode = (s: OrchestratorRunSummary["steps"][number], failed: boolean): number => {
       if (failed) return 1;
@@ -1110,10 +1108,7 @@ export function validateFromSummaryJson(
       return 0;
     };
 
-    const stepExitStatus = (
-      s: OrchestratorRunSummary["steps"][number],
-      failed: boolean,
-    ): ExitStep["status"] => {
+    const stepExitStatus = (s: OrchestratorRunSummary["steps"][number], failed: boolean): ExitStep["status"] => {
       if (failed) return "failed";
       if (s.status === "ok") return "ok";
       if (s.status.startsWith("skipped")) return "skipped";
@@ -1142,9 +1137,7 @@ export function validateFromSummaryJson(
     const isConsolidatedMode = requiredSteps.length > 0 && requiredSteps.every((name) => !present.has(name));
     const missingSteps = isConsolidatedMode ? [] : requiredSteps.filter((name) => !present.has(name));
     const failedSteps = steps.filter(
-      (s) =>
-        (isConsolidatedMode || requiredSteps.includes(s.step)) &&
-        (s.exitCode !== 0 || s.status === "failed"),
+      (s) => (isConsolidatedMode || requiredSteps.includes(s.step)) && s.status === "failed",
     );
 
     const semanticOutcomes = summary.steps
