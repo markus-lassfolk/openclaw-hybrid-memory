@@ -37,7 +37,7 @@ function openTestDb(): DatabaseSync {
   return db;
 }
 
-describe("maintenance data gaps", () => {
+describe("maintenance data gaps", { timeout: 60_000 }, () => {
   it("extracts recall events from assistant tool_use/tool_result blocks", () => {
     const memoryId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     const events = extractRecallEventsFromAssistantContent([
@@ -198,4 +198,4 @@ describe("maintenance data gaps", () => {
     expect(store.recordBackfillIfAbsent(input)).toBe(false);
     expect(store.count()).toBe(1);
   });
-}, { timeout: 60_000 });
+});
