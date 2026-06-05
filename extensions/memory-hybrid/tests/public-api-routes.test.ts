@@ -533,6 +533,18 @@ describe("registerPublicApiRoutes", () => {
     expect(body.uptimeSeconds).toBeGreaterThanOrEqual(0);
   });
 
+  it("process-memory rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
   it("memory-diagnostics returns hybrid reregister metrics when vectorDb present", async () => {
     const { api, routes } = makeApi();
     const vectorDb = {
@@ -559,6 +571,32 @@ describe("registerPublicApiRoutes", () => {
     const body = JSON.parse(res.body);
     expect(body.hybridMemory.reregisterMetrics).toBeDefined();
     expect(body.process.nativeRssBytes).toBeGreaterThanOrEqual(0);
+  });
+
+  it("memory-diagnostics rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(false),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
   });
 
   it("does not register routes when health is disabled", () => {

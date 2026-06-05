@@ -908,7 +908,45 @@ error: unknown command 'bar'
       expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
     });
 
-    it("does not treat deferred required steps as failed when summary exitCode is 2", () => {
+    it("treats ok status with partial semanticOutcome as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-partial-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-partial",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with partial semantic",
+          steps: [
+            {
+              name: "self-correction-run",
+              status: "ok",
+              summary: "semantic=partial",
+              durationMs: 10,
+              semanticOutcome: "partial",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
+    });
+
+    it("treats deferred guard-blocking required steps as failed when summary exitCode is 2", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-deferred-"));
       const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
       const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
@@ -940,9 +978,9 @@ error: unknown command 'bar'
       writeFileSync(logPath, "");
 
       const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["prune", "self-correction-run"], true);
-      expect(result.maintenanceStatus).toBe("success");
+      expect(result.maintenanceStatus).toBe("failed");
       expect(result.semanticStatus).toBe("degraded");
-      expect(result.failedSteps).toHaveLength(0);
+      expect(result.guardUpdated).toBe(false);
       const deferred = result.steps.find((s) => s.step === "self-correction-run");
       expect(deferred?.exitCode).toBe(2);
       expect(deferred?.status).toBe("ok");

@@ -375,6 +375,64 @@ Safety note: `--clean-all` only deletes storage under `~/.openclaw/memory/` by d
 
 ---
 
+## Workboard integration
+
+When `workboard.enabled` is true, hybrid-memory syncs active tasks and goals to OpenClaw's Workboard Kanban UI. The sync runs on a configurable interval (default: every 5 minutes).
+
+No dedicated CLI commands are needed — the sync is automatic. Workboard cards are managed through the Workboard UI in OpenClaw's Control Panel.
+
+**How it works:**
+- Active tasks and goals are created as Workboard cards with the configured `cardTag` (default: `"hybrid-memory"`)
+- Status changes map to column names (e.g. `in_progress` → "In Progress")
+- When `bidirectional` is true, moving a card between columns in the Workboard UI updates the task/goal status in hybrid-memory
+- Cards include a description derived from the task/goal details and a link back to the hybrid-memory entity
+
+**Diagnostics:**
+- Check `openclaw hybrid-mem verify` — reports Workboard connectivity and sync status when the feature is enabled
+- Gateway logs contain `memory-hybrid: workboard sync` entries for each sync cycle
+
+---
+
+## Wiki integration and Dreaming UI
+
+When `wikiIntegration.enabled` is true, hybrid-memory facts are bridged to OpenClaw's memory-wiki plugin and visible in the Dreaming UI tab.
+
+**What gets exposed:**
+- Facts appear in the Dreaming UI under "Imported Insights" and "Memory Palace" (via `publicArtifacts`)
+- Facts are included in `memory_search corpus=all` and `wiki_search corpus=all` results (via `corpusSupplement`)
+- Dream findings (patterns, consolidation summaries, digests) from the nightly dream cycle are stored as facts and also bridged
+
+**Bidirectional editing (when `mutations.enabled` is true):**
+
+Gateway RPC methods under `hybrid-mem.facts.*`:
+
+```bash
+# These are called programmatically by memory-wiki or other Gateway clients.
+# List facts
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.list", "params": {"query": "TypeScript"}}'
+
+# Get a specific fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.get", "params": {"id": "<fact-id>"}}'
+
+# Update a fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.update", "params": {"id": "<fact-id>", "text": "Updated text"}}'
+
+# Supersede (replace or delete) a fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.supersede", "params": {"id": "<fact-id>"}}'
+
+# Create a new fact
+curl -X POST http://localhost:9119/gateway/rpc \
+  -d '{"method": "hybrid-mem.facts.create", "params": {"text": "New fact", "category": "technical"}}'
+```
+
+HTTP equivalent: `POST /plugins/memory-public/fact/mutate` with `{ "action": "update"|"supersede"|"create", ... }`.
+
+---
+
 ## Related docs
 
 - [QUICKSTART.md](QUICKSTART.md) — Installation and first run

@@ -73,7 +73,12 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
             });
           }
 
-          if (result.maintenanceStatus === "failed" || result.maintenanceStatus === "partial") {
+          if (
+            result.maintenanceStatus === "failed" ||
+            result.maintenanceStatus === "partial" ||
+            result.semanticStatus === "semantic_fail" ||
+            (result.maintenanceStatus === "success" && !result.guardUpdated && result.semanticStatus !== "ok")
+          ) {
             process.exitCode = 1;
           }
         },

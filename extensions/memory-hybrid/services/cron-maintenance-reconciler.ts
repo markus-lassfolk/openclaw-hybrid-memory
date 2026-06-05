@@ -296,10 +296,14 @@ export function reconcileCronRunLedger(
       ? validateFromSummaryJson(summaryPath, exitPath, logPath, requiredSteps, true)
       : validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);
 
+    const hasPartialSemanticStep = validation.steps.some(
+      (s) => s.reason === "partial" || s.reason === "failed_partial",
+    );
     const isFalseOk =
       validation.maintenanceStatus === "failed" ||
       validation.maintenanceStatus === "partial" ||
-      (validation.maintenanceStatus === "success" && validation.semanticStatus === "semantic_fail");
+      (validation.maintenanceStatus === "success" && validation.semanticStatus === "semantic_fail") ||
+      (validation.maintenanceStatus === "success" && hasPartialSemanticStep);
 
     // Check if this is a false-OK (status:ok but validation failed/partial/semantic)
     if (isFalseOk) {

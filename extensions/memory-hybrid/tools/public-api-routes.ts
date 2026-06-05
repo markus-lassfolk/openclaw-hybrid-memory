@@ -471,11 +471,17 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     return toJson(200, report);
   });
 
-  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`, async () => {
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.processMemory}`, async (req) => {
+    if (!ctx.cfg.health.authenticated) {
+      return toJson(403, { error: "authentication required" });
+    }
     return toJson(200, buildProcessMemorySnapshot());
   });
 
-  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`, async () => {
+  makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`, async (req) => {
+    if (!ctx.cfg.health.authenticated) {
+      return toJson(403, { error: "authentication required" });
+    }
     if (!ctx.vectorDb) {
       return toJson(503, { error: "vector_db_unavailable" });
     }

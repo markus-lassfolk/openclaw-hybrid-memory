@@ -1311,6 +1311,132 @@ The dream cycle runs a nightly maintenance pipeline: prune expired facts → con
 
 CLI: `openclaw hybrid-mem dream-cycle`
 
+### Dream findings ingestion (`nightlyCycle.ingestDreamFindings`)
+
+When enabled, the dream cycle runs a follow-up step that reads processed dream cycle artifacts (reflection, consolidation, digest stages) and stores significant findings as durable facts. This makes dream insights available via `memory_recall`, `memory_search corpus=all`, and the Dreaming UI (when wiki integration is enabled).
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `ingestDreamFindings` | `true` when `wikiIntegration.enabled`, otherwise `false` | Enable post-dream-cycle findings ingestion |
+
+Stored findings are tagged `dream-finding` and `run:<runId>`. Idempotency is ensured via sentinel facts — re-running the dream cycle does not re-ingest findings from already-processed runs.
+
+---
+
+## Wiki integration (wikiIntegration)
+
+Bridges hybrid-memory with OpenClaw's bundled `memory-wiki` plugin and the Dreaming UI tab. When enabled, hybrid-memory facts become visible in the Dreaming UI's "Imported Insights" and "Memory Palace" sections, and are included in `memory_search corpus=all` / `wiki_search corpus=all` results.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "wikiIntegration": {
+            "enabled": true,
+            "publicArtifacts": true,
+            "corpusSupplement": true,
+            "workspaceExportIntervalMinutes": 30,
+            "mutations": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Master switch for all wiki integration features |
+| `publicArtifacts` | `true` | Register `publicArtifacts` via `registerMemoryCapability` so the memory-wiki bridge can import facts and dream reports into the Dreaming UI |
+| `corpusSupplement` | `true` | Register a `MemoryCorpusSupplement` so hybrid-memory facts appear in unified `corpus=all` searches |
+| `workspaceExportIntervalMinutes` | `30` | How often to sync facts to workspace files for bridge import (minutes) |
+| `mutations.enabled` | `false` | Enable bidirectional editing: registers `hybrid-mem.facts.*` Gateway RPC methods and HTTP endpoints so external clients (memory-wiki, Workboard, WebUI) can create, update, supersede, and delete facts |
+
+### Bidirectional fact editing
+
+When `mutations.enabled` is true, the following Gateway RPC methods are registered:
+
+| RPC method | Description |
+|------------|-------------|
+| `hybrid-mem.facts.list` | List/search facts (by query, entity, or all) |
+| `hybrid-mem.facts.get` | Get a single fact by ID |
+| `hybrid-mem.facts.update` | Update fact text, confidence, entity/key/value, or tags |
+| `hybrid-mem.facts.supersede` | Replace or remove a fact |
+| `hybrid-mem.facts.create` | Create a new fact from an external source |
+
+Equivalent HTTP endpoints are available at `/plugins/memory-public/fact/mutate` (POST with `action` field).
+
+---
+
+## Workboard integration (workboard)
+
+Bidirectional sync of active tasks and goals to OpenClaw's Workboard Kanban UI. Tasks and goals appear as cards on the board; moving cards between columns updates task/goal status in hybrid-memory.
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-hybrid-memory": {
+        "config": {
+          "workboard": {
+            "enabled": true,
+            "gatewayUrl": "http://localhost:9119",
+            "syncIntervalMinutes": 5,
+            "syncTasks": true,
+            "syncGoals": true,
+            "bidirectional": true,
+            "cardTag": "hybrid-memory",
+            "columns": {
+              "taskInProgress": "In Progress",
+              "taskDone": "Done",
+              "taskFailed": "Failed",
+              "taskStale": "Backlog",
+              "taskParked": "Backlog",
+              "goalActive": "In Progress",
+              "goalBlocked": "Blocked",
+              "goalStalled": "Backlog",
+              "goalCompleted": "Done"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `enabled` | `false` | Master switch for Workboard integration |
+| `gatewayUrl` | `"http://localhost:9119"` | Gateway HTTP base URL for Workboard RPC calls |
+| `syncIntervalMinutes` | `5` | How often to reconcile cards with Workboard (minutes) |
+| `syncTasks` | `true` | Sync active tasks (from `ACTIVE-TASKS.md` / project facts) to Workboard |
+| `syncGoals` | `true` | Sync goals (from `state/goals/`) to Workboard |
+| `bidirectional` | `true` | Accept Workboard card moves back into hybrid-memory (column changes update task/goal status) |
+| `cardTag` | `"hybrid-memory"` | Tag applied to cards created by this plugin |
+| `columns.*` | See defaults above | Maps hybrid-memory status values to Workboard column names; set to `null` to skip syncing that status |
+
+### Column mapping
+
+| Config key | Hybrid-memory status | Default column |
+|------------|---------------------|----------------|
+| `taskInProgress` | task `in_progress` | "In Progress" |
+| `taskDone` | task `done` | "Done" |
+| `taskFailed` | task `failed` | "Failed" |
+| `taskStale` | task `stale` | "Backlog" |
+| `taskParked` | task `parked` | "Backlog" |
+| `goalActive` | goal `active` | "In Progress" |
+| `goalBlocked` | goal `blocked` | "Blocked" |
+| `goalStalled` | goal `stalled` | "Backlog" |
+| `goalCompleted` | goal `completed` | "Done" |
+
+The sync uses Workboard Gateway RPC (`workboard.cards.*`) via HTTP. Authentication token is read from `OPENCLAW_GATEWAY_TOKEN` environment variable when set.
+
 ---
 
 ## Passive observer (passiveObserver)

@@ -46,3 +46,10 @@ export function jobRunOutcomeToValidatorSemantic(
 export function jobRunOutcomeFailsOrchestratorStep(outcome: JobRunSemanticOutcome): boolean {
   return outcome === "failed" || outcome === "failed_semantic_empty";
 }
+
+/** Whether a semantic token (unified outcome or legacy CLI status) blocks guard advancement. */
+export function semanticOutcomeBlocksOrchestratorGuard(semantic: string | undefined): boolean {
+  if (!semantic || semantic === "-") return false;
+  if (semantic === "partial" || semantic === "failed_partial") return true;
+  return jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome);
+}

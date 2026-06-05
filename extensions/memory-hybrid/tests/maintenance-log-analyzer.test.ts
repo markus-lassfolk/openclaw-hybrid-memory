@@ -382,6 +382,32 @@ describe("maintenance log analyzer", () => {
     expect(summarySteps[1].line).toContain("summary.json self-correction-run status=failed");
   });
 
+  it("dedupes HM_EXIT steps when summary.json already ingested the same run", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260605");
+    mkdirSync(day, { recursive: true });
+    const stem = "maintenance-nightly-20260605T030000Z-99";
+    const summaryPath = join(day, `${stem}.summary.json`);
+    const siblingExitPath = join(day, `${stem}.exit.txt`);
+    const canonicalExitPath = join(root, `${stem}.exit.txt`);
+    writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        runId: "20260605T030000Z-99",
+        tierLabel: "nightly",
+        finishedAt: "2026-06-05T03:15:00.000Z",
+        exitCode: 0,
+        steps: [{ name: "distill", status: "ok", summary: "stored=1" }],
+      }),
+    );
+    writeFileSync(siblingExitPath, "2026-06-05T03:15:00Z distill exit=0\n");
+    writeFileSync(canonicalExitPath, "2026-06-05T03:15:00Z distill exit=0\n");
+
+    const nowMs = Date.UTC(2026, 5, 5, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs);
+    expect(steps.filter((s) => s.step === "distill")).toHaveLength(1);
+  });
+
   it("parses extended HM_EXIT lines with step=<name> format", () => {
     const root = tmpRoot();
     const day = join(root, "20260513");

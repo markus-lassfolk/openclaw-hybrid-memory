@@ -49,7 +49,11 @@ export async function runExtractImplicitStep(deps: DreamCycleFollowUpDeps, verbo
     includeClosedLoop: false,
     verbose,
   });
-  return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions`;
+  const summary = `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${res.partial ? "partial" : "success"}`;
+  if (res.partial) {
+    throw new Error(`extract-implicit partial failure (${res.partialReason ?? "capped"}): ${summary}`);
+  }
+  return summary;
 }
 
 export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
@@ -63,6 +67,9 @@ export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, ve
 export async function runCrossAgentLearningStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
   if (!deps.runCrossAgentLearning) return "skipped (handler unavailable)";
   const res = await deps.runCrossAgentLearning(verbose ? { verbose: true } : undefined);
+  if (res.errors > 0) {
+    throw new Error(`cross-agent-learning batch errors=${res.errors}`);
+  }
   return `${res.generalisedStored} patterns from ${res.agentsScanned} agents`;
 }
 

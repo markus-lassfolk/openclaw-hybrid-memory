@@ -1,6 +1,6 @@
 ---
 name: openclaw_hybrid_memory
-description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, contacts/org layer (memory_directory), multilingual NER when graph is on, memorySearch, and memory/ files. Goal stewardship (goal_* tools, heartbeat scheduling, OpenClaw cron jobs, verify/troubleshooting). Maintenance orchestrator (maintenance nightly/cycle/full/steps, consolidated cron, run-all). Credentials vault (credential_* tools, credentials get --value-only). Generated skills (skills queue/telemetry/doctor). Use whenever the user asks about saving or recalling information, memory_store or memory_recall, people or companies in memory, hybrid-mem CLI, MEMORY.md, goals, goal_assess, scheduled heartbeat pulses, pruning, distillation, embeddings, tuning recall, which memory settings are enabled, how to optimize or run maintenance, credential vault, crystallization, or debugging missing recall—even if they do not say "hybrid memory" by name.
+description: OpenClaw hybrid memory (memory-hybrid plugin)—SQLite+FTS5 facts, LanceDB semantic recall, auto-capture/recall, decay, contacts/org layer (memory_directory), multilingual NER when graph is on, memorySearch, and memory/ files. Goal stewardship (goal_* tools, heartbeat scheduling, OpenClaw cron jobs, verify/troubleshooting). Maintenance orchestrator (maintenance nightly/cycle/full/steps, consolidated cron, run-all). Credentials vault (credential_* tools, credentials get --value-only). Generated skills (skills queue/telemetry/doctor). Workboard integration (bidirectional task/goal sync to Kanban UI). Wiki integration and Dreaming UI (memory-wiki bridge, corpus supplement, bidirectional fact editing, dream findings ingestion). Use whenever the user asks about saving or recalling information, memory_store or memory_recall, people or companies in memory, hybrid-mem CLI, MEMORY.md, goals, goal_assess, scheduled heartbeat pulses, pruning, distillation, embeddings, tuning recall, which memory settings are enabled, how to optimize or run maintenance, credential vault, crystallization, Workboard, wiki, Dreaming UI, or debugging missing recall—even if they do not say "hybrid memory" by name.
 ---
 
 # OpenClaw Hybrid Memory
@@ -186,6 +186,28 @@ Procedures and crystallization produce skill proposals under the workspace. Oper
 | Run crystallization cycle | `skills crystallize [--dry-run]` |
 
 Repo: **`docs/SKILL-PIPELINES.md`**. Agent tools: **`memory_crystallize*`**, **`memory_workshop`**.
+
+## Workboard integration (when `workboard.enabled: true`)
+
+When Workboard integration is enabled, active tasks and goals sync to OpenClaw's Workboard Kanban UI as cards. The sync is bidirectional: moving a card between columns in Workboard updates the task/goal status in hybrid-memory.
+
+- Sync runs automatically every N minutes (default: 5)
+- Cards are tagged with `hybrid-memory` for filtering
+- Status values map to Workboard columns (e.g. `in_progress` → "In Progress", `done` → "Done")
+- No extra agent tools needed — the sync is transparent
+
+Config: `workboard.enabled`, `workboard.syncTasks`, `workboard.syncGoals`, `workboard.bidirectional`, `workboard.columns.*`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md#workboard-integration-workboard).
+
+## Wiki integration and Dreaming UI (when `wikiIntegration.enabled: true`)
+
+Bridges hybrid-memory with the `memory-wiki` plugin and OpenClaw's Dreaming UI tab:
+
+- **Dreaming UI:** Facts appear in "Imported Insights" and "Memory Palace" sections
+- **Unified search:** Facts are included in `memory_search corpus=all` / `wiki_search corpus=all`
+- **Dream findings:** When the nightly dream cycle runs, discovered patterns and summaries are stored as tagged facts (`dream-finding`) and bridged to the Dreaming UI
+- **Bidirectional editing:** When `mutations.enabled` is true, external clients (memory-wiki, WebUI) can create, update, supersede, and delete facts via `hybrid-mem.facts.*` Gateway RPC or HTTP endpoints
+
+Config: `wikiIntegration.enabled`, `wikiIntegration.publicArtifacts`, `wikiIntegration.corpusSupplement`, `wikiIntegration.mutations.enabled`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md#wiki-integration-wikiintegration).
 
 ## Configuration mindset
 

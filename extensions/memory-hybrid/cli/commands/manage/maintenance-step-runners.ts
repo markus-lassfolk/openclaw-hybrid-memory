@@ -70,9 +70,32 @@ async function runSensorSweepForCli(b: ManageBindings): Promise<string> {
       tier: "all",
       resolvedSqlitePath: b.resolvedSqlitePath,
     });
-    return `written=${r.totalWritten} skipped=${r.totalSkipped} errors=${r.errors.length}`;
+    if (r.errors.length > 0) {
+      throw new Error(`sensor-sweep errors=${r.errors.length}: ${r.errors.slice(0, 3).join("; ")}`);
+    }
+    return `written=${r.totalWritten} skipped=${r.totalSkipped} errors=0`;
   } finally {
     if (ownsBus) eventBus.close?.();
+  }
+}
+
+function formatExtractImplicitSummary(res: {
+  signalsExtracted: number;
+  positiveCount: number;
+  negativeCount: number;
+  sessionsProcessed: number;
+  sessionsScanned: number;
+  partial?: boolean;
+}): string {
+  return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${res.partial ? "partial" : "success"}`;
+}
+
+function assertExtractImplicitNotPartial(
+  res: { partial?: boolean; partialReason?: string },
+  summary: string,
+): void {
+  if (res.partial) {
+    throw new Error(`extract-implicit partial failure (${res.partialReason ?? "capped"}): ${summary}`);
   }
 }
 
@@ -213,7 +236,9 @@ export function buildCliMaintenanceRunners(
         verbose,
         ...scanFlags,
       });
-      return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions`;
+      const summary = formatExtractImplicitSummary(res);
+      assertExtractImplicitNotPartial(res, summary);
+      return summary;
     }
     return runExtractImplicitStep(followUpDeps, verbose);
   });
@@ -420,6 +445,9 @@ export function buildCliMaintenanceRunners(
     if (semantic && jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome)) {
       throw new Error(`generate-proposals semantic failure: ${semantic} (${summary})`);
     }
+    if (semantic === "partial" || semantic === "failed_partial") {
+      throw new Error(`generate-proposals partial failure (${summary})`);
+    }
     return summary;
   });
 
@@ -559,7 +587,10 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
         tier: "all",
         resolvedSqlitePath: deps.resolvedSqlitePath,
       });
-      return `written=${r.totalWritten} skipped=${r.totalSkipped} errors=${r.errors.length}`;
+      if (r.errors.length > 0) {
+        throw new Error(`sensor-sweep errors=${r.errors.length}: ${r.errors.slice(0, 3).join("; ")}`);
+      }
+      return `written=${r.totalWritten} skipped=${r.totalSkipped} errors=0`;
     });
   }
 

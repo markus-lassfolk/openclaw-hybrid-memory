@@ -7,7 +7,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { nowIso } from "../utils/dates.js";
 import { is429OrWrapped } from "./chat.js";
 import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
-import { jobRunOutcomeFailsOrchestratorStep } from "./maintenance-job-run/semantic-outcome.js";
+import { semanticOutcomeBlocksOrchestratorGuard } from "./maintenance-job-run/semantic-outcome.js";
 import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
 import {
   stepGuardEligible,
@@ -400,9 +400,7 @@ function computeExitCode(results: StepResult[]): 0 | 1 | 2 {
 }
 
 function stepSemanticBlocksGuard(semantic?: string): boolean {
-  if (!semantic || semantic === "-") return false;
-  if (semantic === "partial") return true;
-  return jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome);
+  return semanticOutcomeBlocksOrchestratorGuard(semantic);
 }
 
 export async function runMaintenanceOrchestrator(

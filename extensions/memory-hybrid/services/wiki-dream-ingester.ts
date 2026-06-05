@@ -78,8 +78,10 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
           }
         }
 
-        markRunAsIngested(ctx.factsDb, runId);
-        result.runsProcessed++;
+        if (result.errors.length === 0) {
+          markRunAsIngested(ctx.factsDb, runId);
+          result.runsProcessed++;
+        }
       } catch (err) {
         result.errors.push(`Failed to process run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
       }

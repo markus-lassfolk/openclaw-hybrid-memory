@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { normalizeExitStepName } from "./cron-exit-validator.js";
+import { resolveMaintenanceExitPathForSummary } from "./maintenance-artifact-paths.js";
 import { capturePluginError } from "./error-reporter.js";
 import { nowIso, formatTimestampUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
 import {
@@ -403,12 +404,11 @@ export function collectMaintenanceSteps(
   const steps: MaintenanceLogStep[] = [];
   const exitFiles = collectFilesRecursive(root, ".exit.txt");
   const seenExit = new Set(exitFiles);
+  const exitPathsFromSummary = new Set<string>();
 
   const summaryFiles = collectFilesRecursive(root, ".summary.json");
   for (const summaryPath of summaryFiles) {
     if (summaryPath.includes("/job-runs/")) continue;
-    const summaryMtime = safeStatMtimeMs(summaryPath);
-    if (summaryMtime < cutoff) continue;
     try {
       const summary = JSON.parse(safeRead(summaryPath)) as {
         runId?: string;
@@ -418,15 +418,25 @@ export function collectMaintenanceSteps(
         steps?: Array<{ name: string; status: string; summary: string }>;
       };
       if (!Array.isArray(summary.steps)) continue;
-      const job = extractJobFromPath(summaryPath, ".summary.json");
-      // Orchestrator summaries live under DAY_DIR while HM_LOG/HM_EXIT stay at log root.
-      const match = summaryPath.match(/^(.+)\/\d{8}\/([^/]+)\.summary\.json$/);
-      const logPath = match ? `${match[1]}/${match[2]}.log` : summaryPath.replace(/\.summary\.json$/, ".log");
-      const exitPath = match ? `${match[1]}/${match[2]}.exit.txt` : summaryPath.replace(/\.summary\.json$/, ".exit.txt");
-      const logContent = safeRead(logPath);
+      const summaryMtime = safeStatMtimeMs(summaryPath);
       const finishedIso = summary.finishedAt ?? new Date(summaryMtime).toISOString();
       const occurredAt = Math.floor(new Date(finishedIso).getTime() / 1000);
       if (!Number.isFinite(occurredAt) || occurredAt * 1000 < cutoff) continue;
+      const job = extractJobFromPath(summaryPath, ".summary.json");
+      // Orchestrator summaries live under DAY_DIR while HM_LOG/HM_EXIT stay at log root.
+      const dayDirMatch = summaryPath.match(/^(.+)\/(\d{8})\/([^/]+)\.summary\.json$/);
+      const logPath = dayDirMatch
+        ? `${dayDirMatch[1]}/${dayDirMatch[3]}.log`
+        : summaryPath.replace(/\.summary\.json$/, ".log");
+      const siblingExitPath = dayDirMatch
+        ? `${dayDirMatch[1]}/${dayDirMatch[3]}.exit.txt`
+        : summaryPath.replace(/\.summary\.json$/, ".exit.txt");
+      const resolvedExitPath = resolveMaintenanceExitPathForSummary(summaryPath);
+      exitPathsFromSummary.add(siblingExitPath);
+      if (resolvedExitPath) exitPathsFromSummary.add(resolvedExitPath);
+      const exitPath =
+        existsSync(siblingExitPath) ? siblingExitPath : resolvedExitPath ?? siblingExitPath;
+      const logContent = safeRead(logPath);
       for (const step of summary.steps) {
         if (step.status === "skipped_guard" || step.status === "skipped_gate" || step.status === "skipped_dep") {
           continue;
@@ -455,6 +465,7 @@ export function collectMaintenanceSteps(
   }
 
   for (const exitPath of exitFiles) {
+    if (exitPathsFromSummary.has(exitPath)) continue;
     const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
     const exitMtime = safeStatMtimeMs(exitPath);
     const logMtime = safeStatMtimeMs(logPath);

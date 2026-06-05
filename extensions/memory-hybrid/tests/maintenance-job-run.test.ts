@@ -12,6 +12,7 @@ import {
   parseJobRunEvents,
   selfCorrectionStatusToJobRunOutcome,
   jobRunOutcomeFailsOrchestratorStep,
+  semanticOutcomeBlocksOrchestratorGuard,
   resolveLightJobRunOutcome,
 } from "../services/maintenance-job-run/index.js";
 
@@ -88,6 +89,10 @@ describe("maintenance-job-run", () => {
     expect(selfCorrectionStatusToJobRunOutcome("failed_suspect_zero_parsed")).toBe("failed_semantic_empty");
     expect(jobRunOutcomeFailsOrchestratorStep("failed_semantic_empty")).toBe(true);
     expect(jobRunOutcomeFailsOrchestratorStep("success")).toBe(false);
+    expect(semanticOutcomeBlocksOrchestratorGuard("partial")).toBe(true);
+    expect(semanticOutcomeBlocksOrchestratorGuard("failed_partial")).toBe(true);
+    expect(semanticOutcomeBlocksOrchestratorGuard("success")).toBe(false);
+    expect(semanticOutcomeBlocksOrchestratorGuard(undefined)).toBe(false);
   });
 
   it("resolves light JobRun semantic outcomes", () => {

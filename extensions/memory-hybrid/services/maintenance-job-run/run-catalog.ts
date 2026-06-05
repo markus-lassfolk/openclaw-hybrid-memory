@@ -58,6 +58,10 @@ export function listMaintenanceRuns(opts?: {
     if (file.endsWith(".summary.json") && !file.includes("/job-runs/")) {
       try {
         const summary = JSON.parse(readFileSync(file, "utf-8")) as OrchestratorRunSummary;
+        const startedMs = summary.startedAt ? Date.parse(summary.startedAt) : NaN;
+        const finishedMs = summary.finishedAt ? Date.parse(summary.finishedAt) : NaN;
+        const tsMs = Number.isFinite(finishedMs) ? finishedMs : Number.isFinite(startedMs) ? startedMs : st.mtimeMs;
+        if (tsMs < sinceMs) continue;
         runs.push({
           kind: "orchestrator",
           id: summary.runId,

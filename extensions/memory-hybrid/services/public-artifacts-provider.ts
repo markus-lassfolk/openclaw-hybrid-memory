@@ -17,6 +17,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export type PublicArtifact = {
@@ -63,7 +64,7 @@ export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifacts
       const sinceEpoch = opts?.since ? Math.floor(new Date(opts.since).getTime() / 1000) : undefined;
 
       try {
-        const allFacts = factsDb.getAll({});
+        const allFacts = factsDb.getAll({ scopeFilter: globalOnlyScopeFilter() });
         let filtered = allFacts;
 
         if (sinceEpoch) {

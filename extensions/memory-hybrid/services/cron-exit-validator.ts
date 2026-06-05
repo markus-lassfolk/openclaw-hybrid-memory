@@ -43,6 +43,7 @@ import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenanc
 import {
   jobRunOutcomeFailsOrchestratorStep,
   jobRunOutcomeToValidatorSemantic,
+  semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
 
 const SKIP_REASON_COOLDOWN = "skipped_cooldown";
@@ -1100,7 +1101,8 @@ export function validateFromSummaryJson(
     }
 
     const stepFailed = (s: OrchestratorRunSummary["steps"][number]): boolean =>
-      s.status === "failed" || (s.semanticOutcome != null && jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome));
+      s.status === "failed" ||
+      (s.semanticOutcome != null && semanticOutcomeBlocksOrchestratorGuard(s.semanticOutcome));
 
     const stepExitCode = (s: OrchestratorRunSummary["steps"][number], failed: boolean): number => {
       if (failed) return 1;
@@ -1185,6 +1187,29 @@ export function validateFromSummaryJson(
       if (guardBlockingSemantic || failedSteps.length > 0) {
         maintenanceStatus = "failed";
       }
+    }
+
+    const guardBlockingDeferred = summary.steps.some(
+      (s) =>
+        (s.status === "deferred" || s.status === "rate_limited") &&
+        (isConsolidatedMode || requiredSteps.includes(s.name)) &&
+        isGuardBlockingSemanticIssue(
+          buildMaintenanceIssue({
+            jobName: summary.job ?? extractMaintenanceJobName(exitPath),
+            stepName: s.name,
+            failureCategory: "semantic_failure",
+            failureClass: "orchestrator_step_deferred",
+            message: s.summary,
+            semanticStatus: "degraded",
+            hmExitPath: exitPath,
+            hmLogPath: logPath,
+            guardStateAfter: "not_updated",
+          }),
+        ),
+    );
+    if (guardBlockingDeferred) {
+      maintenanceStatus = "failed";
+      semanticStatus = semanticStatus === "ok" ? "degraded" : semanticStatus;
     }
 
     return {

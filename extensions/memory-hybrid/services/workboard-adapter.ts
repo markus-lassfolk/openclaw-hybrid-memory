@@ -82,7 +82,7 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
         // Push tasks
         if (ctx.cfg.syncTasks) {
           const { active, completed } = ctx.loadTasks();
-          const allTasks = [...active, ...completed.slice(0, 10)];
+          const allTasks = [...active, ...completed];
           for (const task of allTasks) {
             const card = taskToCard(task, ctx.cfg.columns, ctx.cfg.cardTag);
             if (!card) continue;
@@ -189,8 +189,8 @@ async function pullChanges(
   cardsByExternalId: Map<string, WorkboardRpcCard>,
   result: WorkboardSyncResult,
 ): Promise<void> {
-  const { active: activeTasks } = ctx.loadTasks();
-  const taskByLabel = new Map(activeTasks.map((t) => [t.label, t]));
+  const { active: activeTasks, completed: completedTasks } = ctx.loadTasks();
+  const taskByLabel = new Map([...activeTasks, ...completedTasks].map((t) => [t.label, t]));
   const goals = await ctx.loadGoals();
   const goalById = new Map(goals.map((g) => [g.id, g]));
 
