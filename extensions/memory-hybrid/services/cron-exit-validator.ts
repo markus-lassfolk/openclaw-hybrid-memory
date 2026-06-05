@@ -323,6 +323,10 @@ function parsePositiveMetric(logContent: string, key: string): number | undefine
   return Number.isFinite(value) ? value : undefined;
 }
 
+function parseStepPositiveMetric(logContent: string, stepName: string, key: string): number | undefined {
+  return parsePositiveMetric(extractStepLog(logContent, stepName), key);
+}
+
 function parseFallbacks(logContent: string): string[] | undefined {
   const match = logContent.match(/\bfallbacks\s*=\s*\[([^\]]*)\]/i);
   if (!match) return undefined;
@@ -635,12 +639,13 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const generateProposalsDetected = isStepInValidationScope("generate-proposals", requiredSteps, ledgerSteps);
+  const generateProposalsLog = generateProposalsDetected ? extractStepLog(logContent, "generate-proposals") : "";
   const generateProposalsSemanticEmpty =
-    /\bgenerate-proposals.*semantic_empty\b/i.test(logContent) ||
-    (/\bgenerate-proposals\b/i.test(logContent) &&
-      /\binsights?\b/i.test(logContent) &&
-      /\bcreated:\s*0\b/i.test(logContent) &&
-      /\bparse_success=false\b/i.test(logContent));
+    /\bgenerate-proposals.*semantic_empty\b/i.test(generateProposalsLog) ||
+    (/\bgenerate-proposals\b/i.test(generateProposalsLog) &&
+      /\binsights?\b/i.test(generateProposalsLog) &&
+      /\bcreated:\s*0\b/i.test(generateProposalsLog) &&
+      /\bparse_success=false\b/i.test(generateProposalsLog));
   if (generateProposalsDetected && generateProposalsSemanticEmpty) {
     addMaintenanceIssue(
       issues,
@@ -694,7 +699,7 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const extractDailyDetected = isStepInValidationScope("extract-daily", requiredSteps, ledgerSteps);
-  const extractDailyVectorFailures = parsePositiveMetric(logContent, "vector_failures");
+  const extractDailyVectorFailures = parseStepPositiveMetric(logContent, "extract-daily", "vector_failures");
   if (extractDailyDetected && typeof extractDailyVectorFailures === "number" && extractDailyVectorFailures > 0) {
     addMaintenanceIssue(
       issues,
@@ -711,8 +716,9 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const extractProceduresDetected = isStepInValidationScope("extract-procedures", requiredSteps, ledgerSteps);
-  const extractProceduresReadFailures = parsePositiveMetric(logContent, "readFailures");
-  const extractProceduresReadFailureLog = /\bsession read failure\(s\)/i.test(logContent);
+  const extractProceduresLog = extractProceduresDetected ? extractStepLog(logContent, "extract-procedures") : "";
+  const extractProceduresReadFailures = parsePositiveMetric(extractProceduresLog, "readFailures");
+  const extractProceduresReadFailureLog = /\bsession read failure\(s\)/i.test(extractProceduresLog);
   if (
     extractProceduresDetected &&
     ((typeof extractProceduresReadFailures === "number" && extractProceduresReadFailures > 0) ||
@@ -820,8 +826,8 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const consolidateDetected = isStepInValidationScope("consolidate", requiredSteps, ledgerSteps);
-  const consolidateClustersFailed = parsePositiveMetric(logContent, "clustersFailed");
-  const consolidateVectorFailures = parsePositiveMetric(logContent, "vector_failures");
+  const consolidateClustersFailed = parseStepPositiveMetric(logContent, "consolidate", "clustersFailed");
+  const consolidateVectorFailures = parseStepPositiveMetric(logContent, "consolidate", "vector_failures");
   const consolidateSemanticPartial =
     /\bconsolidate\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
     (/\bclustersFailed=\d+/i.test(logContent) && /\bsemantic=partial\b/i.test(logContent));
@@ -894,8 +900,12 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const generateAutoSkillsDetected = isStepInValidationScope("generate-auto-skills", requiredSteps, ledgerSteps);
-  const generateAutoSkillsFailedValidation = parsePositiveMetric(logContent, "failedValidation");
-  const generateAutoSkillsFailedEval = parsePositiveMetric(logContent, "failedEval");
+  const generateAutoSkillsFailedValidation = parseStepPositiveMetric(
+    logContent,
+    "generate-auto-skills",
+    "failedValidation",
+  );
+  const generateAutoSkillsFailedEval = parseStepPositiveMetric(logContent, "generate-auto-skills", "failedEval");
   if (
     generateAutoSkillsDetected &&
     ((typeof generateAutoSkillsFailedValidation === "number" && generateAutoSkillsFailedValidation > 0) ||
@@ -916,10 +926,11 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const scopePromoteDetected = isStepInValidationScope("scope-promote", requiredSteps, ledgerSteps);
-  const scopePromoteFailed = parsePositiveMetric(logContent, "failed");
+  const scopePromoteLog = scopePromoteDetected ? extractStepLog(logContent, "scope-promote") : "";
+  const scopePromoteFailed = parsePositiveMetric(scopePromoteLog, "failed");
   const scopePromotePartial =
-    /\bscope-promote\b[\s\S]{0,120}\bsemantic=partial\b/i.test(logContent) ||
-    (/\bpromoted=\d+/i.test(logContent) && /\bfailed=\d+/i.test(logContent));
+    /\bscope-promote\b[\s\S]{0,120}\bsemantic=partial\b/i.test(scopePromoteLog) ||
+    (/\bpromoted=\d+/i.test(scopePromoteLog) && /\bfailed=\d+/i.test(scopePromoteLog));
   if (
     scopePromoteDetected &&
     ((typeof scopePromoteFailed === "number" && scopePromoteFailed > 0) || scopePromotePartial)
@@ -939,7 +950,7 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const repairVectorsDetected = isStepInValidationScope("repair-vectors", requiredSteps, ledgerSteps);
-  const repairOrphanCleanupFailed = parsePositiveMetric(logContent, "orphan_cleanup_failed");
+  const repairOrphanCleanupFailed = parseStepPositiveMetric(logContent, "repair-vectors", "orphan_cleanup_failed");
   const repairVectorsPartial =
     /\brepair-vectors\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
     (typeof repairOrphanCleanupFailed === "number" && repairOrphanCleanupFailed > 0);
@@ -959,7 +970,7 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const pruneDetected = isStepInValidationScope("prune", requiredSteps, ledgerSteps);
-  const pruneVectorFailures = parsePositiveMetric(logContent, "vector_failures");
+  const pruneVectorFailures = parseStepPositiveMetric(logContent, "prune", "vector_failures");
   if (pruneDetected && typeof pruneVectorFailures === "number" && pruneVectorFailures > 0) {
     addMaintenanceIssue(
       issues,
@@ -995,9 +1006,10 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const reembedVectorlessDetected = isStepInValidationScope("reembed-vectorless", requiredSteps, ledgerSteps);
-  const reembedStoreFailures = parsePositiveMetric(logContent, "storeFailures");
+  const reembedVectorlessLog = reembedVectorlessDetected ? extractStepLog(logContent, "reembed-vectorless") : "";
+  const reembedStoreFailures = parsePositiveMetric(reembedVectorlessLog, "failures");
   const reembedPartial =
-    /\breembed-vectorless\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    /\breembed-vectorless\b[\s\S]{0,160}\bsemantic=partial\b/i.test(reembedVectorlessLog) ||
     (typeof reembedStoreFailures === "number" && reembedStoreFailures > 0);
   if (reembedVectorlessDetected && reembedPartial) {
     addMaintenanceIssue(
@@ -1015,9 +1027,10 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const distillDetected = isStepInValidationScope("distill", requiredSteps, ledgerSteps);
-  const distillBatchFailures = parsePositiveMetric(logContent, "batchFailures");
+  const distillLog = distillDetected ? extractStepLog(logContent, "distill") : "";
+  const distillBatchFailures = parsePositiveMetric(distillLog, "batchFailures");
   const distillSemanticPartial =
-    /\bdistill\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    /\bdistill\b[\s\S]{0,160}\bsemantic=partial\b/i.test(distillLog) ||
     (typeof distillBatchFailures === "number" && distillBatchFailures > 0);
   if (distillDetected && distillSemanticPartial) {
     addMaintenanceIssue(
@@ -1069,7 +1082,7 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const lifecycleSyncDetected = isStepInValidationScope("lifecycle-sync", requiredSteps, ledgerSteps);
-  const lifecycleSyncErrors = parsePositiveMetric(logContent, "sync_errors");
+  const lifecycleSyncErrors = parseStepPositiveMetric(logContent, "lifecycle-sync", "sync_errors");
   if (lifecycleSyncDetected && typeof lifecycleSyncErrors === "number" && lifecycleSyncErrors > 0) {
     addMaintenanceIssue(
       issues,
@@ -1086,7 +1099,7 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const autoClassifyDetected = isStepInValidationScope("auto-classify", requiredSteps, ledgerSteps);
-  const autoClassifyBatchFailures = parsePositiveMetric(logContent, "batchFailures");
+  const autoClassifyBatchFailures = parseStepPositiveMetric(logContent, "auto-classify", "batchFailures");
   if (autoClassifyDetected && typeof autoClassifyBatchFailures === "number" && autoClassifyBatchFailures > 0) {
     addMaintenanceIssue(
       issues,
@@ -1103,7 +1116,7 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const generateProposalsSemanticFail =
-    /\bgenerate-proposals\b[\s\S]{0,120}\bsemantic=(failed|semantic_empty|partial)\b/i.test(logContent);
+    /\bgenerate-proposals\b[\s\S]{0,120}\bsemantic=(failed|semantic_empty|partial)\b/i.test(generateProposalsLog);
   if (generateProposalsDetected && generateProposalsSemanticFail) {
     addMaintenanceIssue(
       issues,
@@ -1405,13 +1418,14 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
-  const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected = isStepInValidationScope("implicit-feedback-collapse", requiredSteps, ledgerSteps);
+  const collapseLog = collapseDetected ? extractStepLog(logContent, "implicit-feedback-collapse") : "";
+  const collapseScanned = parsePositiveMetric(collapseLog, "scanned") ?? parsePositiveMetric(collapseLog, "rows");
+  const collapseCount = parsePositiveMetric(collapseLog, "collapsed") ?? parsePositiveMetric(collapseLog, "changed");
   const collapseInterrupted =
     collapseDetected &&
-    /\bimplicit-feedback-collapse interrupted\b/i.test(logContent) &&
-    /\binterrupted=true\b/i.test(logContent);
+    /\bimplicit-feedback-collapse interrupted\b/i.test(collapseLog) &&
+    /\binterrupted=true\b/i.test(collapseLog);
   if (collapseInterrupted) {
     addMaintenanceIssue(
       issues,

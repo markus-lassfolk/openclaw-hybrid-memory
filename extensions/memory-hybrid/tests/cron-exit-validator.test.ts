@@ -1539,6 +1539,48 @@ error: unknown command 'bar'
         }),
       );
     });
+
+    it("does not attribute auto-classify batchFailures to distill in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "auto-classify reclassified=18/20 batchFailures=3 semantic=partial\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "distill",
+          failureClass: "distill_partial_batch_failures",
+        }),
+      );
+    });
+
+    it("does not attribute distill vector_failures to prune in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "prune.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z prune exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-daily stored=3 vector_failures=2 semantic=partial\nprune pruned=3 vector_failures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "prune",
+          failureClass: "prune_vector_cleanup_partial",
+        }),
+      );
+    });
   });
 
   describe("validateFromSummaryJson", () => {
