@@ -303,6 +303,26 @@ describe("WorkflowStore.summarizeGoalKinds", () => {
     expect(summary.userFacing).toBe(1);
     summaryStore.close();
   });
+
+  it("filters by sinceSec using ISO cutoff (lexicographic compare with created_at)", () => {
+    const summaryStore = new WorkflowStore(join(tmpdir(), `wf-summary-since-${Date.now()}.db`));
+    const morning = summaryStore.record({ goal: "morning task", toolSequence: ["read"], outcome: "success" });
+    const afternoon = summaryStore.record({ goal: "afternoon task", toolSequence: ["read"], outcome: "success" });
+    const db = (summaryStore as any).db as import("node:sqlite").DatabaseSync;
+    db.prepare("UPDATE workflow_traces SET created_at = ? WHERE id = ?").run(
+      "2026-06-05T08:00:00.000Z",
+      morning.id,
+    );
+    db.prepare("UPDATE workflow_traces SET created_at = ? WHERE id = ?").run(
+      "2026-06-05T14:00:00.000Z",
+      afternoon.id,
+    );
+    const sinceSec = Math.floor(Date.parse("2026-06-05T12:00:00.000Z") / 1000);
+    const summary = summaryStore.summarizeGoalKinds({ sinceSec });
+    expect(summary.total).toBe(1);
+    expect(summary.userFacing).toBe(1);
+    summaryStore.close();
+  });
 });
 
 describe("WorkflowStore.purgeSystemGoalTraces", () => {

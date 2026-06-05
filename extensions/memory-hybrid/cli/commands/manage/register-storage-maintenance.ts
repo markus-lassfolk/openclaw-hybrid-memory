@@ -30,6 +30,13 @@ import { embedCallWithTimeoutAndRetry } from "../../../utils/embed-call.js";
 import { getEnv } from "../../../utils/env-manager.js";
 import { nowIso } from "../../../utils/dates.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import {
+  type StorageCommandNames,
+  FLAT_STORAGE_COMMAND_NAMES,
+  GROUPED_STORAGE_COMMAND_NAMES,
+  createCommandGroup,
+  deprecatedAction,
+} from "../../commands/cli-group-utils.js";
 import { approxIntervalMs, type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
@@ -162,7 +169,39 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindings): void {
+export type StorageRegistrationOptions = {
+  names?: StorageCommandNames;
+  flatDeprecatedOn?: Chainable;
+};
+
+export function registerManageStorageMaintenance(
+  mem: Chainable,
+  b: ManageBindings,
+  opts?: StorageRegistrationOptions,
+): void {
+  if (opts?.flatDeprecatedOn) {
+    registerManageStorageMaintenanceOnParent(opts.flatDeprecatedOn, b, FLAT_STORAGE_COMMAND_NAMES, deprecatedAction);
+    return;
+  }
+  const names = opts?.names ?? FLAT_STORAGE_COMMAND_NAMES;
+  registerManageStorageMaintenanceOnParent(mem, b, names);
+}
+
+function registerManageStorageMaintenanceOnParent(
+  mem: Chainable,
+  b: ManageBindings,
+  names: StorageCommandNames,
+  wrapAction?: (oldPath: string, newPath: string, fn: (...args: unknown[]) => void | Promise<void>) => (
+    ...args: unknown[]
+  ) => void | Promise<void>,
+): void {
+  const groupedPath = (sub: string) => `storage ${sub}`;
+  const maybeWrap = (
+    flatPath: string,
+    sub: string,
+    fn: (...args: unknown[]) => void | Promise<void>,
+  ): ((...args: unknown[]) => void | Promise<void>) =>
+    wrapAction ? wrapAction(flatPath, groupedPath(sub), fn) : fn;
   const {
     factsDb,
     vectorDb,
@@ -182,16 +221,18 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
   } = b;
 
   const tierCompactCmd = mem
-    .command("tier-compact")
+    .command(names.compact)
     .description(
       "Tier compaction: move facts between hot/warm/cold/structural (does NOT shrink LanceDB — see vectordb-optimize)",
     )
     .option("--dry-run", "Preview tier changes without mutating facts");
-  // Keep the legacy `compact` name working as a deprecated alias so existing
-  // cron jobs and operator muscle memory don't break (#1249).
-  tierCompactCmd.alias?.("compact");
+  // Legacy `compact` alias only applies to the flat tier-compact command name.
+  if (names.compact === "tier-compact") {
+    tierCompactCmd.alias?.("compact");
+  }
   tierCompactCmd.action(
-    withExit(async (opts?: { dryRun?: boolean }) => {
+    withExit(
+      maybeWrap("tier-compact", names.compact, async (opts?: { dryRun?: boolean }) => {
       let counts;
       try {
         counts = await runCompaction({ apply: opts?.dryRun !== true });
@@ -211,33 +252,37 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
       console.log(
         `Tier compaction (${mode}): hot=${counts.hot} warm=${counts.warm} cold=${counts.cold} structural=${counts.structural}${changed}`,
       );
-    }),
+      }),
+    ),
   );
 
   mem
-    .command("retier")
+    .command(names.retier)
     .description("Preview or apply memory tier migration using current tiering rules")
     .option("--apply", "Apply mutations. Omit for dry-run")
     .action(
-      withExit(async (opts?: { apply?: boolean }) => {
+      withExit(
+        maybeWrap("retier", names.retier, async (opts?: { apply?: boolean }) => {
         const report = await runCompaction({ apply: opts?.apply === true });
         const mode = opts?.apply ? "apply" : "dry-run";
         console.log(
           `Retier (${mode}): examined=${report.examined ?? "?"} changed=${report.changed ?? "?"} hot=${report.hot} warm=${report.warm} cold=${report.cold} structural=${report.structural}`,
         );
         if (!opts?.apply) console.log("Dry-run only. Re-run with --apply to mutate fact tiers.");
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("vectordb-optimize")
+    .command(names.optimize)
     .description(
       "Compact LanceDB fragments and prune old versions (stats.freedBytes may be 0 while layout still improves). " +
         "Disk size in `stats` is the whole Lance directory — remove stray `memories_reindex_*` / `memories_old_*` folders after a failed re-index swap if present.",
     )
     .option("--older-than-days <days>", "Remove versions older than this many days (default: 7)", "7")
     .action(
-      withExit(async (opts?: { olderThanDays?: string }) => {
+      withExit(
+        maybeWrap("vectordb-optimize", names.optimize, async (opts?: { olderThanDays?: string }) => {
         const parsedDays = Number.parseInt(opts?.olderThanDays ?? "7", 10);
         if (!Number.isFinite(parsedDays) || parsedDays < 0) {
           console.error("error: --older-than-days must be a finite number ≥ 0");
@@ -261,17 +306,19 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           });
           throw err;
         }
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("vectordb-health")
+    .command(names.health)
     .description(
       "Low-cost LanceDB/Arrow/native memory health snapshot (RSS/native estimate, FD groups, cache/search bounds, table rows/sizes)",
     )
     .option("--json", "Emit JSON")
     .action(
-      withExit(async (opts?: { json?: boolean }) => {
+      withExit(
+        maybeWrap("vectordb-health", names.health, async (opts?: { json?: boolean }) => {
         let lanceBytes: number | null = null;
         try {
           const sizes = await Promise.resolve(ctx.richStatsExtras?.getStorageSizes());
@@ -290,11 +337,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         }
         console.log("=== Vector Backend Health ===");
         printVectorBackendObservabilitySummary(observability);
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("record-storage-sample")
+    .command(names.recordSample)
     .description(
       "Record one storage_growth_history row per UTC day (SQLite + Lance sizes). Use with daily cron so audit-health can compute 7d deltas.",
     )
@@ -302,7 +350,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--dry-run", "Compute and print the sample payload without writing a row")
     .option("--json", "Emit parseable JSON")
     .action(
-      withExit(async (opts?: { force?: boolean; dryRun?: boolean; json?: boolean }) => {
+      withExit(
+        maybeWrap("record-storage-sample", names.recordSample, async (opts?: { force?: boolean; dryRun?: boolean; json?: boolean }) => {
         let lanceBytes: number | null = null;
         try {
           const sizes = await Promise.resolve(ctx.richStatsExtras?.getStorageSizes());
@@ -368,11 +417,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             ? `record-storage-sample: skipped (storage database unavailable; unix=${r.recordedAt}) status=skipped_storage_unavailable`
             : `record-storage-sample: skipped (already sampled today UTC; unix=${r.recordedAt}) status=skipped_already_sampled_today`,
         );
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("stats")
+    .command(names.stats)
     .description(
       "Show memory statistics. Rich output includes procedures, rules, patterns, directives, graph, and operational info. Use --efficiency for tiers, sources, and token estimates.",
     )
@@ -382,7 +432,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     )
     .option("--brief", "Show only storage and decay counts (legacy-style)")
     .action(
-      withExit(async (opts?: { efficiency?: boolean; brief?: boolean }) => {
+      withExit(
+        maybeWrap("stats", names.stats, async (opts?: { efficiency?: boolean; brief?: boolean }) => {
         const efficiency = opts?.efficiency ?? false;
         const brief = opts?.brief ?? false;
         const sqlCount = factsDb.count();
@@ -475,7 +526,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
           if (lanceDeltaSignificant || canonicalDeltaSignificant) {
             console.log(
-              `  Health: SQLite facts ${sqlCount} vs LanceDB vectors ${lanceCount} (Δ=${lanceDelta}); total facts ${totalFacts} vs canonical embedding rows ${canonicalEmbeddings} (Δ=${canonicalDelta}). Run 'openclaw hybrid-mem re-index' if you switched embedding model or after a large backfill.`,
+              `  Health: SQLite facts ${sqlCount} vs LanceDB vectors ${lanceCount} (Δ=${lanceDelta}); total facts ${totalFacts} vs canonical embedding rows ${canonicalEmbeddings} (Δ=${canonicalDelta}). Run 'openclaw hybrid-mem storage re-index' if you switched embedding model or after a large backfill.`,
             );
           }
           console.log("");
@@ -504,7 +555,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           }
           if (unresolvedContradictions > 0) {
             console.log(
-              `Contradictions (unresolved): ${unresolvedContradictions} — run 'openclaw hybrid-mem resolve-contradictions'`,
+              `Contradictions (unresolved): ${unresolvedContradictions} — run 'openclaw hybrid-mem quality contradictions'`,
             );
           } else {
             console.log("Contradictions (unresolved): 0");
@@ -702,11 +753,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             }
           }
         }
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("reembed-vectorless")
+    .command(names.reembed)
     .description("Embed active non-kv facts that lack canonical embeddings (dry-run by default)")
     .option("--limit <n>", "Maximum vectorless facts to process", "100")
     .option("--source <s>", "Only process facts from this source")
@@ -726,7 +778,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--json", "Emit JSON")
     .action(
       withExit(
-        async (
+        maybeWrap("reembed-vectorless", names.reembed, async (
           opts?: {
             limit?: string;
             source?: string;
@@ -1120,16 +1172,17 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               `Partial success: ${storeFailures} write failure(s) occurred during vector re-embedding; retryable LanceDB conflicts were retried where applicable (exit=2).`,
             );
           }
-        },
+        }),
       ),
     );
 
   mem
-    .command("prune")
+    .command(names.prune)
     .description("Remove expired facts (decayed past threshold)")
     .option("-v, --verbose", "List fact ids that will be removed before pruning")
     .action(
-      withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      withExit(
+        maybeWrap("prune", names.prune, async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         await requireWalFlushBeforeMutation("cli_prune_expired");
         const before = factsDb.count();
@@ -1154,21 +1207,24 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
         console.log(
           `Pruned ${pruned} expired facts. Before: ${before}, After: ${after}. Vector cleanup: ${vectorCleanup.deleted}/${vectorCleanup.attempted} deleted${vectorCleanup.failed > 0 ? ` (${vectorCleanup.failed} failed)` : ""}.`,
         );
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("checkpoint")
+    .command(names.checkpoint)
     .description("Checkpoint vector DB to disk (LanceDB optimization)")
     .action(
-      withExit(async () => {
+      withExit(
+        maybeWrap("checkpoint", names.checkpoint, async () => {
         await vectorDb.checkpoint?.();
         console.log("Vector DB checkpoint complete.");
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("re-index")
+    .command(names.reIndex)
     .description(
       "Re-embed all facts into a shadow table, validate, and atomically swap into place. Non-destructive: aborted runs preserve the live vector store (use after switching embedding model, e.g. to a larger one).",
     )
@@ -1187,7 +1243,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--checkpoint-file <path>", "Checkpoint file path for resumable re-index")
     .action(
       withExit(
-        async (opts?: {
+        maybeWrap("re-index", names.reIndex, async (opts?: {
           batchSize?: string;
           delayMsBetweenBatches?: string;
           minFractionSuccess?: string;
@@ -1314,7 +1370,7 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
               console.error(`Reason: ${result.abortReason ?? "unknown"}`);
               console.error("Live vector store was NOT modified.");
               console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
-              console.error("Recommendation: Re-run 'openclaw hybrid-mem re-index --resume' to continue.");
+              console.error("Recommendation: Re-run 'openclaw hybrid-mem storage re-index --resume' to continue.");
               process.exit(1);
             }
 
@@ -1399,12 +1455,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           } else {
             await runReindex();
           }
-        },
+        }),
       ),
     );
 
   mem
-    .command("repair-vectors")
+    .command(names.repair)
     .description(
       "Run an orchestrated vector lifecycle repair pipeline: reembed-vectorless, vectordb-optimize, reconcile orphans, and print a single report.",
     )
@@ -1416,7 +1472,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--max-fixes <n>", "Max SQLite-orphan vectors to auto-rebuild (default: 200)", "200")
     .option("--json", "Emit JSON report")
     .action(
-      withExit(async (opts?: { reconcilePolicy?: string; maxFixes?: string; json?: boolean }) => {
+      withExit(
+        maybeWrap("repair-vectors", names.repair, async (opts?: { reconcilePolicy?: string; maxFixes?: string; json?: boolean }) => {
         const resolveRepairBudget = (policy: "conservative" | "balanced" | "aggressive", maxFixes: number): number => {
           if (policy === "conservative") return 0;
           if (policy === "balanced") return maxFixes;
@@ -1537,11 +1594,12 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
           for (const err of report.errors.slice(0, 10)) console.log(`    - ${err}`);
           process.exitCode = 2;
         }
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("classification-artifacts")
+    .command(names.artifacts)
     .description(
       "Supersede existing NOOP/classification-artifact facts and remove their LanceDB vectors (issue #1561). " +
         "Dry-run by default; use --apply to mutate.",
@@ -1549,7 +1607,8 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
     .option("--apply", "Actually supersede facts and delete vectors. Omit for dry-run.")
     .option("--json", "Emit JSON report")
     .action(
-      withExit(async (opts?: { apply?: boolean; json?: boolean }) => {
+      withExit(
+        maybeWrap("classification-artifacts", names.artifacts, async (opts?: { apply?: boolean; json?: boolean }) => {
         const apply = opts?.apply === true;
         const supersededIds: string[] = [];
         const verifiedSkippedIds: string[] = [];
@@ -1672,6 +1731,14 @@ export function registerManageStorageMaintenance(mem: Chainable, b: ManageBindin
             process.exitCode = 2;
           }
         }
-      }),
+        }),
+      ),
     );
+}
+
+/** Register grouped `storage` commands plus deprecated flat aliases. */
+export function registerStorageGroup(mem: Chainable, b: ManageBindings): void {
+  const group = createCommandGroup(mem, "storage", "Vector and SQLite storage management");
+  registerManageStorageMaintenance(group, b, { names: GROUPED_STORAGE_COMMAND_NAMES });
+  registerManageStorageMaintenance(mem, b, { flatDeprecatedOn: mem });
 }

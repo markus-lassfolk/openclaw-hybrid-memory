@@ -334,4 +334,8 @@ export type ManageContext = {
   pruneCostLog?: (retainDays?: number) => number;
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  proposalsDb?: import("../backends/proposals-db.js").ProposalsDB | null;
+  runPassiveObserverOnce?: () => Promise<string>;
+  runActiveTasksMaintain?: () => Promise<string>;
+  eventBus?: import("../backends/event-bus.js").EventBus | null;
 };

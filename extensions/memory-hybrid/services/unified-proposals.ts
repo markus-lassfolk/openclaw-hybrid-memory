@@ -6,6 +6,7 @@ import type { CrystallizationProposal, CrystallizationStore } from "../backends/
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposal, ToolProposalStore } from "../backends/tool-proposal-store.js";
+import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { ProcedureEntry } from "../types/memory.js";
 import { parseTimestamp } from "../utils/dates.js";
@@ -71,7 +72,22 @@ export type UnifiedProposalStores = {
   cfg: HybridMemoryConfig;
   /** When set, persona undoSupported requires rollback metadata on disk. */
   resolvedSqlitePath?: string;
+  /** When absent, crystallization/tool approve is disabled in list actions. */
+  workflowStore?: WorkflowStore | null;
 };
+
+function applyWorkshopCapabilityGates(proposal: UnifiedProposal, stores: UnifiedProposalStores): UnifiedProposal {
+  if ((proposal.type === "crystallization" || proposal.type === "tool") && !stores.workflowStore) {
+    return {
+      ...proposal,
+      actions: {
+        ...proposal.actions,
+        approveSupported: false,
+      },
+    };
+  }
+  return proposal;
+}
 
 export function makeUnifiedKey(type: UnifiedProposalType, storeId: string): string {
   return `${type}:${storeId}`;
@@ -245,7 +261,7 @@ export function mergeWorkshopListItems(
 }
 
 export function countPendingUnifiedProposals(stores: UnifiedProposalStores): number {
-  return listUnifiedProposals(stores, { status: "pending" }).length;
+  return listUnifiedProposals(stores, { status: "pending" }).filter((p) => p.type !== "procedure-skill").length;
 }
 
 export function enforceMaxPendingCap(
@@ -273,7 +289,7 @@ export function listUnifiedProposals(
     for (const p of stores.proposalsDb.list({ status: filterStatus === "pending" ? "pending" : undefined })) {
       const proposal = buildPersonaUnifiedProposal(p, stores.resolvedSqlitePath);
       if (filterStatus && proposal.status !== filterStatus) continue;
-      out.push(proposal);
+      out.push(applyWorkshopCapabilityGates(proposal, stores));
     }
   }
 
@@ -286,7 +302,7 @@ export function listUnifiedProposals(
     for (const p of crystalList) {
       const proposal = buildCrystallizationUnifiedProposal(p);
       if (filterStatus && proposal.status !== filterStatus) continue;
-      out.push(proposal);
+      out.push(applyWorkshopCapabilityGates(proposal, stores));
     }
   }
 
@@ -295,7 +311,7 @@ export function listUnifiedProposals(
     for (const p of stores.toolProposalStore.list({ status: toolStatus, limit: 200 })) {
       const proposal = buildToolUnifiedProposal(p);
       if (filterStatus && proposal.status !== filterStatus) continue;
-      out.push(proposal);
+      out.push(applyWorkshopCapabilityGates(proposal, stores));
     }
   }
 

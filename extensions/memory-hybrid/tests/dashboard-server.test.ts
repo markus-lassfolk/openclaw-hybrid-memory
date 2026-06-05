@@ -1059,6 +1059,93 @@ describeCreateDashboardServer("Workshop API", () => {
     });
   });
 
+  it("POST /api/workshop/changes/revert reverts by change event id", async () => {
+    await withWorkshopServer(
+      async (ctx, port) => {
+        const { makeUnifiedKey } = await import("../services/unified-proposals.js");
+        const proposal = ctx.proposalsDb.create({
+          targetFile: "SOUL.md",
+          title: "Revert via id",
+          observation: "obs",
+          suggestedChange: "Add guidance.",
+          confidence: 0.9,
+          evidenceSessions: [],
+        });
+        const key = makeUnifiedKey("persona", proposal.id);
+        const event = ctx.changeFeed!.append({
+          sessionKey: "mission-control",
+          timestamp: Date.now(),
+          tier: "persistent",
+          category: "persona",
+          action: "proposed",
+          title: "Persona proposal pending",
+          detail: "Awaiting review",
+          proposalKey: key,
+          rollbackAvailable: false,
+          activation: "next-reload",
+        });
+        const { status, body } = await httpPost(
+          port,
+          "/api/workshop/changes/revert",
+          JSON.stringify({ id: event.id }),
+        );
+        expect(status).toBe(200);
+        expect(JSON.parse(body).ok).toBe(true);
+        expect(ctx.proposalsDb.get(proposal.id)?.status).toBe("rejected");
+        expect(ctx.changeFeed!.getById(event.id)?.status).toBe("reverted");
+      },
+      { withChangeFeed: true },
+    );
+  });
+
+  it("returns 503 when workshop is explicitly disabled", async () => {
+    const td = mkdtempSync(join(tmpdir(), "workshop-disabled-"));
+    const ctx = makeContext(td) as ReturnType<typeof makeContext> & {
+      hybridCfg: import("../config.js").HybridMemoryConfig;
+    };
+    ctx.hybridCfg = {
+      workshop: { enabled: false },
+      procedures: { enabled: false },
+      personaProposals: { enabled: false },
+      crystallization: { enabled: false },
+      selfExtension: { enabled: false },
+    } as import("../config.js").HybridMemoryConfig;
+    const srv = await createDashboardServer(ctx, 0);
+    try {
+      const { status, body } = await httpGet(srv.port, "/api/workshop/proposals");
+      expect(status).toBe(503);
+      expect(JSON.parse(body).error).toBe("workshop_unavailable");
+    } finally {
+      ctx.factsDb.close();
+      ctx.vectorDb.close();
+      srv.close();
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
+  it("allows workshop API when only procedures promotion is enabled", async () => {
+    const td = mkdtempSync(join(tmpdir(), "workshop-procedures-"));
+    const ctx = makeContext(td) as ReturnType<typeof makeContext> & {
+      hybridCfg: import("../config.js").HybridMemoryConfig;
+    };
+    ctx.hybridCfg = {
+      procedures: { enabled: true },
+      personaProposals: { enabled: false },
+      crystallization: { enabled: false },
+      selfExtension: { enabled: false },
+    } as import("../config.js").HybridMemoryConfig;
+    const srv = await createDashboardServer(ctx, 0);
+    try {
+      const { status } = await httpGet(srv.port, "/api/workshop/proposals");
+      expect(status).toBe(200);
+    } finally {
+      ctx.factsDb.close();
+      ctx.vectorDb.close();
+      srv.close();
+      rmSync(td, { recursive: true, force: true });
+    }
+  });
+
   it("returns 503 when workshop context is unavailable", async () => {
     const td = mkdtempSync(join(tmpdir(), "workshop-503-"));
     const ctx = makeContext(td);

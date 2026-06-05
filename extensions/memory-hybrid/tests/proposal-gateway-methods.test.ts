@@ -106,7 +106,7 @@ describe("registerProposalGatewayMethods", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("registers core hybrid-mem.proposals.* methods when health.enabled", () => {
+  it("registers core hybrid-mem.proposals.* methods when workshop is enabled", () => {
     expect(methods.map((m) => m.method)).toEqual(
       expect.arrayContaining([
         "hybrid-mem.proposals.list",
@@ -115,6 +115,28 @@ describe("registerProposalGatewayMethods", () => {
         "hybrid-mem.proposals.inspect",
       ]),
     );
+  });
+
+  it("registers gateway methods even when health.enabled is false", () => {
+    const localMethods: RegisteredMethod[] = [];
+    const api = {
+      registerGatewayMethod: (method: string, handler: RegisteredMethod["handler"]) => {
+        localMethods.push({ method, handler });
+      },
+      logger: { info: () => {}, warn: () => {}, debug: () => {} },
+    } as unknown as ClawdbotPluginApi;
+    registerProposalGatewayMethods({
+      cfg: { ...cfg, health: { enabled: false, authenticated: true } },
+      factsDb,
+      proposalsDb,
+      crystallizationStore: null,
+      toolProposalStore: null,
+      workflowStore: null,
+      resolvedSqlitePath: join(tmpDir, "facts.db"),
+      changeFeed: null,
+      api,
+    });
+    expect(localMethods.map((m) => m.method)).toContain("hybrid-mem.proposals.list");
   });
 
   it("hybrid-mem.proposals.reject rejects a pending persona proposal", async () => {
@@ -161,8 +183,9 @@ describe("registerProposalGatewayMethods", () => {
 
     const result = await callMethod(methods, "hybrid-mem.proposals.list", { limit: 10 });
     expect(result.ok).toBe(true);
-    const proposals = (result.payload as { proposals: unknown[] }).proposals;
-    expect(proposals.length).toBeGreaterThan(0);
+    const payload = result.payload as { proposals: unknown[]; pendingCount: number };
+    expect(payload.proposals.length).toBeGreaterThan(0);
+    expect(payload.pendingCount).toBeGreaterThan(0);
   });
 
   it("hybrid-mem.proposals.approve applies a pending persona proposal", async () => {

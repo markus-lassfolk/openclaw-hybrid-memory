@@ -4,6 +4,7 @@ import {
   DEFAULT_WORKSHOP_MAX_PENDING,
   enforceMaxPendingCap,
   inspectUnifiedProposal,
+  listUnifiedProposals,
   listUndoablePersonaProposals,
   makeUnifiedKey,
   mergeWorkshopListItems,
@@ -158,5 +159,53 @@ describe("unified-proposals", () => {
     ];
     const merged = mergeWorkshopListItems(pending, undoable, 10);
     expect(merged.map((p) => p.unifiedKey)).toEqual(["persona:p2", "persona:p1"]);
+  });
+
+  it("disables crystallization approve when workflowStore is unavailable", () => {
+    const stores = {
+      proposalsDb: null,
+      crystallizationStore: {
+        list: () => [
+          {
+            id: "c1",
+            skillName: "test-skill",
+            status: "drafted",
+            confidence: 0.7,
+            createdAt: "2026-01-01T00:00:00Z",
+            skillContent: "# Skill",
+          },
+        ],
+      },
+      toolProposalStore: null,
+      factsDb: { getProceduresReadyForSkill: () => [] },
+      cfg: { personaProposals: { enabled: false }, procedures: { enabled: false } },
+      workflowStore: null,
+    } as never;
+    const items = listUnifiedProposals(stores, { status: "pending" });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.actions.approveSupported).toBe(false);
+    expect(items[0]?.actions.rejectSupported).toBe(true);
+  });
+
+  it("enforceMaxPendingCap excludes virtual procedure-skill queue from cap", () => {
+    const stores = {
+      proposalsDb: {
+        list: (filters?: { status?: string }) =>
+          filters?.status === "pending"
+            ? [{ id: "p1", title: "x", status: "pending", confidence: 0.5, createdAt: 1, targetFile: "SOUL.md", observation: "", suggestedChange: "" }]
+            : [],
+      },
+      crystallizationStore: null,
+      toolProposalStore: null,
+      factsDb: {
+        getProceduresReadyForSkill: () => [
+          { id: "proc1", taskPattern: "Ready proc", successCount: 5, promotedToSkill: 0 },
+        ],
+      },
+      cfg: { personaProposals: { enabled: true }, procedures: { enabled: true, validationThreshold: 3 } },
+    } as never;
+    const blocked = enforceMaxPendingCap(stores, 1);
+    expect(blocked.ok).toBe(false);
+    if (!blocked.ok) expect(blocked.pending).toBe(1);
   });
 });

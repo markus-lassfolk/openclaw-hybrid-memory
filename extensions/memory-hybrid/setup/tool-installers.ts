@@ -234,25 +234,7 @@ function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginAp
     { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore },
     api,
   );
-  timers.proposalsPruneTimer.value = setInterval(
-    () => {
-      try {
-        if (proposalsDb?.isOpen()) {
-          const pruned = proposalsDb.pruneExpired();
-          if (pruned > 0) {
-            api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
-          }
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "proposals",
-          operation: "periodic-prune",
-        });
-        api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
-      }
-    },
-    24 * 60 * 60_000,
-  );
+  timers.proposalsPruneTimer.value = null; // proposals-prune handled by maintenance orchestrator cycle tick
 }
 
 function selectDocumentToolsContext({

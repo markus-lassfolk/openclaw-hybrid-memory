@@ -101,6 +101,15 @@ interface MaintenanceInventoryOptions {
  */
 const MAINTENANCE_JOB_CATALOG: MaintenanceJobCatalogEntry[] = [
   {
+    jobKey: "maintenance-nightly",
+    name: "maintenance-nightly",
+    pluginJobId: "hybrid-mem:maintenance-nightly",
+    aliases: [],
+    lockKey: "sqlite+lancedb",
+    collisionGroups: ["sqlite-writer", "lancedb-writer", "memory-facts-writer"],
+    mutates: { sqlite: true, lancedb: true, github: false, memoryFacts: true },
+  },
+  {
     jobKey: "nightly-memory-sweep",
     name: "nightly-memory-sweep",
     pluginJobId: "hybrid-mem:nightly-distill",

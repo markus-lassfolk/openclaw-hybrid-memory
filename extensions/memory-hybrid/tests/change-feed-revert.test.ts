@@ -264,6 +264,33 @@ describe("change-feed revert", () => {
     expect(ctx.changeFeed.getById(proposedEvent.id)?.status).toBe("reverted");
   });
 
+  it("reverts a pending proposed procedure-skill by dismissing via workshopReject", () => {
+    const proc = ctx.factsDb.upsertProcedure({
+      taskPattern: "Pending procedure skill",
+      recipeJson: "[]",
+      procedureType: "positive",
+      successCount: 5,
+    });
+    const key = makeUnifiedKey("procedure-skill", proc.id);
+    const proposedEvent = ctx.changeFeed.append({
+      sessionKey: "default",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "procedure-skill",
+      action: "proposed",
+      title: "Procedure skill ready",
+      detail: "Awaiting review",
+      proposalKey: key,
+      rollbackAvailable: true,
+      activation: "next-turn",
+    });
+
+    const result = revertChangeById(buildRevertCtx(ctx), proposedEvent.id);
+    expect(result.ok).toBe(true);
+    expect(ctx.factsDb.getProcedureById(proc.id)?.skillState).toBe("rejected");
+    expect(ctx.changeFeed.getById(proposedEvent.id)?.status).toBe("reverted");
+  });
+
   it("reverts a pending skill-workshop proposal without workshop store", () => {
     const proposedEvent = ctx.changeFeed.append({
       sessionKey: "default",
@@ -347,6 +374,37 @@ describe("change-feed revert", () => {
     expect(updated?.promotedToSkill).toBe(0);
     expect(updated?.skillState).toBe("uninstalled");
     expect(existsSync(skillAbsPath)).toBe(false);
+    expect(ctx.changeFeed.getById(appliedEvent.id)?.status).toBe("reverted");
+  });
+
+  it("reverts an implemented tool proposal via workshopWithdrawTool", () => {
+    const tool = ctx.toolProposalStore.create({
+      name: "memory_lookup",
+      description: "Lookup helper",
+      parameters: "{}",
+      rationale: "Gap detected",
+      sourcePatterns: "[]",
+      implementationHint: "Add tool",
+    });
+    ctx.toolProposalStore.updateStatus(tool.id, "approved", "proposed");
+    ctx.toolProposalStore.updateStatus(tool.id, "implemented", "approved");
+    const key = makeUnifiedKey("tool", tool.id);
+    const appliedEvent = ctx.changeFeed.append({
+      sessionKey: "default",
+      timestamp: Date.now(),
+      tier: "persistent",
+      category: "tool",
+      action: "applied",
+      title: "Tool proposal implemented",
+      detail: "Implemented",
+      proposalKey: key,
+      rollbackAvailable: true,
+      activation: "next-turn",
+    });
+
+    const result = revertChangeById(buildRevertCtx(ctx), appliedEvent.id);
+    expect(result.ok).toBe(true);
+    expect(ctx.toolProposalStore.getById(tool.id)?.status).toBe("rejected");
     expect(ctx.changeFeed.getById(appliedEvent.id)?.status).toBe("reverted");
   });
 });

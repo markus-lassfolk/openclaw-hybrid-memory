@@ -10,7 +10,7 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { isWorkshopEnabled } from "../services/workshop-config.js";
+import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled, resolveWorkshopRevertSessionKey } from "../services/workshop-config.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { revertChangeById, revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
@@ -94,7 +94,6 @@ function parseBody(req: { method: string; url: string; headers: Record<string, s
 
 export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
   if (!isWorkshopEnabled(ctx.cfgFull)) return;
-  if (!ctx.cfg.health.enabled) return;
   if (typeof ctx.api.registerHttpRoute !== "function") return;
 
   const routeOpts: HttpRouteOptions = { authenticated: ctx.cfg.health.authenticated };
@@ -104,7 +103,7 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
 
   register(
     `${PROPOSAL_API_PREFIX}/list`,
-    async (req) => json(200, { proposals: workshopList(wctx(), { status: "pending", limit: 50, includeUndoable: true }) }),
+    async (req) => json(200, { proposals: workshopList(wctx(), { status: "pending", limit: DEFAULT_WORKSHOP_LIST_LIMIT, includeUndoable: true }) }),
     routeOpts,
   );
 
@@ -211,13 +210,13 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
         const sinceOrdinalRaw = u.searchParams.get("sinceOrdinal");
         const sinceOrdinal = sinceOrdinalRaw ? Number(sinceOrdinalRaw) : undefined;
         const limitRaw = u.searchParams.get("limit");
-        const limit = limitRaw ? Number(limitRaw) : 50;
+        const limit = limitRaw ? Number(limitRaw) : DEFAULT_WORKSHOP_LIST_LIMIT;
         return json(200, {
           changes: feed.listRecent({
             sessionKey: sessionKey.trim(),
             since: Number.isFinite(since) ? since : undefined,
             sinceOrdinal: Number.isFinite(sinceOrdinal) ? sinceOrdinal : undefined,
-            limit: Number.isFinite(limit) ? limit : 50,
+            limit: Number.isFinite(limit) ? limit : DEFAULT_WORKSHOP_LIST_LIMIT,
           }),
         });
       },
@@ -228,7 +227,14 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
       `${CHANGE_FEED_API_PREFIX}/revert`,
       async (req) => {
         const body = parseBody(req);
-        const sessionKey = String(body.session ?? body.sessionKey ?? "default");
+        const chatSessionKey =
+          (ctx.api.context?.sessionKey as string | undefined) ??
+          (ctx.api.context?.sessionId as string | undefined);
+        const sessionKey = resolveWorkshopRevertSessionKey(
+          ctx.cfgFull,
+          typeof body.session === "string" ? body.session : typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+          chatSessionKey,
+        );
         const revertCtx = buildChangeRevertContext({
           changeFeed: feed,
           cfg: ctx.cfgFull,

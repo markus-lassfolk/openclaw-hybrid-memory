@@ -2,9 +2,15 @@
  * CLI commands for distillation and extraction (distill, extract-*, generate-auto-skills, record-distill).
  */
 
+import {
+  type DistillCommandNames,
+  FLAT_DISTILL_COMMAND_NAMES,
+  GROUPED_DISTILL_COMMAND_NAMES,
+  deprecatedAction,
+} from "./commands/cli-group-utils.js";
 import { type CommanderOptsParent, resolveHybridMemVerbose } from "./global-verbose.js";
 import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "./maintenance-overrides.js";
-import { type Chainable, withExit } from "./shared.js";
+import { createCommandGroup, type Chainable, withExit } from "./shared.js";
 import type { ReinforcementExtractResult } from "../services/reinforcement-extract.js";
 import type {
   DistillCliResult,
@@ -98,7 +104,36 @@ export type DistillContext = {
   runGenerateProposals?: (opts: { dryRun: boolean; verbose?: boolean }) => Promise<{ created: number }>;
 };
 
-export function registerDistillCommands(mem: Chainable, ctx: DistillContext): void {
+export type DistillRegistrationOptions = {
+  names?: DistillCommandNames;
+  /** Register deprecated flat aliases on this parent (typically the hybrid-mem root). */
+  flatDeprecatedOn?: Chainable;
+};
+
+export function registerDistillCommands(
+  mem: Chainable,
+  ctx: DistillContext,
+  opts?: DistillRegistrationOptions,
+): void {
+  if (opts?.flatDeprecatedOn) {
+    registerDistillCommandsOnParent(opts.flatDeprecatedOn, ctx, FLAT_DISTILL_COMMAND_NAMES, deprecatedAction, {
+      skipDistillMain: true,
+    });
+    return;
+  }
+  const names = opts?.names ?? FLAT_DISTILL_COMMAND_NAMES;
+  registerDistillCommandsOnParent(mem, ctx, names);
+}
+
+function registerDistillCommandsOnParent(
+  mem: Chainable,
+  ctx: DistillContext,
+  names: DistillCommandNames,
+  wrapAction?: (oldPath: string, newPath: string, fn: (...args: unknown[]) => void | Promise<void>) => (
+    ...args: unknown[]
+  ) => void | Promise<void>,
+  opts?: { skipDistillMain?: boolean },
+): void {
   const {
     runDistillWindow,
     runRecordDistill,
@@ -111,11 +146,23 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
     runGenerateProposals,
   } = ctx;
 
+  const isDefaultRun = names.distill === "run";
+  const groupedPath = (sub: string) => `distill ${sub}`;
+  const maybeWrap = (
+    flatPath: string,
+    sub: string,
+    fn: (...args: unknown[]) => void | Promise<void>,
+  ): ((...args: unknown[]) => void | Promise<void>) =>
+    wrapAction ? wrapAction(flatPath, groupedPath(sub), fn) : fn;
+
+  if (!opts?.skipDistillMain) {
   registerScanMaintenanceOverrideOptions(
     mem
-      .command("distill")
+      .command(names.distill, isDefaultRun ? ({ isDefault: true } as never) : undefined)
       .description(
-        "Index session JSONL into memory (extract facts via LLM, dedup, store). Use distill-window for date range info.",
+        isDefaultRun
+          ? "Extract facts from session JSONL via LLM (dedup, store). Use 'distill window' for date range info."
+          : "Index session JSONL into memory (extract facts via LLM, dedup, store). Use distill-window for date range info.",
       )
       .option("--dry-run", "Show what would be processed without storing")
       .option("--all", "Process all sessions (last 90 days)")
@@ -134,7 +181,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       ),
   ).action(
     withExit(
-      async (
+      maybeWrap("distill", names.distill, async (
         opts: {
           dryRun?: boolean;
           all?: boolean;
@@ -183,18 +230,20 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         } else if (result.partialFailure) {
           process.exitCode = 2;
         }
-      },
+      }),
     ),
   );
+  }
 
   mem
-    .command("distill-window")
+    .command(names.distillWindow)
     .description(
       "Print the session distillation window (full or incremental). Use at start of a distillation job to decide what to process.",
     )
     .option("--json", "Output machine-readable JSON only (mode, startDate, endDate, mtimeDays)")
     .action(
-      withExit(async (opts: { json?: boolean }) => {
+      withExit(
+        maybeWrap("distill-window", names.distillWindow, async (opts: { json?: boolean }) => {
         const result = await runDistillWindow({ json: !!opts.json });
         if (opts.json) {
           console.log(JSON.stringify(result));
@@ -205,32 +254,35 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
         console.log(`  endDate: ${result.endDate}`);
         console.log(`  mtimeDays: ${result.mtimeDays} (use find ... -mtime -${result.mtimeDays} for session files)`);
         console.log("Process sessions from that window; distill will record the run automatically.");
-      }),
+        }),
+      ),
     );
 
   mem
-    .command("record-distill")
+    .command(names.recordDistill)
     .description(
       "Record that session distillation was run (writes timestamp to .distill_last_run for 'verify' to show)",
     )
     .action(
-      withExit(async () => {
+      withExit(
+        maybeWrap("record-distill", names.recordDistill, async () => {
         const result = await runRecordDistill();
         console.log(`Recorded distillation run: ${result.timestamp}`);
         console.log(`Written to ${result.path}. Run 'openclaw hybrid-mem verify' to see it.`);
-      }),
+        }),
+      ),
     );
 
   registerScanMaintenanceOverrideOptions(
     mem
-      .command("extract-daily")
+      .command(names.extractDaily)
       .description("Extract structured facts from daily memory files")
       .option("--days <n>", "How many days back to scan", "7")
       .option("--dry-run", "Show extractions without storing")
       .option("-v, --verbose", "Log each extracted fact as it is stored"),
   ).action(
     withExit(
-      async (
+      maybeWrap("extract-daily", names.extractDaily, async (
         opts: { days: string; dryRun?: boolean; verbose?: boolean; force?: boolean; full?: boolean },
         cmd?: CommanderOptsParent,
       ) => {
@@ -253,13 +305,13 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             } duplicates skipped)`,
           );
         }
-      },
+        }),
     ),
   );
 
   registerScanMaintenanceOverrideOptions(
     mem
-      .command("extract-procedures")
+      .command(names.extractProcedures)
       .description("Procedural memory: extract tool-call sequences from session JSONL and store as procedures")
       .option("--dir <path>", "Session directory (default: config procedures.sessionsDir)")
       .option("--days <n>", "Only sessions modified in last N days (default: all in dir)", "")
@@ -267,7 +319,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
       .option("-v, --verbose", "Log why each session was skipped (no_task_intent, fewer_than_2_steps)"),
   ).action(
     withExit(
-      async (
+      maybeWrap("extract-procedures", names.extractProcedures, async (
         opts: {
           dir?: string;
           days?: string;
@@ -295,7 +347,7 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
           );
         }
-      },
+        }),
     ),
   );
 
@@ -385,14 +437,14 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
 
   registerScanMaintenanceOverrideOptions(
     mem
-      .command("extract-directives")
+      .command(names.extractDirectives)
       .description("Extract directive incidents from session JSONL (10 categories)")
       .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
       .option("-v, --verbose", "Log each directive as it is detected")
       .option("--dry-run", "Show what would be extracted without storing"),
   ).action(
     withExit(
-      async (
+      maybeWrap("extract-directives", names.extractDirectives, async (
         opts: {
           days?: string;
           verbose?: boolean;
@@ -444,20 +496,20 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             process.exitCode = 2;
           }
         }
-      },
+        }),
     ),
   );
 
   registerScanMaintenanceOverrideOptions(
     mem
-      .command("extract-reinforcement")
+      .command(names.extractReinforcement)
       .description("Extract reinforcement incidents from session JSONL and annotate facts/procedures")
       .option("--days <n>", "Scan sessions from last N days (default: 3)", "3")
       .option("-v, --verbose", "Log each reinforcement as it is detected")
       .option("--dry-run", "Show what would be annotated without storing"),
   ).action(
     withExit(
-      async (
+      maybeWrap("extract-reinforcement", names.extractReinforcement, async (
         opts: {
           days?: string;
           verbose?: boolean;
@@ -510,7 +562,13 @@ export function registerDistillCommands(mem: Chainable, ctx: DistillContext): vo
             process.exitCode = 2;
           }
         }
-      },
+        }),
     ),
   );
+}
+
+export function registerDistillGroup(mem: Chainable, ctx: DistillContext): void {
+  const group = createCommandGroup(mem, "distill", "Session distillation and extraction");
+  registerDistillCommandsOnParent(group, ctx, GROUPED_DISTILL_COMMAND_NAMES);
+  registerDistillCommands(mem, ctx, { flatDeprecatedOn: mem });
 }

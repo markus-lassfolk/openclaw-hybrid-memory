@@ -20,6 +20,7 @@ import { findOrphanVectorIds, reconcileOrphanVectors } from "../../../services/v
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
+import { readConsolidatedCronJobsFlag } from "../../install/cron-jobs.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 
@@ -341,6 +342,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
           const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, getCronModelConfig(cfg), {
             normalizeExisting: true,
             reEnableDisabled: false,
+            consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
             scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
             featureGates: {
               "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,

@@ -164,6 +164,44 @@ function parseMaintenanceFailureReportingConfig(cfg: Record<string, unknown>): M
   };
 }
 
+function parseStepGuards(raw: unknown): Record<string, number> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      out[key] = Math.floor(value);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function parseMaintenanceOrchestratorConfig(cfg: Record<string, unknown>) {
+  const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
+  const orchestratorRaw = maintenanceRaw?.orchestrator as Record<string, unknown> | undefined;
+  if (!orchestratorRaw) return undefined;
+  return {
+    stepGuards: parseStepGuards(orchestratorRaw.stepGuards),
+    maxCatchUpDays:
+      typeof orchestratorRaw.maxCatchUpDays === "number" && orchestratorRaw.maxCatchUpDays > 0
+        ? Math.floor(orchestratorRaw.maxCatchUpDays)
+        : undefined,
+    llmCooldownBetweenStepsMs:
+      typeof orchestratorRaw.llmCooldownBetweenStepsMs === "number" && orchestratorRaw.llmCooldownBetweenStepsMs >= 0
+        ? Math.floor(orchestratorRaw.llmCooldownBetweenStepsMs)
+        : undefined,
+    rateLimitMaxRetries:
+      typeof orchestratorRaw.rateLimitMaxRetries === "number" && orchestratorRaw.rateLimitMaxRetries > 0
+        ? Math.floor(orchestratorRaw.rateLimitMaxRetries)
+        : undefined,
+    maxRuntimeMinutes:
+      typeof orchestratorRaw.maxRuntimeMinutes === "number" && orchestratorRaw.maxRuntimeMinutes > 0
+        ? Math.floor(orchestratorRaw.maxRuntimeMinutes)
+        : undefined,
+    consolidatedCronJobs:
+      typeof orchestratorRaw.consolidatedCronJobs === "boolean" ? orchestratorRaw.consolidatedCronJobs : undefined,
+  };
+}
+
 export function parseMaintenanceConfig(cfg: Record<string, unknown>): MaintenanceConfig {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const monthlyReviewRaw = maintenanceRaw?.monthlyReview as Record<string, unknown> | undefined;
@@ -183,5 +221,6 @@ export function parseMaintenanceConfig(cfg: Record<string, unknown>): Maintenanc
     cronReliability: parseCronReliabilityConfig(cfg),
     failureReporting: parseMaintenanceFailureReportingConfig(cfg),
     council: parseCouncilConfig(cfg),
+    orchestrator: parseMaintenanceOrchestratorConfig(cfg),
   };
 }

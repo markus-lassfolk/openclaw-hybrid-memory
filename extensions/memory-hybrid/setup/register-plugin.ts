@@ -682,6 +682,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         crystallizationStore: runtime.crystallizationStore ?? null,
         toolProposalStore: runtime.toolProposalStore ?? null,
         changeFeed: runtime.changeFeed,
+        eventBus: runtime.eventBus,
       }),
     );
   } catch (err) {

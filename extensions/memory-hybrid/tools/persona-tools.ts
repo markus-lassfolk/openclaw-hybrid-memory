@@ -17,6 +17,7 @@ import { capturePluginError } from "../services/error-reporter.js";
 import { emitPersonaApplied, emitPersonaProposed } from "../services/change-feed-emit.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { enforceMaxPendingCap, resolveWorkshopMaxPending } from "../services/unified-proposals.js";
+import { resolveWorkshopAppliedSessionKey, resolveWorkshopProposedSessionKey } from "../services/workshop-config.js";
 import { SECONDS_PER_DAY } from "../utils/constants.js";
 import { nowIso } from "../utils/dates.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
@@ -345,12 +346,8 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
 
         api.logger.info(`memory-hybrid: persona proposal created — ${proposal.id} (${title})`);
 
-        const sessionKey =
-          (api.context?.sessionKey as string | undefined) ??
-          (api.context?.sessionId as string | undefined) ??
-          "default";
         emitPersonaProposed(changeFeed, cfg, {
-          sessionKey,
+          sessionKey: resolveWorkshopProposedSessionKey(),
           proposalId: proposal.id,
           title,
           targetFile,
@@ -381,7 +378,7 @@ export function registerPersonaTools(ctx: PluginContext, api: ClawdbotPluginApi)
             resolvedSqlitePath,
             api: { logger: api.logger },
             changeFeed,
-            sessionKey,
+            sessionKey: resolveWorkshopAppliedSessionKey(cfg),
           };
           const applyResult = await applyApprovedProposal(applyCtx, proposal.id);
           const applyVerbosity = cfg.verbosity ?? "normal";

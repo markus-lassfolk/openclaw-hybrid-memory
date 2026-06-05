@@ -10,7 +10,7 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { isWorkshopEnabled } from "../services/workshop-config.js";
+import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled, resolveWorkshopRevertSessionKey } from "../services/workshop-config.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { revertChangeById, revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
@@ -72,9 +72,22 @@ function changeRevertCtx(ctx: ProposalGatewayContext, sessionKey = "default") {
   });
 }
 
+function refreshWorkshopControlUi(ctx: ProposalGatewayContext, pendingCount: number): void {
+  const registerUi = (ctx.api as { registerControlUiDescriptor?: (d: Record<string, unknown>) => void })
+    .registerControlUiDescriptor;
+  if (typeof registerUi !== "function") return;
+  registerUi({
+    id: "hybrid-memory-workshop",
+    surface: "settings",
+    label: "Memory Workshop",
+    description: "Pending skill, persona, and tool proposals from hybrid-memory",
+    schema: { pendingCount: "number" },
+    state: { pendingCount },
+  });
+}
+
 export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): void {
   if (!isWorkshopEnabled(ctx.cfg)) return;
-  if (!ctx.cfg.health.enabled) return;
   const register = (ctx.api as { registerGatewayMethod?: (method: string, handler: GatewayHandler) => void })
     .registerGatewayMethod;
   if (typeof register !== "function") {
@@ -85,8 +98,14 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
   const w = () => workshopCtx(ctx);
 
   register("hybrid-mem.proposals.list", async ({ params, respond }) => {
-    const limit = typeof params.limit === "number" ? params.limit : 50;
-    respond(true, { proposals: workshopList(w(), { status: "pending", limit, includeUndoable: true }) });
+    const limit = typeof params.limit === "number" ? params.limit : DEFAULT_WORKSHOP_LIST_LIMIT;
+    const wctx = w();
+    const pendingCount = workshopPendingCount(wctx);
+    refreshWorkshopControlUi(ctx, pendingCount);
+    respond(true, {
+      proposals: workshopList(wctx, { status: "pending", limit, includeUndoable: true }),
+      pendingCount,
+    });
   });
 
   register("hybrid-mem.proposals.inspect", async ({ params, respond }) => {
@@ -140,7 +159,7 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
 
   if (ctx.changeFeed) {
     register("hybrid-mem.changes.list", async ({ params, respond }) => {
-      const limit = typeof params.limit === "number" ? params.limit : 50;
+      const limit = typeof params.limit === "number" ? params.limit : DEFAULT_WORKSHOP_LIST_LIMIT;
       const since = typeof params.since === "number" ? params.since : undefined;
       const sinceOrdinal = typeof params.sinceOrdinal === "number" ? params.sinceOrdinal : undefined;
       const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey.trim() : "";
@@ -156,7 +175,12 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
 
     register("hybrid-mem.changes.revert", async ({ params, respond }) => {
       if (!ctx.changeFeed) return respond(false, undefined, { message: "change feed unavailable" });
-      const sessionKey = typeof params.sessionKey === "string" ? params.sessionKey : "default";
+      const sessionKey = resolveWorkshopRevertSessionKey(
+        ctx.cfg,
+        typeof params.sessionKey === "string" ? params.sessionKey : undefined,
+        (ctx.api.context?.sessionKey as string | undefined) ??
+          (ctx.api.context?.sessionId as string | undefined),
+      );
       const revertCtx = changeRevertCtx(ctx, sessionKey);
       if (typeof params.ordinal === "number") {
         const result = revertChangeByOrdinal(revertCtx, params.ordinal, sessionKey);
@@ -170,21 +194,12 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
   }
 
   register("hybrid-mem.proposals.pendingCount", async ({ respond }) => {
-    respond(true, { pending: workshopPendingCount(w()) });
+    const pending = workshopPendingCount(w());
+    refreshWorkshopControlUi(ctx, pending);
+    respond(true, { pending });
   });
 
-  const registerUi = (ctx.api as { registerControlUiDescriptor?: (d: Record<string, unknown>) => void })
-    .registerControlUiDescriptor;
-  if (typeof registerUi === "function") {
-    registerUi({
-      id: "hybrid-memory-workshop",
-      surface: "settings",
-      label: "Memory Workshop",
-      description: "Pending skill, persona, and tool proposals from hybrid-memory",
-      schema: { pendingCount: "number" },
-      state: { pendingCount: workshopPendingCount(w()) },
-    });
-  }
+  refreshWorkshopControlUi(ctx, workshopPendingCount(w()));
 
   ctx.api.logger?.info?.(
     `memory-hybrid: registered proposal gateway methods (pending=${workshopPendingCount(w())})`,

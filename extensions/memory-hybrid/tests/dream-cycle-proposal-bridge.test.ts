@@ -160,4 +160,36 @@ describe("dream-cycle proposal bridge", () => {
     expect(pending.length).toBeGreaterThan(0);
     crystallizationStore.close();
   });
+
+  it("prefers crystallization over skill-workshop bridge when both are available", async () => {
+    const { CrystallizationStore } = await import("../backends/crystallization-store.js");
+    const crystallizationStore = new CrystallizationStore(join(tmpDir, "crystallization.db"));
+    const pattern = factsDb.store({
+      text: "When debugging CI, always inspect the failing check logs before pushing fixes.",
+      category: "pattern",
+      importance: 0.7,
+      entity: null,
+      key: null,
+      value: null,
+      source: "dream-cycle-test",
+    });
+    const result = runDreamCycleProposalBridge({
+      cfg: {
+        ...cfg,
+        crystallization: { enabled: true, maxCrystallized: 10 },
+      } as HybridMemoryConfig,
+      factsDb,
+      proposalsDb,
+      crystallizationStore,
+      patternsStored: 1,
+      rulesGenerated: 0,
+      newPatternFactIds: [pattern.id],
+      logger: { info: () => {}, warn: () => {} },
+      workspaceRoot: tmpDir,
+      api: { getTool: () => ({}) },
+    });
+    expect(result.crystallizationProposalsCreated).toBe(1);
+    expect(result.skillWorkshopBridged).toBe(0);
+    crystallizationStore.close();
+  });
 });

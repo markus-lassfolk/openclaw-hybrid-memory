@@ -25,7 +25,6 @@ import { getCronModelConfig, getDefaultCronModel } from "../config.js";
 import type { DashboardServer } from "../routes/dashboard-server.js";
 import { createDashboardServer } from "../routes/dashboard-server.js";
 import { reconcileActiveTaskInProgressSessions } from "../services/active-task.js";
-import { runAutoClassify } from "../services/auto-classifier.js";
 import { syncCronLastRunFromGuards } from "../services/cron-guard.js";
 import type { EmbeddingRegistry } from "../services/embedding-registry.js";
 import {
@@ -37,6 +36,14 @@ import {
 } from "../services/error-reporter.js";
 import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardship.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
+import { runCredentialsPruneForCli } from "../cli/cmd-credentials.js";
+import {
+  analyzeMaintenanceSteps,
+  collectMaintenanceSteps,
+} from "../services/maintenance-log-analyzer.js";
+import { runMaintenanceTiers } from "../services/maintenance-orchestrator.js";
+import { buildPluginCycleRunners } from "../cli/commands/manage/maintenance-step-runners.js";
+import { syncLifecycleFromGitHub } from "../services/lifecycle/github-adapter.js";
 import { runPassiveObserver } from "../services/passive-observer.js";
 import type { ProvenanceService } from "../services/provenance.js";
 import {
@@ -49,6 +56,8 @@ import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { isWorkshopEnabled } from "../services/workshop-config.js";
+import { syncWorkshopProposedEvents, withWorkshopDefaults } from "../services/workshop-service.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
@@ -95,6 +104,7 @@ export interface PluginServiceContext {
   crystallizationStore?: import("../backends/crystallization-store.js").CrystallizationStore | null;
   toolProposalStore?: import("../backends/tool-proposal-store.js").ToolProposalStore | null;
   changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
+  eventBus?: import("../backends/event-bus.js").EventBus | null;
   // Mutable timer refs that will be updated by the start handler
   timers: {
     pruneTimer: { value: ReturnType<typeof setInterval> | null };
@@ -106,6 +116,8 @@ export interface PluginServiceContext {
     postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
     passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
     watchdogTimer: { value: ReturnType<typeof setInterval> | null };
+    maintenanceTick: { value: ReturnType<typeof setInterval> | null };
+    maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
   };
 }
 
@@ -147,6 +159,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     crystallizationStore,
     toolProposalStore,
     changeFeed,
+    eventBus,
   } = ctx;
 
   let observerRunning = false;
@@ -391,6 +404,27 @@ export function createPluginService(ctx: PluginServiceContext) {
         } catch (err) {
           api.logger.debug?.(`memory-hybrid: change-feed prune failed (non-fatal): ${String(err)}`);
         }
+        if (isWorkshopEnabled(cfg)) {
+          try {
+            const synced = syncWorkshopProposedEvents(
+              withWorkshopDefaults({
+                cfg,
+                factsDb,
+                proposalsDb: proposalsDb ?? null,
+                crystallizationStore: crystallizationStore ?? null,
+                toolProposalStore: toolProposalStore ?? null,
+                workflowStore: workflowStore ?? null,
+                resolvedSqlitePath,
+                changeFeed: ctx.changeFeed,
+              }),
+            );
+            if (synced > 0) {
+              api.logger.info(`memory-hybrid: synced ${synced} workshop proposed change event(s) on startup`);
+            }
+          } catch (err) {
+            api.logger.debug?.(`memory-hybrid: workshop change-feed sync failed (non-fatal): ${String(err)}`);
+          }
+        }
       }
 
       // WAL Recovery: replay uncommitted operations from previous session
@@ -474,167 +508,52 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
       }
 
-      // Periodic prune timer
-      let pruneTickInFlight = false;
-      timers.pruneTimer.value = setInterval(async () => {
-        if (pruneTickInFlight) return;
-        pruneTickInFlight = true;
+      // Unified maintenance tick (cycle tier) — replaces scattered prune/classify/language/observer timers
+      let maintenanceTickInFlight = false;
+      const runMaintenanceCycleTick = async (label: string) => {
+        if (maintenanceTickInFlight || shuttingDown) return;
+        if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
+        maintenanceTickInFlight = true;
         try {
-          if (shuttingDown) return;
-          if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
-          const decayNowSec = Math.floor(Date.now() / 1000);
-          const expiredIds = factsDb.listExpiredFactIdsPendingPrune();
-          const decayDeleteIds = factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
-          const hardPruned = factsDb.pruneExpired();
-          const softPruned = factsDb.decayConfidence(decayNowSec);
-          const expiredCleanup = await deleteVectorsForFactIds(vectorDb, expiredIds, {
-            operation: "plugin-periodic-prune-expired",
-            logger: api.logger,
-          });
-          const decayedCleanup = await deleteVectorsForFactIds(vectorDb, decayDeleteIds, {
-            operation: "plugin-periodic-decay",
-            logger: api.logger,
-          });
-          const edictsPruned = edictStore.pruneExpired();
-          let auditPruned = 0;
-          if (auditStore) {
-            try {
-              auditPruned = auditStore.prune(90);
-            } catch {
-              /* non-fatal */
-            }
-          }
-          let healthPruned = 0;
-          if (agentHealthStore) {
-            try {
-              healthPruned = agentHealthStore.prune(30);
-            } catch {
-              /* non-fatal */
-            }
-          }
-          if (hardPruned > 0 || softPruned > 0 || edictsPruned > 0 || auditPruned > 0 || healthPruned > 0) {
-            api.logger.info(
-              `memory-hybrid: periodic prune — ${hardPruned} expired, ${softPruned} decayed, ${edictsPruned} edicts pruned${auditPruned > 0 ? `, ${auditPruned} audit rows` : ""}${healthPruned > 0 ? `, ${healthPruned} agent-health rows` : ""}`,
+          const runCompaction = async () =>
+            factsDb.retier(
+              {
+                inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+                hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+                hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+                coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
+                hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
+                hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
+                hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
+                hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
+                hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
+                structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
+                structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
+              },
+              true,
             );
-          }
-          if (expiredCleanup.failed > 0 || decayedCleanup.failed > 0) {
-            api.logger.warn(
-              `memory-hybrid: periodic vector cleanup partial — expired deleted ${expiredCleanup.deleted}/${expiredCleanup.attempted} (failed ${expiredCleanup.failed}), decayed deleted ${decayedCleanup.deleted}/${decayedCleanup.attempted} (failed ${decayedCleanup.failed})`,
-            );
-          }
-        } catch (err) {
-          api.logger.warn(`memory-hybrid: periodic prune failed: ${err}`);
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "plugin-service",
-            operation: "periodic-prune",
-          });
-        } finally {
-          pruneTickInFlight = false;
-        }
-      }, 60 * 60_000); // every hour
 
-      // Daily auto-classify: reclassify "other" facts using LLM (if enabled)
-      if (cfg.autoClassify.enabled) {
-        const CLASSIFY_INTERVAL = 24 * 60 * 60_000; // 24 hours
-        const discoveredPath = join(dirname(resolvedSqlitePath), ".discovered-categories.json");
-
-        const classifyModel = cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "nano");
-        // Run once shortly after startup (5 min delay to let things settle)
-        timers.classifyStartupTimeout.value = setTimeout(async () => {
-          try {
-            await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
-              discoveredCategoriesPath: discoveredPath,
-              model: classifyModel,
-            });
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: startup auto-classify failed: ${err}`);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "plugin-service",
-              operation: "startup-auto-classify",
-            });
-          }
-        }, 5 * 60_000);
-
-        timers.classifyTimer.value = setInterval(async () => {
-          try {
-            if (shuttingDown) return;
-            if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
-            await runAutoClassify(factsDb, openai, cfg.autoClassify, api.logger, {
-              discoveredCategoriesPath: discoveredPath,
-              model: classifyModel,
-            });
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: daily auto-classify failed: ${err}`);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "plugin-service",
-              operation: "daily-auto-classify",
-            });
-          }
-        }, CLASSIFY_INTERVAL);
-
-        api.logger.info(
-          `memory-hybrid: auto-classify enabled (model: ${classifyModel}, interval: 24h, batch: ${cfg.autoClassify.batchSize})`,
-        );
-      }
-
-      // Auto-build multilingual keywords: run once at startup if no file, then weekly (captures language drift)
-      if (cfg.languageKeywords.autoBuild) {
-        const langFilePath = getLanguageKeywordsFilePath();
-        const runBuild = async () => {
-          try {
+          const runBuildLanguages = async () => {
             const facts = factsDb.getFactsForConsolidation(300);
             const result = await runBuildLanguageKeywords(facts, openai, dirname(resolvedSqlitePath), {
               model: cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default"),
               dryRun: false,
             });
-            if (result.ok && result.languagesAdded > 0) {
-              api.logger.info(
-                `memory-hybrid: language keywords updated (${result.topLanguages.join(", ")}, +${result.languagesAdded} languages)`,
-              );
-            } else if (result.ok) {
-              api.logger.info(`memory-hybrid: language keywords build done (${result.topLanguages.join(", ")})`);
-            } else {
-              api.logger.warn(`memory-hybrid: language keywords build failed: ${result.error}`);
-            }
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: language keywords build failed: ${err}`);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "plugin-service",
-              operation: "language-keywords-build",
-            });
-          }
-        };
+            if (!result.ok) throw new Error(result.error);
+            return `languagesAdded=${result.languagesAdded}`;
+          };
 
-        if (langFilePath && !existsSync(langFilePath)) {
-          api.logger.info("memory-hybrid: no language keywords file; building from memory samples in 3s…");
-          timers.languageKeywordsStartupTimeout.value = setTimeout(() => {
-            void runBuild();
-            timers.languageKeywordsStartupTimeout.value = null;
-          }, 3000);
-        }
-
-        const weeklyMs = cfg.languageKeywords.weeklyIntervalDays * 24 * 60 * 60 * 1000;
-        timers.languageKeywordsTimer.value = setInterval(() => void runBuild(), weeklyMs);
-        api.logger.info(
-          `memory-hybrid: language keywords auto-build enabled (every ${cfg.languageKeywords.weeklyIntervalDays} days)`,
-        );
-      }
-
-      // Passive observer: background fact extraction from session transcripts
-      if (cfg.passiveObserver.enabled) {
-        const { getLLMModelPreference } = await import("../config.js");
-        const observerModel =
-          cfg.passiveObserver.model ??
-          getLLMModelPreference(getCronModelConfig(cfg), "nano")[0] ??
-          getDefaultCronModel(getCronModelConfig(cfg), "nano");
-        const observerFallbacks = (() => {
-          const pref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
-          return pref.length > 1 ? pref.slice(1) : undefined;
-        })();
-        const dbDir = dirname(resolvedSqlitePath);
-
-        const runObserver = async () => {
-          try {
+          const runPassiveObserverOnce = async () => {
+            if (!cfg.passiveObserver?.enabled) return "disabled";
+            const { getLLMModelPreference } = await import("../config.js");
+            const observerModel =
+              cfg.passiveObserver.model ??
+              getLLMModelPreference(getCronModelConfig(cfg), "nano")[0] ??
+              getDefaultCronModel(getCronModelConfig(cfg), "nano");
+            const observerFallbacks = (() => {
+              const pref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+              return pref.length > 1 ? pref.slice(1) : undefined;
+            })();
             const result = await runPassiveObserver(
               factsDb,
               vectorDb,
@@ -645,7 +564,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               {
                 model: observerModel,
                 fallbackModels: observerFallbacks,
-                dbDir,
+                dbDir: dirname(resolvedSqlitePath),
                 proceduresSessionsDir: cfg.procedures.sessionsDir,
                 reinforcement: cfg.reinforcement,
                 provenanceService,
@@ -653,41 +572,104 @@ export function createPluginService(ctx: PluginServiceContext) {
               },
               api.logger,
             );
-            if (result.factsStored > 0 || result.factsExtracted > 0 || result.factsReinforced > 0) {
-              api.logger.info(
-                `memory-hybrid: passive-observer — scanned ${result.sessionsScanned} sessions, ` +
-                  `${result.chunksProcessed} chunks, ${result.factsExtracted} extracted, ` +
-                  `${result.factsStored} stored, ${result.factsReinforced} reinforced`,
-              );
-            } else if (result.sessionsScanned > 0) {
-              api.logger.info(
-                `memory-hybrid: passive-observer — scanned ${result.sessionsScanned} sessions, 0 new facts (idle)`,
-              );
-            }
-          } catch (err) {
-            api.logger.warn(`memory-hybrid: passive-observer run failed: ${err}`);
-            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-              subsystem: "plugin-service",
-              operation: "passive-observer-run",
-            });
-          }
-        };
+            return `stored=${result.factsStored} scanned=${result.sessionsScanned}`;
+          };
 
-        const intervalMs = cfg.passiveObserver.intervalMinutes * 60_000;
-        timers.passiveObserverTimer.value = setInterval(() => {
-          if (shuttingDown) return;
-          if (typeof factsDb.isOpen === "function" && !factsDb.isOpen()) return;
-          if (observerRunning) return;
-          observerRunning = true;
-          observerRunPromise = runObserver().finally(() => {
-            observerRunning = false;
-            observerRunPromise = null;
+          const runLifecycleSync = async () => {
+            const github = cfg.lifecycle?.adapters?.github;
+            if (!github?.enabled) return "skipped (lifecycle github disabled)";
+            const report = await syncLifecycleFromGitHub(factsDb, {
+              config: github,
+              apply: true,
+            });
+            return `matched=${report.matched}`;
+          };
+
+          const openclawDir = join(homedir(), ".openclaw");
+
+          const runAnalyzeLogs = async () => {
+            const logDir = join(openclawDir, "logs", "cron-hybrid-mem");
+            if (!existsSync(logDir)) return "skipped (no cron log dir)";
+            const steps = collectMaintenanceSteps(logDir, "24h");
+            if (steps.length === 0) return "no log steps in 24h";
+            const findings = analyzeMaintenanceSteps(steps);
+            const errors = findings.filter((f) => f.severity === "critical" || f.severity === "high").length;
+            return `steps=${steps.length} findings=${findings.length} errors=${errors}`;
+          };
+
+          const runCredentialsPrune =
+            credentialsDb && cfg.credentials?.enabled
+              ? async () =>
+                  runCredentialsPruneForCli(
+                    { credentialsDb } as import("../cli/handlers.js").HandlerContext,
+                    { dryRun: false, yes: true },
+                  )
+              : undefined;
+
+          const runActiveTasksMaintain = async () => {
+            if (!cfg.activeTask.enabled) return "disabled";
+            const workspaceRoot = resolveOpenClawWorkspaceRoot();
+            const staleMinutes = parseDuration(cfg.activeTask.staleThreshold);
+            if (cfg.activeTask.ledger === "facts") {
+              const r = await reconcileActiveTaskInProgressSessionsFacts(factsDb, vectorDb, embeddings, staleMinutes, {
+                flushOnComplete: cfg.activeTask.flushOnComplete !== false,
+                memoryDir: join(workspaceRoot, "memory"),
+              });
+              return `reconciled=${r.reconciledLabels.length}`;
+            }
+            return "ledger=file (watchdog handles)";
+          };
+
+          const runners = buildPluginCycleRunners({
+            cfg,
+            factsDb,
+            vectorDb,
+            edictStore,
+            auditStore,
+            agentHealthStore,
+            proposalsDb,
+            credentialsDb,
+            openai,
+            embeddings,
+            eventBus: eventBus ?? null,
+            resolvedSqlitePath,
+            logger: api.logger,
+            runCompaction,
+            runBuildLanguages,
+            runPassiveObserverOnce,
+            runLifecycleSync,
+            runActiveTasksMaintain,
+            runAnalyzeLogs,
+            runCredentialsPrune,
           });
-        }, intervalMs);
-        api.logger.info(
-          `memory-hybrid: passive-observer enabled (model: ${observerModel}, interval: ${cfg.passiveObserver.intervalMinutes}m, minImportance: ${cfg.passiveObserver.minImportance})`,
-        );
-      }
+
+          const result = await runMaintenanceTiers(
+            { cfg, runners, logger: api.logger, openclawDir },
+            ["cycle"],
+            { verbose: false },
+          );
+          if (result.exitCode !== 0) {
+            api.logger.warn?.(`memory-hybrid: maintenance tick (${label}) exit=${result.exitCode}: ${result.summaryLine}`);
+          }
+        } catch (err) {
+          api.logger.warn(`memory-hybrid: maintenance tick failed: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "maintenance-tick",
+          });
+        } finally {
+          maintenanceTickInFlight = false;
+        }
+      };
+
+      timers.maintenanceStartupTimeout.value = setTimeout(() => {
+        void runMaintenanceCycleTick("startup");
+        timers.maintenanceStartupTimeout.value = null;
+      }, 5 * 60_000);
+
+      timers.maintenanceTick.value = setInterval(() => {
+        void runMaintenanceCycleTick("interval");
+      }, 60 * 60_000);
+      api.logger.info("memory-hybrid: unified maintenance tick enabled (cycle tier, 60m interval)");
 
       // Task queue watchdog: periodically detect stale/broken autonomous queue runs and self-heal
       const WATCHDOG_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes

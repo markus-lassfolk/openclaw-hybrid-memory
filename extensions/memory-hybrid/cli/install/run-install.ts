@@ -19,7 +19,7 @@ import {
   inspectExistingEmbeddingSetup,
 } from "./config-merge.js";
 import { applyDetectedEmbeddingSetup, detectRecommendedEmbeddingSetup, getDashboardUrl } from "./embedding-detect.js";
-import { ensureMaintenanceCronJobs } from "./cron-jobs.js";
+import { ensureMaintenanceCronJobs, readConsolidatedCronJobsFlag } from "./cron-jobs.js";
 import {
   applyHybridMemoryToolsMd,
   assertSafeRequestedVersionArg,
@@ -208,6 +208,7 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       cronSummary = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
+        consolidatedCronJobs: readConsolidatedCronJobsFlag(pluginCfg as { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } }),
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
         featureGates: {
           "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true,
@@ -438,6 +439,7 @@ export async function runUpgradeForCli(ctx: HandlerContext, requestedVersion?: s
     const { added, normalized } = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
       normalizeExisting: true,
       reEnableDisabled: false,
+      consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
       scheduleOverrides: Object.keys(scheduleOverrides).length > 0 ? scheduleOverrides : undefined,
       featureGates: {
         "sensorSweep.enabled": cfg.sensorSweep?.enabled === true,

@@ -1,0 +1,155 @@
+/**
+ * Maintenance orchestrator CLI: cycle, nightly, full, steps.
+ */
+
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import {
+  effectiveCadenceLabel,
+  formatMaintenanceSummary,
+  listMaintenanceSteps,
+  resolveStepGuardIntervalMs,
+  runMaintenanceOrchestrator,
+} from "../../../services/maintenance-orchestrator.js";
+import { readStepGuardTimestampMs, stepGuardEligible } from "../../../services/cron-guard.js";
+import { formatTimestampUtcFromMs } from "../../../utils/dates.js";
+import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import { type Chainable, withExit } from "../../shared.js";
+import type { ManageBindings } from "./bindings.js";
+import { buildCliMaintenanceRunners } from "./maintenance-step-runners.js";
+
+function parseStepList(raw?: string): string[] | undefined {
+  if (!raw?.trim()) return undefined;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, b: ManageBindings): void {
+  const openclawDir = join(homedir(), ".openclaw");
+
+  const runTier = async (
+    tiers: Array<"cycle" | "nightly">,
+    opts?: {
+      dryRun?: boolean;
+      force?: boolean;
+      full?: boolean;
+      verbose?: boolean;
+      include?: string;
+      exclude?: string;
+      maxRuntimeMin?: string;
+    },
+  ) => {
+    const verbose = !!opts?.verbose;
+    const memoryDir = b.resolvedSqlitePath ? dirname(b.resolvedSqlitePath) : join(homedir(), ".openclaw", "memory");
+    const backfillMarker = join(memoryDir, ".backfill-decay-done");
+    const runners = buildCliMaintenanceRunners(b, {
+      verbose,
+      backfillDecayMarker: backfillMarker,
+      scanOverrides: { force: opts?.force, full: opts?.full },
+    });
+    const maxRuntimeMs =
+      opts?.maxRuntimeMin && Number.isFinite(Number(opts.maxRuntimeMin))
+        ? Number(opts.maxRuntimeMin) * 60_000
+        : undefined;
+
+    const result = await runMaintenanceOrchestrator(
+      {
+        cfg: b.cfg,
+        runners,
+        openclawDir,
+        logger: { info: (m) => console.log(m), warn: (m) => console.warn(m) },
+        oneTimeMarkerExists: (path) => existsSync(join(memoryDir, path)),
+      },
+      {
+        tiers,
+        dryRun: opts?.dryRun,
+        force: opts?.force || opts?.full,
+        verbose,
+        include: parseStepList(opts?.include),
+        exclude: parseStepList(opts?.exclude),
+        maxRuntimeMs,
+      },
+    );
+
+    const { summaryLine, lines } = formatMaintenanceSummary(result.tierLabel, result.steps);
+    console.log(summaryLine);
+    for (const line of lines) console.log(line);
+    if (result.exitCode !== 0) process.exitCode = result.exitCode;
+  };
+
+  const commonOptions = (cmd: Chainable) =>
+    cmd
+      .option("--dry-run", "List steps and guard status without executing")
+      .option("--force", "Bypass per-step guards and scan watermarks (not feature gates)")
+      .option("--full", "Alias for --force")
+      .option("-v, --verbose", "Detailed per-step output")
+      .option("--include <steps>", "Comma-separated step names to run only")
+      .option("--exclude <steps>", "Comma-separated step names to skip")
+      .option("--max-runtime-min <n>", "Optional time budget in minutes");
+
+  commonOptions(
+    maintenance
+      .command("cycle")
+      .description("Run cycle-tier maintenance steps (local gateway-native work)")
+      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
+        await runTier(["cycle"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+      })),
+  );
+
+  commonOptions(
+    maintenance
+      .command("nightly")
+      .description("Run all non-cycle steps (staggered guards decide which execute)")
+      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
+        await runTier(["nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+      })),
+  );
+
+  commonOptions(
+    maintenance
+      .command("full")
+      .description("Run cycle + nightly tiers in sequence")
+      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
+        await runTier(["cycle", "nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+      })),
+  );
+
+  maintenance
+    .command("steps")
+    .description("List registered maintenance steps with tier, guard interval, and cadence")
+    .option("--json", "Output JSON")
+    .action(
+      withExit(async (opts?: { json?: boolean }) => {
+        const rows = listMaintenanceSteps().map((step) => {
+          const guardMs = resolveStepGuardIntervalMs(step, b.cfg);
+          const guard = stepGuardEligible(step.name, guardMs, openclawDir);
+          return {
+            name: step.name,
+            tier: step.tier,
+            guardIntervalMs: guardMs,
+            cadence: effectiveCadenceLabel(guardMs),
+            llmTier: step.llmTier,
+            dependsOn: step.dependsOn ?? [],
+            featureGate: step.featureGate ? step.featureGate(b.cfg) : true,
+            lastRunAt: guard.lastRunMs ? formatTimestampUtcFromMs(guard.lastRunMs) : null,
+            nextEligibleAt: guard.nextEligibleMs ? formatTimestampUtcFromMs(guard.nextEligibleMs) : null,
+            eligibleNow: guard.eligible,
+          };
+        });
+        if (opts?.json) {
+          console.log(JSON.stringify(rows, null, 2));
+          return;
+        }
+        console.log("Maintenance steps (48 registered):");
+        for (const row of rows) {
+          const gate = row.featureGate ? "" : " [gate:off]";
+          console.log(
+            `  ${row.name.padEnd(28)} ${row.tier.padEnd(8)} ${row.cadence.padEnd(18)} llm=${row.llmTier}${gate}${row.eligibleNow ? " *due*" : ""}`,
+          );
+        }
+      }),
+    );
+}

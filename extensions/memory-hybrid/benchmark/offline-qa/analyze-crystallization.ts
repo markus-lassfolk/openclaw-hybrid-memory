@@ -39,6 +39,10 @@ import {
   normalizeWorkflowToolSequence,
   readTrajectoryLines,
 } from "../../services/session-v3-parser.js";
+import {
+  countUsefulnessBuckets,
+  pickCrystallizationVerdict,
+} from "./crystallization-verdict.js";
 import { redactMaintenancePrivateText } from "../../utils/maintenance-privacy.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -289,11 +293,7 @@ async function main(): Promise<void> {
     failed: samples.filter((s) => s.validation.overall === "failed").length,
   };
 
-  const usefulnessCounts = samples.reduce<Record<string, number>>((acc, s) => {
-    const bucket = s.usefulness.split(" — ")[0] ?? s.usefulness;
-    acc[bucket] = (acc[bucket] ?? 0) + 1;
-    return acc;
-  }, {});
+  const usefulnessCounts = countUsefulnessBuckets(samples.map((s) => s.usefulness));
 
   const liveWfPath = join(home, ".openclaw/memory/workflow-traces.db");
   let liveWfStats: {
@@ -341,26 +341,17 @@ async function main(): Promise<void> {
   const dataGapOk = gaps.length <= 2;
   const unknownOutcomeShare =
     backfill.traces > 0 ? (outcomes.unknown ?? 0) / backfill.traces : 0;
-  const verdict =
-    !dataGapOk
-      ? "INCONCLUSIVE — session coverage has multi-day gaps in the window."
-      : liveProdCandidates > 0
-        ? "PROMISING WITH LIVE TRACES — production gates pass on Maeve workflow-traces.db; review proposals manually."
-        : userFacingCandidates.length === 0 && structuralCandidates.length > 0
-          ? "MOSTLY GARBAGE — repeatable patterns are cron/system prompts, not user-facing workflows."
-          : prodCandidates.length === 0 && structuralCandidates.length === 0
-            ? "NOT READY — no repeatable tool patterns at minimum usage thresholds."
-            : prodCandidates.length === 0 && liveWfStats && liveWfStats.sinceWindow > 0
-              ? "LOW SUCCESS RATE — live traces exist but minSuccessRate (0.7) eliminates all production candidates."
-              : prodCandidates.length === 0 && unknownOutcomeShare > 0.5
-                ? "BLOCKED ON OUTCOMES — most backfill traces still have outcome=unknown; rely on live workflowTracking."
-                : validationSummary.deny > validationSummary.allow
-                  ? "MOSTLY GARBAGE — validation denies more samples than it allows."
-                  : (usefulnessCounts.potentially ?? 0) >= 4
-                    ? "PROMISING — several candidates look actionable with real goals."
-                    : (usefulnessCounts.garbage ?? 0) >= 8
-                      ? "MOSTLY GARBAGE — top patterns are cron/system prompts despite passing validation."
-                      : "MIXED — some structure, but many skills are generic boilerplate.";
+  const verdict = pickCrystallizationVerdict({
+    dataGapOk,
+    liveProdCandidates,
+    userFacingCandidates: userFacingCandidates.length,
+    structuralCandidates: structuralCandidates.length,
+    prodCandidates: prodCandidates.length,
+    liveWfStats,
+    unknownOutcomeShare,
+    validationSummary,
+    usefulnessCounts,
+  });
 
   const lines: string[] = [
     `# Crystallization analysis (Maeve offline QA)`,

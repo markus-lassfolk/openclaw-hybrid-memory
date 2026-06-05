@@ -12,11 +12,8 @@ import { registerManageCredentialsAndScope } from "./manage/register-credentials
 import { registerManageProcedureAndLifecycle } from "./manage/register-procedure-lifecycle.js";
 import { registerManageDigest } from "./manage/register-digest.js";
 import { registerExpireBySourceCommands, registerLifecycleSyncCommands } from "./manage/register-lifecycle.js";
-import { registerAnalyzeMaintenanceLogsCommand } from "./manage/register-analyze-maintenance-logs.js";
 import { registerBackfillMaintenanceCommands } from "./manage/register-backfill-maintenance.js";
 import { registerManageStorageAndStats } from "./manage/register-storage-and-stats.js";
-import { registerValidateCronExit } from "./manage/register-validate-cron-exit.js";
-import { registerReconcileCronLedgers } from "./manage/register-reconcile-cron-ledgers.js";
 
 export function registerManageCommands(mem: Chainable, ctx: ManageContext): void {
   const b = buildManageBindings(ctx);
@@ -30,11 +27,6 @@ export function registerManageCommands(mem: Chainable, ctx: ManageContext): void
   registerManageProcedureAndLifecycle(mem, b);
   registerManageCouncil(mem, b);
   registerManageDigest(mem, b);
-  registerAnalyzeMaintenanceLogsCommand(mem, b);
-  registerBackfillMaintenanceCommands(mem, b);
-  registerValidateCronExit(mem, {
-    cfg: ctx.cfg,
-    versionInfo: ctx.versionInfo,
-  });
-  registerReconcileCronLedgers(mem);
+  // Workflow trace QA tools stay flat (not under grouped maintenance backfill).
+  registerBackfillMaintenanceCommands(mem, b, { onlyWorkflowQa: true });
 }

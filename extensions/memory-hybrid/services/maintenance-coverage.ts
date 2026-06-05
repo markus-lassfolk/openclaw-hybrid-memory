@@ -9,7 +9,7 @@ import { countRecallEventsSince } from "./recall-events.js";
 import { countSessionMetadataSince } from "./session-metadata.js";
 import { countReflectionParseFailuresSince } from "./reflection-parse-log.js";
 import { countDailyLogFiles, resolveDailyMemoryDir } from "./daily-log-synthesizer.js";
-import { formatDateUtc } from "../utils/dates.js";
+import { formatDateUtc, formatTimestampUtc } from "../utils/dates.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 
 export type MaintenanceCoverageReport = {
@@ -88,8 +88,8 @@ export function buildMaintenanceCoverageReport(opts: {
         try {
           if (tableExists(wfDb, "workflow_traces")) {
             const row = wfDb
-              .prepare(`SELECT COUNT(*) AS cnt FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch')`)
-              .get(sinceSec) as { cnt: number } | undefined;
+              .prepare(`SELECT COUNT(*) AS cnt FROM workflow_traces WHERE created_at >= ?`)
+              .get(formatTimestampUtc(sinceSec)) as { cnt: number } | undefined;
             workflowTraces = row?.cnt ?? 0;
           }
         } finally {

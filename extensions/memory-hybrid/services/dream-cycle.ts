@@ -32,7 +32,9 @@ import {
   runReflectionRules,
 } from "./reflection.js";
 import { runDreamCycleProposalBridge, type DreamCycleProposalBridgeInput } from "./dream-cycle-proposal-bridge.js";
-import { emitDreamCycleComplete, syncProcedureSkillWorkshopProposals } from "./change-feed-emit.js";
+import { emitDreamCycleComplete } from "./change-feed-emit.js";
+import { isWorkshopEnabled } from "./workshop-config.js";
+import { syncWorkshopProposedEvents, withWorkshopDefaults } from "./workshop-service.js";
 import { cleanupEvictedVector, deleteVectorsForFactIds, reconcileOrphanVectors } from "./vector-maintenance.js";
 
 /** Prune modes for the dream cycle. */
@@ -117,7 +119,7 @@ export interface DreamCycleConfig {
 export type DreamCycleBridgeOpts = Pick<
   DreamCycleProposalBridgeInput,
   "cfg" | "proposalsDb" | "api" | "crystallizationStore" | "toolProposalStore" | "changeFeed"
->;
+> & { resolvedSqlitePath?: string; workflowStore?: import("../backends/workflow-store.js").WorkflowStore | null };
 
 /** Result returned by a single dream cycle run. */
 export interface DreamCycleResult {
@@ -1432,12 +1434,25 @@ export async function runDreamCycle(
         logger.warn(`memory-hybrid: dream-cycle — change-feed prune failed (non-fatal): ${err}`);
       }
       try {
-        const synced = syncProcedureSkillWorkshopProposals(bridge.changeFeed, bridge.cfg, bridge.factsDb);
-        if (synced > 0) {
-          logger.info(`memory-hybrid: dream-cycle — synced ${synced} procedure-skill proposed change event(s)`);
+        if (isWorkshopEnabled(bridge.cfg)) {
+          const synced = syncWorkshopProposedEvents(
+            withWorkshopDefaults({
+              cfg: bridge.cfg,
+              factsDb,
+              proposalsDb: bridge.proposalsDb ?? null,
+              crystallizationStore: bridge.crystallizationStore ?? null,
+              toolProposalStore: bridge.toolProposalStore ?? null,
+              workflowStore: bridge.workflowStore ?? null,
+              resolvedSqlitePath: bridge.resolvedSqlitePath ?? "",
+              changeFeed: bridge.changeFeed,
+            }),
+          );
+          if (synced > 0) {
+            logger.info(`memory-hybrid: dream-cycle — synced ${synced} workshop proposed change event(s)`);
+          }
         }
       } catch (err) {
-        logger.warn(`memory-hybrid: dream-cycle — procedure-skill change-feed sync failed (non-fatal): ${err}`);
+        logger.warn(`memory-hybrid: dream-cycle — workshop change-feed sync failed (non-fatal): ${err}`);
       }
     }
     emitDreamCycleComplete(bridge.changeFeed, bridge.cfg, {

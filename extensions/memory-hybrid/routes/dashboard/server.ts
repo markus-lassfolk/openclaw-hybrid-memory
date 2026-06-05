@@ -62,9 +62,10 @@ import {
   type WorkshopDashboardContext,
 } from "./workshop-collectors.js";
 import { getDashboardHtml } from "./html.js";
+import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled } from "../../services/workshop-config.js";
 
 function workshopCtx(ctx: DashboardContext): WorkshopDashboardContext | null {
-  if (!ctx.hybridCfg) return null;
+  if (!ctx.hybridCfg || !isWorkshopEnabled(ctx.hybridCfg)) return null;
   return {
     cfg: ctx.hybridCfg,
     factsDb: ctx.factsDb,
@@ -619,15 +620,17 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       pathname === "/api/workshop/digest" ||
       pathname === "/api/workshop/dream-log" ||
       pathname === "/api/workshop/skills" ||
-      pathname.startsWith("/api/workshop/proposals/") ||
-      pathname.startsWith("/api/workshop/changes/");
+      pathname === "/api/workshop/changes/revert" ||
+      pathname.startsWith("/api/workshop/proposals/");
 
     if (isWorkshopApi && !wctx) {
       res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
       res.end(
         JSON.stringify({
           error: "workshop_unavailable",
-          message: "Hybrid memory workshop context is not configured",
+          message: ctx.hybridCfg
+            ? "Workshop is disabled. Enable persona/crystallization/self-extension/procedures proposals or set workshop.enabled: true."
+            : "Hybrid memory workshop context is not configured",
         }),
       );
       return;
@@ -648,11 +651,14 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       try {
         const u = new URL(req.url ?? "", "http://127.0.0.1");
         const limitRaw = u.searchParams.get("limit");
-        const limit = limitRaw ? Number(limitRaw) : 50;
+        const limit = limitRaw ? Number(limitRaw) : DEFAULT_WORKSHOP_LIST_LIMIT;
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(
           JSON.stringify({
-            changes: collectWorkshopChanges(wctx, Number.isFinite(limit) ? limit : 50),
+            changes: collectWorkshopChanges(
+              wctx,
+              Number.isFinite(limit) ? limit : DEFAULT_WORKSHOP_LIST_LIMIT,
+            ),
           }),
         );
       } catch (err) {
@@ -695,23 +701,24 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       return;
     }
 
-    if (pathname.startsWith("/api/workshop/changes/") && wctx && req.method === "POST") {
-      const suffix = pathname.slice("/api/workshop/changes/".length);
-      const revertMatch = suffix.match(/^(\d+)\/revert$/);
-      if (revertMatch) {
-        readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
-          .then(() => {
-            const ordinal = Number.parseInt(revertMatch[1] ?? "", 10);
-            const result = revertWorkshopChange(wctx, ordinal);
-            res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(result));
-          })
-          .catch((err: unknown) => {
+    if (pathname === "/api/workshop/changes/revert" && wctx && req.method === "POST") {
+      readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
+        .then((body) => {
+          const id = typeof body.id === "string" ? body.id.trim() : "";
+          if (!id) {
             res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
-          });
-        return;
-      }
+            res.end(JSON.stringify({ error: "missing id" }));
+            return;
+          }
+          const result = revertWorkshopChange(wctx, id);
+          res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err: unknown) => {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        });
+      return;
     }
 
     if (pathname.startsWith("/api/workshop/proposals/") && wctx) {
@@ -751,7 +758,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
               return;
             }
             if (action === "undo") {
-              const result = undoWorkshopProposal(wctx, id);
+              const changeEventId =
+                typeof body.changeEventId === "string" ? body.changeEventId.trim() : undefined;
+              const result = undoWorkshopProposal(wctx, id, changeEventId ? { changeEventId } : undefined);
               res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
               res.end(JSON.stringify(result));
               return;

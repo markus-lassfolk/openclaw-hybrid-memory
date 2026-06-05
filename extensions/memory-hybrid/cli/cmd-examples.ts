@@ -25,7 +25,7 @@ const EXAMPLE_CATEGORIES = {
       },
       {
         name: "View memory stats",
-        command: "openclaw hybrid-mem stats",
+        command: "openclaw hybrid-mem storage stats",
         description: "See memory usage and statistics",
       },
     ],
@@ -60,7 +60,7 @@ const EXAMPLE_CATEGORIES = {
     examples: [
       {
         name: "Run all maintenance",
-        command: "openclaw hybrid-mem run-all",
+        command: "openclaw hybrid-mem maintenance run-all",
         description: "Execute all maintenance tasks in optimal order",
       },
       {
@@ -70,7 +70,7 @@ const EXAMPLE_CATEGORIES = {
       },
       {
         name: "Optimize database",
-        command: "openclaw hybrid-mem vectordb-optimize",
+        command: "openclaw hybrid-mem storage optimize",
         description: "Compact LanceDB and reclaim disk space",
       },
       {
@@ -85,17 +85,17 @@ const EXAMPLE_CATEGORIES = {
     examples: [
       {
         name: "Extract from sessions",
-        command: "openclaw hybrid-mem distill --days 7 --model sonnet --dry-run",
+        command: "openclaw hybrid-mem distill run --days 7 --model sonnet --dry-run",
         description: "Preview fact extraction from last 7 days",
       },
       {
         name: "Find duplicates",
-        command: "openclaw hybrid-mem find-duplicates --threshold 0.85",
+        command: "openclaw hybrid-mem quality duplicates --threshold 0.85",
         description: "Detect near-duplicate facts",
       },
       {
         name: "Re-index vectors",
-        command: "openclaw hybrid-mem re-index",
+        command: "openclaw hybrid-mem storage re-index",
         description: "Rebuild vector database (after model change)",
       },
       {

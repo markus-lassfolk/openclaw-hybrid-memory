@@ -13,6 +13,7 @@ import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
+import { DEFAULT_WORKSHOP_TOOL_LIST_LIMIT, resolveWorkshopRevertSessionKey } from "../services/workshop-config.js";
 import { revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import type { SessionState } from "../lifecycle/types.js";
@@ -80,7 +81,7 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
       sessionKey: Type.Optional(Type.String({ description: "Session key for revert_by_ordinal (defaults to current session)." })),
       reason: Type.Optional(Type.String({ description: "Rejection or quarantine reason." })),
       revision: Type.Optional(Type.String({ description: "Revised suggested_change body (persona proposals only)." })),
-      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: "Max proposals for list (default 20)." })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: `Max proposals for list (default ${DEFAULT_WORKSHOP_TOOL_LIST_LIMIT}).` })),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
       const action = params.action as string;
@@ -90,7 +91,7 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
           case "list": {
             const items = workshopList(workshopCtx, {
               status: "pending",
-              limit: (params.limit as number) ?? 20,
+              limit: (params.limit as number) ?? DEFAULT_WORKSHOP_TOOL_LIST_LIMIT,
               includeUndoable: true,
             });
             const lines = items.map(
@@ -181,11 +182,14 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
                 details: { ok: false },
               };
             }
-            const sessionKey =
-              (params.sessionKey as string | undefined) ??
+            const chatSessionKey =
               (api.context?.sessionKey as string | undefined) ??
-              (api.context?.sessionId as string | undefined) ??
-              "default";
+              (api.context?.sessionId as string | undefined);
+            const sessionKey = resolveWorkshopRevertSessionKey(
+              ctx.cfg,
+              params.sessionKey as string | undefined,
+              chatSessionKey,
+            );
             const result = revertChangeByOrdinal(
               buildChangeRevertContext({
                 changeFeed: ctx.changeFeed,

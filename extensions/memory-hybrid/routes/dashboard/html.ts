@@ -159,6 +159,11 @@ function fmtDate(iso) {
   return d.toLocaleDateString();
 }
 
+function fmtTimestampMs(ts) {
+  if (ts == null) return '—';
+  return fmtDate(typeof ts === 'number' ? new Date(ts).toISOString() : String(ts));
+}
+
 function getAvatar(name) {
   for (const [k, v] of Object.entries(AGENT_AVATARS)) {
     if (name && name.toLowerCase().includes(k.toLowerCase())) return v;
@@ -307,7 +312,7 @@ function renderAgentHealth(ah) {
     const badge = st === 'healthy' ? 'badge-green' : st === 'idle' ? 'badge-muted' : st === 'stale' ? 'badge-yellow' : st === 'degraded' ? 'badge-red' : 'badge-muted';
     html += '<div class="agent-row" style="flex-direction:column;align-items:flex-start;border:1px solid var(--border);border-radius:6px;padding:8px">';
     html += '<div style="display:flex;justify-content:space-between;width:100%;align-items:center"><span class="agent-name">' + escHtml(a.agentId) + '</span><span class="badge ' + badge + '">' + escHtml(st) + '</span></div>';
-    html += '<div class="task-meta">score ' + (typeof a.score === 'number' ? a.score.toFixed(1) : '—') + ' · ' + fmtDate(formatTimestampUtcFromMs(a.lastSeen)) + '</div>';
+    html += '<div class="task-meta">score ' + (typeof a.score === 'number' ? a.score.toFixed(1) : '—') + ' · ' + fmtTimestampMs(a.lastSeen) + '</div>';
     html += '<div class="agent-task">' + escHtml((a.lastTask || '').slice(0, 120)) + '</div></div>';
   });
   html += '</div>';
@@ -345,7 +350,8 @@ function renderAudit(a) {
   return html;
 }
 
-function renderWorkshopProposals(proposals) {
+function renderWorkshopProposals(proposals, appliedChangeByKey) {
+  const changeMap = appliedChangeByKey || {};
   let html = '<div class="card section-full"><div class="card-title"><span class="icon">🛠️</span> Workshop Queue</div>';
   if (!proposals || proposals.length === 0) {
     html += '<div class="empty">No proposals in the workshop queue</div></div>';
@@ -368,7 +374,10 @@ function renderWorkshopProposals(proposals) {
       actionHtml += '<button data-revise="' + escHtml(p.unifiedKey) + '">Revise</button>';
     }
     if (actions.undoSupported) {
-      actionHtml += '<button data-undo="' + escHtml(p.unifiedKey) + '">Undo</button>';
+      const changeId = changeMap[p.unifiedKey];
+      actionHtml += '<button data-undo="' + escHtml(p.unifiedKey) + '"' +
+        (changeId ? ' data-undo-change-id="' + escHtml(String(changeId)) + '"' : '') +
+        '>Undo</button>';
     }
     html += '<tr><td>' + escHtml(p.type) + '</td><td>' + escHtml(p.status || 'pending') + '</td><td>' + escHtml(p.title) + '</td><td>' + Number(p.confidence || 0).toFixed(2) + '</td><td>' + escHtml((p.preview || '').slice(0,120)) + '</td><td class="workshop-actions">' + actionHtml + '</td></tr>';
   });
@@ -397,13 +406,19 @@ function renderWorkshopChanges(changes) {
     html += '<div class="empty">No active change-feed events</div></div>';
     return html;
   }
-  html += '<table class="workshop-table"><thead><tr><th>#</th><th>Action</th><th>Title</th><th>Revert</th></tr></thead><tbody>';
+  html += '<table class="workshop-table"><thead><tr><th>#</th><th>Session</th><th>Action</th><th>Title</th><th>Revert</th></tr></thead><tbody>';
   changes.forEach(c => {
-    const canRevert = c.rollbackAvailable !== false && (c.action === 'proposed' || c.action === 'applied');
+    const isSkillWorkshop = (c.proposalKey || '').startsWith('skill-workshop:');
+    const canRevert =
+      c.rollbackAvailable !== false &&
+      (c.action === 'proposed' ||
+        c.action === 'applied' ||
+        (c.action === 'detected' && c.category === 'frustration'));
     const revertBtn = canRevert
-      ? '<button data-revert-change="' + escHtml(String(c.ordinal)) + '">Revert</button>'
+      ? '<button data-revert-change-id="' + escHtml(String(c.id)) + '">Revert</button>'
       : '—';
-    html += '<tr><td>#' + escHtml(String(c.ordinal)) + '</td><td>' + escHtml(c.action || '') + '</td><td>' + escHtml(c.title || '') + '</td><td>' + revertBtn + '</td></tr>';
+    const title = isSkillWorkshop ? escHtml(c.title || '') + ' <span class="badge badge-muted">Skill Workshop</span>' : escHtml(c.title || '');
+    html += '<tr><td>#' + escHtml(String(c.ordinal)) + '</td><td>' + escHtml(c.sessionKey || '') + '</td><td>' + escHtml(c.action || '') + '</td><td>' + title + '</td><td>' + revertBtn + '</td></tr>';
   });
   html += '</tbody></table></div>';
   return html;
@@ -444,6 +459,24 @@ async function workshopAction(path, body) {
   return data;
 }
 
+let workshopBusy = false;
+
+async function runWorkshopAction(path, body, refresh) {
+  if (workshopBusy) return;
+  workshopBusy = true;
+  const buttons = document.querySelectorAll('#grid button');
+  buttons.forEach(btn => { btn.disabled = true; });
+  try {
+    await workshopAction(path, body);
+    await refresh();
+  } catch (err) {
+    document.getElementById('last-updated').textContent = 'Error: ' + err.message;
+  } finally {
+    workshopBusy = false;
+    buttons.forEach(btn => { btn.disabled = false; });
+  }
+}
+
 async function refreshWorkshop() {
   const grid = document.getElementById('grid');
   try {
@@ -464,79 +497,55 @@ async function refreshWorkshop() {
     const digest = await digestRes.json();
     const dream = (await dreamRes.json()).runs || [];
     const skills = (await skillsRes.json()).skills || [];
+    const appliedChangeByKey = {};
+    changes.forEach(c => {
+      if (c.action === 'applied' && c.proposalKey) appliedChangeByKey[c.proposalKey] = c.id;
+    });
     grid.innerHTML = [
-      renderWorkshopProposals(proposals),
+      renderWorkshopProposals(proposals, appliedChangeByKey),
       renderWorkshopDigest(digest),
       renderWorkshopChanges(changes),
       renderDreamLog(dream),
       renderSkillTelemetry(skills),
     ].join('');
     grid.querySelectorAll('[data-approve]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-approve');
-        try {
-          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/approve', {});
-          refreshWorkshop();
-        } catch (err) {
-          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
-        }
+        runWorkshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/approve', {}, refreshWorkshop);
       });
     });
     grid.querySelectorAll('[data-reject]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-reject');
-        try {
-          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/reject', { reason: 'dashboard reject' });
-          refreshWorkshop();
-        } catch (err) {
-          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
-        }
+        runWorkshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/reject', { reason: 'dashboard reject' }, refreshWorkshop);
       });
     });
     grid.querySelectorAll('[data-quarantine]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-quarantine');
-        try {
-          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/quarantine', { reason: 'dashboard quarantine' });
-          refreshWorkshop();
-        } catch (err) {
-          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
-        }
+        runWorkshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/quarantine', { reason: 'dashboard quarantine' }, refreshWorkshop);
       });
     });
     grid.querySelectorAll('[data-revise]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-revise');
         const revision = window.prompt('Revised suggested change:');
         if (!revision) return;
-        try {
-          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/revise', { revision });
-          refreshWorkshop();
-        } catch (err) {
-          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
-        }
+        runWorkshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/revise', { revision }, refreshWorkshop);
       });
     });
-    grid.querySelectorAll('[data-revert-change]').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const ordinal = btn.getAttribute('data-revert-change');
-        try {
-          await workshopAction('/api/workshop/changes/' + encodeURIComponent(ordinal) + '/revert', {});
-          refreshWorkshop();
-        } catch (err) {
-          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
-        }
+    grid.querySelectorAll('[data-revert-change-id]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.getAttribute('data-revert-change-id');
+        runWorkshopAction('/api/workshop/changes/revert', { id }, refreshWorkshop);
       });
     });
     grid.querySelectorAll('[data-undo]').forEach(btn => {
-      btn.addEventListener('click', async () => {
+      btn.addEventListener('click', () => {
         const id = btn.getAttribute('data-undo');
-        try {
-          await workshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/undo', {});
-          refreshWorkshop();
-        } catch (err) {
-          document.getElementById('last-updated').textContent = 'Error: ' + err.message;
-        }
+        const changeEventId = btn.getAttribute('data-undo-change-id');
+        const body = changeEventId ? { changeEventId } : {};
+        runWorkshopAction('/api/workshop/proposals/' + encodeURIComponent(id) + '/undo', body, refreshWorkshop);
       });
     });
     document.getElementById('last-updated').textContent = 'Updated ' + new Date().toLocaleTimeString();

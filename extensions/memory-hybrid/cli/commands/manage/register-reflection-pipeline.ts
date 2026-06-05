@@ -131,7 +131,19 @@ function parseContradictionReviewFile(inputPath: string): ContradictionReviewDec
   return decisions;
 }
 
-export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindings): void {
+export type ReflectionPipelineRegistrationOptions = {
+  onlyReflect?: boolean;
+  onlyQuality?: boolean;
+  onlyIngest?: boolean;
+  /** When true, skip the main `reflect` command (group namespace owns that name). */
+  skipReflectMain?: boolean;
+};
+
+export function registerManageReflectionPipeline(
+  mem: Chainable,
+  b: ManageBindings,
+  opts?: ReflectionPipelineRegistrationOptions,
+): void {
   const {
     factsDb,
     cfg,
@@ -157,6 +169,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     ctx,
   } = b;
 
+  const registerIngest = opts?.onlyIngest || (!opts?.onlyReflect && !opts?.onlyQuality);
+  const registerQuality = !opts?.onlyReflect && !opts?.onlyIngest;
+  const registerReflect = !opts?.onlyQuality && !opts?.onlyIngest;
+
+  if (registerIngest) {
   mem
     .command("backfill")
     .description(
@@ -261,6 +278,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       ),
     );
 
+  }
+
+  if (registerQuality) {
   mem
     .command("find-duplicates")
     .description("Find duplicate or near-duplicate facts using vector similarity")
@@ -353,6 +373,10 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       }),
     );
 
+  }
+
+  if (registerReflect) {
+  if (!opts?.skipReflectMain) {
   registerScanMaintenanceOverrideOptions(
     mem
       .command("reflect")
@@ -388,6 +412,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       },
     ),
   );
+  }
 
   registerScanMaintenanceOverrideOptions(
     mem
@@ -555,6 +580,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
     ),
   );
 
+  if (registerIngest) {
   const entityMentions = mem.command("entity-mentions").description("Audit and cleanup stored entity mention rows");
 
   entityMentions
@@ -611,6 +637,8 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
         }
       }),
     );
+
+  }
 
   if (runReflectIdentity) {
     mem
@@ -1011,6 +1039,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       );
   }
 
+  }
+
+  if (registerQuality) {
   mem
     .command("resolve-contradictions")
     .description("Resolve unresolved contradictions (auto-resolve obvious cases, report ambiguous pairs)")
@@ -1852,4 +1883,6 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
         },
       ),
     );
+
+  }
 }

@@ -9,6 +9,9 @@ import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { EventLog } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
@@ -94,6 +97,10 @@ export interface LifecycleContext {
   injectedFactIdsBySession?: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
   /** Live change feed for operator notifications. */
   changeFeed?: ChangeFeed | null;
+  /** Workshop stores for in-chat revert (persona, crystallization, tool). */
+  proposalsDb?: ProposalsDB | null;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
 }
 
 /** Per-session state shared across stages (owned by dispatcher). */

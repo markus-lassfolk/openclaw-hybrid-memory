@@ -11,10 +11,16 @@ import type { ProposalsDB } from "../../backends/proposals-db.js";
 import type { ToolProposalStore } from "../../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../../config.js";
+import type { ChangeEvent } from "../../services/change-feed.js";
 import type { ChangeFeed } from "../../services/change-feed.js";
-import { buildChangeRevertContext, revertChangeByOrdinal } from "../../services/change-feed-revert.js";
+import { buildChangeRevertContext, revertChangeById } from "../../services/change-feed-revert.js";
 import { buildWorkshopDigestReport } from "../../services/unified-proposals.js";
-import { resolveWorkshopSessionKey } from "../../services/workshop-config.js";
+import {
+  DEFAULT_WORKSHOP_DASHBOARD_LIST_LIMIT,
+  DEFAULT_WORKSHOP_LIST_LIMIT,
+  listWorkshopDashboardChangeFeedSessions,
+  resolveWorkshopSessionKey,
+} from "../../services/workshop-config.js";
 import {
   type WorkshopServiceContext,
   withWorkshopDefaults,
@@ -54,7 +60,11 @@ function wctx(ctx: WorkshopDashboardContext): WorkshopServiceContext {
 }
 
 export function collectWorkshopProposals(ctx: WorkshopDashboardContext) {
-  return workshopList(wctx(ctx), { status: "pending", limit: 100, includeUndoable: true });
+  return workshopList(wctx(ctx), {
+    status: "pending",
+    limit: DEFAULT_WORKSHOP_DASHBOARD_LIST_LIMIT,
+    includeUndoable: true,
+  });
 }
 
 export function collectWorkshopProposalDetail(ctx: WorkshopDashboardContext, unifiedKey: string) {
@@ -77,28 +87,59 @@ export function reviseWorkshopProposal(ctx: WorkshopDashboardContext, unifiedKey
   return workshopRevise(wctx(ctx), unifiedKey, revision);
 }
 
-export function undoWorkshopProposal(ctx: WorkshopDashboardContext, unifiedKey: string) {
-  return workshopUndo(wctx(ctx), unifiedKey);
+export function undoWorkshopProposal(
+  ctx: WorkshopDashboardContext,
+  unifiedKey: string,
+  opts?: { changeEventId?: string },
+) {
+  return workshopUndo(wctx(ctx), unifiedKey, opts);
 }
 
 export function collectWorkshopDigest(ctx: WorkshopDashboardContext) {
   return buildWorkshopDigestReport(wctx(ctx));
 }
 
-export function collectWorkshopChanges(ctx: WorkshopDashboardContext, limit = 50) {
+export function collectWorkshopChanges(ctx: WorkshopDashboardContext, limit = DEFAULT_WORKSHOP_LIST_LIMIT) {
   if (!ctx.changeFeed || ctx.cfg.liveChangeFeed?.enabled === false) return [];
-  return ctx.changeFeed.listRecent({ limit, status: "active" });
+  const recentAll = ctx.changeFeed.listRecent({ limit: Math.min(200, limit * 4), status: "active" });
+  const recentSessionKeys = new Set<string>();
+  for (const event of recentAll) {
+    if (event.proposalKey?.trim()) {
+      recentSessionKeys.add(event.sessionKey);
+    }
+  }
+  const sessionKeys = listWorkshopDashboardChangeFeedSessions(ctx.cfg, recentSessionKeys);
+  const perSessionLimit = Math.min(200, Math.max(limit, Math.ceil(limit / sessionKeys.length) + 5));
+  const seen = new Set<string>();
+  const merged: ChangeEvent[] = [];
+  for (const sessionKey of sessionKeys) {
+    for (const event of ctx.changeFeed.listRecent({
+      sessionKey,
+      limit: perSessionLimit,
+      status: "active",
+    })) {
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      merged.push(event);
+    }
+  }
+  merged.sort((a, b) => b.timestamp - a.timestamp);
+  return merged
+    .filter((event) => event.action === "proposed" || event.action === "applied" || event.action === "detected")
+    .slice(0, limit);
 }
 
-export function revertWorkshopChange(ctx: WorkshopDashboardContext, ordinal: number) {
+export function revertWorkshopChange(ctx: WorkshopDashboardContext, eventId: string) {
   if (!ctx.changeFeed) return { ok: false as const, error: "change feed unavailable" };
+  const trimmed = eventId.trim();
+  if (!trimmed) return { ok: false as const, error: "missing change event id" };
   const revertCtx = buildChangeRevertContext({
     changeFeed: ctx.changeFeed,
     cfg: ctx.cfg,
     workshopCtx: wctx(ctx),
     sessionKey: resolveWorkshopSessionKey(ctx.cfg),
   });
-  return revertChangeByOrdinal(revertCtx, ordinal, resolveWorkshopSessionKey(ctx.cfg));
+  return revertChangeById(revertCtx, trimmed);
 }
 
 export function collectDreamCycleLog(ctx: WorkshopDashboardContext, limit = 5): Array<Record<string, unknown>> {

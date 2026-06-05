@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 
 import { ChangeFeed } from "../services/change-feed.js";
@@ -514,6 +518,116 @@ describe("collectPendingChangeEvents", () => {
     expect(trimmed[0]!.title.length).toBeLessThan(longTitle.length);
     const block = buildChangeNoticeBlock(trimmed);
     expect(block).not.toContain(longTitle);
+  });
+});
+
+describe("ChangeFeed concurrent append", () => {
+  it("assigns unique ordinals under parallel worker appends", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "change-feed-race-"));
+    const dbPath = join(tmpDir, "facts.db");
+    const db = new DatabaseSync(dbPath);
+    const feed = ChangeFeed.fromDb(db);
+    feed.migrate();
+    db.close();
+
+    const sessionKey = "race-session";
+    const workerCount = 12;
+    const ordinals = await Promise.all(
+      Array.from({ length: workerCount }, () =>
+        new Promise<number>((resolve, reject) => {
+          const worker = new Worker(
+            `
+              const { parentPort, workerData } = require('node:worker_threads');
+              const { DatabaseSync } = require('node:sqlite');
+              const { randomUUID } = require('node:crypto');
+              const db = new DatabaseSync(workerData.dbPath);
+              db.exec('PRAGMA busy_timeout = 5000');
+              const sessionKey = workerData.sessionKey;
+              db.exec('BEGIN IMMEDIATE');
+              try {
+                const maxRow = db
+                  .prepare('SELECT MAX(ordinal) AS maxOrd FROM change_events WHERE session_key = ?')
+                  .get(sessionKey);
+                const ordinal = (maxRow?.maxOrd ?? 0) + 1;
+                db.prepare(
+                  \`INSERT INTO change_events (
+                    id, session_key, ordinal, timestamp_ms, tier, category, action,
+                    title, detail, proposal_key, rollback_available, activation, status
+                  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\`,
+                ).run(
+                  randomUUID(),
+                  sessionKey,
+                  ordinal,
+                  Date.now(),
+                  'session',
+                  'persona',
+                  'detected',
+                  'race',
+                  '',
+                  null,
+                  0,
+                  'immediate',
+                  'active',
+                );
+                db.exec('COMMIT');
+                db.close();
+                parentPort.postMessage({ ordinal });
+              } catch (err) {
+                try { db.exec('ROLLBACK'); } catch {}
+                try { db.close(); } catch {}
+                parentPort.postMessage({ error: String(err) });
+              }
+            `,
+            { eval: true, workerData: { dbPath, sessionKey } },
+          );
+          worker.on("message", (msg: { ordinal?: number; error?: string }) => {
+            worker.terminate().catch(() => {});
+            if (msg.error) reject(new Error(msg.error));
+            else resolve(msg.ordinal!);
+          });
+          worker.on("error", reject);
+        }),
+      ),
+    );
+
+    expect(new Set(ordinals).size).toBe(workerCount);
+    expect(ordinals.sort((a, b) => a - b)).toEqual(Array.from({ length: workerCount }, (_, i) => i + 1));
+
+    const verifyDb = new DatabaseSync(dbPath);
+    const rows = verifyDb
+      .prepare("SELECT ordinal FROM change_events WHERE session_key = ? ORDER BY ordinal")
+      .all(sessionKey) as Array<{ ordinal: number }>;
+    verifyDb.close();
+    expect(rows).toHaveLength(workerCount);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("assigns unique ordinals for rapid sequential appends", () => {
+    const db = new DatabaseSync(":memory:");
+    const feed = ChangeFeed.fromDb(db);
+    const sessionKey = "rapid-session";
+    const count = 50;
+    const ordinals: number[] = [];
+
+    for (let i = 0; i < count; i++) {
+      ordinals.push(
+        feed.append({
+          sessionKey,
+          timestamp: Date.now(),
+          tier: "session",
+          category: "frustration",
+          action: "detected",
+          title: `Event ${i}`,
+          detail: "",
+          proposalKey: null,
+          rollbackAvailable: false,
+          activation: "immediate",
+        }).ordinal,
+      );
+    }
+
+    expect(new Set(ordinals).size).toBe(count);
+    expect(Math.max(...ordinals)).toBe(count);
   });
 });
 

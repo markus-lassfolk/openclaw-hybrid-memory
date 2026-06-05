@@ -432,29 +432,6 @@ export function emitProcedureSkillProposed(
   });
 }
 
-export function syncProcedureSkillWorkshopProposals(
-  changeFeed: ChangeFeed | null | undefined,
-  cfg: HybridMemoryConfig,
-  factsDb: import("../backends/facts-db.js").FactsDB,
-): number {
-  if (!changeFeed || !isLiveChangeFeedEnabled(cfg) || cfg.procedures?.enabled === false) return 0;
-  const threshold = cfg.procedures?.validationThreshold ?? 3;
-  const ttlDays = cfg.procedures?.skillTTLDays ?? 30;
-  const procedures = factsDb.getProceduresReadyForSkill(threshold, 50, ttlDays);
-  let emitted = 0;
-  for (const proc of procedures) {
-    const proposalKey = `procedure-skill:${proc.id}`;
-    if (changeFeed.findActiveByProposalKey(proposalKey, "proposed")) continue;
-    emitProcedureSkillProposed(changeFeed, cfg, {
-      sessionKey: BROADCAST_CHANGE_SESSION_KEY,
-      procedureId: proc.id,
-      title: proc.taskPattern ?? proc.id,
-    });
-    emitted++;
-  }
-  return emitted;
-}
-
 export type ChangeNotifyFilter = {
   tier: ChangeEventTier;
   action: ChangeEventAction;

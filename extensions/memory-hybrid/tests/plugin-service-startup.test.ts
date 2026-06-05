@@ -44,6 +44,8 @@ function makeTimers() {
     postUpgradeTimeout: { value: null as ReturnType<typeof setTimeout> | null },
     passiveObserverTimer: { value: null as ReturnType<typeof setInterval> | null },
     watchdogTimer: { value: null as ReturnType<typeof setInterval> | null },
+    maintenanceTick: { value: null as ReturnType<typeof setInterval> | null },
+    maintenanceStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
   };
 }
 
@@ -83,6 +85,14 @@ function clearTimers(timers: ReturnType<typeof makeTimers>) {
   if (timers.watchdogTimer.value) {
     clearInterval(timers.watchdogTimer.value);
     timers.watchdogTimer.value = null;
+  }
+  if (timers.maintenanceTick.value) {
+    clearInterval(timers.maintenanceTick.value);
+    timers.maintenanceTick.value = null;
+  }
+  if (timers.maintenanceStartupTimeout.value) {
+    clearTimeout(timers.maintenanceStartupTimeout.value);
+    timers.maintenanceStartupTimeout.value = null;
   }
 }
 

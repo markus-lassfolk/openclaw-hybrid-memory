@@ -71,7 +71,7 @@ export function registerDoctorCommand(
           name: "Vector Database (LanceDB)",
           status: "fail",
           message: `Connection failed: ${error}`,
-          fix: "Run: openclaw hybrid-mem re-index",
+          fix: "Run: openclaw hybrid-mem storage re-index",
         });
       }
 

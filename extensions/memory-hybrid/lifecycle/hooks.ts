@@ -228,8 +228,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
   };
 
   const onChangeNotify = (api: ClawdbotPluginApi) => {
-    registerChangeNotifyHandler(api, ctx, sessionState);
     registerChangeRevertHandler(api, ctx, sessionState);
+    registerChangeNotifyHandler(api, ctx, sessionState);
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {

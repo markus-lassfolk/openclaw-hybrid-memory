@@ -2,7 +2,7 @@
  * Optional bridge to OpenClaw Skill Workshop proposal filesystem (Phase 5).
  */
 
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -54,6 +54,20 @@ export function writeSkillWorkshopProposal(input: SkillWorkshopBridgeInput): { o
       JSON.stringify({ id, name: input.name, description: input.description, createdAt: date, source: "hybrid-memory-bridge" }, null, 2),
     );
     return { ok: true, path: proposalPath };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** Remove a bridged skill-workshop proposal directory (best-effort). */
+export function removeSkillWorkshopProposal(proposalId: string): { ok: true } | { ok: false; error: string } {
+  const id = proposalId.trim();
+  if (!id) return { ok: false, error: "missing proposal id" };
+  const dir = join(skillWorkshopRoot(), id);
+  if (!existsSync(dir)) return { ok: true };
+  try {
+    rmSync(dir, { recursive: true, force: true });
+    return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

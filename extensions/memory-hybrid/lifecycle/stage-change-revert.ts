@@ -60,9 +60,10 @@ export function registerChangeRevertHandler(
         workshopCtx: withWorkshopDefaults({
           cfg: ctx.cfg,
           factsDb: ctx.factsDb,
-          proposalsDb: null,
-          crystallizationStore: null,
-          toolProposalStore: null,
+          proposalsDb: ctx.proposalsDb ?? null,
+          crystallizationStore: ctx.crystallizationStore ?? null,
+          toolProposalStore: ctx.toolProposalStore ?? null,
+          workflowStore: ctx.workflowStore ?? null,
           resolvedSqlitePath: ctx.resolvedSqlitePath,
           changeFeed: ctx.changeFeed,
           api: rApi,

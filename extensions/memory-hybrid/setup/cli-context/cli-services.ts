@@ -5,6 +5,8 @@ import type { HandlerContext } from "../../cli/handlers.js";
 import type { HybridMemCliContext } from "../../cli/register.js";
 import type { FindDuplicatesResult } from "../../cli/types.js";
 import {
+  getCronModelConfig,
+  getDefaultCronModel,
   getMemoryCategories,
   resolveReflectionModelAndFallbacks,
   resolveReflectionThinkingMode,
@@ -17,6 +19,7 @@ import { runEntityEnrichmentForCli } from "../../services/entity-enrichment-cli.
 import { runExport } from "../../services/export-memory.js";
 import { runFindDuplicates } from "../../services/find-duplicates.js";
 import { runBuildLanguageKeywords } from "../../services/language-keywords-build.js";
+import { runPassiveObserver } from "../../services/passive-observer.js";
 import { mergeResults } from "../../services/merge-results.js";
 import { runPreConsolidationFlush, requireWalFlushBeforeMutation } from "../../services/pre-consolidation-flush.js";
 import { adjudicateContradictionWithLlm } from "../../services/contradiction-adjudicator.js";
@@ -155,6 +158,7 @@ interface CliContextServices {
   runApplyContradictionReviewDecisions: (
     decisions: import("../../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
   ) => Promise<import("../../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
+  runPassiveObserverOnce?: () => Promise<string>;
   getMemoryCategories: () => string[];
   mergeResults: HybridMemCliContext["mergeResults"];
   parseSourceDate: (v: string | number | null | undefined) => number | null;
@@ -509,7 +513,7 @@ export function buildCliContextServices(
         },
         logSink,
         provenanceService,
-        { cfg, proposalsDb: proposalsDb ?? null, crystallizationStore: ctx.crystallizationStore ?? null, toolProposalStore: ctx.toolProposalStore ?? null, api, changeFeed: ctx.changeFeed ?? null },
+        { cfg, proposalsDb: proposalsDb ?? null, crystallizationStore: ctx.crystallizationStore ?? null, toolProposalStore: ctx.toolProposalStore ?? null, workflowStore: ctx.workflowStore ?? null, api, changeFeed: ctx.changeFeed ?? null, resolvedSqlitePath },
       );
     },
     runContinuousVerification: async (opts?: { verbose?: boolean }) => {
@@ -562,6 +566,37 @@ export function buildCliContextServices(
       });
     },
     requireWalFlushBeforeMutation: guardWal,
+    runPassiveObserverOnce: async () => {
+      if (!cfg.passiveObserver?.enabled) return "skipped (passiveObserver disabled)";
+      const { getLLMModelPreference } = await import("../../config.js");
+      const observerModel =
+        cfg.passiveObserver.model ??
+        getLLMModelPreference(getCronModelConfig(cfg), "nano")[0] ??
+        getDefaultCronModel(getCronModelConfig(cfg), "nano");
+      const observerFallbacks = (() => {
+        const pref = getLLMModelPreference(getCronModelConfig(cfg), "nano");
+        return pref.length > 1 ? pref.slice(1) : undefined;
+      })();
+      const result = await runPassiveObserver(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        cfg.passiveObserver,
+        cfg.categories,
+        {
+          model: observerModel,
+          fallbackModels: observerFallbacks,
+          dbDir: dirname(resolvedSqlitePath),
+          proceduresSessionsDir: cfg.procedures.sessionsDir,
+          reinforcement: cfg.reinforcement,
+          provenanceService: ctx.provenanceService ?? null,
+          eventLog: ctx.eventLog ?? null,
+        },
+        pluginLogger,
+      );
+      return `stored=${result.factsStored} scanned=${result.sessionsScanned}`;
+    },
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,
     parseSourceDate,

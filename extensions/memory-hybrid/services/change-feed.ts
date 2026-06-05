@@ -155,7 +155,7 @@ export class ChangeFeed {
         event.action,
         event.title,
         event.detail,
-        event.proposalKey,
+        event.proposalKey ?? null,
         event.rollbackAvailable ? 1 : 0,
         event.activation,
         event.status,

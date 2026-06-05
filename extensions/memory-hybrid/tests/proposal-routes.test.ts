@@ -110,7 +110,7 @@ describe("registerProposalHttpRoutes", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("registers workshop routes when health.enabled is true", () => {
+  it("registers workshop routes when workshop is enabled", () => {
     expect(capturedRoutes.map((r) => r.path)).toEqual(
       expect.arrayContaining([
         `${PROPOSAL_API_PREFIX}/list`,
@@ -118,6 +118,32 @@ describe("registerProposalHttpRoutes", () => {
         `${PROPOSAL_API_PREFIX}/undo`,
       ]),
     );
+  });
+
+  it("registers workshop routes even when health.enabled is false", () => {
+    capturedRoutes.length = 0;
+    const disabledHealthCfg = {
+      ...cfg,
+      health: { enabled: false, authenticated: true },
+    } as HybridMemoryConfig;
+    registerProposalHttpRoutes({
+      cfg: { health: disabledHealthCfg.health },
+      cfgFull: disabledHealthCfg,
+      factsDb,
+      proposalsDb,
+      crystallizationStore: null,
+      toolProposalStore: null,
+      workflowStore: null,
+      resolvedSqlitePath: join(tmpDir, "facts.db"),
+      changeFeed: null,
+      api: {
+        registerHttpRoute: (path: string) => {
+          capturedRoutes.push({ path, handler: async () => ({}) });
+        },
+        logger: { warn: () => {}, info: () => {} },
+      } as unknown as ClawdbotPluginApi,
+    });
+    expect(capturedRoutes.map((r) => r.path)).toContain(`${PROPOSAL_API_PREFIX}/list`);
   });
 
   it("reject route rejects a pending persona proposal via JSON body", async () => {

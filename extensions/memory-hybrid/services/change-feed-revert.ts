@@ -8,6 +8,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import type { SessionState } from "../lifecycle/types.js";
 import type { ChangeEvent, ChangeFeed } from "./change-feed.js";
 import { BROADCAST_CHANGE_SESSION_KEY, emitChangeReverted, supersedeActiveFrustrationEvents } from "./change-feed-emit.js";
+import { removeSkillWorkshopProposal } from "./skill-workshop-bridge.js";
 import { parseUnifiedKey } from "./unified-proposals.js";
 import {
   type WorkshopServiceContext,
@@ -158,20 +159,22 @@ export function revertChangeEvent(ctx: ChangeRevertContext, event: ChangeEvent):
   }
 
   if (event.action === "proposed" && event.proposalKey) {
-    if (
-      event.proposalKey.startsWith("skill-workshop:") ||
-      (event.proposalKey.startsWith("procedure-skill:") && event.category === "procedure-skill")
-    ) {
+    if (event.proposalKey.startsWith("skill-workshop:")) {
+      const proposalId = event.proposalKey.slice("skill-workshop:".length);
+      const removed = removeSkillWorkshopProposal(proposalId);
+      const detail = removed.ok
+        ? "Skill workshop proposal withdrawn and removed from filesystem."
+        : `Skill workshop proposal withdrawn (filesystem cleanup: ${removed.error}).`;
       ctx.changeFeed.markReverted(event.id);
       const revertedEvent = emitChangeReverted(ctx.changeFeed, ctx.cfg, {
         sessionKey: event.sessionKey,
         originalEvent: event,
-        detail: "Pending proposal withdrawn.",
+        detail,
       });
       return finishRevert(
         ctx,
         event,
-        `Reverted change #${event.ordinal}: proposal withdrawn. ${activationNote(event)}`,
+        `Reverted change #${event.ordinal}: ${detail} ${activationNote(event)}`,
         revertedEvent,
       );
     }
@@ -233,7 +236,9 @@ export function revertChangeEvent(ctx: ChangeRevertContext, event: ChangeEvent):
       if (!parsed || parsed.type !== "procedure-skill") {
         return { ok: false, error: `Invalid procedure-skill key: ${event.proposalKey}` };
       }
-      const result = workshopRevertProcedureSkill(ctx.workshopCtx, parsed.storeId, "reverted via change feed");
+      const result = workshopRevertProcedureSkill(ctx.workshopCtx, parsed.storeId, "reverted via change feed", {
+        skipChangeFeed: true,
+      });
       if (!result.ok) return { ok: false, error: result.error };
       ctx.changeFeed.markReverted(event.id);
       const revertedEvent = emitChangeReverted(ctx.changeFeed, ctx.cfg, {

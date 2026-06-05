@@ -78,74 +78,78 @@ export function backfillTextTimestampColumns(
   }
 }
 
+/** Canonical registry of SQLite TEXT columns that store ISO 8601 UTC timestamps. */
+export type TextTimestampColumnSpec = { table: string; columns: string[] };
+
+export const TEXT_TIMESTAMP_COLUMN_SPECS: TextTimestampColumnSpec[] = [
+  { table: "fact_embeddings", columns: ["created_at"] },
+  { table: "fact_variants", columns: ["created_at"] },
+  { table: "verified_facts", columns: ["verified_at", "next_verification", "created_at"] },
+  { table: "provenance_edges", columns: ["created_at"] },
+  { table: "event_log", columns: ["timestamp", "created_at"] },
+  {
+    table: "crystallization_proposals",
+    columns: ["created_at", "updated_at", "approved_at", "installed_at", "superseded_at"],
+  },
+  {
+    table: "issues",
+    columns: ["detected_at", "resolved_at", "verified_at", "created_at", "updated_at"],
+  },
+  { table: "tool_proposals", columns: ["created_at", "updated_at"] },
+  { table: "workflow_traces", columns: ["created_at"] },
+  { table: "learnings", columns: ["created_at", "updated_at"] },
+  { table: "apitap_endpoints", columns: ["captured_at", "created_at", "updated_at"] },
+  { table: "memory_events", columns: ["created_at", "processed_at"] },
+];
+
+function specsForTables(...tables: string[]): TextTimestampColumnSpec[] {
+  return TEXT_TIMESTAMP_COLUMN_SPECS.filter((spec) => tables.includes(spec.table));
+}
+
 /** Facts DB tables with legacy TEXT timestamp columns. */
 export function backfillFactsDbTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [
-    { table: "fact_embeddings", columns: ["created_at"] },
-    { table: "fact_variants", columns: ["created_at"] },
-    {
-      table: "verified_facts",
-      columns: ["verified_at", "next_verification", "created_at"],
-    },
-    { table: "provenance_edges", columns: ["created_at"] },
-  ]);
+  backfillTextTimestampColumns(
+    db,
+    specsForTables("fact_embeddings", "fact_variants", "verified_facts", "provenance_edges"),
+  );
 }
 
 export function backfillEventLogTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [{ table: "event_log", columns: ["timestamp", "created_at"] }]);
+  backfillTextTimestampColumns(db, specsForTables("event_log"));
 }
 
 export function backfillCrystallizationTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [
-    {
-      table: "crystallization_proposals",
-      columns: ["created_at", "updated_at", "approved_at", "installed_at", "superseded_at"],
-    },
-  ]);
+  backfillTextTimestampColumns(db, specsForTables("crystallization_proposals"));
 }
 
 export function backfillIssueTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [
-    {
-      table: "issues",
-      columns: ["detected_at", "resolved_at", "verified_at", "created_at", "updated_at"],
-    },
-  ]);
+  backfillTextTimestampColumns(db, specsForTables("issues"));
 }
 
 export function backfillToolProposalTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [{ table: "tool_proposals", columns: ["created_at", "updated_at"] }]);
+  backfillTextTimestampColumns(db, specsForTables("tool_proposals"));
 }
 
 export function backfillWorkflowTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [{ table: "workflow_traces", columns: ["created_at"] }]);
+  backfillTextTimestampColumns(db, specsForTables("workflow_traces"));
 }
 
 export function backfillLearningsTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [{ table: "learnings", columns: ["created_at", "updated_at"] }]);
+  backfillTextTimestampColumns(db, specsForTables("learnings"));
 }
 
 export function backfillApitapTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [
-    { table: "apitap_endpoints", columns: ["captured_at", "created_at", "updated_at"] },
-  ]);
+  backfillTextTimestampColumns(db, specsForTables("apitap_endpoints"));
 }
 
 export function backfillVerifiedFactsTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [
-    {
-      table: "verified_facts",
-      columns: ["verified_at", "next_verification", "created_at"],
-    },
-  ]);
+  backfillTextTimestampColumns(db, specsForTables("verified_facts"));
 }
 
 export function backfillEventBusTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [
-    { table: "memory_events", columns: ["created_at", "processed_at"] },
-  ]);
+  backfillTextTimestampColumns(db, specsForTables("memory_events"));
 }
 
 export function backfillProvenanceTextTimestamps(db: DatabaseSync): void {
-  backfillTextTimestampColumns(db, [{ table: "provenance_edges", columns: ["created_at"] }]);
+  backfillTextTimestampColumns(db, specsForTables("provenance_edges"));
 }

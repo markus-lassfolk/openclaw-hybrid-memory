@@ -526,6 +526,17 @@ export function createHybridMemCliContext(
     runToolEffectiveness: (opts) => handlers.runToolEffectivenessForCli(handlerCtx, opts),
     runCostReport: (opts, sink) => handlers.runCostReportForCli(handlerCtx, opts, sink),
     pruneCostLog: (retainDays) => (handlerCtx.costTracker ? handlerCtx.costTracker.pruneOldEntries(retainDays) : 0),
+    runPassiveObserverOnce: services.runPassiveObserverOnce,
+    runActiveTasksMaintain: handlerCtx.cfg.activeTask?.enabled
+      ? async () => {
+          const activeCtx = buildActiveTaskCliContext(handlerCtx);
+          if (!activeCtx) return "skipped (activeTask context unavailable)";
+          const { runActiveTaskMaintain } = await import("../../cli/active-tasks.js");
+          const result = await runActiveTaskMaintain(activeCtx, handlerCtx.cfg, { apply: true, jsonMode: true });
+          const reconciled = result.reconcile?.reconciled ?? 0;
+          return `status=${result.status} reconciled=${reconciled}`;
+        }
+      : undefined,
     runExport: services.runExport,
     richStatsExtras: buildRichStatsExtras(handlerCtx),
     listCommands: buildListCommands(handlerCtx, api),
@@ -546,6 +557,7 @@ export function createHybridMemCliContext(
     eventBus: handlerCtx.eventBus ?? null,
     auditStore: handlerCtx.auditStore ?? null,
     agentHealthStore: handlerCtx.agentHealthStore ?? null,
+    proposalsDb: handlerCtx.proposalsDb ?? null,
   };
 }
 

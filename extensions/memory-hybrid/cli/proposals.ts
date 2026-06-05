@@ -15,6 +15,7 @@ import { emitPersonaApplied, supersedeActiveProposedEvent } from "../services/ch
 import type { ChangeFeed } from "../services/change-feed.js";
 import { writeProposalRollback, deleteProposalRollback } from "../services/proposal-rollback.js";
 import { enforceMaxPendingCap, resolveWorkshopMaxPending, type UnifiedProposalStores } from "../services/unified-proposals.js";
+import { resolveWorkshopAppliedSessionKey } from "../services/workshop-config.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { nowIso } from "../utils/dates.js";
 import { spawnSync } from "../utils/process-runner.js";
@@ -481,7 +482,7 @@ export async function applyApprovedProposal(
       { error: console.error },
     );
     emitPersonaApplied(ctx.changeFeed, ctx.cfg as HybridMemoryConfig, {
-      sessionKey: ctx.sessionKey ?? "system",
+      sessionKey: ctx.sessionKey ?? resolveWorkshopAppliedSessionKey(ctx.cfg as HybridMemoryConfig),
       proposalId,
       targetFile: proposal.targetFile,
       title: proposal.title,

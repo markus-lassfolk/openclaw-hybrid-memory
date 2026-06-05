@@ -211,9 +211,7 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
         input.logger.info(
           `memory-hybrid: dream-cycle auto-proposed crystallization skill ${makeUnifiedKey("crystallization", created.id)}`,
         );
-      }
-
-      if (isSkillWorkshopPluginActive(input.api)) {
+      } else if (isSkillWorkshopPluginActive(input.api)) {
         const bridged = writeSkillWorkshopProposal({
           name: slug,
           description: text.slice(0, 160),
