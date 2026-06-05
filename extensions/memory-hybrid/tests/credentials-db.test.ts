@@ -591,3 +591,43 @@ describe("CredentialsDB.encryptVaultSafe", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// ---------------------------------------------------------------------------
+// rekeyVaultSafe: backup restore on verify failure
+// ---------------------------------------------------------------------------
+
+const TEST_REKEY_ENCRYPTION_KEY = "replacement-encryption-key-32chars";
+
+describe("CredentialsDB.rekeyVaultSafe", () => {
+  it("restores the live vault from backup when verify fails after rekey", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-rekey-restore-"));
+    const dbPath = join(dir, "creds.db");
+    const backupPath = join(dir, "creds.db.rekey.bak");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "svc", type: "api_key", value: "secret-before-rekey" });
+    plainDb.close();
+
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
+    const db2 = new CredentialsDB(dbPath, TEST_ENCRYPTION_KEY);
+    warnSpy.mockRestore();
+    db2.encryptVaultSafe(TEST_ENCRYPTION_KEY, { verify: true });
+    const statusBefore = db2.getVaultStatus();
+
+    const originalGet = db2.get.bind(db2);
+    const getMock = vi.spyOn(db2, "get").mockImplementation((service, type) => {
+      if (service === "svc" && type === "api_key") return null;
+      return originalGet(service, type);
+    });
+
+    expect(() =>
+      db2.rekeyVaultSafe(TEST_REKEY_ENCRYPTION_KEY, { backupPath, verify: true }),
+    ).toThrow(/Verification failed: credential svc\/api_key mismatch after rekey/);
+    getMock.mockRestore();
+
+    expect(db2.getVaultStatus().kdfVersion).toBe(statusBefore.kdfVersion);
+    expect(db2.get("svc", "api_key")?.value).toBe("secret-before-rekey");
+    expect(existsSync(backupPath)).toBe(true);
+    db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

@@ -5,7 +5,7 @@
  */
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
-import { existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
@@ -556,6 +556,9 @@ export class CredentialsDB extends BaseSqliteStore {
     const newSalt = randomBytes(32);
     const newKdfVersion = CRED_KDF_VERSION;
     const newKey = deriveKey(newEncryptionKey, newSalt, newKdfVersion);
+    const priorKdfVersion = this.kdfVersion;
+    const priorSalt = Buffer.from(this.salt);
+    const priorKey = Buffer.from(this.key);
     let rekeyedCount = plaintextRows.length;
 
     let oldBackupPath: string | undefined;
@@ -681,6 +684,20 @@ export class CredentialsDB extends BaseSqliteStore {
         ...(verified !== undefined ? { verified } : {}),
       };
     } catch (err) {
+      if (!rekeySucceeded && backupPath && existsSync(backupPath)) {
+        try {
+          this.restoreVaultFileFromBackup(backupPath, {
+            kdfVersion: priorKdfVersion,
+            salt: priorSalt,
+            key: priorKey,
+          });
+        } catch (restoreErr) {
+          capturePluginError(restoreErr as Error, {
+            subsystem: "credentials",
+            operation: "rekeyVaultSafe:restore-from-backup",
+          });
+        }
+      }
       if (oldBackupPath && backupPath && !rekeySucceeded) {
         try {
           if (existsSync(backupPath)) unlinkSync(backupPath);
@@ -691,6 +708,24 @@ export class CredentialsDB extends BaseSqliteStore {
       }
       throw err;
     }
+  }
+
+  private restoreVaultFileFromBackup(
+    backupPath: string,
+    prior: { kdfVersion: number; salt: Buffer; key: Buffer },
+  ): void {
+    this.db.close();
+    this._dbOpen = false;
+    copyFileSync(backupPath, this.dbPath);
+    tryRestrictSqliteDbFileMode(this.dbPath);
+    this.db.open();
+    this._dbOpen = true;
+    this.applyPragmas();
+    this.kdfVersion = prior.kdfVersion;
+    this.salt = prior.salt;
+    this.key = prior.key;
+    this.password = null;
+    this.storesEncryptedValues = prior.kdfVersion !== CRED_KDF_PLAINTEXT;
   }
 
   /**
