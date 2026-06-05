@@ -36,7 +36,7 @@ export function selfCorrectionStatusToJobRunOutcome(status: string | undefined):
 
 /** Parse `semantic=` token from orchestrator step summary text. */
 export function parseSemanticTokenFromSummary(summary: string): string | undefined {
-  const semantic = summary.match(/\bsemantic=([^\s]+)/)?.[1];
+  const semantic = summary.match(/\bsemantic=([\w_-]+)/)?.[1];
   return semantic && semantic !== "-" ? semantic : undefined;
 }
 
@@ -81,4 +81,28 @@ export function semanticOutcomeBlocksOrchestratorGuard(semantic: string | undefi
 /** Whether a resolved semantic outcome represents a partial batch/step failure. */
 export function semanticOutcomeIsPartialFailure(semantic: string | undefined): boolean {
   return resolveSemanticGuardToken(semantic) === "partial";
+}
+
+function parseMetricFromMaintenanceSummary(summary: string, key: string): number | undefined {
+  const match = summary.match(new RegExp(`\\b${key}=(-?\\d+)\\b`, "i"));
+  if (!match) return undefined;
+  const value = Number.parseInt(match[1], 10);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+/** Whether a reflect-rules orchestrator step summary indicates a semantic failure (mirrors HM_LOG checks). */
+export function reflectRulesStepSummaryIndicatesFailure(summary: string): boolean {
+  if (/\bzero_rules_reason=valid_no_actionable_rules\b/i.test(summary)) return false;
+  if (/\bzero_rules_reason=insufficient_patterns\b/i.test(summary)) return false;
+  const degradedFlake =
+    /\bzero_rules_reason=invalid_response_format\b/i.test(summary) &&
+    /\bstatus=degraded\b/i.test(summary) &&
+    (parseMetricFromMaintenanceSummary(summary, "model_response_chars") ?? 0) > 0;
+  if (degradedFlake) return false;
+  if (/\bstatus=ok\b/i.test(summary) && !/\bparse_success=false\b/i.test(summary)) return false;
+  const parseFailed = /\bparse_success=false\b/i.test(summary);
+  const rulesStored =
+    parseMetricFromMaintenanceSummary(summary, "rulesStored") ??
+    parseMetricFromMaintenanceSummary(summary, "stored");
+  return parseFailed || rulesStored === 0;
 }

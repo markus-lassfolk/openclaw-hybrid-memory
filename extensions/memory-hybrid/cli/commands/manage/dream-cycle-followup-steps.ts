@@ -70,7 +70,11 @@ export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, ve
     verbose,
     logger: () => {},
   });
-  return `${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted`;
+  const summary = `${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted`;
+  if (clReport.interrupted) {
+    throw new Error(`closed-loop-analysis interrupted (${summary}) semantic=partial`);
+  }
+  return summary;
 }
 
 export async function runCrossAgentLearningStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {

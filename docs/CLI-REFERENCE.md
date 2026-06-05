@@ -431,6 +431,17 @@ curl -X POST http://localhost:9119/gateway/rpc \
 
 HTTP equivalent: `POST /plugins/memory-public/fact/mutate` with `{ "action": "update"|"supersede"|"create", ... }`.
 
+**Wiki CLI:**
+
+```bash
+openclaw hybrid-mem wiki status          # config + mirror status
+openclaw hybrid-mem wiki status --json
+openclaw hybrid-mem wiki export          # run workspace mirror sync now
+openclaw hybrid-mem wiki export --json
+```
+
+`openclaw hybrid-mem verify` includes a **UI integrations (Workboard / Dreaming)** section when `wikiIntegration` or `workboard` is enabled.
+
 ---
 
 ## Related docs

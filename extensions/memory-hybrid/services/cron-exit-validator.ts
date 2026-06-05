@@ -43,6 +43,7 @@ import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenanc
 import {
   jobRunOutcomeToValidatorSemantic,
   parseSemanticTokenFromSummary,
+  reflectRulesStepSummaryIndicatesFailure,
   resolveSemanticGuardToken,
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
@@ -899,7 +900,7 @@ export function validateMaintenanceExecution(
         continue;
       }
       missingSteps.push(required);
-    } else if (step.exitCode !== 0) {
+    } else if (step.exitCode !== 0 || step.status === "failed") {
       failedSteps.push(step);
     } else if (
       allowSkip &&
@@ -1183,10 +1184,14 @@ function mergeSummaryWithLedgerChecks(
         wrapperMissing.push(required);
         continue;
       }
-      if (wrapper.exitCode === 1 || (wrapper.exitCode === 2 && !allowSkip)) {
+      if (
+        wrapper.exitCode === 1 ||
+        (wrapper.exitCode === 2 && !allowSkip) ||
+        wrapper.status === "failed"
+      ) {
         wrapperFailures.push(wrapper);
       }
-      if (wrapper.exitCode !== 0 && summary.exitCode === 0) {
+      if ((wrapper.exitCode !== 0 || wrapper.status === "failed") && summary.exitCode === 0) {
         maintenanceStatus = "failed";
       }
     }
@@ -1276,6 +1281,7 @@ export function validateFromSummaryJson(
 
     const stepFailed = (s: OrchestratorRunSummary["steps"][number]): boolean => {
       const semantic = resolveSummaryStepSemantic(s);
+      if (s.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(s.summary)) return true;
       return s.status === "failed" || (semantic != null && semanticOutcomeBlocksOrchestratorGuard(semantic));
     };
 
@@ -1302,7 +1308,10 @@ export function validateFromSummaryJson(
         exitCode,
         line: `${s.name} exit=${exitCode} status=${s.status} summary=${s.summary}`,
         status: stepExitStatus(s, failed),
-        reason: resolveSummaryStepSemantic(s) ?? s.status,
+        reason:
+          s.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(s.summary)
+            ? "failed"
+            : (resolveSummaryStepSemantic(s) ?? s.status),
       };
     });
 

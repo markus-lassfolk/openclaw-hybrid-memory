@@ -9,6 +9,7 @@ import { is429OrWrapped } from "./chat.js";
 import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
 import {
   parseSemanticTokenFromSummary,
+  reflectRulesStepSummaryIndicatesFailure,
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
 import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
@@ -413,7 +414,7 @@ export function formatMaintenanceSummary(
 }
 
 function parseStepRunnerMetadata(summary: string): Pick<StepResult, "jobRunId" | "semanticOutcome"> {
-  const jobRunId = summary.match(/jobRunId=([^\s]+)/)?.[1];
+  const jobRunId = summary.match(/jobRunId=([\w-]+)/)?.[1];
   const semantic = parseSemanticTokenFromSummary(summary);
   return {
     jobRunId: jobRunId && jobRunId !== "-" ? jobRunId : undefined,
@@ -421,10 +422,17 @@ function parseStepRunnerMetadata(summary: string): Pick<StepResult, "jobRunId" |
   };
 }
 
+function resolveStepSemanticOutcome(step: StepResult): string | undefined {
+  return step.semanticOutcome ?? parseSemanticTokenFromSummary(step.summary);
+}
+
 function computeExitCode(results: StepResult[]): 0 | 1 | 2 {
   if (results.some((r) => r.status === "failed")) return 1;
-  // Check for semantic failures in JobRun-backed steps even when status is "ok".
-  if (results.some((r) => r.semanticOutcome === "failed" || r.semanticOutcome === "failed_semantic_empty")) return 1;
+  // Check unified + legacy semantic tokens even when a runner returned ok without throwing.
+  if (results.some((r) => semanticOutcomeBlocksOrchestratorGuard(resolveStepSemanticOutcome(r)))) return 1;
+  if (results.some((r) => r.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(r.summary))) {
+    return 1;
+  }
   if (results.some((r) => r.status === "deferred" || r.status === "rate_limited")) return 2;
   return 0;
 }
@@ -566,6 +574,22 @@ export async function runMaintenanceOrchestrator(
     try {
       const summary = await runner();
       const meta = parseStepRunnerMetadata(summary);
+      if (
+        step.name === "reflect-rules" &&
+        reflectRulesStepSummaryIndicatesFailure(summary)
+      ) {
+        logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (summary diagnostics): ${summary}`);
+        results.push({
+          name: step.name,
+          status: "failed",
+          summary,
+          durationMs: Date.now() - stepStarted,
+          ...meta,
+          semanticOutcome: meta.semanticOutcome ?? "failed",
+        });
+        lastWasLlmStep = isLlmProviderStep(step.llmTier);
+        continue;
+      }
       if (stepSemanticBlocksGuard(meta.semanticOutcome)) {
         logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (${meta.semanticOutcome}): ${summary}`);
         results.push({
@@ -607,11 +631,13 @@ export async function runMaintenanceOrchestrator(
         });
       } else {
         logger?.warn?.(`maintenance-orchestrator: ${step.name} failed: ${message}`);
+        const meta = parseStepRunnerMetadata(message);
         results.push({
           name: step.name,
           status: "failed",
           summary: message,
           durationMs: Date.now() - stepStarted,
+          ...meta,
         });
       }
       lastWasLlmStep = isLlmProviderStep(step.llmTier);

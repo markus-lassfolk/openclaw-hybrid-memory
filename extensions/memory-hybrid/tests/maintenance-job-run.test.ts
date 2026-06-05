@@ -16,6 +16,7 @@ import {
   semanticOutcomeIsPartialFailure,
   resolveSemanticGuardToken,
   parseSemanticTokenFromSummary,
+  reflectRulesStepSummaryIndicatesFailure,
   resolveLightJobRunOutcome,
 } from "../services/maintenance-job-run/index.js";
 
@@ -102,6 +103,15 @@ describe("maintenance-job-run", () => {
     expect(resolveSemanticGuardToken("failed_suspect_zero_parsed")).toBe("failed_semantic_empty");
     expect(semanticOutcomeIsPartialFailure("failed_partial")).toBe(true);
     expect(parseSemanticTokenFromSummary("stored=1 semantic=partial jobRunId=abc")).toBe("partial");
+    expect(parseSemanticTokenFromSummary("reembed-vectorless partial failure (embedded=0/1 failures=1 semantic=partial)")).toBe(
+      "partial",
+    );
+    expect(reflectRulesStepSummaryIndicatesFailure("rulesStored=0 parse_success=false status=partial")).toBe(true);
+    expect(
+      reflectRulesStepSummaryIndicatesFailure(
+        "rulesStored=0 zero_rules_reason=insufficient_patterns status=partial",
+      ),
+    ).toBe(false);
   });
 
   it("resolves light JobRun semantic outcomes", () => {

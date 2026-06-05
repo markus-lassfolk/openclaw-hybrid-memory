@@ -147,6 +147,24 @@ error: unknown command 'bar'
       );
     });
 
+    it("should report failed when a step has exit=0 but status=failed in extended HM_EXIT format", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      writeFileSync(
+        exitPath,
+        "2024-05-08T02:01:00Z step=extract-daily exit=0 status=failed reason=tolerated_extract_daily_exit_1 duration_ms=120000\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, undefined, ["extract-daily"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps).toHaveLength(1);
+      expect(result.failedSteps[0].step).toBe("extract-daily");
+      expect(result.failedSteps[0].exitCode).toBe(0);
+      expect(result.failedSteps[0].status).toBe("failed");
+    });
+
     it("should surface HM_EXIT failure reasons for non-zero steps", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
@@ -952,6 +970,45 @@ error: unknown command 'bar'
       expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
     });
 
+    it("treats repair-vectors orphan cleanup partial semantic as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-repair-vectors-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-repair-vectors",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with orphan cleanup partial",
+          steps: [
+            {
+              name: "repair-vectors",
+              status: "ok",
+              summary:
+                "reembedded=1/1 failures=0 orphans=2 orphan_cleanup_failed=1 semantic=partial",
+              durationMs: 10,
+              semanticOutcome: "partial",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["repair-vectors"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "repair-vectors")).toBe(true);
+    });
+
     it("treats ok status with legacy failed_suspect_zero_parsed in summary text as maintenance failure", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-legacy-"));
       const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
@@ -987,6 +1044,43 @@ error: unknown command 'bar'
       expect(result.semanticStatus).toBe("semantic_fail");
       expect(result.guardUpdated).toBe(false);
       expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
+    });
+
+    it("treats ok reflect-rules step with parse_success=false in summary as failure without log corroboration", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-reflect-"));
+      const summaryPath = join(tmpDir, "maintenance-weekly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-weekly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-weekly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-reflect",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with reflect-rules parse failure in summary only",
+          steps: [
+            {
+              name: "reflect-rules",
+              status: "ok",
+              summary:
+                "rulesStored=0 rulesExtracted=0 parse_success=false zero_rules_reason=all_candidates_rejected status=partial",
+              durationMs: 10,
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-weekly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["reflect-rules"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "reflect-rules")).toBe(true);
     });
 
     it("treats deferred guard-blocking required steps as failed when summary exitCode is 2", () => {
@@ -1066,6 +1160,37 @@ error: unknown command 'bar'
       expect(result.maintenanceStatus).toBe("failed");
       expect(result.guardUpdated).toBe(false);
       expect(result.reportableIssues?.some((i) => i.stepName === "self-correction-run")).toBe(true);
+    });
+
+    it("fails when consolidated wrapper HM_EXIT has exit=0 but status=failed", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-wrapper-failed-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-wrapper-failed",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok",
+          steps: [{ name: "prune", status: "ok", summary: "pruned=1", durationMs: 10 }],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(
+        exitPath,
+        "2026-06-05T02:30:00Z step=maintenance-nightly exit=0 status=failed reason=tolerated_extract_daily_exit_1 duration_ms=120000\n",
+      );
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["maintenance-nightly"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
     });
 
     it("falls back to HM_EXIT validation for empty consolidated summary", () => {

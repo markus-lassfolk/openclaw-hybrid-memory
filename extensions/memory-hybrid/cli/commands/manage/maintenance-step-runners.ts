@@ -43,6 +43,33 @@ import {
   semanticOutcomeIsPartialFailure,
 } from "../../../services/maintenance-job-run/index.js";
 
+function reflectRulesDiagnosticsIndicateFailure(
+  d:
+    | {
+        parseSuccess: boolean;
+        status: "ok" | "partial" | "degraded";
+        zeroRulesReason?: string;
+        modelResponseChars?: number;
+      }
+    | undefined,
+  rulesStored: number,
+): boolean {
+  if (!d) return false;
+  if (d.status === "degraded") return true;
+  if (d.zeroRulesReason === "insufficient_patterns" || d.zeroRulesReason === "valid_no_actionable_rules") {
+    return false;
+  }
+  if (
+    d.zeroRulesReason === "invalid_response_format" &&
+    d.status === "degraded" &&
+    (d.modelResponseChars ?? 0) > 0
+  ) {
+    return false;
+  }
+  if (d.status === "ok") return false;
+  return !d.parseSuccess || rulesStored === 0;
+}
+
 export interface BuildCliRunnersOptions {
   verbose?: boolean;
   backfillDecayMarker?: string;
@@ -104,6 +131,12 @@ function assertSemanticOutcomeDoesNotBlockStep(stepName: string, semantic: strin
   throw new Error(`${stepName} semantic failure: ${semantic} (${summary})`);
 }
 
+function assertVectorCleanupNotPartial(stepName: string, cleanups: Array<{ failed: number }>, summary: string): void {
+  const failures = cleanups.reduce((sum, c) => sum + c.failed, 0);
+  if (failures === 0) return;
+  throw new Error(`${stepName} partial vector cleanup failure (${summary})`);
+}
+
 export function buildCliMaintenanceRunners(
   b: ManageBindings,
   opts: BuildCliRunnersOptions = {},
@@ -124,7 +157,9 @@ export function buildCliMaintenanceRunners(
     const pending = b.factsDb.listExpiredFactIdsPendingPrune();
     const n = b.factsDb.prune();
     const cleanup = await deleteVectorsForFactIds(b.vectorDb, pending, { operation: "orchestrator-prune" });
-    return `pruned=${n} vectors=${cleanup.deleted}/${cleanup.attempted}`;
+    const summary = `pruned=${n} vectors=${cleanup.deleted}/${cleanup.attempted} failures=${cleanup.failed} semantic=${cleanup.failed > 0 ? "partial" : "success"}`;
+    assertVectorCleanupNotPartial("prune", [cleanup], summary);
+    return summary;
   });
 
   set("compact", async () => {
@@ -291,12 +326,14 @@ export function buildCliMaintenanceRunners(
       d ? `parse_success=${d.parseSuccess}` : null,
       d?.zeroRulesReason ? `zero_rules_reason=${d.zeroRulesReason}` : null,
       d ? `status=${d.status}` : null,
-      d?.status === "degraded" ? "semantic=failed" : null,
+      d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored)
+        ? "semantic=failed"
+        : null,
     ]
       .filter(Boolean)
       .join(" ");
-    if (d?.status === "degraded") {
-      throw new Error(`reflect-rules semantic failure (${d.zeroRulesReason ?? "degraded"}): ${summary}`);
+    if (d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored)) {
+      throw new Error(`reflect-rules semantic failure (${d?.zeroRulesReason ?? "degraded"}): ${summary}`);
     }
     return summary;
   });
@@ -348,6 +385,7 @@ export function buildCliMaintenanceRunners(
   set("repair-vectors", async () => {
     const candidates = b.factsDb.listVectorlessActiveFacts({ limit: 200 });
     let reembedded = 0;
+    let failures = 0;
     for (const fact of candidates.slice(0, 200)) {
       try {
         const vec = await b.embeddings.embed(fact.text);
@@ -360,11 +398,17 @@ export function buildCliMaintenanceRunners(
         });
         reembedded++;
       } catch {
-        /* continue */
+        failures++;
       }
     }
     const reconcile = await reconcileOrphanVectors(b.factsDb, b.vectorDb, { operation: "orchestrator-repair-vectors" });
-    return `reembedded=${reembedded} orphans=${reconcile.orphansFound}`;
+    const partial = failures > 0 || reconcile.failed > 0;
+    const summary = `reembedded=${reembedded}/${candidates.length} failures=${failures} orphans=${reconcile.orphansFound} orphan_cleanup_failed=${reconcile.failed} semantic=${partial ? "partial" : "success"}`;
+    if (failures > 0) {
+      throw new Error(`repair-vectors partial failure (${summary})`);
+    }
+    assertVectorCleanupNotPartial("repair-vectors", [reconcile], summary);
+    return summary;
   });
 
   set("vectordb-optimize", async () => {
@@ -408,7 +452,11 @@ export function buildCliMaintenanceRunners(
       scanned += res.scanned;
       collapsed += res.collapsed;
       carryCanonical = res.carryCanonical;
-      if (res.interrupted || res.resumeAfterRowid === null) break;
+      if (res.interrupted) {
+        const summary = `scanned=${scanned} collapsed=${collapsed} interrupted=true semantic=partial`;
+        throw new Error(`implicit-feedback-collapse interrupted (${summary})`);
+      }
+      if (res.resumeAfterRowid === null) break;
       afterRowid = res.resumeAfterRowid;
     }
     return `scanned=${scanned} collapsed=${collapsed}`;
@@ -555,8 +603,12 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     const decayDeleteIds = deps.factsDb.listFactIdsToBeDeletedByDecayRun(decayNowSec);
     const hardPruned = deps.factsDb.pruneExpired();
     const softPruned = deps.factsDb.decayConfidence(decayNowSec);
-    await deleteVectorsForFactIds(deps.vectorDb, expiredIds, { operation: "orchestrator-cycle-prune" });
-    await deleteVectorsForFactIds(deps.vectorDb, decayDeleteIds, { operation: "orchestrator-cycle-decay" });
+    const expiredCleanup = await deleteVectorsForFactIds(deps.vectorDb, expiredIds, {
+      operation: "orchestrator-cycle-prune",
+    });
+    const decayCleanup = await deleteVectorsForFactIds(deps.vectorDb, decayDeleteIds, {
+      operation: "orchestrator-cycle-decay",
+    });
     const edicts = deps.edictStore.pruneExpired();
     let audit = 0;
     let health = 0;
@@ -570,7 +622,10 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     } catch {
       /* non-fatal */
     }
-    return `expired=${hardPruned} decayed=${softPruned} edicts=${edicts} audit=${audit} health=${health}`;
+    const vectorFailures = expiredCleanup.failed + decayCleanup.failed;
+    const summary = `expired=${hardPruned} decayed=${softPruned} edicts=${edicts} audit=${audit} health=${health} vector_failures=${vectorFailures} semantic=${vectorFailures > 0 ? "partial" : "success"}`;
+    assertVectorCleanupNotPartial("prune", [expiredCleanup, decayCleanup], summary);
+    return summary;
   });
 
   if (deps.runCompaction) {

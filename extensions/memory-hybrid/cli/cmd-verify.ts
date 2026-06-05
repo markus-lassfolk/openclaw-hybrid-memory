@@ -8,6 +8,7 @@ import { runVerifyEmbeddingsSection } from "./verify/sections/embeddings.js";
 import { runVerifyLlmModelsSection } from "./verify/sections/llm-models.js";
 import { runVerifyConfigCronSection } from "./verify/sections/config-cron.js";
 import { runVerifyReconcileSection } from "./verify/sections/reconcile.js";
+import { runVerifyUiIntegrationsSection } from "./verify/sections/ui-integrations.js";
 
 export async function runVerifyForCli(
   ctx: import("./handlers.js").HandlerContext,
@@ -19,5 +20,6 @@ export async function runVerifyForCli(
   await runVerifyEmbeddingsSection(state);
   await runVerifyLlmModelsSection(state);
   await runVerifyConfigCronSection(state);
+  await runVerifyUiIntegrationsSection(state);
   await runVerifyReconcileSection(state);
 }
