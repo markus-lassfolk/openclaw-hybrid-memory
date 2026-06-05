@@ -695,7 +695,7 @@ export async function runDistillForCli(
       );
     }
     const runSucceeded = batchFailures === 0 && !semanticEmpty;
-    const shouldAdvanceCursor = batchFailures === 0;
+    const shouldAdvanceCursor = batchFailures === 0 && !semanticEmpty;
     if (opts.dryRun) {
       sink.log(`Would extract ${allFacts.length} facts from ${filesToProcess.length} sessions`);
       return withDistillJobRun(
