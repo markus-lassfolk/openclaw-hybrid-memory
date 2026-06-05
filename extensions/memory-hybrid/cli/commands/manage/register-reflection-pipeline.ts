@@ -395,34 +395,38 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       .option("--thinking <mode>", "MiniMax thinking mode for initial call: disabled|adaptive (default: disabled)")
       .option("-v, --verbose", "Log each rule as it is extracted"),
   ).action(
-    withExit(async (opts?: { dryRun?: boolean; model?: string; thinking?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
-      const dryRun = !!opts?.dryRun;
-      const explicitModel = opts?.model?.trim() || undefined;
-      const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
-      const thinkingMode =
-        opts?.thinking === "adaptive" || opts?.thinking === "disabled" ? opts.thinking : undefined;
-      let res;
-      try {
-        res = await runReflectionRules({ dryRun, model: explicitModel, verbose, thinkingMode });
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "cli",
-          operation: "reflect-rules",
-        });
-        throw err;
-      }
-      console.log(
-        `Reflection (rules) complete: extracted ${res.rulesExtracted} rules, stored ${res.rulesStored} ${dryRun ? "(dry-run)" : ""}`,
-      );
-      if (res.diagnostics) {
-        const zeroReason = res.diagnostics.zeroRulesReason
-          ? ` zero_rules_reason=${res.diagnostics.zeroRulesReason}`
-          : "";
+    withExit(
+      async (
+        opts?: { dryRun?: boolean; model?: string; thinking?: string; verbose?: boolean },
+        cmd?: CommanderOptsParent,
+      ) => {
+        const dryRun = !!opts?.dryRun;
+        const explicitModel = opts?.model?.trim() || undefined;
+        const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+        const thinkingMode = opts?.thinking === "adaptive" || opts?.thinking === "disabled" ? opts.thinking : undefined;
+        let res;
+        try {
+          res = await runReflectionRules({ dryRun, model: explicitModel, verbose, thinkingMode });
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "cli",
+            operation: "reflect-rules",
+          });
+          throw err;
+        }
         console.log(
-          `Reflection (rules) diagnostics: model_response_chars=${res.diagnostics.modelResponseChars} parse_success=${res.diagnostics.parseSuccess} parsed_candidates=${res.diagnostics.parsedCandidates} rejected_duplicates=${res.diagnostics.rejectedDuplicates} rejected_low_confidence=${res.diagnostics.rejectedLowConfidence} stored=${res.diagnostics.stored} status=${res.diagnostics.status}${zeroReason}`,
+          `Reflection (rules) complete: extracted ${res.rulesExtracted} rules, stored ${res.rulesStored} ${dryRun ? "(dry-run)" : ""}`,
         );
-      }
-    }),
+        if (res.diagnostics) {
+          const zeroReason = res.diagnostics.zeroRulesReason
+            ? ` zero_rules_reason=${res.diagnostics.zeroRulesReason}`
+            : "";
+          console.log(
+            `Reflection (rules) diagnostics: model_response_chars=${res.diagnostics.modelResponseChars} parse_success=${res.diagnostics.parseSuccess} parsed_candidates=${res.diagnostics.parsedCandidates} rejected_duplicates=${res.diagnostics.rejectedDuplicates} rejected_low_confidence=${res.diagnostics.rejectedLowConfidence} stored=${res.diagnostics.stored} status=${res.diagnostics.status}${zeroReason}`,
+          );
+        }
+      },
+    ),
   );
 
   registerScanMaintenanceOverrideOptions(
@@ -741,7 +745,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               followUpCompleted++;
               return result;
             } catch (err) {
-              recordDreamCycleFollowUpFailure(followUpPlan.length > 0 ? `${phaseLabel} (stage ${stageIndex}/${followUpPlan.length})` : phaseLabel, err);
+              recordDreamCycleFollowUpFailure(
+                followUpFailures,
+                followUpPlan.length > 0 ? `${phaseLabel} (stage ${stageIndex}/${followUpPlan.length})` : phaseLabel,
+                err,
+              );
               throw err;
             }
           };
@@ -900,7 +908,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 toolEffectivenessSummary = `ran (${firstLine})`;
               } else if (firstLine.length > 0) {
                 toolEffectivenessSummary = `degraded (unexpected output: ${firstLine})`;
-                recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", `unexpected output: ${firstLine}`);
+                recordDreamCycleFollowUpFailure(
+                  followUpFailures,
+                  "tool effectiveness",
+                  `unexpected output: ${firstLine}`,
+                );
               } else {
                 toolEffectivenessSummary = "degraded (unexpected empty output)";
                 recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", "unexpected empty output");
