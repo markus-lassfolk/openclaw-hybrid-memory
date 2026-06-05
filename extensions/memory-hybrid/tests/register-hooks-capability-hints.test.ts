@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { registerLifecycleHooks } from "../setup/register-hooks.js";
+import { consumePrependBudget, initPrependBudget } from "../services/prepend-budget.js";
 import { buildPluginApiForRegisterHooks, makeHooksApi } from "./helpers/register-hooks-harness.js";
 
 vi.mock("../lifecycle/stage-capture.js", () => ({
@@ -92,6 +93,21 @@ describe("registerLifecycleHooks capability hints cadence", () => {
     expect(findCapabilityHints(first)).toBeDefined();
     expect(findCapabilityHints(second)).toBeUndefined();
     expect(findCapabilityHints(third)).toBeDefined();
+  });
+
+  it("trims capability hints to remaining prepend budget instead of bypassing the cap", () => {
+    const api = makeHooksApi();
+    const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, {
+      autoRecall: { enabled: true, capabilityHints: "always" },
+    });
+    initPrependBudget(pluginApi.prependBudgetRef, 500, "agent:main:main");
+    consumePrependBudget(pluginApi.prependBudgetRef, "x".repeat(1480));
+    registerLifecycleHooks(pluginApi as never, api as never);
+
+    const out = findCapabilityHints(invokeBeforePromptBuildHandlers(api, { session: { id: "sess-a" } }));
+    expect(out).toBeDefined();
+    expect(out).toContain("prepend budget cap");
+    expect(pluginApi.prependBudgetRef.value?.remainingTokens).toBe(0);
   });
 
   it("silent mode suppresses capability hints even with explicit capabilityHints setting", () => {

@@ -28,6 +28,7 @@ import {
   terminateGoal,
   updateGoal,
 } from "../services/goal-stewardship.js";
+import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
 import { stringEnum } from "../utils/typebox.js";
 
 export interface GoalToolsContext {
@@ -44,7 +45,7 @@ export interface GoalToolsContext {
 const PRIORITIES = ["critical", "high", "normal", "low"] as const;
 
 async function flushGoalOutcomeToMemory(memoryDir: string, title: string, lines: string[]): Promise<void> {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = formatDateUtc(nowSec());
   const filePath = join(memoryDir, `${date}.md`);
   await mkdir(memoryDir, { recursive: true });
   const block = ["", `## ${title} — ${date}`, "", ...lines, ""].join("\n");
@@ -193,11 +194,11 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
               goalsDir,
               goal.id,
               { status: "blocked", currentBlockers: ["Assessment budget exhausted"] },
-              { timestamp: new Date().toISOString(), action: "blocked", detail: "assessments", actor: "steward" },
+              { timestamp: nowIso(), action: "blocked", detail: "assessments", actor: "steward" },
             );
             return { content: [{ type: "text", text: "Assessment budget exhausted." }], details: { error: "budget" } };
           }
-          const ts = new Date().toISOString();
+          const ts = nowIso();
           let dispatchCount = goal.dispatchCount;
           let lastDispatchedAt = goal.lastDispatchedAt;
           if (p.dispatched) {
@@ -355,7 +356,7 @@ export function registerGoalTools(ctx: GoalToolsContext, api: ClawdbotPluginApi)
         if (p.acceptance_criteria !== undefined) patch.acceptanceCriteria = p.acceptance_criteria;
         if (p.priority !== undefined) patch.priority = p.priority;
         const updated = await updateGoal(goalsDir, goal.id, patch, {
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           action: "updated",
           detail: p.note ?? "update",
           actor: "agent",

@@ -7,6 +7,7 @@ import type { EventLog } from "../../backends/event-log.js";
 import type { FactsDB } from "../../backends/facts-db.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { VectorDB } from "../../backends/vector-db.js";
+import type { WriteAheadLog } from "../../backends/wal.js";
 import type { HybridMemoryConfig } from "../../config.js";
 import type { PendingLLMWarnings } from "../../services/chat.js";
 import type { VariantGenerationQueue } from "../../services/contextual-variants.js";
@@ -15,13 +16,14 @@ import type { EmbeddingProvider } from "../../services/embeddings.js";
 import type { ProvenanceService } from "../../services/provenance.js";
 import type { AliasDB } from "../../services/retrieval-aliases.js";
 import type { VerificationStore } from "../../services/verification-store.js";
+import type { IssueStore } from "../../backends/issue-store.js";
 
 export type BoundWalWriteFn = (
   operation: "store" | "update",
   data: Record<string, unknown>,
   logger: { warn: (msg: string) => void },
   supersedeTargetId?: string,
-) => Promise<string>;
+) => Promise<string | null>;
 
 export type BoundWalRemoveFn = (id: string, logger: { warn: (msg: string) => void }) => Promise<void>;
 
@@ -60,15 +62,20 @@ export interface MemoryToolsContext {
   provenanceService?: ProvenanceService | null;
   verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
+  progressiveIndexBySession: Map<string, string[]>;
+  lastAutoRecallPromptBySession: Map<string, string>;
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   variantQueue?: VariantGenerationQueue | null;
   buildToolScopeFilter: BuildToolScopeFilterFn;
+  wal: WriteAheadLog | null;
   walWrite: BoundWalWriteFn;
   walRemove: BoundWalRemoveFn;
   findSimilarByEmbedding: FindSimilarByEmbeddingFn;
   /** Cross-agent audit trail (Issue #790). */
   auditStore?: AuditStore | null;
+  /** Issue lifecycle store for issue-aware recall (#1802). */
+  issueStore?: IssueStore | null;
 }
 
 type LegacyMemoryToolsContext = Omit<

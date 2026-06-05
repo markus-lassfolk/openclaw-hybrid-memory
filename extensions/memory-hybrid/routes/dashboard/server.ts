@@ -32,6 +32,7 @@ import {
   collectMemoryViewerEpisodes,
   collectMemoryViewerIssues,
   collectMemoryViewerLinks,
+  collectMemoryViewerCorrelation,
   collectMemoryViewerNarratives,
   collectMemoryViewerProvenance,
   collectMemoryViewerStats,
@@ -45,7 +46,44 @@ import {
   readJsonBody,
   type DashboardContext,
 } from "./collectors.js";
+import {
+  applyWorkshopProposal,
+  collectDreamCycleLog,
+  collectSkillTelemetry,
+  collectWorkshopDigest,
+  collectWorkshopChanges,
+  collectWorkshopProposalDetail,
+  collectWorkshopProposals,
+  quarantineWorkshopProposal,
+  rejectWorkshopProposal,
+  reviseWorkshopProposal,
+  revertWorkshopChange,
+  undoWorkshopProposal,
+  type WorkshopDashboardContext,
+} from "./workshop-collectors.js";
 import { getDashboardHtml } from "./html.js";
+import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled } from "../../services/workshop-config.js";
+
+function workshopClientError(err: unknown, route: string): string {
+  pluginLogger.error(`[dashboard-server] ${route}: ${err instanceof Error ? err.message : String(err)}`);
+  if (err instanceof Error && err.message === "Request body too large") return err.message;
+  return "Request failed";
+}
+
+function workshopCtx(ctx: DashboardContext): WorkshopDashboardContext | null {
+  if (!ctx.hybridCfg || !isWorkshopEnabled(ctx.hybridCfg)) return null;
+  return {
+    cfg: ctx.hybridCfg,
+    factsDb: ctx.factsDb,
+    proposalsDb: ctx.proposalsDb ?? null,
+    crystallizationStore: ctx.crystallizationStore ?? null,
+    toolProposalStore: ctx.toolProposalStore ?? null,
+    workflowStore: ctx.workflowStore ?? null,
+    resolvedSqlitePath: ctx.resolvedSqlitePath,
+    changeFeed: ctx.changeFeed ?? null,
+    dreamCycleLogDir: ctx.dreamCycleLogDir,
+  };
+}
 
 export interface DashboardServer {
   server: Server;
@@ -54,7 +92,6 @@ export interface DashboardServer {
 }
 
 export async function createDashboardServer(ctx: DashboardContext, port: number): Promise<DashboardServer> {
-  const html = getDashboardHtml();
   const { createGraphQLServer } = await import("../graphql-server.js");
   const { yoga } = createGraphQLServer(ctx.factsDb, ctx.vectorDb, {
     config: ctx.cfg,
@@ -191,7 +228,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/facts?limit=50&offset=0&category=&tier=&entity=&search=
     if (pathname === "/api/viewer/facts") {
       try {
-        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
+        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10) || 50));
         const offset = Math.max(0, Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0);
         const categoryFilter = searchParams.get("category") || undefined;
         const entityFilter = searchParams.get("entity") || undefined;
@@ -478,6 +515,26 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       return;
     }
 
+    // GET /api/viewer/correlation/:entityKey — unified entity → facts → issues → episodes (#1802)
+    if (pathname.startsWith("/api/viewer/correlation/")) {
+      const entityKey = parseUrlPathSegment(pathname.replace("/api/viewer/correlation/", ""));
+      if (!entityKey) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing entity key" }));
+        return;
+      }
+      try {
+        const payload = collectMemoryViewerCorrelation(ctx, entityKey);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(payload));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        pluginLogger.error(`[dashboard-server] /api/viewer/correlation: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
+      return;
+    }
+
     // GET /api/viewer/provenance/:factId
     if (pathname.startsWith("/api/viewer/provenance/")) {
       const factId = pathname.replace("/api/viewer/provenance/", "");
@@ -556,6 +613,193 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       return;
     }
 
+    if (pathname === "/workshop" || pathname === "/workshop.html") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+      res.end(getDashboardHtml(true));
+      return;
+    }
+
+    const wctx = workshopCtx(ctx);
+    const isWorkshopApi =
+      pathname === "/api/workshop/proposals" ||
+      pathname === "/api/workshop/changes" ||
+      pathname === "/api/workshop/digest" ||
+      pathname === "/api/workshop/dream-log" ||
+      pathname === "/api/workshop/skills" ||
+      pathname === "/api/workshop/changes/revert" ||
+      pathname.startsWith("/api/workshop/proposals/");
+
+    if (isWorkshopApi && !wctx) {
+      res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+      res.end(
+        JSON.stringify({
+          error: "workshop_unavailable",
+          message: ctx.hybridCfg
+            ? "Workshop is disabled. Enable persona/crystallization/self-extension/procedures proposals or set workshop.enabled: true."
+            : "Hybrid memory workshop context is not configured",
+        }),
+      );
+      return;
+    }
+
+    if (pathname === "/api/workshop/proposals" && wctx) {
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ proposals: collectWorkshopProposals(wctx) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals") }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/workshop/changes" && wctx) {
+      try {
+        const u = new URL(req.url ?? "", "http://127.0.0.1");
+        const limitRaw = u.searchParams.get("limit");
+        const limit = limitRaw ? Number(limitRaw) : DEFAULT_WORKSHOP_LIST_LIMIT;
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(
+          JSON.stringify({
+            changes: collectWorkshopChanges(
+              wctx,
+              Number.isFinite(limit) ? limit : DEFAULT_WORKSHOP_LIST_LIMIT,
+            ),
+          }),
+        );
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes") }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/workshop/digest" && wctx) {
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(collectWorkshopDigest(wctx)));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/digest") }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/workshop/dream-log" && wctx) {
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ runs: collectDreamCycleLog(wctx) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/dream-log") }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/workshop/skills" && wctx) {
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ skills: collectSkillTelemetry(wctx) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/skills") }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/workshop/changes/revert" && wctx && req.method === "POST") {
+      readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
+        .then((body) => {
+          const id = typeof body.id === "string" ? body.id.trim() : "";
+          if (!id) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "missing id" }));
+            return;
+          }
+          const result = revertWorkshopChange(wctx, id);
+          res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify(result));
+        })
+        .catch((err: unknown) => {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes/revert") }));
+        });
+      return;
+    }
+
+    if (pathname.startsWith("/api/workshop/proposals/") && wctx) {
+      const suffix = pathname.slice("/api/workshop/proposals/".length);
+      const actionMatch = suffix.match(/^(.+)\/(approve|reject|undo|quarantine|revise)$/);
+      if (req.method === "GET" && !actionMatch) {
+        const id = parseUrlPathSegment(suffix);
+        if (!id) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "missing id" }));
+          return;
+        }
+        const detail = collectWorkshopProposalDetail(wctx, id);
+        if (!detail) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "not found" }));
+          return;
+        }
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(detail));
+        return;
+      }
+      if (req.method === "POST" && actionMatch) {
+        const id = parseUrlPathSegment(actionMatch[1] ?? "");
+        const action = actionMatch[2];
+        if (!id) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "missing id" }));
+          return;
+        }
+        readJsonBody(req, MAX_DASHBOARD_JSON_BODY_BYTES)
+          .then(async (body) => {
+            if (action === "approve") {
+              const result = await applyWorkshopProposal(wctx, id);
+              res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(result));
+              return;
+            }
+            if (action === "undo") {
+              const changeEventId =
+                typeof body.changeEventId === "string" ? body.changeEventId.trim() : undefined;
+              const result = undoWorkshopProposal(wctx, id, changeEventId ? { changeEventId } : undefined);
+              res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(result));
+              return;
+            }
+            if (action === "quarantine") {
+              const result = quarantineWorkshopProposal(
+                wctx,
+                id,
+                typeof body.reason === "string" ? body.reason : undefined,
+              );
+              res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(result));
+              return;
+            }
+            if (action === "revise") {
+              const revision = typeof body.revision === "string" ? body.revision : "";
+              const result = reviseWorkshopProposal(wctx, id, revision);
+              res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+              res.end(JSON.stringify(result));
+              return;
+            }
+            const result = rejectWorkshopProposal(wctx, id, typeof body.reason === "string" ? body.reason : undefined);
+            res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(result));
+          })
+          .catch((err: unknown) => {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals/*") }));
+          });
+        return;
+      }
+    }
+
     if (pathname === "/api/status") {
       collectStatus(ctx)
         .then((status) => {
@@ -575,15 +819,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         "Content-Type": "text/html; charset=utf-8",
         "Cache-Control": "no-cache",
       });
-      res.end(html);
-    } else if (pathname === "/graph") {
-      // Serve the graph explorer visualization
-      const { graphExplorerHTML } = await import("../graph-explorer.js");
-      res.writeHead(200, {
-        "Content-Type": "text/html; charset=utf-8",
-        "Cache-Control": "no-cache",
-      });
-      res.end(graphExplorerHTML);
+      res.end(getDashboardHtml(false));
     } else if (pathname === "/graphql" && req.method === "POST") {
       // Handle GraphQL API requests using the shared Yoga server created at dashboard startup.
       try {

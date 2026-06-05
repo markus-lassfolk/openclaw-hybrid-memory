@@ -366,7 +366,7 @@ const issues: MaintenanceTelemetryIssue[] = [
 
 await reportMaintenanceFailureIssues(issues, {
   cfg: config,
-  pluginVersion: "2026.6.40",
+  pluginVersion: "2026.6.41",
   logger: console,
 });
 ```

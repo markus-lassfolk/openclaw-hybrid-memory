@@ -26,6 +26,7 @@ import {
   getHeartbeatMatchersForVerify,
 } from "../../../services/goal-stewardship-verify-cron.js";
 import { PLUGIN_ID, getRestartPendingPath } from "../../../utils/constants.js";
+import { formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { inferModelProviderPrefix } from "../../../utils/model-provider-family.js";
 import {
   extractCronStoreJobModel,
@@ -698,7 +699,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     const interval = approxIntervalMs(job.scheduleExpr ?? null);
     if (interval && (lastMs == null || Date.now() - lastMs > interval * 1.5)) {
       state.warnings.push(
-        `cron job ${key} is overdue: last=${lastMs ? new Date(lastMs).toISOString() : "never"}, schedule=${job.scheduleExpr ?? "?"}`,
+        `cron job ${key} is overdue: last=${lastMs ? formatTimestampUtcFromMs(lastMs) : "never"}, schedule=${job.scheduleExpr ?? "?"}`,
       );
     }
   }

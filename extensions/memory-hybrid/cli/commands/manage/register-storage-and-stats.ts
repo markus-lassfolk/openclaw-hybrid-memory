@@ -5,7 +5,6 @@
 
 import type { Chainable } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
-import { registerManageStorageMaintenance } from "./register-storage-maintenance.js";
 import { registerManageStorageEntitiesDecay } from "./register-storage-entities-decay.js";
 import { registerManageStorageGraphAudit } from "./register-storage-graph-audit.js";
 export {
@@ -16,7 +15,6 @@ export {
 export { buildAuditFailureArtifact, buildAuditHealthExitInfo } from "../../../services/audit-health-exit-info.js";
 
 export function registerManageStorageAndStats(mem: Chainable, b: ManageBindings): void {
-  registerManageStorageMaintenance(mem, b);
   registerManageStorageEntitiesDecay(mem, b);
   registerManageStorageGraphAudit(mem, b);
 }

@@ -10,6 +10,7 @@ import { stringEnum } from "../../utils/typebox.js";
 
 import { capturePluginError } from "../../services/error-reporter.js";
 import type { EpisodeOutcome } from "../../types/memory.js";
+import { formatTimestampUtc } from "../../utils/dates.js";
 
 import type { MemoryToolRuntime } from "./runtime.js";
 
@@ -79,7 +80,7 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
           content: [
             {
               type: "text",
-              text: `Episode recorded: [${episode.outcome}] "${episode.event}" at ${new Date(episode.timestamp * 1000).toISOString()} (id: ${episode.id})`,
+              text: `Episode recorded: [${episode.outcome}] "${episode.event}" at ${formatTimestampUtc(episode.timestamp)} (id: ${episode.id})`,
             },
           ],
           details: { episode },

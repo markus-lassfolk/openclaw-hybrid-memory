@@ -1,13 +1,13 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerManageStorageAndStats } from "../cli/commands/manage/register-storage-and-stats.js";
+import { registerManageStorageMaintenance } from "../cli/commands/manage/register-storage-maintenance.js";
 import { _testing } from "../index.js";
 
 const { FactsDB } = _testing;
 
 function registerRecordStorageSampleCommand(factsDb: InstanceType<typeof FactsDB>): Command {
   const mem = new Command("hybrid-mem");
-  registerManageStorageAndStats(mem, {
+  registerManageStorageMaintenance(mem, {
     factsDb,
     vectorDb: {},
     aliasDb: {},

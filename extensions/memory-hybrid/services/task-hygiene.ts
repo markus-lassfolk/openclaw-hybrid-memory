@@ -8,7 +8,9 @@ import { promisify } from "node:util";
 import type { ActiveTaskEntry } from "./active-task.js";
 import { isNonActionableSubagentPlaceholderTask, isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import { getEnv } from "../utils/env-manager.js";
+import { nowIso as currentIsoUtc } from "../utils/dates.js";
 import { execFile } from "../utils/process-runner.js";
 
 export type LongRunningWorkflowKind = "pr_queue" | "pr_until_merged" | "ci_monitor" | "issue_sweep" | "deployment";
@@ -309,7 +311,7 @@ export function detectLongRunningWorkflowProposal(
 
 export function buildLongRunningTaskDraft(
   proposal: LongRunningWorkflowProposal,
-  nowIso = new Date().toISOString(),
+  nowIso = currentIsoUtc(),
 ): ActiveTaskEntry {
   return {
     label: proposal.label,
@@ -348,10 +350,14 @@ export function buildLongRunningTaskRegistrationBlock(
     sessionKey?: string | null;
   },
 ): string {
+  const label = sanitizePromptInjection(draft.label);
+  const description = sanitizePromptInjection(draft.description);
+  const next = sanitizePromptInjection(draft.next);
+  const repoContext = proposal.repoContext ? sanitizePromptInjection(proposal.repoContext) : undefined;
   const lines = [
     "<active-task-registration>",
     `**Long-running workflow detected:** ${proposal.kind.replace(/_/g, " ")}`,
-    `- Stable task label: \`${draft.label}\`${proposal.repoContext ? ` (repo context: \`${proposal.repoContext}\`)` : ""}`,
+    `- Stable task label: \`${label}\`${repoContext ? ` (repo context: \`${repoContext}\`)` : ""}`,
   ];
 
   if (opts.autoCreated) {
@@ -370,10 +376,10 @@ export function buildLongRunningTaskRegistrationBlock(
   lines.push(
     JSON.stringify(
       {
-        label: draft.label,
-        description: draft.description,
+        label,
+        description,
         status: draft.status,
-        next: draft.next,
+        next,
       },
       null,
       2,
@@ -398,7 +404,9 @@ export function buildHeartbeatTaskHygieneBlock(
 ): string {
   const formatLabels = opts.formatLabelList ?? ((labels: string[]) => labels.map((l) => `[${l}]`).join(", "));
   const visibleTasks = tasks.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
-  const stale = visibleTasks.filter((t) => t.stale);
+  // Failed rows are terminal bookkeeping — not actionable heartbeat work.
+  const actionableTasks = visibleTasks.filter((t) => t.status !== "Failed");
+  const stale = actionableTasks.filter((t) => t.stale);
   const lines: string[] = [
     "<task-hygiene>",
     "**Heartbeat — active task review**",
@@ -413,7 +421,7 @@ export function buildHeartbeatTaskHygieneBlock(
 
   if (opts.suggestGoalAfterTaskAgeDays > 0) {
     const cutoff = Date.now() - opts.suggestGoalAfterTaskAgeDays * 86_400_000;
-    const longRunning = visibleTasks.filter((t) => {
+    const longRunning = actionableTasks.filter((t) => {
       const u = new Date(t.updated).getTime();
       return !Number.isNaN(u) && u < cutoff;
     });
@@ -446,7 +454,10 @@ export function buildGoalEscalationHeartbeatBlock(
     "<goal-escalation>",
     "**Heartbeat — blocked or stalled goals**",
     "Do not reply HEARTBEAT_OK as if everything is fine until these are triaged or unblocked.",
-    ...bad.map((g) => `- **[${g.label}]** (${g.status})`),
+    ...bad.map((g) => {
+      const label = sanitizePromptInjection(g.label);
+      return label ? `- **[${label}]** (${g.status})` : `- **(redacted label)** (${g.status})`;
+    }),
     "</goal-escalation>",
   ];
   const closingTag = "</goal-escalation>";

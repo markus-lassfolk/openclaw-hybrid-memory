@@ -39,7 +39,7 @@ function parseGrades(response: string, count: number): Array<"yes" | "no"> {
     .slice(0, count);
 
   if (parsed.length !== count) {
-    return new Array(count).fill("yes");
+    return new Array(count).fill("no");
   }
 
   return parsed;
@@ -77,7 +77,7 @@ export class DocumentGrader {
         relevant: answers[index] === "yes",
       }));
     } catch {
-      return docs.map((doc) => ({ factId: doc.factId, answer: "yes", relevant: true }));
+      return docs.map((doc) => ({ factId: doc.factId, answer: "no", relevant: false }));
     }
   }
 

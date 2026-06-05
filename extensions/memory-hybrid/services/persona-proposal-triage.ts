@@ -14,8 +14,12 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
 import { buildAppliedContent, buildUnifiedDiff, parseSuggestedChange } from "../cli/proposals.js";
 import type { HybridMemoryConfig } from "../config.js";
+import { emitPersonaApplied, supersedeActiveProposedEvent, syncProposalWithdrawnInChangeFeed } from "./change-feed-emit.js";
+import type { ChangeFeed } from "./change-feed.js";
+import { writeProposalRollback } from "./proposal-rollback.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getFileSnapshot } from "../utils/file-snapshot.js";
+import { nowIso } from "../utils/dates.js";
 import {
   type AutopilotMode,
   type PendingAutopilotCursor,
@@ -45,7 +49,7 @@ export type PersonaProposalTargetFile = (typeof PERSONA_PROPOSAL_CRITICAL_TARGET
 
 export interface PersonaProposalTriageOptions {
   proposalsDb: ProposalsDB;
-  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed">;
   stateDbPath?: string;
   workspace?: string;
   mode?: AutopilotMode;
@@ -58,6 +62,9 @@ export interface PersonaProposalTriageOptions {
   now?: Date;
   runLifecycle?: "standalone" | "embedded";
   store?: PendingAutopilotStore;
+  changeFeed?: ChangeFeed | null;
+  sessionKey?: string;
+  resolvedSqlitePath?: string;
 }
 
 export interface PersonaProposalTriageResult {
@@ -257,6 +264,9 @@ export async function runPersonaProposalTriage(
           decision,
           workspace,
           cfg: opts.cfg,
+          changeFeed: opts.changeFeed,
+          sessionKey: opts.sessionKey ?? "autopilot",
+          resolvedSqlitePath: opts.resolvedSqlitePath,
         });
         if (decision.action === "failed-validation") {
           store.recordDecision(decision);
@@ -598,6 +608,17 @@ function analyzePersonaProposal(
       1,
     );
   }
+  const alreadyInFile = isAlreadyInTargetFile(p, item);
+  if (alreadyInFile) {
+    return rejectOrDefer(
+      policy,
+      "low",
+      "already-in-file",
+      "Proposed text already present (or substantially covered) in the target file.",
+      evidence,
+      1,
+    );
+  }
   if (isStaleTarget(item)) {
     return rejectOrDefer(
       policy,
@@ -655,7 +676,10 @@ function applyPersonaDecisionWithLock(input: {
   item: PersonaProposalPendingItem;
   decision: PendingDecision;
   workspace: string;
-  cfg: Pick<HybridMemoryConfig, "personaProposals">;
+  cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed">;
+  changeFeed?: ChangeFeed | null;
+  sessionKey?: string;
+  resolvedSqlitePath?: string;
 }): PendingDecision {
   const owner = `${input.decision.runId}:persona-triage`;
   const locked = input.store.acquireLock({
@@ -726,7 +750,7 @@ function applyPersonaDecisionWithLock(input: {
         return validationFailure(input.decision, "input-hash-mismatch", "Target mtime changed before apply.");
       }
       const original = readFileSync(currentTarget.path, "utf-8");
-      const applied = buildAppliedContent(original, current, new Date().toISOString());
+      const applied = buildAppliedContent(original, current, nowIso());
       if (!applied.content.trim()) {
         return validationFailure(
           input.decision,
@@ -754,6 +778,7 @@ function applyPersonaDecisionWithLock(input: {
     }
 
     const decisionForMutation = preparedApply ? withPersonaApplyAudit(input.decision, preparedApply) : input.decision;
+    let wroteRollback = false;
     const ok = input.store.mutateWithLockAndAudit({
       decision: decisionForMutation,
       owner,
@@ -763,11 +788,41 @@ function applyPersonaDecisionWithLock(input: {
         if (decisionForMutation.action === "rejected") {
           input.proposalsDb.updateStatus(input.item.id, "rejected", "persona-triage", decisionForMutation.reasonCode);
         } else if (decisionForMutation.action === "applied" && preparedApply) {
+          if (input.resolvedSqlitePath) {
+            writeProposalRollback(input.resolvedSqlitePath, {
+              proposalId: input.item.id,
+              proposalType: "persona",
+              targetPath: preparedApply.targetPath,
+              originalHash: preparedApply.preHash,
+              originalContent: preparedApply.original,
+              appliedHash: preparedApply.postHash,
+              appliedAt: nowIso(),
+            });
+            wroteRollback = true;
+          }
           applyPreparedPersonaChange(preparedApply, () => input.proposalsDb.markApplied(input.item.id));
         }
       },
     });
     if (!ok) return validationFailure(input.decision, "input-hash-mismatch", "Lock/CAS/audit mutation rejected.");
+    if (decisionForMutation.action === "rejected") {
+      syncProposalWithdrawnInChangeFeed(
+        input.changeFeed,
+        input.cfg as HybridMemoryConfig,
+        `persona:${input.item.id}`,
+        decisionForMutation.reasonCode ?? "Rejected via autopilot triage",
+      );
+    } else if (decisionForMutation.action === "applied" && preparedApply) {
+      const current = input.proposalsDb.get(input.item.id);
+      emitPersonaApplied(input.changeFeed, input.cfg as HybridMemoryConfig, {
+        sessionKey: input.sessionKey ?? "autopilot",
+        proposalId: input.item.id,
+        targetFile: current?.targetFile ?? "unknown",
+        title: current?.title,
+        rollbackAvailable: wroteRollback,
+      });
+      supersedeActiveProposedEvent(input.changeFeed, `persona:${input.item.id}`);
+    }
     return decisionForMutation;
   } finally {
     input.store.releaseLock({
@@ -973,14 +1028,14 @@ function classifyRisk(p: ProposalEntry, item: PersonaProposalPendingItem): Perso
   const text = `${p.title}
 ${p.observation}
 ${p.suggestedChange}`.toLowerCase();
-  if (/\b(destructive|credential)\b|approval boundary|bypass approval|disable safeguard/.test(text)) return "critical";
+  if (/\b(destructive|credential)\b|approval boundary|bypass approval|disable safeguard|bypass.*policy|bypass.*safety/.test(text)) return "critical";
   if (isCriticalTarget(p.targetFile)) {
     if (SENSITIVE_PERSONA_FILES.has(p.targetFile)) {
       if (!isMechanicallyVerifiedSensitiveFormatting(item, p.suggestedChange)) return "high";
       return "low";
     }
     if (!isCriticalTargetFormattingOnly(p.suggestedChange)) return "high";
-    if (/\b(privacy|security|approval|credential|destructive|safeguard)\b/.test(text)) return "high";
+    if (/\b(privacy|security|credential|destructive|safeguard)\b|bypass approval|approval boundary/.test(text)) return "high";
     if (item.targetHash && normalizeText(p.suggestedChange).length < 240) return "low";
     return "medium";
   }
@@ -1117,7 +1172,7 @@ ${applied}`;
 function highRiskReason(p: ProposalEntry): PendingDecision["reasonCode"] {
   const text = `${p.title}\n${p.observation}\n${p.suggestedChange}`.toLowerCase();
   if (/privacy/.test(text)) return "privacy-boundary-change";
-  if (/security|credential|approval|destructive|safeguard/.test(text)) return "security-boundary-change";
+  if (/bypass.*approval|approval boundary|bypass.*policy|bypass.*safety|\bcredential\b|\bdestructive\b|disable safeguard/.test(text)) return "security-boundary-change";
   if (/preference|profile|personal fact|user preference/.test(text)) return "user-preference-change-requires-approval";
   return "identity-boundary-change";
 }
@@ -1132,6 +1187,35 @@ function isMutationDecision(decision: PendingDecision): boolean {
 
 function isStaleTarget(item: PersonaProposalPendingItem): boolean {
   return Boolean(item.proposal.targetHash && item.targetHash && item.proposal.targetHash !== item.targetHash);
+}
+
+/**
+ * Check whether the proposed text is substantially already present in the target file.
+ * Splits the suggestion into sentences and checks how many already appear verbatim
+ * (case-insensitive, whitespace-normalised) in the live file content.
+ * Returns true when >60% of non-trivial sentences are already covered.
+ */
+function isAlreadyInTargetFile(proposal: ProposalEntry, item: PersonaProposalPendingItem): boolean {
+  if (!item.targetValid) return false;
+  let fileContent: string;
+  try {
+    if (!existsSync(item.targetPath)) return false;
+    fileContent = readFileSync(item.targetPath, "utf-8");
+  } catch {
+    return false;
+  }
+  const normalizedFile = fileContent.toLowerCase().replace(/\s+/g, " ");
+  const change = proposal.suggestedChange;
+  // Split into sentences / bullet lines; filter out trivial ones
+  const sentences = change
+    .split(/[.\n•\-]+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 30);
+  if (sentences.length === 0) return false;
+  const covered = sentences.filter((s) =>
+    normalizedFile.includes(s.toLowerCase().replace(/\s+/g, " ")),
+  ).length;
+  return covered / sentences.length >= 0.6;
 }
 
 function hasReliableTargetSnapshot(proposal: Pick<ProposalEntry, "targetHash" | "targetMtimeMs">): boolean {

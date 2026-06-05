@@ -14,9 +14,11 @@ import {
 } from "../services/goal-stewardship-heartbeat.js";
 import { llmTriageNeedsHeavy } from "../services/goal-stewardship-llm-triage.js";
 import { isGlobalRateLimited, listActiveGoals, resolveGoalsDir } from "../services/goal-stewardship.js";
+import { renderActiveTaskMarkdownFile } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
@@ -36,32 +38,46 @@ export function registerGoalStewardshipInjection(
       if (!userText || !matchesHeartbeat(userText, gs)) return undefined;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
+      if (isSubagentSession(sessionKey ?? undefined)) return undefined;
 
       const goals = await listActiveGoals(goalsDir);
-      if (goals.length === 0) return undefined;
-
-      if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
-        api.logger?.warn?.("memory-hybrid: goal stewardship skipped — global dispatch rate limit");
-        return {
-          prependContext:
-            "<goal-stewardship>Global goal dispatch rate limit reached this hour. Assess without spawning if possible.</goal-stewardship>\n\n",
-        };
-      }
 
       if (
         gs.heartbeatRefreshActiveTask &&
         ctx.cfg.activeTask.enabled &&
         resolvedActiveTaskPath &&
-        ctx.cfg.verbosity !== "silent" &&
-        !isSubagentSession(sessionKey ?? undefined)
+        ctx.cfg.verbosity !== "silent"
       ) {
         const staleMinutes = parseDuration(ctx.cfg.activeTask.staleThreshold);
-        await refreshActiveTaskMirrorWithGoals({
-          activeTaskPath: resolvedActiveTaskPath,
-          goals,
-          staleMinutes,
-          logger: api.logger,
-        });
+        if (ctx.cfg.activeTask.ledger === "facts") {
+          await renderActiveTaskMarkdownFile(
+            ctx.factsDb,
+            staleMinutes,
+            resolvedActiveTaskPath,
+            ctx.cfg.activeTask.projection,
+            api.logger,
+            { goals },
+          );
+        } else {
+          await refreshActiveTaskMirrorWithGoals({
+            activeTaskPath: resolvedActiveTaskPath,
+            goals,
+            staleMinutes,
+            logger: api.logger,
+          });
+        }
+      }
+
+      if (goals.length === 0) return undefined;
+
+      if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
+        api.logger?.warn?.("memory-hybrid: goal stewardship skipped — global dispatch rate limit");
+        const prepend = applyPrependBudget(
+          ctx.prependBudgetRef,
+          "<goal-stewardship>Global goal dispatch rate limit reached this hour. Assess without spawning if possible.</goal-stewardship>\n\n",
+        );
+        if (!prepend) return undefined;
+        return { prependContext: prepend };
       }
 
       let triageHeavy = heuristicNeedsHeavyAttention(goals);
@@ -82,7 +98,9 @@ export function registerGoalStewardshipInjection(
       api.logger?.info?.(
         `memory-hybrid: goal stewardship bundle (${built.goalsIncluded.length} goal(s), heavyHint=${built.suggestHeavy})`,
       );
-      return { prependContext: built.prepend };
+      const prepend = applyPrependBudget(ctx.prependBudgetRef, built.prepend);
+      if (!prepend) return undefined;
+      return { prependContext: prepend };
     } catch (err) {
       api.logger?.warn?.(`memory-hybrid: goal stewardship injection error: ${String(err)}`);
       return undefined;

@@ -292,6 +292,54 @@ describe("WorkflowStore.getSuccessRate", () => {
   });
 });
 
+describe("WorkflowStore.summarizeGoalKinds", () => {
+  it("counts system vs user-facing traces", () => {
+    const summaryStore = new WorkflowStore(join(tmpdir(), `wf-summary-${Date.now()}.db`));
+    summaryStore.record({ goal: "[cron:abc] maintenance", toolSequence: ["exec", "read"], outcome: "success" });
+    summaryStore.record({ goal: "Deploy staging API", toolSequence: ["read", "exec"], outcome: "success" });
+    const summary = summaryStore.summarizeGoalKinds();
+    expect(summary.total).toBe(2);
+    expect(summary.systemGoals).toBe(1);
+    expect(summary.userFacing).toBe(1);
+    summaryStore.close();
+  });
+
+  it("filters by sinceSec using ISO cutoff (lexicographic compare with created_at)", () => {
+    const summaryStore = new WorkflowStore(join(tmpdir(), `wf-summary-since-${Date.now()}.db`));
+    const morning = summaryStore.record({ goal: "morning task", toolSequence: ["read"], outcome: "success" });
+    const afternoon = summaryStore.record({ goal: "afternoon task", toolSequence: ["read"], outcome: "success" });
+    const db = (summaryStore as any).db as import("node:sqlite").DatabaseSync;
+    db.prepare("UPDATE workflow_traces SET created_at = ? WHERE id = ?").run(
+      "2026-06-05T08:00:00.000Z",
+      morning.id,
+    );
+    db.prepare("UPDATE workflow_traces SET created_at = ? WHERE id = ?").run(
+      "2026-06-05T14:00:00.000Z",
+      afternoon.id,
+    );
+    const sinceSec = Math.floor(Date.parse("2026-06-05T12:00:00.000Z") / 1000);
+    const summary = summaryStore.summarizeGoalKinds({ sinceSec });
+    expect(summary.total).toBe(1);
+    expect(summary.userFacing).toBe(1);
+    summaryStore.close();
+  });
+});
+
+describe("WorkflowStore.purgeSystemGoalTraces", () => {
+  it("removes cron goal rows", () => {
+    const purgeStore = new WorkflowStore(join(tmpdir(), `wf-purge-${Date.now()}.db`));
+    purgeStore.record({ goal: "[cron:abc] maintenance", toolSequence: ["exec", "read"], outcome: "success" });
+    purgeStore.record({ goal: "ship hotfix to staging", toolSequence: ["exec", "read"], outcome: "success" });
+    const dry = purgeStore.purgeSystemGoalTraces({ dryRun: true });
+    expect(dry.removed).toBe(1);
+    expect(purgeStore.count()).toBe(2);
+    const applied = purgeStore.purgeSystemGoalTraces({ dryRun: false });
+    expect(applied.removed).toBe(1);
+    expect(purgeStore.count()).toBe(1);
+    purgeStore.close();
+  });
+});
+
 describe("WorkflowStore.getPatterns", () => {
   beforeEach(() => {
     store.record({ goal: "deploy app", toolSequence: ["exec", "exec", "read"], outcome: "success", durationMs: 1000 });
@@ -331,6 +379,22 @@ describe("WorkflowStore.getPatterns", () => {
   it("respects limit", () => {
     const patterns = store.getPatterns({ limit: 1 });
     expect(patterns.length).toBeLessThanOrEqual(1);
+  });
+
+  it("excludeSystemGoals omits cron traces from pattern clustering", () => {
+    store.record({
+      goal: "[cron:abc maintenance]",
+      toolSequence: ["exec", "read"],
+      outcome: "success",
+    });
+    store.record({
+      goal: "[cron:abc maintenance]",
+      toolSequence: ["exec", "read"],
+      outcome: "success",
+    });
+    const withCron = store.getPatterns({ minSuccessRate: 0, excludeSystemGoals: false });
+    const withoutCron = store.getPatterns({ minSuccessRate: 0, excludeSystemGoals: true });
+    expect(withCron.length).toBeGreaterThan(withoutCron.length);
   });
 
   it("returns defensive copies for memoized pattern arrays", () => {
@@ -515,11 +579,19 @@ describe("WorkflowTracker", () => {
 
   it("flush with outcome=failure records a failed trace", () => {
     tracker.push("fail-sess", "exec");
+    tracker.push("fail-sess", "read");
     const id = tracker.flush("fail-sess", "broken task", "failure");
     expect(id).not.toBeNull();
     const saved = store.getById(id!);
     expect(saved).not.toBeNull();
     expect(saved?.outcome).toBe("failure");
+  });
+
+  it("flush skips single-tool sessions", () => {
+    tracker.push("single-sess", "exec");
+    const id = tracker.flush("single-sess", "one tool only", "success");
+    expect(id).toBeNull();
+    expect(store.count()).toBe(0);
   });
 
   it("discard removes buffer without saving", () => {
@@ -550,14 +622,17 @@ describe("WorkflowTracker", () => {
     const t = new WorkflowTracker(store, strictCfg);
 
     t.push("s1", "exec");
+    t.push("s1", "read");
     const id1 = t.flush("s1", "g1", "success");
     expect(id1).not.toBeNull(); // 1st — allowed
 
     t.push("s2", "read");
+    t.push("s2", "write");
     const id2 = t.flush("s2", "g2", "success");
     expect(id2).not.toBeNull(); // 2nd — allowed (boundary)
 
     t.push("s3", "write");
+    t.push("s3", "exec");
     const id3 = t.flush("s3", "g3", "success");
     expect(id3).toBeNull(); // 3rd — rejected
 
@@ -572,10 +647,12 @@ describe("WorkflowTracker", () => {
     const t1 = new WorkflowTracker(store, strictCfg, () => day1);
 
     t1.push("s1", "exec");
+    t1.push("s1", "read");
     const id1 = t1.flush("s1", "g1", "success");
     expect(id1).not.toBeNull(); // day 1, 1st — allowed
 
     t1.push("s2", "exec");
+    t1.push("s2", "read");
     const id2 = t1.flush("s2", "g2", "success");
     expect(id2).toBeNull(); // day 1, 2nd — rejected
 
@@ -584,6 +661,7 @@ describe("WorkflowTracker", () => {
     const t2 = new WorkflowTracker(store, strictCfg, () => day2);
 
     t2.push("s3", "exec");
+    t2.push("s3", "read");
     const id3 = t2.flush("s3", "g3", "success");
     expect(id3).not.toBeNull(); // day 2, fresh counter — allowed
 
@@ -598,6 +676,7 @@ describe("WorkflowTracker", () => {
     const t = new WorkflowTracker(store, strictCfg, clock);
 
     t.push("s1", "exec");
+    t.push("s1", "read");
     const id1 = t.flush("s1", "g1", "success");
     expect(id1).not.toBeNull(); // day 1, allowed
 
@@ -605,6 +684,7 @@ describe("WorkflowTracker", () => {
     currentTime = new Date("2025-06-16T00:01:00Z");
 
     t.push("s2", "exec");
+    t.push("s2", "read");
     const id2 = t.flush("s2", "g2", "success");
     expect(id2).not.toBeNull(); // day 2, counter reset — allowed
 
@@ -613,6 +693,7 @@ describe("WorkflowTracker", () => {
 
   it("prune delegates to store.prune", () => {
     tracker.push("s", "exec");
+    tracker.push("s", "read");
     tracker.flush("s", "old goal", "success");
 
     // Backdate via DB

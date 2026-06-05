@@ -90,6 +90,52 @@ export class ProposalsDB extends BaseSqliteStore {
 
     this.migrateRejectionReasonColumn();
     this.migrateTargetSnapshotColumns();
+    this.migrateProposalRunsTable();
+  }
+
+  private migrateProposalRunsTable(): void {
+    this.liveDb.exec(`
+      CREATE TABLE IF NOT EXISTS proposal_runs (
+        id TEXT PRIMARY KEY,
+        run_at INTEGER NOT NULL,
+        insights_count INTEGER NOT NULL DEFAULT 0,
+        parsed_count INTEGER NOT NULL DEFAULT 0,
+        created_count INTEGER NOT NULL DEFAULT 0,
+        semantic_empty INTEGER NOT NULL DEFAULT 0,
+        identity_gap_score REAL,
+        model TEXT,
+        zero_reason TEXT
+      )
+    `);
+    this.liveDb.exec("CREATE INDEX IF NOT EXISTS idx_proposal_runs_run_at ON proposal_runs(run_at)");
+  }
+
+  recordRun(entry: {
+    runAt: number;
+    insightsCount: number;
+    parsedCount: number;
+    createdCount: number;
+    semanticEmpty: boolean;
+    identityGapScore: number;
+    model: string | null;
+    zeroReason: string | null;
+  }): void {
+    this.liveDb
+      .prepare(
+        `INSERT INTO proposal_runs (id, run_at, insights_count, parsed_count, created_count, semantic_empty, identity_gap_score, model, zero_reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        randomUUID(),
+        entry.runAt,
+        entry.insightsCount,
+        entry.parsedCount,
+        entry.createdCount,
+        entry.semanticEmpty ? 1 : 0,
+        entry.identityGapScore,
+        entry.model,
+        entry.zeroReason,
+      );
   }
 
   protected getSubsystemName(): string {
@@ -158,6 +204,26 @@ export class ProposalsDB extends BaseSqliteStore {
     return this.rowToEntry(row);
   }
 
+  /** Targeted duplicate check for pipeline proposal creation (avoids full-table list scans). */
+  findPendingOrAppliedDuplicate(
+    targetFile: string,
+    suggestedChange: string,
+    excludeId?: string,
+  ): ProposalEntry | null {
+    const normalized = suggestedChange.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!normalized) return null;
+    const rows = this.liveDb
+      .prepare("SELECT * FROM proposals WHERE target_file = ? AND status IN ('pending', 'applied')")
+      .all(targetFile) as unknown as ProposalRow[];
+    for (const row of rows) {
+      const entry = this.rowToEntry(row);
+      if (excludeId && entry.id === excludeId) continue;
+      const candidate = entry.suggestedChange.toLowerCase().replace(/\s+/g, " ").trim();
+      if (candidate === normalized) return entry;
+    }
+    return null;
+  }
+
   list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
     let query = "SELECT * FROM proposals WHERE 1=1";
     const params: string[] = [];
@@ -178,10 +244,72 @@ export class ProposalsDB extends BaseSqliteStore {
   }
 
   updateStatus(id: string, status: string, reviewedBy?: string, rejectionReason?: string): ProposalEntry | null {
+    if (status === "pending") {
+      this.liveDb
+        .prepare(
+          "UPDATE proposals SET status = ?, reviewed_at = NULL, reviewed_by = NULL, rejection_reason = NULL WHERE id = ?",
+        )
+        .run(status, id);
+      return this.get(id);
+    }
     const now = Math.floor(Date.now() / 1000);
     this.liveDb
       .prepare("UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ? WHERE id = ?")
       .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id);
+    return this.get(id);
+  }
+
+  /** Atomically transition status only when the proposal is in `expectedStatus`. */
+  updateStatusIf(
+    id: string,
+    status: string,
+    expectedStatus: string,
+    reviewedBy?: string,
+    rejectionReason?: string,
+  ): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    const result =
+      status === "pending"
+        ? this.liveDb
+            .prepare(
+              `UPDATE proposals SET status = ?, reviewed_at = NULL, reviewed_by = NULL, rejection_reason = NULL
+               WHERE id = ? AND status = ?`,
+            )
+            .run(status, id, expectedStatus)
+        : this.liveDb
+            .prepare(
+              `UPDATE proposals SET status = ?, reviewed_at = ?, reviewed_by = ?, rejection_reason = ?
+               WHERE id = ? AND status = ?`,
+            )
+            .run(status, now, reviewedBy ?? null, rejectionReason ?? null, id, expectedStatus);
+    if (result.changes === 0) return null;
+    return this.get(id);
+  }
+
+  updateSuggestedChange(
+    id: string,
+    suggestedChange: string,
+    snapshot?: { targetMtimeMs: number | null; targetHash: string | null; confidence?: number },
+  ): ProposalEntry | null {
+    if (snapshot) {
+      this.liveDb
+        .prepare(
+          `UPDATE proposals SET suggested_change = ?, target_mtime_ms = ?, target_hash = ?, confidence = COALESCE(?, confidence)
+           WHERE id = ? AND status = 'pending'`,
+        )
+        .run(
+          suggestedChange,
+          snapshot.targetMtimeMs,
+          snapshot.targetHash,
+          snapshot.confidence ?? null,
+          id,
+        );
+    } else {
+      this.liveDb.prepare("UPDATE proposals SET suggested_change = ? WHERE id = ? AND status = 'pending'").run(
+        suggestedChange,
+        id,
+      );
+    }
     return this.get(id);
   }
 
@@ -191,11 +319,22 @@ export class ProposalsDB extends BaseSqliteStore {
     return this.get(id);
   }
 
-  countRecentProposals(daysBack: number): number {
+  markAppliedIfApproved(id: string): ProposalEntry | null {
+    const now = Math.floor(Date.now() / 1000);
+    const result = this.liveDb
+      .prepare("UPDATE proposals SET status = 'applied', applied_at = ? WHERE id = ? AND status = 'approved'")
+      .run(now, id);
+    if (result.changes === 0) return null;
+    return this.get(id);
+  }
+
+  countRecentProposals(daysBack: number, opts?: { excludeSelfCorrection?: boolean }): number {
     const cutoff = Math.floor(Date.now() / 1000) - daysBack * 24 * 3600;
-    const row = this.liveDb
-      .prepare("SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?")
-      .get(cutoff) as unknown as CountRow | undefined;
+    const excludeSC = opts?.excludeSelfCorrection === true;
+    const sql = excludeSC
+      ? "SELECT COUNT(*) as count FROM proposals WHERE created_at >= ? AND title NOT LIKE 'Self-correction: %'"
+      : "SELECT COUNT(*) as count FROM proposals WHERE created_at >= ?";
+    const row = this.liveDb.prepare(sql).get(cutoff) as unknown as CountRow | undefined;
     return row?.count ?? 0;
   }
 

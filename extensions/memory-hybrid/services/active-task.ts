@@ -25,9 +25,11 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { formatDuration } from "../utils/duration.js";
+import { formatDateUtc, nowIso, nowSec } from "../utils/dates.js";
 import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { escapeRegExp } from "../utils/text.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import { isOpenClawSessionLikelyPresent, looksLikeOpenClawSessionRef } from "./openclaw-session-artifact.js";
 import type { ActiveTaskReconcileProgressReporter } from "./active-task-reconcile-progress.js";
 
@@ -90,6 +92,11 @@ export const OMITTED_CAP_NOTE =
 /** Valid task statuses */
 export const ACTIVE_TASK_STATUSES = ["In progress", "Waiting", "Stalled", "Failed", "Done"] as const;
 export type ActiveTaskStatus = (typeof ACTIVE_TASK_STATUSES)[number];
+
+/** Terminal statuses — pending sub-agent signals must not mutate or reopen these rows. */
+export function isTerminalActiveTaskStatus(status: ActiveTaskStatus): boolean {
+  return status === "Done" || status === "Failed";
+}
 
 /** Non-terminal statuses (still active) */
 const ACTIVE_STATUSES: Set<ActiveTaskStatus> = new Set(["In progress", "Waiting", "Stalled", "Failed"]);
@@ -535,7 +542,7 @@ export function upsertTask(
   preserveUpdated = false,
 ): ActiveTaskEntry[] {
   const idx = active.findIndex((t) => t.label === entry.label);
-  const updatedTimestamp = preserveUpdated ? entry.updated : new Date().toISOString();
+  const updatedTimestamp = preserveUpdated ? entry.updated : nowIso();
   if (idx >= 0) {
     const updated = [...active];
     updated[idx] = { ...active[idx], ...entry, updated: updatedTimestamp };
@@ -556,8 +563,10 @@ export function completeTask(
   const task: ActiveTaskEntry = {
     ...active[idx],
     status: "Done",
-    updated: new Date().toISOString(),
+    subagent: "",
+    updated: nowIso(),
   };
+  clearActiveTaskHandoff(task);
   const updated = active.filter((_, i) => i !== idx);
   return { updated, completed: task };
 }
@@ -590,9 +599,12 @@ export function buildActiveTaskInjection(
   let injectedCount = 0;
 
   for (const task of activeTasks) {
-    const summary = [`- [${task.label}] ${task.description} (${task.status})`];
-    if (task.next) summary.push(`  Next: ${task.next}`);
-    if (task.subagent) summary.push(`  Subagent: ${task.subagent}`);
+    const label = sanitizePromptInjection(task.label);
+    const description = sanitizePromptInjection(task.description);
+    const summary = [`- [${label}] ${description} (${task.status})`];
+    if (task.next) summary.push(`  Next: ${sanitizePromptInjection(task.next)}`);
+    if (task.subagent) summary.push(`  Subagent: ${sanitizePromptInjection(task.subagent)}`);
+    if (task.relatedGoal?.trim()) summary.push(`  Related goal: ${sanitizePromptInjection(task.relatedGoal.trim())}`);
     const block = summary.join("\n");
     if (used + block.length > charBudget) break;
     lines.push(block);
@@ -632,9 +644,11 @@ export function buildStaleWarningInjection(
   maxChars?: number,
 ): { text: string; renderedCount: number } {
   const visibleTasks = tasks.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
-  const staleTasks = visibleTasks.filter((t) => t.stale);
+  // Failed rows are terminal bookkeeping — not actionable stale work.
+  const actionableTasks = visibleTasks.filter((t) => t.status !== "Failed");
+  const staleTasks = actionableTasks.filter((t) => t.stale);
   // Hint for any "In progress" task with a subagent — regardless of staleness.
-  const inProgressWithSubagent = visibleTasks.filter((t) => t.status === "In progress" && t.subagent);
+  const inProgressWithSubagent = actionableTasks.filter((t) => t.status === "In progress" && t.subagent);
 
   if (staleTasks.length === 0 && inProgressWithSubagent.length === 0) return { text: "", renderedCount: 0 };
 
@@ -654,8 +668,8 @@ export function buildStaleWarningInjection(
     for (const task of staleTasks) {
       const updatedMs = new Date(task.updated).getTime();
       const hoursAgo = Number.isNaN(updatedMs) ? "?" : Math.floor((now - updatedMs) / (60 * 60 * 1000));
-      const line1 = `- [${task.label}]: ${task.description} — last updated ${task.updated} (${hoursAgo}h ago)`;
-      const nextPart = task.next ? `, Next: ${task.next}` : "";
+      const line1 = `- [${sanitizePromptInjection(task.label)}]: ${sanitizePromptInjection(task.description)} — last updated ${task.updated} (${hoursAgo}h ago)`;
+      const nextPart = task.next ? `, Next: ${sanitizePromptInjection(task.next)}` : "";
       const line2 = `  Status: ${task.status}${nextPart}`;
       const blockSize = line1.length + line2.length + 2;
       if (maxChars != null && usedChars + blockSize > maxChars) break;
@@ -684,7 +698,7 @@ export function buildStaleWarningInjection(
     usedChars += headerSize;
 
     for (const task of inProgressWithSubagent) {
-      const line = `- [${task.label}]: ${task.description} (subagent: ${task.subagent})`;
+      const line = `- [${sanitizePromptInjection(task.label)}]: ${sanitizePromptInjection(task.description)} (subagent: ${sanitizePromptInjection(task.subagent ?? "")})`;
       if (maxChars != null && usedChars + line.length + 1 > maxChars) break;
       lines.push(line);
       usedChars += line.length + 1;
@@ -708,7 +722,7 @@ export function buildStaleWarningInjection(
  * Creates the file if it doesn't exist.
  */
 export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDir: string): Promise<string> {
-  const date = new Date().toISOString().slice(0, 10);
+  const date = formatDateUtc(nowSec());
   const filePath = join(memoryDir, `${date}.md`);
 
   await mkdir(memoryDir, { recursive: true });
@@ -758,6 +772,12 @@ export async function flushCompletedTaskToMemory(task: ActiveTaskEntry, memoryDi
 export function isSubagentSession(sessionKey?: string): boolean {
   if (!sessionKey) return false;
   return sessionKey.includes("subagent:");
+}
+
+/** Signal facts sync to wipe stored handoff JSON (`'handoff' in entry`). */
+export function clearActiveTaskHandoff(entry: ActiveTaskEntry): ActiveTaskEntry {
+  entry.handoff = undefined;
+  return entry;
 }
 
 export function normalizePlaceholderTaskNext(
@@ -905,7 +925,7 @@ export function createOctaveTaskHandoffArtifact(signal: TaskSignal): OctaveTaskH
     payload: signal,
     auditTrail: [
       {
-        at: new Date().toISOString(),
+        at: nowIso(),
         by: signal.agent,
         action: "created",
       },
@@ -1202,7 +1222,7 @@ export interface ActiveTaskSessionReconcileResult {
 /**
  * For each "In progress" task with an OpenClaw-shaped session reference, if no session JSONL
  * exists under ~/.openclaw/agents (per-agent sessions folders), move the task to the Completed
- * section as Done with a note (unknown outcome / bookkeeping cleanup).
+ * section as Failed with a note (missing transcript / abandoned bookkeeping cleanup).
  */
 export async function reconcileActiveTaskInProgressSessions(
   filePath: string,
@@ -1295,13 +1315,15 @@ export async function reconcileActiveTaskInProgressSessions(
       continue;
     }
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const completedEntry: ActiveTaskEntry = {
       ...task,
-      status: "Done",
+      status: "Failed",
       updated: now,
       next: `Auto-reconciled: session transcript not found for ${ref} (subagent bookkeeping cleanup).`,
+      subagent: "",
     };
+    clearActiveTaskHandoff(completedEntry);
     newCompleted.push(completedEntry);
     reconciledLabels.push(task.label);
     toFlush.push(completedEntry);
@@ -1309,7 +1331,7 @@ export async function reconcileActiveTaskInProgressSessions(
       index: scanned,
       total: scanTotal,
       entity: task.label,
-      action: "mark_done",
+      action: "mark_abandoned",
       reason: "session_missing",
       previousStatus: task.status,
       elapsedMs,
@@ -1352,6 +1374,7 @@ export async function reconcileActiveTaskInProgressSessions(
 
   if (opts.flushOnComplete && opts.memoryDir) {
     for (const entry of toFlush) {
+      if (entry.status === "Failed") continue;
       try {
         await flushCompletedTaskToMemory(entry, opts.memoryDir);
       } catch {

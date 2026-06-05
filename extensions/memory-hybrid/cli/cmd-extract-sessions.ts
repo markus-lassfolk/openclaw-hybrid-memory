@@ -1,10 +1,40 @@
 /**
  * Session file helpers for extract CLI (split from cmd-extract.ts).
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import { capturePluginError } from "../services/error-reporter.js";
+
+/** Session JSONL basenames eligible for procedure/directive extraction scans. */
+export function isSessionTranscriptCandidate(name: string): boolean {
+  return (
+    name.endsWith(".jsonl") &&
+    !name.startsWith(".deleted") &&
+    !name.includes(".checkpoint.") &&
+    !name.includes(".trajectory.")
+  );
+}
+
+/**
+ * Resolve a session transcript path after OpenClaw rollover/archival moves the file.
+ * Falls back to `sessionDir/archive/<basename>` when the original path is missing.
+ */
+export function resolveSessionTranscriptPath(sessionDir: string, filePath: string): string {
+  if (existsSync(filePath)) {
+    try {
+      return realpathSync(filePath);
+    } catch {
+      return filePath;
+    }
+  }
+  const base = basename(filePath);
+  const direct = join(sessionDir, base);
+  if (existsSync(direct)) return direct;
+  const archived = join(sessionDir, "archive", base);
+  if (existsSync(archived)) return archived;
+  return filePath;
+}
 
 /**
  * Returns session .jsonl file paths modified within the last `days` days,
@@ -14,23 +44,44 @@ import { capturePluginError } from "../services/error-reporter.js";
 export function getSessionFilePathsSince(sessionDir: string, days: number, sinceTimestamp?: number): string[] {
   if (!existsSync(sessionDir)) return [];
   const cutoff = sinceTimestamp !== undefined ? sinceTimestamp : Date.now() - days * 24 * 60 * 60 * 1000;
+
+  const collectFromDir = (dir: string, propagateErrors = false): string[] => {
+    if (!existsSync(dir)) return [];
+    try {
+      return readdirSync(dir)
+        .filter((f) => isSessionTranscriptCandidate(f))
+        .map((f) => join(dir, f))
+        .filter((p) => {
+          try {
+            return statSync(p).mtimeMs > cutoff;
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "stat-check",
+              severity: "info",
+              subsystem: "cli",
+            });
+            return false;
+          }
+        });
+    } catch (err) {
+      if (propagateErrors) throw err;
+      return [];
+    }
+  };
+
   try {
-    const files = readdirSync(sessionDir);
-    return files
-      .filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted"))
-      .map((f) => join(sessionDir, f))
-      .filter((p) => {
-        try {
-          return statSync(p).mtimeMs > cutoff;
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "stat-check",
-            severity: "info",
-            subsystem: "cli",
-          });
-          return false;
-        }
-      });
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    for (const p of [
+      ...collectFromDir(sessionDir, true),
+      ...collectFromDir(join(sessionDir, "archive"), false),
+    ]) {
+      const base = basename(p);
+      if (seen.has(base)) continue;
+      seen.add(base);
+      paths.push(p);
+    }
+    return paths;
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",

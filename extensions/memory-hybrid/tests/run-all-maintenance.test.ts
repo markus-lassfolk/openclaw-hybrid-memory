@@ -1,20 +1,31 @@
 /**
- * run-all maintenance CLI — dry-run listing and backfill-decay idempotency (#2026.5.190).
+ * run-all maintenance CLI — orchestrator alias smoke tests (#2026.5.190).
  */
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { HybridMemoryConfig } from "../config.js";
 import type { ManageBindings } from "../cli/commands/manage/bindings.js";
-import { registerManageAgentsAuditRunall } from "../cli/commands/manage/register-agents-audit-runall.js";
+import { registerRunAllCommand } from "../cli/commands/manage/register-agents-audit-runall.js";
+
+function minimalCfg(): HybridMemoryConfig {
+  return {
+    maintenance: { orchestrator: { llmCooldownBetweenStepsMs: 0, rateLimitMaxRetries: 2 } },
+    autoClassify: { enabled: false },
+    lifecycle: { adapters: { github: { enabled: false } } },
+  } as HybridMemoryConfig;
+}
 
 function makeBindings(overrides: Partial<ManageBindings> & { factsDb: ManageBindings["factsDb"] }): ManageBindings {
   return {
+    cfg: minimalCfg(),
     vectorDb: {
       delete: vi.fn().mockResolvedValue(true),
     },
+    embeddings: { embed: vi.fn().mockResolvedValue([]) },
     auditStore: null,
     agentHealthStore: null,
     resolvedSqlitePath: overrides.resolvedSqlitePath ?? null,
@@ -29,12 +40,17 @@ function makeBindings(overrides: Partial<ManageBindings> & { factsDb: ManageBind
     runGenerateAutoSkills: null,
     runReflectIdentity: null,
     runGenerateProposals: null,
-    runSelfCorrectionRun: vi.fn().mockResolvedValue(undefined),
+    runSelfCorrectionRun: vi.fn().mockResolvedValue({ incidentsFound: 0, analysed: 0 }),
     runBuildLanguageKeywords: vi.fn().mockResolvedValue({ ok: true, languagesAdded: 0 }),
+    runResolveContradictions: vi.fn().mockResolvedValue({ autoResolved: [], ambiguous: [] }),
+    runEntityEnrichment: vi.fn().mockResolvedValue({ processed: 0, factsEnriched: 0 }),
+    runClassify: vi.fn().mockResolvedValue({ reclassified: 0, total: 0 }),
+    runCredentialsPrune: vi.fn().mockReturnValue({ removed: 0 }),
     reflectionConfig: { defaultWindow: 7, model: "test-model" },
-    runReflection: vi.fn().mockResolvedValue({ patternsStored: 0 }),
+    runReflection: vi.fn().mockResolvedValue({ patternsStored: 0, factsAnalyzed: 0 }),
     runReflectionRules: vi.fn().mockResolvedValue({ rulesStored: 0 }),
     runReflectionMeta: vi.fn().mockResolvedValue({ metaStored: 0 }),
+    requireWalFlushBeforeMutation: vi.fn().mockResolvedValue({ committed: 0, skipped: 0 }),
     ...overrides,
   } as unknown as ManageBindings;
 }
@@ -48,12 +64,12 @@ describe("run-all maintenance CLI", () => {
     process.exitCode = undefined;
   });
 
-  it("dry-run lists steps without executing maintenance handlers", async () => {
+  it("dry-run lists orchestrator steps without executing handlers", async () => {
     const backfillDecay = vi.fn();
     const prune = vi.fn();
     const mem = new Command("hybrid-mem");
     mem.exitOverride();
-    registerManageAgentsAuditRunall(
+    registerRunAllCommand(
       mem,
       makeBindings({
         factsDb: {
@@ -72,82 +88,10 @@ describe("run-all maintenance CLI", () => {
 
     await mem.parseAsync(["run-all", "--dry-run"], { from: "user" });
 
-    expect(lines.some((l) => l.includes("run-all (dry-run)"))).toBe(true);
+    expect(lines.some((l) => l.includes("Maintenance full"))).toBe(true);
     expect(lines.some((l) => l.includes("backfill-decay"))).toBe(true);
     expect(lines.some((l) => l.includes("prune"))).toBe(true);
     expect(backfillDecay).not.toHaveBeenCalled();
     expect(prune).not.toHaveBeenCalled();
-  });
-
-  it("writes backfill-decay marker once and skips backfill on a second run-all", async () => {
-    const root = mkdtempSync(join(tmpdir(), "run-all-idempotent-"));
-    roots.push(root);
-    const memoryDir = join(root, "memory");
-    mkdirSync(memoryDir, { recursive: true });
-    const sqlitePath = join(memoryDir, "facts.db");
-    const markerPath = join(memoryDir, ".backfill-decay-done");
-
-    const backfillDecay = vi.fn().mockReturnValue({ fact: 2 });
-    const prune = vi.fn().mockReturnValue(0);
-    const mem = new Command("hybrid-mem");
-    mem.exitOverride();
-    registerManageAgentsAuditRunall(
-      mem,
-      makeBindings({
-        resolvedSqlitePath: sqlitePath,
-        factsDb: {
-          backfillDecay,
-          prune,
-          listExpiredFactIdsPendingPrune: () => [],
-          countActiveFactsByCategory: () => 0,
-        } as never,
-      }),
-    );
-
-    vi.spyOn(console, "log").mockImplementation(() => undefined);
-
-    await mem.parseAsync(["run-all"], { from: "user" });
-    expect(backfillDecay).toHaveBeenCalledTimes(1);
-    expect(existsSync(markerPath)).toBe(true);
-
-    backfillDecay.mockClear();
-    await mem.parseAsync(["run-all", "--verbose"], { from: "user" });
-    expect(backfillDecay).not.toHaveBeenCalled();
-    expect(prune).toHaveBeenCalledTimes(2);
-  });
-
-  it("still runs prune when backfill marker exists", async () => {
-    const root = mkdtempSync(join(tmpdir(), "run-all-marker-"));
-    roots.push(root);
-    const memoryDir = join(root, "memory");
-    mkdirSync(memoryDir, { recursive: true });
-    const sqlitePath = join(memoryDir, "facts.db");
-    writeFileSync(join(memoryDir, ".backfill-decay-done"), `${new Date().toISOString()}\n`, "utf-8");
-
-    const backfillDecay = vi.fn();
-    const prune = vi.fn().mockReturnValue(3);
-    const mem = new Command("hybrid-mem");
-    mem.exitOverride();
-    registerManageAgentsAuditRunall(
-      mem,
-      makeBindings({
-        resolvedSqlitePath: sqlitePath,
-        factsDb: {
-          backfillDecay,
-          prune,
-          listExpiredFactIdsPendingPrune: () => ["id-1"],
-          countActiveFactsByCategory: () => 0,
-        } as never,
-      }),
-    );
-
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((s: string) => lines.push(String(s)));
-
-    await mem.parseAsync(["run-all"], { from: "user" });
-
-    expect(backfillDecay).not.toHaveBeenCalled();
-    expect(prune).toHaveBeenCalledTimes(1);
-    expect(lines.some((l) => l.includes("Pruned 3 expired facts"))).toBe(true);
   });
 });

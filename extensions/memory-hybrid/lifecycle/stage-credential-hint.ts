@@ -7,6 +7,8 @@ import { access, readFile, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
+import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import type { LifecycleContext } from "./types.js";
 
 const PENDING_TTL_MS = 5 * 60 * 1000; // 5 min
@@ -49,10 +51,17 @@ export function registerCredentialHint(api: ClawdbotPluginApi, ctx: LifecycleCon
         return;
       }
       await unlink(pendingPath).catch(() => {});
-      const hintText = hints.join(", ");
-      return {
-        prependContext: `\n<credential-hint>\nA credential may have been shared in the previous exchange (${hintText}). Consider asking the user if they want to store it securely with credential_store.\n</credential-hint>\n`,
-      };
+      const hintText = hints
+        .map((h) => sanitizePromptInjection(String(h)))
+        .filter(Boolean)
+        .join(", ");
+      if (!hintText) return;
+      const prepend = applyPrependBudget(
+        ctx.prependBudgetRef,
+        `\n<credential-hint>\nA credential may have been shared in the previous exchange (${hintText}). Consider asking the user if they want to store it securely with credential_store.\n</credential-hint>\n`,
+      );
+      if (!prepend) return;
+      return { prependContext: prepend };
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code !== "ENOENT") {

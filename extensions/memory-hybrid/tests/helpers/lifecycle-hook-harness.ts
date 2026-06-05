@@ -74,6 +74,8 @@ export function buildGuardTestLifecycleContext(tmpDir: string, factsDb: FactsDB)
     workflowTracker: undefined,
     currentAgentIdRef: { value: "main" },
     lastProgressiveIndexIds: [],
+    progressiveIndexBySession: new Map(),
+    lastAutoRecallPromptBySession: new Map(),
     restartPendingClearedRef: { value: true },
     resolvedSqlitePath: join(tmpDir, "facts.db"),
     walWrite: vi.fn().mockResolvedValue("wal-id") as unknown as LifecycleContext["walWrite"],

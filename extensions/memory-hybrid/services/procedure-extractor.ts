@@ -5,6 +5,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ExtractProceduresResult } from "../cli/register.js";
+import { isSessionTranscriptCandidate, resolveSessionTranscriptPath } from "../cli/cmd-extract-sessions.js";
 import type { ProcedureStep } from "../types/memory.js";
 import { capturePluginError } from "./error-reporter.js";
 
@@ -66,8 +67,7 @@ function looksLikeFailure(content: unknown): boolean {
     lower.includes("404") ||
     lower.includes("failed") ||
     lower.includes("exception") ||
-    lower.includes("econnrefused") ||
-    (lower.includes("html") && lower.includes("<!doctype"))
+    lower.includes("econnrefused")
   );
 }
 
@@ -278,31 +278,45 @@ export async function extractProceduresFromSessions(
     const dir = options.sessionDir;
     if (!fs.existsSync(dir)) {
       logger.warn(`procedure-extractor: session dir not found: ${dir}`);
-      return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun };
+      return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun, readFailures: 0 };
     }
     const files = fs.readdirSync(dir);
-    filePaths = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith(".deleted")).map((f) => path.join(dir, f));
+    filePaths = files
+      .filter((f) => isSessionTranscriptCandidate(f))
+      .map((f) => path.join(dir, f));
+    const archiveDir = path.join(dir, "archive");
+    if (fs.existsSync(archiveDir)) {
+      const archived = fs
+        .readdirSync(archiveDir)
+        .filter((f) => isSessionTranscriptCandidate(f))
+        .map((f) => path.join(archiveDir, f));
+      filePaths.push(...archived);
+    }
   }
 
   let proceduresStored = 0;
   let positiveCount = 0;
   let negativeCount = 0;
+  let readFailures = 0;
 
   for (const filePath of filePaths) {
     const fs = await import("node:fs");
     const path = await import("node:path");
+    const sessionDir = options.sessionDir ?? path.dirname(filePath);
+    const resolvedPath = resolveSessionTranscriptPath(sessionDir, filePath);
     let content: string;
     try {
-      content = fs.readFileSync(filePath, "utf-8");
+      content = fs.readFileSync(resolvedPath, "utf-8");
     } catch (err) {
+      readFailures++;
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "procedure-extractor",
         operation: "read-session-file",
       });
-      logger.warn(`procedure-extractor: read failed ${filePath}: ${err}`);
+      logger.warn(`procedure-extractor: read failed ${resolvedPath}: ${err}`);
       continue;
     }
-    const sessionId = path.basename(filePath, ".jsonl");
+    const sessionId = path.basename(resolvedPath, ".jsonl");
     const parsed = verbose
       ? parseSessionJsonl(content, sessionId, { includeSkipReason: true })
       : parseSessionJsonl(content, sessionId);
@@ -366,5 +380,6 @@ export async function extractProceduresFromSessions(
     positiveCount,
     negativeCount,
     dryRun,
+    readFailures,
   };
 }

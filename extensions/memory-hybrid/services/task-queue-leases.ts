@@ -12,6 +12,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { nowIso, parseTimestampMs, formatTimestampUtcFromMs } from "../utils/dates.js";
 
 const LEASES_FILE = "dispatch-leases.json";
 const LOCK_FILE = "dispatch-leases.lock";
@@ -84,12 +85,12 @@ function issueKey(issue: number): string {
 }
 
 function makeNowIso(now?: Date): string {
-  return (now ?? new Date()).toISOString();
+  return now ? formatTimestampUtcFromMs(now.getTime()) : nowIso();
 }
 
 function parseIsoMs(iso?: string): number {
   if (!iso) return Number.NaN;
-  return new Date(iso).getTime();
+  return parseTimestampMs(iso) ?? Number.NaN;
 }
 
 function isActiveState(state: DispatchLeaseState): boolean {
@@ -219,7 +220,7 @@ async function tryAcquireLock(lockPath: string): Promise<boolean> {
   let fh: Awaited<ReturnType<typeof open>> | undefined;
   try {
     fh = await open(lockPath, "wx");
-    await fh.writeFile(`${process.pid}\n${new Date().toISOString()}\n`, "utf-8");
+    await fh.writeFile(`${process.pid}\n${nowIso()}\n`, "utf-8");
     return true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -309,7 +310,7 @@ function pushEvent(registry: DispatchLeaseRegistry, lease: DispatchLeaseRecord, 
 
 function expireActiveLeases(registry: DispatchLeaseRegistry, now: Date): boolean {
   const nowMs = now.getTime();
-  const nowIso = now.toISOString();
+  const nowIsoStr = formatTimestampUtcFromMs(nowMs);
   let changed = false;
 
   for (const lease of Object.values(registry.leases)) {
@@ -319,8 +320,8 @@ function expireActiveLeases(registry: DispatchLeaseRegistry, now: Date): boolean
 
     lease.state = "lease-expired";
     lease.reason = `lease expired at ${lease.expiresAt}`;
-    lease.completedAt = nowIso;
-    lease.updatedAt = nowIso;
+    lease.completedAt = nowIsoStr;
+    lease.updatedAt = nowIsoStr;
     pushEvent(registry, lease, lease.reason);
     changed = true;
   }
@@ -367,7 +368,7 @@ export async function acquireDispatchLease(input: AcquireDispatchLeaseInput): Pr
       runId: input.runId,
       attempt,
       leasedAt: nowIso,
-      expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+      expiresAt: formatTimestampUtcFromMs(now.getTime() + ttlMs),
       updatedAt: nowIso,
       reason: undefined,
     };
@@ -385,7 +386,7 @@ export async function acquireDispatchLease(input: AcquireDispatchLeaseInput): Pr
 
 export async function transitionDispatchLease(input: TransitionDispatchLeaseInput): Promise<boolean> {
   const now = input.now ?? new Date();
-  const nowIso = now.toISOString();
+  const nowIsoStr = makeNowIso(now);
 
   return withRegistryLock(input.stateDir, async (registryPath) => {
     const registry = await loadRegistry(registryPath);
@@ -424,7 +425,7 @@ export async function transitionDispatchLease(input: TransitionDispatchLeaseInpu
     }
 
     lease.state = input.toState;
-    lease.updatedAt = nowIso;
+    lease.updatedAt = nowIsoStr;
 
     if (input.pid != null) {
       lease.pid = input.pid;
@@ -434,14 +435,14 @@ export async function transitionDispatchLease(input: TransitionDispatchLeaseInpu
       // Refresh expiry while work is active.
       lease.expiresAt = undefined;
     } else if (input.toState === "completed") {
-      lease.completedAt = nowIso;
+      lease.completedAt = nowIsoStr;
       // NOTE: `expiresAt` is overloaded:
       // - for active/leased states, it represents the lease TTL;
       // - for the `completed` state, it acts as a visibility cooldown / acquire-block-until timestamp.
-      lease.expiresAt = new Date(now.getTime() + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS).toISOString();
+      lease.expiresAt = formatTimestampUtcFromMs(now.getTime() + DEFAULT_COMPLETED_VISIBILITY_WINDOW_MS);
     } else {
       // Other terminal states clear `expiresAt`; callers must not assume it is set for all non-active states.
-      lease.completedAt = nowIso;
+      lease.completedAt = nowIsoStr;
       lease.expiresAt = undefined;
     }
 

@@ -57,6 +57,14 @@ function makeMinimalConfig(): ContextEngineOptions["cfg"] {
   } as unknown as ContextEngineOptions["cfg"];
 }
 
+function makeSubagentSpawnConfig(): ContextEngineOptions["cfg"] {
+  return {
+    ...makeMinimalConfig(),
+    autoRecall: { enabled: false, limit: 10, minScore: 0.6, maxTokens: 2000, debounceMs: 200 },
+    retrieval: { ambientBudgetTokens: 400 },
+  } as unknown as ContextEngineOptions["cfg"];
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -221,18 +229,32 @@ describe("HybridMemoryContextEngine.compact()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const result = await engine.compact({ sessionId: "summary-session", sessionFile: "/tmp/s.json" });
 
     expect(result.ok).toBe(true);
-    // The result field should carry the memory summary for SDK consumption
-    const summary = result.result as { topFacts?: unknown[]; factCount?: number } | undefined;
-    if (summary) {
-      // If populated, verify shape
-      expect(typeof summary).toBe("object");
-    }
+    const summary = result.result as { topFacts?: unknown[]; factCount?: number; memorySummary?: string } | undefined;
+    expect(summary?.memorySummary).toBeDefined();
+    expect(summary?.memorySummary).toContain("Important context fact");
     // The reason string should mention the flush
     expect(result.reason).toMatch(/flushed/i);
+  });
+
+  it("skips memorySummary when autoRecall is enabled (after_compaction hook owns injection)", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Should not be summarized by ContextEngine compact",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
+
+    const engine = makeEngine();
+    const result = await engine.compact({ sessionId: "no-summary-session", sessionFile: "/tmp/s.json" });
+    const summary = result.result as { memorySummary?: string } | undefined;
+    expect(summary?.memorySummary).toBeUndefined();
   });
 });
 
@@ -241,6 +263,27 @@ describe("HybridMemoryContextEngine.compact()", () => {
 // ---------------------------------------------------------------------------
 
 describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
+  it("skips injection when autoRecall is enabled", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Should not inject via ContextEngine",
+      category: "fact",
+      importance: 0.85,
+      source: "parent",
+    });
+
+    const engine = makeEngine();
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "parent-session",
+      childSessionKey: "child-session",
+    });
+
+    const extended = prep as { contextAddition?: string };
+    expect(extended.contextAddition).toBeUndefined();
+  });
+
   it("returns a SubagentSpawnPreparation with rollback when facts exist", async () => {
     // Seed some parent facts
     factsDb.store({
@@ -262,7 +305,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
       source: "parent",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const prep = await engine.prepareSubagentSpawn?.({
       parentSessionKey: "parent-session-abc",
       childSessionKey: "child-session-xyz",
@@ -279,7 +322,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
   });
 
   it("returns rollback-only preparation when no facts in store", async () => {
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const prep = await engine.prepareSubagentSpawn?.({
       parentSessionKey: "empty-parent",
       childSessionKey: "empty-child",
@@ -301,7 +344,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const prep = await engine.prepareSubagentSpawn?.({
       parentSessionKey: "parent",
       childSessionKey: "child",
@@ -325,8 +368,8 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
       });
     }
 
-    const cfgWithLimit = { ...makeMinimalConfig() };
-    (cfgWithLimit.autoRecall as { limit: number }).limit = 5;
+    const cfgWithLimit = { ...makeSubagentSpawnConfig() };
+    (cfgWithLimit.autoRecall as { enabled: boolean; limit: number }).limit = 5;
 
     const engine = makeEngine({ cfg: cfgWithLimit });
     const prep = await engine.prepareSubagentSpawn?.({ parentSessionKey: "p", childSessionKey: "c" });
@@ -450,8 +493,26 @@ describe("HybridMemoryContextEngine.info", () => {
 // ---------------------------------------------------------------------------
 
 describe("HybridMemoryContextEngine.assemble()", () => {
-  it("returns messages unchanged and estimatedTokens=0 when store is empty", async () => {
+  it("skips injection when autoRecall is enabled (before_agent_start owns recall)", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Should not appear in assemble when autoRecall is on",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
     const engine = makeEngine();
+    const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
+    expect(result.estimatedTokens).toBe(0);
+    expect(result.systemPromptAddition).toBeUndefined();
+  });
+
+  it("returns messages unchanged and estimatedTokens=0 when store is empty", async () => {
+    const engine = makeEngine({
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     const messages = [{ role: "user", content: "hello" }];
     const result = await engine.assemble({ sessionId: "s1", messages, tokenBudget: 2000 });
 
@@ -471,13 +532,37 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
 
     expect(result.systemPromptAddition).toBeDefined();
     expect(result.systemPromptAddition).toContain("memory-hybrid: session-context");
     expect(result.systemPromptAddition).toContain("User prefers TypeScript over JavaScript");
     expect(result.estimatedTokens).toBeGreaterThan(0);
+  });
+
+  it("skips facts already injected this turn for the session", async () => {
+    const entry = factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Already injected preference",
+      category: "preference",
+      importance: 0.9,
+      source: "test",
+    });
+    const injectedFactIdsBySession = new Map<string, Set<string>>([["s-dedup", new Set([entry.id])]]);
+    const engine = makeEngine({
+      injectedFactIdsBySession,
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
+
+    const result = await engine.assemble({ sessionId: "s-dedup", messages: [], tokenBudget: 2000 });
+
+    expect(result.systemPromptAddition).toBeUndefined();
+    expect(result.estimatedTokens).toBe(0);
   });
 
   it("respects tokenBudget — truncates facts when budget is very small", async () => {
@@ -494,8 +579,12 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       });
     }
 
-    const engineFull = makeEngine();
-    const engineTight = makeEngine();
+    const cfgDisabled = {
+      ...makeMinimalConfig(),
+      autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false },
+    } as never;
+    const engineFull = makeEngine({ cfg: cfgDisabled });
+    const engineTight = makeEngine({ cfg: cfgDisabled });
 
     const resultFull = await engineFull.assemble({ sessionId: "s1", messages: [], tokenBudget: 10000 });
     // Budget arithmetic (char/4 estimate):
@@ -537,7 +626,9 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     // No tokenBudget → falls back to cfg.autoRecall.maxTokens (2000 in test config)
     const result = await engine.assemble({ sessionId: "s1", messages: [] });
 
@@ -553,7 +644,10 @@ describe("HybridMemoryContextEngine.assemble()", () => {
       getCount: vi.fn().mockReturnValue(0),
     };
 
-    const engine = makeEngine({ factsDb: brokenFactsDb as never });
+    const engine = makeEngine({
+      factsDb: brokenFactsDb as never,
+      cfg: { ...makeMinimalConfig(), autoRecall: { ...makeMinimalConfig().autoRecall, enabled: false } } as never,
+    });
     const result = await engine.assemble({ sessionId: "s1", messages: [], tokenBudget: 2000 });
 
     expect(result.estimatedTokens).toBe(0);

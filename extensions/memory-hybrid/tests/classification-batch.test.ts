@@ -128,6 +128,49 @@ describe("classifyMemoryOperationsBatch (#862)", () => {
     expect(out[1].action).toBe("ADD");
   });
 
+  it("parses batch response from native tool_calls with empty content (#1876)", async () => {
+    const inner = JSON.stringify([
+      { action: "NOOP", targetId: null, reason: "dup" },
+      { action: "ADD", targetId: null, reason: "new" },
+    ]);
+    const create = vi.fn().mockResolvedValue({
+      choices: [
+        {
+          message: {
+            content: "",
+            tool_calls: [
+              {
+                type: "function",
+                function: { name: "classify_batch", arguments: inner },
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const openai = { chat: { completions: { create } } } as unknown as OpenAI;
+    const warn = vi.fn();
+    const items = [
+      {
+        candidateText: "a",
+        candidateEntity: null,
+        candidateKey: null,
+        existingFacts: [makeEntry("id1", "old a")],
+      },
+      {
+        candidateText: "b",
+        candidateEntity: null,
+        candidateKey: null,
+        existingFacts: [makeEntry("id2", "old b")],
+      },
+    ];
+    const out = await classifyMemoryOperationsBatch(items, openai, "gpt-4.1-nano", { warn });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(out).toHaveLength(2);
+    expect(out[0].action).toBe("NOOP");
+    expect(out[1].action).toBe("ADD");
+  });
+
   it("falls back to sequential classify when batch response has no JSON array (#1155)", async () => {
     const create = vi
       .fn()

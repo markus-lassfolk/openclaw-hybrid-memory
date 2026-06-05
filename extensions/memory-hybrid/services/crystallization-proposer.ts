@@ -9,14 +9,22 @@ import { getEnv } from "../utils/env-manager.js";
  * When autoApprove=true the proposer immediately writes the skill to disk.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
-import { atomicWriteFile } from "../utils/atomic-write.js";
+import { dirname, join, resolve } from "node:path";
+import { atomicWriteFile, atomicWriteSkillDir } from "../utils/atomic-write.js";
+import { bumpSkillsSnapshotBestEffort } from "./bump-skills-snapshot.js";
 import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { WorkflowPattern, WorkflowStore } from "../backends/workflow-store.js";
+import type { HybridMemoryConfig } from "../config.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
+import {
+  type ChangeFeedEmitOpts,
+  BROADCAST_CHANGE_SESSION_KEY,
+  emitCrystallizationProposed,
+} from "./change-feed-emit.js";
 import { escapeRegExp, stripLeadingHtmlComments } from "../utils/text.js";
+import { nowIso } from "../utils/dates.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
   GeneratedSkillValidationService,
@@ -25,8 +33,26 @@ import {
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
 import { detectCrystallizationCandidates } from "./pattern-detector.js";
-import { crystallizeSkill } from "./skill-crystallizer.js";
+import { filterUserFacingGoals } from "./workflow-goal-classifier.js";
+import {
+  buildCrystallizationInstallFiles,
+  CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH,
+  crystallizeSkill,
+} from "./skill-crystallizer.js";
+import {
+  formatYamlFrontmatterScalar,
+  sanitizeApprovedSkillSlug,
+} from "./skill-crystallizer-helpers.js";
+import {
+  findQuarantinedSkillDir,
+  quarantineCrystallizedSkillOnDisk,
+  removeCrystallizedSkillDir,
+  restoreCrystallizedSkillOnDisk,
+} from "./crystallization-disk.js";
 import { buildNonPlaceholderEmailPattern } from "./skill-validator.js";
+
+/** Cap new proposals per runCycle to avoid flooding the queue when many patterns qualify. */
+const MAX_PROPOSALS_PER_CYCLE = 20;
 
 /** When renaming, replace the first Markdown ATX H1 in the body (after frontmatter), if any. */
 function replaceFirstBodyH1AfterFrontmatter(skillContent: string, newTitle: string): string {
@@ -70,6 +96,8 @@ export interface RescanInstalledSkillsResult {
   scanned: number;
   quarantined: number;
   skipped: number;
+  /** Skill directories moved out of the active output tree on quarantine. */
+  diskQuarantined: number;
   errors: string[];
   messages: string[];
 }
@@ -112,6 +140,7 @@ export class CrystallizationProposer {
     private readonly workflowStore: WorkflowStore | null,
     private readonly crystallizationStore: CrystallizationStore,
     private readonly cfg: CrystallizationConfig,
+    private readonly changeFeedEmit?: ChangeFeedEmitOpts,
   ) {
     this.validator = new GeneratedSkillValidationService(
       cfg.placeholderEmailDomains?.length
@@ -159,18 +188,75 @@ export class CrystallizationProposer {
       };
     }
 
-    const candidates = detectCrystallizationCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
-    if (candidates.length === 0) {
-      return { proposed: 0, skipped: 0, reasons: ["No new candidates found"] };
-    }
-
     let proposed = 0;
     let skipped = 0;
     const reasons: string[] = [];
-    const autoApprove = opts?.autoApproveOverride ?? this.cfg.autoApprove;
 
-    for (const candidate of candidates) {
+    if (this.cfg.pruneUnusedDays > 0) {
+      const pruned = this.crystallizationStore.pruneStalePendingProposals(this.cfg.pruneUnusedDays);
+      if (pruned > 0) {
+        reasons.push(`Pruned ${pruned} stale pending proposal(s) older than ${this.cfg.pruneUnusedDays} days`);
+      }
+    }
+
+    const pendingCount = this.crystallizationStore.count("pending");
+    if (this.cfg.maxPendingProposals > 0 && pendingCount >= this.cfg.maxPendingProposals) {
+      return {
+        proposed: 0,
+        skipped: 0,
+        reasons: [`maxPendingProposals limit reached (${pendingCount}/${this.cfg.maxPendingProposals})`],
+      };
+    }
+
+    const candidates = detectCrystallizationCandidates(this.workflowStore, this.crystallizationStore, this.cfg);
+    if (candidates.length === 0) {
+      if (this.cfg.excludeSystemGoals) {
+        const rawPatterns = this.workflowStore.getPatterns({
+          minSuccessRate: 0,
+          limit: 10,
+          traceSampleLimit: 6000,
+          excludeSystemGoals: false,
+        });
+        const filteredPatterns = this.workflowStore.getPatterns({
+          minSuccessRate: 0,
+          limit: 10,
+          traceSampleLimit: 6000,
+          excludeSystemGoals: true,
+          excludeGoalPatterns: this.cfg.excludeGoalPatterns,
+        });
+        if (rawPatterns.length > 0 && filteredPatterns.length === 0) {
+          reasons.push(
+            "Patterns exist but excludeSystemGoals removed all cron/system traces — waiting for user-facing workflow data",
+          );
+        }
+      }
+      return { proposed: 0, skipped: 0, reasons: reasons.length > 0 ? reasons : ["No new candidates found"] };
+    }
+    const autoApprove = opts?.autoApproveOverride ?? this.cfg.autoApprove;
+    const remainingSlots = Math.max(0, this.cfg.maxCrystallized - approvedCount);
+    const pendingRemaining =
+      this.cfg.maxPendingProposals > 0 ? Math.max(0, this.cfg.maxPendingProposals - pendingCount) : Number.POSITIVE_INFINITY;
+    const cycleCap = autoApprove
+      ? Math.min(remainingSlots, pendingRemaining)
+      : Math.min(MAX_PROPOSALS_PER_CYCLE, Math.max(remainingSlots, 1), pendingRemaining);
+    const batch = candidates.slice(0, cycleCap);
+    if (batch.length < candidates.length) {
+      reasons.push(
+        `Processing ${batch.length} of ${candidates.length} candidate(s) this cycle (cap=${cycleCap})`,
+      );
+    }
+
+    for (const candidate of batch) {
       try {
+        if (
+          this.cfg.excludeSystemGoals !== false &&
+          filterUserFacingGoals(candidate.pattern.exampleGoals, this.cfg).length === 0
+        ) {
+          skipped++;
+          reasons.push(`Skipped pattern ${candidate.patternId.slice(0, 8)}: no user-facing example goals`);
+          continue;
+        }
+
         const result = crystallizeSkill(
           {
             patternId: candidate.patternId,
@@ -240,14 +326,45 @@ export class CrystallizationProposer {
           }
 
           const outputPath = this.computeOutputPath(approval.proposal.skillName);
-          this.writeSkillToDisk(outputPath, this.injectInstallMetadata(approval.proposal, outputPath));
-          this.crystallizationStore.install(approval.proposal.id, outputPath);
+          try {
+            this.writeSkillPackage(
+              approval.proposal.skillName,
+              outputPath,
+              this.injectInstallMetadata(approval.proposal, outputPath),
+              parsePatternSnapshot(approval.proposal.patternSnapshot),
+              approval.proposal.patternId,
+            );
+          } catch (writeErr) {
+            this.crystallizationStore.revertApproval(approval.proposal.id);
+            skipped++;
+            const msg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+            reasons.push(`Skipped '${result.skillName}': auto-approve write failed (reverted) — ${msg}`);
+            continue;
+          }
+          try {
+            this.crystallizationStore.install(approval.proposal.id, outputPath);
+          } catch (installErr) {
+            removeCrystallizedSkillDir(outputPath);
+            this.crystallizationStore.revertApproval(approval.proposal.id);
+            skipped++;
+            const msg = installErr instanceof Error ? installErr.message : String(installErr);
+            reasons.push(`Skipped '${result.skillName}': auto-approve install failed (reverted) — ${msg}`);
+            continue;
+          }
           proposed++;
           continue;
         }
 
         // Store as validated proposal (awaiting human approval)
-        this.crystallizationStore.create(proposalInput);
+        const created = this.crystallizationStore.create(proposalInput);
+        if (this.changeFeedEmit) {
+          emitCrystallizationProposed(this.changeFeedEmit.changeFeed, this.changeFeedEmit.cfg, {
+            sessionKey: this.changeFeedEmit.sessionKey ?? BROADCAST_CHANGE_SESSION_KEY,
+            proposalId: created.id,
+            skillName: created.skillName,
+            detail: created.description ?? undefined,
+          });
+        }
 
         if (autoApprove && gsv.approvalDecision !== "allow") {
           reasons.push(
@@ -313,7 +430,7 @@ export class CrystallizationProposer {
     }
 
     const desiredName = opts?.name?.trim() ? opts.name.trim() : proposal.skillName;
-    const safeName = desiredName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+    const safeName = sanitizeApprovedSkillSlug(desiredName);
     const desiredCategory = opts?.category?.trim() ? opts.category.trim() : proposal.category;
     const desiredRecommendedOutput = opts?.recommendedOutput ?? proposal.recommendedOutput;
 
@@ -367,7 +484,7 @@ export class CrystallizationProposer {
     }
 
     const desiredName = opts?.name?.trim() ? opts.name.trim() : proposal.skillName;
-    const safeName = desiredName.replace(/[^a-z0-9_-]/gi, "-").replace(/^\.+/, "");
+    const safeName = sanitizeApprovedSkillSlug(desiredName);
     const desiredCategory = opts?.category?.trim() ? opts.category.trim() : proposal.category;
     const desiredRecommendedOutput = opts?.recommendedOutput ?? proposal.recommendedOutput;
 
@@ -432,16 +549,33 @@ export class CrystallizationProposer {
     const outputPath = this.computeOutputPath(updated.skillName);
 
     try {
-      this.writeSkillToDisk(outputPath, this.injectInstallMetadata(updated, outputPath));
-      // Mark installed and keep output path link.
-      this.crystallizationStore.install(updated.id, outputPath);
-      // Supersede older installed approvals for the same pattern (best-effort).
-      this.trySupersedeOlderInstalls(updated.patternId, updated.id);
+      this.writeSkillPackage(
+        updated.skillName,
+        outputPath,
+        this.injectInstallMetadata(updated, outputPath),
+        pattern,
+        updated.patternId,
+      );
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.crystallizationStore.revertApproval(updated.id);
+      return {
+        success: false,
+        message: `Failed to write skill (approval reverted): ${msg}`,
+      };
+    }
+
+    try {
+      this.crystallizationStore.install(updated.id, outputPath);
+      this.trySupersedeOlderInstalls(updated.patternId, updated.id);
+      void bumpSkillsSnapshotBestEffort({ changedPath: outputPath, reason: "hybrid-memory-crystallization-approve" });
+    } catch (err) {
+      removeCrystallizedSkillDir(outputPath);
+      this.crystallizationStore.revertApproval(updated.id);
       const msg = err instanceof Error ? err.message : String(err);
       return {
         success: false,
-        message: `Approved but failed to write skill: ${msg}`,
+        message: `Failed to mark skill installed (approval reverted): ${msg}`,
       };
     }
 
@@ -478,6 +612,103 @@ export class CrystallizationProposer {
   }
 
   /**
+   * Restore a quarantined proposal: re-validate, move skill back to the active output tree, mark installed.
+   */
+  restoreProposal(
+    proposalId: string,
+    opts?: { overrideWarnings?: boolean },
+  ): ApproveResult {
+    const proposal = this.crystallizationStore.getById(proposalId);
+    if (!proposal) {
+      return { success: false, message: `Proposal '${proposalId}' not found` };
+    }
+    if (proposal.status !== "quarantined") {
+      return {
+        success: false,
+        message: `Proposal '${proposalId}' is not restorable (status: ${proposal.status})`,
+      };
+    }
+
+    const activeOutputDir = this.cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());
+    const located = locateProposalSkillOnDisk(proposal, activeOutputDir);
+    if (!located) {
+      return {
+        success: false,
+        message: `Quarantined skill files not found for '${proposal.skillName}'`,
+      };
+    }
+
+    let skillContent: string;
+    try {
+      skillContent = readFileSync(located.skillPath, "utf-8");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { success: false, message: `Failed to read quarantined skill: ${msg}` };
+    }
+
+    const pattern = parsePatternSnapshot(proposal.patternSnapshot);
+    const targetOutputPath = this.computeOutputPath(proposal.skillName);
+    const legacy = isLegacyMarkdownCrystallizationProposal(skillContent);
+    const validation = this.validator.validate(
+      {
+        outputDir: activeOutputDir,
+        proposedOutputPath: targetOutputPath,
+        skillName: proposal.skillName,
+        skillContent,
+        pattern,
+      },
+      { legacyQueuedCrystallization: legacy },
+    );
+    this.crystallizationStore.saveValidationResult(proposalId, validation);
+    if (validation.approvalDecision === "deny") {
+      return {
+        success: false,
+        message: `Validation failed: ${detailSkillProposalValidation(validation)}`,
+      };
+    }
+    if (validation.approvalDecision === "allow-with-override" && opts?.overrideWarnings !== true) {
+      return {
+        success: false,
+        message: `Validation requires explicit override: ${summarizeSkillProposalValidation(validation)}`,
+      };
+    }
+
+    const restoreResult = restoreCrystallizedSkillOnDisk(located.skillDir, activeOutputDir, proposal.skillName);
+    if (!restoreResult.outputPath) {
+      return {
+        success: false,
+        message: restoreResult.error ?? "Failed to restore skill directory to active output tree",
+      };
+    }
+
+    const restored = this.crystallizationStore.restoreFromQuarantine(proposalId, restoreResult.outputPath);
+    if (!restored) {
+      const activeDir = join(activeOutputDir, proposal.skillName);
+      try {
+        if (existsSync(activeDir)) {
+          mkdirSync(dirname(located.skillDir), { recursive: true });
+          renameSync(activeDir, located.skillDir);
+        }
+      } catch {
+        removeCrystallizedSkillDir(restoreResult.outputPath);
+      }
+      return { success: false, message: "Failed to update proposal status to installed" };
+    }
+
+    this.trySupersedeOlderInstalls(proposal.patternId, proposalId);
+    void bumpSkillsSnapshotBestEffort({
+      changedPath: restoreResult.outputPath,
+      reason: "hybrid-memory-crystallization-restore",
+    });
+
+    return {
+      success: true,
+      outputPath: restoreResult.outputPath,
+      message: `Skill '${proposal.skillName}' restored to ${restoreResult.outputPath}`,
+    };
+  }
+
+  /**
    * Re-validate on-disk SKILL.md for every installed proposal (operator / cron hygiene).
    * Persists validation via {@link CrystallizationStore.saveValidationResult}; on `deny`, sets status `quarantined`.
    */
@@ -485,6 +716,7 @@ export class CrystallizationProposer {
     const installed = this.crystallizationStore.list({ status: "installed", limit: 500 });
     let scanned = 0;
     let quarantined = 0;
+    let diskQuarantined = 0;
     let skipped = 0;
     const errors: string[] = [];
     const messages: string[] = [];
@@ -529,10 +761,19 @@ export class CrystallizationProposer {
           const updated = this.crystallizationStore.quarantine(proposal.id, reason);
           if (updated) {
             quarantined++;
+            const outputDir = outputDirForInstalledSkill(proposal.outputPath, proposal.skillName, fallbackOutputDir);
+            const diskResult = quarantineCrystallizedSkillOnDisk(proposal.outputPath, outputDir);
+            if (diskResult.movedTo) {
+              diskQuarantined++;
+              const quarantineSkillPath = join(diskResult.movedTo, "SKILL.md");
+              this.crystallizationStore.updateOutputPath(proposal.id, quarantineSkillPath);
+            } else if (diskResult.error) {
+              errors.push(`${proposal.id}: disk quarantine failed — ${diskResult.error}`);
+            }
             truncated =
               !pushLimitedMessage(
                 messages,
-                `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}`,
+                `Quarantined ${proposal.skillName}: ${summarizeSkillProposalValidation(validation)}${diskResult.movedTo ? ` (moved to ${diskResult.movedTo})` : ""}`,
               ) || truncated;
           } else {
             errors.push(`${proposal.id}: quarantine update failed`);
@@ -554,7 +795,7 @@ export class CrystallizationProposer {
       messages.push(`Message output truncated after ${RESCAN_MESSAGE_LIMIT} entries`);
     }
 
-    return { scanned, quarantined, skipped, errors, messages };
+    return { scanned, quarantined, skipped, diskQuarantined, errors, messages };
   }
 
   // -------------------------------------------------------------------------
@@ -661,8 +902,25 @@ ${proposal.skillContent}`;
     }
   }
 
-  private writeSkillToDisk(outputPath: string, skillContent: string): void {
-    atomicWriteFile(outputPath, skillContent);
+  private writeSkillPackage(
+    skillName: string,
+    outputPath: string,
+    skillContent: string,
+    pattern: WorkflowPattern | undefined,
+    patternId: string | undefined,
+  ): void {
+    const skillDir = dirname(outputPath);
+    const files = buildCrystallizationInstallFiles(skillName, skillContent, pattern, patternId);
+    const sidecarPaths = Object.keys(files).filter((p) => p !== "SKILL.md");
+    if (sidecarPaths.length === 0) {
+      atomicWriteFile(outputPath, skillContent);
+      return;
+    }
+    atomicWriteSkillDir(skillDir, files, {
+      executableRelativePaths: sidecarPaths.includes(CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH)
+        ? [CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH]
+        : undefined,
+    });
   }
 }
 
@@ -699,44 +957,6 @@ export function patchOpeningYamlField(skillContent: string, key: string, value: 
   const nextInner = nextLines.join(innerLineBreak);
   const newBlock = `---${innerLineBreak}${nextInner}${innerLineBreak}---${innerLineBreak}`;
   return prefix + body.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, newBlock);
-}
-
-function formatYamlFrontmatterScalar(value: string): string {
-  if (value === "") return '""';
-
-  // YAML 1.1 reserved words that must be quoted to be treated as strings
-  const yamlReservedWords = new Set([
-    "true",
-    "false",
-    "True",
-    "False",
-    "TRUE",
-    "FALSE",
-    "yes",
-    "no",
-    "Yes",
-    "No",
-    "YES",
-    "NO",
-    "on",
-    "off",
-    "On",
-    "Off",
-    "ON",
-    "OFF",
-    "null",
-    "Null",
-    "NULL",
-    "~",
-  ]);
-
-  // Check if value is a reserved word or looks like a number
-  if (yamlReservedWords.has(value) || /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(value)) {
-    return JSON.stringify(value);
-  }
-
-  if (/^[\w.-]+$/.test(value)) return value;
-  return JSON.stringify(value);
 }
 
 function stripInlineYamlTrailingComment(fragment: string): string {
@@ -828,10 +1048,32 @@ function parsePatternSnapshot(snapshot: string): WorkflowPattern | undefined {
 
 /** Queued proposals from older crystallizers start Markdown without YAML frontmatter. */
 
+function locateProposalSkillOnDisk(
+  proposal: { skillName: string; outputPath?: string },
+  activeOutputDir: string,
+): { skillDir: string; skillPath: string } | null {
+  const storedPath = proposal.outputPath?.trim();
+  if (storedPath && existsSync(storedPath)) {
+    return { skillDir: dirname(storedPath), skillPath: storedPath };
+  }
+  if (storedPath) {
+    const storedDir = dirname(storedPath);
+    const storedSkillPath = join(storedDir, "SKILL.md");
+    if (existsSync(storedSkillPath)) {
+      return { skillDir: storedDir, skillPath: storedSkillPath };
+    }
+  }
+  const quarantined = findQuarantinedSkillDir(proposal.skillName, activeOutputDir);
+  if (quarantined) {
+    return { skillDir: quarantined, skillPath: join(quarantined, "SKILL.md") };
+  }
+  return null;
+}
+
 function failedProposalValidation(message: string): SkillProposalValidationResult {
   return {
     schemaVersion: 1,
-    validatedAt: new Date().toISOString(),
+    validatedAt: nowIso(),
     overallStatus: "failed",
     approvalDecision: "deny",
     staticValidation: {

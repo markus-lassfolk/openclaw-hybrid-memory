@@ -48,14 +48,21 @@ export function resolveSessionKeyFromHookEvent(event: unknown, api?: SessionKeyH
   return sessionId ? String(sessionId) : null;
 }
 
-export function createSessionState(): SessionState {
+export function createSessionState(
+  progressiveIndexBySession?: Map<string, string[]>,
+  lastAutoRecallPromptBySession?: Map<string, string>,
+): SessionState {
   const authFailureRecallsThisSession = new Map<string, number>();
   const sessionStartSeen = new Set<string>();
   const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
+  const frustrationThresholdBandMap = new Map<string, "none" | "medium" | "high" | "critical">();
+  const changeNotifyStateMap = new Map<string, { lastNotifiedOrdinal: number; lastNotifiedBroadcastOrdinal: number }>();
+  const displayRevertMap = new Map<string, Map<number, string>>();
   const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
   const ambientLastEmbeddingMap = new Map<string, number[] | null>();
   const sessionLastActivity = new Map<string, number>();
   const capabilityHintsSessionsSeen = new Set<string>();
+  const recallInFlightBySession = new Map<string, number>();
 
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
@@ -66,6 +73,9 @@ export function createSessionState(): SessionState {
     ambientSeenFactsMap.delete(sessionKey);
     ambientLastEmbeddingMap.delete(sessionKey);
     frustrationStateMap.delete(sessionKey);
+    frustrationThresholdBandMap.delete(sessionKey);
+    changeNotifyStateMap.delete(sessionKey);
+    displayRevertMap.delete(sessionKey);
     sessionLastActivity.delete(sessionKey);
     // Do NOT clear capabilityHintsSessionsSeen here — that set persists across agent turns
     // within the same chat session so "session" mode injects once per chat, not once per turn.
@@ -73,9 +83,19 @@ export function createSessionState(): SessionState {
     for (const key of authFailureRecallsThisSession.keys()) {
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
     }
+    recallInFlightBySession.delete(sessionKey);
+    progressiveIndexBySession?.delete(sessionKey);
+    lastAutoRecallPromptBySession?.delete(sessionKey);
   }
 
-  function pruneSessionMaps(): void {
+  function clearInjectedFactIdsForSession(
+    injectedFactIdsBySession: Map<string, Set<string>> | undefined,
+    sessionKey: string,
+  ): void {
+    injectedFactIdsBySession?.delete(sessionKey);
+  }
+
+  function pruneSessionMaps(injectedFactIdsBySession?: Map<string, Set<string>>): void {
     if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
       const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
       const keys = ambientSeenFactsMap.keys();
@@ -127,20 +147,51 @@ export function createSessionState(): SessionState {
         if (value) sessionLastActivity.delete(value);
       }
     }
+    if (progressiveIndexBySession && progressiveIndexBySession.size > MAX_TRACKED_SESSIONS) {
+      const excess = progressiveIndexBySession.size - MAX_TRACKED_SESSIONS;
+      const keys = progressiveIndexBySession.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) progressiveIndexBySession.delete(value);
+      }
+    }
+    if (lastAutoRecallPromptBySession && lastAutoRecallPromptBySession.size > MAX_TRACKED_SESSIONS) {
+      const excess = lastAutoRecallPromptBySession.size - MAX_TRACKED_SESSIONS;
+      const keys = lastAutoRecallPromptBySession.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) lastAutoRecallPromptBySession.delete(value);
+      }
+    }
+    if (injectedFactIdsBySession && injectedFactIdsBySession.size > MAX_TRACKED_SESSIONS) {
+      const excess = injectedFactIdsBySession.size - MAX_TRACKED_SESSIONS;
+      const keys = injectedFactIdsBySession.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) injectedFactIdsBySession.delete(value);
+      }
+    }
   }
 
   function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
     return resolveSessionKeyFromHookEvent(event, api);
   }
 
-  const clearAll = (): void => {
+  const clearAll = (injectedFactIdsBySession?: Map<string, Set<string>>): void => {
     sessionStartSeen.clear();
     ambientSeenFactsMap.clear();
     ambientLastEmbeddingMap.clear();
     frustrationStateMap.clear();
+    frustrationThresholdBandMap.clear();
+    changeNotifyStateMap.clear();
+    displayRevertMap.clear();
     authFailureRecallsThisSession.clear();
     sessionLastActivity.clear();
     capabilityHintsSessionsSeen.clear();
+    recallInFlightBySession.clear();
+    progressiveIndexBySession?.clear();
+    lastAutoRecallPromptBySession?.clear();
+    injectedFactIdsBySession?.clear();
   };
 
   return {
@@ -148,11 +199,16 @@ export function createSessionState(): SessionState {
     ambientSeenFactsMap,
     ambientLastEmbeddingMap,
     frustrationStateMap,
+    frustrationThresholdBandMap,
+    changeNotifyStateMap,
+    displayRevertMap,
     authFailureRecallsThisSession,
     sessionLastActivity,
     capabilityHintsSessionsSeen,
+    recallInFlightBySession,
     touchSession,
     clearSessionState,
+    clearInjectedFactIdsForSession,
     pruneSessionMaps,
     resolveSessionKey,
     MAX_TRACKED_SESSIONS,

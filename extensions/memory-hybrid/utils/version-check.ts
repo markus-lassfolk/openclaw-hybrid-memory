@@ -17,6 +17,22 @@
 export const MIN_OPENCLAW_VERSION = "2026.5.0";
 
 /**
+ * Recommended OpenClaw **gateway** version for full platform integration (Skill Workshop,
+ * skills snapshot hot-reload, Dreaming tab). Soft check only — features are feature-detected
+ * at runtime and degrade gracefully below this version.
+ */
+export const RECOMMENDED_OPENCLAW_VERSION = "2026.6.1";
+
+/** Human-readable list of integrations gated behind {@link RECOMMENDED_OPENCLAW_VERSION}. */
+export const RECOMMENDED_OPENCLAW_FEATURES =
+  "Skill Workshop integration, skills snapshot hot-reload, Dreaming tab visibility";
+
+export type OpenClawVersionLogger = {
+  warn: (msg: string) => void;
+  info?: (msg: string) => void;
+};
+
+/**
  * Parses a version string into a numeric tuple.
  * Handles optional leading `v`, pre-release suffixes (e.g. `2026.3.8-beta`),
  * and build metadata. Rejects empty segments like `2026..8`.
@@ -61,25 +77,34 @@ export function compareVersions(a: string, b: string): number {
 }
 
 /**
- * Checks the running OpenClaw gateway version against the minimum requirement.
- * Logs a clear warning if the version is below the minimum — does not hard-fail.
+ * Checks the running OpenClaw gateway version against minimum and recommended tiers.
+ * Logs warnings/info only — does not hard-fail plugin load.
  *
  * @param currentVersion - The `api.version` string passed by the gateway (may be undefined)
- * @param logger - Plugin logger for emitting the warning
+ * @param logger - Plugin logger for emitting warnings (and optional info for the recommended tier)
  */
-export function checkOpenClawVersion(
-  currentVersion: string | undefined,
-  logger: { warn: (msg: string) => void },
-): void {
+export function checkOpenClawVersion(currentVersion: string | undefined, logger: OpenClawVersionLogger): void {
   if (!currentVersion) {
     logger.warn(
-      `memory-hybrid: WARNING — OpenClaw version is undefined (gateway likely < v${MIN_OPENCLAW_VERSION}). Minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
+      `memory-hybrid: WARNING — OpenClaw version is undefined (gateway likely < v${MIN_OPENCLAW_VERSION}). Minimum required is v${MIN_OPENCLAW_VERSION}; recommended is v${RECOMMENDED_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
     );
     return;
   }
   if (!isVersionAtLeast(currentVersion, MIN_OPENCLAW_VERSION)) {
     logger.warn(
-      `memory-hybrid: WARNING — OpenClaw v${currentVersion} detected, minimum recommended is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload) may not work.`,
+      `memory-hybrid: WARNING — OpenClaw v${currentVersion} detected, minimum required is v${MIN_OPENCLAW_VERSION}. Some features (CLI subcommands, SIGUSR1 reload, contracts.tools) may not work. Upgrade to v${RECOMMENDED_OPENCLAW_VERSION} for ${RECOMMENDED_OPENCLAW_FEATURES}.`,
     );
+    return;
+  }
+  if (!isVersionAtLeast(currentVersion, RECOMMENDED_OPENCLAW_VERSION)) {
+    const msg =
+      `memory-hybrid: OpenClaw v${currentVersion} meets the minimum (v${MIN_OPENCLAW_VERSION}) ` +
+      `but is below the recommended v${RECOMMENDED_OPENCLAW_VERSION}. ` +
+      `Some integrations are feature-detected and may be limited: ${RECOMMENDED_OPENCLAW_FEATURES}.`;
+    if (logger.info) {
+      logger.info(msg);
+    } else {
+      logger.warn(msg);
+    }
   }
 }

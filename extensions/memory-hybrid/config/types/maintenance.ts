@@ -86,6 +86,11 @@ export type NightlyCycleConfig = {
    * Default: true (enabled for backward compatibility).
    */
   enableReflectionRules?: boolean;
+  /**
+   * When true, dream-cycle reflection output is auto-enqueued as governed proposals
+   * (persona rules + optional Skill Workshop bridge). Default: false.
+   */
+  autoPropose?: boolean;
 };
 
 /** Memory health dashboard configuration (Issue #148). */
@@ -117,6 +122,22 @@ export type MaintenanceFailureReportingConfig = {
   enabled: boolean;
 };
 
+/** Orchestrator tuning for hybrid maintenance consolidation. */
+export type MaintenanceOrchestratorConfig = {
+  /** Per-step guard overrides (step name → min interval ms). */
+  stepGuards?: Record<string, number>;
+  /** Max lookback for scan cursors after a long outage (default: 14 days). */
+  maxCatchUpDays?: number;
+  /** Pause between consecutive LLM-provider steps (default: 30000ms). */
+  llmCooldownBetweenStepsMs?: number;
+  /** Max consecutive 429s before deferring remaining LLM steps (default: 2). */
+  rateLimitMaxRetries?: number;
+  /** Optional time budget per orchestrator run in minutes (default: unlimited). */
+  maxRuntimeMinutes?: number;
+  /** Use consolidated single-job cron layout (default: true for new installs). */
+  consolidatedCronJobs?: boolean;
+};
+
 /** Maintenance configuration group. */
 export type MaintenanceConfig = {
   monthlyReview: MonthlyReviewConfig;
@@ -126,6 +147,8 @@ export type MaintenanceConfig = {
   failureReporting: MaintenanceFailureReportingConfig;
   /** Council review provenance configuration (Issue #280). */
   council: CouncilConfig;
+  /** Hybrid maintenance orchestrator settings. */
+  orchestrator?: MaintenanceOrchestratorConfig;
 };
 
 /**

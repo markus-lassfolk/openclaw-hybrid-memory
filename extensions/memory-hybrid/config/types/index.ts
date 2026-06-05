@@ -50,6 +50,7 @@ import type {
   CrystallizationConfig,
   DashboardConfig,
   DigestConfig,
+  LiveChangeFeedConfig,
   DocumentsConfig,
   EntityExtractionConfig,
   FrequencyCaptureConfig,
@@ -69,7 +70,7 @@ import type {
   WorkflowTrackingConfig,
 } from "./features.js";
 
-import type { MultiAgentConfig, PersonaProposalsConfig } from "./agents.js";
+import type { MultiAgentConfig, PersonaProposalsConfig, WorkshopConfig } from "./agents.js";
 
 import type { SensorSweepConfig } from "./sensors.js";
 
@@ -141,6 +142,18 @@ export type LLMConfig = {
    * Example: ["anthropic"] — Anthropic models are not tried even if listed in llm.nano/default/heavy.
    */
   disabledProviders?: string[];
+  /** MiniMax-specific LLM options (M3 thinking mode, etc.). */
+  minimax?: MiniMaxLLMConfig;
+};
+
+/** MiniMax provider options under `llm.minimax`. */
+export type MiniMaxLLMConfig = {
+  /**
+   * Default thinking mode for MiniMax M3 maintenance calls.
+   * `disabled` skips thinking blocks (recommended for structured JSON extraction).
+   * Default: `disabled`.
+   */
+  thinking?: "disabled" | "adaptive";
 };
 
 /** Minimal plugin config shape for resolving cron job model (no full parse). */
@@ -478,6 +491,18 @@ export type SelfCorrectionConfig = {
   reinforcementToProposals?: boolean;
   /** When true, self-correction AGENTS_RULE remediations are written to proposals DB (default: true). */
   agentsRuleToProposals?: boolean;
+  /** Incidents per LLM analysis batch (default: 5 for MiniMax/M3, 25 otherwise). */
+  analysisBatchSize?: number;
+  /** Delay in ms between sequential analysis batches (default: 250). Helps respect MiniMax RPM/TPM. */
+  batchDelayMs?: number;
+  /** Optional model override for self-correction LLM analysis (default: heavy tier). */
+  model?: string;
+  /** MiniMax thinking mode for self-correction analysis (default: llm.minimax.thinking or disabled). */
+  thinking?: "disabled" | "adaptive";
+  /** Use LLM to classify regex/heuristic correction candidates (default: true). */
+  llmExtract?: boolean;
+  /** Minimum LLM confidence to keep a correction incident (default: 0.6). */
+  llmExtractMinConfidence?: number;
 };
 
 /**
@@ -636,6 +661,8 @@ export type HybridMemoryConfig = {
   eventLog: EventLogConfig;
   /** Opt-in persona proposals: agent self-evolution with human approval (default: disabled) */
   personaProposals: PersonaProposalsConfig;
+  /** Unified proposal workshop queue (default: enabled when any proposal source is active). */
+  workshop?: WorkshopConfig;
   /** Passive observer — background fact extraction from session transcripts (default: disabled) */
   passiveObserver: PassiveObserverConfig;
   /** Reflection layer — synthesize behavioral patterns from facts (default: disabled) */
@@ -674,10 +701,12 @@ export type HybridMemoryConfig = {
     reinforcementProcedureBoost?: number;
     /** Phase 2: Number of reinforcements to trigger auto-promotion of procedures (default: 2). */
     reinforcementPromotionThreshold?: number;
-    /** Model tier for main session distill pass. "maintenance" is the safe default; "heavy" is opt-in. */
+    /** Model tier for main session distill pass. "maintenance" is the default. Legacy `"heavy"` is accepted but clamped to maintenance at runtime (#1205/#1216). */
     modelTier?: "nano" | "maintenance" | "default" | "heavy";
     /** Model tier for extraction pipeline (extract-reinforcement LLM analysis). "nano" saves cost; "maintenance" isolates from llm.default; unset defaults to "nano". */
     extractionModelTier?: "nano" | "maintenance" | "default" | "heavy";
+    /** MiniMax thinking mode for distill LLM calls (default: llm.minimax.thinking or disabled). */
+    thinking?: "disabled" | "adaptive";
   };
   /** Auto-build multilingual keywords from memory (default: enabled). Run at first startup if no file, then weekly. */
   languageKeywords: { autoBuild: boolean; weeklyIntervalDays: number };
@@ -781,6 +810,8 @@ export type HybridMemoryConfig = {
   humanizer: HumanizerConfig;
   /** Weekly digest delivery for cron + operator review (Issue #1197). */
   digest: DigestConfig;
+  /** Live change feed for operator notifications (session + persistent mutations). */
+  liveChangeFeed: LiveChangeFeedConfig;
   /** Entity lifecycle adapters — GitHub Phase 2 stub (Issue #1196). */
   lifecycle: LifecycleAdaptersConfig;
   /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */

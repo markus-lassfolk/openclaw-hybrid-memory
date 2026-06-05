@@ -271,10 +271,15 @@ When using Claude via **Anthropic API** (not Azure Foundry). For **Foundry/Marke
 
 ### MiniMax
 
+Operational catalog caps (live-verified on `api.minimax.io`; conservative vs raw API max prompt). Maintenance output caps apply to hybrid-memory self-correction/reinforcement; agent/distill uses max output.
 
-| Model ID       | Context / output  | Notes                 |
-| -------------- | ----------------- | --------------------- |
-| `MiniMax-M2.5` | See provider docs | Used in nano/default. |
+
+| Model ID | Context window | Max output (agent/distill) | Maintenance max output | Batch input (distill) | Notes |
+| -------- | -------------- | -------------------------- | ---------------------- | --------------------- | ----- |
+| `MiniMax-M3` | 520,000 (live max prompt ~524k) | 131,072 | 32,768 | 250,000 (reliable; 300k+ may timeout) | Agentic/coding; `max_completion_tokens`; `thinking` param (`disabled` / `adaptive`). Wire id `MiniMax-M3`. |
+| `MiniMax-M2.7`, `MiniMax-M2.7-highspeed` | 258,000 (live max prompt ~262k; spec 204.8k) | 131,072 | 16,384 | 150,000 | Maintenance/nano tier; thinking blocks share output budget — use `disabled` for JSON. |
+| `MiniMax-M2.5`, `MiniMax-M2.5-highspeed` | 258,000 | 131,072 | 16,384 | 150,000 | Same M2.x catalog entry. |
+| `MiniMax-M2.1`, `MiniMax-M2`, `MiniMax-Text-01` | 258,000 | 131,072 | 16,384 | 150,000 | Legacy M2.x. |
 
 
 ### OpenAI (direct, non-Azure)
@@ -294,9 +299,9 @@ When using `openai` provider with `api.openai.com` (not Azure), same model names
 
 ## 6. How we use this in the plugin
 
-- **Tier choice:** [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) recommend models by tier (nano / default / heavy). Use this reference to check context and max output when you need long context (e.g. distillation → heavy with 200k+ or 1M context).
+- **Tier choice:** [LLM-AND-PROVIDERS.md](LLM-AND-PROVIDERS.md) and [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md) recommend models by tier (nano / maintenance / default / heavy). Use this reference to check context and max output when you need long context (e.g. distillation → configure `llm.maintenance` with a large-context model, or pass `distill --model`).
 - **Config:** OpenClaw gateway or plugin can set per-model `contextWindow` and `maxTokens` in provider/model config; this doc is the source of truth for Azure where the API does not expose them.
-- **Plugin catalog:** The memory-hybrid plugin uses `extensions/memory-hybrid/services/model-capabilities.ts` for `distillBatchTokenLimit` and `distillMaxOutputTokens` (and optionally `getContextWindow`). That catalog is kept in sync with this doc; add new models there when you add them here.
+- **Plugin catalog:** The memory-hybrid plugin uses `extensions/memory-hybrid/services/model-capabilities.ts` for `distillBatchTokenLimit`, `distillMaxOutputTokens`, and `maintenanceMaxOutputTokens`. That catalog is kept in sync with this doc; add new models there when you add them here.
 - **Embeddings:** When switching embedding model (e.g. `text-embedding-3-small` → `text-embedding-3-large`), dimensions change (1,536 → 3,072); re-embed and re-index. See [Embedding providers](LLM-AND-PROVIDERS.md#embedding-providers) and config for `embedding.dimensions`.
 
 ---
@@ -309,6 +314,7 @@ When using `openai` provider with `api.openai.com` (not Azure), same model names
 | 2026-03-19 | Initial version: Azure OpenAI (GPT-5.4–4, o-series, 4.1, 4o, embeddings), other Foundry providers summary, Anthropic/Google/MiniMax/Ollama placeholders.                                                                                                     |
 | 2026-03-19 | Added Foundry models from partners and community: Anthropic (Foundry), Cohere, Meta, Microsoft (Phi), Mistral AI, Stability AI; source [models-from-partners](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-from-partners). |
 | 2026-03-19 | Plugin: added `services/model-capabilities.ts` with per-model context window, max output tokens, and batch token limit for distill; `chat.ts` now uses it for `distillBatchTokenLimit` and `distillMaxOutputTokens`. Deploy: added `openclaw.model-tokens-snippet.json` for OpenClaw config. |
+| 2026-06-04 | MiniMax: operational catalog — M3 (520k ctx, 131k out, 32k maintenance, 250k batch); M2.x (258k ctx, 131k out, 16k maintenance, 150k batch). Live API max prompt higher (~524k / ~262k). |
 | 2026-03-20 | Google: default nano/fallback model switched from deprecated `gemini-2.0-flash-lite` (404) to `gemini-2.5-flash-lite`. See [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations). |
 
 

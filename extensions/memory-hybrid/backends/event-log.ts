@@ -24,6 +24,8 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import { capturePluginError } from "../services/error-reporter.js";
+import { nowIso, normalizeToIsoUtc, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { backfillEventLogTextTimestamps } from "../utils/timestamp-migration.js";
 import { expandTilde } from "../utils/path.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
@@ -87,7 +89,7 @@ function migrateEventLogRelaxEventTypeCheck(db: DatabaseSync): void {
         entities TEXT,
         consolidated_into TEXT,
         metadata TEXT,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        created_at TEXT NOT NULL
       );
     `);
     db.exec(`
@@ -135,7 +137,7 @@ export class EventLog extends BaseSqliteStore {
         entities TEXT,
         consolidated_into TEXT,
         metadata TEXT,
-        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_event_log_session ON event_log(session_id);
       CREATE INDEX IF NOT EXISTS idx_event_log_timestamp ON event_log(timestamp);
@@ -143,6 +145,7 @@ export class EventLog extends BaseSqliteStore {
       CREATE INDEX IF NOT EXISTS idx_event_log_consolidated ON event_log(consolidated_into);
     `);
     migrateEventLogRelaxEventTypeCheck(this.liveDb);
+    backfillEventLogTextTimestamps(this.liveDb);
   }
 
   protected getSubsystemName(): string {
@@ -152,20 +155,23 @@ export class EventLog extends BaseSqliteStore {
   /** Append a single event and return its generated id. */
   append(entry: Omit<EventLogEntry, "id" | "createdAt">): string {
     const id = randomUUID();
+    const timestamp = normalizeToIsoUtc(entry.timestamp);
+    const createdAt = nowIso();
     this.liveDb
       .prepare(
-        `INSERT INTO event_log (id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO event_log (id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
         entry.sessionId,
-        entry.timestamp,
+        timestamp,
         entry.eventType,
         JSON.stringify(entry.content),
         entry.entities != null ? JSON.stringify(entry.entities) : null,
         entry.consolidatedInto ?? null,
         entry.metadata != null ? JSON.stringify(entry.metadata) : null,
+        createdAt,
       );
     return id;
   }
@@ -174,22 +180,25 @@ export class EventLog extends BaseSqliteStore {
   appendBatch(entries: Omit<EventLogEntry, "id" | "createdAt">[]): string[] {
     const ids: string[] = [];
     const stmt = this.liveDb.prepare(
-      `INSERT INTO event_log (id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO event_log (id, session_id, timestamp, event_type, content, entities, consolidated_into, metadata, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertAll = createTransaction(this.liveDb, (batch: Omit<EventLogEntry, "id" | "createdAt">[]) => {
+      const batchCreatedAt = nowIso();
       for (const entry of batch) {
         const id = randomUUID();
         ids.push(id);
+        const timestamp = normalizeToIsoUtc(entry.timestamp);
         stmt.run(
           id,
           entry.sessionId,
-          entry.timestamp,
+          timestamp,
           entry.eventType,
           JSON.stringify(entry.content),
           entry.entities != null ? JSON.stringify(entry.entities) : null,
           entry.consolidatedInto ?? null,
           entry.metadata != null ? JSON.stringify(entry.metadata) : null,
+          batchCreatedAt,
         );
       }
     });
@@ -231,7 +240,7 @@ export class EventLog extends BaseSqliteStore {
     const params: SQLInputValue[] = [];
     let query = "SELECT * FROM event_log WHERE consolidated_into IS NULL";
     if (olderThanDays !== undefined) {
-      const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
+      const cutoff = cutoffIsoDaysAgo(olderThanDays);
       query += " AND timestamp < ?";
       params.push(cutoff);
     }
@@ -273,7 +282,7 @@ export class EventLog extends BaseSqliteStore {
    */
   async archiveConsolidated(olderThanDays: number, archiveDir: string): Promise<{ archived: number; files: string[] }> {
     if (olderThanDays <= 0) return { archived: 0, files: [] };
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
+    const cutoff = cutoffIsoDaysAgo(olderThanDays);
     const resolvedDir = expandTilde(archiveDir);
     mkdirSync(resolvedDir, { recursive: true });
 
@@ -401,7 +410,7 @@ export class EventLog extends BaseSqliteStore {
    * Returns the number of rows deleted.
    */
   archiveOld(olderThanDays: number, includeUnconsolidated = false): number {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 3600 * 1000).toISOString();
+    const cutoff = cutoffIsoDaysAgo(olderThanDays);
     const result = this.liveDb
       .prepare("DELETE FROM event_log WHERE timestamp < ? AND (consolidated_into IS NOT NULL OR ?)")
       .run(cutoff, includeUnconsolidated ? 1 : 0);
@@ -486,7 +495,7 @@ export class EventLog extends BaseSqliteStore {
       entities,
       consolidatedInto: row.consolidated_into != null ? (row.consolidated_into as string) : undefined,
       metadata,
-      createdAt: row.created_at as string,
+      createdAt: (row.created_at as string | null) ?? (row.timestamp as string),
     };
   }
 }

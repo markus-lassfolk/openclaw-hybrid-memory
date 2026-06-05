@@ -1,4 +1,5 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
+import type { Command } from "commander";
 import { createConfigOutputSink } from "../../config-output-sink.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
@@ -109,8 +110,11 @@ export function registerManageConfigCli(mem: Chainable, b: ManageBindings): void
     }),
   );
 
-  mem
-    .command("help config-set <key>")
+  const helpCommand = (mem as Command).commands.find((command) => command.name() === "help");
+  const configSetHelpRegistrar = helpCommand ?? mem;
+  const configSetHelpName = helpCommand ? "config-set <key>" : "help config-set <key>";
+  configSetHelpRegistrar
+    .command(configSetHelpName)
     .description("Show help for a config key")
     .action(
       withExit(async (key: string) => {

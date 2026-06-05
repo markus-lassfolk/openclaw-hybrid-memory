@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getEnv } from "../utils/env-manager.js";
+import { nowIso } from "../utils/dates.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 
 export const DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD = 200;
@@ -77,7 +78,7 @@ export function persistConsecutiveNoProgressState(
         consecutiveNoProgressRuns: evaluation.consecutiveNoProgressRuns,
         lastAmbiguous: metrics.ambiguous,
         lastAutoResolved: metrics.autoResolved,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       } satisfies PersistedNoProgressState,
       null,
       2,
@@ -99,8 +100,7 @@ export function evaluateContradictionProgress(
   const noProgress = totalConsidered > 0 && metrics.autoResolved === 0;
   const degradedThresholdEnabled = degradedAmbiguousThreshold > 0;
   const thresholdExceeded = degradedThresholdEnabled && metrics.ambiguous >= degradedAmbiguousThreshold;
-  const consecutiveNoProgressRuns =
-    noProgress && thresholdExceeded ? previousConsecutiveNoProgressRuns + 1 : 0;
+  const consecutiveNoProgressRuns = noProgress && thresholdExceeded ? previousConsecutiveNoProgressRuns + 1 : 0;
   const consecutiveRequired = degradedConsecutiveThreshold > 0 ? degradedConsecutiveThreshold : 1;
   const degraded = thresholdExceeded && noProgress && consecutiveNoProgressRuns >= consecutiveRequired;
   const exitCode = degraded ? 2 : 0;

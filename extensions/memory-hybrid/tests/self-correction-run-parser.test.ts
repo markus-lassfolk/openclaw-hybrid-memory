@@ -196,6 +196,44 @@ describe("parseSelfCorrectionLLMResponse", () => {
     expect(result).toBeNull();
   });
 
+  it("extracts remediation items from MiniMax M3-style object.items payload", () => {
+    const input = JSON.stringify({ items: [sampleItem] });
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+    expect((result as Array<{ remediationType: string }>)[0].remediationType).toBe("MEMORY_STORE");
+  });
+
+  it("extracts remediation items from nested tool-call arguments object", () => {
+    const input = JSON.stringify({ arguments: { items: [sampleItem] } });
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+  });
+
+  it("extracts remediation items from tool_calls function.arguments string", () => {
+    const input = JSON.stringify({
+      tool_calls: [
+        {
+          type: "function",
+          function: {
+            name: "self_correction_result",
+            arguments: JSON.stringify({ items: [sampleItem] }),
+          },
+        },
+      ],
+    });
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).not.toBeNull();
+    expect(result).toHaveLength(1);
+  });
+
+  it("rejects MiniMax M3-style objects that contain no remediation items", () => {
+    const input = JSON.stringify({ arguments: { items: [{ id: 1, text: "not a remediation" }] } });
+    const result = parseSelfCorrectionLLMResponse(input);
+    expect(result).toBeNull();
+  });
+
   it("handles a fenced block with trailing text (combined)", () => {
     const array = JSON.stringify([sampleItem]);
     const input = `\`\`\`json\n${array}\n\`\`\`\n\nI have summarized 1 correction item above.`;

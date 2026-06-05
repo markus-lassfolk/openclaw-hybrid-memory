@@ -74,6 +74,7 @@ describe("registerLifecycleHooks", () => {
       runReflectionMeta: vi.fn(),
       registrationGeneration: 1,
       currentRegistrationGenerationRef: { value: 1 },
+      sessionStateRef: { value: null },
     };
 
     const handle = registerLifecycleHooks(pluginApi as never, api as never);
@@ -170,6 +171,7 @@ describe("registerLifecycleHooks", () => {
       runReflectionMeta: vi.fn(),
       registrationGeneration: 1,
       currentRegistrationGenerationRef,
+      sessionStateRef: { value: null },
     };
 
     const captureMock = vi.mocked(runCaptureStage);
@@ -248,6 +250,7 @@ describe("registerLifecycleHooks", () => {
       runReflectionMeta: vi.fn(),
       registrationGeneration: 1,
       currentRegistrationGenerationRef,
+      sessionStateRef: { value: null },
     };
 
     registerLifecycleHooks(pluginApi as never, api as never);
@@ -305,6 +308,7 @@ describe("registerLifecycleHooks", () => {
       runReflectionMeta: vi.fn(),
       registrationGeneration: 1,
       currentRegistrationGenerationRef: { value: 1 },
+      sessionStateRef: { value: null },
     };
 
     registerLifecycleHooks(pluginApi as never, api as never);

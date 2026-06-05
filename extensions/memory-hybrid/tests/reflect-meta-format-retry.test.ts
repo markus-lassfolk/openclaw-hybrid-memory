@@ -94,7 +94,7 @@ describe("runReflectionMeta format retry (#1801)", () => {
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining("invalid_response_format"));
   });
 
-  it("throws when primary and fallback both return invalid_response_format", async () => {
+  it("returns degraded when primary and fallback both return invalid_response_format", async () => {
     let callIndex = 0;
     const responses = ["Still no JSON or META lines", "Also invalid prose"];
     const factsDb = {
@@ -116,16 +116,17 @@ describe("runReflectionMeta format retry (#1801)", () => {
         },
       },
     };
-    await expect(
-      runReflectionMeta(
-        factsDb as never,
-        vectorDb as never,
-        embeddings as never,
-        openai as never,
-        { dryRun: false, model: "primary-model", fallbackModels: ["fallback-model"] },
-        { info: () => undefined, warn: () => undefined },
-      ),
-    ).rejects.toThrow("failure_type=invalid_response_format");
+    const res = await runReflectionMeta(
+      factsDb as never,
+      vectorDb as never,
+      embeddings as never,
+      openai as never,
+      { dryRun: false, model: "primary-model", fallbackModels: ["fallback-model"] },
+      { info: () => undefined, warn: () => undefined },
+    );
+    expect(res.metaStored).toBe(0);
+    expect(res.diagnostics?.status).toBe("degraded");
+    expect(res.diagnostics?.zeroMetasReason).toBe("invalid_response_format");
   });
 
   it("rethrows LLM API failures instead of returning zero silently", async () => {

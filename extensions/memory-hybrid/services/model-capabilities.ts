@@ -1,7 +1,7 @@
 /**
  * Per-model capabilities: context window, max output tokens, and batch token limit for distillation.
  * Source: docs/MODEL-REFERENCE.md (Azure Foundry, partners, and other providers).
- * Used by chat.ts for distillBatchTokenLimit and distillMaxOutputTokens; can be used for context-audit or config hints.
+ * Used by chat.ts for distillBatchTokenLimit, distillMaxOutputTokens, and maintenanceMaxOutputTokens.
  */
 
 /**
@@ -12,10 +12,12 @@
 export type WireApi = "chat" | "responses";
 
 interface ModelCapabilities {
-  /** Context window (input + output) in tokens. */
+  /** Context window (input + output) in tokens. Conservative operational cap (may be below live API max). */
   contextWindow: number;
-  /** Max output tokens for a single completion (distill, reflection, etc.). */
+  /** Max output tokens for agent/distill completions. */
   maxOutputTokens: number;
+  /** Max output tokens for hybrid-memory maintenance (self-correction, reinforcement, etc.). Defaults to maxOutputTokens. */
+  maintenanceMaxOutputTokens?: number;
   /** Max input tokens to send in one distill batch request (conservative; leaves room for system + output). */
   batchTokenLimitForDistill: number;
 }
@@ -199,6 +201,28 @@ const CAPABILITIES: Array<{ match: Matcher; cap: ModelCapabilities }> = [
     },
   },
 
+  // ——— MiniMax M3 (520k operational ctx; live api.max ~524k prompt; 250k reliable distill batch) ———
+  {
+    match: (n) => n.includes("minimax-m3") || n === "m3" || n.endsWith("-m3"),
+    cap: {
+      contextWindow: 520_000,
+      maxOutputTokens: 131_072,
+      maintenanceMaxOutputTokens: 32_768,
+      batchTokenLimitForDistill: 250_000,
+    },
+  },
+
+  // ——— MiniMax M2.x (258k operational ctx; live api.max ~262k prompt on M2.7; 150k reliable distill batch) ———
+  {
+    match: (n) => n.includes("minimax") || n.startsWith("m2") || n.includes("minimax-m2") || n.includes("minimax-text"),
+    cap: {
+      contextWindow: 258_000,
+      maxOutputTokens: 131_072,
+      maintenanceMaxOutputTokens: 16_384,
+      batchTokenLimitForDistill: 150_000,
+    },
+  },
+
   // ——— Model router (Azure): conservative ———
   {
     match: (n) => n.includes("model-router"),
@@ -240,6 +264,16 @@ export function getDistillMaxOutputTokens(model: string): number {
 }
 
 /**
+ * Max output tokens for hybrid-memory maintenance LLM calls (self-correction, reinforcement, etc.).
+ * Uses model-specific maintenance cap when set; otherwise matches {@link getDistillMaxOutputTokens}.
+ */
+export function getMaintenanceMaxOutputTokens(model: string): number {
+  const cap = getModelCapabilities(model);
+  if (cap?.maintenanceMaxOutputTokens != null) return cap.maintenanceMaxOutputTokens;
+  return cap?.maxOutputTokens ?? DEFAULT_CAPABILITIES.maxOutputTokens;
+}
+
+/**
  * Context window in tokens (for hints or context-audit). Returns 128_000 for unknown models.
  */
 function _getContextWindow(model: string): number {
@@ -247,12 +281,26 @@ function _getContextWindow(model: string): number {
   return cap?.contextWindow ?? DEFAULT_CAPABILITIES.contextWindow;
 }
 
+/** True when the model id resolves to a MiniMax provider model (M3, M2.x, etc.). */
+export function isMiniMaxModel(model: string): boolean {
+  const normalized = normalizeModelId(model);
+  if (/minimax|minimax-m3|^m3$|minimax-m2|^m2/.test(normalized)) return true;
+  return modelPathSegments(model).some((seg) => seg === "minimax" || /^minimax-/i.test(seg) || seg === "m3");
+}
+
+/** True for MiniMax M3 specifically (520k operational ctx, thinking param supported). */
+export function isMiniMaxM3Model(model: string): boolean {
+  const normalized = normalizeModelId(model);
+  return normalized.includes("minimax-m3") || normalized === "m3" || normalized.endsWith("-m3");
+}
+
 /**
  * True for models that require `max_completion_tokens` instead of `max_tokens` in the API request
- * (e.g. GPT-5+, GPT-4.1*, o-series). Checks every `/`-segment so `azure-foundry/gpt-5.4-nano` matches.
+ * (e.g. GPT-5+, GPT-4.1*, o-series, MiniMax M3). Checks every `/`-segment so `azure-foundry/gpt-5.4-nano` matches.
  */
 export function requiresMaxCompletionTokens(model: string): boolean {
   if (isReasoningModel(model)) return true;
+  if (isMiniMaxM3Model(model)) return true;
   for (const seg of modelPathSegments(model)) {
     if (/^gpt-5/i.test(seg) || /^gpt-4\.1/i.test(seg)) return true;
   }

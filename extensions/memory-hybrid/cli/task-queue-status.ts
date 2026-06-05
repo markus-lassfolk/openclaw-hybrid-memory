@@ -15,6 +15,7 @@ import {
   writeCanonicalIdleTaskQueueFile,
 } from "../services/task-queue-watchdog.js";
 import { getEnv } from "../utils/env-manager.js";
+import { nowIso } from "../utils/dates.js";
 import { readJsonFile } from "../utils/fs.js";
 import type { Chainable } from "./shared.js";
 
@@ -155,12 +156,12 @@ export function registerTaskQueueStatusCommands(mem: Chainable): void {
           const archived = {
             ...raw,
             repairedBy: "task-queue-touch",
-            repairedAt: new Date().toISOString(),
+            repairedAt: nowIso(),
           };
           const body = JSON.stringify(archived, null, 2);
           let dest = "";
           for (let attempt = 0; attempt < 16; attempt++) {
-            const ts = new Date().toISOString().replace(/[:.]/g, "-");
+            const ts = nowIso().replace(/[:.]/g, "-");
             dest = join(histDir, `${ts}-${randomUUID()}-degenerate-cli.json`);
             try {
               await writeFile(dest, body, { encoding: "utf-8", flag: "wx" });

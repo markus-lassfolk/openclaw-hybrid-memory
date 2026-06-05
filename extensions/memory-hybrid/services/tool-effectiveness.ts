@@ -20,6 +20,7 @@ import { BaseSqliteStore } from "../backends/base-sqlite-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ToolEffectivenessConfig } from "../config/types/features.js";
 import { SQLITE_BUSY_TIMEOUT_MS } from "../utils/constants.js";
+import { formatDateUtc, nowSec, formatTimestampUtc } from "../utils/dates.js";
 import { capturePluginError } from "./error-reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -588,7 +589,7 @@ export function formatToolEffectivenessReport(report: ToolEffectivenessReport): 
   }
 
   const lines: string[] = [
-    `Tool Effectiveness Report (${new Date(report.computedAt * 1000).toISOString()})`,
+    `Tool Effectiveness Report (${formatTimestampUtc(report.computedAt)})`,
     `Tools scored: ${report.toolsScored}`,
     "",
     "Top Tools:",
@@ -694,7 +695,7 @@ export async function generateMonthlyReport(store: ToolEffectivenessStore, facts
     const totalTools = allScores.length;
     const avgScore = allScores.reduce((sum, m) => sum + m.compositeScore, 0) / totalTools;
 
-    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const month = formatDateUtc(nowSec()).slice(0, 7); // YYYY-MM
 
     const summaryLines = [
       `Monthly tool effectiveness report (${month}):`,
@@ -707,7 +708,7 @@ export async function generateMonthlyReport(store: ToolEffectivenessStore, facts
 
     const summary = summaryLines.join(" ");
 
-    factsDb.store({
+    const storeResult = factsDb.storeWithResult({
       text: summary,
       category: "pattern",
       entity: null,
@@ -720,6 +721,9 @@ export async function generateMonthlyReport(store: ToolEffectivenessStore, facts
       tags: ["tool-effectiveness", "monthly-report"],
       summary: `Tool effectiveness summary for ${month}`,
     });
+    if (storeResult.skipped || storeResult.newlyStored === false) {
+      return;
+    }
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "tool-effectiveness-monthly-report",

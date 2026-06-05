@@ -15,8 +15,8 @@ import {
   makeEntityMentionKey,
 } from "../utils/entity-mention-quality.js";
 import { isEntityStopWord as isConfiguredEntityStopWord } from "../utils/entity-stopwords.js";
-import { stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
-import { errorIndicatesLlmTimeout } from "./entity-enrichment-adaptive.js";
+import { stripThinkingWrapperBlocks, parseFirstJsonObjectValue } from "../utils/llm-json-array.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import {
   is403QuotaOrRateLimitLike,
   is429OrWrapped,
@@ -26,6 +26,7 @@ import {
   withLLMRetry,
 } from "./chat.js";
 import { withCostFeature } from "./cost-context.js";
+import { errorIndicatesLlmTimeout } from "./entity-enrichment-adaptive.js";
 import { capturePluginError } from "./error-reporter.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 
@@ -86,53 +87,10 @@ export type EntityExtractionPressureSignals = {
 
 function parseMentionJson(content: string): LlmMention[] {
   const stripped = stripThinkingWrapperBlocks(content);
-  const trimmed = stripped.trim();
-  const start = trimmed.indexOf("{");
-  if (start === -1) return [];
-
-  let depth = 0;
-  let end = -1;
-  let inString = false;
-  let escapeNext = false;
-
-  for (let i = start; i < trimmed.length; i++) {
-    const ch = trimmed[i];
-
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      escapeNext = true;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (!inString) {
-      if (ch === "{") {
-        depth++;
-      } else if (ch === "}") {
-        depth--;
-        if (depth === 0) {
-          end = i;
-          break;
-        }
-      }
-    }
-  }
-
-  if (end === -1 || end <= start) return [];
-  try {
-    const obj = JSON.parse(trimmed.slice(start, end + 1)) as { mentions?: LlmMention[] };
-    return Array.isArray(obj.mentions) ? obj.mentions : [];
-  } catch {
-    return [];
-  }
+  const obj = parseFirstJsonObjectValue(stripped);
+  if (!obj) return [];
+  const mentions = obj.mentions;
+  return Array.isArray(mentions) ? (mentions as LlmMention[]) : [];
 }
 
 function clampOffsets(text: string, surface: string, start: number, end: number): { start: number; end: number } {
@@ -212,7 +170,7 @@ ${body}`;
         { maxRetries: 2 },
       ),
     );
-    const content = (resp.choices[0]?.message?.content ?? "").trim();
+    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
     const raw = parseMentionJson(content);
     const mentions: ExtractedMention[] = [];
     const rejectedMentions: EntityMentionRejection[] = [];

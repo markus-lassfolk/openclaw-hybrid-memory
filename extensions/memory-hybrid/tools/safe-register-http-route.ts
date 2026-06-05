@@ -44,6 +44,24 @@ function incomingHeadersToRecord(headers: IncomingMessage["headers"]): Record<st
   return out;
 }
 
+const MAX_HTTP_ROUTE_BODY_BYTES = 64 * 1024;
+
+async function readRequestBody(req: IncomingMessage): Promise<string> {
+  const method = req.method?.toUpperCase() ?? "GET";
+  if (method !== "POST" && method !== "PUT" && method !== "PATCH") return "";
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buf.length;
+    if (size > MAX_HTTP_ROUTE_BODY_BYTES) {
+      throw new Error(`request body exceeds ${MAX_HTTP_ROUTE_BODY_BYTES} bytes`);
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
 function adaptLegacyHandlerToNode(
   legacy: HttpRequestHandler,
   logger: SafeRouteLogger,
@@ -51,10 +69,12 @@ function adaptLegacyHandlerToNode(
 ): RegisterHttpRouteGatewayHandler {
   return async (req: IncomingMessage, res: ServerResponse) => {
     try {
+      const body = await readRequestBody(req);
       const legacyReq = {
         method: req.method ?? "GET",
         url: req.url ?? "/",
         headers: incomingHeadersToRecord(req.headers),
+        body,
       };
       const result = await legacy(legacyReq);
       res.writeHead(result.status, result.headers ?? {});

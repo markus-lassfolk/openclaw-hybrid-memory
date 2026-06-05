@@ -37,6 +37,8 @@ import {
   type PersonaProposalDecisionView,
   type PersonaProposalPendingItem,
 } from "./persona-proposal-triage.js";
+import type { ChangeFeed } from "./change-feed.js";
+import { resolveChangeFeed } from "./change-feed-emit.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
 
 export const PENDING_DIGEST_AUTOPILOT_POLICY_VERSION = "parent-skeleton-v1";
@@ -80,6 +82,8 @@ export interface PendingDigestAutopilotOptions {
   now?: Date;
   stateDbPath?: string;
   adapters?: Partial<Record<PendingQueue, PendingQueueAdapter>>;
+  changeFeed?: ChangeFeed | null;
+  resolvedSqlitePath?: string;
 }
 
 export interface PendingDigestFactsDb {
@@ -305,6 +309,13 @@ export async function runPendingDigestAutopilot(
                 now: opts.now,
                 runLifecycle: "embedded",
                 store,
+                changeFeed: resolveChangeFeed(
+                  opts.cfg,
+                  opts.factsDb as import("../backends/facts-db.js").FactsDB,
+                  opts.changeFeed,
+                ),
+                resolvedSqlitePath: opts.resolvedSqlitePath ?? opts.cfg.sqlitePath,
+                sessionKey: "autopilot",
               });
               const childDecision = applied.decisions.find((d) => d.proposalId === item.id);
               const latestDecision = childDecision

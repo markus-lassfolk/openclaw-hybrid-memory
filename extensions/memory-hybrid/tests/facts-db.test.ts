@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 
-const { FactsDB } = _testing;
+const { FactsDB, isIsoUtcTimestamp } = _testing;
 
 let tmpDir: string;
 let db: InstanceType<typeof FactsDB>;
@@ -3659,6 +3659,24 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(entry.lastAccessedAt).toBeNull();
   });
 
+  it("deferAccessRefresh skips recall_count bump until caller refreshes", () => {
+    const entry = db.store({
+      text: "Deferred refresh fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    db.search("Deferred refresh", 5, { deferAccessRefresh: true });
+    expect(db.getById(entry.id)?.accessCount).toBe(0);
+
+    db.refreshAccessedFacts([entry.id]);
+    expect(db.getById(entry.id)?.accessCount).toBe(1);
+  });
+
   it("refreshAccessedFacts increments access_count and sets last_accessed_at", () => {
     const entry = db.store({
       text: "Recall tracking fact",
@@ -3677,8 +3695,7 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(updated?.accessCount).toBe(1);
     expect(updated?.lastAccessedAt).toBeDefined();
     expect(updated?.lastAccessedAt).not.toBeNull();
-    // Must be strict UTC ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ
-    expect(updated?.lastAccessedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+    expect(isIsoUtcTimestamp(updated!.lastAccessedAt!)).toBe(true);
   });
 
   it("refreshAccessedFacts increments access_count cumulatively", () => {

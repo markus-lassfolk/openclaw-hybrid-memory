@@ -7,6 +7,7 @@ import { ProposalsDB } from "../backends/proposals-db.js";
 import { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { pluginLogger } from "../utils/logger.js";
+import { formatTimestampUtc } from "../utils/dates.js";
 import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 
 type FactsDbForPendingDigest = {
@@ -64,6 +65,10 @@ export type PendingReviewDigestReport = {
       targetFile: string;
       confidence: number;
       createdAt: number;
+      /** Days since proposal was created. */
+      ageDays: number;
+      /** e.g. self-correction when title matches Self-correction: CATEGORY */
+      sourceCategory: string | null;
       approveCommand: string;
       declineCommand: string;
       deferCommand: string;
@@ -210,7 +215,18 @@ export function buildPendingReviewDigestReport(opts: {
       )
     : [];
   const personaPending = personaAll.filter((p) => p.status === "pending");
-  const personaRecentPending = personaPending.filter((p) => p.createdAt >= sinceSec);
+  const nowSec = Math.floor(now.getTime() / 1000);
+  function selfCorrectionCategory(title: string): string | null {
+    const m = title.match(/^Self-correction:\s*([A-Z_]+)/);
+    return m?.[1] ?? null;
+  }
+  const personaPendingSorted = [...personaPending].sort((a, b) => {
+    const aSc = selfCorrectionCategory(a.title) ? 0 : 1;
+    const bSc = selfCorrectionCategory(b.title) ? 0 : 1;
+    if (aSc !== bSc) return aSc - bSc;
+    return b.createdAt - a.createdAt;
+  });
+  const personaRecentPending = personaPendingSorted.filter((p) => p.createdAt >= sinceSec);
 
   const toolAll = withStore(
     () => new ToolProposalStore(paths.toolProposals),
@@ -268,7 +284,7 @@ export function buildPendingReviewDigestReport(opts: {
 
   return {
     schemaVersion: 1,
-    generatedAt: now.toISOString(),
+    generatedAt: formatTimestampUtc(nowSec),
     sinceDays,
     pendingReview,
     procedures: {
@@ -283,7 +299,9 @@ export function buildPendingReviewDigestReport(opts: {
       pending: personaPending.length,
       approved: personaAll.filter((p) => p.status === "approved").length,
       rejected: personaAll.filter((p) => p.status === "rejected").length,
-      expired: personaAll.filter((p) => p.status === "expired").length,
+      expired: personaAll.filter(
+        (p) => p.status === "pending" && p.expiresAt != null && p.expiresAt < nowSec,
+      ).length,
       // #1742: track omitted entries so callers can surface a truncation marker.
       truncated: personaPending.length - personaRecentPending.slice(0, 10).length,
       pendingEntries: personaRecentPending.slice(0, 10).map((p) => ({
@@ -292,6 +310,8 @@ export function buildPendingReviewDigestReport(opts: {
         targetFile: p.targetFile,
         confidence: p.confidence,
         createdAt: p.createdAt,
+        ageDays: Math.max(0, Math.floor((nowSec - p.createdAt) / 86400)),
+        sourceCategory: selfCorrectionCategory(p.title),
         approveCommand: `openclaw hybrid-mem proposals approve ${p.id}`,
         declineCommand: `openclaw hybrid-mem proposals reject ${p.id}`,
         deferCommand: "openclaw hybrid-mem proposals list --status pending",
@@ -312,7 +332,7 @@ export function buildPendingReviewDigestReport(opts: {
     },
     crystallization: {
       pending: crystalPending.length,
-      approved: crystalAll.filter((p) => p.status === "approved").length,
+      approved: crystalAll.filter((p) => p.status === "approved" || p.status === "installed").length,
       rejected: crystalAll.filter((p) => p.status === "rejected").length,
       pendingEntries: crystalPending.slice(0, 10).map((p) => ({
         id: p.id,
@@ -341,8 +361,9 @@ export function renderPendingReviewDigestMarkdown(report: PendingReviewDigestRep
   if (report.personaProposals.pendingEntries.length === 0)
     lines.push("No recent pending persona proposals in this window.");
   report.personaProposals.pendingEntries.forEach((p, i) => {
+    const categoryHint = p.sourceCategory ? ` [${p.sourceCategory}]` : "";
     lines.push(
-      `${i + 1}. [proposed ${relativeTime(p.createdAt)}] ${p.title} (${p.targetFile}, confidence ${p.confidence.toFixed(2)})`,
+      `${i + 1}. [pending ${p.ageDays}d${categoryHint}] ${p.title} (${p.targetFile}, confidence ${p.confidence.toFixed(2)})`,
     );
     lines.push(`   - Approve: ${p.approveCommand}`);
     lines.push(`   - Decline: ${p.declineCommand}`);

@@ -8,20 +8,30 @@
 import { Type } from "@sinclair/typebox";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
+import { formatTimestampUtc } from "../utils/dates.js";
 
 import type { CredentialsDB } from "../backends/credentials-db.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import type { VectorDB } from "../backends/vector-db.js";
 import { CREDENTIAL_TYPES, type CredentialType, type HybridMemoryConfig } from "../config.js";
+import {
+  deleteCredentialPointerFacts,
+  ensureCredentialVaultPointer,
+  rollbackVaultCredentialWrite,
+} from "../services/credential-vault-pointer.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { CREDENTIAL_NOTES_MAX_CHARS, CREDENTIAL_URL_MAX_CHARS, SECONDS_PER_DAY } from "../utils/constants.js";
 
 export interface PluginContext {
   credentialsDb: CredentialsDB | null;
+  factsDb: FactsDB | null;
+  vectorDb?: VectorDB | null;
   cfg: HybridMemoryConfig;
   api: ClawdbotPluginApi;
 }
 
 export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, cfg } = ctx;
+  const { credentialsDb, factsDb, vectorDb, cfg } = ctx;
 
   if (cfg.credentials.enabled && credentialsDb) {
     api.registerTool(
@@ -66,6 +76,15 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               backend: "sqlite",
             });
             throw err;
+          }
+          if (!factsDb) {
+            rollbackVaultCredentialWrite(credentialsDb, service, type);
+            throw new Error("Facts store not available — cannot create vault pointer for credential");
+          }
+          const pointer = ensureCredentialVaultPointer(factsDb, service, type, "credential-tool");
+          if (!pointer.ok) {
+            rollbackVaultCredentialWrite(credentialsDb, service, type);
+            throw new Error("Credential pointer rejected by pre-store guard");
           }
           return {
             content: [{ type: "text", text: `Stored credential for ${service} (${type}).` }],
@@ -181,7 +200,7 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
           }
           const lines = items.map(
             (i) =>
-              `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${new Date(i.expires * 1000).toISOString()}]` : ""}`,
+              `- ${i.service} (${i.type})${i.url ? ` @ ${i.url}` : ""}${i.expires ? ` [expires: ${formatTimestampUtc(i.expires)}]` : ""}`,
           );
           return {
             content: [{ type: "text", text: `Stored credentials:\n${lines.join("\n")}` }],
@@ -225,9 +244,25 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
               details: { deleted: false },
             };
           }
+          let pointersRemoved = 0;
+          if (factsDb) {
+            try {
+              pointersRemoved = await deleteCredentialPointerFacts(factsDb, vectorDb, service, type);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "credentials",
+                operation: "credential-delete-pointer-cleanup",
+              });
+            }
+          }
           return {
-            content: [{ type: "text", text: `Deleted credential for ${service}${type ? ` (${type})` : ""}.` }],
-            details: { deleted: true, service, type },
+            content: [
+              {
+                type: "text",
+                text: `Deleted credential for ${service}${type ? ` (${type})` : ""}${pointersRemoved > 0 ? ` and ${pointersRemoved} memory pointer(s).` : "."}`,
+              },
+            ],
+            details: { deleted: true, service, type, pointersRemoved },
           };
         },
       },

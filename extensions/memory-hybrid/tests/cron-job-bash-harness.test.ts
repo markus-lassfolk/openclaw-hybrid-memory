@@ -27,6 +27,7 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"');
     expect(bash).toContain('HM_REQUIRED_STEPS=("prune")');
     expect(bash).toContain('local step_ec="${PIPESTATUS[0]}"');
+    expect(bash).toContain("failed(?:_[A-Za-z0-9_-]+)?");
     expect(bash).toContain('hm_step "prune" openclaw hybrid-mem prune --verbose');
     expect(bash).toContain('local timeout_raw="${STEP_TIMEOUT_SECONDS:-0}"');
     expect(bash).toContain('if [ "$timeout_secs" -gt 0 ]; then');
@@ -426,6 +427,49 @@ exit 2
     expect(result.status).toBe(0);
     const exitContents = readFileSync(marker, "utf-8");
     expect(exitContents).toContain("self-correct exit=0 status=skipped reason=skipped_cooldown");
+  });
+
+  it("captures bare status=failed from self-correction-run CLI output as step reason", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "hm-cron-harness-"));
+    const bin = join(tmp, "bin");
+    const home = join(tmp, "oc-home");
+    spawnSync("mkdir", ["-p", bin, home]);
+    const fakeOpenclaw = join(bin, "openclaw");
+    writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "--version" ]; then echo "OpenClaw fake"; exit 0; fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "self-correction-run" ]; then
+  echo "Error: simulated first-batch LLM API failure status=failed"
+  exit 1
+fi
+if [ "\${1:-}" = "hybrid-mem" ] && [ "\${2:-}" = "validate-cron-exit" ]; then
+  echo '{"maintenanceStatus":"failed"}'
+  exit 1
+fi
+echo "unexpected openclaw args: $*" >&2
+exit 2
+`,
+    );
+    chmodSync(fakeOpenclaw, 0o755);
+
+    const bash = buildHybridMemCronBashBody("nightly-self-correction", [
+      { name: "self-correct", cmd: "openclaw hybrid-mem self-correction-run" },
+    ]);
+    const result = spawnSync("bash", ["-c", bash], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, OPENCLAW_HOME: home },
+    });
+
+    expect(result.status).toBe(1);
+    const exitDir = join(home, "logs", "cron-hybrid-mem");
+    const exitPath = readdirSync(exitDir)
+      .filter((name) => name.endsWith(".exit.txt"))
+      .map((name) => join(exitDir, name))[0];
+    expect(exitPath).toBeDefined();
+    const exitContents = readFileSync(exitPath, "utf-8");
+    expect(exitContents).toContain("self-correct exit=1 status=failed reason=failed");
   });
 
   it("skips timeout wrapper when STEP_TIMEOUT_SECONDS=0", () => {

@@ -11,14 +11,17 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type OpenAI from "openai";
 import {
+  buildMergedFromTranslations,
+  clearKeywordCache,
   ENGLISH_KEYWORDS,
   type KeywordGroup,
   type LanguageExtractionTemplate,
   type LanguageKeywordsFile,
-  buildMergedFromTranslations,
-  clearKeywordCache,
 } from "../utils/language-keywords.js";
+import { parseFirstJsonObjectValue, tryParseFirstJsonArray } from "../utils/llm-json-array.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { capturePluginError } from "./error-reporter.js";
+import { nowIso } from "../utils/dates.js";
 import { EXTRACTION_INTENTS, KEYWORD_GROUP_INTENTS, STRUCTURAL_TRIGGER_INTENTS } from "./intent-template.js";
 import { chatCompletionTokenParams } from "./model-capabilities.js";
 
@@ -86,10 +89,9 @@ ${block}`;
         }),
       { maxRetries: 2 },
     );
-    const content = (resp.choices[0]?.message?.content ?? "").trim();
-    const match = content.match(/\[[\s\S]*?\]/);
-    if (!match) return [];
-    const arr = JSON.parse(match[0]) as unknown;
+    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
+    const arr = tryParseFirstJsonArray(content);
+    if (!arr) return [];
     if (!Array.isArray(arr)) return [];
     return arr
       .filter((x): x is string => typeof x === "string")
@@ -259,15 +261,14 @@ async function generateIntentBasedLanguages(
         }),
       { maxRetries: 2 },
     );
-    const content = (resp.choices[0]?.message?.content ?? "").trim();
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return { translations: {}, triggerStructures: {}, extraction: {} };
-    }
-    const parsed = JSON.parse(jsonMatch[0]) as Record<
+    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
+    const parsed = parseFirstJsonObjectValue(content) as Record<
       string,
       Record<string, unknown> & { triggerStructures?: string[]; extraction?: unknown }
-    >;
+    > | null;
+    if (!parsed) {
+      return { translations: {}, triggerStructures: {}, extraction: {} };
+    }
 
     const translations: Record<string, Record<KeywordGroup, string[]>> = {};
     const triggerStructures: Record<string, string[]> = {};
@@ -346,10 +347,9 @@ Each value must be an array of translated strings in the same order as the Engli
         }),
       { maxRetries: 2 },
     );
-    const content = (resp.choices[0]?.message?.content ?? "").trim();
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return {};
-    const parsed = JSON.parse(jsonMatch[0]) as Record<string, Record<string, string[]>>;
+    const content = extractAssistantMessageText(resp.choices[0]?.message).text;
+    const parsed = parseFirstJsonObjectValue(content) as Record<string, Record<string, string[]>> | null;
+    if (!parsed) return {};
     const result: Record<string, Record<KeywordGroup, string[]>> = {};
     for (const lang of toTranslate) {
       const data = parsed[lang];
@@ -447,7 +447,7 @@ export async function runBuildLanguageKeywords(
 
   const data: LanguageKeywordsFile & { _langHash?: string } = {
     version: 2,
-    detectedAt: new Date().toISOString(),
+    detectedAt: nowIso(),
     topLanguages: topLanguages.length > 0 ? topLanguages : ["en"],
     translations,
     triggerStructures: Object.keys(triggerStructures).length > 0 ? triggerStructures : undefined,

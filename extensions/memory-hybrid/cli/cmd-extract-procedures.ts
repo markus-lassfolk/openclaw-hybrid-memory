@@ -1,13 +1,16 @@
 /** Procedure extraction and auto-skill CLI. Split from cmd-extract.ts. */
 import { capturePluginError } from "../services/error-reporter.js";
 import { extractProceduresFromSessions } from "../services/procedure-extractor.js";
+import { auditAutoSkills, quarantineAutoSkills } from "../services/auto-skills-audit.js";
 import { generateAutoSkills } from "../services/procedure-skill-generator.js";
+import { isWorkshopEnabled } from "../services/workshop-config.js";
+import { syncWorkshopProposedEvents, withWorkshopDefaults } from "../services/workshop-service.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 import { acquireScanSlot, clearScanLock } from "./shared.js";
 import type { ExtractProceduresResult, GenerateAutoSkillsResult } from "./types.js";
 
-import { getSessionFilePathsSince, getMaxMtime } from "./cmd-extract-sessions.js";
+import { getSessionFilePathsSince, getMaxMtime, resolveSessionTranscriptPath } from "./cmd-extract-sessions.js";
 export async function runExtractProceduresForCli(
   ctx: HandlerContext,
   opts: {
@@ -20,7 +23,7 @@ export async function runExtractProceduresForCli(
   },
 ): Promise<ExtractProceduresResult> {
   const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
-  const { factsDb, vectorDb, cfg, logger } = ctx;
+  const { factsDb, cfg, logger, changeFeed, proposalsDb, crystallizationStore, toolProposalStore, resolvedSqlitePath } = ctx;
   const SCAN_TYPE = "extract-procedures";
   if (cfg.procedures?.enabled === false) {
     return {
@@ -72,7 +75,7 @@ export async function runExtractProceduresForCli(
         warn: (s) => logger.warn?.(s) ?? console.warn(s),
       },
     );
-    if (!opts.dryRun) {
+    if (!opts.dryRun && (result.readFailures ?? 0) === 0) {
       let lastSessionTs: number | undefined;
       if (filePaths) {
         lastSessionTs = getMaxMtime(filePaths);
@@ -81,6 +84,30 @@ export async function runExtractProceduresForCli(
         lastSessionTs = getMaxMtime(allFiles);
       }
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
+    } else if ((result.readFailures ?? 0) > 0) {
+      logger.warn?.(
+        `memory-hybrid: ${SCAN_TYPE} — ${result.readFailures} session read failure(s); scan cursor not advanced`,
+      );
+    }
+    if (!opts.dryRun && changeFeed && isWorkshopEnabled(cfg)) {
+      try {
+        const synced = syncWorkshopProposedEvents(
+          withWorkshopDefaults({
+            cfg,
+            factsDb,
+            proposalsDb: proposalsDb ?? null,
+            crystallizationStore: crystallizationStore ?? null,
+            toolProposalStore: toolProposalStore ?? null,
+            resolvedSqlitePath: resolvedSqlitePath ?? "",
+            changeFeed,
+          }),
+        );
+        if (synced > 0) {
+          logger.info?.(`memory-hybrid: ${SCAN_TYPE} — synced ${synced} procedure-skill proposed change event(s)`);
+        }
+      } catch (err) {
+        logger.warn?.(`memory-hybrid: ${SCAN_TYPE} — workshop change-feed sync failed (non-fatal): ${err}`);
+      }
     }
     return result;
   } catch (err) {
@@ -113,10 +140,12 @@ export async function runGenerateAutoSkillsForCli(
   const info = opts.verbose ? (s: string) => logger.info?.(s) ?? console.log(s) : () => {};
   const warn = (s: string) => logger.warn?.(s) ?? console.warn(s);
   try {
-    return generateAutoSkills(
+    const result = await generateAutoSkills(
       factsDb,
       {
         skillsAutoPath: cfg.procedures.skillsAutoPath,
+        skillsPendingPath: cfg.procedures.skillsPendingPath,
+        requireApprovalForPromote: cfg.procedures.requireApprovalForPromote,
         validationThreshold: cfg.procedures.validationThreshold,
         skillTTLDays: cfg.procedures.skillTTLDays,
         dryRun: opts.dryRun,
@@ -127,6 +156,22 @@ export async function runGenerateAutoSkillsForCli(
       },
       { info, warn },
     );
+    if (opts.apply && !opts.dryRun && result.generated > 0) {
+      const audit = auditAutoSkills(cfg.procedures.skillsAutoPath);
+      if (audit.quarantinable > 0) {
+        warn(
+          `memory-hybrid: auto-skills post-generate audit: ${audit.quarantinable} quarantinable of ${audit.scanned} scanned`,
+        );
+        if (cfg.procedures.quarantineAfterGenerate) {
+          const toMove = audit.entries.filter(
+            (e) => !e.loadable || e.transcriptLike || e.secretLike || e.injectionLike,
+          );
+          quarantineAutoSkills(cfg.procedures.skillsAutoPath, toMove);
+        }
+      }
+      return { ...result, quarantinable: audit.quarantinable };
+    }
+    return result;
   } catch (err) {
     capturePluginError(err as Error, {
       subsystem: "cli",

@@ -15,6 +15,7 @@ import {
   reconcileCronRunLedger,
 } from "../../../services/cron-maintenance-reconciler.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "../../../services/hybrid-mem-cron-default-job-steps.js";
+import { formatTimestampUtcFromMs } from "../../../utils/dates.js";
 import { type Chainable, withExit } from "../../shared.js";
 
 export function registerReconcileCronLedgers(hybrid: Chainable): void {
@@ -102,7 +103,7 @@ function printReconciliationResult(result: ReconciliationResult, dryRun: boolean
     console.log("\nCorrections made:");
     for (const correction of result.corrections) {
       console.log(`\n  Job: ${correction.jobId}`);
-      console.log(`  Timestamp: ${new Date(correction.timestamp).toISOString()}`);
+      console.log(`  Timestamp: ${formatTimestampUtcFromMs(correction.timestamp)}`);
       console.log(`  Status: ${correction.originalStatus} → ${correction.newStatus}`);
       console.log(`  Validation: ${correction.validationResult.maintenanceStatus}`);
       if (correction.validationResult.error) {

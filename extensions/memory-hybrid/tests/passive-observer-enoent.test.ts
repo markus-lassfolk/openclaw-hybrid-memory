@@ -63,13 +63,27 @@ const makeConfig = (overrides: Partial<PassiveObserverConfig> = {}): PassiveObse
 
 const makeLogger = () => ({ info: vi.fn(), warn: vi.fn() });
 
-const makeFactsDb = () => ({
-  getRecentFacts: vi.fn().mockReturnValue([]),
-  store: vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` }),
-  detectContradictions: vi.fn(),
-  setEmbeddingModel: vi.fn(),
-  boostConfidence: vi.fn().mockReturnValue(false),
-});
+const makeFactsDb = () => {
+  const store = vi.fn().mockReturnValue({ id: `fact-${randomUUID()}` });
+  return {
+    getRecentFacts: vi.fn().mockReturnValue([]),
+    store,
+    storeWithResult: vi.fn((args: Record<string, unknown>) => {
+      const entry = store(args);
+      return {
+        skipped: false,
+        newlyStored: true,
+        embeddingStale: false,
+        evictedFactId: null,
+        preMergeText: null,
+        entry,
+      };
+    }),
+    detectContradictions: vi.fn(),
+    setEmbeddingModel: vi.fn(),
+    boostConfidence: vi.fn().mockReturnValue(false),
+  };
+};
 
 const makeVectorDb = () => ({
   store: vi.fn().mockResolvedValue(undefined),

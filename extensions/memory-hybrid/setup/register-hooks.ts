@@ -12,10 +12,23 @@ import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
 import { getMemoryCategories } from "../config.js";
 import { withHookResolutionApi } from "../lifecycle/hook-resolution-api.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
+import { resolveRecallScopeFilter } from "../lifecycle/stage-recall/degraded-recall.js";
 import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { trimBlockToBudget } from "../services/context-block-trim.js";
+import { applyPrependBudget, getRemainingPrependTokens } from "../services/prepend-budget.js";
+import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
+import {
+  assembleRecallPrependContext,
+  DEFAULT_EDICT_BUDGET_FRACTION,
+  edictMaxTokensForBudget,
+  formatSanitizedMemoryPreview,
+  wrapUntrustedMemoryContent,
+} from "../services/recalled-context-assembler.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { estimateTokens } from "../utils/text.js";
 import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
 import { WorkflowTracker } from "../services/workflow-tracker.js";
 import {
@@ -165,6 +178,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           : undefined,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
+      progressiveIndexBySession: ctx.progressiveIndexBySession,
+      lastAutoRecallPromptBySession: ctx.lastAutoRecallPromptBySession,
+      injectedFactIdsBySession: ctx.injectedFactIdsBySession,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       walWrite: (operation, data, logger, supersedeTargetId) =>
@@ -178,6 +194,11 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       issueStore: ctx.issueStore,
       recallInFlightRef: ctx.recallInFlightRef,
       lastAutoRecallPromptRef: ctx.lastAutoRecallPromptRef,
+      prependBudgetRef: ctx.prependBudgetRef,
+      changeFeed: ctx.changeFeed ?? null,
+      proposalsDb: ctx.proposalsDb ?? null,
+      crystallizationStore: ctx.crystallizationStore ?? null,
+      toolProposalStore: ctx.toolProposalStore ?? null,
       registrationGeneration,
       currentRegistrationGenerationRef,
     };
@@ -199,10 +220,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     });
     throw err;
   }
+  if (ctx.sessionStateRef) {
+    ctx.sessionStateRef.value = hooks.sessionState;
+  }
   try {
     hooks.onAgentStart(guardedApi);
     hooks.onAgentEnd(guardedApi);
     hooks.onFrustrationDetect?.(guardedApi);
+    hooks.onChangeNotify?.(guardedApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
@@ -224,12 +249,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // Wrap warnings in a stable, parseable block to prevent prompt pollution
     const wrappedWarnings = [
       "<llm-config-warning>",
-      ...warnings,
+      ...warnings.map((w) => sanitizePromptInjection(String(w))),
       "Note: These configuration warnings will not repeat in this session.",
       "</llm-config-warning>",
     ].join("\n");
 
-    return { prependContext: wrappedWarnings };
+    const prepend = applyPrependBudget(lifecycleContext.prependBudgetRef, wrappedWarnings);
+    if (!prepend) return;
+    return { prependContext: prepend };
   });
 
   // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
@@ -298,9 +325,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         if (hooks.sessionState.capabilityHintsSessionsSeen.has(sessionKey)) return;
         hooks.sessionState.capabilityHintsSessionsSeen.add(sessionKey);
         hooks.sessionState.touchSession(sessionKey);
-        hooks.sessionState.pruneSessionMaps();
+        hooks.sessionState.pruneSessionMaps(ctx.injectedFactIdsBySession);
       }
-      return { prependContext: staticMemoryInstructions };
+      const remaining = getRemainingPrependTokens(lifecycleContext.prependBudgetRef);
+      if (remaining !== undefined && remaining < 120) return;
+      const prepend = applyPrependBudget(lifecycleContext.prependBudgetRef, staticMemoryInstructions);
+      if (!prepend) return;
+      return { prependContext: prepend };
     });
   }
 
@@ -337,11 +368,16 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         emitCompactionModelWatchdogAlert(api, "before_compaction", { event, hookCtx });
       }
 
-      await runPreConsolidationFlush(
+      const flush = await runPreConsolidationFlush(
         { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
         api.logger,
         "before_compaction",
       );
+      if (flush.failed) {
+        api.logger.error?.(
+          "memory-hybrid: before_compaction — WAL pre-flush failed; compaction may proceed on stale SQLite state",
+        );
+      }
 
       // Log pre-compaction snapshot for diagnostics
       const msgCount = ev.messageCount ?? 0;
@@ -372,8 +408,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         if (typeof api.resolvePath === "function") {
           const agentsMdPath = api.resolvePath("AGENTS.md");
           if (fs.existsSync(agentsMdPath)) {
-            const content = fs.readFileSync(agentsMdPath, "utf-8");
-            injectedContext += `\n<!-- Workspace Agent Rules (AGENTS.md) -->\n${content}\n`;
+            const content = sanitizePromptInjection(fs.readFileSync(agentsMdPath, "utf-8"));
+            const agentsBlock = `\n<!-- Workspace Agent Rules (AGENTS.md) -->\n${content}\n`;
+            injectedContext += trimBlockToBudget(agentsBlock, 1500).text;
           }
         }
       } catch (err) {
@@ -389,13 +426,20 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         const hotFacts = ctx.factsDb.getHotFacts(4000, scopeFilter);
         const pinnedRecallThreshold = ctx.cfg.autoRecall?.progressivePinnedRecallCount ?? 3;
 
-        const pinnedFacts = hotFacts.filter(
-          (x) => x.entry.decayClass === "permanent" || (x.entry.recallCount ?? 0) >= pinnedRecallThreshold,
-        );
+        const pinnedFacts = hotFacts.filter((x) => shouldPinFactForInjection(x.entry, pinnedRecallThreshold));
 
         if (pinnedFacts.length > 0) {
-          injectedContext += "\n<!-- Pinned Session Constraints / Memories -->\n";
-          injectedContext += `${pinnedFacts.map((f) => `- ${f.entry.summary || f.entry.text}`).join("\n")}\n`;
+          const lines = pinnedFacts
+            .map((f) => {
+              const raw = sanitizePromptInjection(f.entry.summary || f.entry.text);
+              return raw ? `- ${raw}` : "";
+            })
+            .filter(Boolean);
+          if (lines.length > 0) {
+            const wrappedPinned = wrapUntrustedMemoryContent(lines.join("\n"));
+            const pinnedBlock = `\n<!-- Pinned Session Constraints / Memories -->\n${wrappedPinned}\n`;
+            injectedContext += trimBlockToBudget(pinnedBlock, 800).text;
+          }
         }
       } catch (err) {
         api.logger.debug?.(`memory-hybrid: failed to fetch pinned facts for pre-compaction: ${err}`);
@@ -481,33 +525,62 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         // NOTE: `after_compaction` may not support prependContext in all OpenClaw versions.
         // The return value is a best-effort injection — older runtimes will silently ignore it.
         try {
+          const postCompactionBudget = Math.min(
+            ctx.cfg.autoRecall.maxTokens ?? 800,
+            ctx.cfg.retrieval.ambientBudgetTokens ?? 2000,
+            Math.max(400, Math.floor((ev.tokenCount ?? 800) * 0.15)),
+          );
           const blocks: string[] = [];
+          let usedRecallSnippet = false;
+          const compactionSessionKey =
+            resolveSessionKeyFromHookEvent(event, hookCtx) ?? lifecycleContext.currentAgentIdRef.value ?? "default";
+          const lastPrompt =
+            lifecycleContext.lastAutoRecallPromptBySession.get(compactionSessionKey)?.trim() ??
+            (typeof lifecycleContext.lastAutoRecallPromptRef.value === "string"
+              ? lifecycleContext.lastAutoRecallPromptRef.value.trim()
+              : "");
 
           if (ctx.cfg.autoRecall.enabled) {
-            const lastPrompt = lifecycleContext.lastAutoRecallPromptRef.value;
-            if (typeof lastPrompt === "string" && lastPrompt.trim().length >= 5) {
-              const recallBlock = await buildPostCompactionRecallSnippet(lifecycleContext, api, lastPrompt);
+            if (lastPrompt.length >= 5) {
+              const recallBlock = await buildPostCompactionRecallSnippet(
+                lifecycleContext,
+                api,
+                lastPrompt,
+                postCompactionBudget,
+              );
               if (recallBlock) {
                 blocks.push(recallBlock);
+                usedRecallSnippet = true;
                 api.logger.debug?.("memory-hybrid: after_compaction — injecting post-compaction recall snippet (#957)");
               }
             }
           }
 
-          const summaryFacts = ctx.factsDb.list(8);
-          const summaryLines: string[] = [];
+          const summaryInner: string[] = [];
 
-          if (summaryFacts.length > 0) {
-            summaryLines.push("<!-- memory-hybrid: post-compaction memory summary -->");
-            summaryLines.push("Key memories retained across compaction:");
-            for (const f of summaryFacts) {
-              const entityPrefix = f.entity ? `[${f.entity}] ` : "";
-              const preview = f.text.length > 150 ? `${f.text.slice(0, 150)}…` : f.text;
-              summaryLines.push(`- ${entityPrefix}${preview}`);
+          if (!usedRecallSnippet) {
+            const scopeFilter = resolveRecallScopeFilter(lifecycleContext);
+            const tierFilter = ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const);
+            const summaryFacts =
+              lastPrompt.length >= 5
+                ? ctx.factsDb
+                    .search(lastPrompt, 8, { scopeFilter, tierFilter, deferAccessRefresh: true })
+                    .map((r) => r.entry)
+                : ctx.cfg.memoryTiering.enabled
+                  ? ctx.factsDb.getHotFacts(8, scopeFilter).map((r) => r.entry)
+                  : ctx.factsDb.list(8);
+            if (summaryFacts.length > 0) {
+              summaryInner.push("Key memories retained across compaction:");
+              for (const f of summaryFacts) {
+                const line = formatSanitizedMemoryPreview(f.text, {
+                  entity: f.entity,
+                  maxChars: 150,
+                });
+                if (line) summaryInner.push(line);
+              }
             }
           }
 
-          // Append open issues summary if IssueStore is available
           if (ctx.issueStore) {
             try {
               const openIssues = ctx.issueStore.list({
@@ -515,10 +588,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
                 limit: 5,
               });
               if (openIssues.length > 0) {
-                summaryLines.push("");
-                summaryLines.push("Open issues:");
+                if (summaryInner.length > 0) summaryInner.push("");
+                summaryInner.push("Open issues:");
                 for (const issue of openIssues) {
-                  summaryLines.push(`- [${issue.severity}] ${issue.title} (${issue.status})`);
+                  const title = sanitizePromptInjection(issue.title);
+                  const severity = sanitizePromptInjection(issue.severity);
+                  const status = sanitizePromptInjection(issue.status);
+                  summaryInner.push(`- [${severity}] ${title} (${status})`);
                 }
               }
             } catch {
@@ -526,16 +602,28 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
             }
           }
 
-          if (summaryLines.length > 0) {
-            summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
-            blocks.push(summaryLines.join("\n"));
+          if (summaryInner.length > 0) {
+            const remaining = Math.max(0, postCompactionBudget - blocks.reduce((sum, b) => sum + estimateTokens(b), 0));
+            const wrapped = assembleRecallPrependContext(lifecycleContext, summaryInner.join("\n"), {
+              edictMaxTokens: edictMaxTokensForBudget(remaining, DEFAULT_EDICT_BUDGET_FRACTION),
+            });
+            if (wrapped) {
+              const summaryBlock = [
+                "<!-- memory-hybrid: post-compaction memory summary -->",
+                trimBlockToBudget(wrapped, remaining).text,
+                "<!-- /memory-hybrid: post-compaction memory summary -->",
+              ].join("\n");
+              blocks.push(summaryBlock);
+            }
           }
 
-          if (blocks.length > 0) {
+          const combined = blocks.filter((b) => b.trim().length > 0).join("\n\n");
+          const trimmed = trimBlockToBudget(combined, postCompactionBudget).text;
+          if (trimmed) {
             api.logger.debug?.(
-              `memory-hybrid: after_compaction — injecting post-compaction context (${summaryFacts.length} summary facts)`,
+              `memory-hybrid: after_compaction — injecting post-compaction context (~${estimateTokens(trimmed)} tokens, recall=${usedRecallSnippet})`,
             );
-            return { prependContext: blocks.join("\n\n") };
+            return { prependContext: trimmed };
           }
         } catch {
           // Non-fatal — summary injection failure should not disrupt normal operation

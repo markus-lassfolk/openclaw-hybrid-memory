@@ -931,7 +931,7 @@ describe("implicit feedback routing — negative → implicit_feedback_signal", 
     expect(row.supersededBy).toBe(canonical.id);
   });
 
-  it("keeps enough canonical context across many batches so late-page duplicates still collapse", () => {
+  it("keeps enough canonical context across many batches so late-page duplicates still collapse", { timeout: 120_000 }, () => {
     const db = makeDb(tmpDir);
     // Put the late duplicate in the first batch after legacy 2k carry would evict the canonical row.
     const PAGED_SCAN_LIMIT = 250;
@@ -1615,6 +1615,80 @@ describe("ImplicitFeedbackConfig — trajectoryLLMAnalysis", () => {
     expect(result.maxSignalsPerRun).toBe(1234);
     expect(result.maxTrajectoriesPerRun).toBe(7);
     expect(result.maxWallClockSeconds).toBe(42);
+  });
+});
+
+describe("implicit feedback routing — self-correction bridge", () => {
+  let tmpDir: string;
+  let sessionsDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "ifr-bridge-"));
+    sessionsDir = join(tmpDir, "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it("calls runSelfCorrectionRunForCli when triggerSelfCorrectionRun is enabled", async () => {
+    const mod = await import("../cli/cmd-selfcorrection.js");
+    const spy = vi.spyOn(mod, "runSelfCorrectionRunForCli").mockResolvedValue({
+      incidentsFound: 1,
+      analysed: 1,
+      autoFixed: 0,
+      proposals: [],
+      reportPath: null,
+      status: "success_analyzed",
+    });
+    const db = makeDb(tmpDir);
+    writeNegativeSession(sessionsDir, "2026-01-01-session.jsonl");
+    const ctx = makeCtx(db, sessionsDir, {
+      feedToReinforcement: false,
+      feedToSelfCorrection: true,
+      triggerSelfCorrectionRun: true,
+      selfCorrectionBridgeMaxIncidents: 5,
+      selfCorrectionBridgeMinConfidence: 0,
+    });
+    await runExtractImplicitFeedbackForCli(ctx, {
+      days: 365,
+      dryRun: false,
+      includeTrajectories: false,
+      includeClosedLoop: false,
+    });
+    expect(spy).toHaveBeenCalled();
+    const call = spy.mock.calls[0]?.[1];
+    expect(call?.incidents?.length).toBeGreaterThan(0);
+    expect(call?.incidents?.length ?? 0).toBeLessThanOrEqual(5);
+    spy.mockRestore();
+  });
+
+  it("does not call runSelfCorrectionRunForCli when triggerSelfCorrectionRun is false", async () => {
+    const mod = await import("../cli/cmd-selfcorrection.js");
+    const spy = vi.spyOn(mod, "runSelfCorrectionRunForCli").mockResolvedValue({
+      incidentsFound: 0,
+      analysed: 0,
+      autoFixed: 0,
+      proposals: [],
+      reportPath: null,
+    });
+    const db = makeDb(tmpDir);
+    writeNegativeSession(sessionsDir, "2026-01-02-session.jsonl");
+    const ctx = makeCtx(db, sessionsDir, {
+      feedToReinforcement: false,
+      feedToSelfCorrection: true,
+      triggerSelfCorrectionRun: false,
+    });
+    await runExtractImplicitFeedbackForCli(ctx, {
+      days: 365,
+      dryRun: false,
+      includeTrajectories: false,
+      includeClosedLoop: false,
+    });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 

@@ -536,7 +536,7 @@ Run **`openclaw hybrid-mem verify`** to see effective models per tier and featur
 
 ## Session distillation (legacy: `distill`)
 
-Session distillation uses an LLM to extract durable facts from conversation logs. The main distill pass uses **`distill.modelTier`** (unset → **`maintenance`**) plus the corresponding `llm.<tier>` list; `--model` and legacy `distill.defaultModel` still override for one run/global compatibility. The **`distill`** block is otherwise legacy.
+Session distillation uses an LLM to extract durable facts from conversation logs. The main distill pass uses **`distill.modelTier`** (unset → **`maintenance`**; set to `nano`, `maintenance`, or `default`) plus the corresponding `llm.<tier>` list. Legacy **`distill.modelTier="heavy"`** is still parsed but **clamped to maintenance** at runtime (#1205/#1216). `--model` and legacy `distill.defaultModel` still override for one run/global compatibility. The **`distill`** block is otherwise legacy.
 
 ```json
 "distill": {
@@ -704,6 +704,22 @@ Optional config for the self-correction pipeline: semantic dedup before storing 
 | `analyzeViaSpawn` | `false` | When true and incidents > spawnThreshold, run Phase 2 via `openclaw sessions spawn` |
 | `spawnThreshold` | `15` | Use spawn for Phase 2 when incident count exceeds this |
 | `spawnModel` | `gemini` | Model for spawn when analyzeViaSpawn is true |
+| `analysisBatchSize` | `5` (MiniMax/M3) / `25` | Incidents per LLM analysis batch; auto-split-on-mismatch for partial M3 output |
+| `batchDelayMs` | `250` | Delay in ms between sequential analysis batches (rate-limit pacing) |
+
+MiniMax M3 maintenance tuning under `llm.minimax`:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `llm.minimax.thinking` | `"disabled"` | Global MiniMax thinking fallback for maintenance LLM calls: `"disabled"` (recommended for JSON extraction) or `"adaptive"` |
+| `selfCorrection.thinking` | (falls back to `llm.minimax.thinking`) | Self-correction batch analysis thinking mode |
+| `reinforcement.thinking` | (falls back to `llm.minimax.thinking`) | Reinforcement incident analysis thinking mode |
+| `distill.thinking` | (falls back to `llm.minimax.thinking`) | Session distill LLM thinking mode |
+| `reflection.thinking` | (falls back to `llm.minimax.thinking`) | Reflection / reflect-rules / reflect-meta / consolidation thinking mode |
+
+Maintenance chat timeouts (MiniMax): M3 disabled **120s**, M3+thinking **180s**, M2.x+thinking **120s**; default **45s** otherwise. On thinking timeout the plugin retries once with `thinking=disabled`, then the maintenance fallback chain. See `benchmark/ab-maintenance/latency-report.md`.
+
+**Quality-first model selection (A/B validated):** scheduled maintenance prioritizes output richness and reliability over latency. Recommended per-task defaults from Maeve fixtures: self-correction → M3/disabled; reflection → M3/adaptive; distill → `distill.modelTier=maintenance` (M3/disabled); consolidation → M3/disabled; reinforcement → M2.7-highspeed/disabled. See `benchmark/ab-maintenance/maeve-tier-snippet.json`.
 
 ---
 

@@ -12,6 +12,7 @@ import { registerCrystallizationTools } from "../tools/crystallization-tools.js"
 import { type DashboardRoutesContext, registerDashboardHttpRoutes } from "../tools/dashboard-routes.js";
 import { registerDocumentTools } from "../tools/document-tools.js";
 import { type GoalToolsContext, registerGoalTools } from "../tools/goal-tools.js";
+import { registerHealthTools } from "../tools/health-dashboard.js";
 import { type PluginContext as GraphToolsContext, registerGraphTools } from "../tools/graph-tools.js";
 import { registerIssueTools } from "../tools/issue-tools.js";
 import { type MemoryToolsContext, registerMemoryTools } from "../tools/memory-tools.js";
@@ -22,6 +23,10 @@ import { registerSelfExtensionTools } from "../tools/self-extension-tools.js";
 import { registerTaskHygieneTools, resolveActiveTaskPathForTools } from "../tools/task-hygiene-tools.js";
 import { type PluginContext as UtilityToolsContext, registerUtilityTools } from "../tools/utility-tools.js";
 import { registerVerificationTools } from "../tools/verification-tools.js";
+import { registerWorkshopTools, type WorkshopToolsContext } from "../tools/workshop-tool.js";
+import { isWorkshopEnabled } from "../services/workshop-config.js";
+import { registerProposalGatewayMethods, type ProposalGatewayContext } from "../tools/proposal-gateway-methods.js";
+import { registerProposalHttpRoutes, type ProposalRoutesContext } from "../tools/proposal-routes.js";
 import { registerWorkflowTools } from "../tools/workflow-tools.js";
 import { getEnv } from "../utils/env-manager.js";
 
@@ -38,21 +43,24 @@ type UtilityInstallerContext = {
   runReflection: MemoryPluginAPI["runReflection"];
   runReflectionRules: MemoryPluginAPI["runReflectionRules"];
   runReflectionMeta: MemoryPluginAPI["runReflectionMeta"];
-  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string>;
+  walWrite: (operation: "store" | "update", data: Record<string, unknown>) => Promise<string | null>;
   walRemove: (id: string) => Promise<void>;
 };
 
 type ProvenanceInstallerContext = Pick<ToolsContext, "factsDb" | "eventLog" | "provenanceService" | "cfg">;
-type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "cfg">;
+type CredentialInstallerContext = Pick<ToolsContext, "credentialsDb" | "factsDb" | "vectorDb" | "cfg">;
 type DocumentInstallerContext = Pick<
   ToolsContext,
   "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
 >;
 type VerificationInstallerContext = Pick<ToolsContext, "factsDb" | "verificationStore" | "cfg">;
-type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "cfg">;
-type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore">;
-type CrystallizationInstallerContext = Pick<ToolsContext, "crystallizationStore" | "workflowStore" | "cfg">;
-type SelfExtensionInstallerContext = Pick<ToolsContext, "toolProposalStore" | "workflowStore" | "cfg">;
+type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "factsDb" | "cfg">;
+type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
+type CrystallizationInstallerContext = Pick<
+  ToolsContext,
+  "crystallizationStore" | "workflowStore" | "cfg" | "changeFeed"
+>;
+type SelfExtensionInstallerContext = Pick<ToolsContext, "toolProposalStore" | "workflowStore" | "cfg" | "changeFeed">;
 type ApitapInstallerContext = Pick<ToolsContext, "apitapStore" | "cfg">;
 
 function defineToolInstaller<TSelectedContext>(
@@ -83,6 +91,8 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     verificationStore,
     variantQueue,
     lastProgressiveIndexIds,
+    progressiveIndexBySession,
+    lastAutoRecallPromptBySession,
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
@@ -90,6 +100,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     walWrite,
     walRemove,
     auditStore,
+    issueStore,
   } = ctx;
 
   return {
@@ -108,6 +119,8 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     verificationStore,
     variantQueue,
     lastProgressiveIndexIds,
+    progressiveIndexBySession,
+    lastAutoRecallPromptBySession,
     currentAgentIdRef,
     pendingLLMWarnings,
     buildToolScopeFilter,
@@ -115,6 +128,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
     auditStore,
+    issueStore,
   };
 }
 
@@ -172,14 +186,19 @@ function installProvenanceTools(ctx: ProvenanceInstallerContext, api: ClawdbotPl
   }
 }
 
-function selectCredentialToolsContext({ credentialsDb, cfg }: ToolsContext): CredentialInstallerContext {
-  return { credentialsDb, cfg };
+function selectCredentialToolsContext({
+  credentialsDb,
+  factsDb,
+  vectorDb,
+  cfg,
+}: ToolsContext): CredentialInstallerContext {
+  return { credentialsDb, factsDb, vectorDb, cfg };
 }
 
 function installCredentialTools(ctx: CredentialInstallerContext, api: ClawdbotPluginApi): void {
-  const { credentialsDb, cfg } = ctx;
+  const { credentialsDb, factsDb, vectorDb, cfg } = ctx;
   if (cfg.credentials.enabled && credentialsDb) {
-    registerCredentialTools({ credentialsDb, cfg, api }, api);
+    registerCredentialTools({ credentialsDb, factsDb, vectorDb, cfg, api }, api);
   }
 }
 
@@ -189,35 +208,33 @@ function selectPersonaToolsContext({
   proposalsDb,
   cfg,
   resolvedSqlitePath,
+  changeFeed,
+  factsDb,
+  crystallizationStore,
+  toolProposalStore,
   timers,
 }: ToolsContext): PersonaInstallerContext {
-  return { proposalsDb: proposalsDb ?? undefined, cfg, resolvedSqlitePath, timers };
+  return {
+    proposalsDb: proposalsDb ?? undefined,
+    cfg,
+    resolvedSqlitePath,
+    changeFeed,
+    factsDb,
+    crystallizationStore,
+    toolProposalStore,
+    timers,
+  };
 }
 
 function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginApi): void {
-  const { proposalsDb, cfg, resolvedSqlitePath, timers } = ctx;
+  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore, timers } = ctx;
   if (!(cfg.personaProposals.enabled && proposalsDb)) return;
 
-  registerPersonaTools({ proposalsDb, cfg, resolvedSqlitePath }, api);
-  timers.proposalsPruneTimer.value = setInterval(
-    () => {
-      try {
-        if (proposalsDb?.isOpen()) {
-          const pruned = proposalsDb.pruneExpired();
-          if (pruned > 0) {
-            api.logger.info(`memory-hybrid: pruned ${pruned} expired proposal(s)`);
-          }
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "proposals",
-          operation: "periodic-prune",
-        });
-        api.logger.warn(`memory-hybrid: proposal prune failed: ${err}`);
-      }
-    },
-    24 * 60 * 60_000,
+  registerPersonaTools(
+    { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore },
+    api,
   );
+  timers.proposalsPruneTimer.value = null; // proposals-prune handled by maintenance orchestrator cycle tick
 }
 
 function selectDocumentToolsContext({
@@ -254,23 +271,30 @@ function installVerificationTools(ctx: VerificationInstallerContext, api: Clawdb
   }
 }
 
-function selectIssueToolsContext({ issueStore, cfg }: ToolsContext): IssueInstallerContext {
-  return { issueStore, cfg };
+function selectIssueToolsContext({ issueStore, factsDb, cfg }: ToolsContext): IssueInstallerContext {
+  return { issueStore, factsDb, cfg };
 }
 
 function installIssueTools(ctx: IssueInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.issueStore) {
-    registerIssueTools({ issueStore: ctx.issueStore, cfg: ctx.cfg }, api);
+    registerIssueTools({ issueStore: ctx.issueStore, factsDb: ctx.factsDb, cfg: ctx.cfg }, api);
   }
 }
 
-function selectWorkflowToolsContext({ workflowStore }: ToolsContext): WorkflowInstallerContext {
-  return { workflowStore };
+function selectWorkflowToolsContext({ workflowStore, cfg }: ToolsContext): WorkflowInstallerContext {
+  return { workflowStore, cfg };
 }
 
 function installWorkflowTools(ctx: WorkflowInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.workflowStore) {
-    registerWorkflowTools({ workflowStore: ctx.workflowStore }, api);
+    registerWorkflowTools(
+      {
+        workflowStore: ctx.workflowStore,
+        excludeSystemGoals: ctx.cfg.crystallization?.excludeSystemGoals,
+        excludeGoalPatterns: ctx.cfg.crystallization?.excludeGoalPatterns,
+      },
+      api,
+    );
   }
 }
 
@@ -278,14 +302,20 @@ function selectCrystallizationToolsContext({
   crystallizationStore,
   workflowStore,
   cfg,
+  changeFeed,
 }: ToolsContext): CrystallizationInstallerContext {
-  return { crystallizationStore, workflowStore, cfg };
+  return { crystallizationStore, workflowStore, cfg, changeFeed };
 }
 
 function installCrystallizationTools(ctx: CrystallizationInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.crystallizationStore && ctx.workflowStore) {
     registerCrystallizationTools(
-      { crystallizationStore: ctx.crystallizationStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg },
+      {
+        crystallizationStore: ctx.crystallizationStore,
+        workflowStore: ctx.workflowStore,
+        cfg: ctx.cfg,
+        changeFeed: ctx.changeFeed ?? null,
+      },
       api,
     );
   }
@@ -295,14 +325,20 @@ function selectSelfExtensionToolsContext({
   toolProposalStore,
   workflowStore,
   cfg,
+  changeFeed,
 }: ToolsContext): SelfExtensionInstallerContext {
-  return { toolProposalStore, workflowStore, cfg };
+  return { toolProposalStore, workflowStore, cfg, changeFeed };
 }
 
 function installSelfExtensionTools(ctx: SelfExtensionInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.toolProposalStore && ctx.workflowStore) {
     registerSelfExtensionTools(
-      { toolProposalStore: ctx.toolProposalStore, workflowStore: ctx.workflowStore, cfg: ctx.cfg },
+      {
+        toolProposalStore: ctx.toolProposalStore,
+        workflowStore: ctx.workflowStore,
+        cfg: ctx.cfg,
+        changeFeed: ctx.changeFeed ?? null,
+      },
       api,
     );
   }
@@ -326,6 +362,24 @@ function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPl
   registerDashboardHttpRoutes({ cfg }, api);
 }
 
+type HealthInstallerContext = Pick<ToolsContext, "factsDb" | "cfg" | "resolvedSqlitePath" | "vectorDb">;
+
+function selectHealthToolsContext({ factsDb, cfg, resolvedSqlitePath, vectorDb }: ToolsContext): HealthInstallerContext {
+  return { factsDb, cfg, resolvedSqlitePath, vectorDb };
+}
+
+function installHealthTools(ctx: HealthInstallerContext, api: ClawdbotPluginApi): void {
+  registerHealthTools(
+    {
+      factsDb: ctx.factsDb,
+      cfg: ctx.cfg,
+      resolvedSqlitePath: ctx.resolvedSqlitePath,
+      resolvedLancePath: typeof ctx.vectorDb?.getPath === "function" ? ctx.vectorDb.getPath() : "",
+    },
+    api,
+  );
+}
+
 function selectPublicApiRoutesContext({
   cfg,
   factsDb,
@@ -335,6 +389,9 @@ function selectPublicApiRoutesContext({
   recallInFlightRef,
   variantQueue,
 }: ToolsContext): PublicApiRoutesContext {
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? pathJoin(homedir(), ".openclaw", "workspace");
+  const goalsDir =
+    cfg.goalStewardship?.enabled === true ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir) : undefined;
   return {
     cfg,
     factsDb,
@@ -344,11 +401,63 @@ function selectPublicApiRoutesContext({
     resolvedLancePath: typeof vectorDb?.getPath === "function" ? vectorDb.getPath() : undefined,
     recallInFlightRef,
     variantQueue,
+    goalsDir,
   };
 }
 
 function installPublicApiRoutes(ctx: PublicApiRoutesContext, api: ClawdbotPluginApi): void {
   registerPublicApiRoutes(ctx, api);
+}
+
+function selectWorkshopToolsContext({
+  cfg,
+  factsDb,
+  proposalsDb,
+  crystallizationStore,
+  toolProposalStore,
+  workflowStore,
+  resolvedSqlitePath,
+  changeFeed,
+  sessionStateRef,
+}: ToolsContext): WorkshopToolsContext {
+  return {
+    cfg,
+    factsDb,
+    proposalsDb,
+    crystallizationStore,
+    toolProposalStore,
+    workflowStore,
+    resolvedSqlitePath,
+    changeFeed,
+    sessionStateRef,
+  };
+}
+
+function installWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPluginApi): void {
+  if (!isWorkshopEnabled(ctx.cfg)) return;
+  registerWorkshopTools(ctx, api);
+}
+
+function selectProposalRoutesContext(ctx: ToolsContext, api: ClawdbotPluginApi): ProposalRoutesContext {
+  return {
+    cfg: { health: ctx.cfg.health },
+    cfgFull: ctx.cfg,
+    factsDb: ctx.factsDb,
+    proposalsDb: ctx.proposalsDb,
+    crystallizationStore: ctx.crystallizationStore,
+    toolProposalStore: ctx.toolProposalStore,
+    workflowStore: ctx.workflowStore,
+    resolvedSqlitePath: ctx.resolvedSqlitePath,
+    changeFeed: ctx.changeFeed,
+    sessionStateRef: ctx.sessionStateRef,
+    api,
+  };
+}
+
+function installProposalRoutes(ctx: ProposalRoutesContext): void {
+  if (!isWorkshopEnabled(ctx.cfgFull)) return;
+  registerProposalHttpRoutes(ctx);
+  registerProposalGatewayMethods(ctx);
 }
 
 function selectGoalToolsContext(ctx: ToolsContext): GoalToolsContext {
@@ -422,6 +531,18 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     install: installPersonaTools,
   }),
   defineToolInstaller({
+    id: "workshop",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectWorkshopToolsContext(ctx),
+    install: installWorkshopTools,
+  }),
+  defineToolInstaller({
+    id: "proposalRoutes",
+    bootstrapPhase: "optional",
+    selectContext: (ctx, api) => selectProposalRoutesContext(ctx, api),
+    install: installProposalRoutes,
+  }),
+  defineToolInstaller({
     id: "documents",
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectDocumentToolsContext(ctx),
@@ -468,6 +589,12 @@ export const toolInstallers = orderByBootstrapPhase<ToolInstaller>([
     bootstrapPhase: "optional",
     selectContext: (ctx) => selectDashboardRoutesContext(ctx),
     install: installDashboardRoutes,
+  }),
+  defineToolInstaller({
+    id: "health",
+    bootstrapPhase: "optional",
+    selectContext: (ctx) => selectHealthToolsContext(ctx),
+    install: installHealthTools,
   }),
   defineToolInstaller({
     id: "publicApi",

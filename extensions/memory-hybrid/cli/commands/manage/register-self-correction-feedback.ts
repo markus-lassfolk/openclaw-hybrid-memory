@@ -1,10 +1,70 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { type CommanderOptsParent, readHybridMemVerbose } from "../../global-verbose.js";
+import {
+  type LearnCommandNames,
+  FLAT_LEARN_COMMAND_NAMES,
+  GROUPED_LEARN_COMMAND_NAMES,
+  createCommandGroup,
+  deprecatedAction,
+} from "../../commands/cli-group-utils.js";
 import { registerScanMaintenanceOverrideOptions, scanMaintenanceOverridePayload } from "../../maintenance-overrides.js";
 import { type Chainable, SCAN_MIN_INTERVAL_MS, withExit } from "../../shared.js";
+import type { SelfCorrectionRunResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
 
-export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBindings): void {
+function isSelfCorrectionDegradedStatus(status: SelfCorrectionRunResult["status"]): boolean {
+  return status === "failed_partial" || status === "failed_suspect_zero_parsed";
+}
+
+function selfCorrectionBatchProgressSuffix(res: SelfCorrectionRunResult): string {
+  if (res.status === "failed_partial" || res.status === "failed" || res.status === "failed_parse") {
+    return ` batches_completed=${res.batchesCompleted ?? 0}/${res.totalBatches ?? "?"}`;
+  }
+  return "";
+}
+
+export type LearnRegistrationOptions = {
+  names?: LearnCommandNames;
+  flatDeprecatedOn?: Chainable;
+  /** When true, nest extract/run under a `self-correction` subcommand. */
+  grouped?: boolean;
+};
+
+export function registerManageSelfCorrectionFeedback(
+  mem: Chainable,
+  b: ManageBindings,
+  opts?: LearnRegistrationOptions,
+): void {
+  if (opts?.flatDeprecatedOn) {
+    registerManageSelfCorrectionFeedbackOnParent(opts.flatDeprecatedOn, b, FLAT_LEARN_COMMAND_NAMES, deprecatedAction);
+    return;
+  }
+  const names = opts?.names ?? FLAT_LEARN_COMMAND_NAMES;
+  registerManageSelfCorrectionFeedbackOnParent(mem, b, names, undefined, opts?.grouped === true);
+}
+
+function registerManageSelfCorrectionFeedbackOnParent(
+  mem: Chainable,
+  b: ManageBindings,
+  names: LearnCommandNames,
+  wrapAction?: (oldPath: string, newPath: string, fn: (...args: unknown[]) => void | Promise<void>) => (
+    ...args: unknown[]
+  ) => void | Promise<void>,
+  grouped = false,
+): void {
+  const groupedPath = (sub: string) => `learn ${sub}`;
+  const maybeWrap = (
+    flatPath: string,
+    sub: string,
+    fn: (...args: unknown[]) => void | Promise<void>,
+  ): ((...args: unknown[]) => void | Promise<void>) =>
+    wrapAction ? wrapAction(flatPath, groupedPath(sub), fn) : fn;
+
+  const selfCorrectionParent = grouped
+    ? mem.command("self-correction").description("Extract and run self-correction from session logs")
+    : mem;
+  const extractName = grouped ? names.selfCorrectionExtract : names.selfCorrectionExtract;
+  const runName = grouped ? names.selfCorrectionRun : names.selfCorrectionRun;
   const {
     cfg,
     ctx,
@@ -18,8 +78,8 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
     runAnalyzeFeedbackPhrases,
   } = b;
 
-  mem
-    .command("self-correction-extract")
+  selfCorrectionParent
+    .command(extractName)
     .description(
       "Extract self-correction incidents from session JSONL using multi-language correction signals from .language-keywords.json",
     )
@@ -27,7 +87,11 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
     .option("--output <path>", "Output path for incidents JSON (default: memory/.self-correction-incidents.json)")
     .option("-v, --verbose", "Log session files scanned (plugin logger) and incident previews on stdout")
     .action(
-      withExit(async (opts?: { days?: string; output?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      withExit(
+        maybeWrap("self-correction-extract", grouped ? "self-correction extract" : names.selfCorrectionExtract, async (
+          opts?: { days?: string; output?: string; verbose?: boolean },
+          cmd?: CommanderOptsParent,
+        ) => {
         const days = opts?.days ? Number.parseInt(opts.days, 10) : 7;
         const outputPath = opts?.output;
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
@@ -52,27 +116,30 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             console.log(`  ${inc.sessionFile}: ${preview}${tail}`);
           }
         }
-      }),
+        }),
+      ),
     );
 
   registerScanMaintenanceOverrideOptions(
-    mem
-      .command("self-correction-run")
+    selfCorrectionParent
+      .command(runName)
       .description("Analyze extracted incidents and auto-remediate (memory store, TOOLS.md); report to memory/reports")
       .option("--extract-path <path>", "Path to incidents JSON (default: memory/.self-correction-incidents.json)")
       .option("--workspace <w>", "Workspace path (for TOOLS.md)")
       .option("--dry-run", "Show what would be applied without applying")
+      .option("--days <n>", "Days to look back when extracting incidents (default 3)", "3")
       .option("--model <m>", "LLM model override (default from self-correction heavy tier)")
       .option("--approve", "Auto-approve all corrections (skip review)")
       .option("--no-apply-tools", "Skip TOOLS.md updates (memory-only)")
       .option("-v, --verbose", "Log progress before LLM analysis (plugin logger); respects hybrid-mem -v"),
   ).action(
     withExit(
-      async (
+      maybeWrap("self-correction-run", grouped ? "self-correction run" : names.selfCorrectionRun, async (
         opts?: {
           extractPath?: string;
           workspace?: string;
           dryRun?: boolean;
+          days?: string;
           model?: string;
           approve?: boolean;
           applyTools?: boolean;
@@ -85,6 +152,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         const extractPath = opts?.extractPath;
         const workspace = opts?.workspace;
         const dryRun = !!opts?.dryRun;
+        const days = opts?.days ? Number.parseInt(opts.days, 10) : 3;
         const model = opts?.model?.trim() || undefined;
         const approve = !!opts?.approve;
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
@@ -94,6 +162,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
             extractPath,
             workspace,
             dryRun,
+            days,
             model,
             approve,
             applyTools: opts?.applyTools,
@@ -109,8 +178,11 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         }
         if (res.error) {
           console.error(`Error: ${res.error}${res.status ? ` status=${res.status}` : ""}`);
-          process.exitCode = 1;
+          process.exitCode = isSelfCorrectionDegradedStatus(res.status) ? 2 : 1;
           return;
+        }
+        if (isSelfCorrectionDegradedStatus(res.status)) {
+          process.exitCode = 2;
         }
         if (res.skipped) {
           const thresholdH = Math.round(SCAN_MIN_INTERVAL_MS / 3_600_000);
@@ -126,6 +198,15 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         console.log(
           `Self-correction run complete: ${res.incidentsFound} incidents found, ${res.analysed} analysed, ${res.autoFixed} auto-fixed ${dryRun ? "(dry-run)" : ""}${res.status ? ` status=${res.status}` : ""}`,
         );
+        if (res.batchesStarted != null || res.retryCount != null || res.batchesCompleted != null) {
+          console.log(
+            `Batches started: ${res.batchesStarted ?? 0} | Batches completed: ${res.batchesCompleted ?? 0}/${res.totalBatches ?? "?"} | Parsed item lines: ${res.analysed ?? 0} | Retry lines: ${res.retryCount ?? 0} | Fallback lines: ${res.fallbackCount ?? 0} | Errors/unparseable/failure lines: ${(res.parseFailures ?? 0) + (res.unparseableFailures ?? 0)}`,
+          );
+          const parseSuccess = res.status === "success_analyzed" || res.status === "success_no_incidents";
+          console.log(
+            `parse_success=${parseSuccess} parsed_candidates=${res.analysed ?? 0} retry_count=${res.retryCount ?? 0} fallback_count=${res.fallbackCount ?? 0} parse_failures=${res.parseFailures ?? 0} unparseable_failures=${res.unparseableFailures ?? 0}${selfCorrectionBatchProgressSuffix(res)}`,
+          );
+        }
         if (res.proposals.length > 0) {
           console.log(`Proposals (${res.proposals.length}):`);
           for (const p of res.proposals) {
@@ -144,14 +225,14 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         if (res.toolsApplied != null && res.toolsApplied > 0) {
           console.log(`TOOLS.md updates applied: ${res.toolsApplied}`);
         }
-      },
+      }),
     ),
   );
 
   if (runExtractImplicitFeedback) {
     registerScanMaintenanceOverrideOptions(
       mem
-        .command("extract-implicit")
+        .command(names.implicit)
         .description(
           "Extract implicit feedback signals from session transcripts and route to reinforcement/self-correction pipelines",
         )
@@ -162,7 +243,7 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         .option("--no-closed-loop", "Skip closed-loop analysis"),
     ).action(
       withExit(
-        async (
+        maybeWrap("extract-implicit", "implicit", async (
           opts?: {
             days?: string;
             dryRun?: boolean;
@@ -217,18 +298,19 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           if (res.closedLoopReport) {
             console.log(`\n${res.closedLoopReport}`);
           }
-        },
+        }),
       ),
     );
   }
 
   // ----- cross-agent-learning (Issue #263 — Phase 2) -----
   mem
-    .command("cross-agent-learning")
+    .command(names.crossAgent)
     .description("Generalise agent-scoped lessons into global patterns (Issue #263 — Phase 2)")
     .option("-v, --verbose", "Log each LLM batch and use hybrid-mem -v for full plugin output")
     .action(
-      withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      withExit(
+        maybeWrap("cross-agent-learning", "cross-agent", async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
         if (!runCrossAgentLearning) {
           console.error("cross-agent-learning is not available in this context.");
@@ -257,9 +339,11 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
         if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
       }),
+      ),
     );
 
-  // ----- cost-report (Issue #270) -----
+  // ----- cost-report (Issue #270) — top-level only, not under `learn` group -----
+  if (!grouped) {
   mem
     .command("cost-report")
     .description("Show LLM token usage and estimated cost breakdown by feature (Issue #270)")
@@ -293,14 +377,16 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         },
       ),
     );
+  }
 
   // ----- tool-effectiveness (Issue #263 — Phase 3) -----
   mem
-    .command("tool-effectiveness")
+    .command(names.tools)
     .description("Compute and display tool effectiveness scores from workflow traces (Issue #263 — Phase 3)")
     .option("-v, --verbose", "Show detailed per-tool breakdown")
     .action(
-      withExit(async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
+      withExit(
+        maybeWrap("tool-effectiveness", "tools", async (opts?: { verbose?: boolean }, cmd?: CommanderOptsParent) => {
         if (!runToolEffectiveness) {
           console.error("tool-effectiveness is not available in this context.");
           process.exitCode = 1;
@@ -320,10 +406,11 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
         }
         console.log(output);
       }),
+      ),
     );
 
   mem
-    .command("analyze-feedback-phrases")
+    .command(names.feedback)
     .description(
       "Analyze session logs with an LLM (e.g. Gemini) to discover your praise/frustration phrases; optional --learn to save to .user-feedback-phrases.json",
     )
@@ -335,7 +422,8 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
       "Merge discovered phrases into .user-feedback-phrases.json (reinforcement/correction detection will use them)",
     )
     .action(
-      withExit(async (opts?: { days?: string; model?: string; output?: string; learn?: boolean }) => {
+      withExit(
+        maybeWrap("analyze-feedback-phrases", "feedback", async (opts?: { days?: string; model?: string; output?: string; learn?: boolean }) => {
         if (!runAnalyzeFeedbackPhrases) {
           console.error("analyze-feedback-phrases is not available in this context.");
           process.exitCode = 1;
@@ -384,5 +472,13 @@ export function registerManageSelfCorrectionFeedback(mem: Chainable, b: ManageBi
           console.log(`Output written to ${outputPath}`);
         }
       }),
+      ),
     );
+}
+
+/** Register grouped `learn` commands plus deprecated flat aliases. */
+export function registerLearnGroup(mem: Chainable, b: ManageBindings): void {
+  const group = createCommandGroup(mem, "learn", "Self-correction and feedback learning");
+  registerManageSelfCorrectionFeedback(group, b, { names: GROUPED_LEARN_COMMAND_NAMES, grouped: true });
+  registerManageSelfCorrectionFeedback(mem, b, { flatDeprecatedOn: mem });
 }

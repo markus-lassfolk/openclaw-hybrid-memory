@@ -4,8 +4,19 @@
  */
 
 import type { OpenAI } from "openai";
-import { DEFAULT_CHAT_TIMEOUT_MS } from "../utils/constants.js";
+import {
+  DEFAULT_CHAT_TIMEOUT_MS,
+  MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV,
+  MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MAX_MS,
+  MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MIN_MS,
+  MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS,
+  MAINTENANCE_M3_CHAT_TIMEOUT_MS,
+  MAINTENANCE_THINKING_CHAT_TIMEOUT_MS,
+} from "../utils/constants.js";
+import { getEnv } from "../utils/env-manager.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { pluginLogger } from "../utils/logger.js";
+import { applyOpenClawGatewayModelRequest, isOpenClawGatewayClient } from "../utils/openclaw-gateway-http.js";
 import { withCostFeature } from "./cost-context.js";
 import { capturePluginError } from "./error-reporter.js";
 import {
@@ -17,14 +28,60 @@ import {
   type WireApi,
   getDistillBatchTokenLimit as getDistillBatchTokenLimitFromCatalog,
   getDistillMaxOutputTokens as getDistillMaxOutputTokensFromCatalog,
+  getMaintenanceMaxOutputTokens as getMaintenanceMaxOutputTokensFromCatalog,
+  isMiniMaxModel,
   requiresMaxCompletionTokens,
   shouldOmitSamplingParams,
   resolveWireApi,
 } from "./model-capabilities.js";
-import { callResponsesApi } from "./responses-adapter.js";
+import { callResponsesApi, mapResponsesFinishReason } from "./responses-adapter.js";
 import { recordProviderHttpAttempt, formatRecentHttpAttemptsForRateLimitLog } from "./recent-http-attempts.js";
 
 export { is403QuotaOrRateLimitLike, parseGoDurationToMs, parseRetryAfterMs } from "./llm-rate-limit-headers.js";
+export { isMiniMaxModel, isMiniMaxM3Model } from "./model-capabilities.js";
+
+/** MiniMax M3 thinking mode: `adaptive` (provider default) or `disabled` (skip thinking blocks for JSON extraction). */
+export type MiniMaxThinkingMode = "disabled" | "adaptive";
+
+/** Whether thinking blocks are requested (adaptive maps to provider thinking; enabled is treated as adaptive at call sites). */
+export function isMiniMaxThinkingEnabled(thinkingMode?: MiniMaxThinkingMode | "enabled"): boolean {
+  return thinkingMode === "adaptive" || thinkingMode === "enabled";
+}
+
+/**
+ * Per-request timeout for maintenance-tier chat (self-correction, reflection, distill, etc.).
+ * Derived from A/B latencies on real Maeve fixtures (2026-06-04): M3+thinking often 40–90s+.
+ */
+export function resolveMaintenanceChatTimeoutMs(model: string, thinkingMode?: MiniMaxThinkingMode | "enabled"): number {
+  const overrideRaw = getEnv(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_ENV)?.trim();
+  if (overrideRaw) {
+    const parsed = Number.parseInt(overrideRaw, 10);
+    if (Number.isFinite(parsed)) {
+      return Math.min(
+        MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MAX_MS,
+        Math.max(MAINTENANCE_CHAT_TIMEOUT_OVERRIDE_MIN_MS, parsed),
+      );
+    }
+  }
+  if (!isMiniMaxModel(model)) return DEFAULT_CHAT_TIMEOUT_MS;
+  const m3 = /MiniMax-M3/i.test(model);
+  if (isMiniMaxThinkingEnabled(thinkingMode)) {
+    return m3 ? MAINTENANCE_THINKING_CHAT_TIMEOUT_MS : MAINTENANCE_M27_THINKING_CHAT_TIMEOUT_MS;
+  }
+  return m3 ? MAINTENANCE_M3_CHAT_TIMEOUT_MS : DEFAULT_CHAT_TIMEOUT_MS;
+}
+
+export type ChatCompletionUsageSummary = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
+export type ChatCompleteDetailedResult = {
+  text: string;
+  finishReason?: string | null;
+  usage?: ChatCompletionUsageSummary;
+};
 
 /**
  * Thrown when a model's provider has no API key or base URL configured in llm.providers.
@@ -435,7 +492,7 @@ export function isOllamaOOM(err: unknown): boolean {
   );
 }
 
-export async function chatComplete(opts: {
+export async function chatCompleteDetailed(opts: {
   model: string;
   content: string;
   temperature?: number;
@@ -451,7 +508,9 @@ export async function chatComplete(opts: {
   wireApi?: WireApi;
   /** OpenAI chat.completions response_format (chat wire API only). */
   responseFormat?: { type: "json_object" };
-}): Promise<string> {
+  /** MiniMax-only: control deep thinking (`disabled` saves output budget for structured JSON). */
+  thinkingMode?: MiniMaxThinkingMode;
+}): Promise<ChatCompleteDetailedResult> {
   const {
     model,
     content,
@@ -462,6 +521,7 @@ export async function chatComplete(opts: {
     feature,
     wireApi: wireApiOverride,
     responseFormat,
+    thinkingMode,
   } = opts;
   const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(model);
   const controller = new AbortController();
@@ -485,15 +545,17 @@ export async function chatComplete(opts: {
           { model, content, temperature, maxTokens: effectiveMaxTokens },
           { signal: controller.signal },
         );
-      const { text } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
+      const { text, raw } = await (feature ? withCostFeature(feature, doCreate) : doCreate());
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener("abort", onAbort);
-      return text;
+      return { text, finishReason: mapResponsesFinishReason(raw) };
     }
 
     // Standard chat.completions.create path
     const useMaxCompletionTokens = requiresMaxCompletionTokens(model);
-    const body: OpenAI.ChatCompletionCreateParamsNonStreaming = {
+    const body: OpenAI.ChatCompletionCreateParamsNonStreaming & {
+      thinking?: { type: MiniMaxThinkingMode };
+    } = {
       model,
       messages: [{ role: "user", content }],
       ...(useMaxCompletionTokens ? { max_completion_tokens: effectiveMaxTokens } : { max_tokens: effectiveMaxTokens }),
@@ -504,27 +566,40 @@ export async function chatComplete(opts: {
     if (responseFormat) {
       body.response_format = responseFormat;
     }
+    if (thinkingMode && isMiniMaxModel(model)) {
+      body.thinking = { type: thinkingMode };
+    }
+    let requestBody: typeof body = body;
+    let createOpts: { signal: AbortSignal; headers?: Record<string, string> } = { signal: controller.signal };
+    if (isOpenClawGatewayClient(opts.openai)) {
+      const applied = applyOpenClawGatewayModelRequest(body as unknown as Record<string, unknown>, model, createOpts);
+      requestBody = applied.body as unknown as typeof body;
+      createOpts = applied.opts as unknown as typeof createOpts;
+    }
     const doCreate = () =>
-      opts.openai.chat.completions.create(body as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0], {
-        signal: controller.signal,
-      });
+      opts.openai.chat.completions.create(
+        requestBody as unknown as Parameters<OpenAI["chat"]["completions"]["create"]>[0],
+        createOpts,
+      );
     // If feature is provided, wrap in withCostFeature so the proxy attributes the call correctly.
     // Cost recording itself is done by the OpenAI proxy in setup/init-databases.ts.
     const resp = (await (feature ? withCostFeature(feature, doCreate) : doCreate())) as OpenAI.Chat.ChatCompletion;
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
-    const msg = resp.choices?.[0]?.message;
-    const msgContent = msg?.content?.trim();
-    if (msgContent) return msgContent;
-    // Qwen3 thinking mode (Ollama OpenAI-compat endpoint) puts the response in
-    // message.reasoning_content (current standard, May 2025+) or message.reasoning (legacy).
-    // Fall back to these fields when enable_thinking=true so agents don't see an empty reply (#314).
-    const msgRecord = msg as unknown as Record<string, unknown> | undefined;
-    const reasoningContent = msgRecord?.reasoning_content;
-    if (typeof reasoningContent === "string" && reasoningContent.trim()) return reasoningContent.trim();
-    const reasoning = msgRecord?.reasoning;
-    if (typeof reasoning === "string" && reasoning.trim()) return reasoning.trim();
-    return msgContent ?? "";
+    const choice = resp.choices?.[0];
+    const msg = choice?.message;
+    const usageRaw = resp.usage;
+    return {
+      text: extractAssistantMessageText(msg).text,
+      finishReason: choice?.finish_reason ?? null,
+      usage: usageRaw
+        ? {
+            promptTokens: usageRaw.prompt_tokens,
+            completionTokens: usageRaw.completion_tokens,
+            totalTokens: usageRaw.total_tokens,
+          }
+        : undefined,
+    };
   } catch (err) {
     clearTimeout(timeoutId);
     if (signal) signal.removeEventListener("abort", onAbort);
@@ -574,6 +649,29 @@ export async function chatComplete(opts: {
   }
 }
 
+export async function chatComplete(opts: {
+  model: string;
+  content: string;
+  temperature?: number;
+  maxTokens?: number;
+  openai: OpenAI;
+  /** Timeout in ms; after this the promise rejects. Prevents silent hang when gateway/LLM never responds. Default 45s. */
+  timeoutMs?: number;
+  /** When aborted (e.g. parent timeout), the request is cancelled and no retry is needed. */
+  signal?: AbortSignal;
+  /** Feature label for cost tracking. When set, the call is wrapped in withCostFeature() so the proxy records the correct label. */
+  feature?: string;
+  /** Force a specific wire API surface ("chat" or "responses"). When unset, resolved from the model's provider prefix. */
+  wireApi?: WireApi;
+  /** OpenAI chat.completions response_format (chat wire API only). */
+  responseFormat?: { type: "json_object" };
+  /** MiniMax-only: control deep thinking (`disabled` saves output budget for structured JSON). */
+  thinkingMode?: MiniMaxThinkingMode;
+}): Promise<string> {
+  const detail = await chatCompleteDetailed(opts);
+  return detail.text;
+}
+
 /** Max input tokens for one distill batch request. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillBatchTokenLimit(model: string): number {
   return getDistillBatchTokenLimitFromCatalog(model);
@@ -582,6 +680,11 @@ export function distillBatchTokenLimit(model: string): number {
 /** Max output tokens for distill/ingest LLM calls. From model-capabilities catalog (docs/MODEL-REFERENCE.md). */
 export function distillMaxOutputTokens(model: string): number {
   return getDistillMaxOutputTokensFromCatalog(model);
+}
+
+/** Max output tokens for maintenance LLM calls (self-correction, reinforcement). From model-capabilities catalog. */
+export function maintenanceMaxOutputTokens(model: string): number {
+  return getMaintenanceMaxOutputTokensFromCatalog(model);
 }
 
 /**
@@ -633,6 +736,8 @@ export async function withLLMRetry<T>(
     signal?: AbortSignal;
     /** Tags errors for triage when they surface at async boundaries (#1010, #1011). */
     llmContext?: { model?: string; operation?: string };
+    /** Called immediately before a retry backoff sleep. */
+    onRetry?: (info: { attempt: number; delayMs: number; error: Error }) => void;
   },
 ): Promise<T> {
   const maxRetries = opts?.maxRetries ?? 3;
@@ -778,6 +883,7 @@ export async function withLLMRetry<T>(
       } else {
         delay = 3 ** attempt * 1000; // 1s, 3s, 9s
       }
+      opts?.onRetry?.({ attempt: attempt + 1, delayMs: delay, error: lastError });
       // Abort-aware backoff sleep: if the signal fires while we are waiting, reject immediately
       // instead of sleeping through the full delay. The listener is removed on normal resolve to
       // prevent leaks; the { once: true } option is not relied on alone for cleanup.
@@ -840,6 +946,8 @@ export type ChatCompleteWithRetryDetails = {
    * for attempts; some models may still have been skipped due to AbortSignal pre-checks.
    */
   attemptChain: string[];
+  finishReason?: string | null;
+  usage?: ChatCompletionUsageSummary;
 };
 
 /**
@@ -856,6 +964,8 @@ export async function chatCompleteWithRetryDetailed(opts: {
   label?: string;
   /** Timeout per model attempt (passed to chatComplete). Default 45s. */
   timeoutMs?: number;
+  /** When set, overrides timeoutMs per model in the fallback chain. */
+  timeoutMsPerModel?: (model: string) => number;
   /** When aborted (e.g. parent step timeout), the request is cancelled and no fallback models are tried. */
   signal?: AbortSignal;
   /** Optional per-instance warning queue for missing provider keys. */
@@ -864,15 +974,22 @@ export async function chatCompleteWithRetryDetailed(opts: {
   feature?: string;
   /** OpenAI chat.completions response_format (chat wire API only). */
   responseFormat?: { type: "json_object" };
+  /** Called immediately before a retry backoff sleep. */
+  onRetry?: (info: { attempt: number; delayMs: number; error: Error; model: string }) => void;
+  /** MiniMax-only: control deep thinking (`disabled` saves output budget for structured JSON). */
+  thinkingMode?: MiniMaxThinkingMode;
 }): Promise<ChatCompleteWithRetryDetails> {
   const {
     fallbackModels = [],
     label: rawLabel,
     maxTokens,
     timeoutMs,
+    timeoutMsPerModel,
     signal,
     pendingWarnings,
     feature,
+    onRetry,
+    thinkingMode,
     ...chatOpts
   } = opts;
   const label = rawLabel ?? "LLM call";
@@ -893,27 +1010,39 @@ export async function chatCompleteWithRetryDetailed(opts: {
     const currentModel = modelsToTry[i];
     lastAttemptedModel = currentModel;
     const _isFallback = i > 0;
-    // Use per-model max_tokens so fallbacks (e.g. gpt-4o) don't receive primary model's limit (e.g. 65k for Gemini)
-    const effectiveMaxTokens = maxTokens ?? distillMaxOutputTokens(currentModel);
+    const modelCatalogCap =
+      maxTokens != null
+        ? getMaintenanceMaxOutputTokensFromCatalog(currentModel)
+        : getDistillMaxOutputTokensFromCatalog(currentModel);
+    const effectiveMaxTokens = maxTokens != null ? Math.min(maxTokens, modelCatalogCap) : modelCatalogCap;
+    const attemptTimeoutMs = timeoutMsPerModel?.(currentModel) ?? timeoutMs;
 
     try {
-      const content = await withLLMRetry(
+      const detail = await withLLMRetry(
         () =>
-          chatComplete({
+          chatCompleteDetailed({
             ...chatOpts,
             model: currentModel,
             maxTokens: effectiveMaxTokens,
-            ...(timeoutMs != null && { timeoutMs }),
+            ...(attemptTimeoutMs != null && { timeoutMs: attemptTimeoutMs }),
             signal,
             ...(feature != null && { feature }),
+            ...(thinkingMode != null && { thinkingMode }),
           }),
         {
           maxRetries: 3,
           signal,
           llmContext: { model: currentModel, operation: label },
+          onRetry: (info) => onRetry?.({ ...info, model: currentModel }),
         },
       );
-      return { content, modelUsed: currentModel, attemptChain: modelsToTry };
+      return {
+        content: detail.text,
+        modelUsed: currentModel,
+        attemptChain: modelsToTry,
+        finishReason: detail.finishReason,
+        usage: detail.usage,
+      };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       // Check both direct UnconfiguredProviderError and wrapped in LLMRetryError

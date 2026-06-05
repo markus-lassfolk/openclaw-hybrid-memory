@@ -16,9 +16,11 @@ import type { AliasDB } from "../services/retrieval-aliases.js";
 import { PLUGIN_ID } from "../utils/constants.js";
 import { type ActiveTaskContext, registerActiveTaskCommands } from "./active-tasks.js";
 import { registerBenchmarkCommands } from "./benchmark.js";
+import { registerHelpCommand } from "./cmd-help.js";
 import { registerStatusCommands } from "./cmd-status.js";
 import { registerUserFriendlyCommands, type UserFriendlyContext } from "./cmd-user-friendly.js";
-import { type DistillContext, registerDistillCommands } from "./distill.js";
+import { type DistillContext } from "./distill.js";
+import { registerAllCliGroups } from "./commands/register-cli-groups.js";
 import { registerGoalCommands } from "./goals.js";
 import { type ManageContext, registerManageCommands } from "./manage.js";
 import { registerSkillsCommands } from "./skills.js";
@@ -94,6 +96,7 @@ export type HybridMemCliContext = {
   wal?: WriteAheadLog | null;
   aliasDb?: AliasDB | null;
   crystallizationStore?: CrystallizationStore | null;
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   versionInfo: {
     pluginVersion: string;
     memoryManagerVersion: string;
@@ -212,7 +215,12 @@ export type HybridMemCliContext = {
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflectionRules: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    thinkingMode?: import("../services/chat.js").MiniMaxThinkingMode;
+  }) => Promise<{
     rulesExtracted: number;
     rulesStored: number;
     diagnostics?: {
@@ -229,6 +237,7 @@ export type HybridMemCliContext = {
   runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     metaExtracted: number;
     metaStored: number;
+    diagnostics?: import("../services/reflection.js").ReflectionMetaDiagnostics;
   }>;
   reflectionConfig: {
     enabled: boolean;
@@ -273,6 +282,7 @@ export type HybridMemCliContext = {
   runApplyContradictionReviewDecisions: (
     decisions: import("../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
   ) => Promise<import("../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
+  requireWalFlushBeforeMutation: (phase: string) => Promise<{ committed: number; skipped: number }>;
   runClassify: (opts: { dryRun: boolean; limit: number; model?: string }) => Promise<{
     reclassified: number;
     total: number;
@@ -330,6 +340,7 @@ export type HybridMemCliContext = {
     }>;
     workspace?: string;
     dryRun?: boolean;
+    days?: number;
     model?: string;
     approve?: boolean;
     applyTools?: boolean;
@@ -483,6 +494,9 @@ export type HybridMemCliContext = {
   /** Cross-agent audit log (Issue #790). */
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  proposalsDb?: import("../backends/proposals-db.js").ProposalsDB | null;
+  runPassiveObserverOnce?: () => Promise<string>;
+  runActiveTasksMaintain?: () => Promise<string>;
 };
 
 /** Chainable command type (Commander-style). */
@@ -511,6 +525,17 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     throw err;
   }
 
+  try {
+    registerHelpCommand(mem);
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "register-cli:help",
+    });
+    throw err;
+  }
+
+  const manageContext: ManageContext = ctx;
   const distillContext: DistillContext = {
     runDistillWindow: ctx.runDistillWindow,
     runRecordDistill: ctx.runRecordDistill,
@@ -524,16 +549,15 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
     runGenerateProposals: ctx.runGenerateProposals,
   };
   try {
-    registerDistillCommands(mem, distillContext);
+    registerAllCliGroups(mem, manageContext, distillContext);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",
-      operation: "register-cli:distill",
+      operation: "register-cli:groups",
     });
     throw err;
   }
 
-  const manageContext: ManageContext = ctx;
   try {
     registerManageCommands(mem, manageContext);
   } catch (err) {
@@ -549,6 +573,7 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       crystallizationStore: ctx.crystallizationStore ?? null,
       cfg: ctx.cfg,
       factsDb: ctx.factsDb ?? null,
+      changeFeed: ctx.changeFeed ?? null,
     });
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

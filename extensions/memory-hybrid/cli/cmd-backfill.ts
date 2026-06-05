@@ -25,6 +25,7 @@ import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens }
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
@@ -186,6 +187,8 @@ export type SessionJsonlUserMessageExtraction = {
   texts: string[];
   /** First 1-based line number that failed JSON.parse, if any. */
   firstMalformedLine: number | null;
+  /** Non-empty lines that parsed as JSON objects (user messages optional). */
+  validLineCount: number;
 };
 
 /** Extract user message texts and record the first malformed JSONL line (best-effort per line). */
@@ -193,6 +196,7 @@ export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string
   const lines = readFileSync(filePath, "utf-8").split("\n");
   const texts: string[] = [];
   let firstMalformedLine: number | null = null;
+  let validLineCount = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
@@ -203,6 +207,7 @@ export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string
         message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
       };
       if (!obj || typeof obj !== "object") continue;
+      validLineCount++;
       if (obj.type !== "message" || !obj.message || obj.message.role !== "user") continue;
       const content = obj.message.content;
       if (!Array.isArray(content)) continue;
@@ -215,7 +220,7 @@ export function extractUserMessageTextsFromSessionJsonlWithMeta(filePath: string
       if (firstMalformedLine === null) firstMalformedLine = i + 1;
     }
   }
-  return { texts, firstMalformedLine };
+  return { texts, firstMalformedLine, validLineCount };
 }
 
 /** Extract raw user message texts from a session file (for regex/sentiment). */
@@ -304,6 +309,11 @@ export async function runBackfillForCli(
       if (storeResult.skipped) {
         continue;
       }
+      if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+        skipped++;
+        processed++;
+        continue;
+      }
       const entry = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       await cleanupEvictedVector({
@@ -374,7 +384,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   let firstSessionParseError: string | null = null;
   for (const { path: fp } of sessionFiles) {
     try {
-      const { texts, firstMalformedLine } = extractUserMessageTextsFromSessionJsonlWithMeta(fp);
+      const { texts, firstMalformedLine, validLineCount } = extractUserMessageTextsFromSessionJsonlWithMeta(fp);
       if (firstMalformedLine !== null) {
         logger.warn?.(
           `memory-hybrid: Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}, continuing with valid lines`,
@@ -382,7 +392,9 @@ export async function runAnalyzeFeedbackPhrasesForCli(
         if (!firstSessionParseError) {
           firstSessionParseError = `Malformed session JSONL at ${basename(fp)}:${firstMalformedLine}`;
         }
-      } else {
+      }
+      // Count sessions with at least one parseable JSONL line (user text optional).
+      if (validLineCount > 0) {
         successfullyScannedSessions++;
       }
       allTexts.push(...texts);
@@ -395,12 +407,12 @@ export async function runAnalyzeFeedbackPhrasesForCli(
       if (!firstSessionParseError) firstSessionParseError = `Failed to parse session file ${fp}: ${message}`;
     }
   }
-  if (firstSessionParseError) {
+  if (successfullyScannedSessions === 0 && sessionFiles.length > 0) {
     return {
       reinforcement: [],
       correction: [],
-      sessionsScanned: successfullyScannedSessions > 0 ? successfullyScannedSessions : sessionFiles.length,
-      error: firstSessionParseError,
+      sessionsScanned: 0,
+      error: firstSessionParseError ?? "No session files could be read",
     };
   }
   const unmatched = allTexts.filter((text) => {
@@ -448,7 +460,7 @@ export async function runAnalyzeFeedbackPhrasesForCli(
   }
 
   if (toAnalyze.length === 0) {
-    return { reinforcement: [], correction: [], sessionsScanned: sessionFiles.length };
+    return { reinforcement: [], correction: [], sessionsScanned: successfullyScannedSessions };
   }
 
   const maxChars = 400_000;
@@ -603,7 +615,7 @@ export async function runIngestFilesForCli(
   sink: IngestFilesSink,
 ): Promise<IngestFilesResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
-  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
   const ingestCfg = cfg.ingest;
   const patterns = opts.paths?.length ? opts.paths : ingestCfg?.paths?.length ? ingestCfg.paths : DEFAULT_INGEST_PATHS;
   const chunkSize = ingestCfg?.chunkSize ?? 800;
@@ -705,6 +717,9 @@ export async function runIngestFilesForCli(
   }
 
   if (opts.dryRun) {
+    if (files.length > 0 && allFacts.length === 0) {
+      sink.warn(`memory-hybrid: ingest-files semantic_empty: processed ${files.length} file(s) but parsed zero facts`);
+    }
     sink.log(`Would extract ${allFacts.length} facts from ${files.length} files`);
     return { stored: 0, skipped: 0, extracted: allFacts.length, files: files.length, dryRun: true };
   }
@@ -736,6 +751,10 @@ export async function runIngestFilesForCli(
       if (storeResult.skipped) {
         continue;
       }
+      if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+        skipped++;
+        continue;
+      }
       const entry = storeResult.entry;
       // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
       await cleanupEvictedVector({
@@ -762,6 +781,9 @@ export async function runIngestFilesForCli(
       sink.warn(`memory-hybrid: ingest-files store failed for "${fact.text.slice(0, 40)}...": ${err}`);
       capturePluginError(err as Error, { subsystem: "cli", operation: "runIngestFilesForCli:store-fact" });
     }
+  }
+  if (files.length > 0 && allFacts.length === 0) {
+    sink.warn(`memory-hybrid: ingest-files semantic_empty: processed ${files.length} file(s) but parsed zero facts`);
   }
   return { stored, skipped, extracted: allFacts.length, files: files.length, dryRun: false };
 }

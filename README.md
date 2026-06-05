@@ -8,7 +8,7 @@
 [![Documentation](https://img.shields.io/badge/docs-site-blue)](https://markus-lassfolk.github.io/openclaw-hybrid-memory/)
 [![License: MIT](https://img.shields.io/github/license/markus-lassfolk/openclaw-hybrid-memory?style=flat-square)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A522.16.0-brightgreen?style=flat-square)](https://nodejs.org)
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-v2026.3.8%2B-blue?style=flat-square)](https://github.com/openclaw/openclaw)
+[![OpenClaw](https://img.shields.io/badge/OpenClaw-%E2%89%A52026.5.0%20(%E2%89%A52026.6.1%20rec.)-blue?style=flat-square)](https://github.com/openclaw/openclaw)
 
 </div>
 

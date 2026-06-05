@@ -60,6 +60,43 @@ function replaceOrAppendGoalsMirror(raw: string, goalsMd: string): string {
   return `${raw}${sep}${sep}${replacement.join("\n")}`;
 }
 
+/** Extract the `## Active Goals` section from an ACTIVE-TASKS.md projection, if present. */
+export function extractGoalsMirrorBlock(raw: string): string | null {
+  const lines = raw.split("\n");
+  const start = lines.findIndex((line) => line.trim() === "## Active Goals");
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (lines[i]?.trim().startsWith("## ")) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+}
+
+function stripGoalsMirrorBlock(raw: string): string {
+  const block = extractGoalsMirrorBlock(raw);
+  if (!block) return raw;
+  const idx = raw.indexOf(block);
+  if (idx < 0) return raw;
+  return `${raw.slice(0, idx)}${raw.slice(idx + block.length)}`.replace(/\n{3,}/g, "\n\n").trimEnd();
+}
+
+/** Merge a goals mirror section into a projection markdown body. */
+export function mergeGoalsMirrorIntoMarkdown(projectionMarkdown: string, goalsMd: string): string {
+  return replaceOrAppendGoalsMirror(stripGoalsMirrorBlock(projectionMarkdown), goalsMd);
+}
+
+/** Carry forward an existing goals mirror when regenerating the task projection. */
+export function preserveGoalsMirrorSection(previousMarkdown: string, projectionMarkdown: string): string {
+  const block = extractGoalsMirrorBlock(previousMarkdown);
+  if (!block) return projectionMarkdown;
+  const base = stripGoalsMirrorBlock(projectionMarkdown);
+  const sep = base.endsWith("\n") ? "" : "\n";
+  return `${base}${sep}\n\n${block}\n`;
+}
+
 export async function refreshActiveTaskMirrorWithGoals(opts: {
   activeTaskPath: string;
   goals: Goal[];

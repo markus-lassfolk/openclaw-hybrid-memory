@@ -9,6 +9,20 @@ const {
   parseTags,
   tagsContains,
   parseSourceDate,
+  nowSec,
+  nowIso,
+  formatTimestampUtc,
+  formatTimestampUtcFromMs,
+  cutoffIsoDaysAgo,
+  addDaysUtcIso,
+  cutoffIsoHoursAgo,
+  formatCompactRunIdUtc,
+  formatRunIdSlug,
+  formatDateUtc,
+  parseTimestamp,
+  parseTimestampMs,
+  normalizeToIsoUtc,
+  isIsoUtcTimestamp,
   estimateTokens,
   estimateTokensForDisplay,
   formatProgressiveIndexLine,
@@ -206,6 +220,155 @@ describe("parseSourceDate", () => {
 
   it("returns null for garbage string", () => {
     expect(parseSourceDate("not-a-date")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTimestamp / formatTimestampUtc / nowSec / nowIso
+// ---------------------------------------------------------------------------
+
+describe("parseTimestamp", () => {
+  it("parses epoch seconds", () => {
+    expect(parseTimestamp(1700000000)).toBe(1700000000);
+  });
+
+  it("parses epoch milliseconds", () => {
+    expect(parseTimestamp(1700000000000)).toBe(1700000000);
+  });
+
+  it("parses numeric string seconds", () => {
+    expect(parseTimestamp("1700000000")).toBe(1700000000);
+  });
+
+  it("parses ISO UTC string", () => {
+    expect(parseTimestamp("2026-06-05T12:34:56.789Z")).toBe(Math.floor(Date.parse("2026-06-05T12:34:56.789Z") / 1000));
+  });
+
+  it("parses timezone-less ISO as UTC", () => {
+    expect(parseTimestamp("2026-06-05T12:34:56")).toBe(Math.floor(Date.parse("2026-06-05T12:34:56Z") / 1000));
+  });
+
+  it("parses SQLite datetime('now') space format as UTC", () => {
+    expect(parseTimestamp("2026-06-05 12:34:56")).toBe(Math.floor(Date.parse("2026-06-05T12:34:56Z") / 1000));
+  });
+
+  it("parses compact YYYYMMDD digits as UTC midnight", () => {
+    expect(parseTimestamp("20260605")).toBe(Math.floor(Date.UTC(2026, 5, 5) / 1000));
+  });
+
+  it("parses ISO offset strings", () => {
+    expect(parseTimestamp("2026-06-05T12:34:56+00:00")).toBe(
+      Math.floor(Date.parse("2026-06-05T12:34:56+00:00") / 1000),
+    );
+  });
+
+  it("returns null for invalid values", () => {
+    expect(parseTimestamp(null)).toBeNull();
+    expect(parseTimestamp("")).toBeNull();
+    expect(parseTimestamp("not-a-date")).toBeNull();
+    expect(parseTimestamp(0)).toBeNull();
+  });
+});
+
+describe("parseTimestampMs", () => {
+  it("converts seconds to ms", () => {
+    expect(parseTimestampMs(1700000000)).toBe(1700000000000);
+  });
+
+  it("passes through ms", () => {
+    expect(parseTimestampMs(1700000000123)).toBe(1700000000123);
+  });
+
+  it("parses ISO string to ms", () => {
+    expect(parseTimestampMs("2026-06-05T12:34:56.789Z")).toBe(Date.parse("2026-06-05T12:34:56.789Z"));
+  });
+});
+
+describe("formatTimestampUtc", () => {
+  it("formats epoch seconds as ISO Z", () => {
+    expect(formatTimestampUtc(1700000000)).toMatch(/^2023-11-14T22:13:20\.\d{3}Z$/);
+  });
+});
+
+describe("formatDateUtc", () => {
+  it("formats epoch seconds as YYYY-MM-DD", () => {
+    expect(formatDateUtc(1700000000)).toBe("2023-11-14");
+  });
+});
+
+describe("cutoff and offset helpers", () => {
+  const refMs = Date.UTC(2026, 5, 5, 12, 0, 0); // 2026-06-05T12:00:00.000Z
+
+  it("formatTimestampUtcFromMs formats milliseconds", () => {
+    expect(formatTimestampUtcFromMs(refMs)).toBe("2026-06-05T12:00:00.000Z");
+    expect(formatTimestampUtcFromMs(refMs + 876)).toBe("2026-06-05T12:00:00.876Z");
+  });
+
+  it("cutoffIsoDaysAgo subtracts whole days", () => {
+    expect(cutoffIsoDaysAgo(7, refMs)).toBe("2026-05-29T12:00:00.000Z");
+  });
+
+  it("addDaysUtcIso adds whole days", () => {
+    expect(addDaysUtcIso(3, refMs)).toBe("2026-06-08T12:00:00.000Z");
+  });
+
+  it("cutoffIsoHoursAgo subtracts whole hours", () => {
+    expect(cutoffIsoHoursAgo(6, refMs)).toBe("2026-06-05T06:00:00.000Z");
+  });
+
+  it("formatCompactRunIdUtc produces compact artifact id segment", () => {
+    expect(formatCompactRunIdUtc(refMs)).toBe("20260605T120000Z");
+  });
+
+  it("formatRunIdSlug produces filesystem-safe slug", () => {
+    expect(formatRunIdSlug(refMs)).toBe("2026-06-05T12-00-00");
+  });
+});
+
+describe("nowSec / nowIso", () => {
+  it("nowSec is within 2s of Date.now/1000", () => {
+    expect(Math.abs(nowSec() - Math.floor(Date.now() / 1000))).toBeLessThanOrEqual(2);
+  });
+
+  it("nowIso ends with Z", () => {
+    expect(nowIso()).toMatch(/Z$/);
+  });
+});
+
+describe("normalizeToIsoUtc", () => {
+  it("normalizes legacy sqlite format", () => {
+    expect(normalizeToIsoUtc("2026-06-05 12:34:56")).toBe("2026-06-05T12:34:56.000Z");
+  });
+
+  it("uses explicit fallback when value is invalid", () => {
+    expect(normalizeToIsoUtc("bad", 1700000000)).toBe(formatTimestampUtc(1700000000));
+  });
+
+  it("uses now when value is null or empty", () => {
+    const fromNull = normalizeToIsoUtc(null);
+    const fromEmpty = normalizeToIsoUtc("  ");
+    expect(fromNull).toMatch(/Z$/);
+    expect(fromEmpty).toMatch(/Z$/);
+  });
+
+  it("throws on invalid non-empty value without fallback", () => {
+    expect(() => normalizeToIsoUtc("bad")).toThrow(/Invalid timestamp/);
+  });
+
+  it("preserves strict ISO Z strings", () => {
+    const iso = "2026-06-05T12:34:56.789Z";
+    expect(normalizeToIsoUtc(iso)).toBe(iso);
+  });
+});
+
+describe("isIsoUtcTimestamp", () => {
+  it("detects strict ISO Z", () => {
+    expect(isIsoUtcTimestamp("2026-06-05T12:34:56.789Z")).toBe(true);
+    expect(isIsoUtcTimestamp("2026-06-05T12:34:56.789z")).toBe(true);
+  });
+
+  it("rejects sqlite space format", () => {
+    expect(isIsoUtcTimestamp("2026-06-05 12:34:56")).toBe(false);
   });
 });
 

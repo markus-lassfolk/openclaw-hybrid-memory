@@ -15,8 +15,15 @@ describe("subagentEndedIsSuccess", () => {
     expect(subagentEndedIsSuccess({ outcome: "completed" })).toBe(true);
   });
 
-  it("defaults to success when outcome is empty", () => {
-    expect(subagentEndedIsSuccess({})).toBe(true);
+  it("defaults to failure when outcome is empty or unknown", () => {
+    expect(subagentEndedIsSuccess({})).toBe(false);
+    expect(subagentEndedIsSuccess({ outcome: "weird-state" })).toBe(false);
+  });
+
+  it("matches labels case-insensitively", () => {
+    expect(
+      findActiveTaskForSubagentEnd([{ label: "Deploy-API", subagent: "sess:1" }], { label: "deploy-api" }),
+    ).toEqual({ label: "Deploy-API", subagent: "sess:1" });
   });
 });
 

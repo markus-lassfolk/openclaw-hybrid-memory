@@ -15,7 +15,7 @@ import { hybridConfigSchema } from "../config.js";
 import { _testing } from "../index.js";
 import { capturePluginError, getErrorReporterMuteReason, setErrorReporterMuted } from "../services/error-reporter.js";
 import { type PluginServiceContext, createPluginService } from "../setup/plugin-service.js";
-import { MIN_OPENCLAW_VERSION } from "../utils/version-check.js";
+import { MIN_OPENCLAW_VERSION, RECOMMENDED_OPENCLAW_VERSION } from "../utils/version-check.js";
 
 const { FactsDB, VectorDB } = _testing;
 
@@ -44,6 +44,8 @@ function makeTimers() {
     postUpgradeTimeout: { value: null as ReturnType<typeof setTimeout> | null },
     passiveObserverTimer: { value: null as ReturnType<typeof setInterval> | null },
     watchdogTimer: { value: null as ReturnType<typeof setInterval> | null },
+    maintenanceTick: { value: null as ReturnType<typeof setInterval> | null },
+    maintenanceStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
   };
 }
 
@@ -83,6 +85,14 @@ function clearTimers(timers: ReturnType<typeof makeTimers>) {
   if (timers.watchdogTimer.value) {
     clearInterval(timers.watchdogTimer.value);
     timers.watchdogTimer.value = null;
+  }
+  if (timers.maintenanceTick.value) {
+    clearInterval(timers.maintenanceTick.value);
+    timers.maintenanceTick.value = null;
+  }
+  if (timers.maintenanceStartupTimeout.value) {
+    clearTimeout(timers.maintenanceStartupTimeout.value);
+    timers.maintenanceStartupTimeout.value = null;
   }
 }
 
@@ -176,14 +186,37 @@ describe("createPluginService startup — version check wiring", () => {
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });
 
-  it("does not emit a version warning when api.version meets the minimum", async () => {
+  it("emits a recommended-tier info when api.version meets minimum only", async () => {
     const api = makeMockApi(MIN_OPENCLAW_VERSION);
     const ctx = buildMinimalCtx(tmpDir, api, timers);
     await createPluginService(ctx).start();
 
+    const infoCalls = api.logger.info.mock.calls.map((c: unknown[]) => c[0] as string);
+    const versionInfo = infoCalls.find((msg) => msg.includes(RECOMMENDED_OPENCLAW_VERSION));
+    expect(versionInfo).toBeDefined();
+    expect(versionInfo).toContain("Skill Workshop");
+
     const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
-    const versionWarn = warnCalls.find((msg) => msg.includes(MIN_OPENCLAW_VERSION) && msg.includes("WARNING"));
+    const versionWarn = warnCalls.find((msg) => msg.includes("WARNING") && msg.includes(MIN_OPENCLAW_VERSION));
     expect(versionWarn).toBeUndefined();
+    (ctx.factsDb as InstanceType<typeof FactsDB>).close();
+    (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
+  });
+
+  it("does not emit version warnings or info when api.version meets recommended tier", async () => {
+    const api = makeMockApi(RECOMMENDED_OPENCLAW_VERSION);
+    const ctx = buildMinimalCtx(tmpDir, api, timers);
+    await createPluginService(ctx).start();
+
+    const warnCalls = api.logger.warn.mock.calls.map((c: unknown[]) => c[0] as string);
+    const versionWarn = warnCalls.find(
+      (msg) => msg.includes(MIN_OPENCLAW_VERSION) && msg.includes("WARNING"),
+    );
+    expect(versionWarn).toBeUndefined();
+
+    const infoCalls = api.logger.info.mock.calls.map((c: unknown[]) => c[0] as string);
+    const versionInfo = infoCalls.find((msg) => msg.includes(RECOMMENDED_OPENCLAW_VERSION));
+    expect(versionInfo).toBeUndefined();
     (ctx.factsDb as InstanceType<typeof FactsDB>).close();
     (ctx.vectorDb as InstanceType<typeof VectorDB>).close();
   });

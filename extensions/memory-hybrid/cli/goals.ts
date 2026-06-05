@@ -9,6 +9,7 @@ import {
   updateGoal,
 } from "../services/goal-stewardship.js";
 import { formatGoalStewardshipConfigLines, workspaceRootForCli } from "./config-feature-summaries.js";
+import { nowIso } from "../utils/dates.js";
 import type { Chainable } from "./shared.js";
 
 function workspaceRoot(): string {
@@ -225,7 +226,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
       const dir = goalsDir(ctx.cfg);
       const goals = await listGoals(dir);
       const base = {
-        generatedAt: new Date().toISOString(),
+        generatedAt: nowIso(),
         goalsDir: dir,
         workspaceRoot: workspaceRoot(),
         configSnapshot: {
@@ -297,7 +298,7 @@ export function registerGoalCommands(mem: Chainable, ctx: { cfg: HybridMemoryCon
         patch.currentBlockers = [];
       }
       await updateGoal(dir, goal.id, patch as Parameters<typeof updateGoal>[2], {
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         action: "budget-reset",
         detail: `dispatches ${prevDisp}->0, assessments ${prevAssess}->0${wasBlocked ? ", status blocked->active" : ""}`,
         actor: "user",

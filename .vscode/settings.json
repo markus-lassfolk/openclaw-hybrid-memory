@@ -1,0 +1,13 @@
+{
+  "terminal.integrated.defaultProfile.linux": "bash (Node 22)",
+  "terminal.integrated.profiles.linux": {
+    "bash (Node 22)": {
+      "path": "bash",
+      "args": ["-l"],
+      "icon": "node",
+      "env": {
+        "PATH": "/usr/bin:/usr/local/bin:${env:HOME}/.local/bin:/usr/sbin:/sbin:/bin"
+      }
+    }
+  }
+}

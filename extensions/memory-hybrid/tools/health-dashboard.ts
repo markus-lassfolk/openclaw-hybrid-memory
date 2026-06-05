@@ -14,6 +14,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { detectClusters } from "../services/topic-clusters.js";
 import { getDirSize, getFileSizeAsync } from "../utils/fs.js";
+import { formatTimestampUtc, nowIso } from "../utils/dates.js";
 
 interface HealthPluginContext {
   factsDb: FactsDB;
@@ -252,13 +253,13 @@ export async function buildHealthReport(
   const reflRow = db.prepare(`SELECT MAX(created_at) AS last_at FROM facts WHERE source = 'reflection'`).get() as {
     last_at: number | null;
   };
-  const lastReflectionAt = reflRow.last_at != null ? new Date(reflRow.last_at * 1000).toISOString() : null;
+  const lastReflectionAt = reflRow.last_at != null ? formatTimestampUtc(reflRow.last_at) : null;
 
   // Last prune: derived from MAX(valid_until) of superseded facts (best approximation)
   const pruneRow = db
     .prepare("SELECT MAX(valid_until) AS last_at FROM facts WHERE valid_until IS NOT NULL AND valid_until <= ?")
     .get(nowSec) as { last_at: number | null };
-  const lastPruneAt = pruneRow.last_at != null ? new Date(pruneRow.last_at * 1000).toISOString() : null;
+  const lastPruneAt = pruneRow.last_at != null ? formatTimestampUtc(pruneRow.last_at) : null;
 
   // Storage sizes (async I/O — avoids sync stat hot-path blocking; Issue #880)
   const [sqliteSize, sqliteWalSize, sqliteShmSize, lanceSize] = await Promise.all([
@@ -292,7 +293,7 @@ export async function buildHealthReport(
       lance: lanceSize,
       total: totalSqliteSize + lanceSize,
     },
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(),
   };
 }
 

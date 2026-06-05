@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { VectorDB } from "../backends/vector-db.js";
+import { nowIso } from "../utils/dates.js";
 
 type ProcStatusSnapshot = {
   vmRssKb: number | null;
@@ -285,7 +286,7 @@ export async function collectVectorBackendObservability(opts: {
   const cacheTelemetry = vectorDbWithObs.getSemanticQueryCacheTelemetry?.() ?? null;
 
   return {
-    capturedAt: new Date().toISOString(),
+    capturedAt: nowIso(),
     memory: {
       rssBytes: usage.rss,
       heapTotalBytes: usage.heapTotal,

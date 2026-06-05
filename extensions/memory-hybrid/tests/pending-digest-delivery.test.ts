@@ -58,6 +58,7 @@ describe("pending digest delivery via cron config (#1197)", () => {
     const openclawDir = newOpenclawDir();
     ensureMaintenanceCronJobs(openclawDir, undefined, {
       normalizeExisting: true,
+      consolidatedCronJobs: false,
       digestWeeklyDelivery: { mode: "none" },
     });
     const target = readJobs(openclawDir).find((j) => j.pluginJobId === "hybrid-mem:weekly-pending-digest");
@@ -68,6 +69,7 @@ describe("pending digest delivery via cron config (#1197)", () => {
     const openclawDir = newOpenclawDir();
     ensureMaintenanceCronJobs(openclawDir, undefined, {
       normalizeExisting: true,
+      consolidatedCronJobs: false,
       digestWeeklyDelivery: { mode: "telegram", chatId: "12345" },
     });
     const target = readJobs(openclawDir).find((j) => j.pluginJobId === "hybrid-mem:weekly-pending-digest");

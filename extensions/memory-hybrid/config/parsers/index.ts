@@ -44,6 +44,7 @@ import {
   parseCrystallizationConfig,
   parseDashboardConfig,
   parseDigestConfig,
+  parseLiveChangeFeedConfig,
   parseDocumentsConfig,
   parseEntityExtractionConfig,
   parseErrorReportingConfig,
@@ -60,6 +61,7 @@ import {
   parseMemoryTieringConfig,
   parseMultiAgentConfig,
   parsePersonaProposalsConfig,
+  parseWorkshopConfig,
   parseReinforcementConfig,
   parseSelfExtensionConfig,
   parseToolEffectivenessConfig,
@@ -748,6 +750,10 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
               ? (v as "nano" | "maintenance" | "default" | "heavy")
               : undefined;
           })(),
+          thinking: ((): "disabled" | "adaptive" | undefined => {
+            const rawThinking = distillRaw.thinking;
+            return rawThinking === "adaptive" || rawThinking === "disabled" ? rawThinking : undefined;
+          })(),
         }
       : undefined;
 
@@ -784,6 +790,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     diagnostics: parseDiagnosticsConfig(cfg),
     eventLog: parseEventLogConfig(cfg),
     personaProposals: parsePersonaProposalsConfig(cfg),
+    workshop: parseWorkshopConfig(cfg),
     passiveObserver: parsePassiveObserverConfig(cfg),
     reflection: parseReflectionConfig(cfg),
     identityReflection: parseIdentityReflectionConfig(cfg),
@@ -833,6 +840,7 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     costTracking: parseCostTrackingConfig(cfg),
     dashboard: parseDashboardConfig(cfg),
     digest: parseDigestConfig(cfg),
+    liveChangeFeed: parseLiveChangeFeedConfig(cfg),
     lifecycle: parseLifecycleConfig(cfg),
     sensorSweep: parseSensorSweepConfig(cfg),
     apiTap: parseApiTapConfig(cfg),

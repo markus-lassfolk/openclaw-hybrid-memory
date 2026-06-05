@@ -505,6 +505,21 @@ export function parseSelfCorrectionConfig(cfg: Record<string, unknown>): SelfCor
     reinforcementLLMAnalysis: scRaw.reinforcementLLMAnalysis !== false,
     reinforcementToProposals: scRaw.reinforcementToProposals !== false,
     agentsRuleToProposals: scRaw.agentsRuleToProposals !== false,
+    analysisBatchSize:
+      typeof scRaw.analysisBatchSize === "number" && scRaw.analysisBatchSize >= 1
+        ? Math.floor(scRaw.analysisBatchSize)
+        : undefined,
+    batchDelayMs:
+      typeof scRaw.batchDelayMs === "number" && scRaw.batchDelayMs >= 0 ? Math.floor(scRaw.batchDelayMs) : undefined,
+    model: typeof scRaw.model === "string" && scRaw.model.trim().length > 0 ? scRaw.model.trim() : undefined,
+    thinking: scRaw.thinking === "adaptive" || scRaw.thinking === "disabled" ? scRaw.thinking : undefined,
+    llmExtract: scRaw.llmExtract !== false,
+    llmExtractMinConfidence:
+      typeof scRaw.llmExtractMinConfidence === "number" &&
+      scRaw.llmExtractMinConfidence >= 0 &&
+      scRaw.llmExtractMinConfidence <= 1
+        ? scRaw.llmExtractMinConfidence
+        : 0.6,
   };
 }
 
@@ -625,6 +640,11 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
       `memory-hybrid: invalid llm.maintenanceFallbackPolicy ${JSON.stringify(maintenanceFallbackPolicyRaw)} — ignoring`,
     );
   }
+  const minimaxRaw = llmRaw?.minimax as Record<string, unknown> | undefined;
+  const minimaxThinkingRaw = minimaxRaw?.thinking;
+  const minimaxThinking: "disabled" | "adaptive" | undefined =
+    minimaxThinkingRaw === "disabled" || minimaxThinkingRaw === "adaptive" ? minimaxThinkingRaw : undefined;
+  const minimax = minimaxThinking !== undefined ? { thinking: minimaxThinking } : undefined;
   const llm: LLMConfig | undefined =
     maintenanceList.length > 0 ||
     defaultList.length > 0 ||
@@ -633,7 +653,8 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
     llmProviders !== undefined ||
     localAutoStart ||
     disabledProviders.length > 0 ||
-    maintenanceFallbackPolicy !== undefined
+    maintenanceFallbackPolicy !== undefined ||
+    minimax !== undefined
       ? {
           ...(maintenanceList.length > 0 ? { maintenance: maintenanceList } : {}),
           default: defaultList,
@@ -648,6 +669,7 @@ export function parseLLMConfig(cfg: Record<string, unknown>): LLMConfig | undefi
           localAutoStart,
           ...(disabledProviders.length > 0 ? { disabledProviders } : {}),
           ...(maintenanceFallbackPolicy !== undefined ? { maintenanceFallbackPolicy } : {}),
+          ...(minimax !== undefined ? { minimax } : {}),
         }
       : undefined;
   return llm;

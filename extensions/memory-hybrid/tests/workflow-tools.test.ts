@@ -38,4 +38,22 @@ describe("memory_workflows tool", () => {
     expect(result.content[0].text).toContain("temporarily unavailable");
     expect(result.content[0].text).toContain("database not ready");
   });
+
+  it("passes excludeSystemGoals to workflowStore.getPatterns", async () => {
+    const api = makeMockApi();
+    const getPatterns = vi.fn().mockReturnValue([]);
+    registerWorkflowTools(
+      { workflowStore: { getPatterns } as any, excludeSystemGoals: true, excludeGoalPatterns: ["^legacy:"] },
+      api as any,
+    );
+
+    await api.callTool("memory_workflows", {});
+
+    expect(getPatterns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        excludeSystemGoals: true,
+        excludeGoalPatterns: ["^legacy:"],
+      }),
+    );
+  });
 });

@@ -18,6 +18,12 @@ import { FactsDB } from "../backends/facts-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { runExtractReinforcementForCli } from "../cli/handlers.js";
 import type { HandlerContext } from "../cli/handlers.js";
+import { clearScanLock } from "../cli/shared.js";
+import * as adaptiveLlm from "../services/adaptive-maintenance-llm.js";
+
+vi.mock("../services/vector-search.js", () => ({
+  findSimilarByEmbedding: vi.fn().mockResolvedValue([]),
+}));
 
 // ---------------------------------------------------------------------------
 // Shared setup
@@ -92,7 +98,12 @@ function makeCtx(openai: any, extra: Partial<HandlerContext> = {}): HandlerConte
         reinforcementToProposals: true,
         agentsRuleToProposals: true,
       },
-      llm: { default: ["test-model"], heavy: ["test-model"], _source: undefined },
+      llm: {
+        default: ["test-model"],
+        heavy: ["test-model"],
+        maintenance: ["test-model"],
+        _source: undefined,
+      },
       store: { classifyBeforeWrite: false },
       autoRecall: { enabled: false },
     } as any,
@@ -251,9 +262,16 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "reinf-zero-ann-test-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
   proposalsDb = new ProposalsDB(join(tmpDir, "proposals.db"));
+  vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+    content: "[]",
+  } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
+  // Block standalone praise-signal writes (#1802) so #1639 zero-annotation semantics remain testable.
+  vi.spyOn(factsDb, "hasDuplicate").mockReturnValue(true);
 });
 
 afterEach(() => {
+  clearScanLock("extract-reinforcement");
+  vi.restoreAllMocks();
   factsDb.close();
   proposalsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
@@ -344,7 +362,14 @@ describe("no-match benign (partial_no_matches) (#1639)", () => {
 // ---------------------------------------------------------------------------
 
 describe("LLM failure → degraded_model_or_parser (#1639)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("annotationStatus is degraded_model_or_parser when LLM throws and all incidents have no recalled IDs", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockRejectedValue(
+      new Error("LLM provider unavailable"),
+    );
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeSessionWithoutMemoryRecall(sessionFile);
 
@@ -359,6 +384,9 @@ describe("LLM failure → degraded_model_or_parser (#1639)", () => {
   });
 
   it("annotationStatus is degraded_model_or_parser when LLM returns unparseable output", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "No JSON available.",
+    } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeSessionWithoutMemoryRecall(sessionFile);
 
@@ -370,6 +398,21 @@ describe("LLM failure → degraded_model_or_parser (#1639)", () => {
     expect(result.annotated).toBe(0);
     expect(result.annotationStatus).toBe("degraded_model_or_parser");
     expect(result.annotationReasons?.noRecalledIds).toBe(result.incidents.length);
+  });
+
+  it("annotationStatus is degraded_model_or_parser when native tool_calls payload is unparseable", async () => {
+    vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+      content: "",
+      toolCalls: [{ name: "annotate", arguments: "not json" }],
+    } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
+    const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
+    writeSessionWithoutMemoryRecall(sessionFile);
+
+    const openai = makeOpenAIMock("[]");
+    const ctx = makeCtx(openai);
+    const result = await runExtractReinforcementForCli(ctx, { workspace: tmpDir });
+
+    expect(result.annotationStatus).toBe("degraded_model_or_parser");
   });
 });
 
@@ -398,16 +441,15 @@ describe("procedure boost errors are surfaced (#1639)", () => {
 // ---------------------------------------------------------------------------
 
 describe("fallback chain derived from configured llm tier (#1639)", () => {
-  it("fallback chain is non-empty when llm.nano has multiple models configured", async () => {
+  it("fallback chain is non-empty when llm.maintenance has multiple models configured", async () => {
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeSessionWithoutMemoryRecall(sessionFile);
 
     const openai = makeOpenAIMock("[]");
-    // Use ctx with explicit llm.nano list containing primary + fallback
     const ctx = makeCtx(openai, {
       cfg: {
         procedures: { sessionsDir: tmpDir },
-        distill: { extractionModelTier: "nano" },
+        distill: { extractionModelTier: "maintenance" },
         reinforcement: {
           enabled: true,
           trackContext: true,
@@ -421,7 +463,7 @@ describe("fallback chain derived from configured llm tier (#1639)", () => {
           reinforcementToProposals: false,
         },
         llm: {
-          nano: ["minimax/MiniMax-M2.7-highspeed", "google/gemini-2.0-flash"],
+          maintenance: ["minimax/MiniMax-M2.7-highspeed", "google/gemini-2.0-flash"],
           default: ["minimax/MiniMax-M2.7-highspeed"],
           _source: undefined,
         },
@@ -439,11 +481,11 @@ describe("fallback chain derived from configured llm tier (#1639)", () => {
     // Find the fallback chain log message
     const fallbackLog = logMessages.find((m) => m.includes("fallback chain"));
     expect(fallbackLog).toBeDefined();
-    // With two models in nano, fallback chain should contain the second model
+    // With two models in maintenance, fallback chain should contain the second model
     expect(fallbackLog).toContain("google/gemini-2.0-flash");
   });
 
-  it("fallback chain picks up llm.fallbackModel when llm.nano has only one entry", async () => {
+  it("fallback chain picks up llm.fallbackModel when llm.maintenance has only one entry", async () => {
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeSessionWithoutMemoryRecall(sessionFile);
 
@@ -451,7 +493,7 @@ describe("fallback chain derived from configured llm tier (#1639)", () => {
     const ctx = makeCtx(openai, {
       cfg: {
         procedures: { sessionsDir: tmpDir },
-        distill: { extractionModelTier: "nano" },
+        distill: { extractionModelTier: "maintenance" },
         reinforcement: {
           enabled: true,
           trackContext: true,
@@ -465,7 +507,7 @@ describe("fallback chain derived from configured llm tier (#1639)", () => {
           reinforcementToProposals: false,
         },
         llm: {
-          nano: ["minimax/MiniMax-M2.7-highspeed"],
+          maintenance: ["minimax/MiniMax-M2.7-highspeed"],
           default: ["minimax/MiniMax-M2.7-highspeed"],
           fallbackModel: "google/gemini-2.0-flash",
           _source: undefined,
@@ -482,7 +524,7 @@ describe("fallback chain derived from configured llm tier (#1639)", () => {
 
     const fallbackLog = logMessages.find((m) => m.includes("fallback chain"));
     expect(fallbackLog).toBeDefined();
-    // llm.fallbackModel should appear in the chain even when nano only has one model
+    // llm.fallbackModel should appear in the chain even when maintenance only has one model
     expect(fallbackLog).toContain("google/gemini-2.0-flash");
   });
 });

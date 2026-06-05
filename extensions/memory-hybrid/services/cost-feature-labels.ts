@@ -25,6 +25,7 @@ export const CostFeature = {
   generateProposals: "generate-proposals",
   selfCorrectionAnalyze: "self-correction-analyze",
   selfCorrectionRewriteTools: "self-correction-rewrite-tools",
+  feedbackSignalClassify: "feedback-signal-classify",
   backfillSentiment: "backfill-sentiment",
   backfillIngest: "backfill-ingest",
   verifyCliLlm: "verify-cli-llm",

@@ -1,7 +1,7 @@
 {
   "id": "openclaw-hybrid-memory",
   "kind": "memory",
-  "version": "2026.6.40",
+  "version": "2026.6.52",
   "contracts": {
     "tools": [
       "active_task_checkpoint",
@@ -67,6 +67,7 @@
       "memory_verification_status",
       "memory_verified_list",
       "memory_verify",
+      "memory_workshop",
       "memory_workflows",
       "persona_propose",
       "persona_proposals_list"
@@ -1182,7 +1183,7 @@
       "distill": {
         "type": "object",
         "additionalProperties": false,
-        "description": "Session distillation via llm.heavy tier (default: azure-foundry/gpt-5.4-pro). No separate API key required.",
+        "description": "Session distillation via distill.modelTier (default: maintenance / llm.maintenance). No separate API key required when llm is configured.",
         "properties": {
           "apiKey": {
             "type": "string",
@@ -1190,7 +1191,7 @@
           },
           "defaultModel": {
             "type": "string",
-            "description": "Model override for distill (default: azure-foundry/gpt-5.4-pro or llm.heavy tier)"
+            "description": "Model override for distill (default: first model in distill.modelTier / llm.maintenance)"
           },
           "extractDirectives": {
             "type": "boolean",
@@ -1216,6 +1217,16 @@
             "type": "string",
             "enum": ["nano", "maintenance", "default", "heavy"],
             "description": "Model tier for extraction pipeline (extract-reinforcement LLM). 'nano' saves cost; 'maintenance' isolates from llm.default; unset defaults to nano (same as CLI/runtime ?? \"nano\")."
+          },
+          "modelTier": {
+            "type": "string",
+            "enum": ["nano", "maintenance", "default", "heavy"],
+            "description": "Model tier for main session distill pass (default: maintenance / llm.maintenance)."
+          },
+          "thinking": {
+            "type": "string",
+            "enum": ["disabled", "adaptive"],
+            "description": "MiniMax thinking mode for distill LLM calls (default: llm.minimax.thinking or disabled)"
           }
         }
       },
@@ -1256,6 +1267,11 @@
           "minObservations": {
             "type": "number",
             "description": "Min observations to support a pattern (default: 2)"
+          },
+          "thinking": {
+            "type": "string",
+            "enum": ["disabled", "adaptive"],
+            "description": "MiniMax thinking mode for reflection/consolidation (default: llm.minimax.thinking or disabled)"
           }
         }
       },
@@ -1396,9 +1412,34 @@
           "requireScopeFilter": {
             "type": "boolean",
             "description": "When true, generate-proposals throws an error if autoRecall.scopeFilter is not set and non-global scoped facts exist (default: false)"
+          },
+          "workshopMaxPending": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Max pending items across the unified workshop queue (persona, crystallization, tool, procedure-skill; default: 50, 0 = unlimited)"
           }
         },
         "description": "Opt-in persona proposals: agent self-evolution with human approval gate (disabled by default)"
+      },
+      "workshop": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Master switch for memory_workshop tool and proposal HTTP/gateway routes (default: enabled when any proposal source is active)"
+          },
+          "maxPending": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Max pending items across the unified workshop queue (default: 50, 0 = unlimited). Overrides personaProposals.workshopMaxPending when set."
+          },
+          "sessionKey": {
+            "type": "string",
+            "description": "Change-feed session key for Mission Control / dashboard workshop actions (default: mission-control)"
+          }
+        },
+        "description": "Unified memory workshop — proposal review queue across persona, crystallization, tool, and procedure-skill backlogs"
       },
       "identityReflection": {
         "type": "object",
@@ -1555,6 +1596,10 @@
             "type": "string",
             "description": "Session JSONL directory (default: ~/.openclaw/agents/main/sessions)"
           },
+          "allAgentSessions": {
+            "type": "boolean",
+            "description": "When true, scan all agent session dirs under ~/.openclaw/agents (multi-agent hosts). Default false."
+          },
           "minSteps": {
             "type": "number",
             "description": "Min tool steps per procedure (default: 2)"
@@ -1571,6 +1616,10 @@
             "type": "string",
             "description": "Path for auto-generated skills (default: skills/auto)"
           },
+          "skillsPendingPath": {
+            "type": "string",
+            "description": "Pending skills awaiting human promote (default: memory/skills-pending)"
+          },
           "requireApprovalForPromote": {
             "type": "boolean",
             "description": "Require human move to promote auto-skill (default: true)"
@@ -1585,6 +1634,10 @@
               "type": "string"
             },
             "description": "Optional regex pattern strings (case-insensitive) for extra too_context_specific task checks (#1421)"
+          },
+          "quarantineAfterGenerate": {
+            "type": "boolean",
+            "description": "When true, quarantine auto-skills that fail post-generate audit (default: false)"
           }
         },
         "description": "Procedural memory: auto-generated skills from learned patterns"
@@ -1646,6 +1699,30 @@
           "agentsRuleToProposals": {
             "type": "boolean",
             "description": "Write AGENTS_RULE remediations from self-correction to proposalsDB (default: true)"
+          },
+          "analysisBatchSize": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Number of incidents per LLM analysis batch (default: 1 for MiniMax/M3, 25 otherwise)"
+          },
+          "batchDelayMs": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Delay in milliseconds between analysis batches (default: 250)"
+          },
+          "maxIncidentsPerRun": {
+            "type": "number",
+            "minimum": 1,
+            "description": "Maximum number of incidents to analyze per run (default: 100)"
+          },
+          "model": {
+            "type": "string",
+            "description": "Optional model override for self-correction LLM analysis (default: heavy tier)"
+          },
+          "thinking": {
+            "type": "string",
+            "enum": ["disabled", "adaptive"],
+            "description": "MiniMax thinking mode for self-correction analysis (default: llm.minimax.thinking or disabled)"
           }
         },
         "description": "Self-correction analysis: semantic dedup, TOOLS sectioning, auto-rewrite vs approve, optional Phase 2 via spawn"
@@ -1796,6 +1873,10 @@
               "type": "string"
             },
             "description": "Extra event_type deny list merged with built-in session/heartbeat filter (#1185)"
+          },
+          "autoPropose": {
+            "type": "boolean",
+            "description": "When true, dream-cycle reflection output is auto-enqueued as governed proposals (default: false)"
           }
         },
         "description": "Nightly dream cycle: prune, consolidate, reflect"
@@ -1916,6 +1997,9 @@
           "pruneUnusedDays": {
             "type": "number"
           },
+          "maxPendingProposals": {
+            "type": "number"
+          },
           "evidenceCountBucketSize": {
             "type": "number"
           },
@@ -1951,6 +2035,15 @@
             "items": {
               "type": "string"
             }
+          },
+          "excludeSystemGoals": {
+            "type": "boolean"
+          },
+          "excludeGoalPatterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "description": "Auto-generate SKILL.md from repeated patterns"
@@ -1964,6 +2057,11 @@
             "items": {
               "type": "string"
             }
+          },
+          "maintenanceFallbackPolicy": {
+            "type": "string",
+            "enum": ["default", "cheap-only", "explicit-only", "allow-heavy"],
+            "description": "How maintenance-tier commands build automatic fallback chains (#1226)."
           },
           "default": {
             "type": "array",
@@ -2001,6 +2099,18 @@
               "type": "string"
             },
             "description": "Provider ids to exclude from automatic LLM selection (e.g. openai, anthropic, google). Same as parseLLMConfig / hybrid-mem config-set."
+          },
+          "minimax": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "thinking": {
+                "type": "string",
+                "enum": ["disabled", "adaptive"],
+                "description": "MiniMax M3 thinking mode: 'adaptive' (provider default) or 'disabled' (skip thinking blocks for JSON extraction, default: disabled)"
+              }
+            },
+            "description": "MiniMax-specific LLM options (M3 thinking mode)"
           }
         },
         "description": "LLM model preference lists per tier (maintenance, default, heavy, nano)"
@@ -2070,6 +2180,22 @@
           "maxWallClockSeconds": {
             "type": "number",
             "description": "Maximum wall-clock seconds to spend in one run before deferring backlog (default: 300, 0 disables)"
+          },
+          "triggerSelfCorrectionRun": {
+            "type": "boolean",
+            "description": "Bridge negative implicit signals to self-correction (default: false)"
+          },
+          "selfCorrectionBridgeMaxIncidents": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "Maximum implicit signals to bridge to self-correction per run (default: 5)"
+          },
+          "selfCorrectionBridgeMinConfidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum confidence threshold for bridging signals to self-correction (default: 0.7)"
           }
         },
         "description": "Implicit feedback detection and routing"

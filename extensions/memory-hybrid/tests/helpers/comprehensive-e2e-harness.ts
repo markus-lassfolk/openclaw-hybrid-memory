@@ -155,6 +155,13 @@ export async function invokeHooks(
   return results;
 }
 
+export function mergePrependFromHookResults(results: unknown[]): string {
+  return results
+    .map((r) => (r as { prependContext?: string } | undefined)?.prependContext)
+    .filter((s): s is string => typeof s === "string" && s.length > 0)
+    .join("\n");
+}
+
 export function assertFullStackPaths(tmpDir: string): void {
   expect(existsSync(join(tmpDir, "facts.db"))).toBe(true);
 }

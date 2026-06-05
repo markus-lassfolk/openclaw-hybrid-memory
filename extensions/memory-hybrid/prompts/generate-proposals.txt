@@ -34,6 +34,12 @@ Min confidence: {{min_confidence}}
 --- Current identity file contents (READ THESE CAREFULLY — match their structure, fill their templates, complement their tone) ---
 {{identity_files}}
 
+--- Pre-flight identity gap analysis (insights likely NOT yet captured in identity files) ---
+{{identity_gaps}}
+
+--- Already pending proposals (do NOT re-propose these) ---
+{{pending_proposals}}
+
 --- End ---
 
-Output a JSON array of proposals (or [] if no gaps):
+Output a JSON array of proposals. Return [] ONLY when identity files fully cover all reflection insights AND no gaps are listed above. When identity_gaps lists uncovered items, propose at least one well-supported addition:

@@ -11,6 +11,7 @@ import type OpenAI from "openai";
 import type { FactsDB } from "../backends/facts-db.js";
 import { getMemoryCategories, isValidCategory } from "../config.js";
 import { tryParseFirstJsonArray } from "../utils/llm-json-array.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { is404Like, is500Like, isConnectionErrorLike, isOllamaOOM } from "./chat.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -141,7 +142,7 @@ async function discoverCategoriesFromOther(
           }),
         { maxRetries: 2 },
       );
-      const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
+      const content = extractAssistantMessageText(resp.choices?.[0]?.message).text || "[]";
       const labels = tryParseFirstJsonArray(content);
       if (!labels) continue;
       anyBatchSucceeded = true;
@@ -254,7 +255,7 @@ Respond with ONLY a JSON array of category strings, one per fact, in order. Exam
       { maxRetries: 2 },
     );
 
-    const content = resp.choices?.[0]?.message?.content?.trim() || "[]";
+    const content = extractAssistantMessageText(resp.choices?.[0]?.message).text || "[]";
     const parsed = tryParseFirstJsonArray(content);
     if (!parsed) return { results: new Map(), suggestions: new Map(), success: false };
 

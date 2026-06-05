@@ -9,6 +9,7 @@ import {
   type ActiveTaskInjectionBuildResult,
   buildActiveTaskInjection,
   buildStaleWarningInjection,
+  isNonActionableSubagentPlaceholderTask,
 } from "./active-task.js";
 import { buildHeartbeatTaskHygieneBlock } from "./task-hygiene.js";
 import { applyActiveTaskProjectionFilters } from "./task-ledger-facts.js";
@@ -72,10 +73,16 @@ export function prepareActiveTasksForInjection(
     injectionMaxTasks?: number;
     userText?: string;
     sessionKey?: string;
+    /** Heartbeat hygiene: Failed rows are terminal bookkeeping, not active work. */
+    excludeFailed?: boolean;
   },
 ): { prepared: ActiveTaskEntry[]; ledgerActiveCount: number; filteredActiveCount: number } {
   const ledgerActiveCount = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status)).length;
   let prepared = ledgerTasks.filter((t) => ACTIVE_STATUSES.has(t.status) && !t.stale);
+  prepared = prepared.filter((t) => !isNonActionableSubagentPlaceholderTask(t));
+  if (opts.excludeFailed) {
+    prepared = prepared.filter((t) => t.status !== "Failed");
+  }
   prepared = applyActiveTaskProjectionFilters(prepared, opts.projection);
   prepared.sort((a, b) => compareTasksForInjection(a, b, opts.userText, opts.sessionKey));
 
@@ -122,6 +129,7 @@ export function buildActiveTaskContextBundle(input: ActiveTaskContextBundleInput
     injectionMaxTasks: input.injectionMaxTasks,
     userText: input.userText,
     sessionKey: input.sessionKey,
+    excludeFailed: input.heartbeatHygiene != null,
   });
 
   const parts: string[] = [];

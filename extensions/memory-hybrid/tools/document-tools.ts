@@ -30,6 +30,7 @@ import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import { cleanupEvictedVector, storeCanonicalVectorForFact } from "../services/vector-maintenance.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { extractTags } from "../utils/tags.js";
 import { stringEnum } from "../utils/typebox.js";
 
@@ -243,7 +244,7 @@ async function describeImageWithVision(opts: {
         temperature: 0.2,
         ...chatCompletionTokenParams(model, 800),
       });
-      const text = resp.choices[0]?.message?.content?.trim() ?? "";
+      const text = extractAssistantMessageText(resp.choices[0]?.message).text;
       if (!text) {
         throw new Error(`Vision model ${model} returned empty response.`);
       }
@@ -586,6 +587,9 @@ export function registerDocumentTools(ctx: DocumentToolsContext, api: ClawdbotPl
           decayClass: "stable",
         });
         if (storeResult.skipped) {
+          continue;
+        }
+        if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
           continue;
         }
         entry = storeResult.entry;

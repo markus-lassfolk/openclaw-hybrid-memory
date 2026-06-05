@@ -174,7 +174,7 @@ Each LLM-backed feature is assigned a **tier** (nano, default, or heavy). The fe
 |---------|------|--------------------------|
 | Auto-classify, classify-before-write, query expansion, summarize (recall), reranking, contextual variants, language keywords, retrieval aliases, passive observer | **nano** | `cfg.autoClassify.model` (or equivalent per feature) or `getDefaultCronModel(cronCfg, "nano")`. |
 | Reflection, reflect-rules, reflect-meta, **consolidate**, extract-procedures, persona proposals, dream cycle (reflection steps), ingest, cross-agent learning | **default** | Feature-specific config (e.g. `cfg.reflection.model`) or `getDefaultCronModel(cronCfg, "default")`. CLI `--model` overrides when present (e.g. `consolidate --model …`). |
-| Distill main pass | **maintenance** by default | `distill.modelTier` (unset → maintenance), `distill.defaultModel`, or CLI `distill --model`. Use `heavy` only by opting into `distill.modelTier="heavy"`. |
+| Distill main pass | **maintenance** by default | `distill.modelTier` (`nano` \| `maintenance` \| `default`; unset → maintenance), `distill.defaultModel`, or CLI `distill --model`. Legacy `distill.modelTier="heavy"` is clamped to maintenance (#1205/#1216). |
 
 So: **identification** = config + `getCronModelConfig` + `getLLMModelPreference` (and optionally `getProvidersWithKeys`). **Usage** = pick the tier for the feature, then take the first working model from that tier’s list. The full feature–tier matrix is in [FEATURES-AND-TIERS.md](FEATURES-AND-TIERS.md).
 
@@ -311,6 +311,8 @@ The `baseURL` defaults to `https://api.minimax.io/v1` (global endpoint). Set it 
 **Gateway key auto-merge:** If OpenClaw's gateway has a `minimax` provider configured (under `models.providers.minimax`), the plugin automatically picks up the API key — no duplication needed. Just add `minimax/MiniMax-M2.5` to your `llm.nano` or `llm.default` list.
 
 **OAuth support:** MiniMax supports CLI OAuth via `minimax-portal:minimax-cli` in `auth.order`. When configured alongside an available gateway, requests route through the gateway automatically (same as Google and Anthropic).
+
+**Per-task thinking overrides:** Maintenance analyzers honor `selfCorrection.thinking`, `reinforcement.thinking`, `distill.thinking`, and `reflection.thinking` (each falls back to `llm.minimax.thinking`, default `disabled`). Use `disabled` for structured JSON extraction; try `adaptive` only on reasoning-heavy steps after A/B validation.
 
 ### Any other OpenAI-compatible provider
 

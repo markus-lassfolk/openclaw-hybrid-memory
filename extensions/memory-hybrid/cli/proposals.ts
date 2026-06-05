@@ -4,12 +4,20 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import type { ProposalsDB } from "../backends/proposals-db.js";
-import type { IdentityFileType } from "../config.js";
+import type { ProposalEntry, ProposalsDB } from "../backends/proposals-db.js";
+import type { IdentityFileType, HybridMemoryConfig } from "../config.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { emitPersonaApplied, supersedeActiveProposedEvent } from "../services/change-feed-emit.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import { writeProposalRollback, deleteProposalRollback } from "../services/proposal-rollback.js";
+import { enforceMaxPendingCap, resolveWorkshopMaxPending, type UnifiedProposalStores } from "../services/unified-proposals.js";
+import { resolveWorkshopAppliedSessionKey } from "../services/workshop-config.js";
+import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso } from "../utils/dates.js";
 import { spawnSync } from "../utils/process-runner.js";
 /** Resolve a proposal target file (e.g. SOUL.md) against the workspace directory. */
 function resolveProposalTarget(targetFile: string): string {
@@ -30,7 +38,7 @@ async function auditProposal(
 ): Promise<void> {
   const auditDir = join(dirname(resolvedSqlitePath), "decisions");
   await mkdir(auditDir, { recursive: true });
-  const timestamp = new Date().toISOString();
+  const timestamp = nowIso();
   const entry = {
     timestamp,
     action,
@@ -131,6 +139,107 @@ export function capProposalConfidence(confidence: number, targetFile: string, su
   return confidence;
 }
 
+const PROPOSAL_DANGEROUS_CONTENT_RE = /<script|<iframe|javascript:/i;
+const PROPOSAL_PROMPT_INJECTION_RE =
+  /ignore (all )?(previous|above|system|developer)(?:\s+\w+){0,3}\s+instructions|reveal (the )?(system prompt|secrets)|bypass (policy|approval|safety)|you are now|act as an unrestricted/i;
+const PROPOSAL_SECRET_OR_PRIVATE_RE =
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:api[_-]?key|token|password|secret)\s*[:=]|\bghp_[A-Za-z0-9_]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}|\bsk-[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._~+/-]{16,}/i;
+
+export type ProposalContentValidationFailure =
+  | "dangerous_content"
+  | "prompt_injection"
+  | "secret_or_private_data";
+
+export function validateProposalContent(
+  text: string,
+): { ok: true } | { ok: false; reason: ProposalContentValidationFailure } {
+  if (PROPOSAL_DANGEROUS_CONTENT_RE.test(text)) return { ok: false, reason: "dangerous_content" };
+  if (PROPOSAL_SECRET_OR_PRIVATE_RE.test(text)) return { ok: false, reason: "secret_or_private_data" };
+  if (PROPOSAL_PROMPT_INJECTION_RE.test(text)) return { ok: false, reason: "prompt_injection" };
+  return { ok: true };
+}
+
+export function normalizeProposalText(input: string): string {
+  return input.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** Returns an existing pending/applied proposal with the same normalized change for the same target file. */
+export function findDuplicateProposal(
+  all: ProposalEntry[],
+  candidate: Pick<ProposalEntry, "targetFile" | "suggestedChange"> & { id?: string },
+): ProposalEntry | null {
+  const normalized = normalizeProposalText(candidate.suggestedChange);
+  if (!normalized) return null;
+  return (
+    all.find(
+      (c) =>
+        c.id !== candidate.id &&
+        c.targetFile === candidate.targetFile &&
+        (c.status === "applied" || c.status === "pending") &&
+        normalizeProposalText(c.suggestedChange) === normalized,
+    ) ?? null
+  );
+}
+
+export function getProposalExpiryError(
+  proposal: Pick<ProposalEntry, "expiresAt" | "id">,
+  nowSec?: number,
+): string | null {
+  if (proposal.expiresAt == null) return null;
+  const now = nowSec ?? Math.floor(Date.now() / 1000);
+  if (proposal.expiresAt >= now) return null;
+  return `Proposal ${proposal.id} expired and cannot be approved or applied`;
+}
+
+/** Snapshot + validation helpers for pipeline-created proposals (self-correction, reinforcement, generate-proposals). */
+export function resolvePipelineProposalTarget(input: {
+  targetFile: string;
+  suggestedChange: string;
+  allowedFiles: readonly string[];
+  workspaceRoot: string;
+  confidence: number;
+  proposalTTLDays: number;
+  minConfidence?: number;
+  nowSec?: number;
+  proposalsDb?: ProposalsDB;
+  /** When set, block pipeline proposal creation when the unified workshop queue is full. */
+  workshopStores?: UnifiedProposalStores;
+  maxPending?: number;
+}): {
+  targetFile: string;
+  confidence: number;
+  targetMtimeMs: number | null;
+  targetHash: string | null;
+  expiresAt: number | null;
+} | null {
+  const targetFile = input.targetFile.trim();
+  if (!targetFile || !input.allowedFiles.includes(targetFile as IdentityFileType)) return null;
+  const contentCheck = validateProposalContent(input.suggestedChange);
+  if (!contentCheck.ok) return null;
+  if (input.proposalsDb) {
+    const duplicate = input.proposalsDb.findPendingOrAppliedDuplicate(targetFile, input.suggestedChange);
+    if (duplicate) return null;
+  }
+  if (input.workshopStores) {
+    const cap = enforceMaxPendingCap(
+      input.workshopStores,
+      input.maxPending ?? resolveWorkshopMaxPending(input.workshopStores.cfg),
+    );
+    if (!cap.ok) return null;
+  }
+  const snapshot = getFileSnapshot(join(input.workspaceRoot, targetFile));
+  const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
+  const confidence = capProposalConfidence(input.confidence, targetFile, input.suggestedChange);
+  if (input.minConfidence != null && confidence < input.minConfidence) return null;
+  return {
+    targetFile,
+    confidence,
+    targetMtimeMs: snapshot?.mtimeMs ?? null,
+    targetHash: snapshot?.hash ?? null,
+    expiresAt: input.proposalTTLDays > 0 ? nowSec + input.proposalTTLDays * 24 * 3600 : null,
+  };
+}
+
 function buildAppendBlock(proposalId: string, observation: string, suggestedChange: string, timestamp: string): string {
   const escapeHtmlComment = (text: string): string =>
     text
@@ -226,9 +335,11 @@ function commitProposalChange(
 
 type ApplyProposalContext = {
   proposalsDb: ProposalsDB;
-  cfg: { personaProposals: { allowedFiles: string[] } };
+  cfg: Pick<HybridMemoryConfig, "personaProposals" | "liveChangeFeed">;
   resolvedSqlitePath: string;
   api?: { logger?: { warn?: (msg: string) => void } };
+  changeFeed?: ChangeFeed | null;
+  sessionKey?: string;
 };
 
 /**
@@ -251,6 +362,10 @@ export async function applyApprovedProposal(
       error: `Proposal ${proposalId} is ${proposal.status}. Only approved proposals can be applied.`,
     };
   }
+  const expiryError = getProposalExpiryError(proposal);
+  if (expiryError) {
+    return { ok: false, error: expiryError };
+  }
   if (!ctx.cfg.personaProposals.allowedFiles.includes(proposal.targetFile as IdentityFileType)) {
     return {
       ok: false,
@@ -264,10 +379,25 @@ export async function applyApprovedProposal(
   if (!existsSync(targetPath)) {
     return { ok: false, error: `Target file ${proposal.targetFile} not found at ${targetPath}` };
   }
-  const DANGEROUS_PATTERNS = /<script|<iframe|javascript:/i;
-  if (DANGEROUS_PATTERNS.test(proposal.suggestedChange)) {
-    return { ok: false, error: `Proposal ${proposalId} contains potentially dangerous content and cannot be applied.` };
+  const contentCheck = validateProposalContent(
+    `${proposal.title}\n${proposal.observation}\n${proposal.suggestedChange}`,
+  );
+  if (!contentCheck.ok) {
+    return {
+      ok: false,
+      error: `Proposal ${proposalId} failed safety validation (${contentCheck.reason}) and cannot be applied.`,
+    };
   }
+  const parsedChange = parseSuggestedChange(proposal.suggestedChange);
+  if (parsedChange.changeType === "replace" && !proposal.targetHash && proposal.targetMtimeMs == null) {
+    return {
+      ok: false,
+      error: `Proposal ${proposalId} is a full-file replace but has no target snapshot. Review and re-create the proposal.`,
+    };
+  }
+  let original = "";
+  let wroteRollback = false;
+  let wroteFile = false;
   try {
     const currentSnapshot = getFileSnapshot(targetPath);
     if (proposal.targetHash && currentSnapshot?.hash && proposal.targetHash !== currentSnapshot.hash) {
@@ -287,20 +417,36 @@ export async function applyApprovedProposal(
         error: `Target file ${proposal.targetFile} has changed since proposal creation (mtime mismatch). Review and re-approve.`,
       };
     }
-    const original = readFileSync(targetPath, "utf-8");
+    original = readFileSync(targetPath, "utf-8");
+    const originalSnapshot = getFileSnapshot(targetPath);
     const backupPath = `${targetPath}.backup-${Date.now()}`;
     writeFileSync(backupPath, original);
-    const timestamp = new Date().toISOString();
+    const timestamp = nowIso();
     const applied = buildAppliedContent(original, proposal, timestamp);
     if (!applied.content.trim()) {
       return { ok: false, error: `Proposal ${proposalId} does not contain replacement content to apply.` };
     }
-    writeFileSync(targetPath, applied.content);
+    if (originalSnapshot) {
+      writeProposalRollback(ctx.resolvedSqlitePath, {
+        proposalId,
+        proposalType: "persona",
+        targetPath,
+        originalHash: originalSnapshot.hash,
+        originalContent: original,
+        appliedHash: createHash("sha256").update(applied.content).digest("hex"),
+        appliedAt: timestamp,
+        changeType: applied.changeType,
+      });
+      wroteRollback = true;
+    }
+    atomicWriteFile(targetPath, applied.content);
+    wroteFile = true;
     // Only attempt git commit when the target is inside a git repo (issue #90: non-git workspace can still apply).
     if (isGitRepo(targetPath)) {
       const commitResult = commitProposalChange(targetPath, proposalId, proposal.targetFile);
       if (!commitResult.ok) {
-        writeFileSync(targetPath, original);
+        atomicWriteFile(targetPath, original);
+        if (wroteRollback) deleteProposalRollback(ctx.resolvedSqlitePath, proposalId);
         const repoRoot = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf-8" });
         if (repoRoot.status === 0 && repoRoot.stdout.trim()) {
           const cwd = repoRoot.stdout.trim();
@@ -313,7 +459,12 @@ export async function applyApprovedProposal(
         };
       }
     }
-    ctx.proposalsDb.markApplied(proposalId);
+    const marked = ctx.proposalsDb.markAppliedIfApproved(proposalId);
+    if (!marked) {
+      if (wroteFile) atomicWriteFile(targetPath, original);
+      if (wroteRollback) deleteProposalRollback(ctx.resolvedSqlitePath, proposalId);
+      return { ok: false, error: `Proposal ${proposalId} is no longer approved` };
+    }
     await auditProposal(
       "applied",
       proposalId,
@@ -327,6 +478,14 @@ export async function applyApprovedProposal(
       },
       { error: console.error },
     );
+    emitPersonaApplied(ctx.changeFeed, ctx.cfg as HybridMemoryConfig, {
+      sessionKey: ctx.sessionKey ?? resolveWorkshopAppliedSessionKey(ctx.cfg as HybridMemoryConfig),
+      proposalId,
+      targetFile: proposal.targetFile,
+      title: proposal.title,
+      rollbackAvailable: wroteRollback,
+    });
+    supersedeActiveProposedEvent(ctx.changeFeed, `persona:${proposalId}`);
     return {
       ok: true,
       targetFile: proposal.targetFile,
@@ -334,6 +493,14 @@ export async function applyApprovedProposal(
       suggestedChange: proposal.suggestedChange,
     };
   } catch (err) {
+    if (wroteFile && original) {
+      try {
+        atomicWriteFile(targetPath, original);
+      } catch {
+        // Best-effort restore only.
+      }
+    }
+    if (wroteRollback) deleteProposalRollback(ctx.resolvedSqlitePath, proposalId);
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       operation: "apply-proposal",
       subsystem: "proposals",

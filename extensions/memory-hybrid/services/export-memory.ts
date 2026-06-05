@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, st
 import { basename, dirname, join, resolve } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
+import { nowIso } from "../utils/dates.js";
 
 type ExportOpts = {
   /** Output directory (must exist or be creatable). */
@@ -251,7 +252,7 @@ ${memLinks.length > 200 ? `\n... and ${memLinks.length - 200} more\n` : ""}
   const manifest = {
     version: versionInfo.pluginVersion,
     schemaVersion: versionInfo.schemaVersion,
-    exportedAt: new Date().toISOString(),
+    exportedAt: nowIso(),
     factsExported: facts.length,
     proceduresExported: procedures.length,
     filesWritten: finalFilesWritten,

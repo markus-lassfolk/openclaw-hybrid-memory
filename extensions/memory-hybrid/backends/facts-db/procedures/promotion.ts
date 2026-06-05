@@ -117,6 +117,7 @@ export function getProceduresReadyForSkill(
         WHERE ${POSITIVE_PROCEDURE_TYPE_SQL}
           AND success_count >= ?
           AND promoted_to_skill = 0
+          AND (skill_state IS NULL OR trim(skill_state) = '' OR LOWER(trim(skill_state)) NOT IN ('rejected', 'archived'))
           AND (? = 0 OR COALESCE(last_validated, updated_at, created_at) >= ?)
         ORDER BY success_count DESC, COALESCE(last_validated, updated_at, created_at) DESC, rowid ASC
         LIMIT ?`,

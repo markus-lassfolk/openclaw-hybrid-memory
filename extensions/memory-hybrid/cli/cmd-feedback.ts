@@ -12,12 +12,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { FactsDB, ReinforcementContext } from "../backends/facts-db.js";
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity } from "../config.js";
+import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity, resolveReflectionModelAndFallbacks } from "../config.js";
 import { chatCompleteWithRetry } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../services/feedback-effectiveness.js";
+import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { extractImplicitSignals, parseSessionTurns } from "../services/implicit-feedback-extract.js";
 import { getModeCostEstimates } from "../services/model-pricing.js";
 import {
@@ -30,7 +31,11 @@ import { analyzeTrajectoriesWithLLM, buildTrajectories, serializeTrajectory } fr
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { loadPrompt } from "../utils/prompt-loader.js";
 import { createTransaction } from "../utils/sqlite-transaction.js";
-import { getSessionFilePathsSince } from "./cmd-extract.js";
+import type { CorrectionIncident } from "../services/self-correction-extract.js";
+import { getEnv } from "../utils/env-manager.js";
+import { formatDateUtc, nowSec, formatTimestampUtcFromMs, formatTimestampUtc } from "../utils/dates.js";
+import { runSelfCorrectionRunForCli } from "./cmd-selfcorrection.js";
+import { resolveExtractSessionFilePaths } from "../services/extract-session-paths.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolveScanMaintenanceOverrides } from "./maintenance-overrides.js";
 
@@ -170,11 +175,12 @@ function markImplicitFeedbackLessonRecalled(
   factId: string,
 ): void {
   const nowSec = Math.floor(Date.now() / 1000);
+  const nowIsoAt = formatTimestampUtc(nowSec);
   rawDb
     ?.prepare(
-      "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+      "UPDATE facts SET recall_count = recall_count + 1, access_count = access_count + 1, last_accessed = ?, last_accessed_at = ? WHERE id = ?",
     )
-    .run(nowSec, nowSec, factId);
+    .run(nowSec, nowIsoAt, factId);
 }
 
 /** Rows matching this OR-branch are legacy implicit-feedback bloat (category=pattern). Use with --include-legacy collapse. */
@@ -295,8 +301,9 @@ export function cleanupImplicitFeedbackDuplicates(
     }
   }
   const nowSec = Math.floor(Date.now() / 1000);
+  const nowIsoAt = formatTimestampUtc(nowSec);
   const reinforce = rawDb.prepare(
-    "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = strftime('%Y-%m-%dT%H:%M:%SZ', ?, 'unixepoch') WHERE id = ?",
+    "UPDATE facts SET recall_count = recall_count + ?, access_count = access_count + ?, last_accessed = ?, last_accessed_at = ? WHERE id = ?",
   );
   const supersedeStmt = rawDb.prepare(
     "UPDATE facts SET superseded_at = ?, superseded_by = ?, valid_until = ? WHERE id = ? AND superseded_at IS NULL",
@@ -362,7 +369,7 @@ export function cleanupImplicitFeedbackDuplicates(
       const sup = supersedeStmt.run(nowSec, match.id, nowSec, row.id);
       if ((sup.changes ?? 0) > 0) {
         supersededAny = true;
-        reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowSec, match.id);
+        reinforce.run(Math.max(0, row.recallCount ?? 0), Math.max(0, row.accessCount ?? 0), nowSec, nowIsoAt, match.id);
         collapsed++;
       }
       if (scanned % reportEvery === 0 || scanned === rows.length) {
@@ -477,7 +484,6 @@ export async function runExtractImplicitFeedbackForCli(
   const { factsDb, vectorDb, cfg, logger, openai } = ctx;
   const SCAN_TYPE = "extract-implicit-feedback";
   const days = opts.days ?? 3;
-  const sessionDir = cfg.procedures.sessionsDir;
 
   // Get scan cursor for incremental mode
   const cursor = opts.dryRun ? null : factsDb.getScanCursor(SCAN_TYPE);
@@ -489,7 +495,7 @@ export async function runExtractImplicitFeedbackForCli(
     // A capped backlog may take longer than `days` to drain; using the day window
     // first would permanently strand old-but-unprocessed sessions after the cursor.
     const cursorFloor = Math.max(0, cursor.lastSessionTs - 1);
-    const allFiles = getSessionFilePathsSince(sessionDir, 0, cursorFloor);
+    const allFiles = resolveExtractSessionFilePaths(cfg, 0, cursorFloor);
     const incrementalCandidates: Array<{ path: string; mtime: number; fname: string }> = [];
     for (const path of allFiles) {
       try {
@@ -533,7 +539,7 @@ export async function runExtractImplicitFeedbackForCli(
     }
   } else {
     // Full mode: process all files in the date range
-    filePaths = getSessionFilePathsSince(sessionDir, days);
+    filePaths = resolveExtractSessionFilePaths(cfg, days);
     // Sort by mtime ascending, then by filename to ensure deterministic processing order
     filePaths.sort((a, b) => {
       let statA, statB;
@@ -598,6 +604,8 @@ export async function runExtractImplicitFeedbackForCli(
     autoCleanup: true,
     cleanupLimit: 1000,
   };
+  let bridgeIncidents: CorrectionIncident[] = [];
+  const bridgeMinConfidence = implicitCfg.selfCorrectionBridgeMinConfidence ?? 0.7;
 
   if (implicitCfg.enabled === false) {
     progress.stage = "done";
@@ -955,6 +963,24 @@ export async function runExtractImplicitFeedbackForCli(
       const lessonDedupeJaccard = implicitCfg.lessonDedupeJaccard ?? 0.7;
       const negativeSignals = signals.filter((s) => s.polarity === "negative" && s.confidence >= minConf);
       for (const sig of negativeSignals) {
+        if (
+          implicitCfg.triggerSelfCorrectionRun &&
+          sig.confidence >= bridgeMinConfidence &&
+          bridgeIncidents.length < (implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5)
+        ) {
+          let followingAssistant = "";
+          const userTurnIndex = sig.context.precedingTurns;
+          if (userTurnIndex + 1 < turns.length && turns[userTurnIndex + 1].role === "assistant") {
+            followingAssistant = turns[userTurnIndex + 1].content;
+          }
+          bridgeIncidents.push({
+            userMessage: sig.context.userMessage,
+            precedingAssistant: sig.context.agentMessage,
+            followingAssistant: followingAssistant.slice(0, 500),
+            sessionFile: sig.context.sessionFile,
+            timestamp: formatTimestampUtcFromMs(sig.context.timestamp),
+          });
+        }
         if (wallClockLimitReached()) {
           markPartialProgress("maxWallClock", deferredIncludingCurrentSession());
           break;
@@ -981,6 +1007,9 @@ export async function runExtractImplicitFeedbackForCli(
             decayClass: "normal",
           });
           if (storeResult.skipped) {
+            continue;
+          }
+          if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
             continue;
           }
           // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
@@ -1159,6 +1188,9 @@ export async function runExtractImplicitFeedbackForCli(
                   if (storeResult.skipped) {
                     continue;
                   }
+                  if (storeResult.newlyStored === false && !storeResult.embeddingStale) {
+                    continue;
+                  }
                   if (storeResult.evictedFactId) {
                     evictedFactIds.push(storeResult.evictedFactId);
                   }
@@ -1186,6 +1218,51 @@ export async function runExtractImplicitFeedbackForCli(
 
             trajectoriesBuilt++;
             progress.trajectoriesBuilt = trajectoriesBuilt;
+
+            // Count trajectory outcomes as implicit signals when turn-level heuristics found none.
+            if (rawDb) {
+              const polarity =
+                traj.outcome === "success" || traj.outcome === "partial"
+                  ? "positive"
+                  : traj.outcome === "failure"
+                    ? "negative"
+                    : "neutral";
+              const summary =
+                traj.lessonsExtracted.find((l) => l.trim().length > 0)?.trim() ??
+                `Trajectory ${traj.outcome}: ${traj.outcomeSignal}`;
+              if (polarity !== "neutral" && summary.length > 0) {
+                try {
+                  const insertSignal = rawDb.prepare(`
+                    INSERT OR IGNORE INTO implicit_signals (session_file, signal_type, confidence, polarity, user_message, agent_message, preceding_turns, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'trajectory')
+                  `);
+                  const changes = insertSignal.run(
+                    traj.sessionFile,
+                    `trajectory_${traj.outcomeSignal}`,
+                    traj.outcome === "success" ? 0.65 : traj.outcome === "partial" ? 0.55 : 0.5,
+                    polarity,
+                    summary.slice(0, 500),
+                    (traj.topic ?? "").slice(0, 500),
+                    traj.keyPivot ?? 0,
+                  ).changes;
+                  if (changes > 0) {
+                    totalSignals++;
+                    if (polarity === "positive") positiveCount++;
+                    else negativeCount++;
+                    progress.signalsExtracted = totalSignals;
+                    progress.positiveCount = positiveCount;
+                    progress.negativeCount = negativeCount;
+                  }
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    operation: "runExtractImplicitFeedbackForCli:trajectory-signal",
+                    severity: "info",
+                    subsystem: "implicit-feedback",
+                  });
+                }
+              }
+            }
+
             emitProgress();
 
             // Keep vector maintenance outside the SQL transaction.
@@ -1359,14 +1436,67 @@ export async function runExtractImplicitFeedbackForCli(
   progress.stage = "done";
   emitProgress();
 
-  // Update scan cursor with the last processed session
-  if (!opts.dryRun && lastProcessedFilePath) {
-    const stat = statSync(lastProcessedFilePath);
-    const lastSessionTs = stat.mtimeMs;
-    const lastSessionFile = basename(lastProcessedFilePath);
-    // BUG FIX: Use sessionsVisited instead of sessionsProcessed for cursor advancement
-    // so that skipped sessions (read errors, too short) also advance the watermark
-    factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
+  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+    if (implicitCfg.llmSignalAnalysis !== false) {
+      const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(cfg, "maintenance");
+      try {
+        const filtered = await classifyAndFilterCorrectionIncidents({
+          incidents: bridgeIncidents,
+          openai,
+          model: defaultModel,
+          fallbackModels,
+          minConfidence: implicitCfg.selfCorrectionBridgeMinConfidence ?? 0.7,
+          batchSize: implicitCfg.llmSignalBatchSize ?? 10,
+          factsDb,
+          logger: {
+            info: (msg) => logger?.info?.(msg),
+            warn: (msg) => logger?.warn?.(msg),
+          },
+        });
+        bridgeIncidents = filtered.incidents;
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          operation: "runExtractImplicitFeedbackForCli:llm-signal-bridge",
+          severity: "warning",
+          subsystem: "implicit-feedback",
+        });
+      }
+    }
+  }
+
+  if (!opts.dryRun && implicitCfg.triggerSelfCorrectionRun && bridgeIncidents.length > 0) {
+    const cap = implicitCfg.selfCorrectionBridgeMaxIncidents ?? 5;
+    const incidents = bridgeIncidents.slice(0, cap);
+    const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    try {
+      const bridgeRes = await runSelfCorrectionRunForCli(ctx, { incidents, workspace, dryRun: false });
+      logger?.info?.(
+        `memory-hybrid: implicit-feedback self-correction bridge status=${bridgeRes.status ?? "unknown"} analysed=${bridgeRes.analysed} autoFixed=${bridgeRes.autoFixed}`,
+      );
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        operation: "runExtractImplicitFeedbackForCli:self-correction-bridge",
+        severity: "warning",
+        subsystem: "implicit-feedback",
+      });
+    }
+  }
+
+  // Update scan cursor with the last fully processed session
+  if (!opts.dryRun && lastProcessedFilePath && progress.sessionsProcessed > 0) {
+    const shouldAdvanceCursor =
+      !partial ||
+      partialReason === "maxSessions" ||
+      partialReason === "maxSignals" ||
+      partialReason === "maxTrajectories" ||
+      partialReason === "maxWallClock" ||
+      (partialReason === "reinforcementError" && progress.sessionsProcessed > 0);
+    if (shouldAdvanceCursor) {
+      const stat = statSync(lastProcessedFilePath);
+      const lastSessionTs = stat.mtimeMs;
+      const lastSessionFile = basename(lastProcessedFilePath);
+      factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs, progress.sessionsVisited, lastSessionFile);
+    }
   }
 
   // Calculate backlog estimates
@@ -1633,7 +1763,7 @@ export async function runToolEffectivenessForCli(
     const report = await computeToolEffectiveness(workflowDbPath, effStore, teCfg ?? {}, ctx.logger ?? {});
 
     // Gap 3 (#263): Generate monthly report, gated to once per calendar month
-    const month = new Date().toISOString().slice(0, 7); // YYYY-MM
+    const month = formatDateUtc(nowSec()).slice(0, 7); // YYYY-MM
     const monthlyKey = `tool-effectiveness-monthly-${month}`;
     try {
       const rawDb = ctx.factsDb.getRawDb();

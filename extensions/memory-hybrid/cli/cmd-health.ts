@@ -11,6 +11,7 @@ import type { HybridMemoryConfig } from "../config.js";
 import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
+import { nowIso } from "../utils/dates.js";
 
 interface HealthIndicator {
   name: string;
@@ -165,7 +166,7 @@ export function registerHealthCommand(
           const walPath = breaker.walPath ?? cfg.wal.walPath ?? "unknown";
           const walSizeBytes =
             breaker.walPath && existsSync(breaker.walPath) ? Math.max(0, statSync(breaker.walPath).size) : 0;
-          const allEntries = await wal.readAll();
+          const { entries: allEntries, hadCorruption } = await wal.readAllRecoverable();
           const validEntries = await wal.getValidEntries();
           const staleEntries = Math.max(0, allEntries.length - validEntries.length);
 
@@ -181,11 +182,12 @@ export function registerHealthCommand(
               status: "warn",
               detail: "Circuit breaker open in current process",
             });
-          } else if (walSizeBytes > WAL_SIZE_WARN_BYTES || staleEntries > 0) {
+          } else if (hadCorruption || walSizeBytes > WAL_SIZE_WARN_BYTES || staleEntries > 0) {
+            const corruptionNote = hadCorruption ? ", corruption detected (run verify --fix)" : "";
             indicators.push({
               name: "WAL",
               status: "warn",
-              detail: `${validEntries.length} pending, ${staleEntries} stale, ${formatBytes(walSizeBytes)} at ${walPath}`,
+              detail: `${validEntries.length} pending, ${staleEntries} stale${corruptionNote}, ${formatBytes(walSizeBytes)} at ${walPath}`,
             });
           } else {
             indicators.push({
@@ -285,7 +287,7 @@ export function registerHealthCommand(
                   ? "unhealthy"
                   : "degraded",
               indicators,
-              timestamp: new Date().toISOString(),
+              timestamp: nowIso(),
             },
             null,
             2,

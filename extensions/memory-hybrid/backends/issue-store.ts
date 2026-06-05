@@ -14,6 +14,8 @@ import type { SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { CreateIssueInput, Issue, IssueSeverity, IssueStatus } from "../types/issue-types.js";
 import { ISSUE_TRANSITIONS } from "../types/issue-types.js";
+import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { backfillIssueTextTimestamps } from "../utils/timestamp-migration.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 interface IssueRow {
@@ -57,13 +59,14 @@ export class IssueStore extends BaseSqliteStore {
         verified_at TEXT,
         tags TEXT DEFAULT '[]',
         metadata TEXT DEFAULT '{}',
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
       CREATE INDEX IF NOT EXISTS idx_issues_severity ON issues(severity);
     `);
+    backfillIssueTextTimestamps(this.liveDb);
   }
 
   protected getSubsystemName(): string {
@@ -72,7 +75,7 @@ export class IssueStore extends BaseSqliteStore {
 
   create(input: CreateIssueInput): Issue {
     const id = randomUUID();
-    const now = new Date().toISOString();
+    const now = nowIso();
 
     this.liveDb
       .prepare(
@@ -104,7 +107,7 @@ export class IssueStore extends BaseSqliteStore {
     const existing = this.get(id);
     if (!existing) throw new Error(`Issue not found: ${id}`);
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const sets: string[] = ["updated_at = ?"];
     const params: SQLInputValue[] = [now];
 
@@ -177,7 +180,7 @@ export class IssueStore extends BaseSqliteStore {
       );
     }
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const patch: Partial<Issue> = { ...data, status: newStatus };
 
     if (newStatus === "resolved" && !patch.resolvedAt) {
@@ -241,12 +244,12 @@ export class IssueStore extends BaseSqliteStore {
       related.push(factId);
       this.liveDb
         .prepare("UPDATE issues SET related_facts = ?, updated_at = ? WHERE id = ?")
-        .run(JSON.stringify(related), new Date().toISOString(), issueId);
+        .run(JSON.stringify(related), nowIso(), issueId);
     }
   }
 
   archive(olderThanDays: number): number {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = cutoffIsoDaysAgo(olderThanDays);
     const result = this.liveDb
       .prepare(`DELETE FROM issues WHERE status IN ('verified', 'wont-fix') AND updated_at < ?`)
       .run(cutoff);

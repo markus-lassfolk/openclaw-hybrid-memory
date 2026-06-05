@@ -6,6 +6,7 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import {
   detectStaleTasks,
+  isSubagentSession,
   readActiveTaskFile,
   upsertTask,
   writeActiveTaskFileGuarded,
@@ -23,6 +24,7 @@ import {
 } from "../services/task-hygiene.js";
 import { loadTaskLedgerFromFactsWithMetrics, syncActiveTaskEntryToFacts } from "../services/task-ledger-facts.js";
 import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
+import { applyPrependBudget, capBudgetToPrependRemaining } from "../services/prepend-budget.js";
 import { parseDuration } from "../utils/duration.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -49,6 +51,7 @@ export function registerActiveTaskInjection(
         userText && longRunningMode !== "off" ? detectLongRunningWorkflowProposal(userText, workspaceRoot) : null;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
+      const isSubagent = isSubagentSession(sessionKey ?? undefined);
       let factsSelectionMetrics: import("../services/task-ledger-facts.js").ActiveTaskLedgerSelectionMetrics | null =
         null;
       let factsSelectionStartMs: number | null = null;
@@ -134,6 +137,7 @@ export function registerActiveTaskInjection(
 
       const th = ctx.cfg.activeTask.taskHygiene;
       const isHeartbeat =
+        !isSubagent &&
         th.heartbeatEscalation &&
         ctx.cfg.goalStewardship.enabled &&
         !!userText &&
@@ -152,9 +156,18 @@ export function registerActiveTaskInjection(
         });
       }
 
+      const injectionBudgetTokens = capBudgetToPrependRemaining(
+        ctx.prependBudgetRef,
+        ctx.cfg.activeTask.injectionBudget,
+      );
+      if (injectionBudgetTokens <= 0) {
+        logFactsSelection(0);
+        return undefined;
+      }
+
       const bundle = buildActiveTaskContextBundle({
         ledgerTasks: activeForInjection,
-        injectionBudgetTokens: ctx.cfg.activeTask.injectionBudget,
+        injectionBudgetTokens,
         staleMinutes,
         staleWarningEnabled: ctx.cfg.activeTask.staleWarning.enabled,
         projection: ctx.cfg.activeTask.projection,
@@ -181,13 +194,14 @@ export function registerActiveTaskInjection(
       const parts = [...bundle.parts, longRunningBlock].filter(Boolean);
       if (parts.length === 0) return undefined;
 
-      const context = parts.join("\n\n");
+      const prepend = applyPrependBudget(ctx.prependBudgetRef, `${parts.join("\n\n")}\n\n`);
+      if (!prepend?.trim()) return undefined;
       const staleCount = activeForInjection.filter((t) => t.stale).length;
       const src = ctx.cfg.activeTask.ledger === "facts" ? "category:project facts" : "ACTIVE-TASKS.md";
       api.logger?.info?.(
         `memory-hybrid: active-task injection from ${src}: ledger=${bundle.ledgerActiveCount} filtered=${bundle.filteredActiveCount} injected=${bundle.injectedTaskCount} (~${bundle.injectedTokens} tok)${staleCount > 0 ? ` (${staleCount} stale in ledger)` : ""}`,
       );
-      return { prependContext: `${context}\n\n` };
+      return { prependContext: prepend };
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         operation: "active-task-injection",

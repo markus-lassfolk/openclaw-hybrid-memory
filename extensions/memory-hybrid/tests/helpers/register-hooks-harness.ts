@@ -66,8 +66,11 @@ export function buildPluginApiForRegisterHooks(
     runReflectionMeta: vi.fn(),
     recallInFlightRef: { value: 0 },
     lastAutoRecallPromptRef: { value: null },
+    lastAutoRecallPromptBySession: new Map(),
+    prependBudgetRef: { value: null },
     registrationGeneration: 0,
     currentRegistrationGenerationRef: { value: 0 },
+    sessionStateRef: { value: null },
   };
 }
 

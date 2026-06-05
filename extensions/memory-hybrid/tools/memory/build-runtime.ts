@@ -1,8 +1,15 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { TASK_LEDGER_CATEGORY, refreshActiveTaskProjectionBestEffort } from "../../services/task-ledger-facts.js";
+import {
+  TASK_LEDGER_CATEGORY,
+  activeTaskRenderGoalsOpts,
+  refreshActiveTaskProjectionBestEffort,
+} from "../../services/task-ledger-facts.js";
 import { storeCanonicalVectorForFact } from "../../services/vector-maintenance.js";
 import { parseDuration } from "../../utils/duration.js";
+import { getEnv } from "../../utils/env-manager.js";
 import { resolveWorkspacePath } from "../../utils/path.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { MemoryToolsContext } from "./types.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 import { isEdictWriteToolEnabled, sanitizeScopeParam, storeRegistryEmbeddings } from "./helpers.js";
@@ -23,6 +30,8 @@ export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api:
     embeddingRegistry,
     verificationStore,
     lastProgressiveIndexIds,
+    progressiveIndexBySession,
+    lastAutoRecallPromptBySession,
     currentAgentIdRef,
     pendingLLMWarnings,
     variantQueue,
@@ -54,6 +63,7 @@ export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api:
       return parseDuration("24h");
     }
   })();
+  const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
 
   const maybeRefreshProjectActiveTaskProjection = async (
     factCategory: string,
@@ -72,6 +82,7 @@ export function buildMemoryToolRuntime(resolvedContext: MemoryToolsContext, api:
       source: "memory_store",
       factId,
       logger: api.logger,
+      goalsDir: activeTaskRenderGoalsOpts(cfg, workspaceRoot).goalsDir,
     });
   };
 

@@ -63,7 +63,7 @@ describe("maintenance pipeline — malformed session JSONL", () => {
     expect(extractUserMessageTextsFromSessionJsonl(path)).toEqual(["keep me"]);
   });
 
-  it("analyze-feedback skips phrase extraction when any session has malformed JSONL", async () => {
+  it("analyze-feedback continues after malformed JSONL and counts only clean sessions", async () => {
     writeSession(".openclaw/agents/agent-bad/sessions/bad.jsonl", '{"type":"message"\n');
     writeSession(
       ".openclaw/agents/agent-good/sessions/good.jsonl",
@@ -75,9 +75,7 @@ describe("maintenance pipeline — malformed session JSONL", () => {
 
     const result = await runAnalyzeFeedbackPhrasesForCli(makeContext(), { days: 30 });
 
-    expect(result.error).toContain("Malformed session JSONL at");
-    expect(result.error).toContain("bad.jsonl:1");
-    // All files are scanned; phrase extraction is skipped when any file had a bad line.
+    expect(result.error).toBeUndefined();
     expect(result.sessionsScanned).toBe(1);
     expect(result.reinforcement).toEqual([]);
     expect(result.correction).toEqual([]);

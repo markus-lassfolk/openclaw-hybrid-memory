@@ -90,6 +90,8 @@ describe("registerAuthFailureRecall", () => {
     );
 
     expect(out?.prependContext).toBeTruthy();
+    expect(out?.prependContext).toContain("<recalled-context>");
+    expect(out?.prependContext).toContain("recalled data only");
     expect(api.logger.info).toHaveBeenCalledWith(expect.stringContaining("auth failure detected"));
   });
 });

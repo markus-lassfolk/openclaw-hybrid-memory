@@ -12,8 +12,15 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { getCronModelConfig, getDefaultCronModel } from "../config/index.js";
 import { isAbortOrTransientLlmError } from "../services/chat.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../services/workflow-goal-classifier.js";
+import { redactMaintenancePrivateText } from "../utils/maintenance-privacy.js";
+import {
+  currentTurnSlice,
+  extractToolNamesFromMessages,
+} from "../services/workflow-message-utils.js";
 import { buildDailyNarrative } from "../src/worker/narratives.js";
 import { recordStartupMemoryCheckpoint } from "../services/startup-memory-attribution.js";
+import { nowIso } from "../utils/dates.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { createSessionState } from "./session-state.js";
 import { registerActiveTaskInjection } from "./stage-active-task.js";
@@ -22,9 +29,12 @@ import { runCaptureStage } from "./stage-capture.js";
 import { createStaleSweepTimer, getDispose, registerCleanupHandlers } from "./stage-cleanup.js";
 import { registerCredentialHint } from "./stage-credential-hint.js";
 import { registerFrustrationHandlers } from "./stage-frustration.js";
+import { registerChangeNotifyHandler } from "./stage-change-notify.js";
+import { registerChangeRevertHandler } from "./stage-change-revert.js";
 import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
+import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
@@ -36,8 +46,8 @@ import { isStaleLifecycleGeneration } from "../utils/lifecycle-generation.js";
 export type { LifecycleContext } from "./types.js";
 
 export function createLifecycleHooks(ctx: LifecycleContext) {
-  const sessionState = createSessionState();
-  const staleSweepTimer = createStaleSweepTimer(sessionState);
+  const sessionState = createSessionState(ctx.progressiveIndexBySession, ctx.lastAutoRecallPromptBySession);
+  const staleSweepTimer = createStaleSweepTimer(sessionState, ctx.injectedFactIdsBySession);
   let firstRecallCheckpointCaptured = false;
 
   const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
@@ -78,6 +88,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return undefined;
           }
           if (!recallStageResult) {
+            api.logger.warn?.("memory-hybrid: recall stage returned no result — attempting FTS+HOT degraded fallback");
+            const degraded = await buildDegradedFtsHotRecallStage(event, rApi, ctx, sessionState, "timeout");
             if (capturedFirstRecallBegin) {
               recordStartupMemoryCheckpoint({
                 logger: api.logger,
@@ -86,11 +98,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 phase: "startup.first-recall.after",
                 onceKey: "startup.first-recall.after",
                 tags: {
-                  resultKind: "timeout",
+                  resultKind: degraded.kind,
                 },
               });
             }
-            return undefined;
+            return degraded.prependContext ? { prependContext: degraded.prependContext } : undefined;
           }
           if (recallStageResult.kind === "degraded") {
             if (capturedFirstRecallBegin) {
@@ -187,7 +199,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       });
     }
 
-    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
+    // Register before active-task injection so credential hints prepend ahead of task blocks
+    // when OpenClaw merges before_agent_start prependContext (left-to-right concat).
+    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
+      registerCredentialHint(api, ctx);
+    }
+
     const resolvedGoalsDir = resolvedGoalsDirForLifecycle(ctx.cfg);
     registerGoalStewardshipInjection(
       api,
@@ -195,6 +212,8 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       resolvedGoalsDir,
       ctx.cfg.activeTask.enabled ? resolvedActiveTaskPath : undefined,
     );
+
+    registerActiveTaskInjection(api, ctx, resolvedActiveTaskPath, workspaceRoot);
     registerGoalSubagentHandlers(api, ctx, resolvedGoalsDir);
     registerCleanupHandlers(api, ctx, sessionState, resolvedActiveTaskPath, workspaceRoot);
     // Guard experimental/optional features at the registration point — avoids registering
@@ -202,17 +221,15 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     if (ctx.cfg.autoRecall.enabled && ctx.cfg.autoRecall.authFailure.enabled) {
       registerAuthFailureRecall(api, ctx, sessionState);
     }
-    // Note: credential hints are gated on verbosity !== "silent" because their output
-    // (a prepended hint block) is meaningless in silent mode. This is intentional:
-    // the feature adds context only when the agent can surface it. If credential detection
-    // without output injection is ever needed, split the guard accordingly.
-    if (ctx.cfg.credentials.enabled && ctx.cfg.credentials.autoDetect && ctx.cfg.verbosity !== "silent") {
-      registerCredentialHint(api, ctx);
-    }
   };
 
   const onFrustrationDetect = (api: ClawdbotPluginApi) => {
     registerFrustrationHandlers(api, ctx, sessionState);
+  };
+
+  const onChangeNotify = (api: ClawdbotPluginApi) => {
+    registerChangeRevertHandler(api, ctx, sessionState);
+    registerChangeNotifyHandler(api, ctx, sessionState);
   };
 
   const onAgentEnd = (api: ClawdbotPluginApi) => {
@@ -229,43 +246,33 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
         try {
           const messages = ev?.messages ?? [];
           const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
+          const turnMessages = currentTurnSlice(messages);
 
-          // Extract goal from first user message (used as trace label)
-          let goal = "unknown";
-          for (const msg of messages) {
-            if (msg && typeof msg === "object" && (msg as { role?: string }).role === "user") {
-              const content = (msg as { content?: unknown }).content;
-              if (typeof content === "string" && content.trim()) {
-                goal = content.trim().slice(0, 200);
-                break;
-              }
-            }
-          }
+          const goal = redactMaintenancePrivateText(
+            extractUserWorkflowGoal(turnMessages, ctx.cfg.crystallization?.excludeGoalPatterns),
+          );
 
           // Get session start time from sessionLastActivity (set during before_agent_start)
           const sessionStartTime = sessionState.sessionLastActivity.get(sessionId);
 
-          // Push each tool call onto the tracker buffer with the actual session start time
-          for (const msg of messages) {
-            if (!msg || typeof msg !== "object") continue;
-            const msgObj = msg as Record<string, unknown>;
-            if (msgObj.role !== "assistant") continue;
-            const toolCalls = msgObj.tool_calls;
-            if (!Array.isArray(toolCalls)) continue;
-            for (const tc of toolCalls) {
-              if (!tc || typeof tc !== "object") continue;
-              const fn = (tc as Record<string, unknown>).function as Record<string, unknown> | undefined;
-              if (fn && typeof fn.name === "string") {
-                ctx.workflowTracker?.push(sessionId, fn.name, sessionStartTime);
-              }
-            }
+          for (const toolName of extractToolNamesFromMessages(turnMessages)) {
+            ctx.workflowTracker?.push(sessionId, toolName, sessionStartTime);
           }
 
-          // Flush buffer to workflow-traces.db
-          const outcome = ev?.success === true ? "success" : ev?.success === false ? "failure" : "unknown";
-          const traceId = ctx.workflowTracker?.flush(sessionId, goal, outcome);
-          if (traceId) {
-            api.logger.debug?.(`memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId}`);
+          if (isSystemWorkflowGoal(goal, ctx.cfg.crystallization?.excludeGoalPatterns)) {
+            ctx.workflowTracker?.discard(sessionId);
+            api.logger.debug?.(
+              `memory-hybrid: workflow trace skipped (system/cron goal) session=${sessionId} goal=${goal.slice(0, 80)}`,
+            );
+          } else {
+            const outcome = ev?.success === true ? "success" : ev?.success === false ? "failure" : "unknown";
+            const toolCount = ctx.workflowTracker?.getBuffer?.(sessionId)?.length ?? 0;
+            const traceId = ctx.workflowTracker?.flush(sessionId, goal, outcome);
+            if (traceId) {
+              api.logger.info?.(
+                `memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId} outcome=${outcome} tools=${toolCount}`,
+              );
+            }
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -280,6 +287,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       if (isStaleLifecycleGeneration(ctx)) {
         const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
         sessionState.clearSessionState(sessionId);
+        sessionState.clearInjectedFactIdsForSession(ctx.injectedFactIdsBySession, sessionId);
         return;
       }
       await runCaptureStage(event, rApi, ctx, sessionState);
@@ -298,7 +306,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             try {
               ctx.eventLog?.append({
                 sessionId,
-                timestamp: new Date().toISOString(),
+                timestamp: nowIso(),
                 eventType: "action_taken",
                 content: {
                   kind: "goal.session_summary",
@@ -359,7 +367,18 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             guard.reason === "missing_checkpoint_block" || guard.reason === "missing_checkpoint_warn";
           if (requiresProjectFacts) {
             const projectFacts = ctx.factsDb.listFactsByCategory(TASK_LEDGER_CATEGORY, 8000);
-            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId });
+            let goalAliases: Array<{ id: string; label: string }> | undefined;
+            if (ctx.cfg.goalStewardship?.enabled) {
+              try {
+                const { listActiveGoals, resolveGoalsDir } = await import("../services/goal-stewardship.js");
+                const gDir = resolveGoalsDir(workspaceRoot, ctx.cfg.goalStewardship.goalsDir);
+                const activeGoals = await listActiveGoals(gDir);
+                goalAliases = activeGoals.map((g) => ({ id: g.id, label: g.label }));
+              } catch {
+                goalAliases = undefined;
+              }
+            }
+            guard = evaluatePreFinalizationGuard(messages, { projectFacts, sessionKey: sessionId, goalAliases });
           }
           const guardMessage = formatPreFinalizationGuardMessage(guard);
           if (guard.reason === "explicit_bypass" || guard.reason === "checkpoint_present") {
@@ -392,7 +411,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     });
   };
 
-  const dispose = getDispose(staleSweepTimer, sessionState);
+  const dispose = getDispose(staleSweepTimer, sessionState, ctx.injectedFactIdsBySession);
 
-  return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose, sessionState };
+  return { onAgentStart, onAgentEnd, onFrustrationDetect, onChangeNotify, dispose, sessionState };
 }

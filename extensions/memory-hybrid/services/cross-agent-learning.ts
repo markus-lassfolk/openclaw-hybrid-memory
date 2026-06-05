@@ -332,7 +332,7 @@ export async function runCrossAgentLearning(
           const importance = Math.min(0.95, Math.max(0.5, lesson.importance ?? 0.7) + 0.1);
 
           // Store as global fact
-          const newFact = factsDb.store({
+          const storeResult = factsDb.storeWithResult({
             text: lesson.text,
             category: "pattern",
             entity: null,
@@ -357,6 +357,11 @@ export async function runCrossAgentLearning(
               })),
             }),
           });
+          if (storeResult.skipped || storeResult.newlyStored === false) {
+            result.skippedDuplicates++;
+            continue;
+          }
+          const newFact = storeResult.entry;
 
           result.generalisedStored++;
           result.newFacts.push({

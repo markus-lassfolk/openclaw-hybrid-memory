@@ -24,8 +24,10 @@ const BASE_CFG: CrystallizationConfig = {
   outputDir: "",
   maxCrystallized: 50,
   pruneUnusedDays: 30,
+  maxPendingProposals: 100,
   evidenceCountBucketSize: 5,
   placeholderEmailDomains: ["example.com", "localhost", "test.com", "example.org"],
+  excludeSystemGoals: true,
 };
 const MIN_CONCRETE_EXAMPLE_LENGTH_THRESHOLD_CHARS = 18;
 
@@ -163,6 +165,33 @@ Bounded release-health review workflow.
     expect(validation.staticValidation.status).toBe("passed");
     expect(validation.dryLoadValidation.status).toBe("passed");
     expect(validation.approvalDecision).toBe("allow");
+  });
+
+  it("denies validation when example goals are cron-only", () => {
+    tmpDir = mkdtempSync(join(tmpdir(), "generated-skill-validation-deny-cron-"));
+    const cfg: CrystallizationConfig = { ...BASE_CFG, outputDir: join(tmpDir, "skills") };
+    const service = new GeneratedSkillValidationService();
+    const pattern: WorkflowPattern = {
+      toolSequence: ["read", "exec"],
+      totalCount: 6,
+      successCount: 4,
+      failureCount: 2,
+      successRate: 4 / 6,
+      avgDurationMs: 900,
+      exampleGoals: ["[cron:abc openclaw-hybrid-memory-pr-stewardship]"],
+    };
+
+    const result = crystallizeSkill({ patternId: "cron-deny", evidenceHash: "ev-deny", pattern }, cfg);
+    const validation = service.validate({
+      outputDir: cfg.outputDir,
+      proposedOutputPath: result.proposedOutputPath,
+      skillName: result.skillName,
+      skillContent: result.skillContent,
+      pattern,
+    });
+
+    expect(validation.approvalDecision).toBe("deny");
+    expect(validation.staticValidation.violations.join(" ")).toMatch(/cron\/system prompts only/i);
   });
 
   it("passes static, dry-load, and activation eval for crystallized skills", () => {

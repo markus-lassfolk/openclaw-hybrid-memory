@@ -13,6 +13,7 @@ import { getMemoryTriggers } from "../services/auto-capture.js";
 import { detectCategory as detectCategoryUtil, shouldCapture as shouldCaptureUtil } from "../services/capture-utils.js";
 import { ContextualVariantGenerator, VariantGenerationQueue } from "../services/contextual-variants.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { ChangeFeed } from "../services/change-feed.js";
 import { runReflection, runReflectionMeta, runReflectionRules } from "../services/reflection.js";
 import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
@@ -442,6 +443,19 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       agentHealthStore = null;
     }
 
+  let changeFeed: ChangeFeed | null = null;
+  try {
+    changeFeed = new ChangeFeed(dbContext.factsDb);
+    logApi.logger.info("memory-hybrid: change feed initialized");
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "registration",
+      operation: "plugin-register:change-feed-init",
+      severity: "warning",
+    });
+    changeFeed = null;
+  }
+
   // ========================================================================
   // Build PluginRuntime -- single instance-scoped container for all state
   // ========================================================================
@@ -484,6 +498,8 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     learningsDb,
     auditStore,
     agentHealthStore,
+    changeFeed,
+    sessionStateRef: { value: null },
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
     toolRegistrationHandle: null, // set after registerTools below
     bootstrapAsyncInit,
@@ -494,7 +510,11 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     restartPendingClearedRef: { value: false },
     recallInFlightRef: { value: 0 },
     lastAutoRecallPromptRef: { value: null },
+    prependBudgetRef: { value: null },
     lastProgressiveIndexIds: [],
+    progressiveIndexBySession: new Map(),
+    lastAutoRecallPromptBySession: new Map(),
+    injectedFactIdsBySession: new Map(),
     timers: createTimers(),
   };
 
@@ -525,10 +545,14 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     verificationStore: runtime.verificationStore,
     variantQueue: runtime.variantQueue,
     lastProgressiveIndexIds: runtime.lastProgressiveIndexIds,
+    progressiveIndexBySession: runtime.progressiveIndexBySession,
+    lastAutoRecallPromptBySession: runtime.lastAutoRecallPromptBySession,
+    injectedFactIdsBySession: runtime.injectedFactIdsBySession,
     currentAgentIdRef: runtime.currentAgentIdRef,
     restartPendingClearedRef: runtime.restartPendingClearedRef,
     recallInFlightRef: runtime.recallInFlightRef,
     lastAutoRecallPromptRef: runtime.lastAutoRecallPromptRef,
+    prependBudgetRef: runtime.prependBudgetRef,
     registrationGeneration,
     currentRegistrationGenerationRef: registrationGenerationRef,
     pendingLLMWarnings: runtime.pendingLLMWarnings,
@@ -547,6 +571,8 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     apitapStore: runtime.apitapStore,
     auditStore: runtime.auditStore,
     agentHealthStore: runtime.agentHealthStore,
+    changeFeed: runtime.changeFeed,
+    sessionStateRef: runtime.sessionStateRef,
   };
 
   // ========================================================================
@@ -580,6 +606,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         identityReflectionStore: runtime.identityReflectionStore,
         personaStateStore: runtime.personaStateStore,
         crystallizationStore: runtime.crystallizationStore ?? null,
+        toolProposalStore: runtime.toolProposalStore ?? null,
         eventLog: runtime.eventLog,
         verificationStore: runtime.verificationStore,
         provenanceService: runtime.provenanceService,
@@ -591,6 +618,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         detectCategory,
         auditStore: runtime.auditStore,
         agentHealthStore: runtime.agentHealthStore ?? null,
+        changeFeed: runtime.changeFeed,
       },
       { onHybridMemCliComplete: () => performHybridMemCliTeardown() },
     );
@@ -647,6 +675,14 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         costTracker: runtime.costTracker,
         auditStore: runtime.auditStore ?? null,
         agentHealthStore: runtime.agentHealthStore ?? null,
+        verificationStore: runtime.verificationStore ?? null,
+        issueStore: runtime.issueStore ?? null,
+        workflowStore: runtime.workflowStore ?? null,
+        narrativesDb: runtime.narrativesDb ?? null,
+        crystallizationStore: runtime.crystallizationStore ?? null,
+        toolProposalStore: runtime.toolProposalStore ?? null,
+        changeFeed: runtime.changeFeed,
+        eventBus: runtime.eventBus,
       }),
     );
   } catch (err) {

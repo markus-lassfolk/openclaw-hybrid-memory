@@ -18,7 +18,13 @@ import {
   getMemoryCategories,
   isCompactVerbosity,
 } from "../../config.js";
-import { VAULT_POINTER_PREFIX, isCredentialLike, tryParseCredentialForVault } from "../../services/auto-capture.js";
+import { isCredentialLike, tryParseCredentialForVault } from "../../services/auto-capture.js";
+import {
+  buildCredentialPointerText,
+  ensureCredentialVaultPointer,
+  abortCredentialVaultWriteOnPointerDedupe,
+  rollbackVaultCredentialWrite,
+} from "../../services/credential-vault-pointer.js";
 import { classifyMemoryOperation } from "../../services/classification.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
@@ -28,12 +34,18 @@ import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
+import { isWalWriteFailure } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
+import { nowIso } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
+import {
+  isSubstantiveMemoryText,
+  prepareMemoryMetadataForStorage,
+  prepareMemoryTextForStorage,
+} from "../../services/recalled-context-assembler.js";
 import { extractTags } from "../../utils/tags.js";
-import { truncateForStorage } from "../../utils/text.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 
 export function registerStoreTools(runtime: MemoryToolRuntime): void {
@@ -56,6 +68,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     pendingLLMWarnings,
     variantQueue,
     buildToolScopeFilter,
+    wal,
     walWrite,
     walRemove,
     findSimilarByEmbedding,
@@ -69,6 +82,16 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     isEdictWriteToolEnabled,
     sanitizeScopeParam,
   } = runtime;
+
+  const walWriteFailedResponse = () => ({
+    content: [
+      {
+        type: "text" as const,
+        text: "Store aborted: WAL durability write failed. Resolve WAL storage issues before storing.",
+      },
+    ],
+    details: { error: "wal_write_failed" },
+  });
 
   api.registerTool(
     {
@@ -185,8 +208,19 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
 
-          let textToStore = text;
-          textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+          const textToStore = prepareMemoryTextForStorage(text, cfg.captureMaxChars);
+          if (!textToStore || !isSubstantiveMemoryText(textToStore)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "memory_store: text is empty after sanitization (prompt-injection markers removed).",
+                },
+              ],
+              details: { error: "invalid_text" },
+            };
+          }
+          const whyStored = prepareMemoryMetadataForStorage(why);
 
           const importanceValue = importance as number;
           if (!Number.isFinite(importanceValue) || importanceValue < 0 || importanceValue > 1) {
@@ -234,9 +268,11 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           };
 
           const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
-          const entity = paramEntity || extracted.entity;
-          const key = paramKey || extracted.key;
-          const value = paramValue || extracted.value;
+          const entity =
+            prepareMemoryMetadataForStorage(paramEntity) ?? prepareMemoryMetadataForStorage(extracted.entity);
+          const key = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
+          const value =
+            prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
 
           if (factsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
             return {
@@ -258,6 +294,55 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               ],
               details: { error: "scope_target_required" },
             };
+          }
+
+          // Resolve final scope before classify-before-write and WAL so scoped metadata is complete (issue #1574).
+          if (paramScope) {
+            scope = paramScope;
+            scopeTarget = scope === "global" ? null : (paramScopeTarget?.trim() ?? null);
+          } else {
+            const agentId = currentAgentIdRef.value || cfg.multiAgent.orchestratorId;
+            const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
+
+            if (
+              cfg.multiAgent.strictAgentScoping &&
+              !currentAgentIdRef.value &&
+              (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")
+            ) {
+              throw new Error(
+                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`,
+              );
+            }
+
+            if (cfg.multiAgent.defaultStoreScope === "global") {
+              scope = "global";
+              scopeTarget = null;
+            } else if (cfg.multiAgent.defaultStoreScope === "agent") {
+              scope = "agent";
+              scopeTarget = agentId;
+            } else if (isOrchestrator) {
+              scope = "global";
+              scopeTarget = null;
+            } else {
+              scope = "agent";
+              scopeTarget = agentId;
+            }
+          }
+
+          if (scope !== "global" && !scopeTarget) {
+            if (paramScope) {
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId). Provide scopeTarget parameter or use scope="global".`,
+                  },
+                ],
+                details: { error: "scope_target_required" },
+              };
+            }
+            scope = "global";
+            scopeTarget = null;
           }
 
           const explicitVerificationTier = (verificationTier ?? "").trim().toLowerCase();
@@ -298,93 +383,114 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
               });
               if (parsed) {
-                const stored = credentialsDb.storeIfNew({
-                  service: parsed.service,
-                  type: parsed.type,
-                  value: parsed.secretValue,
-                  url: parsed.url,
-                  notes: parsed.notes,
-                });
-                if (!stored) {
+                let storedInVault = false;
+                try {
+                  storedInVault = credentialsDb.storeIfNew({
+                    service: parsed.service,
+                    type: parsed.type,
+                    value: parsed.secretValue,
+                    url: parsed.url,
+                    notes: parsed.notes,
+                  });
+                } catch (err) {
+                  capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                    subsystem: "memory-tools",
+                    operation: "memory-store:credential-vault-store",
+                  });
                   return {
-                    content: [
-                      { type: "text", text: `Credential already in vault for ${parsed.service} (${parsed.type}).` },
-                    ],
-                    details: { action: "credential_skipped_duplicate", service: parsed.service, type: parsed.type },
+                    content: [{ type: "text", text: "Credential vault store failed." }],
+                    details: { action: "credential_vault_error" },
                   };
                 }
-                const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
-                const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-                const pointerStoreResult = factsDb.storeWithResult({
-                  text: pointerText,
-                  why,
-                  category: "technical" as MemoryCategory,
+
+                const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "conversation", {
+                  why: whyStored,
                   importance,
-                  entity: "Credentials",
-                  key: parsed.service,
-                  value: pointerValue,
-                  source: "conversation",
                   decayClass: paramDecayClass ?? "permanent",
-                  tags: ["auth", ...extractTags(pointerText, "Credentials")],
                   provenanceSession: provenanceSessionId,
                   extractionMethod: "active",
                   extractionConfidence: importance,
                 });
-                const pointerEntry = pointerStoreResult.entry;
-                // Guard: if the pointer was rejected by the pre-store guard, undo the vault store and return rejected artifact
-                if (pointerStoreResult.rejected) {
-                  try {
-                    credentialsDb.delete(parsed.service, parsed.type as any);
-                  } catch (_cleanupErr) {
-                    // best-effort cleanup
+                if (!pointer.ok) {
+                  if (storedInVault) {
+                    rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
                   }
                   return {
                     content: [{ type: "text", text: "Credential-like content rejected by pre-store guard." }],
                     details: { action: "credential_rejected_artifact" },
                   };
                 }
+                const pointerEntry = pointer.entry;
+                if (
+                  abortCredentialVaultWriteOnPointerDedupe(
+                    storedInVault,
+                    pointer,
+                    credentialsDb,
+                    parsed.service,
+                    parsed.type,
+                  )
+                ) {
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: `Credential already in vault for ${parsed.service} (${parsed.type}).`,
+                      },
+                    ],
+                    details: {
+                      action: "credential_skipped_duplicate",
+                      id: pointerEntry.id,
+                      service: parsed.service,
+                      type: parsed.type,
+                    },
+                  };
+                }
                 await cleanupEvictedVector({
                   vectorDb,
-                  evictedFactId: pointerStoreResult.evictedFactId,
+                  evictedFactId: pointer.evictedFactId,
                   logger: api.logger,
                   context: "memory-store-credential-pointer",
                 });
-                recordActiveStoreProvenance(pointerEntry.id, pointerText);
-                try {
-                  addOperationBreadcrumb("vector", "store-credential-pointer");
-                  const vector = await embedCallWithTimeoutAndRetry(
-                    () => embeddings.embed(pointerText),
-                    "memory-tools:store-credential-pointer",
-                  );
-                  await storeActiveCanonicalVector({
-                    factId: pointerEntry.id,
-                    text: pointerText,
-                    why,
-                    vector,
-                    importance,
-                    category: "technical",
-                  });
-                  await storeRegistryEmbeddings({
-                    factsDb,
-                    embeddingRegistry,
-                    embeddings,
-                    factId: pointerEntry.id,
-                    text: pointerText,
-                    vector,
-                    logger: api.logger,
-                    operation: "store-credential-pointer",
-                  });
-                } catch (err) {
-                  // AllEmbeddingProvidersFailed is expected when no providers are configured — don't report to Sentry.
-                  if (!(err instanceof AllEmbeddingProvidersFailed)) {
-                    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                      subsystem: "vector",
-                      operation: "store-credential-pointer",
-                      phase: "runtime",
-                      backend: "lancedb",
+                const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
+                if (pointer.newlyStored) {
+                  recordActiveStoreProvenance(pointerEntry.id, pointerText);
+                }
+                if (pointer.newlyStored || pointer.embeddingStale) {
+                  try {
+                    addOperationBreadcrumb("vector", "store-credential-pointer");
+                    const vector = await embedCallWithTimeoutAndRetry(
+                      () => embeddings.embed(pointerText),
+                      "memory-tools:store-credential-pointer",
+                    );
+                    await storeActiveCanonicalVector({
+                      factId: pointerEntry.id,
+                      text: pointerText,
+                      why: whyStored,
+                      vector,
+                      importance,
+                      category: "technical",
                     });
+                    await storeRegistryEmbeddings({
+                      factsDb,
+                      embeddingRegistry,
+                      embeddings,
+                      factId: pointerEntry.id,
+                      text: pointerText,
+                      vector,
+                      logger: api.logger,
+                      operation: "store-credential-pointer",
+                    });
+                  } catch (err) {
+                    if (!(err instanceof AllEmbeddingProvidersFailed)) {
+                      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                        subsystem: "vector",
+                        operation: "store-credential-pointer",
+                        phase: "runtime",
+                        backend: "lancedb",
+                      });
+                    }
+                    api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                   }
-                  api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
                 }
                 return {
                   content: [
@@ -424,7 +530,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           const tags =
             paramTags && paramTags.length > 0
-              ? paramTags.map((t) => t.trim().toLowerCase()).filter(Boolean)
+              ? paramTags
+                  .map((t) => prepareMemoryMetadataForStorage(t.trim().toLowerCase()))
+                  .filter((t): t is string => Boolean(t))
               : extractTags(textToStore, entity);
 
           const summaryThreshold = cfg.autoRecall.summaryThreshold;
@@ -540,7 +648,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     "update",
                     {
                       text: textToStore,
-                      why,
+                      why: whyStored,
                       category,
                       importance: Math.max(importance, oldFact.importance),
                       entity: entity || oldFact.entity,
@@ -558,11 +666,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger,
                     classification.targetId,
                   );
+                  if (isWalWriteFailure(wal, walEntryId)) {
+                    return walWriteFailedResponse();
+                  }
 
                   const nowSec = Math.floor(Date.now() / 1000);
                   const updateStoreResult = factsDb.storeWithResult({
                     text: textToStore,
-                    why,
+                    why: whyStored,
                     category: category as MemoryCategory,
                     importance: Math.max(importance, oldFact.importance),
                     entity: entity || oldFact.entity,
@@ -583,7 +694,59 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   });
                   const newEntry = updateStoreResult.entry;
                   // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
-                  if (!updateStoreResult.skipped) {
+                  if (
+                    !updateStoreResult.skipped &&
+                    updateStoreResult.newlyStored === false &&
+                    !updateStoreResult.embeddingStale
+                  ) {
+                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [
+                        {
+                          type: "text",
+                          text: `Update deduplicated to existing fact — target ${classification.targetId.slice(0, 8)} not superseded.`,
+                        },
+                      ],
+                      details: { action: "noop", reason: "dedupe-update", id: newEntry.id },
+                    };
+                  }
+                  if (
+                    !updateStoreResult.skipped &&
+                    updateStoreResult.newlyStored === false &&
+                    updateStoreResult.embeddingStale
+                  ) {
+                    await cleanupEvictedVector({
+                      vectorDb,
+                      evictedFactId: updateStoreResult.evictedFactId,
+                      logger: api.logger,
+                      context: "memory-store-update-merge",
+                    });
+                    try {
+                      const mergedVector = await embeddings.embed(newEntry.text);
+                      factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                      await storeActiveCanonicalVector({
+                        factId: newEntry.id,
+                        text: newEntry.text,
+                        why: whyStored,
+                        vector: mergedVector,
+                        importance: Math.max(importance, oldFact.importance),
+                        category,
+                      });
+                    } catch (err) {
+                      api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
+                    }
+                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    return {
+                      content: [
+                        {
+                          type: "text",
+                          text: `Update merged into existing fact ${newEntry.id.slice(0, 8)} — target not superseded.`,
+                        },
+                      ],
+                      details: { action: "noop", reason: "dedupe-merge", id: newEntry.id },
+                    };
+                  }
+                  if (!updateStoreResult.skipped && updateStoreResult.newlyStored) {
                     await cleanupEvictedVector({
                       vectorDb,
                       evictedFactId: updateStoreResult.evictedFactId,
@@ -614,7 +777,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                         await storeActiveCanonicalVector({
                           factId: newEntry.id,
                           text: textToStore,
-                          why,
+                          why: whyStored,
                           vector,
                           importance: finalImportance,
                           category,
@@ -650,7 +813,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
-                    await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemove(walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -661,7 +824,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       details: {
                         action: "updated",
                         id: newEntry.id,
-                        why: why ?? undefined,
+                        why: whyStored ?? undefined,
                         superseded: classification.targetId,
                         reason: classification.reason,
                         backend: "both",
@@ -670,7 +833,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     };
                   }
                   // WAL cleanup for skipped update path
-                  await walRemove(walEntryId, api.logger);
+                  if (walEntryId) await walRemove(walEntryId, api.logger);
                   return {
                     content: [
                       {
@@ -695,76 +858,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
           }
 
-          // Resolve final scope before WAL write so the WAL entry captures the complete scope
-          // metadata. Without this, a crash between WAL write and DB commit would cause replay
-          // to default scoped facts to global scope (issue #1574).
-          // Smart default scope based on agent identity and config (FR-006: overwrite for normal path when not explicit)
-          if (paramScope) {
-            // Explicit scope parameter always takes precedence
-            scope = paramScope;
-            scopeTarget = scope === "global" ? null : (paramScopeTarget?.trim() ?? null);
-          } else {
-            // Auto-determine scope based on multiAgent config
-            const agentId = currentAgentIdRef.value || cfg.multiAgent.orchestratorId;
-            const isOrchestrator = agentId === cfg.multiAgent.orchestratorId;
-
-            // Strict agent scoping: throw if agent detection failed in agent/auto mode
-            if (
-              cfg.multiAgent.strictAgentScoping &&
-              !currentAgentIdRef.value &&
-              (cfg.multiAgent.defaultStoreScope === "agent" || cfg.multiAgent.defaultStoreScope === "auto")
-            ) {
-              throw new Error(
-                `Agent detection failed (currentAgentId is null) and multiAgent.strictAgentScoping is enabled. Cannot auto-determine scope for defaultStoreScope="${cfg.multiAgent.defaultStoreScope}". Fix: ensure agent_id is provided in session context, or disable strictAgentScoping.`,
-              );
-            }
-
-            if (cfg.multiAgent.defaultStoreScope === "global") {
-              // Backward compatible: always global
-              scope = "global";
-              scopeTarget = null;
-            } else if (cfg.multiAgent.defaultStoreScope === "agent") {
-              // Always agent-scoped (for fully isolated setups)
-              scope = "agent";
-              scopeTarget = agentId;
-            } else {
-              // "auto" mode: orchestrator → global, specialists → agent
-              if (isOrchestrator) {
-                scope = "global";
-                scopeTarget = null;
-              } else {
-                scope = "agent";
-                scopeTarget = agentId;
-              }
-            }
-          }
-
-          // Final validation: if scope requires a target but none is available, fall back to global
-          // (unless strictAgentScoping already threw above)
-          if (scope !== "global" && !scopeTarget) {
-            if (paramScope) {
-              // User explicitly requested non-global scope but didn't provide target
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text: `Scope "${scope}" requires scopeTarget (userId, agentId, or sessionId). Provide scopeTarget parameter or use scope="global".`,
-                  },
-                ],
-                details: { error: "scope_target_required" },
-              };
-            }
-            // Auto-determined scope ended up without target (shouldn't happen with current logic,
-            // but handle gracefully by falling back to global)
-            scope = "global";
-            scopeTarget = null;
-          }
+          // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
           const walEntryId = await walWrite(
             "store",
             {
               text: textToStore,
-              why,
+              why: whyStored,
               category,
               importance,
               entity,
@@ -781,6 +881,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             },
             api.logger,
           );
+          if (isWalWriteFailure(wal, walEntryId)) {
+            return walWriteFailedResponse();
+          }
           const decayFreezeUntil =
             paramDecayFreezeUntil != null && Number.isFinite(paramDecayFreezeUntil)
               ? paramDecayFreezeUntil
@@ -790,7 +893,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const storeSessionId = api.context?.sessionId ?? null;
           const storeResult = factsDb.storeWithResult({
             text: textToStore,
-            why,
+            why: whyStored,
             category: category as MemoryCategory,
             importance,
             entity,
@@ -810,6 +913,18 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             ...(supersedes?.trim() ? { validFrom: nowSec, supersedesId: supersedes.trim() } : {}),
           });
           const entry = storeResult.entry;
+          if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
+            if (walEntryId) await walRemove(walEntryId, api.logger);
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: `Deduped to existing fact ${entry.id.slice(0, 8)} — no new store.`,
+                },
+              ],
+              details: { action: "noop", reason: "dedupe", id: entry.id },
+            };
+          }
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
             await cleanupEvictedVector({
@@ -818,8 +933,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               logger: api.logger,
               context: "memory-store",
             });
-            recordActiveStoreProvenance(entry.id, textToStore);
-            if (supersedes?.trim()) {
+            if (storeResult.newlyStored) {
+              recordActiveStoreProvenance(entry.id, textToStore);
+            }
+            if (supersedes?.trim() && storeResult.newlyStored) {
               const supersededId = supersedes.trim();
               factsDb.supersede(supersededId, entry.id);
               aliasDb?.deleteByFactId(supersededId);
@@ -837,7 +954,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 await storeActiveCanonicalVector({
                   factId: entry.id,
                   text: textToStore,
-                  why,
+                  why: whyStored,
                   vector,
                   importance,
                   category,
@@ -871,7 +988,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 const eventType = categoryToEventType(category);
                 eventLog.append({
                   sessionId: api.context?.sessionId ?? "unknown",
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   eventType,
                   content: {
                     text: textToStore.slice(0, 500),
@@ -916,7 +1033,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               if (eventLog) {
                 eventLog.append({
                   sessionId: api.context?.sessionId ?? "unknown",
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   eventType: "correction",
                   content: {
                     type: "contradiction_detected",
@@ -1032,7 +1149,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
-            await walRemove(walEntryId, api.logger);
+            if (walEntryId) await walRemove(walEntryId, api.logger);
             return {
               content: [
                 {
@@ -1043,7 +1160,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               details: {
                 action: supersedes?.trim() ? "updated" : "created",
                 id: entry.id,
-                why: why ?? undefined,
+                why: whyStored ?? undefined,
                 backend: "both",
                 decayClass: entry.decayClass,
                 ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),
@@ -1062,7 +1179,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
           // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
-          await walRemove(walEntryId, api.logger);
+          if (walEntryId) await walRemove(walEntryId, api.logger);
           return {
             content: [
               {

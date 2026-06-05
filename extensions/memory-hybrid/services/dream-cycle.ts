@@ -15,10 +15,12 @@ import { join } from "node:path";
 import type OpenAI from "openai";
 import type { EventLog, EventLogEntry, EventType } from "../backends/event-log.js";
 import type { FactsDB } from "../backends/facts-db.js";
+import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { MemoryCategory, MemoryEntry } from "../types/memory.js";
 import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
+import { nowIso, formatCompactRunIdUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { writeMemoryIndex } from "./memory-index.js";
@@ -29,7 +31,11 @@ import {
   runReflection,
   runReflectionRules,
 } from "./reflection.js";
-import { cleanupEvictedVector, deleteVectorsForFactIds } from "./vector-maintenance.js";
+import { runDreamCycleProposalBridge, type DreamCycleProposalBridgeInput } from "./dream-cycle-proposal-bridge.js";
+import { emitDreamCycleComplete } from "./change-feed-emit.js";
+import { isWorkshopEnabled } from "./workshop-config.js";
+import { syncWorkshopProposedEvents, withWorkshopDefaults } from "./workshop-service.js";
+import { cleanupEvictedVector, deleteVectorsForFactIds, reconcileOrphanVectors } from "./vector-maintenance.js";
 
 /** Prune modes for the dream cycle. */
 export type DreamCyclePruneMode = "expired" | "decay" | "both";
@@ -102,7 +108,18 @@ export interface DreamCycleConfig {
    * for both the directory name and artifact `runId` field to ensure consistency.
    */
   runId?: string;
+  /**
+   * When true, WAL replay failed before the cycle started and episodic consolidation
+   * is skipped to avoid operating on a stale SQLite view.
+   */
+  walFlushFailed?: boolean;
 }
+
+/** Optional bridge context for auto-proposing reflection output (Phase 4). */
+export type DreamCycleBridgeOpts = Pick<
+  DreamCycleProposalBridgeInput,
+  "cfg" | "proposalsDb" | "api" | "crystallizationStore" | "toolProposalStore" | "changeFeed"
+> & { resolvedSqlitePath?: string; workflowStore?: import("../backends/workflow-store.js").WorkflowStore | null };
 
 /** Result returned by a single dream cycle run. */
 export interface DreamCycleResult {
@@ -143,6 +160,10 @@ export interface DreamCycleResult {
   digestSummary: string;
   /** True when the cycle was skipped because nightlyCycle.enabled = false. */
   skipped: boolean;
+  /** False when any core stage recorded a failure (errors are also listed in failedStages). */
+  success: boolean;
+  /** Labels of core stages that failed (non-fatal stages still run afterward). */
+  failedStages: string[];
 }
 
 // Minimum patterns stored in one cycle before we also run reflect-rules.
@@ -159,10 +180,7 @@ const STAGE_LABEL_MAX_LENGTH = 60;
  * Format: `YYYYMMDDTHHmmssZ-<pid>` e.g. `20260602T061400Z-12345`.
  */
 export function makeDreamCycleRunId(): string {
-  return `${new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace(/\.\d{3}Z$/, "Z")}-${process.pid}`;
+  return `${formatCompactRunIdUtc()}-${process.pid}`;
 }
 const EPISODIC_PROGRESS_GROUP_INTERVAL = 25;
 const SKIP_CONSOLIDATION_TEXT_PATTERNS = new Set([
@@ -271,6 +289,51 @@ export function shouldSkipEpisodicConsolidation(event: EventLogEntry): boolean {
   return false;
 }
 
+export const CONSOLIDATED_FACT_TEXT_MAX_LENGTH = 500;
+
+/**
+ * Build searchable text for a consolidated episodic fact, packing as many event
+ * snippets as fit within {@link maxLength} (default 500).
+ */
+export function buildConsolidatedFactText(
+  eventTexts: string[],
+  entityLabel: string | null,
+  maxLength = CONSOLIDATED_FACT_TEXT_MAX_LENGTH,
+): string {
+  if (eventTexts.length === 0) return "";
+  if (eventTexts.length === 1) return eventTexts[0].slice(0, maxLength);
+
+  const prefix = `[consolidated from ${eventTexts.length} events${entityLabel ? ` about ${entityLabel}` : ""}] `;
+  let result = prefix;
+  let lastRepresentedIndex = -1;
+  for (let i = 0; i < eventTexts.length; i++) {
+    const sep = lastRepresentedIndex >= 0 ? "; " : "";
+    const snippet = eventTexts[i];
+    const candidate = result + sep + snippet;
+    if (candidate.length <= maxLength) {
+      result = candidate;
+      lastRepresentedIndex = i;
+      continue;
+    }
+    const room = maxLength - result.length - sep.length;
+    if (room > 10) {
+      result += sep + snippet.slice(0, room);
+      lastRepresentedIndex = i;
+    }
+    break;
+  }
+  const omitted = lastRepresentedIndex >= 0 ? eventTexts.length - (lastRepresentedIndex + 1) : eventTexts.length;
+  if (omitted > 0) {
+    const suffix = ` (+${omitted} more)`;
+    const allowedBodyLen = maxLength - suffix.length;
+    if (result.length > allowedBodyLen) {
+      result = result.slice(0, allowedBodyLen).replace(/; [^;]*$/, "");
+    }
+    result += suffix;
+  }
+  return result.slice(0, maxLength);
+}
+
 /**
  * Build the digest summary string from cycle counts.
  * Exported so it can be tested independently.
@@ -287,6 +350,7 @@ export function buildDigestSummary(counts: {
   vacuumRan?: boolean;
   decayReclassified?: number;
   orphanVectorsRemoved?: number;
+  failedStages?: string[];
 }): string {
   const parts: string[] = [];
   if (counts.factsPruned > 0) parts.push(`${counts.factsPruned} facts pruned`);
@@ -305,6 +369,13 @@ export function buildDigestSummary(counts: {
   if (counts.rulesGenerated > 0) parts.push(`${counts.rulesGenerated} rules generated`);
   if (counts.logRowsPruned && counts.logRowsPruned > 0) parts.push(`${counts.logRowsPruned} log rows pruned`);
   if (counts.vacuumRan) parts.push("VACUUM ran");
+  const failedStages = counts.failedStages?.filter((stage) => stage.length > 0) ?? [];
+  if (failedStages.length > 0 && parts.length === 0) {
+    return `Stages failed: ${failedStages.join(", ")}.`;
+  }
+  if (failedStages.length > 0) {
+    parts.push(`${failedStages.length} stage(s) failed (${failedStages.join(", ")})`);
+  }
   if (parts.length === 0) return "No changes.";
   return `${parts.join(", ")}.`;
 }
@@ -413,22 +484,9 @@ export async function runEpisodicConsolidation(
     maybeLogConsolidationProgress(entity);
 
     if (entity === "__default__" && groupEvents.length > maxEventsPerConsolidation) {
-      try {
-        eventsConsolidated += eventLog.markConsolidated(
-          groupEvents.map((e) => e.id),
-          "SKIP:default_group_cap",
-        );
-        logger.info(
-          `memory-hybrid: dream-cycle — skipped ${groupEvents.length} unattributed event(s): default group exceeds maxEventsPerConsolidation=${maxEventsPerConsolidation}`,
-        );
-      } catch (err) {
-        logger.warn(`memory-hybrid: dream-cycle — failed to mark capped default group as skipped: ${err}`);
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "dream-cycle-mark-default-cap-skip",
-          subsystem: "event-log",
-        });
-      }
-      continue;
+      logger.info(
+        `memory-hybrid: dream-cycle — default group has ${groupEvents.length} event(s); consolidating first ${maxEventsPerConsolidation}, skipping ${groupEvents.length - maxEventsPerConsolidation} excess`,
+      );
     }
 
     const cappedGroupEvents = groupEvents.slice(0, maxEventsPerConsolidation);
@@ -457,10 +515,7 @@ export async function runEpisodicConsolidation(
 
     // Build merged text for the consolidated fact
     const entityLabel = entity !== "__default__" ? entity : null;
-    const mergedText =
-      eventTexts.length === 1
-        ? eventTexts[0]
-        : `[consolidated from ${eventTexts.length} events${entityLabel ? ` about ${entityLabel}` : ""}] ${eventTexts.slice(0, 5).join("; ")}`;
+    const mergedText = buildConsolidatedFactText(eventTexts, entityLabel);
 
     const consolidatedAt = Math.floor(Date.now() / 1000);
     const sourceEvents = cappedGroupEvents.map((event) => ({
@@ -476,9 +531,11 @@ export async function runEpisodicConsolidation(
     // Historical DERIVED_FROM rows are left untouched by this forward migration;
     // deleting legacy provenance blindly is riskier than stopping new hub growth.
     let consolidatedFact: MemoryEntry | null = null;
+    let factNewlyStored = false;
+    let factEmbeddingStale = false;
     try {
       const storeResult = factsDb.storeWithResult({
-        text: mergedText.slice(0, 500),
+        text: mergedText.slice(0, CONSOLIDATED_FACT_TEXT_MAX_LENGTH),
         category: "fact" as MemoryCategory,
         importance: 0.5,
         entity: entityLabel,
@@ -496,17 +553,32 @@ export async function runEpisodicConsolidation(
         }),
       });
       if (storeResult.skipped) {
+        try {
+          eventsConsolidated += eventLog.markConsolidated(
+            cappedGroupEvents.map((e) => e.id),
+            "SKIP:pre_store_guard",
+          );
+        } catch (err) {
+          logger.warn(`memory-hybrid: dream-cycle — failed to mark pre-store-guard skipped events: ${err}`);
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "dream-cycle-mark-pre-store-skip",
+            subsystem: "event-log",
+          });
+        }
         continue;
       }
       consolidatedFact = storeResult.entry;
-      // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-      if (vectorDb) {
-        await cleanupEvictedVector({
-          vectorDb,
-          evictedFactId: storeResult.evictedFactId,
-          logger,
-          context: "dream-cycle",
-        });
+      factNewlyStored = storeResult.newlyStored === true;
+      factEmbeddingStale = storeResult.embeddingStale === true;
+      if (storeResult.newlyStored || storeResult.embeddingStale) {
+        if (vectorDb) {
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: storeResult.evictedFactId,
+            logger,
+            context: "dream-cycle",
+          });
+        }
       }
     } catch (err) {
       logger.warn(`memory-hybrid: dream-cycle — failed to store consolidated fact for entity "${entity}": ${err}`);
@@ -514,6 +586,18 @@ export async function runEpisodicConsolidation(
         operation: "dream-cycle-consolidate",
         subsystem: "facts-db",
       });
+      try {
+        eventsConsolidated += eventLog.markConsolidated(
+          cappedGroupEvents.map((e) => e.id),
+          "SKIP:store_failed",
+        );
+      } catch (markErr) {
+        logger.warn(`memory-hybrid: dream-cycle — failed to mark store-failed events as skipped: ${markErr}`);
+        capturePluginError(markErr instanceof Error ? markErr : new Error(String(markErr)), {
+          operation: "dream-cycle-mark-store-failed-skip",
+          subsystem: "event-log",
+        });
+      }
       continue;
     }
 
@@ -523,13 +607,15 @@ export async function runEpisodicConsolidation(
         cappedGroupEvents.map((e) => e.id),
         consolidatedFact.id,
       );
-      factsCreated++;
+      if (factNewlyStored) {
+        factsCreated++;
+      }
 
       if (excessEvents.length > 0) {
         try {
           eventsConsolidated += eventLog.markConsolidated(
             excessEvents.map((e) => e.id),
-            "SKIP:entity_group_cap",
+            entity === "__default__" ? "SKIP:default_group_cap" : "SKIP:entity_group_cap",
           );
           logger.info(
             `memory-hybrid: dream-cycle — skipped ${excessEvents.length} excess event(s) for entity "${entity}": exceeds maxEventsPerConsolidation=${maxEventsPerConsolidation}`,
@@ -549,7 +635,7 @@ export async function runEpisodicConsolidation(
         subsystem: "event-log",
       });
       try {
-        if (consolidatedFact) factsDb.delete(consolidatedFact.id);
+        if (consolidatedFact && factNewlyStored) factsDb.delete(consolidatedFact.id);
       } catch (cleanupErr) {
         logger.warn(
           `memory-hybrid: dream-cycle — failed to delete consolidated fact after mark failure: ${cleanupErr}`,
@@ -566,7 +652,7 @@ export async function runEpisodicConsolidation(
     // semantic search.  This is non-fatal: the fact is already safely in SQLite.
     // Use the same truncated text for both the embedding call and the store payload
     // so the embedding always matches the text that will be returned by search.
-    if (vectorDb && embeddings) {
+    if (vectorDb && embeddings && (factNewlyStored || factEmbeddingStale)) {
       const persistedText =
         typeof consolidatedFact.text === "string" && consolidatedFact.text.trim().length > 0
           ? consolidatedFact.text.slice(0, 500)
@@ -615,6 +701,7 @@ export async function runDreamCycle(
   config: DreamCycleConfig,
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
+  bridge?: DreamCycleBridgeOpts,
 ): Promise<DreamCycleResult> {
   if (!config.enabled) {
     return {
@@ -631,6 +718,8 @@ export async function runDreamCycle(
       orphanVectorsRemoved: 0,
       digestSummary: "Dream cycle disabled.",
       skipped: true,
+      success: true,
+      failedStages: [],
     };
   }
 
@@ -638,6 +727,20 @@ export async function runDreamCycle(
   const cycleStartedAt = Date.now();
   const v = !!config.verbose;
   const runId = config.runId ?? makeDreamCycleRunId();
+  const failedStages: string[] = [];
+  const recordStageFailure = (stage: string, err: unknown): void => {
+    if (!failedStages.includes(stage)) failedStages.push(stage);
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      operation: `dream-cycle-${stage.replace(/\s+/g, "-")}`,
+      subsystem: "dream-cycle",
+    });
+  };
+  if (config.walFlushFailed) {
+    failedStages.push("wal pre-flush");
+    logger.warn(
+      "memory-hybrid: dream-cycle — WAL pre-flush failed; skipping episodic consolidation to avoid stale SQLite state",
+    );
+  }
   // Ensure stage artifact dir exists when configured.
   if (config.stageArtifactDir) {
     try {
@@ -672,7 +775,7 @@ export async function runDreamCycle(
     const stageNumber = ++stageCounter;
     const startedAt = Date.now();
     logger.info(`memory-hybrid: dream-cycle — stage ${stageNumber} start: ${label}`);
-    writeStageArtifact(stageNumber, label, { status: "started", startedAt: new Date(startedAt).toISOString() });
+    writeStageArtifact(stageNumber, label, { status: "started", startedAt: formatTimestampUtcFromMs(startedAt) });
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     if (v && opts?.heartbeat === true) {
       heartbeat = setInterval(() => {
@@ -696,8 +799,8 @@ export async function runDreamCycle(
         );
         writeStageArtifact(stageNumber, label, {
           status: "succeeded",
-          startedAt: new Date(startedAt).toISOString(),
-          completedAt: new Date().toISOString(),
+          startedAt: formatTimestampUtcFromMs(startedAt),
+          completedAt: nowIso(),
           elapsedSec,
           ...(summary != null ? { summary } : {}),
         });
@@ -708,8 +811,8 @@ export async function runDreamCycle(
         logger.warn(`memory-hybrid: dream-cycle — stage ${stageNumber} failed after ${elapsedSec}s: ${label}: ${err}`);
         writeStageArtifact(stageNumber, label, {
           status: "failed",
-          startedAt: new Date(startedAt).toISOString(),
-          completedAt: new Date().toISOString(),
+          startedAt: formatTimestampUtcFromMs(startedAt),
+          completedAt: nowIso(),
           elapsedSec,
           error: String(err),
           ...(summary != null ? { summary } : {}),
@@ -748,6 +851,9 @@ export async function runDreamCycle(
       if (vectorCleanup.failed > 0) {
         logger.warn(
           `memory-hybrid: dream-cycle — expired vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
+        stageCoreError ??= new Error(
+          `expired vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
         );
       }
     } catch (err) {
@@ -806,6 +912,9 @@ export async function runDreamCycle(
         logger.warn(
           `memory-hybrid: dream-cycle — decay vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
         );
+        stageCoreError ??= new Error(
+          `decay vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
       }
     } catch (err) {
       stageCoreError ??= err;
@@ -863,24 +972,21 @@ export async function runDreamCycle(
   const vectorReconcileStep = beginSubstep("reconcile LanceDB orphaned vectors");
   let orphanVectorsRemoved = 0;
   try {
-    const sqliteIds = new Set(factsDb.getAllIds());
-    const vectorIds = await vectorDb.getAllIds();
-    const orphans = vectorIds.filter((id) => !sqliteIds.has(id));
-    if (orphans.length > 0) {
-      logger.info(`memory-hybrid: dream-cycle — reconciling ${orphans.length} orphaned vector(s)...`);
-      const cleanup = await deleteVectorsForFactIds(vectorDb, orphans, {
-        operation: "dream-cycle-orphan-vector-reconcile",
-        logger,
-      });
-      orphanVectorsRemoved = cleanup.deleted;
-      if (cleanup.deleted > 0) {
-        logger.info(`memory-hybrid: dream-cycle — removed ${cleanup.deleted} orphaned vector(s) from LanceDB`);
-      }
-      if (cleanup.failed > 0) {
-        logger.warn(
-          `memory-hybrid: dream-cycle — orphan reconciliation partial: deleted ${cleanup.deleted}/${cleanup.attempted}, failed ${cleanup.failed}`,
-        );
-      }
+    const reconcile = await reconcileOrphanVectors(factsDb, vectorDb, {
+      operation: "dream-cycle-orphan-vector-reconcile",
+      logger,
+    });
+    orphanVectorsRemoved = reconcile.orphanVectorsRemoved;
+    if (reconcile.orphansFound > 0 && reconcile.orphanVectorsRemoved > 0) {
+      logger.info(`memory-hybrid: dream-cycle — removed ${reconcile.orphanVectorsRemoved} orphaned vector(s) from LanceDB`);
+    }
+    if (reconcile.failed > 0) {
+      logger.warn(
+        `memory-hybrid: dream-cycle — orphan reconciliation partial: deleted ${reconcile.orphanVectorsRemoved}/${reconcile.orphansFound}, failed ${reconcile.failed}`,
+      );
+      stageCoreError ??= new Error(
+        `orphan reconciliation partial: deleted ${reconcile.orphanVectorsRemoved}/${reconcile.orphansFound}, failed ${reconcile.failed}`,
+      );
     }
     if (isVectorBackendAvailable(vectorDb)) {
       const vectorlessAfterReconcile = factsDb.countVectorlessActiveFacts();
@@ -892,17 +998,17 @@ export async function runDreamCycle(
     }
   } catch (err) {
     stageCoreError ??= err;
+    recordStageFailure("core prune/decay/link/vector maintenance", err);
     logger.warn(`memory-hybrid: dream-cycle — vector reconciliation failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-vector-reconcile",
-      subsystem: "vector",
-    });
   }
   vectorReconcileStep.complete(`removed=${orphanVectorsRemoved}`);
   {
     const summary = `factsPruned=${factsPruned}, factsDecayed=${factsDecayed}, linksPruned=${linksPruned}, decayReclassified=${decayReclassified}, orphanVectorsRemoved=${orphanVectorsRemoved}`;
     if (stageCoreError === undefined) stageCore.complete(summary);
     else stageCore.fail(stageCoreError, summary);
+  }
+  if (stageCoreError !== undefined) {
+    recordStageFailure("core prune/decay/link/vector maintenance", stageCoreError);
   }
 
   // ── Stage 2: Episodic consolidation + event log maintenance ──────────────
@@ -915,7 +1021,7 @@ export async function runDreamCycle(
     progressSupplier: () =>
       `phase=${eventLogPhase}; eventsConsolidated=${eventsConsolidated}; factsCreated=${factsCreated}`,
   });
-  if (eventLog) {
+  if (eventLog && !config.walFlushFailed) {
     try {
       const consolidationResult = await runEpisodicConsolidation(
         factsDb,
@@ -932,12 +1038,11 @@ export async function runDreamCycle(
       factsCreated = consolidationResult.factsCreated;
     } catch (err) {
       stageEventLogError ??= err;
+      recordStageFailure("episodic consolidation", err);
       logger.warn(`memory-hybrid: dream-cycle — consolidation step failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-consolidation",
-        subsystem: "event-log",
-      });
     }
+  } else if (eventLog && config.walFlushFailed && v) {
+    logger.info("memory-hybrid: dream-cycle — skipping episodic consolidation (WAL pre-flush failed)");
   } else if (v) {
     logger.info("memory-hybrid: dream-cycle — no event log: skipping episodic consolidation");
   }
@@ -963,13 +1068,19 @@ export async function runDreamCycle(
   }
 
   // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
-  if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
+  if (eventLog && config.maxUnconsolidatedAgeDays > 0 && !config.walFlushFailed) {
     eventLogPhase = "archive-old";
+    const archiveAgeDays = Math.max(config.maxUnconsolidatedAgeDays, config.consolidateAfterDays);
+    if (archiveAgeDays !== config.maxUnconsolidatedAgeDays && v) {
+      logger.info(
+        `memory-hybrid: dream-cycle — clamping maxUnconsolidatedAgeDays from ${config.maxUnconsolidatedAgeDays} to ${archiveAgeDays} (must be ≥ consolidateAfterDays=${config.consolidateAfterDays})`,
+      );
+    }
     try {
-      const deleted = eventLog.archiveOld(config.maxUnconsolidatedAgeDays, true);
+      const deleted = eventLog.archiveOld(archiveAgeDays, true);
       if (deleted > 0) {
         logger.info(
-          `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${config.maxUnconsolidatedAgeDays} days`,
+          `memory-hybrid: dream-cycle — deleted ${deleted} old event log entries (including unconsolidated) older than ${archiveAgeDays} days`,
         );
       }
     } catch (err) {
@@ -980,14 +1091,27 @@ export async function runDreamCycle(
         subsystem: "event-log",
       });
     }
+  } else if (eventLog && config.walFlushFailed && config.maxUnconsolidatedAgeDays > 0 && v) {
+    logger.info(
+      "memory-hybrid: dream-cycle — skipping archiveOld for unconsolidated events (WAL pre-flush failed; would risk deleting unprocessed episodic data)",
+    );
   }
   {
     const summary = `eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}`;
     if (stageEventLogError === undefined) stageEventLog.complete(summary);
     else stageEventLog.fail(stageEventLogError, summary);
   }
+  if (stageEventLogError !== undefined) {
+    recordStageFailure("episodic consolidation + event log maintenance", stageEventLogError);
+  }
 
   // ── Stage 3: Reflection (patterns) ────────────────────────────────────────
+  const patternIdsBeforeReflection = new Set(
+    factsDb
+      .getAll()
+      .filter((f) => f.category === "pattern" && !f.supersededAt)
+      .map((f) => f.id),
+  );
   let patternsFound = 0;
   let stageReflectionError: unknown;
   const stageReflection = beginStage("reflection (patterns)", {
@@ -1020,22 +1144,28 @@ export async function runDreamCycle(
     logger.info(`memory-hybrid: dream-cycle — reflection complete: ${patternsFound} patterns stored`);
   } catch (err) {
     stageReflectionError ??= err;
+    recordStageFailure("reflection (patterns)", err);
     logger.warn(`memory-hybrid: dream-cycle — reflection step failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-reflect",
-      subsystem: "reflection",
-    });
   }
   {
     const summary = `patternsStored=${patternsFound}`;
     if (stageReflectionError === undefined) stageReflection.complete(summary);
     else stageReflection.fail(stageReflectionError, summary);
   }
+  if (stageReflectionError !== undefined) {
+    recordStageFailure("reflection (patterns)", stageReflectionError);
+  }
 
   const livePatternCountForRules = countActivePatternFactsForMaintenance(factsDb);
   const patternGateForRules = Math.max(patternsFound, livePatternCountForRules);
 
   // ── Stage 4: Reflect-rules (optional) ─────────────────────────────────────
+  const ruleIdsBeforeReflectRules = new Set(
+    factsDb
+      .getAll()
+      .filter((f) => f.category === "rule" && !f.supersededAt)
+      .map((f) => f.id),
+  );
   let rulesGenerated = 0;
   let reflectionRulesDiagnostics: DreamCycleResult["reflectionRulesDiagnostics"];
   const enableReflectionRules = config.enableReflectionRules !== false; // default: true
@@ -1060,13 +1190,14 @@ export async function runDreamCycle(
       logger.info(
         `memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored (status=${rulesResult.diagnostics.status}${rulesResult.diagnostics.zeroRulesReason ? `, zero_rules_reason=${rulesResult.diagnostics.zeroRulesReason}` : ""})`,
       );
+      if (rulesResult.diagnostics.status === "degraded") {
+        stageReflectRulesError = new Error(rulesResult.diagnostics.zeroRulesReason ?? "reflect_rules_degraded");
+        recordStageFailure("reflect-rules", stageReflectRulesError);
+      }
     } catch (err) {
       stageReflectRulesError ??= err;
+      recordStageFailure("reflect-rules", err);
       logger.warn(`memory-hybrid: dream-cycle — reflect-rules step failed: ${err}`);
-      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-        operation: "dream-cycle-reflect-rules",
-        subsystem: "reflection",
-      });
       reflectionRulesDiagnostics = {
         modelResponseChars: 0,
         parseSuccess: false,
@@ -1115,6 +1246,47 @@ export async function runDreamCycle(
     }
   }
 
+  let bridgePersonaCreated = 0;
+  let bridgeCrystallizationCreated = 0;
+  let bridgeSkillBridged = 0;
+
+  if (bridge?.cfg?.nightlyCycle?.autoPropose === true) {
+    try {
+      const newPatternFactIds = factsDb
+        .getAll()
+        .filter((f) => f.category === "pattern" && !f.supersededAt && !patternIdsBeforeReflection.has(f.id))
+        .map((f) => f.id);
+      const newRuleFactIds = factsDb
+        .getAll()
+        .filter((f) => f.category === "rule" && !f.supersededAt && !ruleIdsBeforeReflectRules.has(f.id))
+        .map((f) => f.id);
+      const bridgeResult = runDreamCycleProposalBridge({
+        cfg: bridge.cfg,
+        factsDb,
+        proposalsDb: bridge.proposalsDb ?? null,
+        crystallizationStore: bridge.crystallizationStore ?? null,
+        toolProposalStore: bridge.toolProposalStore ?? null,
+        patternsStored: patternsFound,
+        rulesGenerated,
+        newRuleFactIds,
+        newPatternFactIds,
+        logger,
+        api: bridge.api,
+        changeFeed: bridge.changeFeed,
+      });
+      bridgePersonaCreated = bridgeResult.personaProposalsCreated;
+      bridgeCrystallizationCreated = bridgeResult.crystallizationProposalsCreated;
+      bridgeSkillBridged = bridgeResult.skillWorkshopBridged;
+      if (bridgePersonaCreated > 0 || bridgeCrystallizationCreated > 0 || bridgeSkillBridged > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle auto-propose — persona=${bridgePersonaCreated} crystallization=${bridgeCrystallizationCreated} skillWorkshop=${bridgeSkillBridged}`,
+        );
+      }
+    } catch (err) {
+      logger.warn(`memory-hybrid: dream-cycle auto-propose bridge failed (non-fatal): ${err}`);
+    }
+  }
+
   // ── Stage 5: Refresh memory awareness index ───────────────────────────────
   let stageMemoryIndexError: unknown;
   const stageMemoryIndex = beginStage("MEMORY_INDEX.md refresh", {
@@ -1135,11 +1307,8 @@ export async function runDreamCycle(
     );
   } catch (err) {
     stageMemoryIndexError ??= err;
+    recordStageFailure("MEMORY_INDEX.md refresh", err);
     logger.warn(`memory-hybrid: dream-cycle — memory index update failed: ${err}`);
-    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-      operation: "dream-cycle-memory-index",
-      subsystem: "reflection",
-    });
   }
   if (stageMemoryIndexError === undefined) stageMemoryIndex.complete();
   else stageMemoryIndex.fail(stageMemoryIndexError);
@@ -1224,6 +1393,9 @@ export async function runDreamCycle(
     if (stageOperationalError === undefined) stageOperational.complete(summary);
     else stageOperational.fail(stageOperationalError, summary);
   }
+  if (stageOperationalError !== undefined) {
+    recordStageFailure("prune operational logs + FTS optimize + optional vacuum", stageOperationalError);
+  }
 
   // ── Step 6: Digest summary ───────────────────────────────────────────────
   const digestSummary = buildDigestSummary({
@@ -1238,10 +1410,59 @@ export async function runDreamCycle(
     vacuumRan,
     decayReclassified,
     orphanVectorsRemoved,
+    failedStages,
   });
 
+  const success = failedStages.length === 0;
   const totalElapsedSec = Math.floor((Date.now() - cycleStartedAt) / 1000);
-  logger.info(`memory-hybrid: dream-cycle — complete in ${totalElapsedSec}s. ${digestSummary}`);
+  if (success) {
+    logger.info(`memory-hybrid: dream-cycle — complete in ${totalElapsedSec}s. ${digestSummary}`);
+  } else {
+    logger.warn(
+      `memory-hybrid: dream-cycle — finished with ${failedStages.length} failed stage(s) in ${totalElapsedSec}s. ${digestSummary}`,
+    );
+  }
+
+  if (bridge?.changeFeed && bridge?.cfg) {
+    if (bridge.cfg.liveChangeFeed?.enabled !== false) {
+      try {
+        const pruned = bridge.changeFeed.pruneOlderThan(bridge.cfg.liveChangeFeed?.retentionDays ?? 90);
+        if (pruned > 0) {
+          logger.info(`memory-hybrid: dream-cycle — pruned ${pruned} old change-feed event(s)`);
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — change-feed prune failed (non-fatal): ${err}`);
+      }
+      try {
+        if (isWorkshopEnabled(bridge.cfg)) {
+          const synced = syncWorkshopProposedEvents(
+            withWorkshopDefaults({
+              cfg: bridge.cfg,
+              factsDb,
+              proposalsDb: bridge.proposalsDb ?? null,
+              crystallizationStore: bridge.crystallizationStore ?? null,
+              toolProposalStore: bridge.toolProposalStore ?? null,
+              workflowStore: bridge.workflowStore ?? null,
+              resolvedSqlitePath: bridge.resolvedSqlitePath ?? "",
+              changeFeed: bridge.changeFeed,
+            }),
+          );
+          if (synced > 0) {
+            logger.info(`memory-hybrid: dream-cycle — synced ${synced} workshop proposed change event(s)`);
+          }
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: dream-cycle — workshop change-feed sync failed (non-fatal): ${err}`);
+      }
+    }
+    emitDreamCycleComplete(bridge.changeFeed, bridge.cfg, {
+      success,
+      digestSummary,
+      personaProposalsCreated: bridgePersonaCreated,
+      crystallizationProposalsCreated: bridgeCrystallizationCreated,
+      skillWorkshopBridged: bridgeSkillBridged,
+    });
+  }
 
   return {
     factsPruned,
@@ -1258,5 +1479,7 @@ export async function runDreamCycle(
     orphanVectorsRemoved,
     digestSummary,
     skipped: false,
+    success,
+    failedStages,
   };
 }

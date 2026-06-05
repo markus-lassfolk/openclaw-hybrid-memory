@@ -1354,15 +1354,18 @@ export class VectorDB {
   }
 
   private async withRetryableWriteConflictRetry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+    const { withEmbedWriteLock } = await import("../../services/embeddings/shared.js");
     const maxAttempts = VECTORDB_WRITE_CONFLICT_MAX_RETRIES + 1;
     let lastErr: unknown;
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await this.waitForReindexLockRelease();
-        if (isReindexLockHeld(this.dbPath)) {
-          throw new Error("VectorDB write blocked by active re-index lock");
-        }
-        return await fn();
+        return await withEmbedWriteLock(async () => {
+          await this.waitForReindexLockRelease();
+          if (isReindexLockHeld(this.dbPath)) {
+            throw new Error("VectorDB write blocked by active re-index lock");
+          }
+          return await fn();
+        });
       } catch (err) {
         lastErr = err;
         const isCommitConflict = this.isRetryableCommitConflictError(err);

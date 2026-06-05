@@ -1,4 +1,64 @@
+import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+
+const ORPHAN_RECONCILE_VECTOR_BATCH = 1000;
+
+/**
+ * Return LanceDB vector IDs with no corresponding active SQLite fact.
+ */
+export async function findOrphanVectorIds(
+  factsDb: Pick<FactsDB, "filterActiveFactIds">,
+  vectorDb: Pick<VectorDB, "getAllIds"> & Partial<Pick<VectorDB, "isLanceDbAvailable">>,
+): Promise<string[]> {
+  if (typeof vectorDb.isLanceDbAvailable === "function" && !vectorDb.isLanceDbAvailable()) {
+    return [];
+  }
+  if (typeof vectorDb.getAllIds !== "function") {
+    return [];
+  }
+  const vectorIds = await vectorDb.getAllIds();
+  if (vectorIds.length === 0) return [];
+
+  const orphans: string[] = [];
+  for (let i = 0; i < vectorIds.length; i += ORPHAN_RECONCILE_VECTOR_BATCH) {
+    const batch = vectorIds.slice(i, i + ORPHAN_RECONCILE_VECTOR_BATCH);
+    const active = factsDb.filterActiveFactIds(batch);
+    for (const id of batch) {
+      if (!active.has(id.toLowerCase())) orphans.push(id);
+    }
+  }
+  return orphans;
+}
+
+/**
+ * Delete LanceDB vectors whose fact IDs are not active in SQLite.
+ * Uses batched SQLite lookups so the full facts table is not loaded into memory.
+ */
+export async function reconcileOrphanVectors(
+  factsDb: Pick<FactsDB, "filterActiveFactIds">,
+  vectorDb: Pick<VectorDB, "getAllIds" | "delete"> & Partial<Pick<VectorDB, "deleteMany" | "isLanceDbAvailable">>,
+  options: {
+    operation: string;
+    logger?: { warn?: (message: string) => void; info?: (message: string) => void };
+  },
+): Promise<{ orphanVectorsRemoved: number; failed: number; orphansFound: number }> {
+  if (typeof vectorDb.isLanceDbAvailable === "function" && !vectorDb.isLanceDbAvailable()) {
+    return { orphanVectorsRemoved: 0, failed: 0, orphansFound: 0 };
+  }
+
+  const orphans = await findOrphanVectorIds(factsDb, vectorDb);
+  if (orphans.length === 0) {
+    return { orphanVectorsRemoved: 0, failed: 0, orphansFound: 0 };
+  }
+
+  options.logger?.info?.(`memory-hybrid: ${options.operation} — reconciling ${orphans.length} orphaned vector(s)...`);
+  const cleanup = await deleteVectorsForFactIds(vectorDb, orphans, options);
+  return {
+    orphanVectorsRemoved: cleanup.deleted,
+    failed: cleanup.failed,
+    orphansFound: orphans.length,
+  };
+}
 
 export async function deleteVectorsForFactIds(
   vectorDb: Pick<VectorDB, "delete"> & Partial<Pick<VectorDB, "deleteMany" | "isLanceDbAvailable">>,
@@ -23,11 +83,16 @@ export async function deleteVectorsForFactIds(
       const normalizedDeleted = Number.isFinite(deleted)
         ? Math.max(0, Math.min(uniqueIds.length, Math.floor(deleted)))
         : 0;
+      const failed = Math.max(0, uniqueIds.length - normalizedDeleted);
+      if (failed > 0) {
+        options.logger?.warn?.(
+          `memory-hybrid: ${options.operation} vector bulk delete partial: deleted ${normalizedDeleted}/${uniqueIds.length}`,
+        );
+      }
       return {
         attempted: uniqueIds.length,
         deleted: normalizedDeleted,
-        // Keep failed semantics aligned with the per-id path: only count hard errors.
-        failed: 0,
+        failed,
       };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));

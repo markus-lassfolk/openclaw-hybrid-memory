@@ -2,6 +2,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { Episode, MemoryEntry, ProcedureEntry, ScopeFilter } from "../types/memory.js";
 import { versionInfo } from "../versionInfo.js";
+import { nowIso } from "../utils/dates.js";
 
 export interface NarrativeExportEntry {
   id: string;
@@ -157,7 +158,7 @@ export function buildPublicExportBundle(
   return {
     manifest: {
       bundleVersion: 1,
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso(),
       pluginVersion: versionInfo.pluginVersion,
       schemaVersion: versionInfo.schemaVersion,
       counts: {

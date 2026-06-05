@@ -1,46 +1,13 @@
 import type OpenAI from "openai";
 import type { ContradictionReviewItem, LlmContradictionDecision } from "../backends/facts-db/contradictions.js";
-
-function extractJsonObject(text: string): string | null {
-  const trimmed = text.trim();
-  const start = trimmed.indexOf("{");
-  if (start < 0) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escapeNext = false;
-  for (let i = start; i < trimmed.length; i++) {
-    const ch = trimmed[i];
-    if (escapeNext) {
-      escapeNext = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escapeNext = true;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      continue;
-    }
-    if (inString) continue;
-    if (ch === "{") depth++;
-    else if (ch === "}") {
-      depth--;
-      if (depth === 0) {
-        return trimmed.slice(start, i + 1);
-      }
-    }
-  }
-  return null;
-}
+import { tryParseFirstJsonObject } from "../utils/llm-json-array.js";
+import { extractAssistantMessageText } from "../utils/llm-message.js";
 
 export function parseContradictionAdjudicationResponse(content: string): LlmContradictionDecision | null {
-  const rawJson = extractJsonObject(content);
-  if (!rawJson) return null;
+  const parsed = tryParseFirstJsonObject(content) as Partial<LlmContradictionDecision> | null;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
 
   try {
-    const parsed = JSON.parse(rawJson) as Partial<LlmContradictionDecision>;
     if (
       parsed.decision !== "keep_new" &&
       parsed.decision !== "keep_old" &&
@@ -89,8 +56,8 @@ export async function adjudicateContradictionWithLlm(
       },
     ],
   });
-  const content = response.choices[0]?.message?.content;
-  const parsed = parseContradictionAdjudicationResponse(typeof content === "string" ? content : "");
+  const content = extractAssistantMessageText(response.choices[0]?.message).text;
+  const parsed = parseContradictionAdjudicationResponse(content);
   if (!parsed) {
     throw new Error("LLM returned malformed contradiction adjudication JSON.");
   }

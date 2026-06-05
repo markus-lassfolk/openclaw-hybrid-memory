@@ -14,8 +14,11 @@ import {
 import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
 import { filterByScope, mergeResults } from "../services/merge-results.js";
+import { assembleRecallPrependContext } from "../services/recalled-context-assembler.js";
 import type { ScopeFilter } from "../types/memory.js";
+import { isTierAllowedForWarmSearch } from "../utils/tier-filter.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { isRecallContextSuperseded, suppressStaleLifecycleDbError } from "../utils/registration-superseded.js";
 import type { LifecycleContext, SessionState } from "./types.js";
@@ -96,11 +99,14 @@ export function registerAuthFailureRecall(
             }
           : undefined;
 
+      const tierFilter: "warm" | "all" = ctx.cfg.memoryTiering.enabled ? "warm" : "all";
       const ftsResults = ctx.factsDb.search(query, 5, {
         scopeFilter,
+        tierFilter,
         reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
         diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
         interactiveFtsFastPath: true,
+        deferAccessRefresh: true,
       });
       const vector = await ctx.embeddings.embed(query);
       let lanceResults = await ctx.vectorDb.search(vector, 5, 0.3);
@@ -118,6 +124,7 @@ export function registerAuthFailureRecall(
         : merged;
 
       let credentialFacts = scopeValidatedMerged.filter((r) => {
+        if (ctx.cfg.memoryTiering.enabled && !isTierAllowedForWarmSearch(r.entry.tier)) return false;
         const fact = r.entry;
         if (fact.category === "technical") return true;
         if (fact.entity?.toLowerCase() === "credentials") return true;
@@ -151,7 +158,11 @@ export function registerAuthFailureRecall(
           `memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`,
         );
         authFailureRecallsThisSession.set(recallKey, recallCount + 1);
-        return { prependContext: `${hint}\n\n` };
+        const wrapped = assembleRecallPrependContext(ctx, hint, { edictBlock: "" }) ?? `${hint}\n\n`;
+        const prepend = applyPrependBudget(ctx.prependBudgetRef, wrapped);
+        if (!prepend) return;
+        ctx.factsDb.refreshAccessedFacts(credentialFacts.map((r) => r.entry.id));
+        return { prependContext: prepend };
       }
     } catch (err) {
       if (isRecallContextSuperseded(ctx)) {

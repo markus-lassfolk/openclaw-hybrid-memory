@@ -21,6 +21,7 @@ import {
   type MaintenanceLogStep,
 } from "../../../services/maintenance-log-analyzer.js";
 import { isBenignNoiseOnlyMaintenanceStep } from "../../../services/maintenance-benign-noise.js";
+import { formatTimestampUtc } from "../../../utils/dates.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
@@ -56,7 +57,7 @@ function stepsFromPipedExitLog(content: string): MaintenanceLogStep[] {
     .filter(({ line }) => /\bexit=\d+\b/.test(line))
     .map(({ line, idx }) => {
       const m = line.match(/^(\S+)\s+(?:(\S+)\/)?(\S+)\s+(?:completed|failed)?\s*exit=(\d+)\b/);
-      const iso = m?.[1] ?? new Date(now * 1000).toISOString();
+      const iso = m?.[1] ?? formatTimestampUtc(now);
       const occurredAt = Math.floor(new Date(iso).getTime() / 1000);
       return {
         occurredAt: Number.isFinite(occurredAt) ? occurredAt : now + idx,

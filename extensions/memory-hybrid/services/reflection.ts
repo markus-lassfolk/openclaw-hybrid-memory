@@ -80,6 +80,7 @@ interface ReflectionOptions {
   fallbackModels?: string[];
   modelSource?: string;
   adaptiveStatePath?: string;
+  thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
 }
 
 interface ReflectionResult {
@@ -657,6 +658,7 @@ export async function runReflection(
       logger,
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
+      thinkingMode: opts.thinkingMode,
     });
     if (detail.modelUsed !== opts.model) {
       logger.info(`memory-hybrid: reflection — used fallback model ${detail.modelUsed}`);
@@ -1138,6 +1140,11 @@ export async function runReflectionRules(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
+    /** Internal: one-shot retry with thinking enabled after invalid JSON (#1801). */
+    formatRetryWithThinking?: boolean;
+    /** Internal: one-shot retry with minimal JSON-only prompt after invalid JSON. */
+    formatRetryMinimal?: boolean;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -1201,6 +1208,8 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
+      // Default disabled for json_object; format-retry and --thinking may override via opts.thinkingMode.
+      thinkingMode: opts.thinkingMode ?? "disabled",
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1217,8 +1226,8 @@ export async function runReflectionRules(
     });
     throw err instanceof Error ? err : new Error(String(err));
   }
-  const parseResult = parseRulesFromModelResponse(rawResponse);
-  const uniqueRules = parseResult.rules;
+  let parseResult = parseRulesFromModelResponse(rawResponse);
+  let uniqueRules = parseResult.rules;
   const { parseableLines, rejectedLowConfidence, rejectedLength, rejectedDuplicates, parseSuccess, parsedFromJson } =
     parseResult;
   const modelResponseChars = rawResponse.length;
@@ -1253,10 +1262,15 @@ export async function runReflectionRules(
     );
     // Format retry (#1824): when the model returned an unusable response format and fallbacks are
     // available, retry with the next model in the chain before giving up.
-    if (
-      (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") &&
-      opts.fallbackModels?.length
-    ) {
+    const formatRetryEligible =
+      zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response";
+    const placeholderRetryEligible =
+      zeroRulesReason === "all_candidates_rejected_length" &&
+      parsedFromJson &&
+      parseableLines > 0 &&
+      rejectedLength > 0;
+
+    if (formatRetryEligible && opts.fallbackModels?.length) {
       // Filter out the model that was actually used (which produced the bad response)
       const remainingFallbacks = opts.fallbackModels.filter((m) => m !== modelUsed);
       if (remainingFallbacks.length > 0) {
@@ -1275,13 +1289,86 @@ export async function runReflectionRules(
         );
       }
     }
-    if (zeroRulesReason === "invalid_response_format" || zeroRulesReason === "empty_model_response") {
-      throw new Error(`memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}`);
+    // Adaptive thinking before minimal prompt — Maeve M3/M2.7 often need thinking to emit parseable JSON.
+    if ((formatRetryEligible || placeholderRetryEligible) && !opts.formatRetryWithThinking) {
+      logger.warn(
+        `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying once with thinking=adaptive`,
+      );
+      return runReflectionRules(
+        factsDb,
+        vectorDb,
+        embeddings,
+        openai,
+        { ...opts, formatRetryWithThinking: true, thinkingMode: "adaptive", fallbackModels: opts.fallbackModels?.filter((m) => m !== modelUsed) },
+        logger,
+        provenanceService,
+      );
     }
-    return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
+    if (formatRetryEligible && !opts.formatRetryMinimal) {
+      const minimalPrompt =
+        `${patternsBlock}\n\nReturn only valid JSON with this schema (no markdown, no prose):\n` +
+        `{"rules":["<imperative one-line rule>", "..."],"noAction":false}\n` +
+        `When there are no actionable rules, return {"rules":[],"noAction":true}.\n` +
+        `Replace every rules[] entry with a real imperative rule — never echo schema placeholders.`;
+      logger.warn(
+        `memory-hybrid: reflect-rules — ${modelUsed} returned ${zeroRulesReason}, retrying once with minimal JSON-only prompt`,
+      );
+      try {
+        const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
+        const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
+          model: opts.model,
+          modelSource: "format-retry-minimal",
+          content: minimalPrompt,
+          temperature: REFLECTION_TEMPERATURE,
+          maxTokens: 800,
+          openai,
+          fallbackModels: opts.fallbackModels ?? [],
+          label: "memory-hybrid: reflect-rules-minimal-retry",
+          feature: CostFeature.reflectionRules,
+          logger,
+          adaptiveStatePath: opts.adaptiveStatePath,
+          enabled: adaptiveEnabled,
+          responseFormat: { type: "json_object" },
+          thinkingMode: opts.thinkingMode ?? "disabled",
+        });
+        const minimalParse = parseRulesFromModelResponse(detail.content);
+        if (minimalParse.rules.length > 0) {
+          logger.info(
+            `memory-hybrid: reflect-rules — minimal JSON retry succeeded with ${minimalParse.rules.length} rule(s) (model=${detail.modelUsed})`,
+          );
+          parseResult = minimalParse;
+          uniqueRules = minimalParse.rules;
+          modelUsed = detail.modelUsed;
+        }
+      } catch (err) {
+        logger.warn(`memory-hybrid: reflect-rules minimal JSON retry failed: ${err}`);
+      }
+      if (uniqueRules.length === 0) {
+        return runReflectionRules(
+          factsDb,
+          vectorDb,
+          embeddings,
+          openai,
+          { ...opts, formatRetryMinimal: true },
+          logger,
+          provenanceService,
+        );
+      }
+    }
+    if (uniqueRules.length > 0) {
+      // Minimal retry recovered parseable rules — continue to storage below.
+    } else {
+      if (formatRetryEligible) {
+        logger.warn(
+          `memory-hybrid: reflect-rules — model=${modelUsed} failure_type=${zeroRulesReason}; returning 0 stored (degraded)`,
+        );
+      }
+      return { rulesExtracted: uniqueRules.length, rulesStored: 0, diagnostics };
+    }
   }
 
-  if (parsedFromJson && opts.verbose) {
+  const { parsedFromJson: activeParsedFromJson } = parseResult;
+  if (activeParsedFromJson && opts.verbose) {
     logger.info("memory-hybrid: reflect-rules — parsed rules from JSON response");
   }
 
@@ -1364,6 +1451,10 @@ export async function runReflectionRules(
       if (opts.verbose) {
         logger.info(`memory-hybrid: reflect-rules — skipped duplicate: ${ruleText.slice(0, 50)}...`);
       }
+      continue;
+    }
+    if (/^<[^>]+>$/i.test(ruleText) || /^<imperative\s+one-line\s+rule>/i.test(ruleText)) {
+      logger.warn(`memory-hybrid: reflect-rules — rejected template placeholder at store gate: ${ruleText.slice(0, 60)}`);
       continue;
     }
     if (opts.dryRun) {
@@ -1801,6 +1892,7 @@ export async function runReflectionMeta(
     fallbackModels?: string[];
     modelSource?: string;
     adaptiveStatePath?: string;
+    thinkingMode?: import("./chat.js").MiniMaxThinkingMode;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
   provenanceService?: ProvenanceService | null,
@@ -1840,6 +1932,8 @@ export async function runReflectionMeta(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
+      // Structured JSON extraction: disable M3 thinking blocks (adaptive breaks json_object parsing).
+      thinkingMode: "disabled",
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {
@@ -1908,7 +2002,9 @@ export async function runReflectionMeta(
       }
     }
     if (zeroMetasReason === "invalid_response_format" || zeroMetasReason === "empty_model_response") {
-      throw new Error(`memory-hybrid: reflect-meta — model=${modelUsed} failure_type=${zeroMetasReason}`);
+      logger.warn(
+        `memory-hybrid: reflect-meta — model=${modelUsed} failure_type=${zeroMetasReason}; returning 0 stored (degraded)`,
+      );
     }
     return { metaExtracted: uniqueMetas.length, metaStored: 0, diagnostics };
   }

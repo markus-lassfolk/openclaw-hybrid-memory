@@ -42,6 +42,8 @@ import type { ProvenanceService } from "../services/provenance.js";
 import type { PythonBridge } from "../services/python-bridge.js";
 import type { AliasDB } from "../services/retrieval-aliases.js";
 import type { VerificationStore } from "../services/verification-store.js";
+import type { ChangeFeed } from "../services/change-feed.js";
+import type { SessionState } from "../lifecycle/types.js";
 import type { LifecycleHooksHandle } from "../setup/register-hooks.js";
 import type { ToolRegistrationHandle } from "../setup/register-tools.js";
 
@@ -87,6 +89,10 @@ export interface PluginRuntime {
   /** Cross-agent audit log (Issue #790). */
   auditStore: AuditStore | null;
   agentHealthStore: AgentHealthStore | null;
+  /** Live change feed for operator notifications. */
+  changeFeed: ChangeFeed | null;
+  /** Populated after lifecycle hooks register; used for frustration reset on revert. */
+  sessionStateRef: { value: SessionState | null };
 
   // --- Lifecycle state ---
   /** Handle returned by registerLifecycleHooks; set after hooks are registered, null until then. */
@@ -117,8 +123,14 @@ export interface PluginRuntime {
   recallInFlightRef: { value: number };
   /** Last user prompt used for interactive auto-recall (issue #957 post-compaction reinjection). */
   lastAutoRecallPromptRef: { value: string | null };
-  /** Last progressive index fact IDs (1-based position → fact id). */
+  /** Per-turn shared prepend token budget across before_agent_start hooks. */
+  prependBudgetRef: import("../services/prepend-budget.js").PrependBudgetRef;
+  /** Last progressive index fact IDs (1-based position → fact id). @deprecated use progressiveIndexBySession */
   lastProgressiveIndexIds: string[];
+  progressiveIndexBySession: Map<string, string[]>;
+  lastAutoRecallPromptBySession: Map<string, string>;
+  /** Per-session fact IDs injected this turn (lifecycle + ContextEngine dedup). */
+  injectedFactIdsBySession: import("../services/session-injection-dedup.js").InjectedFactIdsBySession;
 
   // --- Timer refs (objects so they can be passed by reference to plugin-service) ---
   timers: {
@@ -130,9 +142,12 @@ export interface PluginRuntime {
     languageKeywordsStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
     postUpgradeTimeout: { value: ReturnType<typeof setTimeout> | null };
     passiveObserverTimer: { value: ReturnType<typeof setInterval> | null };
-    /** Issue #631: Stale-run watchdog timer for autonomous task queue self-healing. */
-    watchdogTimer: { value: ReturnType<typeof setInterval> | null };
-  };
+  /** Issue #631: Stale-run watchdog timer for autonomous task queue self-healing. */
+  watchdogTimer: { value: ReturnType<typeof setInterval> | null };
+  /** Unified maintenance orchestrator tick (cycle tier). */
+  maintenanceTick: { value: ReturnType<typeof setInterval> | null };
+  maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
+};
 }
 
 /** Create a fresh, empty timers bag for a new PluginRuntime instance. */
@@ -147,6 +162,8 @@ export function createTimers(): PluginRuntime["timers"] {
     postUpgradeTimeout: { value: null },
     passiveObserverTimer: { value: null },
     watchdogTimer: { value: null },
+    maintenanceTick: { value: null },
+    maintenanceStartupTimeout: { value: null },
   };
 }
 
@@ -190,5 +207,13 @@ export function clearRuntimeTimers(timers: PluginRuntime["timers"]): void {
   if (timers.watchdogTimer.value) {
     clearInterval(timers.watchdogTimer.value);
     timers.watchdogTimer.value = null;
+  }
+  if (timers.maintenanceTick.value) {
+    clearInterval(timers.maintenanceTick.value);
+    timers.maintenanceTick.value = null;
+  }
+  if (timers.maintenanceStartupTimeout.value) {
+    clearTimeout(timers.maintenanceStartupTimeout.value);
+    timers.maintenanceStartupTimeout.value = null;
   }
 }

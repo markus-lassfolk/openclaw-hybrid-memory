@@ -11,6 +11,7 @@ import type { MemoryCategory } from "../types/memory.js";
 import { BATCH_STORE_IMPORTANCE } from "../utils/constants.js";
 import { extractTags } from "../utils/tags.js";
 import { VAULT_POINTER_PREFIX, tryParseCredentialForVault } from "./auto-capture.js";
+import { rollbackVaultCredentialWrite } from "./credential-vault-pointer.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
@@ -68,6 +69,7 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
       skipped++;
       continue;
     }
+    let plaintextRemoved = false;
     try {
       credentialsDb.store({
         service: parsed.service,
@@ -80,7 +82,35 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
       if (!stored || stored.value !== parsed.secretValue) {
         throw new Error(`vault verification failed for ${parsed.service}:${parsed.type}`);
       }
+      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
+      const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
+      const pointerResult = factsDb.storeWithResult({
+        text: pointerText,
+        category: "technical" as MemoryCategory,
+        importance: BATCH_STORE_IMPORTANCE,
+        entity: "Credentials",
+        key: parsed.service,
+        value: pointerValue,
+        source: "conversation",
+        decayClass: "permanent",
+        tags: ["auth", ...extractTags(pointerText, "Credentials")],
+      });
+      if (pointerResult.skipped) {
+        rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (message, cleanupErr) => {
+          capturePluginError(cleanupErr instanceof Error ? cleanupErr : new Error(String(cleanupErr)), {
+            operation: "migrate-credential-compensating-delete-skip",
+            subsystem: "credentials",
+          });
+        });
+        errors.push(`pointer rejected for ${parsed.service}: pre-store guard blocked`);
+        continue;
+      }
+      const pointerEntry = pointerResult.entry;
+      const pointerAlreadyExists = pointerResult.newlyStored === false && !pointerResult.embeddingStale;
+
+      // Only remove the plaintext fact after vault + pointer path is confirmed.
       factsDb.delete(entry.id);
+      plaintextRemoved = true;
       aliasDb?.deleteByFactId(entry.id);
       try {
         await vectorDb.delete(entry.id);
@@ -93,19 +123,17 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
         }
         // LanceDB row might not exist
       }
-      const pointerText = `Credential for ${parsed.service} (${parsed.type}) — stored in secure vault. Use credential_get(service="${parsed.service}", type="${parsed.type}") to retrieve.`;
-      const pointerValue = `${VAULT_POINTER_PREFIX}${parsed.service}:${parsed.type}`;
-      const pointerEntry = factsDb.store({
-        text: pointerText,
-        category: "technical" as MemoryCategory,
-        importance: BATCH_STORE_IMPORTANCE,
-        entity: "Credentials",
-        key: parsed.service,
-        value: pointerValue,
-        source: "conversation",
-        decayClass: "permanent",
-        tags: ["auth", ...extractTags(pointerText, "Credentials")],
-      });
+      if (pointerResult.evictedFactId) {
+        try {
+          await vectorDb.delete(pointerResult.evictedFactId);
+        } catch {
+          // best-effort — evicted vector cleanup
+        }
+      }
+      if (pointerAlreadyExists) {
+        migrated++;
+        continue;
+      }
       let vector: number[] | null = null;
       try {
         vector = await embeddings.embed(pointerText);
@@ -143,6 +171,9 @@ export async function migrateCredentialsToVault(opts: MigrateCredentialsOptions)
       }
       migrated++;
     } catch (e) {
+      if (!plaintextRemoved) {
+        rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
+      }
       capturePluginError(e instanceof Error ? e : new Error(String(e)), {
         subsystem: "credentials",
         operation: "migrate-fact-to-vault",

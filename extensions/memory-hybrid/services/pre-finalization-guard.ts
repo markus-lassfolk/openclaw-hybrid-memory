@@ -106,6 +106,8 @@ export interface EvaluatePreFinalizationGuardOptions {
   nowMs?: number;
   taskUpdatedFreshnessMs?: number;
   sessionKey?: string;
+  /** Resolve goal id ↔ label equivalence for goal_assess matching. */
+  goalAliases?: Array<{ id: string; label: string }>;
 }
 
 function extractTextBlocks(content: unknown): string[] {
@@ -262,6 +264,39 @@ function normalizeGoalId(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function goalRefVariants(value: string, aliases?: Array<{ id: string; label: string }>): Set<string> {
+  const out = new Set<string>();
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return out;
+  out.add(normalized);
+  if (!aliases) return out;
+  for (const g of aliases) {
+    const id = g.id.trim().toLowerCase();
+    const label = g.label.trim().toLowerCase();
+    if (normalized === id || normalized === label) {
+      out.add(id);
+      out.add(label);
+    }
+  }
+  return out;
+}
+
+function goalAssessMatchesRelatedGoal(
+  relatedGoal: string,
+  goalAssess: GoalAssessEvidence,
+  aliases?: Array<{ id: string; label: string }>,
+): boolean {
+  if (!goalAssess.called) return false;
+  if (goalAssess.assessedGoalIds.size === 0) return true;
+  const relatedVariants = goalRefVariants(relatedGoal, aliases);
+  for (const assessed of goalAssess.assessedGoalIds) {
+    for (const variant of goalRefVariants(assessed, aliases)) {
+      if (relatedVariants.has(variant)) return true;
+    }
+  }
+  return false;
+}
+
 function collectGoalAssessEvidence(toolCalls: ToolCallSnapshot[]): GoalAssessEvidence {
   const assessedGoalIds = new Set<string>();
   let called = false;
@@ -272,7 +307,8 @@ function collectGoalAssessEvidence(toolCalls: ToolCallSnapshot[]): GoalAssessEvi
       normalizeGoalId(call.parsedArgs?.goal_id) ??
       normalizeGoalId(call.parsedArgs?.goalId) ??
       normalizeGoalId(call.parsedArgs?.related_goal) ??
-      normalizeGoalId(call.parsedArgs?.goal);
+      normalizeGoalId(call.parsedArgs?.goal) ??
+      normalizeGoalId(call.parsedArgs?.label);
     if (parsedId) {
       assessedGoalIds.add(parsedId);
     }
@@ -361,6 +397,7 @@ function evaluateProjectCheckpoint(
   goalAssess: GoalAssessEvidence,
   currentSessionKey?: string,
   projectFactsProvided?: boolean,
+  goalAliases?: Array<{ id: string; label: string }>,
 ): ProjectCheckpointEvaluation {
   if (projectFacts.length === 0) {
     // When a sessionKey is provided and there are no project facts at all, there is no
@@ -431,7 +468,7 @@ function evaluateProjectCheckpoint(
     if (normalizedRelatedGoal) {
       if (!goalAssess.called) {
         missingFields.push("goal_assess");
-      } else if (goalAssess.assessedGoalIds.size > 0 && !goalAssess.assessedGoalIds.has(normalizedRelatedGoal)) {
+      } else if (!goalAssessMatchesRelatedGoal(relatedGoal, goalAssess, goalAliases)) {
         missingFields.push("goal_assess");
       }
     }
@@ -556,6 +593,7 @@ export function evaluatePreFinalizationGuard(
     goalAssess,
     options.sessionKey,
     options.projectFacts !== undefined,
+    options.goalAliases,
   );
   const checkpointSatisfied = activeTaskCheckpointCalled || projectCheckpoint.satisfied;
 

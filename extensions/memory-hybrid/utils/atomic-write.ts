@@ -17,6 +17,7 @@
 import { chmodSync, existsSync, mkdirSync, renameSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
+import { nowIso } from "./dates.js";
 
 /** Marker file written as the last step inside an atomic skill directory. */
 export const SKILL_COMPLETE_MARKER = ".openclaw-skill-complete";
@@ -143,7 +144,7 @@ export function atomicWriteSkillDir(
     }
 
     // Stamp the completion marker as the final write inside the temp dir.
-    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), new Date().toISOString(), "utf-8");
+    writeFileSync(join(tmpDir, SKILL_COMPLETE_MARKER), nowIso(), "utf-8");
 
     // Atomic promotion: temp dir → final skill dir. On POSIX, renameSync
     // atomically replaces empty directories, preserving the allocation lock.

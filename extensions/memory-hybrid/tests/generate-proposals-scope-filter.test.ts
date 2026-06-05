@@ -161,7 +161,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const db = new FactsDB(":memory:");
     const proposalsDb = new ProposalsDB(":memory:");
     insertScopedPattern(db, "global", null, "global pattern");
-    const chatSpy = vi.spyOn(chatService, "chatCompleteWithRetryDetailed").mockRejectedValue(new Error("forced failure"));
+    const chatSpy = vi
+      .spyOn(chatService, "chatCompleteWithRetryDetailed")
+      .mockRejectedValue(new Error("forced failure"));
 
     const ctx = makeCtx(db, proposalsDb, {
       configOverrides: {
@@ -187,7 +189,9 @@ describe("generate-proposals — requireScopeFilter (#1809)", () => {
     const db = new FactsDB(":memory:");
     const proposalsDb = new ProposalsDB(":memory:");
     insertScopedPattern(db, "global", null, "global pattern");
-    const chatSpy = vi.spyOn(chatService, "chatCompleteWithRetryDetailed").mockRejectedValue(new Error("forced failure"));
+    const chatSpy = vi
+      .spyOn(chatService, "chatCompleteWithRetryDetailed")
+      .mockRejectedValue(new Error("forced failure"));
 
     const ctx = makeCtx(db, proposalsDb, {
       configOverrides: {
@@ -317,6 +321,65 @@ describe("generate-proposals — JSON retry (#1824)", () => {
     );
 
     expect(openai.chat.completions.create).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns semantic_empty when insights exist but parsed items are zero", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+    insertScopedPattern(
+      db,
+      "global",
+      null,
+      "User values type safety and enables TypeScript strict mode in all projects",
+    );
+
+    const emptyArrayResponse = {
+      choices: [{ message: { content: [{ type: "text", text: "[]" }] } }],
+    };
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => emptyArrayResponse),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
+
+    const result = await runGenerateProposalsForCli(ctx, { dryRun: false }, { resolvePath: (f) => f });
+    expect(result.created).toBe(0);
+    expect(ctx.logger.warn).toHaveBeenCalledWith(
+      expect.stringMatching(/semantic_empty.*identity_gap_score=/),
+    );
+  });
+
+  it("logs pre-flight identity_gap_score when verbose is present only in argv", async () => {
+    const db = new FactsDB(":memory:");
+    const proposalsDb = new ProposalsDB(":memory:");
+    insertScopedPattern(db, "global", null, "User consistently prefers functional composition over OOP patterns");
+
+    const openai = {
+      chat: {
+        completions: {
+          create: vi.fn(async () => ({
+            choices: [{ message: { content: [{ type: "text", text: "[]" }] } }],
+          })),
+        },
+      },
+    };
+
+    const ctx = makeCtxWithMaintenanceFallbackModels(db, proposalsDb, openai);
+    await runGenerateProposalsForCli(
+      ctx,
+      { dryRun: false, verbose: false },
+      { resolvePath: (f) => f },
+      ["node", "openclaw", "hybrid-mem", "generate-proposals", "--verbose"],
+    );
+
+    expect(ctx.logger.info).toHaveBeenCalledWith(
+      expect.stringMatching(/identity_gap_score=.*pending=/),
+    );
   });
 
   it("does not leak raw LLM response snippets in thrown/default error when verbose=false", async () => {

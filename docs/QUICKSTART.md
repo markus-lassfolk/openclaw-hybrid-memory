@@ -6,13 +6,13 @@ nav_order: 1
 ---
 # Quick Start - Hybrid Memory Plugin
 
-Get an agent that **remembers you** and **gets better at giving the right context** over time - in about 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md). For low-cost production rollout, see [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md). After install, see [release notes 2026.6.40](../release-notes/release-notes-2026.6.40.md) for recent maintenance, entity-graph, and reliability changes.
+Get an agent that **remembers you** and **gets better at giving the right context** over time - in about 10 minutes. For full configuration options see [CONFIGURATION.md](CONFIGURATION.md); for architecture background see [ARCHITECTURE.md](ARCHITECTURE.md). For low-cost production rollout, see [COST-OPTIMIZATION-PLAYBOOK.md](COST-OPTIMIZATION-PLAYBOOK.md). After install, see [release notes 2026.6.41](../release-notes/release-notes-2026.6.41.md) for recent maintenance, entity-graph, and reliability changes.
 
 ---
 
 ## Prerequisites
 
-- **OpenClaw v2026.3.8+** (minimum — matches plugin peer dependency and startup warning): use a **recent 2026.3.x** release in practice; CI resolves a specific `openclaw` in `extensions/memory-hybrid/package-lock.json`.
+- **OpenClaw ≥2026.5.0** (required — matches `peerDependencies` and `MIN_OPENCLAW_VERSION`); **≥2026.6.1** recommended for Skill Workshop, skills hot-reload, and Dreaming tab integration (`RECOMMENDED_OPENCLAW_VERSION`). CI resolves a specific `openclaw` in `extensions/memory-hybrid/package-lock.json`.
 - **Embedding access** (required): configure `embedding.provider` and related settings so the plugin can generate embedding vectors. Four providers are supported:
   - **OpenAI** (default): set `embedding.apiKey` and `embedding.model` (e.g. `text-embedding-3-small`).
   - **Ollama**: set `embedding.provider: "ollama"` and `embedding.model` (e.g. `nomic-embed-text`). No API key required — Ollama must be running locally.

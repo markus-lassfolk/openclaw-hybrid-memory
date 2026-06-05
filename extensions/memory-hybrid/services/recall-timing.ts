@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { nowIso } from "../utils/dates.js";
 
 export type RecallTimingMode = "off" | "basic" | "verbose";
 
@@ -50,7 +51,7 @@ export function createRecallTimingLogger(args: {
       ...toFieldParts(fields),
     ];
     if (mode === "verbose") {
-      parts.push(`ts=${new Date().toISOString()}`);
+      parts.push(`ts=${nowIso()}`);
     }
     logger.debug?.(`memory-hybrid: ${subsystem} ${parts.join(" ")}`);
   }

@@ -10,11 +10,6 @@ import { join } from "node:path";
 
 import { capturePluginError } from "../../../services/error-reporter.js";
 import {
-  collectMaintenanceInventory,
-  renderMaintenanceInventoryMarkdown,
-  renderMaintenanceInventoryText,
-} from "../../../services/maintenance-inventory.js";
-import {
   PROCEDURE_PROMOTION_POLICY_VERSION,
   type ProcedurePromotionDuplicateCandidate,
   createProcedurePromotionItem,
@@ -23,7 +18,8 @@ import {
 } from "../../../services/procedure-promotion-policy.js";
 import { generateAutoSkillForProcedure } from "../../../services/procedure-skill-generator.js";
 import { resolveWorkspacePath } from "../../../utils/path.js";
-import { type Chainable, relativeTime, withExit } from "../../shared.js";
+import { formatTimestampUtc, nowIso } from "../../../utils/dates.js";
+import { type Chainable, withExit } from "../../shared.js";
 import type { ManageBindings } from "./bindings.js";
 
 /** Quote a path for use in a crontab line so spaces/special chars do not break the shell. */
@@ -89,9 +85,9 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         console.log(`  Rate:      ${(rate * 100).toFixed(1)}%`);
         console.log(`  Outcome:   ${proc.lastOutcome ?? "unknown"}`);
         console.log(
-          `  Last Validated: ${proc.lastValidated ? new Date(proc.lastValidated * 1000).toISOString() : "never"}`,
+          `  Last Validated: ${proc.lastValidated ? formatTimestampUtc(proc.lastValidated) : "never"}`,
         );
-        console.log(`  Last Failed:   ${proc.lastFailed ? new Date(proc.lastFailed * 1000).toISOString() : "never"}`);
+        console.log(`  Last Failed:   ${proc.lastFailed ? formatTimestampUtc(proc.lastFailed) : "never"}`);
 
         if (proc.avoidanceNotes && proc.avoidanceNotes.length > 0) {
           console.log("\n  Avoidance notes (all versions):");
@@ -119,7 +115,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
         if (failures.length > 0) {
           console.log(`\n  Recent failures (${failures.length} total):`);
           for (const f of failures.slice(0, 10)) {
-            const when = new Date(f.timestamp * 1000).toISOString();
+            const when = formatTimestampUtc(f.timestamp);
             const step = f.failedAtStep !== null ? ` step ${f.failedAtStep}` : "";
             console.log(`    [${when}] v${f.versionNumber}${step}: ${f.context ?? "(no context)"}`);
           }
@@ -199,8 +195,8 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               reasons?: string[];
             }
           >) {
-            const validated = row.validatedAt ? new Date(row.validatedAt * 1000).toISOString() : "never";
-            const lastRecall = row.lastRecall ? new Date(row.lastRecall * 1000).toISOString() : "never";
+            const validated = row.validatedAt ? formatTimestampUtc(row.validatedAt) : "never";
+            const lastRecall = row.lastRecall ? formatTimestampUtc(row.lastRecall) : "never";
             console.log(
               `${row.id} | ${row.title.replace(/\s+/g, " ").slice(0, 80)} | ${validated} | ${
                 row.promotionDecision ?? row.promotionBlockReason
@@ -291,6 +287,8 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             factsDb,
             {
               skillsAutoPath: cfg.procedures.skillsAutoPath,
+              skillsPendingPath: cfg.procedures.skillsPendingPath,
+              requireApprovalForPromote: cfg.procedures.requireApprovalForPromote,
               validationThreshold: cfg.procedures.validationThreshold,
               skillTTLDays: cfg.procedures.skillTTLDays,
               procedureId: id,
@@ -560,7 +558,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               `${JSON.stringify(
                 {
                   ok: true,
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   backupDir: res.backupDir,
                   sqliteSize: res.sqliteSize,
                   lancedbSize: res.lancedbSize,
@@ -584,7 +582,7 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
               `${JSON.stringify(
                 {
                   ok: false,
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   error: res.error,
                 },
                 null,
@@ -699,293 +697,4 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
       }),
     );
 
-  // Issue #281 — Maintenance status command
-  const maintenance = mem
-    .command("maintenance")
-    .description("Memory maintenance management and health checks (Issue #281).");
-
-  maintenance
-    .command("inventory")
-    .description("List host-crontab and gateway-cron maintenance jobs in one report.")
-    .option("--json", "Output as JSON")
-    .option("--format <format>", "Output format: text, markdown, json", "text")
-    .action(
-      withExit(async (opts?: { json?: boolean; format?: string }) => {
-        const requestedFormat = (opts?.format ?? "text").toLowerCase();
-        if (opts?.json && requestedFormat === "markdown") {
-          throw new Error("Use either --json or --format markdown, not both.");
-        }
-        const format = opts?.json ? "json" : requestedFormat;
-        if (!["text", "markdown", "json"].includes(format)) {
-          throw new Error(`Unsupported inventory format: ${opts?.format ?? ""}`);
-        }
-
-        const report = collectMaintenanceInventory(join(homedir(), ".openclaw"));
-        if (format === "json") {
-          console.log(JSON.stringify(report, null, 2));
-          return;
-        }
-        if (format === "markdown") {
-          console.log(renderMaintenanceInventoryMarkdown(report));
-          return;
-        }
-        console.log(renderMaintenanceInventoryText(report));
-      }),
-    );
-
-  maintenance
-    .command("status")
-    .description("Show maintenance cron job health: nightly cycle, weekly backup, and any reliability issues.")
-    .option("--json", "Output as JSON")
-    .action(
-      withExit(async (opts?: { json?: boolean }) => {
-        const cronStorePath = join(homedir(), ".openclaw", "cron", "jobs.json");
-        const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
-        const nightlyCronExpr = cfg.maintenance?.cronReliability?.nightlyCron ?? "0 3 * * *";
-        const weeklyBackupCronExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
-
-        /** Job health record */
-        type JobStatus = {
-          name: string;
-          pluginJobId: string;
-          enabled: boolean;
-          lastRunAt: string | null;
-          nextRunAt: string | null;
-          lastStatus: string | null;
-          isStale: boolean;
-          isMissing: boolean;
-          configuredSchedule: string;
-          issue?: string;
-        };
-
-        const jobsOfInterest: Array<{
-          id: string;
-          label: string;
-          scheduleExpr: string;
-          staleMs: number;
-        }> = [
-          {
-            id: "hybrid-mem:nightly-distill",
-            label: "nightly-memory-sweep",
-            scheduleExpr: nightlyCronExpr,
-            staleMs: staleThresholdMs,
-          },
-          {
-            id: "hybrid-mem:nightly-dream-cycle",
-            label: "nightly-dream-cycle",
-            scheduleExpr: cfg.nightlyCycle?.schedule ?? "45 2 * * *",
-            staleMs: staleThresholdMs,
-          },
-          {
-            id: "hybrid-mem:weekly-reflection",
-            label: "weekly-reflection",
-            scheduleExpr: "0 3 * * 0",
-            staleMs: 7 * 24 * 60 * 60 * 1000,
-          },
-          {
-            id: "hybrid-mem:weekly-extract-procedures",
-            label: "weekly-extract-procedures",
-            scheduleExpr: "0 4 * * 0",
-            staleMs: 7 * 24 * 60 * 60 * 1000,
-          },
-          {
-            id: "hybrid-mem:weekly-deep-maintenance",
-            label: "weekly-deep-maintenance",
-            scheduleExpr: weeklyBackupCronExpr,
-            staleMs: 7 * 24 * 60 * 60 * 1000,
-          },
-          {
-            id: "hybrid-mem:monthly-consolidation",
-            label: "monthly-consolidation",
-            scheduleExpr: "0 5 1 * *",
-            staleMs: 32 * 24 * 60 * 60 * 1000,
-          },
-        ];
-
-        const results: JobStatus[] = [];
-
-        let cronStore: { jobs?: unknown[] } = { jobs: [] };
-        if (existsSync(cronStorePath)) {
-          try {
-            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as {
-              jobs?: unknown[];
-            };
-          } catch {
-            // corrupt store — treat all as missing
-          }
-        }
-
-        const jobs = Array.isArray(cronStore.jobs) ? (cronStore.jobs as Array<Record<string, unknown>>) : [];
-
-        for (const wanted of jobsOfInterest) {
-          const found = jobs.find((j) => j && (j.pluginJobId === wanted.id || String(j.name ?? "") === wanted.label));
-
-          if (!found) {
-            results.push({
-              name: wanted.label,
-              pluginJobId: wanted.id,
-              enabled: false,
-              lastRunAt: null,
-              nextRunAt: null,
-              lastStatus: null,
-              isStale: false,
-              isMissing: true,
-              configuredSchedule: wanted.scheduleExpr,
-              issue: "Job not found in cron store — run `hybrid-mem verify --fix` to install.",
-            });
-            continue;
-          }
-
-          const enabled = found.enabled !== false;
-          const state = found.state as
-            | {
-                nextRunAtMs?: number;
-                lastRunAtMs?: number;
-                lastStatus?: string;
-                lastError?: string;
-              }
-            | undefined;
-          const lastRunAtMs = state?.lastRunAtMs;
-          const nextRunAtMs = state?.nextRunAtMs;
-          const lastStatus = state?.lastStatus ?? null;
-
-          const isStale = enabled && lastRunAtMs != null && Date.now() - lastRunAtMs > wanted.staleMs;
-          const neverRan = enabled && lastRunAtMs == null;
-
-          let issue: string | undefined;
-          if (!enabled) {
-            issue = "Job is disabled.";
-          } else if (neverRan) {
-            issue = "Job has never run — check cron daemon is running.";
-          } else if (isStale) {
-            const hoursSince = Math.floor((Date.now() - (lastRunAtMs ?? 0)) / 3600000);
-            issue = `Job is stale — last run was ${hoursSince}h ago (threshold: ${Math.floor(
-              wanted.staleMs / 3600000,
-            )}h).`;
-          } else if (lastStatus === "error") {
-            issue = `Last run failed: ${state?.lastError ?? "unknown error"}`;
-          }
-
-          results.push({
-            name: wanted.label,
-            pluginJobId: wanted.id,
-            enabled,
-            lastRunAt: lastRunAtMs != null ? new Date(lastRunAtMs).toISOString() : null,
-            nextRunAt: nextRunAtMs != null ? new Date(nextRunAtMs).toISOString() : null,
-            lastStatus,
-            isStale,
-            isMissing: false,
-            configuredSchedule: wanted.scheduleExpr,
-            issue,
-          });
-        }
-
-        const issues = results.filter((r) => r.issue);
-
-        if (opts?.json) {
-          console.log(
-            JSON.stringify(
-              {
-                ok: issues.length === 0,
-                jobs: results,
-                issueCount: issues.length,
-              },
-              null,
-              2,
-            ),
-          );
-          return;
-        }
-
-        // Human-readable output
-        console.log("Memory Maintenance Status (Issue #281)");
-        console.log("========================================");
-        console.log(`Cron store: ${cronStorePath}`);
-        console.log(`Stale threshold (daily): ${cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28}h`);
-        console.log("");
-
-        for (const r of results) {
-          const icon = r.isMissing ? "❌" : !r.enabled ? "⏸ " : r.issue ? "⚠️ " : "✅";
-          const lastRun = r.lastRunAt
-            ? `last: ${relativeTime(new Date(r.lastRunAt).getTime())} (${r.lastStatus ?? "unknown"})`
-            : "last: never";
-          const nextRun = r.nextRunAt ? `next: ${relativeTime(new Date(r.nextRunAt).getTime())}` : "";
-          const timing = [lastRun, nextRun].filter(Boolean).join("  ");
-          console.log(
-            `${icon} ${r.name.padEnd(32)} ${r.isMissing ? "MISSING" : r.enabled ? "enabled " : "disabled"} ${timing}`,
-          );
-          if (r.issue) {
-            console.log(`   └─ ${r.issue}`);
-          }
-        }
-
-        console.log("");
-        if (issues.length === 0) {
-          console.log("✅ All maintenance jobs healthy.");
-        } else {
-          console.log(`⚠️  ${issues.length} issue(s) detected. Run \`hybrid-mem verify --fix\` to repair.`);
-          if (issues.some((r) => r.isMissing)) {
-            console.log("   Missing jobs can be registered with: hybrid-mem install");
-          }
-        }
-      }),
-    );
-
-  maintenance
-    .command("cron-health")
-    .description(
-      "Check if expected cron jobs exist and have fired recently. " +
-        "Logs warnings for missing or stale jobs. Useful in heartbeat checks.",
-    )
-    .action(
-      withExit(async () => {
-        const cronStorePath = join(homedir(), ".openclaw", "cron", "jobs.json");
-        const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
-        const criticalJobs = [
-          "hybrid-mem:nightly-distill",
-          "hybrid-mem:weekly-reflection",
-          "hybrid-mem:weekly-deep-maintenance",
-        ];
-
-        let cronStore: { jobs?: unknown[] } = { jobs: [] };
-        if (existsSync(cronStorePath)) {
-          try {
-            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as {
-              jobs?: unknown[];
-            };
-          } catch {
-            console.warn("⚠ Could not read cron store — skipping health check.");
-            return;
-          }
-        } else {
-          console.warn("⚠ Cron store not found — maintenance jobs not installed. Run: hybrid-mem install");
-          return;
-        }
-
-        const jobs = Array.isArray(cronStore.jobs) ? (cronStore.jobs as Array<Record<string, unknown>>) : [];
-        let healthy = true;
-
-        for (const id of criticalJobs) {
-          const job = jobs.find((j) => j && j.pluginJobId === id);
-          if (!job) {
-            console.warn(`⚠ Maintenance job missing: ${id}. Run: hybrid-mem install`);
-            healthy = false;
-            continue;
-          }
-          if (job.enabled === false) {
-            continue; // Disabled by user intent — not an error
-          }
-          const state = job.state as { lastRunAtMs?: number; lastStatus?: string } | undefined;
-          if (state?.lastRunAtMs != null && Date.now() - state.lastRunAtMs > staleThresholdMs) {
-            const h = Math.floor((Date.now() - state.lastRunAtMs) / 3600000);
-            console.warn(`⚠ Stale maintenance job: ${id} (last run ${h}h ago). Check cron daemon.`);
-            healthy = false;
-          }
-        }
-
-        if (healthy) {
-          console.log("✓ Maintenance cron jobs healthy.");
-        }
-      }),
-    );
 }

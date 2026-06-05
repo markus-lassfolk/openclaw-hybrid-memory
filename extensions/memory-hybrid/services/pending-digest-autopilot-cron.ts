@@ -7,6 +7,7 @@ import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { canonicalJson, redactAutopilotValue } from "./pending-autopilot/index.js";
 import type { PendingDigestAutopilotResult, PendingDigestFactsDb } from "./pending-digest-autopilot.js";
 import { runPendingDigestAutopilot } from "./pending-digest-autopilot.js";
+import { formatDateUtc, formatTimestampUtc, formatTimestampUtcFromMs, nowIso } from "../utils/dates.js";
 
 export const PENDING_DIGEST_AUTOPILOT_CRON_JOB = "weekly-pending-digest-autopilot";
 const PENDING_DIGEST_JOB = "weekly-pending-digest";
@@ -95,12 +96,14 @@ export async function runPendingDigestAutopilotCron(
   opts: RunPendingDigestAutopilotCronOptions,
 ): Promise<PendingDigestAutopilotCronResult> {
   const now = opts.now ?? new Date();
-  const runId = opts.runId ?? `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${now.toISOString()}`;
+  const nowSec = Math.floor(now.getTime() / 1000);
+  const nowIsoUtc = formatTimestampUtc(nowSec);
+  const runId = opts.runId ?? `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${nowIsoUtc}`;
   const openclawHome = resolveOpenclawHome(opts.openclawHome);
   const cronLogRoot = resolveWritableCronHybridMemRoot(openclawHome);
-  const artifactDir = join(cronLogRoot, now.toISOString().slice(0, 10).replace(/-/g, ""));
+  const artifactDir = join(cronLogRoot, formatDateUtc(nowSec).replace(/-/g, ""));
   mkdirSync(artifactDir, { recursive: true });
-  const runToken = now.toISOString().replace(/[:.]/g, "-");
+  const runToken = nowIsoUtc.replace(/[:.]/g, "-");
   const hmLog = process.env.HM_LOG?.trim() || join(artifactDir, `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${runToken}.log`);
   const hmExit =
     process.env.HM_EXIT?.trim() || join(artifactDir, `${PENDING_DIGEST_AUTOPILOT_CRON_JOB}-${runToken}.exit.txt`);
@@ -472,7 +475,7 @@ function ensureFile(path: string): void {
 }
 
 function appendStepLine(path: string, row: StepRow): void {
-  const ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+  const ts = nowIso().replace(/\.\d{3}Z$/, "Z");
   writeFileSync(
     path,
     `${ts} step=${row.name} exit=${row.exit} status=${row.status} reason=${row.reason} duration_ms=${row.durationMs}\n`,
@@ -484,7 +487,7 @@ function appendStepLine(path: string, row: StepRow): void {
 }
 
 function logLine(path: string, line: string): void {
-  writeFileSync(path, `${new Date().toISOString()} ${line}\n`, { encoding: "utf-8", flag: "a" });
+  writeFileSync(path, `${nowIso()} ${line}\n`, { encoding: "utf-8", flag: "a" });
 }
 
 function stringifyError(err: unknown): string {
@@ -527,14 +530,14 @@ function findLatestWeeklyPendingDigestArtifact(root: string): PendingDigestAutop
     return {
       found: true,
       path: newest.path,
-      timestamp: new Date(newest.mtimeMs).toISOString(),
+      timestamp: formatTimestampUtcFromMs(newest.mtimeMs),
       status: "success",
     };
   }
   return {
     found: false,
     path: newest.path,
-    timestamp: new Date(newest.mtimeMs).toISOString(),
+    timestamp: formatTimestampUtcFromMs(newest.mtimeMs),
     status: "failed",
   };
 }

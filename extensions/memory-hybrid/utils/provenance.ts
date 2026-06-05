@@ -14,6 +14,7 @@
 
 import { randomBytes } from "node:crypto";
 import type { CouncilProvenanceMode } from "../config/types/maintenance.js";
+import { nowIso } from "./dates.js";
 
 /**
  * ACP provenance headers for a council review session spawn.
@@ -75,7 +76,7 @@ export function getProvenanceHeaders(
  *   // Append to review body: body + "\n\n" + receipt
  */
 export function formatProvenanceReceipt(traceId: string, sessionKey: string): string {
-  const ts = new Date().toISOString();
+  const ts = nowIso();
   return `---\n*Provenance: trace-id=${traceId} session=${sessionKey} at=${ts}*`;
 }
 

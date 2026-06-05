@@ -37,6 +37,7 @@ export type ManageContext = {
   parseSourceDate: (v: string | number | null | undefined) => number | null;
   getMemoryCategories: () => string[];
   cfg: HybridMemoryConfig;
+  changeFeed?: import("../services/change-feed.js").ChangeFeed | null;
   runStore: (opts: StoreCliOpts) => Promise<StoreCliResult>;
   runBackfill: (
     opts: { dryRun: boolean; workspace?: string; limit?: number },
@@ -88,7 +89,12 @@ export type ManageContext = {
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflectionRules: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    thinkingMode?: import("../services/chat.js").MiniMaxThinkingMode;
+  }) => Promise<{
     rulesExtracted: number;
     rulesStored: number;
     diagnostics?: {
@@ -102,11 +108,11 @@ export type ManageContext = {
       status: "ok" | "partial" | "degraded";
     };
   }>;
-  runReflectionMeta: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{ metaExtracted: number; metaStored: number }>;
+  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+    metaExtracted: number;
+    metaStored: number;
+    diagnostics?: import("../services/reflection.js").ReflectionMetaDiagnostics;
+  }>;
   runReflectIdentity?: (opts: {
     dryRun: boolean;
     model?: string;
@@ -186,6 +192,7 @@ export type ManageContext = {
   runApplyContradictionReviewDecisions: (
     decisions: import("../backends/facts-db/contradictions.js").ContradictionReviewDecision[],
   ) => Promise<import("../backends/facts-db/contradictions.js").ApplyContradictionReviewResult>;
+  requireWalFlushBeforeMutation: (phase: string) => Promise<{ committed: number; skipped: number }>;
   runSelfCorrectionExtract: (opts: {
     days?: number;
     outputPath?: string;
@@ -208,6 +215,7 @@ export type ManageContext = {
     }>;
     workspace?: string;
     dryRun?: boolean;
+    days?: number;
     model?: string;
     approve?: boolean;
     applyTools?: boolean;
@@ -326,4 +334,8 @@ export type ManageContext = {
   pruneCostLog?: (retainDays?: number) => number;
   auditStore?: import("../backends/audit-store.js").AuditStore | null;
   agentHealthStore?: import("../backends/agent-health-store.js").AgentHealthStore | null;
+  proposalsDb?: import("../backends/proposals-db.js").ProposalsDB | null;
+  runPassiveObserverOnce?: () => Promise<string>;
+  runActiveTasksMaintain?: () => Promise<string>;
+  eventBus?: import("../backends/event-bus.js").EventBus | null;
 };

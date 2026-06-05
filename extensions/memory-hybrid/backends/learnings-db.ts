@@ -24,6 +24,8 @@ import type {
   LearningEntryType,
 } from "../types/learnings-types.js";
 import { LEARNING_STATUS_TRANSITIONS } from "../types/learnings-types.js";
+import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { backfillLearningsTextTimestamps } from "../utils/timestamp-migration.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
 /** TYPE_PREFIX maps entry type → slug prefix character(s). */
@@ -64,14 +66,15 @@ export class LearningsDB extends BaseSqliteStore {
         recurrence  INTEGER NOT NULL DEFAULT 1,
         promoted_to TEXT,
         tags        TEXT NOT NULL DEFAULT '[]',
-        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at  TEXT NOT NULL,
+        updated_at  TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_learnings_type   ON learnings(type);
       CREATE INDEX IF NOT EXISTS idx_learnings_status ON learnings(status);
       CREATE INDEX IF NOT EXISTS idx_learnings_area   ON learnings(area);
     `);
+    backfillLearningsTextTimestamps(this.liveDb);
   }
 
   protected getSubsystemName(): string {
@@ -84,7 +87,7 @@ export class LearningsDB extends BaseSqliteStore {
 
   create(input: CreateLearningEntryInput): LearningEntry {
     const id = randomUUID();
-    const now = new Date().toISOString();
+    const now = nowIso();
 
     this.liveDb.exec("BEGIN IMMEDIATE");
     try {
@@ -112,7 +115,7 @@ export class LearningsDB extends BaseSqliteStore {
     const existing = this.get(id);
     if (!existing) throw new Error(`LearningEntry not found: ${id}`);
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     this.liveDb.prepare("UPDATE learnings SET recurrence = recurrence + 1, updated_at = ? WHERE id = ?").run(now, id);
 
     // biome-ignore lint/style/noNonNullAssertion: Known to exist
@@ -134,7 +137,7 @@ export class LearningsDB extends BaseSqliteStore {
       throw new Error(`promotedTo is required when transitioning to "promoted" status`);
     }
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const sets: string[] = ["status = ?", "updated_at = ?"];
     const params: SQLInputValue[] = [newStatus, now];
 
@@ -237,7 +240,7 @@ export class LearningsDB extends BaseSqliteStore {
 
   /** Remove promoted/wont_promote entries older than N days. */
   prune(olderThanDays: number): number {
-    const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+    const cutoff = cutoffIsoDaysAgo(olderThanDays);
     const result = this.liveDb
       .prepare(`DELETE FROM learnings WHERE status IN ('promoted', 'wont_promote') AND updated_at <= ?`)
       .run(cutoff);

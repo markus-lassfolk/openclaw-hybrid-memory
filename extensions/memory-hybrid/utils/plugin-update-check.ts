@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { UpdateNudgeConfig } from "../config.js";
 import { compareVersions } from "./version-check.js";
+import { nowIso as currentIsoUtc } from "./dates.js";
 
 const DEFAULT_TIMEOUT_MS = 3000;
 const NPM_LATEST_URL = "https://registry.npmjs.org/openclaw-hybrid-memory/latest";
@@ -142,7 +143,7 @@ export function shouldEmitUpdateNudge(
 
 export function markUpdateNudged(
   entry: VersionCheckCacheEntry,
-  nowIso = new Date().toISOString(),
+  nowIso = currentIsoUtc(),
 ): VersionCheckCacheEntry {
   return { ...entry, lastNudgedAt: nowIso };
 }

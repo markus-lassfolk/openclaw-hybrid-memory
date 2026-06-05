@@ -5,6 +5,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
+import { formatTimestampUtcFromMs } from "../utils/dates.js";
 
 export interface BenchmarkConfig {
   /** Number of iterations per test */
@@ -440,7 +441,7 @@ export class BenchmarkRunner {
 
     lines.push(`# ${suite.name}`);
     lines.push(`**Version:** ${suite.version}`);
-    lines.push(`**Date:** ${new Date(suite.timestamp).toISOString()}`);
+    lines.push(`**Date:** ${formatTimestampUtcFromMs(suite.timestamp)}`);
     lines.push("");
 
     lines.push("## Summary");

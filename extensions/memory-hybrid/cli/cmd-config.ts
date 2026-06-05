@@ -16,6 +16,7 @@ import {
   type ConfigMode,
   PRESET_OVERRIDES,
   describeMaintenanceFallbackPolicy,
+  effectiveDistillMainModelTier,
   getCronModelConfig,
   getDefaultCronModel,
   getLLMModelPreference,
@@ -291,13 +292,16 @@ export function runConfigViewForCli(
     log(`  nano (HyDE, classify, summarize): ${fmt(nano)}`);
     log(`  maintenance (distill, dream cycle, reflection, consolidation): ${fmt(maintenance)}`);
     log(`  default (general): ${fmt(def)}`);
-    log(`  heavy (self-correction, hard tasks; opt-in for distill): ${fmt(heavy)}`);
+    log(`  heavy (self-correction, hard tasks): ${fmt(heavy)}`);
     if (cfg.nightlyCycle?.model?.trim()) {
       log(`  nightlyCycle.model (overrides dream / MEMORY_INDEX LLM): ${cfg.nightlyCycle.model.trim()}`);
     }
-    const mainDistillTier = cfg.distill?.modelTier ?? "maintenance";
+    const mainDistillTierRaw = cfg.distill?.modelTier ?? "maintenance";
+    const mainDistillTier = effectiveDistillMainModelTier(mainDistillTierRaw);
     const extTier = cfg.distill?.extractionModelTier ?? "nano";
-    log(`  distill.modelTier (main session distill): ${mainDistillTier}`);
+    log(
+      `  distill.modelTier (main session distill): ${mainDistillTierRaw}${mainDistillTierRaw === "heavy" ? " (legacy; effective: maintenance)" : ""}`,
+    );
     log(`  distill.extractionModelTier (directives/reinforcement extraction): ${extTier}`);
 
     log("");
@@ -323,12 +327,13 @@ export function runConfigViewForCli(
   log("Maintenance routing");
   try {
     log(`  maintenanceFallbackPolicy: ${describeMaintenanceFallbackPolicy(cfg)}`);
-    const mainDistillTier = cfg.distill?.modelTier ?? "maintenance";
+    const mainDistillTierRaw = cfg.distill?.modelTier ?? "maintenance";
+    const mainDistillTier = effectiveDistillMainModelTier(mainDistillTierRaw);
     const distillResolved = resolveReflectionModelAndFallbacks(cfg, mainDistillTier);
     const distillModel = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), mainDistillTier);
     const distillFallbacks = distillResolved.fallbackModels ?? [];
     log(
-      `  distill: distill.modelTier=${mainDistillTier} (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
+      `  distill: distill.modelTier=${mainDistillTierRaw}${mainDistillTierRaw !== mainDistillTier ? ` -> ${mainDistillTier}` : ""} (primary=${distillModel}${distillFallbacks.length ? `; +${distillFallbacks.length} fallback(s)` : ""})`,
     );
     const extractionTier = cfg.distill?.extractionModelTier ?? "nano";
     const extractionResolved = resolveReflectionModelAndFallbacks(cfg, extractionTier);
@@ -366,7 +371,7 @@ export function runConfigViewForCli(
     try {
       if (!statePath) throw new Error("no adaptive maintenance state path");
       const state = loadAdaptiveModelLimits(statePath);
-      const mainDistillTier = cfg.distill?.modelTier ?? "maintenance";
+      const mainDistillTier = effectiveDistillMainModelTier(cfg.distill?.modelTier);
       const distillResolved = resolveReflectionModelAndFallbacks(cfg, mainDistillTier);
       const model = distillResolved.defaultModel ?? getDefaultCronModel(getCronModelConfig(cfg), mainDistillTier);
       const effective = getEffectiveModelLimits({
@@ -639,7 +644,7 @@ export function runConfigSetForCli(_ctx: HandlerContext, key: string, value: str
   }
   // Enum-like keys: normalize value to lowercase so "Nano" → "nano" for schema validation
   const enumKeys: Record<string, string[]> = {
-    "distill.modelTier": ["nano", "maintenance", "default", "heavy"],
+    "distill.modelTier": ["nano", "maintenance", "default"],
     "distill.extractionModelTier": ["nano", "maintenance", "default", "heavy"],
   };
   let valueToSet: unknown = value;

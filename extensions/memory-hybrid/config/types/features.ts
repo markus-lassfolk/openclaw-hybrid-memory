@@ -160,6 +160,20 @@ export type ReinforcementConfig = {
   trackContext?: boolean;
   /** Base boost amount before diversity weighting is applied (default: 1.0). */
   boostAmount?: number;
+  /** TOOLS.md section for POSITIVE_RULE lines (default: "Positive Reinforcement Rules"). */
+  positiveRulesSection?: string;
+  /** Run LLM reinforcement analysis when incidents are found (default: true). */
+  reinforcementLLMAnalysis?: boolean;
+  /** Create proposals from reinforcement PROPOSAL remediations (default: true). */
+  reinforcementToProposals?: boolean;
+  /** Incidents per LLM analysis batch (default: 25; 1 for MiniMax/M3). */
+  analysisBatchSize?: number;
+  /** Max incidents passed to analysis per run; excess logged as truncated (default: 100). */
+  maxIncidentsPerRun?: number;
+  /** Optional model override for reinforcement LLM analysis (default: nano tier). */
+  model?: string;
+  /** MiniMax thinking mode for reinforcement analysis (default: llm.minimax.thinking or disabled). */
+  thinking?: "disabled" | "adaptive";
 };
 
 /** Future-date decay freeze protection (#144). */
@@ -198,6 +212,8 @@ export type CrystallizationConfig = {
   maxCrystallized: number;
   /** Prune unused auto-skills older than N days (default: 30; 0 = disabled). */
   pruneUnusedDays: number;
+  /** Maximum pending proposals in queue (drafted+validated; default: 100; 0 = unlimited). */
+  maxPendingProposals: number;
   /** Project-level SKILL.md section taxonomy overrides keyed by category. */
   sectionTaxonomy?: SectionTaxonomyOverrides;
   /**
@@ -211,6 +227,12 @@ export type CrystallizationConfig = {
    * not flagged as real addresses. Default: ["example.com", "localhost", "test.com", "example.org"].
    */
   placeholderEmailDomains: string[];
+  /**
+   * Skip crystallization when all example goals look like cron/system injections (default: true).
+   */
+  excludeSystemGoals: boolean;
+  /** Extra regex patterns (case-insensitive) treated as system goals when excludeSystemGoals is true. */
+  excludeGoalPatterns?: string[];
 };
 
 /** Document ingestion via MarkItDown Python bridge (Issue #206). */
@@ -282,8 +304,18 @@ export type ImplicitFeedbackConfig = {
   feedToReinforcement: boolean;
   /** Feed negative implicit signals into the self-correction pipeline (default: true). */
   feedToSelfCorrection: boolean;
+  /** After extract-implicit, optionally run self-correction-run on capped negative signals (default: false). */
+  triggerSelfCorrectionRun?: boolean;
+  /** Max incidents forwarded to self-correction bridge per run (default: 5). */
+  selfCorrectionBridgeMaxIncidents?: number;
+  /** Minimum signal confidence for bridge incidents (default: 0.7). */
+  selfCorrectionBridgeMinConfidence?: number;
   /** Use LLM-based trajectory analysis instead of heuristic lesson extraction (default: false). */
   trajectoryLLMAnalysis: boolean;
+  /** Classify heuristic implicit signals with LLM before routing (default: true). */
+  llmSignalAnalysis?: boolean;
+  /** Batch size for LLM signal classification (default: 10). */
+  llmSignalBatchSize?: number;
   /** Maximum implicit-feedback lessons to store per UTC day (default: 50). */
   maxLessonsPerDay: number;
   /** Token-Jaccard threshold for implicit-feedback lesson near-duplicate suppression (default: 0.8). */
@@ -484,6 +516,32 @@ export type DigestConfig = {
     delivery: DigestWeeklyDeliveryConfig;
   };
   autopilot: DigestAutopilotConfig;
+};
+
+/** Live change feed — operator visibility for session adaptations and persistent mutations. */
+export type LiveChangeFeedConfig = {
+  /** Enable change event logging and notifications (default: true). */
+  enabled: boolean;
+  /** Days to retain change events (default: 90). */
+  retentionDays: number;
+  /** Inject in-chat notices via prependContext (default: true). */
+  notifyInChat: boolean;
+  notifyOn: {
+    /** Tier 1 session adaptations (frustration detected). */
+    sessionAdaptation: boolean;
+    /** Tier 2 proposal created. */
+    proposalCreated: boolean;
+    /** Tier 2 proposal applied (critical). */
+    proposalApplied: boolean;
+    /** Revert confirmations. */
+    proposalReverted: boolean;
+    /** Dream-cycle batch summary (default: false — too noisy for in-chat). */
+    dreamCycleComplete: boolean;
+  };
+  /** Max events summarized per agent turn in-chat (default: 5). */
+  maxInChatEventsPerTurn: number;
+  /** Token budget for in-chat change notice prepend (default: 150). */
+  inChatBudgetTokens: number;
 };
 
 /**

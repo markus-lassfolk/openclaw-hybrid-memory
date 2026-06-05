@@ -412,6 +412,12 @@ describe("buildActiveTaskInjection", () => {
     expect(result.text).toContain("Deploy the fix");
   });
 
+  it("includes related goal when present", () => {
+    const tasks = [makeEntry({ relatedGoal: "goal-abc" })];
+    const result = buildActiveTaskInjection(tasks, 500);
+    expect(result.text).toContain("Related goal: goal-abc");
+  });
+
   it("excludes stale tasks from active-task injection when excludeStale is true", () => {
     const tasks = [makeEntry({ stale: true })];
     const result = buildActiveTaskInjection(tasks, 500, { excludeStale: true });
@@ -511,6 +517,18 @@ describe("buildStaleWarningInjection", () => {
     expect(result.text).toContain("Implement heartbeat hook");
     expect(result.text).toContain("Status: In progress");
     expect(result.text).toContain("Consider:");
+    expect(result.renderedCount).toBe(1);
+  });
+
+  it("excludes Failed tasks from stale warnings", () => {
+    const staleTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    const tasks = [
+      makeEntry({ label: "failed-stale", status: "Failed", stale: true, updated: staleTime }),
+      makeEntry({ label: "live-stale", status: "In progress", stale: true, updated: staleTime }),
+    ];
+    const result = buildStaleWarningInjection(tasks, THRESHOLD_MINUTES);
+    expect(result.text).toContain("[live-stale]");
+    expect(result.text).not.toContain("[failed-stale]");
     expect(result.renderedCount).toBe(1);
   });
 
@@ -692,6 +710,31 @@ describe("completeTask", () => {
     const active = [makeEntry({ label: "task", updated: "2020-01-01T00:00:00.000Z" })];
     const { completed } = completeTask(active, "task");
     expect(completed?.updated >= before).toBe(true);
+  });
+
+  it("clears subagent session ref when marking Done", () => {
+    const active = [makeEntry({ label: "task", subagent: "agent:forge:subagent:abc" })];
+    const { completed } = completeTask(active, "task");
+    expect(completed?.subagent).toBe("");
+  });
+
+  it("clears stale handoff when marking Done", () => {
+    const active = [
+      makeEntry({
+        label: "task",
+        handoff: {
+          schema: "octave/task-handoff@v1",
+          artifactId: "artifact-1",
+          signal: "update",
+          agent: "worker",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          checksum: "abc123",
+        },
+      }),
+    ];
+    const { completed } = completeTask(active, "task");
+    expect(completed?.handoff).toBeUndefined();
+    expect("handoff" in (completed ?? {})).toBe(true);
   });
 });
 
@@ -1081,6 +1124,89 @@ describe("runActiveTaskAdd", () => {
     expect(taskFile?.active).toHaveLength(1);
     expect(taskFile?.active[0].description).toBe("Updated description");
     expect(taskFile?.active[0].next).toBe("new next");
+  });
+
+  it("clears subagent when upserting status to Done", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [makeEntry({ label: "finish-me", subagent: "agent:forge:subagent:old", status: "In progress" })],
+      [],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "finish-me",
+      description: "Finished work",
+      status: "Done",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(0);
+    expect(taskFile?.completed).toHaveLength(1);
+    expect(taskFile?.completed[0].subagent).toBeUndefined();
+  });
+
+  it("clears stale next and subagent when reopening a Failed task", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [makeEntry({ label: "retry-me", subagent: "agent:forge:subagent:old", status: "Failed", next: "Fix: timeout" })],
+      [],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "retry-me",
+      description: "Retry work",
+      status: "In progress",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].status).toBe("In progress");
+    expect(taskFile?.active[0].next).toBeUndefined();
+    expect(taskFile?.active[0].subagent).toBeUndefined();
+  });
+
+  it("clears stale next when reopening from completed history", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [],
+      [makeEntry({ label: "revive-me", status: "Done", next: "Auto-reconciled: merged", subagent: "agent:old" })],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "revive-me",
+      description: "Pick up again",
+      status: "In progress",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].status).toBe("In progress");
+    expect(taskFile?.active[0].next).toBeUndefined();
+    expect(taskFile?.active[0].subagent).toBeUndefined();
+    expect(taskFile?.completed).toHaveLength(0);
+  });
+
+  it("clears stale handoff when reopening from completed history", async () => {
+    await writeActiveTaskFile(
+      ctx.activeTaskFilePath,
+      [],
+      [
+        makeEntry({
+          label: "revive-handoff",
+          status: "Done",
+          handoff: {
+            schema: "octave/task-handoff@v1",
+            artifactId: "artifact-done",
+            signal: "completed",
+            agent: "worker",
+            timestamp: "2026-01-01T00:00:00.000Z",
+            checksum: "abc123",
+          },
+        }),
+      ],
+    );
+    await runActiveTaskAdd(ctx, {
+      label: "revive-handoff",
+      description: "Pick up again",
+      status: "In progress",
+    });
+    const taskFile = await readActiveTaskFile(ctx.activeTaskFilePath, 1440);
+    expect(taskFile?.active).toHaveLength(1);
+    expect(taskFile?.active[0].handoff).toBeUndefined();
   });
 
   it("rejects invalid status gracefully (falls back to In progress)", async () => {
@@ -1762,7 +1888,7 @@ describe("reconcileActiveTaskInProgressSessions", () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("moves in-progress tasks to completed when session transcript is missing", async () => {
+  it("moves in-progress tasks to completed as Failed when session transcript is missing", async () => {
     const path = join(tmpDir, "ACTIVE-TASKS.md");
     const key = "agent:testagent:subagent:f3d14066-09ea-492f-a3f3-7ae2fe6c9b0a";
     await writeFile(
@@ -1787,6 +1913,7 @@ describe("reconcileActiveTaskInProgressSessions", () => {
     const content = await readFile(path, "utf-8");
     expect(content).toContain("## Completed");
     expect(content).toContain("orphan");
+    expect(content).toContain("**Status:** Failed");
   });
 
   it("does not reconcile when session jsonl exists", async () => {

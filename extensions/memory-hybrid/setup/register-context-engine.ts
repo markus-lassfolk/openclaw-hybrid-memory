@@ -1,7 +1,10 @@
 import type { PluginRuntime } from "../api/plugin-runtime.js";
 import { capturePluginError } from "../services/error-reporter.js";
 
-type ContextEngineRegistrationRuntime = Pick<PluginRuntime, "factsDb" | "vectorDb" | "wal" | "embeddings" | "cfg">;
+type ContextEngineRegistrationRuntime = Pick<
+  PluginRuntime,
+  "factsDb" | "vectorDb" | "wal" | "embeddings" | "cfg" | "injectedFactIdsBySession"
+>;
 
 type ContextEngineRegistrar = (opts: {
   factsDb: ContextEngineRegistrationRuntime["factsDb"];
@@ -9,6 +12,7 @@ type ContextEngineRegistrar = (opts: {
   wal: ContextEngineRegistrationRuntime["wal"];
   embeddings: ContextEngineRegistrationRuntime["embeddings"];
   cfg: ContextEngineRegistrationRuntime["cfg"];
+  injectedFactIdsBySession: ContextEngineRegistrationRuntime["injectedFactIdsBySession"];
   logger: { warn?: (message: string) => void };
   pluginVersion: string;
 }) => unknown;
@@ -34,6 +38,7 @@ export function registerContextEngineBestEffort(args: {
         wal: runtime.wal,
         embeddings: runtime.embeddings,
         cfg: runtime.cfg,
+        injectedFactIdsBySession: runtime.injectedFactIdsBySession,
         logger,
         pluginVersion,
       }),

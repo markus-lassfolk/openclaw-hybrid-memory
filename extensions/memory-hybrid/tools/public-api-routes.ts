@@ -16,6 +16,7 @@ import {
 } from "../services/task-ledger-facts.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
+import { nowIso } from "../utils/dates.js";
 import { resolveWorkspacePath } from "../utils/path.js";
 import { versionInfo } from "../versionInfo.js";
 import type { HttpRequestHandler, HttpRouteOptions } from "./http-route-types.js";
@@ -48,6 +49,8 @@ export interface PublicApiRoutesContext {
   resolvedLancePath?: string;
   recallInFlightRef?: { value: number };
   variantQueue?: { queueLength: number } | null;
+  /** Resolved goals directory when goal stewardship is enabled (for projection mirror refresh). */
+  goalsDir?: string;
 }
 
 export const PUBLIC_API_PREFIX = "/plugins/memory-public";
@@ -251,7 +254,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     }
 
     return toJson(200, {
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso(),
       facts: {
         active: scopedFacts.length,
         expired: 0,
@@ -375,6 +378,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
           reason: "public_api_active_tasks_render",
           source: "public_api",
           logger: api.logger,
+          goalsDir: ctx.goalsDir,
         });
         renderApplied = result.rendered;
         renderError = result.error ?? null;
@@ -396,7 +400,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     }
 
     return toJson(200, {
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso(),
       source: "category:project",
       staleThresholdMinutes: staleMinutes,
       ledger: activeTaskCfg.ledger,
