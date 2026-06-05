@@ -1581,6 +1581,67 @@ error: unknown command 'bar'
         }),
       );
     });
+
+    it("does not attribute self-correction parse_success=false to reflect-rules in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect-rules.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect-rules exit=0\n");
+      writeFileSync(
+        logPath,
+        "self-correction-run status=failed_partial parse_success=false analysed=0\nreflect-rules parse_success=true stored=4 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-rules"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect-rules",
+        }),
+      );
+    });
+
+    it("does not attribute unrelated status=failed lines to self-correction-run in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "Error: provider timeout status=failed\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "self-correction-run",
+        }),
+      );
+    });
+
+    it("does not attribute reflect-rules failures to reflect in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect exit=0\n");
+      writeFileSync(
+        logPath,
+        "reflect-rules parse_success=false stored=0 semantic=failed\nreflect patternsStored=5 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect",
+          failureClass: "reflect_embed_partial",
+        }),
+      );
+    });
   });
 
   describe("validateFromSummaryJson", () => {
