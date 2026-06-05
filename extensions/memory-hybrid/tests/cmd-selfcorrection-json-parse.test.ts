@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
+import { ProposalsDB } from "../backends/proposals-db.js";
 import {
   runSelfCorrectionRunForCli,
   resolveSelfCorrectionBatchStateDir,
@@ -34,6 +35,7 @@ import * as adaptiveLlm from "../services/adaptive-maintenance-llm.js";
 
 let tmpDir: string;
 let factsDb: FactsDB;
+let proposalsDb: ProposalsDB;
 
 const SAMPLE_INCIDENT: CorrectionIncident = {
   userMessage: "That was wrong — you should have verified first.",
@@ -138,7 +140,7 @@ function makeCtx(openai: any): HandlerContext {
       modelName: "test-model",
     } as any,
     openai,
-    proposalsDb: null,
+    proposalsDb,
     cfg: {
       procedures: { sessionsDir: tmpDir },
       distill: {},
@@ -180,10 +182,13 @@ function makeCtx(openai: any): HandlerContext {
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "sc-json-parse-test-"));
   factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  proposalsDb = new ProposalsDB(join(tmpDir, "proposals.db"));
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   factsDb.close();
+  proposalsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -885,21 +890,18 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
   });
 
   it("AGENTS_RULE proposal uses source incident from batch order", async () => {
-    writeFileSync(join(tmpDir, "AGENTS.md"), "# Agents\n\n", "utf-8");
+    writeFileSync(join(tmpDir, "SOUL.md"), "# Soul\n\n", "utf-8");
     const agentsRule = {
       incidentIndex: 0,
       category: "behavior",
       severity: "medium",
       remediationType: "AGENTS_RULE",
-      remediationContent: "Always verify in AGENTS.md",
+      remediationContent: "When a sub-agent completes, immediately continue with next task without waiting.",
     };
     const llmResponse = JSON.stringify([agentsRule]);
     const openai = makeOpenAIMock(llmResponse);
     mockAdaptiveLlm(llmResponse);
-    const create = vi.fn();
-    const proposalsDb = { create };
     const ctx = makeCtx(openai);
-    (ctx as any).proposalsDb = proposalsDb;
     (ctx.cfg as any).selfCorrection = {
       ...(ctx.cfg as any).selfCorrection,
       agentsRuleToProposals: true,
@@ -915,9 +917,10 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
       workspace: tmpDir,
     });
 
-    expect(create).toHaveBeenCalled();
-    const arg = create.mock.calls[0][0];
-    expect(arg.observation).toContain("Unique incident text");
-    expect(arg.evidenceSessions).toEqual([incident.sessionFile]);
+    const proposals = proposalsDb.list();
+    const prop = proposals.find((p) => p.suggestedChange.includes("sub-agent"));
+    expect(prop).toBeDefined();
+    expect(prop?.observation).toContain("Unique incident text");
+    expect(prop?.evidenceSessions).toEqual([incident.sessionFile]);
   });
 });

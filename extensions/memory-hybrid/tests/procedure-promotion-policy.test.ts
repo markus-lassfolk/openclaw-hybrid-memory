@@ -1222,7 +1222,7 @@ Use for collecting markerless legacy reports.
 
     expect(evaluation.metadata).toMatchObject({
       skill: "validating-release-health-report-with-objective-checks-1",
-      generatedSkillPath: join(skillsDir, "validate-release-health-report-with-objective-checks-1"),
+      generatedSkillPath: "skills-auto/validate-release-health-report-with-objective-checks-1",
     });
 
     expect(decision.summary?.body).toContain("validating-release-health-report-with-objective-checks-1");

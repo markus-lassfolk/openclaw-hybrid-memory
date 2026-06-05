@@ -7,11 +7,12 @@ import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
   type ParsedRecallEvent,
+  extractFactIdsFromToolResultPayload,
   extractRecallEventsFromMessages,
   extractRecallEventsFromTrajectoryLines,
   readTrajectoryLines,
 } from "./session-v3-parser.js";
-import { extractRecalledMemoryIds, parseSessionMessagesFromLines } from "./session-signal-context.js";
+import { parseSessionMessagesFromLines } from "./session-signal-context.js";
 import { timestampFromFilename } from "../utils/text.js";
 
 export type RecallEventSource = "tool" | "auto-recall" | "backfill";
@@ -174,7 +175,8 @@ export function extractRecallEventsFromAssistantContent(content: unknown): Parse
       if (!toolUseId || !pending.has(toolUseId)) continue;
       const meta = pending.get(toolUseId)!;
       pending.delete(toolUseId);
-      const factIds = extractRecalledMemoryIds([block]);
+      const payload = (block as { content?: unknown }).content;
+      const factIds = extractFactIdsFromToolResultPayload(payload, block);
       events.push({
         query: meta.query,
         factIds,
