@@ -1590,6 +1590,11 @@ export function registerManageReflectionPipeline(
           console.log(
             `Classify complete: reclassified ${res.reclassified}/${res.total} facts ${dryRun ? "(dry-run)" : ""}`,
           );
+          const batchFailures = res.batchFailures ?? 0;
+          console.log(`auto-classify reclassified=${res.reclassified}/${res.total} batchFailures=${batchFailures} semantic=${batchFailures > 0 ? "partial" : "success"}`);
+          if (batchFailures > 0) {
+            process.exitCode = 2;
+          }
           if (res.breakdown) {
             console.log("Breakdown by category:");
             for (const [cat, count] of Object.entries(res.breakdown)) {

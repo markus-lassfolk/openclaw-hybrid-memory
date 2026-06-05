@@ -225,6 +225,12 @@ function registerDistillCommandsOnParent(
                 `\nDistill done: ${result.stored} stored, ${result.dedupSkipped} skipped (${result.factsExtracted} extracted from ${result.sessionsScanned} sessions).`,
               );
             }
+            const semantic =
+              result.semanticOutcome ??
+              (result.partialFailure ? "partial" : result.semanticEmpty ? "failed" : "success");
+            console.log(
+              `distill stored=${result.stored} sessions=${result.sessionsScanned} batchFailures=${result.batchFailures ?? 0} semantic=${semantic}`,
+            );
             if (result.semanticEmpty) {
               process.exitCode = 1;
             } else if (result.partialFailure) {
@@ -309,6 +315,14 @@ function registerDistillCommandsOnParent(
               } duplicates skipped)`,
             );
           }
+          const vectorFailures = result.vectorFailures ?? 0;
+          const semantic = result.semanticOutcome ?? (vectorFailures > 0 ? "partial" : "success");
+          console.log(
+            `extract-daily stored=${result.totalStored} vector_failures=${vectorFailures} semantic=${semantic}`,
+          );
+          if (vectorFailures > 0 || semantic === "partial") {
+            process.exitCode = 2;
+          }
         },
       ),
     ),
@@ -354,6 +368,12 @@ function registerDistillCommandsOnParent(
             console.log(
               `\nSessions scanned: ${result.sessionsScanned}; procedures stored/updated: ${result.proceduresStored} (${result.positiveCount} positive, ${result.negativeCount} negative)`,
             );
+          }
+          const readFailures = result.readFailures ?? 0;
+          const semantic = readFailures > 0 ? "partial" : "success";
+          console.log(`extract-procedures sessions=${result.sessionsScanned} readFailures=${readFailures} semantic=${semantic}`);
+          if (readFailures > 0) {
+            process.exitCode = 2;
           }
         },
       ),
@@ -447,6 +467,11 @@ function registerDistillCommandsOnParent(
           console.log(`\n[dry-run] Would create ${result.created} proposal(s).`);
         } else {
           console.log(`\nCreated ${result.created} proposal(s).`);
+        }
+        const semantic = result.semanticOutcome ?? "success";
+        console.log(`generate-proposals created=${result.created} semantic=${semantic}`);
+        if (semantic === "partial" || semantic === "failed" || semantic === "semantic_empty") {
+          process.exitCode = 2;
         }
       }),
     );

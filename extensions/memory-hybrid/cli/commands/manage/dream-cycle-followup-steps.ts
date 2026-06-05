@@ -7,6 +7,10 @@ import type { FactsDB } from "../../../backends/facts-db.js";
 import type { ChangeFeed } from "../../../services/change-feed.js";
 import { runCrystallizationProposalCycle } from "../../../services/crystallization-maintenance.js";
 import { getEffectivenessReport, runClosedLoopAnalysis } from "../../../services/feedback-effectiveness.js";
+import {
+  assessContinuousVerificationResult,
+  formatContinuousVerificationAssessmentLine,
+} from "./dream-cycle-followup.js";
 
 export interface DreamCycleFollowUpDeps {
   cfg: HybridMemoryConfig;
@@ -45,10 +49,13 @@ export interface DreamCycleFollowUpDeps {
 export async function runContinuousVerificationStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
   if (!deps.runContinuousVerification) return "skipped (handler unavailable)";
   const res = await deps.runContinuousVerification(verbose ? { verbose: true } : undefined);
-  if (res.errors > 0) {
-    throw new Error(`${res.errors}/${res.checked} verification check(s) errored`);
+  const assessment = assessContinuousVerificationResult(res);
+  const machineLine = formatContinuousVerificationAssessmentLine(res, assessment);
+  const summary = `checked=${res.checked} confirmed=${res.confirmed} stale=${res.stale} uncertain=${res.uncertain} errors=${res.errors} semantic=${assessment.shouldFailPipeline ? "partial" : "success"} Machine status: ${machineLine}`;
+  if (assessment.shouldFailPipeline) {
+    throw new Error(`continuous-verification degraded (${assessment.reason}): ${summary}`);
   }
-  return `checked=${res.checked} confirmed=${res.confirmed} stale=${res.stale}`;
+  return summary;
 }
 
 export async function runExtractImplicitStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
