@@ -350,7 +350,7 @@ describe("maintenance-orchestrator", () => {
         "resolve-contradictions",
         async () => {
           throw new Error(
-            "resolve-contradictions degraded backlog (ambiguous_backlog_no_progress): resolve-contradictions summary mode=default auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 semantic=partial",
+            "resolve-contradictions degraded backlog (resolve-contradictions summary mode=auto auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 semantic=partial)",
           );
         },
       ],
@@ -358,6 +358,25 @@ describe("maintenance-orchestrator", () => {
     const result = await runMaintenanceOrchestrator(
       { cfg: minimalCfg(), runners, openclawDir },
       { tiers: ["nightly"], force: true, verbose: false, include: ["resolve-contradictions"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("parses semantic token from scope-promote partial failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "scope-promote",
+        async () => {
+          throw new Error("scope-promote partial failure (promoted=1/3 failed=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["scope-promote"] },
     );
     expect(result.steps[0]?.status).toBe("failed");
     expect(result.steps[0]?.semanticOutcome).toBe("partial");

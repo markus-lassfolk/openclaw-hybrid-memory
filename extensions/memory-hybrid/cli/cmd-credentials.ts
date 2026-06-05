@@ -22,6 +22,7 @@ import type {
   CredentialsPruneResult,
   EncryptVaultResult,
   MigrateToVaultResult,
+  RekeyVaultResult,
   VaultStatusResult,
 } from "./types.js";
 
@@ -114,6 +115,69 @@ export function runEncryptVaultForCli(
     };
   } catch (err) {
     capturePluginError(err as Error, { subsystem: "cli", operation: "runEncryptVaultForCli" });
+    return { ok: false, vaultPath, error: String(err) };
+  }
+}
+
+/**
+ * Re-encrypt an already-encrypted vault with the configured encryption key material.
+ * Use after fixing a legacy literal `file:/path` SecretRef to file-content semantics.
+ */
+export function runRekeyVaultForCli(
+  ctx: HandlerContext,
+  opts: { yes?: boolean; backup?: boolean; backupPath?: string; verify?: boolean },
+): RekeyVaultResult {
+  const { credentialsDb, resolvedSqlitePath, cfg } = ctx;
+  const vaultPath = join(dirname(resolvedSqlitePath), "credentials.db");
+  if (!credentialsDb) {
+    return { ok: false, vaultPath, error: "Credentials vault is not available (credentialsDb is null)." };
+  }
+
+  const st = credentialsDb.getVaultStatus();
+  if (!st.encryptedAtRest) {
+    return {
+      ok: false,
+      vaultPath,
+      error: "Vault is plaintext. Run `openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes` first.",
+    };
+  }
+
+  const newKey = cfg.credentials.encryptionKey ?? "";
+  if (newKey.length < 16) {
+    return {
+      ok: false,
+      vaultPath,
+      error:
+        "Configured encryption key is missing or too short. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY to the desired new key material.",
+    };
+  }
+
+  if (!opts.yes) {
+    return { ok: true, dryRun: true, vaultPath, status: { kdfVersion: st.kdfVersion, encryptedAtRest: true } };
+  }
+
+  let resolvedBackupPath: string | undefined = opts.backupPath;
+  if (!resolvedBackupPath && opts.backup) {
+    resolvedBackupPath = `${vaultPath}.rekey.bak.${Date.now()}-${process.pid}`;
+  }
+
+  try {
+    const res = credentialsDb.rekeyVaultSafe(newKey, {
+      backupPath: resolvedBackupPath,
+      verify: opts.verify,
+    });
+    const after = credentialsDb.getVaultStatus();
+    return {
+      ok: true,
+      dryRun: false,
+      vaultPath,
+      rekeyed: res.rekeyed,
+      ...(res.backupPath !== undefined ? { backupPath: res.backupPath } : {}),
+      ...(res.verified !== undefined ? { verified: res.verified } : {}),
+      status: { kdfVersion: after.kdfVersion, encryptedAtRest: after.encryptedAtRest },
+    };
+  } catch (err) {
+    capturePluginError(err as Error, { subsystem: "cli", operation: "runRekeyVaultForCli" });
     return { ok: false, vaultPath, error: String(err) };
   }
 }

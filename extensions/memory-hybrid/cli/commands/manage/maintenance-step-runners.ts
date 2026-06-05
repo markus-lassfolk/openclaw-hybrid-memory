@@ -48,14 +48,6 @@ import {
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
 } from "../../../services/maintenance-job-run/index.js";
-import {
-  DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
-  DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,
-  evaluateContradictionProgress,
-  formatContradictionProgressSummaryLine,
-  persistConsecutiveNoProgressState,
-  readConsecutiveNoProgressRuns,
-} from "../../../services/contradiction-progress-summary.js";
 
 function reflectRulesDiagnosticsIndicateFailure(
   d:
@@ -271,7 +263,7 @@ export function buildCliMaintenanceRunners(
 
   set("compact", async () => {
     const c = await b.runCompaction({ apply: true });
-    return `hot=${c.hot} warm=${c.warm} cold=${c.cold}`;
+    return `hot=${c.hot} warm=${c.warm} cold=${c.cold} semantic=success`;
   });
 
   set("auto-classify", async () => {
@@ -323,7 +315,7 @@ export function buildCliMaintenanceRunners(
     if (b.cfg.personaProposals?.enabled === false) return "skipped (personaProposals disabled)";
     if (!b.proposalsDb) return "skipped (proposals store unavailable)";
     const n = b.proposalsDb.pruneExpired();
-    return `pruned=${n}`;
+    return `pruned=${n} semantic=success`;
   });
 
   set("build-languages", async () => {
@@ -335,7 +327,7 @@ export function buildCliMaintenanceRunners(
   set("credentials-prune", async () => {
     if (!b.cfg.credentials?.enabled) return "skipped (credentials disabled)";
     const r = b.runCredentialsPrune({ dryRun: false, yes: true });
-    return `removed=${r.removed ?? 0}`;
+    return `removed=${r.removed ?? 0} semantic=success`;
   });
 
   set("sensor-sweep", async () => runSensorSweepForCli(b));
@@ -372,25 +364,18 @@ export function buildCliMaintenanceRunners(
   });
 
   set("resolve-contradictions", async () => {
-    const r = await b.runResolveContradictions();
-    const autoResolvedCount = r.autoResolved.length;
-    const ambiguousCount = r.ambiguous.length;
-    const metrics = {
-      autoResolved: autoResolvedCount,
-      ambiguous: ambiguousCount,
-      totalConsidered: autoResolvedCount + ambiguousCount,
-    };
-    const evaluation = evaluateContradictionProgress(metrics, {
+    const openclawHome = resolveOpenclawHomeFromSqlitePath(b.resolvedSqlitePath);
+    const { summary, evaluation } = await runContradictionMaintenanceAutoStep({
+      openclawHome,
       degradedAmbiguousThreshold: DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
-      degradedConsecutiveThreshold: DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,
-      previousConsecutiveNoProgressRuns: readConsecutiveNoProgressRuns(),
+      degradedConsecutiveThreshold: ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
+      runAuto: () =>
+        b.runResolveContradictionsAuto({
+          dryRun: false,
+          targetRate: 0.8,
+        }),
     });
-    persistConsecutiveNoProgressState(metrics, evaluation);
-    const summary = `${formatContradictionProgressSummaryLine("default", metrics, evaluation)} semantic=${evaluation.degraded ? "partial" : "success"}`;
-    if (evaluation.degraded) {
-      throw new Error(`resolve-contradictions degraded backlog (${evaluation.exitReason}): ${summary}`);
-    }
-    return summary;
+    return assertContradictionMaintenanceSummaryDoesNotBlock(summary, evaluation);
   });
 
   set("enrich-entities", async () => {
@@ -422,7 +407,7 @@ export function buildCliMaintenanceRunners(
 
   set("entity-mentions-cleanup", async () => {
     const summary = b.factsDb.cleanupEntityMentions({ limit: 200, apply: true });
-    return `changedFacts=${summary.changedFacts} rowsScanned=${summary.rowsScanned}`;
+    return `changedFacts=${summary.changedFacts} rowsScanned=${summary.rowsScanned} removedRows=${summary.removedRows} semantic=success`;
   });
 
   set("dream-cycle-core", async () => {
@@ -598,10 +583,17 @@ export function buildCliMaintenanceRunners(
   set("scope-promote", async () => {
     const candidates = b.factsDb.findSessionFactsForPromotion(7, 0.7);
     let promoted = 0;
+    let failed = 0;
     for (const f of candidates) {
       if (b.factsDb.promoteScope(f.id, "global", null)) promoted++;
+      else failed++;
     }
-    return `promoted=${promoted}/${candidates.length}`;
+    const partial = failed > 0;
+    const summary = `promoted=${promoted}/${candidates.length} failed=${failed} semantic=${partial ? "partial" : "success"}`;
+    if (partial) {
+      throw new Error(`scope-promote partial failure (${summary})`);
+    }
+    return summary;
   });
 
   set("decay-reclassify", async () => {
@@ -611,7 +603,7 @@ export function buildCliMaintenanceRunners(
       inactiveDays: nightly?.reclassifyInactiveDays,
       promoteRecallCount: nightly?.reclassifyPromoteRecallCount,
     });
-    return `reclassified=${report.changed} scanned=${report.scanned}`;
+    return `reclassified=${report.changed} scanned=${report.scanned} semantic=success`;
   });
 
   set("implicit-feedback-collapse", async () => {
@@ -819,7 +811,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   if (deps.runCompaction) {
     runners.set("compact", async () => {
       const c = await deps.runCompaction!();
-      return `hot=${c.hot} warm=${c.warm} cold=${c.cold}`;
+      return `hot=${c.hot} warm=${c.warm} cold=${c.cold} semantic=success`;
     });
   }
 
@@ -876,7 +868,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   if (deps.proposalsDb) {
     runners.set("proposals-prune", async () => {
       const n = deps.proposalsDb!.pruneExpired();
-      return `pruned=${n}`;
+      return `pruned=${n} semantic=success`;
     });
   }
 
@@ -887,7 +879,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   if (deps.runCredentialsPrune) {
     runners.set("credentials-prune", async () => {
       const r = await Promise.resolve(deps.runCredentialsPrune!());
-      return `removed=${r.removed ?? 0}`;
+      return `removed=${r.removed ?? 0} semantic=success`;
     });
   }
 

@@ -177,6 +177,12 @@ export type HybridMemCliContext = {
     backupPath?: string;
     verify?: boolean;
   }) => EncryptVaultResult;
+  runRekeyVault: (opts: {
+    yes?: boolean;
+    backup?: boolean;
+    backupPath?: string;
+    verify?: boolean;
+  }) => import("./types.js").RekeyVaultResult;
   runVaultStatus: () => VaultStatusResult | null;
   runCredentialsList: () => Array<{
     service: string;

@@ -102,6 +102,24 @@ export type EncryptVaultResult =
     }
   | { ok: false; vaultPath: string; error: string };
 
+export type RekeyVaultResult =
+  | {
+      ok: true;
+      dryRun: true;
+      vaultPath: string;
+      status: { kdfVersion: number; encryptedAtRest: boolean };
+    }
+  | {
+      ok: true;
+      dryRun: false;
+      vaultPath: string;
+      rekeyed: number;
+      backupPath?: string;
+      verified?: boolean;
+      status: { kdfVersion: number; encryptedAtRest: boolean };
+    }
+  | { ok: false; vaultPath: string; error: string };
+
 export type VaultStatusResult = {
   dbPath: string;
   kdfVersion: number;

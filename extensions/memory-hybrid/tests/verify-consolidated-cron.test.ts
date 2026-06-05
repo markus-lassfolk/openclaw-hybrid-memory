@@ -144,4 +144,31 @@ describe("runVerifyForCli - consolidated maintenance cron", () => {
     expect(consolidated?.enabled).not.toBe(false);
     expect(lines.join("\n")).toContain("maintenance-nightly");
   });
+
+  it("warns when consolidated mode still has enabled weekly-audit-health legacy job", async () => {
+    writeCronStore([
+      {
+        pluginJobId: "hybrid-mem:maintenance-nightly",
+        name: "maintenance-nightly",
+        enabled: true,
+        schedule: { kind: "cron", expr: "0 2 * * *" },
+        payload: { kind: "agentTurn", message: "openclaw hybrid-mem maintenance nightly --verbose" },
+      },
+      {
+        pluginJobId: "hybrid-mem:weekly-audit-health",
+        name: "weekly-audit-health",
+        enabled: true,
+        schedule: { kind: "cron", expr: "0 5 * * 0" },
+        payload: { kind: "agentTurn", message: "openclaw hybrid-mem audit health --strict --json" },
+      },
+    ]);
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(buildCtx() as never, { fix: false }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).toContain("weekly-audit-health");
+    expect(out).toMatch(/Legacy per-task cron jobs still enabled/i);
+  });
 });

@@ -524,6 +524,175 @@ export class CredentialsDB extends BaseSqliteStore {
   }
 
   /**
+   * Re-encrypt an already-encrypted vault with new key material.
+   * Used to migrate off legacy literal `file:/path` passphrases to file-content semantics.
+   */
+  rekeyVaultSafe(
+    newEncryptionKey: string,
+    opts: { backupPath?: string; verify?: boolean } = {},
+  ): { rekeyed: number; kdfVersion: number; backupPath?: string; verified?: boolean } {
+    const { backupPath, verify } = opts;
+
+    if (newEncryptionKey.length < 16) {
+      throw new Error(
+        "New encryption key is missing or too short. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY.",
+      );
+    }
+    if (this.kdfVersion === CRED_KDF_PLAINTEXT) {
+      throw new Error("Cannot rekey a plaintext vault. Run encrypt-vault first.");
+    }
+
+    const plaintextRows = this.listAll().map((entry) => ({
+      service: entry.service,
+      type: entry.type as CredentialType,
+      value: entry.value,
+      url: entry.url,
+      notes: entry.notes,
+      created: entry.created,
+      updated: entry.updated,
+      expires: entry.expires,
+    }));
+
+    const newSalt = randomBytes(32);
+    const newKdfVersion = CRED_KDF_VERSION;
+    const newKey = deriveKey(newEncryptionKey, newSalt, newKdfVersion);
+    let rekeyedCount = plaintextRows.length;
+
+    let oldBackupPath: string | undefined;
+    if (backupPath) {
+      mkdirSync(dirname(backupPath), { recursive: true });
+      try {
+        if (existsSync(backupPath)) {
+          oldBackupPath = `${backupPath}.old.${Date.now()}`;
+          renameSync(backupPath, oldBackupPath);
+        }
+      } catch {
+        /* proceed */
+      }
+    }
+
+    const rekey = createTransaction(
+      this.liveDb,
+      () => {
+        if (backupPath) {
+          const backupDb = new DatabaseSync(backupPath);
+          try {
+            backupDb.exec(`
+              CREATE TABLE vault_meta (
+                key TEXT PRIMARY KEY,
+                value BLOB NOT NULL
+              )
+            `);
+            backupDb.exec(`
+              CREATE TABLE credentials (
+                service TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'other',
+                value BLOB NOT NULL,
+                url TEXT,
+                notes TEXT,
+                created INTEGER NOT NULL,
+                updated INTEGER NOT NULL,
+                expires INTEGER,
+                PRIMARY KEY (service, type)
+              )
+            `);
+            backupDb.exec(`CREATE INDEX idx_credentials_service ON credentials(service)`);
+            const metaRows = this.liveDb.prepare("SELECT key, value FROM vault_meta").all() as Array<{
+              key: string;
+              value: Uint8Array | Buffer;
+            }>;
+            const insertMeta = backupDb.prepare("INSERT INTO vault_meta (key, value) VALUES (?, ?)");
+            for (const row of metaRows) insertMeta.run(row.key, row.value);
+            const credRows = this.liveDb.prepare("SELECT * FROM credentials").all() as Array<Record<string, unknown>>;
+            const insertCred = backupDb.prepare(
+              "INSERT INTO credentials (service, type, value, url, notes, created, updated, expires) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            );
+            for (const row of credRows) {
+              insertCred.run(
+                row.service as string,
+                row.type as string,
+                row.value as string,
+                row.url as string | null,
+                row.notes as string | null,
+                row.created as number,
+                row.updated as number,
+                row.expires as number | null,
+              );
+            }
+            backupDb.close();
+            tryRestrictSqliteDbFileMode(backupPath);
+          } catch (err) {
+            backupDb.close();
+            throw err;
+          }
+        }
+
+        const updateStmt = this.liveDb.prepare("UPDATE credentials SET value = ? WHERE service = ? AND type = ?");
+        for (const row of plaintextRows) {
+          const encrypted = encryptValue(row.value, newKey);
+          updateStmt.run(encrypted as unknown as Uint8Array, row.service, row.type);
+        }
+        this.liveDb
+          .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
+          .run(Buffer.from([newKdfVersion]));
+        this.liveDb.prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('salt', ?)").run(newSalt);
+      },
+      "IMMEDIATE",
+    );
+
+    let rekeySucceeded = false;
+    try {
+      rekey();
+      rekeySucceeded = true;
+      this.kdfVersion = newKdfVersion;
+      this.salt = newSalt;
+      this.key = newKey;
+      this.password = null;
+      this.storesEncryptedValues = true;
+
+      let verified: boolean | undefined;
+      if (verify) {
+        const entries = this.listAll();
+        if (entries.length !== rekeyedCount) {
+          throw new Error(`Verification failed: only ${entries.length} of ${rekeyedCount} entries could be decrypted`);
+        }
+        for (const row of plaintextRows) {
+          const verifiedEntry = this.get(row.service, row.type);
+          if (!verifiedEntry || verifiedEntry.value !== row.value) {
+            throw new Error(`Verification failed: credential ${row.service}/${row.type} mismatch after rekey`);
+          }
+        }
+        verified = true;
+      }
+
+      if (oldBackupPath) {
+        try {
+          unlinkSync(oldBackupPath);
+        } catch {
+          /* best effort */
+        }
+      }
+
+      return {
+        rekeyed: rekeyedCount,
+        kdfVersion: this.kdfVersion,
+        ...(backupPath !== undefined ? { backupPath } : {}),
+        ...(verified !== undefined ? { verified } : {}),
+      };
+    } catch (err) {
+      if (oldBackupPath && backupPath && !rekeySucceeded) {
+        try {
+          if (existsSync(backupPath)) unlinkSync(backupPath);
+          renameSync(oldBackupPath, backupPath);
+        } catch {
+          /* preserve .old backup */
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Insert or update a credential. On conflict (service, type), `updated` and value fields refresh;
    * `created` is preserved from the original row — intentional for "same key, rotated secret" flows (#894).
    */

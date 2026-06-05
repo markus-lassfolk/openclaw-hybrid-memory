@@ -118,6 +118,10 @@ describe("maintenance-job-run", () => {
     expect(resolveLightJobRunOutcome({ semanticEmpty: true, inputsProcessed: 3 })).toBe("failed_semantic_empty");
     expect(resolveLightJobRunOutcome({ inputsProcessed: 0 })).toBe("empty");
     expect(resolveLightJobRunOutcome({ inputsProcessed: 2, outputsProduced: 1 })).toBe("success");
+    expect(resolveLightJobRunOutcome({ inputsProcessed: 3, outputsProduced: 0 })).toBe("empty");
+    expect(resolveLightJobRunOutcome({ semanticEmpty: true, inputsProcessed: 3, outputsProduced: 0 })).toBe(
+      "failed_semantic_empty",
+    );
     expect(resolveLightJobRunOutcome({ skipped: true })).toBe("skipped");
   });
 

@@ -54,6 +54,7 @@ describe("resolveCredentialsEncryptionKeyCandidates", () => {
   it("resolveCredentialsEncryptionKeyForConfig rejects unreadable file: refs", () => {
     const missing = `file:${join(tmpdir(), "cred-key-missing", "vault.key")}`;
     expect(resolveCredentialsEncryptionKeyForConfig(missing)).toBe("");
+    expect(resolveCredentialsEncryptionKeyCandidates(missing)).toEqual([""]);
   });
 });
 
