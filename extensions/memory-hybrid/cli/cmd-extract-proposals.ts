@@ -18,10 +18,7 @@ import {
 import { parseStructuredItemsAcceptingEmpty, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { formatDateUtc } from "../utils/dates.js";
-import {
-  createLightJobRun,
-  finishLightJobRun,
-} from "../services/maintenance-job-run/light-job-run-bridge.js";
+import { createLightJobRun, finishLightJobRun } from "../services/maintenance-job-run/light-job-run-bridge.js";
 import type { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolvePipelineProposalTarget } from "./proposals.js";
@@ -108,6 +105,7 @@ export async function runGenerateProposalsForCli(
     const scopeFilterWarning =
       "memory-hybrid: generate-proposals — autoRecall.scopeFilter is not set; all stored facts are included regardless of which agent or user created them. Set autoRecall.scopeFilter (e.g. agentId/userId) to restrict proposals to a specific user/agent and avoid cross-user contamination.";
     if (cfg.personaProposals.requireScopeFilter) {
+      finishLightJobRun(jobRun, { skipped: true, inputsProcessed: 0, outputsProduced: 0, dryRun: opts.dryRun });
       throw new Error(scopeFilterWarning);
     }
     ctx.logger.warn?.(scopeFilterWarning);
@@ -212,20 +210,13 @@ export async function runGenerateProposalsForCli(
     insights.push(`Durable persona state:\n${personaStateBlock}`);
   }
   if (insights.length === 0) {
-    if (verbose)
-      ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
+    if (verbose) ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
     return finishProposals(0, { skipped: true });
   }
   const insightsBlock = insights.join("\n\n");
   const allowedFiles = cfg.personaProposals.allowedFiles;
   const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-  const gapInsights = [
-    ...patterns,
-    ...rules,
-    ...metaPatterns,
-    ...selfCorrectionInsights,
-    ...implicitInsights,
-  ];
+  const gapInsights = [...patterns, ...rules, ...metaPatterns, ...selfCorrectionInsights, ...implicitInsights];
   const identityGapResult = scoreIdentityGaps(gapInsights, workspace);
   const identityGapsBlock = identityGapResult.bullets.join("\n");
   const pendingProposals = proposalsDb.list({ status: "pending" });
@@ -342,6 +333,12 @@ export async function runGenerateProposalsForCli(
   if (items === undefined) {
     const failureMessage = `memory-hybrid: generate-proposals — all models failed: ${lastFailReason} (models tried: ${allModels.join(", ")})`;
     console.error(`${failureMessage} parse_success=false`);
+    finishLightJobRun(jobRun, {
+      skipped: false,
+      inputsProcessed: insights.length,
+      outputsProduced: 0,
+      dryRun: opts.dryRun,
+    });
     throw new Error(failureMessage);
   }
   if (items.length === 0 && insights.length > 0) {
@@ -491,15 +488,15 @@ export async function runGenerateProposalsForCli(
     parsedCount: items.length,
     createdCount: created,
     semanticEmpty: created === 0 && items.length === 0,
-      identityGapScore: identityGapResult.score,
-      model: allModels[0] ?? null,
-      zeroReason: created === 0 ? (items.length === 0 ? "semantic_empty" : "filtered_or_capped") : null,
-    });
-    if (verbose) {
-      ctx.logger.info?.(
-        `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} created=${created}`,
-      );
-    }
+    identityGapScore: identityGapResult.score,
+    model: allModels[0] ?? null,
+    zeroReason: created === 0 ? (items.length === 0 ? "semantic_empty" : "filtered_or_capped") : null,
+  });
+  if (verbose) {
+    ctx.logger.info?.(
+      `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} created=${created}`,
+    );
+  }
   return finishProposals(created, {
     semanticEmpty: created === 0 && items.length === 0,
     inputsProcessed: insights.length,
