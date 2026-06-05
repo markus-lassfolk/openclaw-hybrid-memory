@@ -1642,6 +1642,106 @@ error: unknown command 'bar'
         }),
       );
     });
+
+    it("does not attribute hidden LLM failures from unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-directives: LLM call failed after retries semantic=partial\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "hidden_llm_failure",
+        }),
+      );
+    });
+
+    it("does not attribute cursor_not_advanced from unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "cross-agent.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z cross-agent-learning exit=0\n");
+      writeFileSync(
+        logPath,
+        "extract-directives cursor_advanced=false semantic=partial\ncross-agent-learning: agents=3 generalised=1 errors=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["cross-agent-learning"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "cursor_not_advanced",
+        }),
+      );
+    });
+
+    it("does not attribute continuous-verification degradation to unrelated steps", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "continuous-verification checked=12 Machine status: status=degraded reason=all_uncertain errors=0 semantic=partial\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "continuous-verification",
+        }),
+      );
+    });
+
+    it("does not attribute closed-loop interruption to unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "tool-effectiveness.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z tool-effectiveness exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: closed-loop — interrupted by wall-clock limit\nclosed-loop-analysis interrupted semantic=partial\ntool-effectiveness ranked=12 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["tool-effectiveness"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "closed-loop-analysis",
+        }),
+      );
+    });
+
+    it("does not attribute digest-autopilot partial status to unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "prune.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z prune exit=0\n");
+      writeFileSync(
+        logPath,
+        "Pending digest autopilot cron weekly-pending-digest-autopilot-20260508T082000Z\nStatus: partial\nprune pruned=3 vector_failures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["prune"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "digest-autopilot",
+        }),
+      );
+    });
   });
 
   describe("validateFromSummaryJson", () => {

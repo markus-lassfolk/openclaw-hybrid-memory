@@ -39,6 +39,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
+import { MAINTENANCE_STEPS } from "./maintenance-orchestrator.js";
 import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenance-job-run/types.js";
 import {
   jobRunOutcomeToValidatorSemantic,
@@ -363,10 +364,20 @@ function addMaintenanceIssue(issues: Map<string, MaintenanceTelemetryIssue>, iss
  * Attempts to find step-scoped output by searching for the step name in the log.
  * Returns a substring of the log that's likely to contain output from that step.
  */
+const STEP_LOG_LINE_ALIASES: Record<string, RegExp[]> = {
+  "closed-loop-analysis": [/memory-hybrid:\s*closed-loop\b/i],
+  "digest-autopilot": [/\bPending digest autopilot cron\b/i],
+  "continuous-verification": [/\bcontinuous-verification\b/i, /\bMachine status:\s*status=degraded\b/i],
+};
+
 function lineMentionsStep(line: string, stepName: string): boolean {
   const escaped = stepName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const tokenPattern = new RegExp(`\\b${escaped}(?:\\s|[=:]|$)`, "i");
-  return tokenPattern.test(line) || line.includes(stepName.replace(/-/g, "_"));
+  if (tokenPattern.test(line) || line.includes(stepName.replace(/-/g, "_"))) {
+    return true;
+  }
+  const aliases = STEP_LOG_LINE_ALIASES[stepName];
+  return aliases?.some((pattern) => pattern.test(line)) ?? false;
 }
 
 function isForeignStepSummaryLine(line: string, stepName: string): boolean {
@@ -408,6 +419,32 @@ function extractStepLog(logContent: string, stepName: string): string {
   }
 
   return relevantLines.length > 0 ? relevantLines.join("\n") : logContent;
+}
+
+function getValidationScopeStepNames(requiredSteps: string[], ledgerSteps: ExitStep[]): string[] {
+  const names = new Set<string>();
+  for (const step of requiredSteps) {
+    if (step) names.add(step);
+  }
+  for (const entry of ledgerSteps) {
+    if (entry.step) names.add(entry.step);
+  }
+  return [...names];
+}
+
+function collectValidationScopeLog(
+  logContent: string,
+  requiredSteps: string[],
+  ledgerSteps: ExitStep[],
+): string {
+  const orchestratorStepNames = new Set(MAINTENANCE_STEPS.map((step) => step.name));
+  const scopeSteps = getValidationScopeStepNames(requiredSteps, ledgerSteps);
+  const knownSteps = scopeSteps.filter((step) => orchestratorStepNames.has(step));
+  if (knownSteps.length === 0) return logContent;
+  return knownSteps
+    .map((step) => extractStepLog(logContent, step))
+    .filter((chunk) => chunk.length > 0)
+    .join("\n");
 }
 
 function isStepInValidationScope(
@@ -1092,7 +1129,10 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const continuousVerificationDetected = isStepInValidationScope("continuous-verification", requiredSteps, ledgerSteps);
-  const continuousVerificationDegraded = detectDegradedContinuousVerificationStatus(logContent);
+  const continuousVerificationLog = continuousVerificationDetected
+    ? extractStepLog(logContent, "continuous-verification")
+    : "";
+  const continuousVerificationDegraded = detectDegradedContinuousVerificationStatus(continuousVerificationLog);
   if (continuousVerificationDetected && continuousVerificationDegraded) {
     addMaintenanceIssue(
       issues,
@@ -1266,12 +1306,11 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const closedLoopDetected = isStepInValidationScope("closed-loop-analysis", requiredSteps, ledgerSteps);
+  const closedLoopLog = closedLoopDetected ? extractStepLog(logContent, "closed-loop-analysis") : "";
   const closedLoopInterrupted =
-    /\bclosed-loop-analysis interrupted\b/i.test(logContent) ||
-    /memory-hybrid:\s*closed-loop\s*—\s*interrupted\b/i.test(logContent) ||
-    (closedLoopDetected &&
-      /\binterrupted\b/i.test(logContent) &&
-      /\bsemantic=partial\b/i.test(logContent));
+    /\bclosed-loop-analysis interrupted\b/i.test(closedLoopLog) ||
+    /memory-hybrid:\s*closed-loop\s*—\s*interrupted\b/i.test(closedLoopLog) ||
+    (/\binterrupted\b/i.test(closedLoopLog) && /\bsemantic=partial\b/i.test(closedLoopLog));
   if (closedLoopDetected && closedLoopInterrupted) {
     addMaintenanceIssue(
       issues,
@@ -1313,7 +1352,8 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const toolEffectivenessDetected = isStepInValidationScope("tool-effectiveness", requiredSteps, ledgerSteps);
-  if (toolEffectivenessDetected && /\bunexpected empty output\b/i.test(logContent)) {
+  const toolEffectivenessLog = toolEffectivenessDetected ? extractStepLog(logContent, "tool-effectiveness") : "";
+  if (toolEffectivenessDetected && /\bunexpected empty output\b/i.test(toolEffectivenessLog)) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -1329,12 +1369,12 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const digestAutopilotDetected = isStepInValidationScope("digest-autopilot", requiredSteps, ledgerSteps);
+  const digestAutopilotLog = digestAutopilotDetected ? extractStepLog(logContent, "digest-autopilot") : "";
   const digestAutopilotSemanticFail =
-    /\bdigest-autopilot\b[^\n]*\bstatus=(failed|partial)\b/i.test(logContent) ||
-    /\bpending digest autopilot cron (failed|partial)\b/i.test(logContent) ||
-    (digestAutopilotDetected &&
-      /\bStatus:\s*(failed|partial)\b/i.test(logContent) &&
-      /\bPending digest autopilot cron\b/i.test(logContent));
+    /\bdigest-autopilot\b[^\n]*\bstatus=(failed|partial)\b/i.test(digestAutopilotLog) ||
+    /\bpending digest autopilot cron (failed|partial)\b/i.test(digestAutopilotLog) ||
+    (/\bStatus:\s*(failed|partial)\b/i.test(digestAutopilotLog) &&
+      /\bPending digest autopilot cron\b/i.test(digestAutopilotLog));
   if (digestAutopilotDetected && digestAutopilotSemanticFail) {
     addMaintenanceIssue(
       issues,
@@ -1351,9 +1391,10 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const auditHealthDetected = isStepInValidationScope("audit-health", requiredSteps, ledgerSteps);
+  const auditHealthLog = auditHealthDetected ? extractStepLog(logContent, "audit-health") : "";
   const auditHealthSucceededInLedger = !failedSteps.some((s) => s.step === "audit-health");
   if (auditHealthDetected && auditHealthSucceededInLedger) {
-    const extracted = extractAuditHealthJsonFromLog(logContent);
+    const extracted = extractAuditHealthJsonFromLog(auditHealthLog);
     if (extracted.kind === "ok") {
       const report = extracted.value;
       const warningCount =
@@ -1406,9 +1447,12 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const crystallizationProposalsDetected = isStepInValidationScope("crystallization-proposals", requiredSteps, ledgerSteps);
+  const crystallizationProposalsLog = crystallizationProposalsDetected
+    ? extractStepLog(logContent, "crystallization-proposals")
+    : "";
   const crystallizationStoresUnavailable =
-    /\bcrystallization-proposals\b[\s\S]{0,200}\bstores unavailable\b/i.test(logContent) ||
-    (crystallizationProposalsDetected && /\bstores-unavailable\b/i.test(logContent));
+    /\bcrystallization-proposals\b[\s\S]{0,200}\bstores unavailable\b/i.test(crystallizationProposalsLog) ||
+    /\bstores-unavailable\b/i.test(crystallizationProposalsLog);
   if (crystallizationProposalsDetected && crystallizationStoresUnavailable) {
     addMaintenanceIssue(
       issues,
@@ -1492,27 +1536,29 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const scopedValidationLog = collectValidationScopeLog(logContent, requiredSteps, ledgerSteps);
   const hiddenLlmFailure =
-    /(?:llm call failed|failed its llm call|provider call failed|model request failed)/i.test(logContent) &&
-    failedSteps.length === 0;
+    /(?:llm call failed|failed its llm call|provider call failed|model request failed)/i.test(
+      scopedValidationLog,
+    ) && failedSteps.length === 0;
   if (hiddenLlmFailure) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
         ...commonFields,
         jobName,
-        stepName: /persona-proposals/i.test(logContent) ? "persona-proposals" : "maintenance",
+        stepName: /persona-proposals/i.test(scopedValidationLog) ? "persona-proposals" : "maintenance",
         failureCategory: "semantic_failure",
         failureClass: "hidden_llm_failure",
         message: `${jobName} logged an LLM failure without a matching non-zero exit`,
         semanticStatus: "semantic_fail",
-        model: parseModel(logContent),
-        fallbacks: parseFallbacks(logContent),
+        model: parseModel(scopedValidationLog),
+        fallbacks: parseFallbacks(scopedValidationLog),
       }),
     );
   }
 
-  if (/\bcursor(?:[_ ]advanced\s*=\s*false|\s+(?:did not|not)\s+advance)\b/i.test(logContent)) {
+  if (/\bcursor(?:[_ ]advanced\s*=\s*false|\s+(?:did not|not)\s+advance)\b/i.test(scopedValidationLog)) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
