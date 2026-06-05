@@ -1015,7 +1015,7 @@ export function resolveEntityForeignKeys(db: DatabaseSync, factId: string, entit
     const mention = db
       .prepare(
         `SELECT contact_id, organization_id FROM fact_entity_mentions
-           WHERE fact_id = ? OR normalized_surface = ?
+           WHERE fact_id = ? AND normalized_surface = ?
            ORDER BY confidence DESC LIMIT 1`,
       )
       .get(factId, key) as { contact_id: string | null; organization_id: string | null } | undefined;

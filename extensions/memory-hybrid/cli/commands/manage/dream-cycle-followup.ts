@@ -135,3 +135,24 @@ export async function runVerboseFollowUp<T>(
     progressSeparator: " — ",
   });
 }
+
+export function recordDreamCycleFollowUpFailure(
+  failures: Array<{ phase: string; error: string }>,
+  phase: string,
+  error: unknown,
+): void {
+  failures.push({
+    phase,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+
+export function applyDreamCyclePipelineExitCode(params: {
+  coreSuccess: boolean;
+  coreFailedStages: string[];
+  followUpFailures: Array<{ phase: string; error: string }>;
+}): void {
+  if (!params.coreSuccess || params.coreFailedStages.length > 0 || params.followUpFailures.length > 0) {
+    process.exitCode = 2;
+  }
+}
