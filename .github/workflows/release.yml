@@ -171,11 +171,17 @@ jobs:
       - name: Verify publish
         run: npm run verify:publish
       - name: Publish to NPM
-        run: npm publish --provenance --access public
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if npm view "openclaw-hybrid-memory@${VERSION}" version 2>/dev/null | grep -qxF "$VERSION"; then
+            echo "openclaw-hybrid-memory@${VERSION} already on npm; skipping"
+          else
+            npm publish --provenance --access public
+          fi
 
   publish-npm-install:
     name: Publish openclaw-hybrid-memory-install to NPM
-    needs: [release]
+    needs: [release, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -183,9 +189,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - name: Set package version
+        id: version
         run: |
           TAG="${{ needs.release.outputs.tag }}"
           VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           CURRENT=$(node -p "require('./packages/openclaw-hybrid-memory-install/package.json').version")
           if [ "$CURRENT" != "$VERSION" ]; then
             cd packages/openclaw-hybrid-memory-install && npm version --no-git-tag-version "$VERSION"
@@ -196,4 +204,10 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
       - name: Publish to NPM
         working-directory: packages/openclaw-hybrid-memory-install
-        run: npm publish --provenance --access public
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if npm view "openclaw-hybrid-memory-install@${VERSION}" version 2>/dev/null | grep -qxF "$VERSION"; then
+            echo "openclaw-hybrid-memory-install@${VERSION} already on npm; skipping"
+          else
+            npm publish --provenance --access public
+          fi

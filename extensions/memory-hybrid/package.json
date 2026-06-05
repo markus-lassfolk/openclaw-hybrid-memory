@@ -7,6 +7,7 @@
     "dist",
     "index.ts",
     "index-help.ts",
+    "index-credentials-cli.ts",
     "index-testing-exports.ts",
     "api",
     "config.ts",
