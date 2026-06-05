@@ -749,7 +749,11 @@ export function createPluginService(ctx: PluginServiceContext) {
               },
               api.logger,
             );
-            return `stored=${result.factsStored} scanned=${result.sessionsScanned}`;
+            const summary = `stored=${result.factsStored} scanned=${result.sessionsScanned} errors=${result.errors} semantic=${result.errors > 0 ? "partial" : "success"}`;
+            if (result.errors > 0) {
+              throw new Error(`passive-observer errors=${result.errors} (${summary})`);
+            }
+            return summary;
           };
 
           const runLifecycleSync = async () => {

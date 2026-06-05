@@ -67,7 +67,7 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
       }
 
       try {
-        const findings = extractFindingsFromRun(join(ctx.dreamCycleLogDir, runDir));
+        const findings = extractFindingsFromRun(join(ctx.dreamCycleLogDir, runDir), runId);
         traceIntegration(verbose, `dream ingester run ${runId} — ${findings.length} finding(s) extracted`);
         const runErrors: string[] = [];
         for (const finding of findings) {
@@ -81,7 +81,8 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
               key: finding.key ?? null,
               value: null,
               confidence: 0.7,
-              tags: ["dream-finding", `run:${runId}`],
+              tags: ["dream-finding", `run:${runId}`, "dream-ingested"],
+              scope: "global",
             });
             if (!storeResult.skipped) {
               result.findingsIngested++;
@@ -148,7 +149,7 @@ function markRunAsIngested(factsDb: FactsDB, runId: string): void {
   });
 }
 
-function extractFindingsFromRun(runDirPath: string): Finding[] {
+function extractFindingsFromRun(runDirPath: string, runId: string): Finding[] {
   const findings: Finding[] = [];
 
   try {
@@ -169,12 +170,12 @@ function extractFindingsFromRun(runDirPath: string): Finding[] {
         }
 
         if (stage.includes("consolidat")) {
-          const consolidated = extractConsolidatedFindings(artifact);
+          const consolidated = extractConsolidatedFindings(artifact, runId);
           findings.push(...consolidated);
         }
 
         if (stage.includes("digest") || stage.includes("summary")) {
-          const digest = extractDigestFindings(artifact);
+          const digest = extractDigestFindings(artifact, runId);
           findings.push(...digest);
         }
       } catch {
@@ -215,7 +216,7 @@ function extractPatterns(artifact: Record<string, unknown>): Finding[] {
   return findings;
 }
 
-function extractConsolidatedFindings(artifact: Record<string, unknown>): Finding[] {
+function extractConsolidatedFindings(artifact: Record<string, unknown>, runId: string): Finding[] {
   const findings: Finding[] = [];
 
   const created = artifact.factsCreated;
@@ -225,14 +226,14 @@ function extractConsolidatedFindings(artifact: Record<string, unknown>): Finding
       category: "meta",
       importance: 0.4,
       entity: "dream-cycle",
-      key: "consolidation-summary",
+      key: `consolidation-summary:${runId}`,
     });
   }
 
   return findings;
 }
 
-function extractDigestFindings(artifact: Record<string, unknown>): Finding[] {
+function extractDigestFindings(artifact: Record<string, unknown>, runId: string): Finding[] {
   const findings: Finding[] = [];
 
   const summary = artifact.digestSummary ?? artifact.summary;
@@ -242,7 +243,7 @@ function extractDigestFindings(artifact: Record<string, unknown>): Finding[] {
       category: "meta",
       importance: 0.5,
       entity: "dream-cycle",
-      key: "digest-summary",
+      key: `digest-summary:${runId}`,
     });
   }
 

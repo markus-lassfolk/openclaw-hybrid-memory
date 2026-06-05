@@ -487,7 +487,7 @@ export function buildCliContextServices(
           reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
           reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
           enableReflectionRules: cfg.nightlyCycle.enableReflectionRules,
-          ingestDreamFindings: cfg.nightlyCycle.ingestDreamFindings ?? cfg.wikiIntegration?.enabled,
+          ingestDreamFindings: cfg.nightlyCycle.ingestDreamFindings === true,
           verbose,
           episodicConsolidationEventTypes: {
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,
@@ -597,7 +597,11 @@ export function buildCliContextServices(
         },
         pluginLogger,
       );
-      return `stored=${result.factsStored} scanned=${result.sessionsScanned}`;
+      const summary = `stored=${result.factsStored} scanned=${result.sessionsScanned} errors=${result.errors} semantic=${result.errors > 0 ? "partial" : "success"}`;
+      if (result.errors > 0) {
+        throw new Error(`passive-observer errors=${result.errors} (${summary})`);
+      }
+      return summary;
     },
     getMemoryCategories: () => [...getMemoryCategories()],
     mergeResults,

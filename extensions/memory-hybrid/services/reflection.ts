@@ -1129,6 +1129,7 @@ export async function runReflection(
     patternsExtracted: uniqueNewPatterns.length,
     patternsStored: stored,
     window: windowDays,
+    semanticOutcome: newPatternEmbedFailures > 0 ? "partial" : "success",
   };
 }
 
@@ -2448,7 +2449,7 @@ export async function runReflectionMeta(
       parsedCandidates: parseResult.parseableLines,
       rejectedLength: parseResult.rejectedLength,
       stored,
-      status: "ok",
+      status: newMetaEmbedFailures > 0 ? "partial" : "ok",
     },
   };
 }

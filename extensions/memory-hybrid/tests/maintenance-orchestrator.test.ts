@@ -253,6 +253,29 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it("parses semantic token from passive-observer error summary", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "passive-observer",
+        async () => {
+          throw new Error("passive-observer errors=2 (stored=1 scanned=3 errors=2 semantic=partial)");
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      {
+        cfg: { ...minimalCfg(), passiveObserver: { enabled: true } } as HybridMemoryConfig,
+        runners,
+        openclawDir,
+      },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["passive-observer"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
   it("fails reflect-rules when runner summary has parse_success=false without semantic token", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([

@@ -126,6 +126,9 @@ export type ExtractDailyResult = {
   totalStored: number;
   daysBack: number;
   dryRun: boolean;
+  /** Facts stored in SQLite but vector index/embed failed for some rows. */
+  vectorFailures?: number;
+  semanticOutcome?: string;
 };
 export type ExtractDailySink = {
   log: (s: string) => void;

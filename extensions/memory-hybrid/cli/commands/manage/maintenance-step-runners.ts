@@ -150,6 +150,16 @@ function assertActiveTasksMaintainSummaryDoesNotBlock(summary: string): string {
   return summary;
 }
 
+function assertPassiveObserverSummaryDoesNotBlock(summary: string): string {
+  const errors = Number.parseInt(summary.match(/\berrors=(\d+)\b/i)?.[1] ?? "0", 10);
+  const semantic = parseSemanticTokenFromSummary(summary);
+  if (errors > 0 || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
+    const semanticSummary = summary.includes("semantic=") ? summary : `${summary} semantic=partial`;
+    throw new Error(`passive-observer errors=${errors || "semantic"} (${semanticSummary})`);
+  }
+  return summary;
+}
+
 export function buildCliMaintenanceRunners(
   b: ManageBindings,
   opts: BuildCliRunnersOptions = {},
@@ -215,7 +225,7 @@ export function buildCliMaintenanceRunners(
   set("passive-observer", async () => {
     if (!b.cfg.passiveObserver?.enabled) return "skipped (passiveObserver disabled)";
     if (!b.runPassiveObserverOnce) throw new Error("passive-observer unavailable");
-    return b.runPassiveObserverOnce();
+    return assertPassiveObserverSummaryDoesNotBlock(await b.runPassiveObserverOnce());
   });
 
   set("proposals-prune", async () => {
@@ -249,7 +259,14 @@ export function buildCliMaintenanceRunners(
   set("extract-daily", async () => {
     if (!b.runExtractDaily) throw new Error("extract-daily unavailable");
     const r = await b.runExtractDaily({ days: 7, dryRun: false, verbose }, sink);
-    return `stored=${r.stored ?? r.totalStored ?? 0}`;
+    const vectorFailures = (r as { vectorFailures?: number }).vectorFailures ?? 0;
+    const summary = `stored=${r.stored ?? r.totalStored ?? 0} vector_failures=${vectorFailures} semantic=${(r as { semanticOutcome?: string }).semanticOutcome ?? (vectorFailures > 0 ? "partial" : "success")}`;
+    assertSemanticOutcomeDoesNotBlockStep(
+      "extract-daily",
+      (r as { semanticOutcome?: string }).semanticOutcome ?? (vectorFailures > 0 ? "partial" : undefined),
+      summary,
+    );
+    return summary;
   });
 
   set("distill", async () => {
@@ -331,6 +348,7 @@ export function buildCliMaintenanceRunners(
     if (r.semanticOutcome === "failed") {
       throw new Error(`reflect LLM failure (${summary})`);
     }
+    assertSemanticOutcomeDoesNotBlockStep("reflect", r.semanticOutcome, summary);
     return summary;
   });
 
@@ -355,7 +373,18 @@ export function buildCliMaintenanceRunners(
 
   set("reflect-meta", async () => {
     const r = await b.runReflectionMeta({ dryRun: false, model: b.reflectionConfig.model, verbose });
-    return `metaStored=${r.metaStored}`;
+    const d = r.diagnostics;
+    const summary = [
+      `metaStored=${r.metaStored}`,
+      d ? `status=${d.status}` : null,
+      d?.status === "partial" || d?.status === "degraded" ? "semantic=partial" : "semantic=success",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (d?.status === "partial" || d?.status === "degraded") {
+      throw new Error(`reflect-meta semantic failure (${d?.zeroMetasReason ?? d.status}): ${summary}`);
+    }
+    return summary;
   });
 
   set("reflect-identity", async () => {
@@ -370,8 +399,16 @@ export function buildCliMaintenanceRunners(
 
   set("extract-procedures", async () => {
     if (!b.runExtractProcedures) throw new Error("extract-procedures unavailable");
-    const r = (await b.runExtractProcedures({ dryRun: false, verbose, ...scanFlags })) as { sessionsScanned?: number };
-    return `sessions=${r.sessionsScanned ?? 0}`;
+    const r = (await b.runExtractProcedures({ dryRun: false, verbose, ...scanFlags })) as {
+      sessionsScanned?: number;
+      readFailures?: number;
+    };
+    const readFailures = r.readFailures ?? 0;
+    const summary = `sessions=${r.sessionsScanned ?? 0} readFailures=${readFailures} semantic=${readFailures > 0 ? "partial" : "success"}`;
+    if (readFailures > 0) {
+      throw new Error(`extract-procedures read failures (${summary})`);
+    }
+    return summary;
   });
 
   set("extract-directives", async () => {
@@ -680,7 +717,11 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   if (deps.runAnalyzeLogs) runners.set("analyze-maintenance-logs", deps.runAnalyzeLogs);
   if (deps.runLifecycleSync) runners.set("lifecycle-sync", deps.runLifecycleSync);
-  if (deps.runPassiveObserverOnce) runners.set("passive-observer", deps.runPassiveObserverOnce);
+  if (deps.runPassiveObserverOnce) {
+    runners.set("passive-observer", async () =>
+      assertPassiveObserverSummaryDoesNotBlock(await deps.runPassiveObserverOnce!()),
+    );
+  }
 
   if (deps.proposalsDb) {
     runners.set("proposals-prune", async () => {
