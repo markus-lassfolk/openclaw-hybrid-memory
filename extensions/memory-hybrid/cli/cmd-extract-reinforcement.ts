@@ -771,7 +771,7 @@ export async function runExtractReinforcementForCli(
               }
             }
           } catch (err) {
-            capturePluginError(err as Error, {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
               subsystem: "cli",
               operation: "runExtractReinforcementForCli:similarity-fallback",
             });
