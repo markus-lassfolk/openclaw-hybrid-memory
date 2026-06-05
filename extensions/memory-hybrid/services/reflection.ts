@@ -1208,8 +1208,8 @@ export async function runReflectionRules(
       adaptiveStatePath: opts.adaptiveStatePath,
       enabled: adaptiveEnabled,
       responseFormat: { type: "json_object" },
-      // Structured JSON extraction: always disable thinking (adaptive breaks json_object parsing).
-      thinkingMode: "disabled",
+      // Default disabled for json_object; format-retry and --thinking may override via opts.thinkingMode.
+      thinkingMode: opts.thinkingMode ?? "disabled",
     });
     modelUsed = detail.modelUsed;
     if (detail.modelUsed !== opts.model) {

@@ -337,6 +337,57 @@ export class WorkflowStore extends BaseSqliteStore {
     });
   }
 
+  /**
+   * Remove duplicate rows sharing the same session_id + args_hash (e.g. from repeated backfills).
+   * Keeps the deterministic backfill id when present, otherwise the oldest created_at row.
+   */
+  dedupeBySessionAndArgsHash(opts?: { dryRun?: boolean }): {
+    removed: number;
+    kept: number;
+    duplicateGroups: number;
+  } {
+    return this.runSqliteOp("dedupeBySessionAndArgsHash", () => {
+      const groups = this.liveDb
+        .prepare(
+          `SELECT session_id, args_hash, COUNT(*) AS cnt
+           FROM workflow_traces
+           GROUP BY session_id, args_hash
+           HAVING cnt > 1`,
+        )
+        .all() as Array<{ session_id: string; args_hash: string; cnt: number }>;
+
+      let removed = 0;
+      let kept = 0;
+      const dryRun = opts?.dryRun === true;
+      const deleteStmt = dryRun ? null : this.liveDb.prepare("DELETE FROM workflow_traces WHERE id = ?");
+
+      for (const group of groups) {
+        const rows = this.liveDb
+          .prepare(
+            `SELECT id, created_at FROM workflow_traces
+             WHERE session_id = ? AND args_hash = ?
+             ORDER BY created_at ASC`,
+          )
+          .all(group.session_id, group.args_hash) as Array<{ id: string; created_at: string }>;
+        if (rows.length <= 1) continue;
+
+        const canonicalId = backfillWorkflowTraceId(group.session_id, group.args_hash);
+        const keepId = rows.some((r) => r.id === canonicalId)
+          ? canonicalId
+          : rows[0].id;
+        kept += 1;
+        for (const row of rows) {
+          if (row.id === keepId) continue;
+          if (!dryRun) deleteStmt!.run(row.id);
+          removed += 1;
+        }
+      }
+
+      if (!dryRun && removed > 0) this.invalidateWorkflowPatternsMemo();
+      return { removed, kept, duplicateGroups: groups.length };
+    });
+  }
+
   // -------------------------------------------------------------------------
   // getById
   // -------------------------------------------------------------------------

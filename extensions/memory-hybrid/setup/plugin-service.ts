@@ -617,6 +617,10 @@ export function createPluginService(ctx: PluginServiceContext) {
                   `${result.chunksProcessed} chunks, ${result.factsExtracted} extracted, ` +
                   `${result.factsStored} stored, ${result.factsReinforced} reinforced`,
               );
+            } else if (result.sessionsScanned > 0) {
+              api.logger.info(
+                `memory-hybrid: passive-observer — scanned ${result.sessionsScanned} sessions, 0 new facts (idle)`,
+              );
             }
           } catch (err) {
             api.logger.warn(`memory-hybrid: passive-observer run failed: ${err}`);

@@ -48,7 +48,12 @@ interface CliContextServices {
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflectionRules: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    thinkingMode?: import("../../services/chat.js").MiniMaxThinkingMode;
+  }) => Promise<{
     rulesExtracted: number;
     rulesStored: number;
     diagnostics?: {
@@ -289,8 +294,7 @@ export function buildCliContextServices(
           modelSource,
           fallbackModels,
           adaptiveStatePath: adaptiveMaintenanceStatePath,
-          // JSON extraction must not use adaptive thinking (breaks json_object parsing).
-          thinkingMode: "disabled",
+          thinkingMode: opts.thinkingMode ?? "disabled",
         },
         logSink,
         provenanceService,
@@ -433,7 +437,7 @@ export function buildCliContextServices(
       );
       if (verbose) {
         pluginLogger.info(
-          `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped})`,
+          `memory-hybrid: dream-cycle — WAL flush done (committed=${flush.committed}, skipped=${flush.skipped}, failed=${flush.failed})`,
         );
       }
       const runId = makeDreamCycleRunId();
@@ -467,6 +471,7 @@ export function buildCliContextServices(
             deny: cfg.nightlyCycle.consolidationEventTypeDeny,
           },
           runId,
+          walFlushFailed: flush.failed,
           stageArtifactDir: (() => {
             const envDir = getEnv("HYBRID_MEM_DREAM_STAGE_DIR");
             if (envDir?.trim()) {

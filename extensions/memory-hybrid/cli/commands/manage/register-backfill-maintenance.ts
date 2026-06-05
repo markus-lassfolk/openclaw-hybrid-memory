@@ -191,6 +191,29 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
     );
 
   mem
+    .command("dedupe-workflow-traces")
+    .description("Remove duplicate workflow_traces rows with the same session_id and args_hash")
+    .option("--dry-run", "Report duplicates without deleting")
+    .option("--json", "Emit JSON")
+    .action(
+      withExit(async (opts?: { dryRun?: boolean; json?: boolean }) => {
+        const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
+        const result = workflowStore.dedupeBySessionAndArgsHash({ dryRun: !!opts?.dryRun });
+        const report = { ...result, dryRun: !!opts?.dryRun };
+        if (opts?.json) console.log(JSON.stringify(report, null, 2));
+        else if (opts?.dryRun) {
+          console.log(
+            `dedupe-workflow-traces (dry-run): ${result.duplicateGroups} duplicate group(s), would remove ${result.removed} row(s)`,
+          );
+        } else {
+          console.log(
+            `dedupe-workflow-traces: removed ${result.removed} duplicate row(s), kept ${result.kept} canonical row(s)`,
+          );
+        }
+      }),
+    );
+
+  mem
     .command("maintenance-coverage")
     .description("Print maintenance data coverage counts for offline QA diagnostics")
     .option("--days <n>", "Window in days", "7")

@@ -212,7 +212,12 @@ export type HybridMemCliContext = {
     patternsStored: number;
     window: number;
   }>;
-  runReflectionRules: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
+  runReflectionRules: (opts: {
+    dryRun: boolean;
+    model: string;
+    verbose?: boolean;
+    thinkingMode?: import("../services/chat.js").MiniMaxThinkingMode;
+  }) => Promise<{
     rulesExtracted: number;
     rulesStored: number;
     diagnostics?: {

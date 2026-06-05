@@ -23,8 +23,10 @@ import type { ManageBindings } from "./bindings.js";
 
 import {
   assessContinuousVerificationResult,
+  applyDreamCyclePipelineExitCode,
   formatContinuousVerificationAssessmentLine,
   formatExtractImplicitFeedbackProgress,
+  recordDreamCycleFollowUpFailure,
   type RunVerboseFollowUpOptions,
   runVerboseFollowUp,
 } from "./dream-cycle-followup.js";
@@ -390,16 +392,19 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
       .description("Run reflection (rules): extract high-level rules from patterns")
       .option("--dry-run", "Show what would be stored without storing")
       .option("--model <m>", "LLM model (default from config)", reflectionConfig.model)
+      .option("--thinking <mode>", "MiniMax thinking mode for initial call: disabled|adaptive (default: disabled)")
       .option("-v, --verbose", "Log each rule as it is extracted"),
   ).action(
-    withExit(async (opts?: { dryRun?: boolean; model?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
+    withExit(async (opts?: { dryRun?: boolean; model?: string; thinking?: string; verbose?: boolean }, cmd?: CommanderOptsParent) => {
       const dryRun = !!opts?.dryRun;
       const model =
         opts?.model ?? reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(ctx.cfg), "maintenance");
       const verbose = !!opts?.verbose || readHybridMemVerbose(cmd);
+      const thinkingMode =
+        opts?.thinking === "adaptive" || opts?.thinking === "disabled" ? opts.thinking : undefined;
       let res;
       try {
-        res = await runReflectionRules({ dryRun, model, verbose });
+        res = await runReflectionRules({ dryRun, model, verbose, thinkingMode });
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "cli",
@@ -656,8 +661,15 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           const coreElapsedSec = Math.floor((Date.now() - coreStartedAt) / 1000);
           if (res.skipped) {
             console.log("Dream cycle skipped (nightlyCycle.enabled = false in config).");
-          } else {
+          } else if (res.success) {
             console.log(`Dream cycle complete: ${res.digestSummary}`);
+          } else {
+            console.log(`Dream cycle finished with errors: ${res.digestSummary}`);
+            if (res.failedStages.length > 0) {
+              console.log(`  Core stage failures: ${res.failedStages.join(", ")}`);
+            }
+          }
+          if (!res.skipped) {
             console.log(`  Core cycle elapsed: ${coreElapsedSec}s`);
             console.log(`  Facts pruned: ${res.factsPruned}`);
             console.log(`  Facts decayed: ${res.factsDecayed}`);
@@ -722,13 +734,31 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           ): Promise<T> => {
             const stageIndex = followUpCompleted + 1;
             try {
-              return await runVerboseFollowUp(phaseLabel, verbose, fn, {
+              const result = await runVerboseFollowUp(phaseLabel, verbose, fn, {
                 ...options,
                 stageIndex: followUpPlan.length > 0 ? stageIndex : undefined,
                 stageTotal: followUpPlan.length > 0 ? followUpPlan.length : undefined,
               });
-            } finally {
               followUpCompleted++;
+              return result;
+            } catch (err) {
+              recordDreamCycleFollowUpFailure(followUpPlan.length > 0 ? `${phaseLabel} (stage ${stageIndex}/${followUpPlan.length})` : phaseLabel, err);
+              throw err;
+            }
+          };
+          const runFollowUpStageSafe = async <T>(
+            phaseLabel: string,
+            fn: () => Promise<T> | T,
+            operation: string,
+            options?: RunVerboseFollowUpOptions,
+          ): Promise<void> => {
+            try {
+              await runFollowUpStage(phaseLabel, fn, options);
+            } catch (err) {
+              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+                subsystem: "cli",
+                operation,
+              });
             }
           };
 
@@ -777,73 +807,63 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 console.log(`  Warning: ${verificationAssessment.summary}`);
               }
               if (verificationAssessment.shouldFailPipeline) {
-                followUpFailures.push({
-                  phase: "continuous verification",
-                  error: verificationAssessment.summary ?? "verification follow-up degraded",
-                });
-                // Keep running the remaining follow-up stages for observability, but make the
-                // standalone CLI exit non-zero once the pipeline completes.
-                process.exitCode = 2;
+                recordDreamCycleFollowUpFailure(
+                  followUpFailures,
+                  "continuous verification",
+                  verificationAssessment.summary ?? "verification follow-up degraded",
+                );
               }
             }
           }
 
           // Extract implicit feedback signals as part of nightly cycle
           if (!res.skipped && runExtractImplicitFeedback && cfg.implicitFeedback?.enabled !== false) {
-            try {
-              let latestProgress: ExtractImplicitFeedbackProgressSnapshot | undefined;
-              const implRes = await runFollowUpStage(
-                "extract implicit feedback",
-                () =>
-                  runExtractImplicitFeedback({
-                    days: 3,
-                    dryRun: false,
-                    includeClosedLoop: false,
-                    verbose,
-                    onProgress: (snapshot) => {
-                      latestProgress = snapshot;
-                    },
-                  }),
-                {
-                  progressSupplier: () => formatExtractImplicitFeedbackProgress(latestProgress),
-                },
-              );
-              const partialSuffix = implRes.partial
-                ? ` Partial: ${implRes.partialReason ?? "capped"}; deferred=${implRes.sessionsDeferred}; backlog≈${implRes.backlogSignalsEstimate} signals/${implRes.backlogTrajectoriesEstimate} trajectories.`
-                : "";
-              console.log(
-                `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsProcessed}/${implRes.sessionsScanned} sessions.${partialSuffix}`,
-              );
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "cli",
-                operation: "dream-cycle:extract-implicit",
-              });
-            }
+            let latestProgress: ExtractImplicitFeedbackProgressSnapshot | undefined;
+            await runFollowUpStageSafe(
+              "extract implicit feedback",
+              async () => {
+                const implRes = await runExtractImplicitFeedback({
+                  days: 3,
+                  dryRun: false,
+                  includeClosedLoop: false,
+                  verbose,
+                  onProgress: (snapshot) => {
+                    latestProgress = snapshot;
+                  },
+                });
+                const partialSuffix = implRes.partial
+                  ? ` Partial: ${implRes.partialReason ?? "capped"}; deferred=${implRes.sessionsDeferred}; backlog≈${implRes.backlogSignalsEstimate} signals/${implRes.backlogTrajectoriesEstimate} trajectories.`
+                  : "";
+                console.log(
+                  `Extract-implicit: ${implRes.signalsExtracted} signals (${implRes.positiveCount}+/${implRes.negativeCount}-) from ${implRes.sessionsProcessed}/${implRes.sessionsScanned} sessions.${partialSuffix}`,
+                );
+              },
+              "dream-cycle:extract-implicit",
+              {
+                progressSupplier: () => formatExtractImplicitFeedbackProgress(latestProgress),
+              },
+            );
           }
 
           // Closed-loop effectiveness analysis
           if (!res.skipped && cfg.closedLoop?.enabled !== false && cfg.closedLoop?.runInNightlyCycle !== false) {
-            try {
-              const clReport = await runFollowUpStage("closed-loop effectiveness", () =>
-                runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true }, {
+            await runFollowUpStageSafe(
+              "closed-loop effectiveness",
+              async () => {
+                const clReport = await runClosedLoopAnalysis(factsDb, cfg.closedLoop ?? { enabled: true }, {
                   verbose,
                   logger: (msg) => console.log(msg),
-                }),
-              );
-              console.log(
-                `Closed-loop analysis: ${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted.`,
-              );
-              if (clReport.rulesAnalyzed > 0) {
-                const report = getEffectivenessReport(factsDb);
-                if (report && report.length > 0) console.log(report);
-              }
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "cli",
-                operation: "dream-cycle:closed-loop",
-              });
-            }
+                });
+                console.log(
+                  `Closed-loop analysis: ${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted.`,
+                );
+                if (clReport.rulesAnalyzed > 0) {
+                  const report = getEffectivenessReport(factsDb);
+                  if (report && report.length > 0) console.log(report);
+                }
+              },
+              "dream-cycle:closed-loop",
+            );
           }
 
           // Cross-agent learning (Issue #263 — Phase 2)
@@ -853,19 +873,16 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             cfg.crossAgentLearning?.enabled &&
             cfg.crossAgentLearning?.runInNightlyCycle !== false
           ) {
-            try {
-              const caRes = await runFollowUpStage("cross-agent learning", () =>
-                runCrossAgentLearning(verbose ? { verbose: true } : undefined),
-              );
-              console.log(
-                `Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`,
-              );
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "cli",
-                operation: "dream-cycle:cross-agent-learning",
-              });
-            }
+            await runFollowUpStageSafe(
+              "cross-agent learning",
+              async () => {
+                const caRes = await runCrossAgentLearning(verbose ? { verbose: true } : undefined);
+                console.log(
+                  `Cross-agent learning: ${caRes.generalisedStored} generalised patterns stored from ${caRes.agentsScanned} agents.`,
+                );
+              },
+              "dream-cycle:cross-agent-learning",
+            );
           }
 
           // Tool effectiveness scoring (Issue #263 — Phase 3)
@@ -884,16 +901,10 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 toolEffectivenessSummary = `ran (${firstLine})`;
               } else if (firstLine.length > 0) {
                 toolEffectivenessSummary = `degraded (unexpected output: ${firstLine})`;
-                followUpFailures.push({
-                  phase: "tool effectiveness",
-                  error: `unexpected output: ${firstLine}`,
-                });
+                recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", `unexpected output: ${firstLine}`);
               } else {
                 toolEffectivenessSummary = "degraded (unexpected empty output)";
-                followUpFailures.push({
-                  phase: "tool effectiveness",
-                  error: "unexpected empty output",
-                });
+                recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", "unexpected empty output");
               }
             } catch (err) {
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -901,10 +912,7 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
                 operation: "dream-cycle:tool-effectiveness",
               });
               toolEffectivenessSummary = `degraded (${err instanceof Error ? err.message : String(err)})`;
-              followUpFailures.push({
-                phase: "tool effectiveness",
-                error: err instanceof Error ? err.message : String(err),
-              });
+              recordDreamCycleFollowUpFailure(followUpFailures, "tool effectiveness", err);
             }
           } else if (!res.skipped) {
             if (!runToolEffectiveness) {
@@ -926,15 +934,14 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
             cfg.costTracking?.enabled !== false &&
             cfg.costTracking?.pruneInNightlyCycle !== false
           ) {
-            try {
-              const pruned = await runFollowUpStage("cost log prune", () => pruneCostLog(cfg.costTracking?.retainDays));
-              if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
-            } catch (err) {
-              capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-                subsystem: "cli",
-                operation: "dream-cycle:cost-log-prune",
-              });
-            }
+            await runFollowUpStageSafe(
+              "cost log prune",
+              async () => {
+                const pruned = await pruneCostLog(cfg.costTracking?.retainDays);
+                if (pruned > 0) console.log(`Cost log: pruned ${pruned} old entries.`);
+              },
+              "dream-cycle:cost-log-prune",
+            );
           }
 
           if (!res.skipped && followUpFailures.length > 0) {
@@ -945,6 +952,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
           }
 
           if (!res.skipped) {
+            applyDreamCyclePipelineExitCode({
+              coreSuccess: res.success,
+              coreFailedStages: res.failedStages,
+              followUpFailures,
+            });
             const totalElapsedSec = Math.floor((Date.now() - pipelineStartedAt) / 1000);
             const followUpElapsedSec = Math.max(0, totalElapsedSec - coreElapsedSec);
             console.log(
