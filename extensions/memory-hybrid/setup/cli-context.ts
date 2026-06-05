@@ -5,3 +5,4 @@ export { buildCliContextServices, type HybridMemCliRegistrationContext } from ".
 export { createHybridMemCliContext } from "./cli-context/register-help.js";
 export { registerHybridMemCliWithApi, type RegisterHybridMemCliWithApiOptions } from "./cli-context/register-full.js";
 export { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
+export { registerHybridMemCliCredentialsOnlyWithApi } from "./cli-context/register-credentials-only.js";

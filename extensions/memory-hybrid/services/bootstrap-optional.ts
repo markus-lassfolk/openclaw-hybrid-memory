@@ -16,6 +16,7 @@ import type { BootstrapPhaseConfig, HybridMemoryConfig } from "../config.js";
 import { ProvenanceService } from "./provenance.js";
 import { AliasDB } from "./retrieval-aliases.js";
 import { VerificationStore } from "./verification-store.js";
+import { createCredentialsDbForConfig, resolveCredentialsDbPath } from "./credentials-bootstrap.js";
 
 export interface OptionalBootstrapContext {
   cfg: HybridMemoryConfig;
@@ -54,21 +55,23 @@ export const optionalBootstrapInstaller: OptionalBootstrapInstaller = {
 
     let credentialsDb: CredentialsDB | null = null;
     if (cfg.credentials.enabled) {
-      const credPath = join(baseDir, "credentials.db");
-      credentialsDb = new CredentialsDB(credPath, cfg.credentials.encryptionKey ?? "");
-      const st = credentialsDb.getVaultStatus();
-      if (st.encryptedAtRest) {
-        api.logger.info(
-          `memory-hybrid: credentials vault enabled (encrypted, kdf_version=${st.kdfVersion}) (${credPath})`,
-        );
-      } else if (st.migrationRequired) {
-        api.logger.warn(
-          `memory-hybrid: credentials vault enabled (plaintext, kdf_version=${st.kdfVersion}) (${credPath}) — encryption key is configured but ignored until the vault is encrypted. Fix: run \`openclaw hybrid-mem credentials encrypt-vault --yes\` (see docs/CREDENTIALS.md).`,
-        );
-      } else {
-        api.logger.warn(
-          `memory-hybrid: credentials vault enabled (plaintext, kdf_version=${st.kdfVersion}) (${credPath}) — no encryption key configured. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY when ready; until then restrict access to this file.`,
-        );
+      const credPath = resolveCredentialsDbPath(resolvedSqlitePath);
+      credentialsDb = createCredentialsDbForConfig(cfg, resolvedSqlitePath);
+      if (credentialsDb) {
+        const st = credentialsDb.getVaultStatus();
+        if (st.encryptedAtRest) {
+          api.logger.info(
+            `memory-hybrid: credentials vault enabled (encrypted, kdf_version=${st.kdfVersion}) (${credPath})`,
+          );
+        } else if (st.migrationRequired) {
+          api.logger.warn(
+            `memory-hybrid: credentials vault enabled (plaintext, kdf_version=${st.kdfVersion}) (${credPath}) — encryption key is configured but ignored until the vault is encrypted. Fix: run \`openclaw hybrid-mem credentials encrypt-vault --yes\` (see docs/CREDENTIALS.md).`,
+          );
+        } else {
+          api.logger.warn(
+            `memory-hybrid: credentials vault enabled (plaintext, kdf_version=${st.kdfVersion}) (${credPath}) — no encryption key configured. Set credentials.encryptionKey (16+ chars) or OPENCLAW_CRED_KEY when ready; until then restrict access to this file.`,
+          );
+        }
       }
     }
 

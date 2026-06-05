@@ -13,9 +13,12 @@ Run these in a shell (host where OpenClaw + the plugin run):
 | A | `openclaw hybrid-mem verify` | Embedding, SQLite, LanceDB, embedding↔vector dimensions, cron jobs registered, feature toggles printed as **true/false** |
 | B | `openclaw hybrid-mem config` | Full effective-style view of plugin keys (or use `openclaw hybrid-mem config-set <key>` **without a value** to read one key) |
 | C | `openclaw hybrid-mem stats` (optional: `--efficiency`) | Fact counts, decay breakdown, store health |
-| D | Inspect `~/.openclaw/cron/jobs.json` | Which **hybrid-mem:*** jobs exist (disabled jobs stay disabled; verify does not re-enable them) |
+| D | `openclaw hybrid-mem maintenance steps` | **48-step orchestrator** — guard intervals, last run, what is due tonight vs on the gateway tick |
+| E | Inspect `~/.openclaw/cron/jobs.json` | Look for **`hybrid-mem:maintenance-nightly`** (consolidated mode). Legacy per-task jobs may show `superseded: true` after upgrade |
 
 If **embedding vs LanceDB dimensions** mismatch, fix config and run `openclaw hybrid-mem re-index` if the docs say so—semantic recall will be wrong until aligned.
+
+**Full command tree:** `openclaw hybrid-mem help` (grouped namespaces) or repo [MAINTENANCE-TASKS-MATRIX.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE-TASKS-MATRIX.md).
 
 ---
 
@@ -33,91 +36,110 @@ These are **general** priorities; exact benefit depends on workload.
 | **`reflection` + `reflect-*`** | Meta-patterns, rules, proposals | Less self-improvement over time |
 | **`procedures` + extract/generate-auto-skills** | Reusable tool sequences → skills | No procedural layer |
 | **`selfCorrection`** | Learns from user corrections → memory + TOOLS.md | Repeated mistakes |
-| **`nightlyCycle` / `dream-cycle`** | Prune → consolidate event log → reflect chain | Layer-1 episodic consolidation depends on this being on |
+| **`nightlyCycle` / dream-cycle** | Prune → consolidate event log → reflect chain | Layer-1 episodic consolidation depends on this being on |
 | **`consolidate` / `compact` / `scope promote`** | Merge duplicates, tier DB, promote scoped facts | Drift, bloat, session facts stuck in session scope |
 | **`ingest.paths`** + **`ingest-files`** | Indexes `skills/**`, `TOOLS.md`, `AGENTS.md` as facts | Lower recall of workspace “how we work” docs |
 | **`graph.enabled`** (NER + contacts) | Store-time PERSON/ORG extraction (**franc** + LLM); **`memory_directory`** for org/people views | No structured contact/org lists without it; use **`enrich-entities`** to backfill old facts |
+| **`maintenance.orchestrator`** (default on) | Gateway tick + one nightly cron instead of 18 separate jobs | Set `consolidatedCronJobs: false` only if you need legacy per-task crons |
 
 For deep detail, see the repo: [CONFIGURATION.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CONFIGURATION.md), [GRAPH-MEMORY.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/GRAPH-MEMORY.md), [MAINTENANCE-TASKS-MATRIX.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE-TASKS-MATRIX.md).
 
 ---
 
-## 3. One command: broad “catch-up”
+## 3. Maintenance orchestrator (preferred)
 
-**`openclaw hybrid-mem run-all`** runs a long, ordered pipeline (prune, compact, distill, extracts, reflection, self-correction, languages, etc.—**respecting feature flags**). It is the best **single** entry for “run everything that makes sense with my current config.”
+Since 2026.6, maintenance runs through a **48-step hybrid orchestrator** with **staggered guards** (20h / 44h / 68h / 5d / 25d). Weekly/monthly work is **not** separate cron jobs — guards decide when each step is due.
 
-**Not covered by `run-all`:** e.g. **`consolidate`**, **`scope promote`**, **`sensor-sweep`**—those are mainly **weekly/monthly cron** or manual. See matrix below.
+| Layer | Trigger | Command | Typical steps |
+| --- | --- | --- | --- |
+| **Gateway tick** | ~every 60 min (+ startup) | `maintenance cycle` | prune, compact, sensor-sweep, auto-classify, proposals-prune, build-languages (when due) |
+| **Nightly cron** | Daily 02:00 `hybrid-mem:maintenance-nightly` | `maintenance nightly --verbose` | distill, extract-daily, dream-cycle, reflect chain, self-correction, LLM-heavy quality steps (only when guards say due) |
+| **Manual catch-up** | Operator | `maintenance full` or `run-all` | cycle + nightly tiers (respects guards unless `--force`) |
+| **Inspect** | Anytime | `maintenance steps` | Full registry: guard interval, last run, eligible now |
+
+**Start here for “run everything”:**
+
+```bash
+openclaw hybrid-mem verify
+openclaw hybrid-mem maintenance steps          # see what's due
+openclaw hybrid-mem maintenance full --verbose # or: run-all
+```
+
+After long downtime: `openclaw hybrid-mem maintenance full --force --verbose` bypasses guard files under `~/.openclaw/memory/step--*.ms`.
+
+**Install / verify --fix** adds the single consolidated cron job and marks legacy hybrid-mem crons `superseded: true` (when consolidated mode is on). Restart the gateway so the 60-minute tick runs.
 
 ---
 
-## 4. Manual order (when running steps one-by-one)
+## 4. Individual steps (manual override)
 
-If the user prefers **explicit** steps or `run-all` is too heavy, use this **canonical** ordering (aligned with scheduled jobs in the plugin docs).
+Use these when the user wants **one** step, a **targeted backfill**, or to debug a failing orchestrator step. The orchestrator runs the same underlying commands with guards and scan cursors.
 
-### A. Nightly-style sweep (session + daily files + contradictions)
+### Quick local / storage (often on gateway tick)
 
-1. `openclaw hybrid-mem prune` (add `--verbose` for id list when useful)
-2. `openclaw hybrid-mem distill --days 3` (packaged cron uses `--days 1`; adjust window as needed; `--all` for big backfill; `--verbose` in cron)
-3. `openclaw hybrid-mem extract-daily` (as configured; cron uses `--days 7 --verbose`)
-4. `openclaw hybrid-mem resolve-contradictions --auto` (`--auto --verbose` in cron)
-5. `openclaw hybrid-mem enrich-entities --limit 200` (backfill PERSON/ORG rows for facts still missing them; uses LLM when graph is on; `--verbose` in cron)
+| Step | Command | Notes |
+| --- | --- | --- |
+| Prune | `openclaw hybrid-mem prune [--verbose]` | Also at gateway startup |
+| Compact | `openclaw hybrid-mem compact` | Or `storage compact` |
+| Vector maintenance | `openclaw hybrid-mem vectordb-optimize` | Or `storage optimize` |
+| Scope promote | `openclaw hybrid-mem scope promote` | Promote important session-scoped facts |
+| Sensor sweep | `openclaw hybrid-mem sensor-sweep` | When sensor features enabled |
 
-### B. Self-correction (after distill if you want fresh incidents)
+### Session + daily extraction (nightly tier)
 
-6. `openclaw hybrid-mem self-correction-run` (when `selfCorrection` is enabled)
+| Step | Command | Notes |
+| --- | --- | --- |
+| Distill | `openclaw hybrid-mem distill --days 3` | Cron/orchestrator uses scan cursors; `--all` for big backfill |
+| Daily logs | `openclaw hybrid-mem extract-daily` | Orchestrator passes `--days 7` |
+| Contradictions | `openclaw hybrid-mem resolve-contradictions --auto` | Or `quality contradictions` |
+| Enrich entities | `openclaw hybrid-mem enrich-entities --limit 200` | Backfill PERSON/ORG; `--verbose` in cron |
 
-### C. Dream cycle (optional; requires `nightlyCycle.enabled`)
+### Learning + reflection (guarded 44h–5d)
 
-7. `openclaw hybrid-mem dream-cycle`
+| Step | Command | Notes |
+| --- | --- | --- |
+| Self-correction | `openclaw hybrid-mem self-correction-run` | When `selfCorrection` enabled |
+| Dream cycle | `openclaw hybrid-mem dream-cycle` | Requires `nightlyCycle.enabled` |
+| Procedures | `openclaw hybrid-mem extract-procedures --days 7` | Or `distill extract-procedures` |
+| Directives / reinforcement | `extract-directives`, `extract-reinforcement` | Weekly-frequency guards |
+| Auto-skills | `openclaw hybrid-mem generate-auto-skills` | Procedure → skill drafts |
+| Reflect chain | `reflect`, `reflect-rules`, `reflect-meta` | Or `reflect patterns`, etc. |
+| Proposals | `openclaw hybrid-mem generate-proposals` | Persona proposals |
 
-### D. Weekly-style (procedures, directives, reinforcement, auto-skills)
+### Deep / monthly-style (5d–25d guards)
 
-8. `openclaw hybrid-mem extract-procedures --days 7`
-9. `openclaw hybrid-mem extract-directives --days 7`
-10. `openclaw hybrid-mem extract-reinforcement --days 7`
-11. `openclaw hybrid-mem generate-auto-skills`
-
-### E. Reflection + proposals (weekly cron mirrors)
-
-12. `openclaw hybrid-mem reflect --verbose`
-13. `openclaw hybrid-mem reflect-rules --verbose`
-14. `openclaw hybrid-mem reflect-meta --verbose`
-15. `openclaw hybrid-mem generate-proposals` (if persona proposals matter)
-
-### F. Deep storage maintenance (weekly cron mirror)
-
-16. `openclaw hybrid-mem compact`
-17. `openclaw hybrid-mem vectordb-optimize` (when you use vector DB maintenance)
-18. `openclaw hybrid-mem scope promote` (promote important session-scoped facts)
-
-### G. Monthly-style consolidation
-
-19. `openclaw hybrid-mem consolidate --threshold 0.92`
-20. `openclaw hybrid-mem build-languages`
-21. `openclaw hybrid-mem backfill-decay`
-22. `openclaw hybrid-mem enrich-entities --limit 25` (safe per-run cap; re-run on later cycles to process more; set `HYBRID_MEM_CLI_JOB_ENRICH_LIMIT` env var to override the cron default)
-
-### H. Workspace corpus (optional but high value for recall of docs)
-
-23. `openclaw hybrid-mem ingest-files` (uses `ingest.paths`—default includes `skills/**/*.md`, `TOOLS.md`, `AGENTS.md`)
+| Step | Command | Notes |
+| --- | --- | --- |
+| Consolidate | `openclaw hybrid-mem consolidate --threshold 0.92` | Or `quality consolidate` |
+| Languages | `openclaw hybrid-mem build-languages` | Multilingual NER keywords |
+| Decay backfill | `openclaw hybrid-mem backfill-decay` | Once per install (marker) |
+| Workspace ingest | `openclaw hybrid-mem ingest-files` | Uses `ingest.paths` |
 
 **Always end with:** `openclaw hybrid-mem verify` if anything failed or config changed.
+
+**Grouped CLI (preferred):** `distill`, `reflect`, `storage`, `quality`, `learn`, `maintenance` — each accepts `--help`. Flat names (`run-all`, `stats`, `extract-daily`, …) still work with a deprecation hint on stderr.
 
 ---
 
 ## 5. Cron schedule (what runs automatically)
 
-If **`openclaw hybrid-mem install`** / **`verify --fix`** has been run, jobs in `~/.openclaw/cron/jobs.json` mirror roughly. Default messages embed a **bash harness**: per-step `tee` to `HM_LOG`, `HM_EXIT` lines with exit codes, and logs under `~/.openclaw/logs/cron-hybrid-mem/` (created on install).
+### Consolidated mode (default)
 
-| When | Bundle |
-| --- | --- |
-| Daily 02:00 | prune → distill (1d in cron) → extract-daily → resolve-contradictions → enrich-entities |
-| Daily 02:30 | self-correction-run |
-| Daily 02:45 | dream-cycle (gated) |
-| Weekly | reflection, procedure pipeline, compact/scope, proposals |
-| Monthly | consolidate, languages, backfill-decay, enrich-entities |
+| When | Job / trigger | What runs |
+| --- | --- | --- |
+| **Every ~60 min** | Gateway maintenance tick | `maintenance cycle` — local steps (prune, compact, sensor-sweep, …) |
+| **Daily 02:00** | `hybrid-mem:maintenance-nightly` in `~/.openclaw/cron/jobs.json` | `openclaw hybrid-mem maintenance nightly --verbose` — LLM steps only when guards are due (~5–7 steps on a typical night, not all 48) |
+| **After plugin upgrade** | Gateway startup (once) | Post-upgrade pipeline (~20s delay) |
 
-Exact names/schedules: [CLI-REFERENCE.md — Maintenance cron jobs](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/CLI-REFERENCE.md#maintenance-cron-jobs).
+Logs: `~/.openclaw/logs/cron-hybrid-mem/` (created on install). Per-step harness lines include `HM_EXIT` exit codes when using the bundled cron message.
+
+**Disable consolidated mode:** `maintenance.orchestrator.consolidatedCronJobs: false` — restores legacy per-task cron layout (see repo docs).
+
+### Legacy multi-job layout (opt-in only)
+
+If consolidated mode is off, install/verify may register separate daily/weekly jobs (prune→distill chain, self-correction, dream-cycle, etc.). Prefer upgrading to consolidated mode unless you rely on custom per-job schedules.
+
+Canonical reference: [MAINTENANCE-TASKS-MATRIX.md](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE-TASKS-MATRIX.md).
 
 ---
 
@@ -126,3 +148,11 @@ Exact names/schedules: [CLI-REFERENCE.md — Maintenance cron jobs](https://gith
 - Keep **`MEMORY.md`** short; put detail in **`memory/**`**.
 - Use clear headings and consistent paths in markdown so **memorySearch** chunks well.
 - See [MAINTENANCE.md — Writing Effective Memory Files](https://github.com/markus-lassfolk/openclaw-hybrid-memory/blob/main/docs/MAINTENANCE.md#writing-effective-memory-files).
+
+---
+
+## 7. Refresh this skill in your workspace
+
+- **First gateway start:** copies bundled skill if `{workspace}/skills/hybrid-memory/SKILL.md` is missing.
+- **After plugin upgrade:** run **`openclaw hybrid-mem install`** to overwrite the workspace skill + `references/` and refresh the managed block in `TOOLS.md`.
+- Custom edits in the workspace skill are **not** overwritten on every restart — only `install` replaces them.

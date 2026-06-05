@@ -7,7 +7,6 @@ import { LearningsDB } from "../backends/learnings-db.js";
 import type { MemoryPluginAPI } from "../api/memory-plugin-api.js";
 import { type PluginRuntime, clearRuntimeTimers, createTimers } from "../api/plugin-runtime.js";
 import type { HybridMemoryConfig, MemoryCategory } from "../config.js";
-import { hybridConfigSchema } from "../config/hybrid-schema.js";
 import { createPendingLLMWarnings } from "../services/chat.js";
 import { getMemoryTriggers } from "../services/auto-capture.js";
 import { detectCategory as detectCategoryUtil, shouldCapture as shouldCaptureUtil } from "../services/capture-utils.js";
@@ -21,7 +20,9 @@ import { resetStartupMemoryAttribution } from "../services/startup-memory-attrib
 import { walRemove, walWrite } from "../services/wal-helpers.js";
 import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
 import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
+import { registerHybridMemCliCredentialsOnlyWithApi } from "./cli-context/register-credentials-only.js";
 import { registerHybridMemCliWithApi } from "./cli-context/register-full.js";
+import { parseHybridMemPluginConfig } from "./parse-plugin-config.js";
 import "./cli-context.js";
 import { closeOldDatabases, createReusedDatabaseBootstrap, initializeDatabases } from "./bootstrap-databases.js";
 import "./init-databases.js";
@@ -35,10 +36,6 @@ import {
   resetReregisterPolicyForTests,
   resolveReregisterPolicy,
 } from "./reregister-policy.js";
-import {
-  applyGatewayEmbeddingInheritanceBeforeParse,
-  shallowClonePluginConfigForGatewayMerge,
-} from "./provider-router.js";
 import {
   getHybridMemoryRegistrationState,
   resetHybridMemoryRegistrationStateForTests,
@@ -56,6 +53,7 @@ import { registerLifecycleHooks } from "./register-hooks.js";
 import { registerTools } from "./register-tools.js";
 import { PLUGIN_ID } from "../utils/constants.js";
 import { isHybridMemHelpInvocation } from "../index-help.js";
+import { isHybridMemCredentialsOnlyInvocation } from "../index-credentials-cli.js";
 import { wrapApiLoggerStderrForJsonCli, restoreStdoutAfterJsonCli } from "../utils/hybrid-mem-json-cli.js";
 import {
   getCategoryDecisionRegex,
@@ -186,6 +184,12 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
     return;
   }
 
+  // Vault-only commands need CredentialsDB + config only (issue #1883).
+  if (isHybridMemCredentialsOnlyInvocation(process.argv)) {
+    registerHybridMemCliCredentialsOnlyWithApi(api);
+    return;
+  }
+
   // Issue #802 re-entrancy: serialize concurrent register() calls. OpenClaw requires register()
   // to be synchronous (no Promise return), so we block with Atomics.wait instead of async/await.
   while (registrationInProgress) {
@@ -201,7 +205,7 @@ export function runMemoryHybridRegister(api: ClawdbotPluginApi): void {
 }
 
 function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
-  // Issue #1230 / #1234: JSON CLI must not write plugin telemetry to stdout (cron harnesses, jq).
+  // Issue #1230 / #1234 / #1882: machine-output CLI must not write plugin telemetry to stdout.
   // Wrap api.logger to stderr before bootstrap; keep pluginLogger on that same logger delegate.
   const logApi = wrapApiLoggerStderrForJsonCli(api);
   initPluginLogger(logApi.logger, false);
@@ -213,19 +217,10 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   let cfg: HybridMemoryConfig;
   let parsedCfgSnapshot: HybridMemoryConfig;
   try {
-    const rawPc = api.pluginConfig;
-    const buildConfigToParse = (): unknown => {
-      if (rawPc && typeof rawPc === "object" && !Array.isArray(rawPc)) {
-        const clone = shallowClonePluginConfigForGatewayMerge(rawPc as Record<string, unknown>);
-        applyGatewayEmbeddingInheritanceBeforeParse(clone, api);
-        return clone;
-      }
-      return rawPc;
-    };
-    cfg = hybridConfigSchema.parse(buildConfigToParse());
+    cfg = parseHybridMemPluginConfig(logApi);
     // Re-parse from raw plugin config so snapshot matches a fresh register() parse (structuredClone
     // drops non-enumerable fields such as credentials.encryptionKey).
-    parsedCfgSnapshot = hybridConfigSchema.parse(buildConfigToParse());
+    parsedCfgSnapshot = parseHybridMemPluginConfig(logApi);
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "registration",

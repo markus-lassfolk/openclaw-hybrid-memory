@@ -6,6 +6,7 @@
 import { capturePluginError } from "../../../services/error-reporter.js";
 import { deleteVectorsForFactIds } from "../../../services/vector-maintenance.js";
 import type { ScopeFilter } from "../../../types/memory.js";
+import { withMachineOutputStdoutSuppressed } from "../../../utils/hybrid-mem-json-cli.js";
 import { type Chainable, withExit } from "../../shared.js";
 import type { MigrateToVaultResult } from "../../types.js";
 import type { ManageBindings } from "./bindings.js";
@@ -179,12 +180,14 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
       "--value-only",
       "Print only the secret value (for piping); no metadata. Warning: value is printed in plaintext.",
     )
+    .option("--quiet", "Alias for --value-only (machine-readable stdout for scripting)")
     .option(
       "--show-value",
       "Reveal the secret value in the default (metadata) output. Without this flag the value is masked for safety.",
     )
     .action(
-      withExit(async (opts: { service: string; type?: string; valueOnly?: boolean; showValue?: boolean }) => {
+      withExit(async (opts: { service: string; type?: string; valueOnly?: boolean; quiet?: boolean; showValue?: boolean }) => {
+        const valueOnly = opts.valueOnly === true || opts.quiet === true;
         const entry = runCredentialsGet({ service: opts.service, type: opts.type });
         if (!entry) {
           console.error(
@@ -193,8 +196,10 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
           process.exitCode = 1;
           return;
         }
-        if (opts.valueOnly) {
-          console.log(entry.value);
+        if (valueOnly) {
+          withMachineOutputStdoutSuppressed(() => {
+            process.stdout.write(entry.value);
+          });
           return;
         }
         console.log(`service: ${entry.service}`);

@@ -190,7 +190,7 @@ export type CredentialAutoCaptureConfig = {
 export type CredentialsConfig = {
   enabled: boolean;
   store: "sqlite";
-  /** Encryption key: "env:VAR_NAME" resolves from env, or raw string (not recommended) */
+  /** Encryption key: env:/file: SecretRef or raw string (16+ chars). See docs/CREDENTIALS.md. */
   encryptionKey: string;
   /** When enabled, detect credential patterns in conversation and prompt to store (default false) */
   autoDetect?: boolean;
