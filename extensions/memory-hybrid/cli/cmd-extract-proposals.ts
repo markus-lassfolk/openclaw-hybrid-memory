@@ -335,6 +335,7 @@ export async function runGenerateProposalsForCli(
     console.error(`${failureMessage} parse_success=false`);
     finishLightJobRun(jobRun, {
       skipped: false,
+      semanticEmpty: true,
       inputsProcessed: insights.length,
       outputsProduced: 0,
       dryRun: opts.dryRun,

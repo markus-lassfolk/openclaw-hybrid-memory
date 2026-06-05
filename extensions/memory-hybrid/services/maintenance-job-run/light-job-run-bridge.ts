@@ -20,7 +20,6 @@ export function resolveLightJobRunOutcome(params: LightJobRunParams): JobRunSema
   const inputs = params.inputsProcessed ?? 0;
   const outputs = params.outputsProduced ?? 0;
   if (inputs === 0) return "empty";
-  if (inputs > 0 && outputs === 0) return "success";
   if (outputs === 0) return "empty";
   return "success";
 }
