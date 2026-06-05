@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { runInjectionStage } from "../lifecycle/stage-injection.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { initPrependBudget } from "../services/prepend-budget.js";
 import {
   buildRecallLifecycleContext,
   makeMinimalRecallResult,
@@ -124,5 +125,41 @@ describe("runInjectionStage", () => {
 
     expect(factsDb.getById(short.id)?.recallCount).toBe((shortEntry?.recallCount ?? 0) + 1);
     expect(factsDb.getById(oversized.id)?.recallCount).toBe(oversizedEntry?.recallCount ?? 0);
+  });
+
+  it("falls back on injection timeout without double-consuming prepend budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+      initPrependBudget(ctx.prependBudgetRef, 500, "test-session");
+      const api = makeMockStageApi();
+      const base = makeMinimalRecallResult().candidates[0];
+      const candidates = Array.from({ length: 5 }, (_, i) => ({
+        ...base,
+        entry: { ...base.entry, id: `fact-${i}`, text: `Stored memory number ${i} with enough detail to matter.` },
+      }));
+      vi.mocked(ctx.openai.chat.completions.create).mockReturnValue(new Promise(() => {}) as never);
+
+      const recall = makeMinimalRecallResult({
+        candidates,
+        maxTokens: 40,
+        totalBudget: 40,
+        summarizeWhenOverBudget: true,
+      });
+
+      const runPromise = runInjectionStage(recall, api as never, ctx, { prompt: "test" });
+      await vi.advanceTimersByTimeAsync(10_001);
+      const out = await runPromise;
+
+      expect(out?.prependContext).toBeDefined();
+      expect(api.logger.warn).toHaveBeenCalledWith(
+        "memory-hybrid: injection stage timed out — returning unsummarized partial injection",
+      );
+      const remaining = ctx.prependBudgetRef.value?.remainingTokens ?? 0;
+      expect(remaining).toBeGreaterThan(0);
+      expect(remaining).toBeLessThan(500);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

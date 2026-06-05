@@ -11,6 +11,7 @@ import { formatSanitizedMemoryPreview } from "./recalled-context-assembler.js";
 import { estimateTokens, sanitizeRecallFactText } from "../utils/text.js";
 import { withTimeout } from "../utils/timeout.js";
 import { capturePluginError } from "./error-reporter.js";
+import { filterCandidatesByInteractiveGrading } from "./interactive-recall-grader.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "./recall-pipeline.js";
 import { assembleRecallPrependContext } from "./recalled-context-assembler.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY } from "./retrieval-mode-policy.js";
@@ -63,6 +64,7 @@ export async function buildPostCompactionRecallSnippet(
         reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
         diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
         interactiveFtsFastPath: true,
+        deferAccessRefresh: true,
       };
       const limit = Math.min(ctx.cfg.autoRecall.limit ?? 10, 15);
       const minScore = ctx.cfg.autoRecall.minScore ?? 0.3;
@@ -103,6 +105,13 @@ export async function buildPostCompactionRecallSnippet(
         return null;
       }
 
+      candidates = await filterCandidatesByInteractiveGrading(
+        trimmed,
+        candidates,
+        ctx.cfg.documentGrading,
+        ctx.openai,
+      );
+
       if (candidates.length === 0) return null;
 
       const budget =
@@ -111,6 +120,7 @@ export async function buildPostCompactionRecallSnippet(
       const edictReserve = Math.max(0, Math.floor(budget * 0.15));
       const memoryBudget = Math.max(80, budget - edictReserve);
       const lines: string[] = [];
+      const injectedIds: string[] = [];
       let used = estimateTokens("Recalled after context compaction:\n");
       for (const r of candidates.slice(0, limit)) {
         const raw = sanitizeRecallFactText(r.entry.summary || r.entry.text);
@@ -119,10 +129,13 @@ export async function buildPostCompactionRecallSnippet(
         const lineTokens = estimateTokens(`${line}\n`);
         if (used + lineTokens > memoryBudget) break;
         lines.push(line);
+        injectedIds.push(r.entry.id);
         used += lineTokens;
       }
 
       if (lines.length === 0) return null;
+
+      ctx.factsDb.refreshAccessedFacts(injectedIds);
 
       const semanticMarker = pipelineStatusRef.semanticDegraded
         ? "<!-- recall degraded: semantic -->"

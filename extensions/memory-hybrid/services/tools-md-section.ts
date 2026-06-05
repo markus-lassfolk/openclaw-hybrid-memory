@@ -11,7 +11,7 @@ export function normalizeRuleLine(line: string): string {
   return line.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-/** True when normalized rule text already appears as its own bullet under any section. */
+/** True when normalized rule text already appears as a bullet line in content. */
 export function ruleExistsInContent(content: string, rule: string): boolean {
   const needle = normalizeRuleLine(rule);
   if (!needle) return false;
@@ -19,7 +19,7 @@ export function ruleExistsInContent(content: string, rule: string): boolean {
     const trimmed = line.trim();
     if (trimmed.startsWith("- ") && normalizeRuleLine(trimmed.slice(2)) === needle) return true;
   }
-  return normalizeRuleLine(content).includes(needle);
+  return false;
 }
 
 /**

@@ -82,6 +82,8 @@ export interface MemoryPluginAPI {
   resolvedSqlitePath: string;
   currentAgentIdRef: { value: string | null };
   lastProgressiveIndexIds: string[];
+  progressiveIndexBySession: Map<string, string[]>;
+  lastAutoRecallPromptBySession: Map<string, string>;
   pendingLLMWarnings: PendingLLMWarnings;
 
   // --- Optional core (nullable) ---

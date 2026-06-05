@@ -986,6 +986,18 @@ export function resolveEntityForeignKeys(db: DatabaseSync, factId: string, entit
   const key = normalizeEntityKey(entity);
   if (!key) return;
 
+  const existing = db
+    .prepare(`SELECT entity, entity_contact_id, entity_organization_id FROM facts WHERE id = ?`)
+    .get(factId) as
+    | { entity: string | null; entity_contact_id: string | null; entity_organization_id: string | null }
+    | undefined;
+  if (!existing) return;
+
+  const existingKey = normalizeEntityKey(existing.entity ?? "");
+  const hasResolvedFk =
+    existing.entity_contact_id != null || existing.entity_organization_id != null;
+  if (hasResolvedFk && existingKey === key) return;
+
   let contactId: string | null = null;
   let organizationId: string | null = null;
 

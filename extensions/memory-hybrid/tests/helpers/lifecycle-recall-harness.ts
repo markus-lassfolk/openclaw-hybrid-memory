@@ -12,6 +12,9 @@ import { createSessionState } from "../../lifecycle/session-state.js";
 import type { LifecycleContext, RecallResult, SessionState } from "../../lifecycle/types.js";
 import type { SearchResult } from "../../types/memory.js";
 
+/** Default session key from {@link makeMockStageApi}. */
+export const DEFAULT_TEST_SESSION_KEY = "agent:main:telegram:test";
+
 export function buildRecallTestConfig(tmpDir: string, overrides: Record<string, unknown> = {}): HybridMemoryConfig {
   return hybridConfigSchema.parse({
     embedding: { apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
@@ -71,8 +74,10 @@ export function buildRecallLifecycleContext(
     narrativesDb: null,
     workflowStore: null,
     workflowTracker: undefined,
-    currentAgentIdRef: { value: "main" },
+    currentAgentIdRef: { value: DEFAULT_TEST_SESSION_KEY },
     lastProgressiveIndexIds: [],
+    progressiveIndexBySession: new Map(),
+    lastAutoRecallPromptBySession: new Map(),
     restartPendingClearedRef: { value: true },
     resolvedSqlitePath: join(tmpDir, "facts.db"),
     walWrite: vi.fn().mockResolvedValue("wal-id") as unknown as LifecycleContext["walWrite"],
@@ -91,6 +96,17 @@ export function buildRecallLifecycleContext(
 
 export function makeRecallSessionState(): SessionState {
   return createSessionState();
+}
+
+/** Seed per-session recall queue depth so the next runRecall exceeds degradationQueueDepth. */
+export function seedSessionRecallQueueDepth(
+  sessionState: SessionState,
+  priorInFlight: number,
+  sessionKey = DEFAULT_TEST_SESSION_KEY,
+): void {
+  if (priorInFlight > 0) {
+    sessionState.recallInFlightBySession.set(sessionKey, priorInFlight);
+  }
 }
 
 export function makeMockStageApi(sessionKey = "agent:main:telegram:test"): {
@@ -156,7 +172,8 @@ export function makeMinimalRecallResult(overrides: Partial<RecallResult> = {}): 
     summarizeModel: undefined,
     groupByCategory: false,
     pinnedRecallThreshold: 3,
-    lastProgressiveIndexIdsRef: [],
+    progressiveIndexSessionKey: "agent:main:telegram:test",
+    progressiveIndexBySession: new Map(),
     ambientCfg: { enabled: false },
     ambientSeenFacts: null,
     totalBudget: 2000,

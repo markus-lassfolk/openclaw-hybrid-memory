@@ -291,6 +291,8 @@ export function registerManageProcedureAndLifecycle(mem: Chainable, b: ManageBin
             factsDb,
             {
               skillsAutoPath: cfg.procedures.skillsAutoPath,
+              skillsPendingPath: cfg.procedures.skillsPendingPath,
+              requireApprovalForPromote: cfg.procedures.requireApprovalForPromote,
               validationThreshold: cfg.procedures.validationThreshold,
               skillTTLDays: cfg.procedures.skillTTLDays,
               procedureId: id,

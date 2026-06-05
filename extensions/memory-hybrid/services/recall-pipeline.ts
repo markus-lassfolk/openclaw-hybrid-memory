@@ -82,6 +82,8 @@ export interface RecallSearchOpts {
   diversityWeight: number;
   /** Passed to `FactsDB.search` — bounded FTS + two-phase fetch on interactive recall. */
   interactiveFtsFastPath?: boolean;
+  /** Defer recall_count until injection confirms exposure (#1559). */
+  deferAccessRefresh?: boolean;
 }
 
 /** All explicit dependencies consumed by `runRecallPipelineQuery`. */

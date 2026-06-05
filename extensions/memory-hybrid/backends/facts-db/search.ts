@@ -78,6 +78,8 @@ export function searchFacts(
     reinforcementBoost?: number;
     diversityWeight?: number;
     interactiveFtsFastPath?: boolean;
+    /** When true, skip recall_count bump — caller refreshes access only after injection (#1559). */
+    deferAccessRefresh?: boolean;
   } = {},
 ): SearchResult[] {
   const {
@@ -90,6 +92,7 @@ export function searchFacts(
     reinforcementBoost = 0.1,
     diversityWeight = 1.0,
     interactiveFtsFastPath = false,
+    deferAccessRefresh = false,
   } = options;
 
   const safeQuery = interactiveFtsFastPath
@@ -216,10 +219,12 @@ export function searchFacts(
   });
   const topResults = results.slice(0, limit);
 
-  refreshAccessedFacts(
-    db,
-    topResults.map((r) => r.entry.id),
-  );
+  if (!deferAccessRefresh) {
+    refreshAccessedFacts(
+      db,
+      topResults.map((r) => r.entry.id),
+    );
+  }
 
   return topResults;
 }
@@ -234,6 +239,7 @@ export function lookupFacts(
     asOf?: number;
     scopeFilter?: ScopeFilter | null;
     limit?: number;
+    deferAccessRefresh?: boolean;
   },
 ): SearchResult[] {
   const nowSec = Math.floor(Date.now() / 1000);
@@ -284,10 +290,12 @@ export function lookupFacts(
     };
   });
 
-  refreshAccessedFacts(
-    db,
-    results.map((r) => r.entry.id),
-  );
+  if (!options?.deferAccessRefresh) {
+    refreshAccessedFacts(
+      db,
+      results.map((r) => r.entry.id),
+    );
+  }
 
   return results;
 }

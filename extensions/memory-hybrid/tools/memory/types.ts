@@ -62,6 +62,8 @@ export interface MemoryToolsContext {
   provenanceService?: ProvenanceService | null;
   verificationStore?: VerificationStore | null;
   lastProgressiveIndexIds: string[];
+  progressiveIndexBySession: Map<string, string[]>;
+  lastAutoRecallPromptBySession: Map<string, string>;
   currentAgentIdRef: { value: string | null };
   pendingLLMWarnings: PendingLLMWarnings;
   variantQueue?: VariantGenerationQueue | null;

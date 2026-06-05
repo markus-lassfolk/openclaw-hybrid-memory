@@ -358,6 +358,7 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
         const results = factsDb.search(query, Math.min(limit, 15), {
           tierFilter,
           interactiveFtsFastPath: true,
+          deferAccessRefresh: true,
         });
         facts = results.map((r) => r.entry);
       }
@@ -405,11 +406,19 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
     const { logger, wal, factsDb, vectorDb, embeddings } = this.opts;
     try {
       // 1. Replay pending WAL entries — commit any writes that didn't complete before crash/compaction
-      const { committed: walCommitted, skipped: walSkipped } = await runPreConsolidationFlush(
+      const flush = await runPreConsolidationFlush(
         { wal, factsDb, vectorDb, embeddings },
         logger,
         "context-engine compact",
       );
+      if (flush.failed) {
+        return {
+          ok: false,
+          compacted: false,
+          reason: "WAL pre-flush failed; aborting compaction to avoid stale SQLite state",
+        };
+      }
+      const { committed: walCommitted } = flush;
 
       // 2. Auto-capture episodic events from session log (#781)
       //    Scans the session JSONL for outcome-indicating phrases (✅ merged, ❌ failed, etc.)
@@ -441,14 +450,17 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       let topFacts: ReturnType<typeof factsDb.list> = [];
       try {
         sessionFacts = factsDb.getCount();
-        topFacts = factsDb.list(8);
-        const block = buildContextBlock(
-          topFacts,
-          "post-compaction memory summary",
-          "Key memories retained across compaction:",
-          _params.tokenBudget,
-        );
-        if (block) memorySummary = block;
+        // after_compaction hook owns post-compaction injection when auto-recall is on (#957).
+        if (!this.opts.cfg.autoRecall?.enabled) {
+          topFacts = factsDb.list(8);
+          const block = buildContextBlock(
+            topFacts,
+            "post-compaction memory summary",
+            "Key memories retained across compaction:",
+            _params.tokenBudget,
+          );
+          if (block) memorySummary = block;
+        }
       } catch {
         // Non-fatal
       }

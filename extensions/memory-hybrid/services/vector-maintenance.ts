@@ -83,11 +83,16 @@ export async function deleteVectorsForFactIds(
       const normalizedDeleted = Number.isFinite(deleted)
         ? Math.max(0, Math.min(uniqueIds.length, Math.floor(deleted)))
         : 0;
+      const failed = Math.max(0, uniqueIds.length - normalizedDeleted);
+      if (failed > 0) {
+        options.logger?.warn?.(
+          `memory-hybrid: ${options.operation} vector bulk delete partial: deleted ${normalizedDeleted}/${uniqueIds.length}`,
+        );
+      }
       return {
         attempted: uniqueIds.length,
         deleted: normalizedDeleted,
-        // Keep failed semantics aligned with the per-id path: only count hard errors.
-        failed: 0,
+        failed,
       };
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));

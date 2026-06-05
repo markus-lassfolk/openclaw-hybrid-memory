@@ -16,6 +16,7 @@ import { resolveRecallScopeFilter } from "../lifecycle/stage-recall/degraded-rec
 import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { trimBlockToBudget } from "../services/context-block-trim.js";
+import { applyPrependBudget, getRemainingPrependTokens } from "../services/prepend-budget.js";
 import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
 import {
@@ -23,6 +24,7 @@ import {
   DEFAULT_EDICT_BUDGET_FRACTION,
   edictMaxTokensForBudget,
   formatSanitizedMemoryPreview,
+  wrapUntrustedMemoryContent,
 } from "../services/recalled-context-assembler.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
@@ -176,6 +178,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           : undefined,
       currentAgentIdRef: ctx.currentAgentIdRef,
       lastProgressiveIndexIds: ctx.lastProgressiveIndexIds,
+      progressiveIndexBySession: ctx.progressiveIndexBySession,
+      lastAutoRecallPromptBySession: ctx.lastAutoRecallPromptBySession,
       restartPendingClearedRef: ctx.restartPendingClearedRef,
       resolvedSqlitePath: ctx.resolvedSqlitePath,
       walWrite: (operation, data, logger, supersedeTargetId) =>
@@ -236,12 +240,14 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     // Wrap warnings in a stable, parseable block to prevent prompt pollution
     const wrappedWarnings = [
       "<llm-config-warning>",
-      ...warnings,
+      ...warnings.map((w) => sanitizePromptInjection(String(w))),
       "Note: These configuration warnings will not repeat in this session.",
       "</llm-config-warning>",
     ].join("\n");
 
-    return { prependContext: wrappedWarnings };
+    const prepend = applyPrependBudget(lifecycleContext.prependBudgetRef, wrappedWarnings);
+    if (!prepend) return;
+    return { prependContext: prepend };
   });
 
   // Temporary fix: ensure every tool_use has a tool_result immediately after (Claude API requirement).
@@ -314,10 +320,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       }
       const remaining = getRemainingPrependTokens(lifecycleContext.prependBudgetRef);
       if (remaining !== undefined && remaining < 120) return;
-      if (staticMemoryInstructions) {
-        consumePrependBudget(lifecycleContext.prependBudgetRef, staticMemoryInstructions);
-      }
-      return { prependContext: staticMemoryInstructions };
+      const prepend = applyPrependBudget(lifecycleContext.prependBudgetRef, staticMemoryInstructions);
+      if (!prepend) return;
+      return { prependContext: prepend };
     });
   }
 
@@ -354,11 +359,16 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         emitCompactionModelWatchdogAlert(api, "before_compaction", { event, hookCtx });
       }
 
-      await runPreConsolidationFlush(
+      const flush = await runPreConsolidationFlush(
         { wal: ctx.wal, factsDb: ctx.factsDb, vectorDb: ctx.vectorDb, embeddings: ctx.embeddings },
         api.logger,
         "before_compaction",
       );
+      if (flush.failed) {
+        api.logger.error?.(
+          "memory-hybrid: before_compaction — WAL pre-flush failed; compaction may proceed on stale SQLite state",
+        );
+      }
 
       // Log pre-compaction snapshot for diagnostics
       const msgCount = ev.messageCount ?? 0;
@@ -389,7 +399,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         if (typeof api.resolvePath === "function") {
           const agentsMdPath = api.resolvePath("AGENTS.md");
           if (fs.existsSync(agentsMdPath)) {
-            const content = fs.readFileSync(agentsMdPath, "utf-8");
+            const content = sanitizePromptInjection(fs.readFileSync(agentsMdPath, "utf-8"));
             const agentsBlock = `\n<!-- Workspace Agent Rules (AGENTS.md) -->\n${content}\n`;
             injectedContext += trimBlockToBudget(agentsBlock, 1500).text;
           }
@@ -419,7 +429,8 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
             })
             .filter(Boolean);
           if (lines.length > 0) {
-            const pinnedBlock = `\n<!-- Pinned Session Constraints / Memories -->\n${lines.join("\n")}\n`;
+            const wrappedPinned = wrapUntrustedMemoryContent(lines.join("\n"));
+            const pinnedBlock = `\n<!-- Pinned Session Constraints / Memories -->\n${wrappedPinned}\n`;
             injectedContext += trimBlockToBudget(pinnedBlock, 800).text;
           }
         }
@@ -514,10 +525,15 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           );
           const blocks: string[] = [];
           let usedRecallSnippet = false;
+          const compactionSessionKey =
+            resolveSessionKeyFromHookEvent(event, hookCtx) ??
+            lifecycleContext.currentAgentIdRef.value ??
+            "default";
           const lastPrompt =
-            typeof lifecycleContext.lastAutoRecallPromptRef.value === "string"
+            lifecycleContext.lastAutoRecallPromptBySession.get(compactionSessionKey)?.trim() ??
+            (typeof lifecycleContext.lastAutoRecallPromptRef.value === "string"
               ? lifecycleContext.lastAutoRecallPromptRef.value.trim()
-              : "";
+              : "");
 
           if (ctx.cfg.autoRecall.enabled) {
             if (lastPrompt.length >= 5) {
@@ -542,10 +558,12 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
             const tierFilter = ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const);
             const summaryFacts =
               lastPrompt.length >= 5
-                ? ctx.factsDb.search(lastPrompt, 8, { scopeFilter, tierFilter }).map((r) => r.entry)
+                ? ctx.factsDb
+                    .search(lastPrompt, 8, { scopeFilter, tierFilter, deferAccessRefresh: true })
+                    .map((r) => r.entry)
                 : ctx.cfg.memoryTiering.enabled
                   ? ctx.factsDb.getHotFacts(8, scopeFilter).map((r) => r.entry)
-                  : [];
+                  : ctx.factsDb.list(8);
             if (summaryFacts.length > 0) {
               summaryInner.push("Key memories retained across compaction:");
               for (const f of summaryFacts) {
@@ -569,7 +587,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
                 summaryInner.push("Open issues:");
                 for (const issue of openIssues) {
                   const title = sanitizePromptInjection(issue.title);
-                  summaryInner.push(`- [${issue.severity}] ${title} (${issue.status})`);
+                  const severity = sanitizePromptInjection(issue.severity);
+                  const status = sanitizePromptInjection(issue.status);
+                  summaryInner.push(`- [${severity}] ${title} (${status})`);
                 }
               }
             } catch {

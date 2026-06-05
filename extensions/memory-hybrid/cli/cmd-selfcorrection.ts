@@ -44,6 +44,7 @@ import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signa
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { applyToolsMdRules } from "../services/tools-md-rewrite.js";
+import { formatSkillUpdateProposal } from "../services/corrections-report.js";
 import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
@@ -390,7 +391,11 @@ async function applySelfCorrectionRemediations(params: {
           ? a.remediationContent
           : ((a.remediationContent as { text?: string })?.text ?? "");
       if (line.trim()) {
-        proposals.push(`[${a.remediationType}] ${line.trim()}`);
+        const proposalLine =
+          a.remediationType === "SKILL_UPDATE"
+            ? formatSkillUpdateProposal(line, workspaceRoot)
+            : `[${a.remediationType}] ${line.trim()}`;
+        proposals.push(proposalLine);
         if (
           a.remediationType === "AGENTS_RULE" &&
           proposalsDb &&
@@ -633,7 +638,7 @@ export async function runSelfCorrectionRunForCli(
   }
 
   try {
-    const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace, config: ctx.cfg as unknown as Record<string, unknown> });
+    const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
     const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
     const reportDir = join(workspaceRoot, "memory", "reports");
     const today = new Date().toISOString().slice(0, 10);

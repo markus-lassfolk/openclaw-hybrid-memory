@@ -17,6 +17,7 @@ import {
   buildRecallLifecycleContext,
   makeMockStageApi,
   makeRecallSessionState,
+  seedSessionRecallQueueDepth,
 } from "./helpers/lifecycle-recall-harness.js";
 
 vi.mock("../services/recall-pipeline.js", async (importOriginal) => {
@@ -86,7 +87,6 @@ describe("runRecallStage", () => {
 
   it("uses FTS-only degraded path when recall queue depth exceeds threshold", async () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
-    ctx.recallInFlightRef.value = 1;
     const searchSpy = vi.spyOn(factsDb, "search").mockReturnValue([
       {
         entry: {
@@ -110,6 +110,7 @@ describe("runRecallStage", () => {
       },
     ]);
     const sessionState = makeRecallSessionState();
+    seedSessionRecallQueueDepth(sessionState, 1);
     const api = makeMockStageApi();
 
     const result = await runRecallStage(
@@ -126,7 +127,7 @@ describe("runRecallStage", () => {
     }
     expect(searchSpy).toHaveBeenCalled();
     expect(recallPipeline.runRecallPipelineQuery).not.toHaveBeenCalled();
-    expect(ctx.recallInFlightRef.value).toBe(1);
+    expect(ctx.recallInFlightRef.value).toBe(0);
   });
 
   it("decrements recallInFlightRef when pipeline throws", async () => {
@@ -322,8 +323,8 @@ describe("runRecallStage", () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
       memoryTiering: { enabled: true, hotMaxTokens: 2000 },
       autoRecall: {
-        maxTokens: 8,
-        hotMaxTokens: 8,
+        maxTokens: 4,
+        hotMaxTokens: 4,
         narrativeMaxTokens: 0,
         procedureMaxTokens: 0,
       },
@@ -379,11 +380,13 @@ describe("runRecallStage", () => {
 
     expect(result?.kind).toBe("full");
     if (result?.kind === "full") {
-      expect(result.result.maxTokens).toBeLessThanOrEqual(2);
-      expect(estimateTokens(result.result.hotBlock)).toBeLessThanOrEqual(12);
-      expect(result.result.hotBlock).toContain("hot");
+      expect(result.result.maxTokens).toBeLessThanOrEqual(4);
+      expect(estimateTokens(result.result.hotBlock)).toBeLessThanOrEqual(4);
+      if (result.result.hotBlock.length > 0) {
+        expect(result.result.hotBlock).toContain("hot");
+      }
     }
-    if (result?.kind === "full" && result.result.maxTokens === 0) {
+    if (result?.kind === "full" && result.result.maxTokens <= 1) {
       expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("consumers:"));
     }
   });

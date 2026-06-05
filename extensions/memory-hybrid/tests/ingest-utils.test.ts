@@ -91,4 +91,19 @@ describe("gatherIngestFiles", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("skips atomic skill write scratch directories", () => {
+    const root = makeTempDir();
+    mkdirSync(join(root, "skills", "auto", ".openclaw-skill-tmp-abc"), { recursive: true });
+    writeFileSync(join(root, "skills", "auto", ".openclaw-skill-tmp-abc", "SKILL.md"), "draft", "utf-8");
+    mkdirSync(join(root, "skills", "auto", "live-skill"), { recursive: true });
+    writeFileSync(join(root, "skills", "auto", "live-skill", "SKILL.md"), "live", "utf-8");
+    try {
+      const result = gatherIngestFiles(root, ["skills/**/*.md"]);
+      expect(result.some((p) => p.includes(".openclaw-skill-tmp-"))).toBe(false);
+      expect(result.some((p) => p.includes("live-skill/SKILL.md"))).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

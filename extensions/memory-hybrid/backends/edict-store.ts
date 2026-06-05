@@ -16,6 +16,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { capturePluginError } from "../services/error-reporter.js";
+import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { parseTags, serializeTags } from "../utils/tags.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 
@@ -99,7 +100,9 @@ function renderEdictLine(edict: EdictEntry): string {
   // Edicts are intended to be short and declarative, but cap pathological cases so
   // forced injection cannot explode prompt size.
   const MAX_EDICT_PROMPT_TEXT_CHARS = 1000;
-  const tagStr = edict.tags.length > 0 ? `[${edict.tags[0]}] ` : "";
+  const tag =
+    edict.tags.length > 0 ? sanitizePromptInjection(edict.tags[0] ?? "") : "";
+  const tagStr = tag ? `[${tag}] ` : "";
   const text =
     edict.text.length > MAX_EDICT_PROMPT_TEXT_CHARS
       ? `${edict.text.slice(0, MAX_EDICT_PROMPT_TEXT_CHARS)}…`

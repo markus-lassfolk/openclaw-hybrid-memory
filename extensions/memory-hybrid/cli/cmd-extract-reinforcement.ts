@@ -34,7 +34,8 @@ import {
   runReinforcementExtract,
 } from "../services/reinforcement-extract.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
-import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { insertRulesUnderSection, ruleExistsInContent } from "../services/tools-md-section.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
@@ -249,7 +250,7 @@ export async function runExtractReinforcementForCli(
     } else {
       filePaths = resolveExtractSessionFilePaths(cfg, days);
     }
-    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
 
     // Two-tier pre-filter: use local Ollama to triage sessions before regex scan (Issue #290).
     // NOTE: filePaths (the full candidate set) is preserved for cursor watermarking below so
@@ -577,18 +578,18 @@ export async function runExtractReinforcementForCli(
               typeof a.remediationContent === "string"
                 ? a.remediationContent
                 : ((a.remediationContent as { text?: string })?.text ?? "");
-            if (!line.trim()) continue;
+            const trimmedRule = line.trim();
+            if (!trimmedRule) continue;
 
-            // Exact text dedup: skip if the rule already appears in TOOLS.md
             if (existsSync(toolsPath)) {
               const currentTools = readFileSync(toolsPath, "utf-8");
-              if (currentTools.includes(line.trim())) continue;
+              if (ruleExistsInContent(currentTools, trimmedRule)) continue;
             }
 
             let ruleVec: number[] | null = null;
             if (semanticDedup) {
               try {
-                ruleVec = await embeddings.embed(line.trim());
+                ruleVec = await embeddings.embed(trimmedRule);
                 if (await vectorDb.hasDuplicate(ruleVec, semanticThreshold)) {
                   logger?.info?.(
                     `memory-hybrid: reinforcement POSITIVE_RULE skipped (semantic duplicate): ${line.slice(0, 80)}`,
@@ -603,24 +604,22 @@ export async function runExtractReinforcementForCli(
               }
             }
 
-            if (existsSync(toolsPath)) {
-              insertRulesUnderSection(toolsPath, positiveRulesSection, [line.trim()]);
+            insertRulesUnderSection(toolsPath, positiveRulesSection, [trimmedRule]);
 
-              if (ruleVec) {
-                try {
-                  await vectorDb.store({
-                    text: line.trim(),
-                    vector: ruleVec,
-                    importance: CLI_STORE_IMPORTANCE,
-                    category: "technical",
-                    id: `positive-rule-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-                  });
-                } catch (err) {
-                  capturePluginError(err as Error, {
-                    subsystem: "cli",
-                    operation: "reinforcement:positive-rule-vector-store",
-                  });
-                }
+            if (ruleVec) {
+              try {
+                await vectorDb.store({
+                  text: trimmedRule,
+                  vector: ruleVec,
+                  importance: CLI_STORE_IMPORTANCE,
+                  category: "technical",
+                  id: `positive-rule-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+                });
+              } catch (err) {
+                capturePluginError(err as Error, {
+                  subsystem: "cli",
+                  operation: "reinforcement:positive-rule-vector-store",
+                });
               }
             }
           } else if (a.remediationType === "MEMORY_STORE" || a.remediationType === "PATTERN_FACT") {
@@ -734,8 +733,8 @@ export async function runExtractReinforcementForCli(
       const maxEventsPerFact = cfg.reinforcement?.maxEventsPerFact ?? 50;
       for (const incident of result.incidents) {
         if (incident.recalledMemoryIds.length === 0) {
-          annotationReasons.noRecalledIds++;
           let reinforcedViaSimilarity = false;
+          let praiseStored = false;
           // Embedding-similarity fallback when agent did not call memory_recall (#1802).
           try {
             const contextText = [incident.agentBehavior, incident.precedingUserMessage, incident.userMessage]
@@ -744,8 +743,9 @@ export async function runExtractReinforcementForCli(
               .slice(0, 500);
             if (contextText.trim().length >= 20) {
               const vector = await embeddings.embed(contextText);
-              const similar = await findSimilarByEmbedding(vectorDb, factsDb, vector, 3, 0.45);
+              const similar = await findSimilarByEmbedding(vectorDb, factsDb, vector, 1, 0.55);
               if (similar.length > 0) {
+                const entry = similar[0];
                 const context: ReinforcementContext = {
                   querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
                   topic: analysisCategory,
@@ -754,19 +754,17 @@ export async function runExtractReinforcementForCli(
                 };
                 const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
                 const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
-                for (const entry of similar) {
-                  const diversityScore = factsDb.calculateDiversityScore(entry.id);
-                  const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
-                  const ok = factsDb.reinforceFact(entry.id, incident.userMessage, context, {
-                    trackContext,
-                    maxEventsPerFact,
-                    boostAmount: effectiveBoost,
-                  });
-                  if (ok) {
-                    reinforcedViaSimilarity = true;
-                    annotated++;
-                    annotationReasons.reinforced++;
-                  }
+                const diversityScore = factsDb.calculateDiversityScore(entry.id);
+                const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+                const ok = factsDb.reinforceFact(entry.id, incident.userMessage, context, {
+                  trackContext,
+                  maxEventsPerFact,
+                  boostAmount: effectiveBoost,
+                });
+                if (ok) {
+                  reinforcedViaSimilarity = true;
+                  annotated++;
+                  annotationReasons.reinforced++;
                 }
               }
             }
@@ -798,6 +796,7 @@ export async function runExtractReinforcementForCli(
                   suppressVectorFallbackWarning: true,
                 });
                 if (!storeResult.skipped && (storeResult.newlyStored || storeResult.embeddingStale)) {
+                  praiseStored = true;
                   annotated++;
                   annotationReasons.reinforced++;
                   await cleanupEvictedVector({
@@ -839,6 +838,9 @@ export async function runExtractReinforcementForCli(
               subsystem: "cli",
               operation: "runExtractReinforcementForCli:procedure-boost",
             });
+          }
+          if (!reinforcedViaSimilarity && !praiseStored) {
+            annotationReasons.noRecalledIds++;
           }
           continue;
         }

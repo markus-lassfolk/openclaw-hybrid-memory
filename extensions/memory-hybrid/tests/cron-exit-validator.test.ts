@@ -538,6 +538,29 @@ error: unknown command 'bar'
       expect(result.failedSteps.some((s) => s.step === "dream-cycle-core")).toBe(true);
     });
 
+    it("fails dream-cycle validation from machine-readable status line without duplicate core entries", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "2024-05-08T02:15:30Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "Dream cycle finished with errors: Stages failed: reflection (patterns).",
+          "  Core stage failures: reflection (patterns)",
+          "Dream cycle status: success=false core_success=false failed_stages=1 follow_up_failures=0",
+          "memory-hybrid: dream-cycle — stage 3 failed after 12s: reflection (patterns): Error: llm down",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      const coreFailures = result.failedSteps.filter((s) => s.step === "dream-cycle-core");
+      expect(coreFailures).toHaveLength(1);
+      expect(coreFailures[0].failureReason).toBe("core_stage_failed");
+    });
+
     it("fails dream-cycle validation when follow-up failures are reported", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");

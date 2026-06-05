@@ -16,8 +16,13 @@ import { registerMemoryTools } from "../tools/memory-tools.js";
 function makeMockApi() {
   const tools = new Map<string, { execute: (...args: unknown[]) => unknown }>();
   return {
-    registerTool(opts: Record<string, unknown>) {
-      tools.set(opts.name as string, { execute: opts.execute as (...args: unknown[]) => unknown });
+    registerTool(...args: unknown[]) {
+      for (const arg of args) {
+        if (arg && typeof arg === "object" && "name" in arg && "execute" in arg) {
+          const tool = arg as { name: string; execute: (...a: unknown[]) => unknown };
+          tools.set(tool.name, { execute: tool.execute });
+        }
+      }
     },
     getTool(name: string) {
       return tools.get(name);

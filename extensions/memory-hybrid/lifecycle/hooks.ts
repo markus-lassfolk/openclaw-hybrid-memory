@@ -25,6 +25,7 @@ import { registerFrustrationHandlers } from "./stage-frustration.js";
 import { registerGoalStewardshipInjection, resolvedGoalsDirForLifecycle } from "./stage-goal-stewardship.js";
 import { registerGoalSubagentHandlers } from "./stage-goal-subagent.js";
 import { runInjectionStage } from "./stage-injection.js";
+import { buildDegradedFtsHotRecallStage } from "./stage-recall/degraded-recall.js";
 import { runRecallStage } from "./stage-recall.js";
 import { runSetupStage } from "./stage-setup.js";
 import { formatPreFinalizationGuardMessage, evaluatePreFinalizationGuard } from "../services/pre-finalization-guard.js";
@@ -78,6 +79,10 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return undefined;
           }
           if (!recallStageResult) {
+            api.logger.warn?.(
+              "memory-hybrid: recall stage returned no result — attempting FTS+HOT degraded fallback",
+            );
+            const degraded = await buildDegradedFtsHotRecallStage(event, rApi, ctx, sessionState, "timeout");
             if (capturedFirstRecallBegin) {
               recordStartupMemoryCheckpoint({
                 logger: api.logger,
@@ -86,11 +91,11 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
                 phase: "startup.first-recall.after",
                 onceKey: "startup.first-recall.after",
                 tags: {
-                  resultKind: "timeout",
+                  resultKind: degraded.kind,
                 },
               });
             }
-            return undefined;
+            return degraded.prependContext ? { prependContext: degraded.prependContext } : undefined;
           }
           if (recallStageResult.kind === "degraded") {
             if (capturedFirstRecallBegin) {

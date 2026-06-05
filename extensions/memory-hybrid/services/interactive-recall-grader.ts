@@ -31,14 +31,14 @@ export async function filterCandidatesByInteractiveGrading(
       query,
       toGrade.map((r) => ({ factId: r.entry.id, text: r.entry.summary || r.entry.text })),
     );
-    if (grades.length === 0) return candidates;
+    if (grades.length === 0) return [];
 
     const relevantIds = new Set(grades.filter((g) => g.relevant).map((g) => g.factId));
-    if (relevantIds.size === 0) return tail;
+    if (relevantIds.size === 0) return [];
 
     const filteredHead = toGrade.filter((r) => relevantIds.has(r.entry.id));
     return [...filteredHead, ...tail];
   } catch {
-    return candidates;
+    return tail;
   }
 }

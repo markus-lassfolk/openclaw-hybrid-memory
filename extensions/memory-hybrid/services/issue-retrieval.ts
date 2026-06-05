@@ -4,6 +4,7 @@
 
 import type { IssueStore } from "../backends/issue-store.js";
 import type { Issue, IssueSeverity } from "../types/issue-types.js";
+import { shouldTriggerIssueAmbientSearch } from "./ambient-retrieval.js";
 import type { RankedResult } from "./rrf-fusion.js";
 
 const OPEN_STATUSES = new Set(["open", "diagnosed", "fix-attempted"]);
@@ -46,6 +47,13 @@ function scoreIssueRelevance(issue: Issue, queryLower: string): number {
     if (queryLower.includes(tag.toLowerCase())) score += 1;
   }
   if (issue.rootCause && queryLower.includes(issue.rootCause.toLowerCase().slice(0, 30))) score += 2;
+  const queryTokens = queryLower.split(/\s+/).filter((t) => t.length >= 3);
+  for (const token of queryTokens) {
+    if (issue.title.toLowerCase().includes(token)) score += 1;
+    for (const symptom of issue.symptoms) {
+      if (symptom.toLowerCase().includes(token)) score += 1;
+    }
+  }
   if (OPEN_STATUSES.has(issue.status)) score += 0.5;
   if (issue.severity === "critical") score += 2;
   else if (issue.severity === "high") score += 1;
@@ -59,22 +67,41 @@ export function runIssueRetrievalStrategy(
   query: string,
   issueStore: IssueStore,
   topK = 10,
+  factsDb?: { getById(id: string): { supersededAt?: number | null } | null } | null,
 ): RankedResult[] {
   const q = query.trim();
   if (!q) return [];
 
   const queryLower = q.toLowerCase();
   const matched = issueStore.search(q);
-  const criticalOpen = getOpenCriticalAndHighIssues(issueStore, 5);
+  const matchedIds = new Set(matched.map((issue) => issue.id));
+  const includeCriticalBaseline = shouldTriggerIssueAmbientSearch(q);
+  const criticalOpen = includeCriticalBaseline ? getOpenCriticalAndHighIssues(issueStore, 5) : [];
 
   const byId = new Map<string, Issue>();
-  for (const issue of [...matched, ...criticalOpen]) {
+  for (const issue of matched) {
+    byId.set(issue.id, issue);
+  }
+  // Phrase LIKE search can miss multi-token queries (e.g. "memory leak OOM" vs "Critical memory leak").
+  const queryTokens = queryLower.split(/\s+/).filter((t) => t.length >= 3);
+  for (const token of queryTokens.slice(0, 5)) {
+    for (const issue of issueStore.search(token)) {
+      byId.set(issue.id, issue);
+      matchedIds.add(issue.id);
+    }
+  }
+  for (const issue of criticalOpen) {
     byId.set(issue.id, issue);
   }
 
   const scoredIssues = [...byId.values()]
     .map((issue) => ({ issue, score: scoreIssueRelevance(issue, queryLower) }))
-    .filter((row) => row.score > 0 || HIGH_SEVERITIES.includes(row.issue.severity))
+    .filter(
+      (row) =>
+        matchedIds.has(row.issue.id) ||
+        row.score > 0 ||
+        (includeCriticalBaseline && row.issue.severity === "critical"),
+    )
     .sort((a, b) => b.score - a.score);
 
   const factScores = new Map<string, number>();
@@ -90,6 +117,11 @@ export function runIssueRetrievalStrategy(
   }
 
   return [...factScores.entries()]
+    .filter(([factId]) => {
+      if (!factsDb) return true;
+      const entry = factsDb.getById(factId);
+      return entry != null && entry.supersededAt == null;
+    })
     .sort((a, b) => b[1] - a[1])
     .slice(0, topK)
     .map(([factId], index) => ({

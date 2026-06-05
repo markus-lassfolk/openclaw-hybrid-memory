@@ -52,7 +52,12 @@ export interface LifecycleContext {
   workflowStore: WorkflowStore | null;
   workflowTracker?: WorkflowTracker;
   currentAgentIdRef: { value: string | null };
+  /** @deprecated Use progressiveIndexBySession — kept for test harness compatibility. */
   lastProgressiveIndexIds: string[];
+  /** Session-scoped progressive index (1-based memory_recall id → fact id). */
+  progressiveIndexBySession: Map<string, string[]>;
+  /** Session-scoped last auto-recall prompt for post-compaction reinjection (#957). */
+  lastAutoRecallPromptBySession: Map<string, string>;
   restartPendingClearedRef: { value: boolean };
   resolvedSqlitePath: string;
   walWrite: (
@@ -76,7 +81,7 @@ export interface LifecycleContext {
   auditStore: AuditStore | null;
   issueStore: import("../backends/issue-store.js").IssueStore | null;
   recallInFlightRef: { value: number };
-  /** Updated when interactive auto-recall runs; read after compaction to re-inject recall (#957). */
+  /** @deprecated Use lastAutoRecallPromptBySession. */
   lastAutoRecallPromptRef: { value: string | null };
   /** Registration generation that owns this lifecycle context; used to detect stale in-flight hooks. */
   registrationGeneration?: number;
@@ -95,6 +100,8 @@ export interface SessionState {
   authFailureRecallsThisSession: Map<string, number>;
   sessionLastActivity: Map<string, number>;
   capabilityHintsSessionsSeen: Set<string>;
+  /** Per-session in-flight recall count for queue degradation (avoids cross-session bleed). */
+  recallInFlightBySession: Map<string, number>;
   touchSession: (sessionKey: string) => void;
   clearSessionState: (sessionKey: string) => void;
   pruneSessionMaps: () => void;
@@ -124,7 +131,8 @@ export interface RecallResult {
   summarizeModel: string | undefined;
   groupByCategory: boolean;
   pinnedRecallThreshold: number;
-  lastProgressiveIndexIdsRef: string[];
+  progressiveIndexSessionKey: string;
+  progressiveIndexBySession: Map<string, string[]>;
   ambientCfg: { enabled: boolean; multiQuery?: boolean };
   /** When ambient multiQuery is on, the session's seen-facts for topic-shift deduplication. */
   ambientSeenFacts: SessionSeenFacts | null;

@@ -20,7 +20,12 @@ import { getCronModelConfig, getDefaultCronModel, hybridConfigSchema } from "../
 import { readGuardTimestampMs } from "../../services/cron-guard.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { runPersonaProposalTriage, validatePersonaPolicy } from "../../services/persona-proposal-triage.js";
-import { insertRulesUnderSection } from "../../services/tools-md-section.js";
+import {
+  applyParsedCorrectionRules,
+  parseReportProposedSections,
+  parseReportRulesForApply,
+} from "../../services/corrections-report.js";
+import { resolveCliWorkspaceRoot } from "../../utils/cli-workspace-root.js";
 import { parseDuration } from "../../utils/duration.js";
 import { resetPluginLogger, restoreDefaultLogger } from "../../utils/logger.js";
 
@@ -271,65 +276,11 @@ function buildListCommands(
   api: ClawdbotPluginApi,
 ): NonNullable<HybridMemCliContext["listCommands"]> {
   const { factsDb, proposalsDb, cfg, resolvedSqlitePath } = ctx;
-  const workspaceRoot = () => getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
-  const reportDir = (workspace?: string) => join(workspace ?? workspaceRoot(), "memory", "reports");
+  const workspaceRoot = (workspace?: string) => resolveCliWorkspaceRoot({ workspace });
+  const reportDir = (workspace?: string) => join(workspaceRoot(workspace), "memory", "reports");
 
-  function parseReportProposedSections(content: string): string[] {
-    const lines = content.split("\n");
-    const items: string[] = [];
-    let inSection = false;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith("## Suggested TOOLS.md rules") || trimmed === "## Proposed (review before applying)") {
-        inSection = true;
-        continue;
-      }
-      if (trimmed.startsWith("## ")) {
-        inSection = false;
-        continue;
-      }
-      if (inSection && trimmed.startsWith("- ") && trimmed.length > 2) items.push(trimmed.slice(2).trim());
-    }
-    return items;
-  }
-
-  function parseReportRulesForApply(content: string): { toolsRules: string[]; agentsRules: string[] } {
-    const toolsRules: string[] = [];
-    const agentsRules: string[] = [];
-    const lines = content.split("\n");
-    let inSuggested = false;
-    let inProposed = false;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].trim();
-      if (trimmed.startsWith("## Suggested TOOLS.md rules")) {
-        inSuggested = true;
-        inProposed = false;
-        continue;
-      }
-      if (trimmed === "## Proposed (review before applying)") {
-        inSuggested = false;
-        inProposed = true;
-        continue;
-      }
-      if (trimmed.startsWith("## ")) {
-        inSuggested = false;
-        inProposed = false;
-        continue;
-      }
-      if (trimmed.startsWith("- ") && trimmed.length > 2) {
-        const text = trimmed.slice(2).trim();
-        if (inSuggested) {
-          toolsRules.push(text);
-        } else if (inProposed) {
-          if (text.startsWith("[AGENTS_RULE]") || text.startsWith("[SKILL_UPDATE]")) {
-            agentsRules.push(text.replace(/^\[(AGENTS_RULE|SKILL_UPDATE)\]\s*/i, "").trim());
-          } else {
-            toolsRules.push(text.replace(/^\[TOOLS_RULE\]\s*/i, "").trim());
-          }
-        }
-      }
-    }
-    return { toolsRules, agentsRules };
+  function parseReportProposedSectionsLocal(content: string): string[] {
+    return parseReportProposedSections(content);
   }
 
   function getLatestCorrectionReport(workspace?: string): { path: string; content: string } | null {
@@ -391,35 +342,35 @@ function buildListCommands(
     listCorrections: async (opts: { workspace?: string }) => {
       const report = getLatestCorrectionReport(opts.workspace);
       if (!report) return { reportPath: null, items: [] };
-      const items = parseReportProposedSections(report.content);
+      const items = parseReportProposedSectionsLocal(report.content);
       return { reportPath: report.path, items };
     },
     correctionsApproveAll: async (opts: { workspace?: string }) => {
       const report = getLatestCorrectionReport(opts.workspace);
       if (!report) return { applied: 0, error: "No self-correction report found" };
-      const { toolsRules, agentsRules } = parseReportRulesForApply(report.content);
-      const totalRules = toolsRules.length + agentsRules.length;
-      if (totalRules === 0)
-        return { applied: 0, error: "No suggested TOOLS or AGENTS rules in report (run self-correction-run first)" };
-      const root = opts.workspace ?? workspaceRoot();
+      const root = workspaceRoot(opts.workspace);
+      const parsed = parseReportRulesForApply(report.content, root);
+      const totalRules =
+        parsed.toolsRules.length +
+        [...parsed.agentsRulesByFile.values()].reduce((n, rules) => n + rules.length, 0) +
+        parsed.skillUpdates.length;
+      if (totalRules === 0 && parsed.unresolvedSkillUpdates.length === 0) {
+        return { applied: 0, error: "No suggested TOOLS, persona, or skill rules in report (run self-correction-run first)" };
+      }
       const scCfg = cfg.selfCorrection ?? { toolsSection: "Self-correction rules" };
       const section =
         typeof scCfg === "object" && scCfg && "toolsSection" in scCfg
           ? (scCfg.toolsSection as string)
           : "Self-correction rules";
-      let applied = 0;
-      if (toolsRules.length > 0) {
-        const toolsPath = join(root, "TOOLS.md");
-        if (!existsSync(toolsPath)) return { applied: 0, error: "TOOLS.md not found in workspace" };
-        const { inserted } = insertRulesUnderSection(toolsPath, section, toolsRules);
-        applied += inserted;
+      const { applied, errors } = applyParsedCorrectionRules({
+        workspaceRoot: root,
+        toolsSection: section,
+        parsed,
+      });
+      if (errors.length > 0 && applied === 0) {
+        return { applied: 0, error: errors.join("; ") };
       }
-      if (agentsRules.length > 0) {
-        const agentsPath = join(root, "AGENTS.md");
-        const { inserted } = insertRulesUnderSection(agentsPath, section, agentsRules, "# AGENTS");
-        applied += inserted;
-      }
-      return { applied };
+      return { applied, error: errors.length > 0 ? errors.join("; ") : undefined };
     },
     showItem: async (id: string) => {
       const fact = factsDb.getById(id);

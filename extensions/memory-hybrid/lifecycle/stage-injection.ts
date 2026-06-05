@@ -21,7 +21,13 @@ import {
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
-import { estimateTokens, estimateTokensForDisplay, formatProgressiveIndexLine } from "../utils/text.js";
+import {
+  estimateTokens,
+  estimateTokensForDisplay,
+  formatProgressiveIndexLine,
+  sanitizeRecallFactText,
+} from "../utils/text.js";
+import { setProgressiveIndexIds } from "../utils/progressive-index-session.js";
 import type { LifecycleContext, RecallResult } from "./types.js";
 import { resolveAgentIdFromHookEvent } from "./resolve-agent-id.js";
 
@@ -61,6 +67,28 @@ function strengthenHebbianLinks(
       }
     }
   });
+}
+
+type InjectionSideEffects = {
+  accessedIds?: string[];
+  indexedIds?: string[];
+};
+
+function applyInjectionSideEffects(
+  ctx: LifecycleContext,
+  api: ClawdbotPluginApi,
+  ambientSeenFacts: RecallResult["ambientSeenFacts"],
+  sideEffects: InjectionSideEffects,
+): void {
+  const accessedIds = sideEffects.accessedIds ?? [];
+  const indexedIds = sideEffects.indexedIds ?? [];
+  if (accessedIds.length > 0) ctx.factsDb.refreshAccessedFacts(accessedIds);
+  if (indexedIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexedIds);
+  const seenIds = [...accessedIds, ...indexedIds];
+  if (ambientSeenFacts && seenIds.length > 0) ambientSeenFacts.markSeen(seenIds);
+  if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && accessedIds.length >= 2) {
+    strengthenHebbianLinks(accessedIds, ctx.factsDb, api.logger);
+  }
 }
 
 export async function runInjectionStage(
@@ -147,7 +175,8 @@ async function runInjection(
     summarizeModel,
     groupByCategory,
     pinnedRecallThreshold,
-    lastProgressiveIndexIdsRef,
+    progressiveIndexSessionKey,
+    progressiveIndexBySession,
     ambientCfg: _ambientCfg,
     ambientSeenFacts,
   } = r;
@@ -159,13 +188,18 @@ async function runInjection(
   );
   const edictBlock = (() => {
     const raw = buildEdictBlock(ctx);
-    if (!raw || edictMaxTokens <= 0) return raw;
+    if (!raw) return "";
+    if (edictMaxTokens <= 0) return "";
     return trimBlockToBudget(raw, edictMaxTokens).text;
   })();
   const memoryTokenBudget = Math.max(0, maxTokens - estimateTokens(edictBlock));
   const effectiveIndexCap = Math.min(indexCap, memoryTokenBudget);
 
-  const finishPrepend = (memoryContent: string, prefix?: string): { prependContext: string } | undefined => {
+  const finishPrepend = (
+    memoryContent: string,
+    prefix?: string,
+    sideEffects?: InjectionSideEffects,
+  ): { prependContext: string } | undefined => {
     if (options.emitGate?.emitted) return undefined;
     const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(memoryContent), {
       prefix,
@@ -174,6 +208,7 @@ async function runInjection(
     if (!prepend) return undefined;
     if (options.emitGate) options.emitGate.emitted = true;
     consumePrependBudget(ctx.prependBudgetRef, prepend);
+    if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, sideEffects);
     return { prependContext: prepend };
   };
 
@@ -205,17 +240,18 @@ async function runInjection(
       if (x.entry.key) {
         title = sanitizePromptInjection(`${x.entry.entity ? `${x.entry.entity}: ` : ""}${x.entry.key}`);
       } else if (x.entry.summary) {
-        title = sanitizePromptInjection(x.entry.summary);
+        title = sanitizePromptInjection(sanitizeRecallFactText(x.entry.summary));
       } else {
         const truncated = x.entry.text.length > 60 ? `${x.entry.text.slice(0, 60).trim()}…` : x.entry.text;
-        title = sanitizePromptInjection(truncated);
+        title = sanitizePromptInjection(sanitizeRecallFactText(truncated));
       }
       const tokenCost = estimateTokensForDisplay(x.entry.summary || x.entry.text);
       const pos = startPosition + indexEntries.length;
-      const line = formatProgressiveIndexLine(x.entry.category, title, tokenCost, pos);
+      const category = sanitizePromptInjection(x.entry.category);
+      const line = formatProgressiveIndexLine(category, title, tokenCost, pos);
       const lineTokens = estimateTokens(`${line}\n`);
       if (usedTokens + lineTokens > cap) break;
-      indexEntries.push({ line, id: x.entry.id, category: x.entry.category, position: pos });
+      indexEntries.push({ line, id: x.entry.id, category, position: pos });
       usedTokens += lineTokens;
     }
     const ids = indexEntries.map((e) => e.id);
@@ -261,7 +297,8 @@ async function runInjection(
       let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
       if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
         text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
-      const line = `- [${x.backend}/${x.entry.category}] ${text}`;
+      const category = sanitizePromptInjection(x.entry.category);
+      const line = `- [${x.backend}/${category}] ${text}`;
       const lineTokens = estimateTokens(`${line}\n`);
       if (pinnedTokens + lineTokens > pinnedBudget) break;
       pinnedPart.push(line);
@@ -278,22 +315,21 @@ async function runInjection(
     );
     const indexBudget = Math.min(effectiveIndexCap, Math.max(0, memoryTokenBudget - pinnedTokens - fixedOverhead));
     if (indexBudget <= 0) {
-      lastProgressiveIndexIdsRef.length = 0;
+      setProgressiveIndexIds(progressiveIndexBySession, progressiveIndexSessionKey, []);
       api.logger.debug?.(
         `memory-hybrid: progressive index budget exhausted by fixed blocks (indexCap=${indexCap} tokens); no index will be injected`,
       );
       if (pinnedPart.length > 0) {
-        ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
-        if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedPinnedIds);
-        if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedPinnedIds.length >= 2) {
-          strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger);
-        }
         const fullContent = `${pinnedHeader}${pinnedPart.join("\n")}\n</relevant-memories>`;
         api.logger.info?.(
           `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, no index (~${pinnedTokens} tokens)`,
         );
         emitAudit(pinnedTokens);
-        return finishPrepend(withAmbient(withProcedures(fullContent))) ?? undefined;
+        return (
+          finishPrepend(withAmbient(withProcedures(fullContent)), undefined, {
+            accessedIds: injectedPinnedIds,
+          }) ?? undefined
+        );
       }
       if (procedureBlock) {
         emitAudit(estimateTokens(recalledAmbient + procedureBlock));
@@ -310,18 +346,7 @@ async function runInjection(
       return undefined;
     }
     const { lines: indexLines, ids: indexIds } = buildProgressiveIndex(rest, indexBudget, 1);
-    lastProgressiveIndexIdsRef.length = 0;
-    lastProgressiveIndexIdsRef.push(...indexIds);
-    if (injectedPinnedIds.length > 0) ctx.factsDb.refreshAccessedFacts(injectedPinnedIds);
-    // Index-only exposures must NOT inflate recall_count (#1559)
-    if (indexIds.length > 0) ctx.factsDb.refreshIndexedFacts(indexIds);
-    if (ambientSeenFacts) {
-      const seenIds = [...injectedPinnedIds, ...indexIds];
-      if (seenIds.length > 0) ambientSeenFacts.markSeen(seenIds);
-    }
-    if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedPinnedIds.length >= 2) {
-      strengthenHebbianLinks(injectedPinnedIds, ctx.factsDb, api.logger);
-    }
+    setProgressiveIndexIds(progressiveIndexBySession, progressiveIndexSessionKey, indexIds);
     const indexContent = indexLines.join("\n");
     const fullContent =
       pinnedPart.length > 0
@@ -332,7 +357,12 @@ async function runInjection(
       `memory-hybrid: progressive_hybrid — ${pinnedPart.length} pinned in full, index of ${indexIds.length} (~${totalTokens} tokens)`,
     );
     emitAudit(totalTokens);
-    return finishPrepend(withAmbient(withProcedures(fullContent))) ?? undefined;
+    return (
+      finishPrepend(withAmbient(withProcedures(fullContent)), undefined, {
+        accessedIds: injectedPinnedIds,
+        indexedIds: indexIds,
+      }) ?? undefined
+    );
   }
 
   if (injectionFormat === "progressive") {
@@ -358,17 +388,17 @@ async function runInjection(
       }
       return undefined;
     }
-    lastProgressiveIndexIdsRef.length = 0;
-    lastProgressiveIndexIdsRef.push(...indexIds);
-    // Index-only exposures must NOT inflate recall_count (#1559)
-    ctx.factsDb.refreshIndexedFacts(indexIds);
-    if (ambientSeenFacts && indexIds.length > 0) ambientSeenFacts.markSeen(indexIds);
+    setProgressiveIndexIds(progressiveIndexBySession, progressiveIndexSessionKey, indexIds);
     const indexContent = indexLines.join("\n");
     api.logger.info?.(
       `memory-hybrid: progressive disclosure — injecting index of ${indexLines.length} memories (~${indexTokens} tokens)`,
     );
     emitAudit(indexTokens);
-    return finishPrepend(withAmbient(withProcedures(`${indexHeader}${indexContent}${indexFooter}`))) ?? undefined;
+    return (
+      finishPrepend(withAmbient(withProcedures(`${indexHeader}${indexContent}${indexFooter}`)), undefined, {
+        indexedIds: indexIds,
+      }) ?? undefined
+    );
   }
 
   const header = "<relevant-memories>\nThe following memories may be relevant:\n";
@@ -379,12 +409,13 @@ async function runInjection(
   for (const x of candidates) {
     let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
     if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
+    const category = sanitizePromptInjection(x.entry.category);
     const line =
       injectionFormat === "minimal"
         ? `- ${text}`
         : injectionFormat === "short"
-          ? `- ${x.entry.category}: ${text}`
-          : `- [${x.backend}/${x.entry.category}] ${text}`;
+          ? `- ${category}: ${text}`
+          : `- [${x.backend}/${category}] ${text}`;
     const lineTokens = estimateTokens(`${line}\n`);
     if (usedTokens + lineTokens > memoryTokenBudget) break;
     lines.push(line);
@@ -401,20 +432,15 @@ async function runInjection(
       emitAudit(estimateTokens(recalledAmbient));
       return finishPrepend(recalledAmbient) ?? undefined;
     }
-    if (buildEdictBlock(ctx)) {
-      emitAudit(estimateTokens(buildEdictBlock(ctx)));
+    if (edictBlock) {
+      emitAudit(estimateTokens(edictBlock));
       return finishPrepend("") ?? undefined;
     }
     return undefined;
   }
 
-  ctx.factsDb.refreshAccessedFacts(injectedIds);
-  if (ambientSeenFacts) ambientSeenFacts.markSeen(injectedIds);
-  if (ctx.cfg.graph.enabled && ctx.cfg.graph.strengthenOnRecall && injectedIds.length >= 2) {
-    strengthenHebbianLinks(injectedIds, ctx.factsDb, api.logger);
-  }
-
   let memoryContext = lines.join("\n");
+  let accessRefreshIds = injectedIds;
 
   if (!options.skipLlmSummarize && summarizeWhenOverBudget && lines.length < candidates.length) {
     const summarizeStartedAt = recallTiming.phaseStarted("injection_summarize", {
@@ -425,11 +451,12 @@ async function runInjection(
         let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
         if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
           text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
+        const category = sanitizePromptInjection(x.entry.category);
         return injectionFormat === "minimal"
           ? `- ${text}`
           : injectionFormat === "short"
-            ? `- ${x.entry.category}: ${text}`
-            : `- [${x.backend}/${x.entry.category}] ${text}`;
+            ? `- ${category}: ${text}`
+            : `- [${x.backend}/${category}] ${text}`;
       })
       .join("\n");
     try {
@@ -465,6 +492,7 @@ async function runInjection(
         if (summaryTokens <= memoryTokenBudget) {
           memoryContext = sanitizedSummary;
           usedTokens = summaryTokens;
+          accessRefreshIds = candidates.map((c) => c.entry.id);
           api.logger.info?.(`memory-hybrid: over budget — injected LLM summary (~${usedTokens} tokens)`);
           recallTiming.phaseCompleted("injection_summarize", summarizeStartedAt, {
             status: "ok",
@@ -501,8 +529,8 @@ async function runInjection(
       emitAudit(estimateTokens(recalledAmbient));
       return finishPrepend(recalledAmbient) ?? undefined;
     }
-    if (buildEdictBlock(ctx)) {
-      emitAudit(estimateTokens(buildEdictBlock(ctx)));
+    if (edictBlock) {
+      emitAudit(estimateTokens(edictBlock));
       return finishPrepend("") ?? undefined;
     }
     return undefined;
@@ -514,5 +542,9 @@ async function runInjection(
 
   emitAudit(usedTokens);
 
-  return finishPrepend(withAmbient(withProcedures(`${header}${memoryContext}${footer}`))) ?? undefined;
+  return (
+    finishPrepend(withAmbient(withProcedures(`${header}${memoryContext}${footer}`)), undefined, {
+      accessedIds: accessRefreshIds,
+    }) ?? undefined
+  );
 }

@@ -23,9 +23,11 @@ import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/n
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
-import { consumePrependBudget, initPrependBudget } from "../../services/prepend-budget.js";
+import { trimBlockToBudget } from "../../services/context-block-trim.js";
+import { consumePrependBudget, getRemainingPrependTokens, initPrependBudget } from "../../services/prepend-budget.js";
 import {
   assembleRecallPrependContext,
+  edictMaxTokensForBudget,
   edictMaxTokensFromPrependBudget,
   promptMentionsEntity,
   sanitizeProcedureText,
@@ -52,8 +54,16 @@ import {
 function finishEmptyRecallPrepend(ctx: LifecycleContext, combinedContext: string): RecallStageResult {
   const trimmed = combinedContext.trim();
   if (!trimmed) return { kind: "empty", prependContext: undefined };
-  const prepend = assembleRecallPrependContext(ctx, trimmed, {
-    edictMaxTokens: edictMaxTokensFromPrependBudget(ctx),
+  const total = ctx.prependBudgetRef?.value?.totalTokens ?? 0;
+  const remaining = getRemainingPrependTokens(ctx.prependBudgetRef);
+  const edictCap =
+    remaining !== undefined
+      ? Math.min(edictMaxTokensForBudget(total), remaining)
+      : (edictMaxTokensFromPrependBudget(ctx) ?? 0);
+  const innerCap = remaining !== undefined ? Math.max(0, remaining - edictCap) : undefined;
+  const inner = innerCap !== undefined ? trimBlockToBudget(trimmed, innerCap).text : trimmed;
+  const prepend = assembleRecallPrependContext(ctx, inner, {
+    edictMaxTokens: edictCap,
   });
   if (prepend) consumePrependBudget(ctx.prependBudgetRef, prepend);
   return { kind: "empty", prependContext: prepend ?? undefined };
@@ -232,6 +242,12 @@ export async function runRecall(
   };
 
   ctx.recallInFlightRef.value++;
+  const trackedSessionScopeKey =
+    sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+  sessionState.recallInFlightBySession.set(
+    trackedSessionScopeKey,
+    (sessionState.recallInFlightBySession.get(trackedSessionScopeKey) ?? 0) + 1,
+  );
   const recallStartMs = Date.now();
   const recallProbeId = `recall-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   let recallProbePhase = "start";
@@ -279,16 +295,19 @@ export async function runRecall(
     if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const { currentAgentIdRef } = ctx;
-    const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen } =
+    const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen, recallInFlightBySession } =
       sessionState;
+    const sessionScopeKey = trackedSessionScopeKey;
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
     api.logger.debug?.(
-      `memory-hybrid: recall-probe id=${recallProbeId} enter promptChars=${promptText.length} inFlight=${ctx.recallInFlightRef.value}`,
+      `memory-hybrid: recall-probe id=${recallProbeId} enter promptChars=${promptText.length} inFlight=${ctx.recallInFlightRef.value} sessionInFlight=${recallInFlightBySession.get(sessionScopeKey) ?? 0}`,
     );
 
-    if (e.prompt.length >= 5 && ctx.lastAutoRecallPromptRef) {
-      ctx.lastAutoRecallPromptRef.value = e.prompt.trim().slice(0, 12_000);
+    if (e.prompt.length >= 5) {
+      const trimmedPrompt = e.prompt.trim().slice(0, 12_000);
+      ctx.lastAutoRecallPromptBySession?.set(sessionScopeKey, trimmedPrompt);
+      if (ctx.lastAutoRecallPromptRef) ctx.lastAutoRecallPromptRef.value = trimmedPrompt;
     }
 
     // Let pending gateway I/O (health RPCs, WebSocket) run before heavy sync work (#931).
@@ -315,19 +334,19 @@ export async function runRecall(
       `memory-hybrid: interactive enrichment=${interactivePolicy.interactiveEnrichment} (HyDE=${interactivePolicy.allowHyde}, ambientMulti=${interactivePolicy.allowAmbientMultiQuery})`,
     );
     const { degradationQueueDepth, degradationMaxLatencyMs } = interactivePolicy;
-    const sessionKeyForBudget =
-      sessionState.resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
+    const sessionKeyForBudget = sessionScopeKey;
     if (ctx.prependBudgetRef) {
       initPrependBudget(ctx.prependBudgetRef, interactivePolicy.contextBudgetTokens, sessionKeyForBudget);
     }
-    const forceDegraded = degradationQueueDepth > 0 && ctx.recallInFlightRef.value > degradationQueueDepth;
+    const sessionInFlight = recallInFlightBySession.get(sessionScopeKey) ?? 0;
+    const forceDegraded = degradationQueueDepth > 0 && sessionInFlight > degradationQueueDepth;
 
     if (forceDegraded) {
       setRecallProbePhase("degraded_fts_only");
       await yieldEventLoop();
       if (shouldAbortRecall()) return completeStage(emptyRecallStage());
       api.logger.debug?.(
-        `memory-hybrid: recall degraded (queue depth ${ctx.recallInFlightRef.value} > ${degradationQueueDepth}), using FTS-only + HOT`,
+        `memory-hybrid: recall degraded (session queue depth ${sessionInFlight} > ${degradationQueueDepth}), using FTS-only + HOT`,
       );
       return completeStage(await buildDegradedFtsHotRecallStage(event, api, ctx, sessionState, "queue"));
     }
@@ -352,7 +371,7 @@ export async function runRecall(
         for (const p of positiveFiltered.slice(0, 3)) {
           try {
             const steps = (JSON.parse(p.recipeJson) as Array<{ tool?: string }>)
-              .map((s) => s.tool)
+              .map((s) => sanitizeProcedureText(String(s.tool ?? "")))
               .filter(Boolean)
               .join(" → ");
             const emoji = p.relevanceScore >= 0.7 ? "✅" : "⚠️";
@@ -374,7 +393,7 @@ export async function runRecall(
             const emoji = n.relevanceScore >= 0.7 ? "❌" : "⚠️";
             const confidence = Math.round(n.relevanceScore * 100);
             const steps = (JSON.parse(n.recipeJson) as Array<{ tool?: string }>)
-              .map((s) => s.tool)
+              .map((s) => sanitizeProcedureText(String(s.tool ?? "")))
               .filter(Boolean)
               .join(" → ");
             const pattern = sanitizeProcedureText(n.taskPattern);
@@ -438,6 +457,7 @@ export async function runRecall(
       reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
       diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
       interactiveFtsFastPath: true,
+      deferAccessRefresh: true,
     };
     const hydeUsedRef = { value: false };
     const pipelineDeps: RecallPipelineDeps = {
@@ -460,8 +480,7 @@ export async function runRecall(
     };
 
     const ambientCfg = ctx.cfg.ambient;
-    const sessionScopeKey = resolveSessionKey(e, api) ?? "default";
-    const sessionKey = resolveSessionKey(e, api) ?? currentAgentIdRef.value ?? "default";
+    const sessionKey = sessionScopeKey;
     if (!ambientSeenFactsMap.has(sessionScopeKey)) {
       ambientSeenFactsMap.set(sessionScopeKey, new SessionSeenFacts());
       ambientLastEmbeddingMap.set(sessionScopeKey, null);
@@ -656,7 +675,9 @@ export async function runRecall(
             issueLines.push("<known-issues>");
             for (const issue of issueResults.openIssues) {
               const sanitizedTitle = sanitizePromptInjection(issue.title);
-              issueLines.push(`- [${issue.severity}] ${sanitizedTitle} (status: ${issue.status})`);
+              const severity = sanitizePromptInjection(issue.severity);
+              const status = sanitizePromptInjection(issue.status);
+              issueLines.push(`- [${severity}] ${sanitizedTitle} (status: ${status})`);
             }
             issueLines.push("</known-issues>");
           }
@@ -665,7 +686,8 @@ export async function runRecall(
             for (const issue of issueResults.resolvedIssues) {
               const sanitizedTitle = sanitizePromptInjection(issue.title);
               const resolution = issue.fix ? ` — Fix: ${sanitizePromptInjection(issue.fix).slice(0, 100)}` : "";
-              issueLines.push(`- [${issue.severity}] ${sanitizedTitle}${resolution}`);
+              const severity = sanitizePromptInjection(issue.severity);
+              issueLines.push(`- [${severity}] ${sanitizedTitle}${resolution}`);
             }
             issueLines.push("</resolved-issues>");
           }
@@ -702,7 +724,9 @@ export async function runRecall(
           const lines = recentNarratives.map((n) => {
             const sanitized = sanitizePromptInjection(n.text);
             const clipped = clipNarrativeText(sanitized);
-            return `- [${n.source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${n.sessionId})\n${clipped}`;
+            const source = sanitizePromptInjection(n.source);
+            const sessionId = sanitizePromptInjection(n.sessionId);
+            return `- [${source}/${formatNarrativeRange(n.periodStart, n.periodEnd)}] (sessionKey: ${sessionId})\n${clipped}`;
           });
           narrativeBlock = `<recent-history-narratives>\n${lines.join("\n")}\n</recent-history-narratives>\n\n`;
         }
@@ -739,7 +763,7 @@ export async function runRecall(
         for (const entity of entityLookupNames) {
           if (!promptMentionsEntity(e.prompt, entity)) continue;
           const entityResults = ctx.factsDb
-            .lookup(entity, undefined, undefined, { scopeFilter })
+            .lookup(entity, undefined, undefined, { scopeFilter, deferAccessRefresh: true })
             .slice(0, entityLookup.maxFactsPerEntity);
           for (const r of entityResults) {
             if (ctx.cfg.memoryTiering.enabled && !isTierAllowedForWarmSearch(r.entry.tier)) continue;
@@ -805,16 +829,17 @@ export async function runRecall(
     };
     if (directivesCfg.enabled && !skipPostMainRecallEnrichment) {
       try {
-        if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+        if (isRecallContextSuperseded(ctx)) {
           return abortDirectives();
         }
         if (directivesCfg.entityMentioned && entityLookup.enabled) {
           const entityLookupNames = resolveEntityLookupNames(entityLookup, ctx.factsDb);
           if (entityLookupNames.length > 0) {
             for (const entity of entityLookupNames) {
-              if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+              if (isRecallContextSuperseded(ctx)) {
                 return abortDirectives();
               }
+              if (recallAborted(signal)) break;
               if (!promptMentionsEntity(e.prompt, entity)) continue;
               if (!canRunDirective()) break;
               const results = await runRecallPipelineQuery(entity, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -834,9 +859,10 @@ export async function runRecall(
         }
         if (directivesCfg.keywords.length > 0) {
           for (const keyword of directivesCfg.keywords) {
-            if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+            if (isRecallContextSuperseded(ctx)) {
               return abortDirectives();
             }
+            if (recallAborted(signal)) break;
             if (!promptLower.includes(keyword.toLowerCase())) continue;
             if (!canRunDirective()) break;
             const results = await runRecallPipelineQuery(keyword, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -853,9 +879,10 @@ export async function runRecall(
           }
         }
         for (const [taskType, triggers] of Object.entries(directivesCfg.taskTypes)) {
-          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+          if (isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
+          if (recallAborted(signal)) break;
           const hit = triggers.some((t) => promptLower.includes(t.toLowerCase()));
           if (!hit || !canRunDirective()) continue;
           const results = await runRecallPipelineQuery(taskType, directiveLimit, pipelineDeps, hydeUsedRef, {
@@ -871,10 +898,12 @@ export async function runRecall(
           addDirectiveResults(results, `taskType:${taskType}`);
         }
         if (directivesCfg.sessionStart) {
-          if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
+          if (isRecallContextSuperseded(ctx)) {
             return abortDirectives();
           }
-          if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
+          if (recallAborted(signal)) {
+            // skip session-start directive on stage timeout
+          } else if (!sessionStartSeen.has(sessionKey) && canRunDirective()) {
             const results = await runRecallPipelineQuery("session start", directiveLimit, pipelineDeps, hydeUsedRef, {
               probeId: `${recallProbeId}:directive:session-start`,
               hydeLabel: "HyDE",
@@ -990,8 +1019,9 @@ export async function runRecall(
       (ctx.cfg.procedures.enabled
         ? Math.min(ctx.cfg.procedures.maxInjectionTokens ?? defaultProcedureCap, defaultProcedureCap)
         : 0);
+    const edictReserve = edictMaxTokensForBudget(totalBudget);
     const budgetState: BudgetState = {
-      remainingBudget: totalBudget,
+      remainingBudget: Math.max(0, totalBudget - edictReserve),
       audit: [],
     };
 
@@ -1085,7 +1115,8 @@ export async function runRecall(
       summarizeModel,
       groupByCategory,
       pinnedRecallThreshold,
-      lastProgressiveIndexIdsRef: ctx.lastProgressiveIndexIds,
+      progressiveIndexSessionKey: sessionKey,
+      progressiveIndexBySession: ctx.progressiveIndexBySession,
       ambientCfg: { enabled: ambientCfg.enabled, multiQuery: ambientCfg.multiQuery },
       ambientSeenFacts: ambientCfg.enabled && ambientCfg.multiQuery ? ambientSeenFacts : null,
       semanticDegraded: pipelineStatusRef.semanticDegraded,
@@ -1117,6 +1148,9 @@ export async function runRecall(
     throw err;
   } finally {
     ctx.recallInFlightRef.value--;
+    const sessionCount = sessionState.recallInFlightBySession.get(trackedSessionScopeKey) ?? 1;
+    if (sessionCount <= 1) sessionState.recallInFlightBySession.delete(trackedSessionScopeKey);
+    else sessionState.recallInFlightBySession.set(trackedSessionScopeKey, sessionCount - 1);
     clearRecallProbeWatchdog();
     api.logger.debug?.(
       `memory-hybrid: recall-probe id=${recallProbeId} exit elapsedMs=${Date.now() - recallStartMs} phase=${recallProbePhase} completed=${recallStageCompleted}`,

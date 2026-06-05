@@ -131,7 +131,9 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
           },
         )();
 
-        maybeAutoLink(issue);
+        if (rootCause !== undefined || fix !== undefined || symptoms !== undefined) {
+          maybeAutoLink(issue);
+        }
 
         const updateText = isCompactVerbosity(verbosity)
           ? `Issue ${issue.id}: ${issue.status}.`

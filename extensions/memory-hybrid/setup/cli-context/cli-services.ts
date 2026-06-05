@@ -220,7 +220,10 @@ export function buildCliContextServices(
         );
         return { clustersFound: 0, merged: 0, deleted: 0 };
       }
-      await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
+      const flush = await runPreConsolidationFlush({ wal, factsDb, vectorDb, embeddings }, api.logger, "cli_consolidation");
+      if (flush.failed) {
+        throw new Error("WAL pre-flush failed; aborting consolidate to avoid stale SQLite state");
+      }
       return runConsolidate(
         factsDb,
         vectorDb,

@@ -22,6 +22,12 @@ import { getEnv } from "../../utils/env-manager.js";
 import { expandTilde } from "../../utils/path.js";
 import { escapeRegExp } from "../../utils/text.js";
 import {
+  loadOpenclawRootForWorkspace,
+  resolveAgentWorkspaceRoot,
+  resolveOpenclawJsonPathForWorkspace,
+} from "../../utils/openclaw-workspace.js";
+export { loadOpenclawRootForWorkspace, resolveAgentWorkspaceRoot, resolveOpenclawJsonPathForWorkspace };
+import {
   TOOLS_MD_MANAGED_BEGIN,
   TOOLS_MD_MANAGED_END,
 } from "../../services/tools-md-rewrite.js";
@@ -70,32 +76,6 @@ export function assertSafeRequestedVersionArg(version: string): void {
   if (!v) throw new Error("Upgrade version is empty");
   if (!hasNoWhitespace(v)) throw new Error("Upgrade version contains whitespace");
   if (v.startsWith("-")) throw new Error("Upgrade version must not start with '-'");
-}
-
-/** Reject empty paths and the literal strings "undefined"/"null" (common when env vars are set incorrectly). */
-function isUsableWorkspacePath(p: string): boolean {
-  const t = p.trim();
-  if (t.length === 0) return false;
-  const lower = t.toLowerCase();
-  if (lower === "undefined" || lower === "null") return false;
-  return true;
-}
-
-/**
- * Resolve the agent workspace root (where `skills/`, `memory/`, MEMORY.md, etc. live).
- * Order: `OPENCLAW_WORKSPACE` (if valid), `agents.defaults.workspace`, `agent.workspace` (OpenClaw [agent workspace](https://docs.openclaw.ai/concepts/agent-workspace) shape), else `~/.openclaw/workspace`.
- */
-export function resolveAgentWorkspaceRoot(config: Record<string, unknown>): string {
-  const env = process.env.OPENCLAW_WORKSPACE?.trim();
-  if (env && isUsableWorkspacePath(env)) return expandTilde(env);
-  const agents = config.agents as Record<string, unknown> | undefined;
-  const defaults = agents?.defaults as Record<string, unknown> | undefined;
-  const ws = defaults?.workspace;
-  if (typeof ws === "string" && isUsableWorkspacePath(ws)) return expandTilde(ws.trim());
-  const agentBlock = config.agent as Record<string, unknown> | undefined;
-  const legacyWs = agentBlock?.workspace;
-  if (typeof legacyWs === "string" && isUsableWorkspacePath(legacyWs)) return expandTilde(legacyWs.trim());
-  return join(homedir(), ".openclaw", "workspace");
 }
 
 function bundledHybridMemorySkillDir(pluginRootDir: string): string {
@@ -149,32 +129,6 @@ export function installHybridMemoryWorkspaceSkill(opts: {
     return { path: dest };
   } catch (err) {
     return { path: dest, error: String(err) };
-  }
-}
-
-/**
- * Path to merged OpenClaw config JSON for workspace resolution and skill bootstrap.
- * Order: `OPENCLAW_CONFIG`, `OPENCLAW_CONFIG_PATH`, then `{OPENCLAW_HOME}/openclaw.json`, else `~/.openclaw/openclaw.json`.
- */
-export function resolveOpenclawJsonPathForWorkspace(): string {
-  const explicit = getEnv("OPENCLAW_CONFIG")?.trim() || getEnv("OPENCLAW_CONFIG_PATH")?.trim();
-  if (explicit) return expandTilde(explicit);
-  const owHome = getEnv("OPENCLAW_HOME")?.trim();
-  if (owHome) return join(expandTilde(owHome), "openclaw.json");
-  return join(homedir(), ".openclaw", "openclaw.json");
-}
-
-/**
- * Load `openclaw.json` for workspace resolution (`agents.defaults.workspace`, etc.).
- * Returns `{}` if the file is missing or unreadable (caller still gets `OPENCLAW_WORKSPACE` via env in {@link resolveAgentWorkspaceRoot}).
- */
-export function loadOpenclawRootForWorkspace(): Record<string, unknown> {
-  const configPath = resolveOpenclawJsonPathForWorkspace();
-  try {
-    if (!existsSync(configPath)) return {};
-    return JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-  } catch {
-    return {};
   }
 }
 

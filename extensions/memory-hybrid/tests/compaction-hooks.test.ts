@@ -21,7 +21,7 @@ vi.mock("../src/worker/narratives.js", () => ({
 }));
 
 vi.mock("../services/pre-consolidation-flush.js", () => ({
-  runPreConsolidationFlush: vi.fn().mockResolvedValue(undefined),
+  runPreConsolidationFlush: vi.fn().mockResolvedValue({ failed: false }),
 }));
 
 vi.mock("../services/post-compaction-recall.js", () => ({

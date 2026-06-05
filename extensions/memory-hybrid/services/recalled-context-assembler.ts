@@ -6,6 +6,7 @@
 import { capturePluginError } from "./error-reporter.js";
 import { trimBlockToBudget } from "./context-block-trim.js";
 import { RECALLED_CONTEXT_BOUNDARY, sanitizePromptInjection } from "./skill-prompt-injection.js";
+import { truncateForStorage } from "../utils/text.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
 
 /** Max share of the interactive prepend budget reserved for edicts (remainder goes to memories). */
@@ -44,6 +45,13 @@ export function buildEdictBlock(ctx: LifecycleContext): string {
   }
 }
 
+/** Wrap untrusted stored/user content for auxiliary injection paths (auth hints, pinned facts). */
+export function wrapUntrustedMemoryContent(memoryContent: string): string {
+  const trimmed = memoryContent.trim();
+  if (!trimmed) return "";
+  return wrapRecalledContext("", trimmed);
+}
+
 /** Wrap memory content with optional edicts and the untrusted-data boundary. */
 export function wrapRecalledContext(edicts: string, memoryContent: string): string {
   if (!edicts && !memoryContent) return "";
@@ -75,8 +83,11 @@ function resolveEdictBlock(ctx: LifecycleContext, options?: AssembleRecallPrepen
   const raw = buildEdictBlock(ctx);
   if (!raw) return "";
   const cap = options?.edictMaxTokens;
-  if (cap == null || cap <= 0) return raw;
-  return trimBlockToBudget(raw, cap).text;
+  if (cap != null) {
+    if (cap <= 0) return "";
+    return trimBlockToBudget(raw, cap).text;
+  }
+  return raw;
 }
 
 /** Build a full prepend block from ambient/memory content with edicts and boundary. */
@@ -124,6 +135,59 @@ export function promptMentionsEntity(prompt: string, entity: string): boolean {
   return re.test(lower);
 }
 
+/** Sanitize optional memory metadata for injection or tool output. */
+export function sanitizeMemoryField(text: string | null | undefined): string {
+  if (text == null) return "";
+  const trimmed = String(text).trim();
+  if (!trimmed) return "";
+  return sanitizePromptInjection(trimmed);
+}
+
+const INJECTION_REDACTION = "[redacted: prompt-injection marker]";
+
+/** True when sanitized text still has non-redaction content worth storing. */
+export function isSubstantiveMemoryText(text: string): boolean {
+  const stripped = text.replace(new RegExp(INJECTION_REDACTION.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "").trim();
+  return stripped.length > 0;
+}
+
+/** Sanitize and truncate fact text before SQLite/Lance persistence (Issue #1579 store-time defense). */
+export function prepareMemoryTextForStorage(text: string, maxChars: number): string {
+  const sanitized = sanitizeMemoryField(text);
+  return truncateForStorage(sanitized, maxChars);
+}
+
+/** Sanitize optional metadata fields (entity, key, why, tags) before persistence. */
+export function prepareMemoryMetadataForStorage(text: string | null | undefined): string | undefined {
+  const sanitized = sanitizeMemoryField(text);
+  return sanitized || undefined;
+}
+
+/** Format one memory line for memory_recall tool results (sanitized). */
+export function formatMemoryRecallToolLine(
+  entry: { text: string; category: string; why?: string | null },
+  opts?: {
+    backend?: string;
+    linePrefix?: string;
+    scorePct?: string;
+    extraSuffix?: string;
+  },
+): string {
+  const category = sanitizeMemoryField(entry.category) || "fact";
+  const text = sanitizeMemoryField(entry.text);
+  const backend = sanitizeMemoryField(opts?.backend) || "sqlite";
+  const prefix = opts?.linePrefix ?? "";
+  const score = opts?.scorePct ? ` (${opts.scorePct})` : "";
+  const suffix = opts?.extraSuffix ?? "";
+  const why = entry.why ? `\n   Why: ${sanitizeMemoryField(entry.why)}` : "";
+  return `${prefix}[${backend}/${category}] ${text}${score}${suffix}${why}`;
+}
+
+/** Prefix for memory_recall tool text payloads (untrusted recalled data). */
+export function memoryRecallToolBoundaryPrefix(): string {
+  return `${RECALLED_CONTEXT_BOUNDARY}\n`;
+}
+
 /** Sanitize a single line of post-compaction or summary memory preview. */
 export function formatSanitizedMemoryPreview(
   text: string,
@@ -137,6 +201,9 @@ export function formatSanitizedMemoryPreview(
     const entity = sanitizePromptInjection(opts.entity);
     return entity ? `- [${entity}] ${preview}` : `- ${preview}`;
   }
-  if (opts?.category) return `- [${opts.category}] ${preview}`;
+  if (opts?.category) {
+    const category = sanitizePromptInjection(opts.category);
+    return category ? `- [${category}] ${preview}` : `- ${preview}`;
+  }
   return `- ${preview}`;
 }

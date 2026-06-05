@@ -25,6 +25,7 @@ import { chatCompleteWithRetry, distillBatchTokenLimit, distillMaxOutputTokens }
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { gatherIngestFiles } from "../services/ingest-utils.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { BATCH_STORE_IMPORTANCE, DISTILL_DEDUP_THRESHOLD } from "../utils/constants.js";
 import { tryExtractionFromTemplates } from "../utils/extraction-from-template.js";
@@ -609,7 +610,7 @@ export async function runIngestFilesForCli(
   sink: IngestFilesSink,
 ): Promise<IngestFilesResult> {
   const { factsDb, vectorDb, embeddings, openai, cfg } = ctx;
-  const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? process.cwd();
+  const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace });
   const ingestCfg = cfg.ingest;
   const patterns = opts.paths?.length ? opts.paths : ingestCfg?.paths?.length ? ingestCfg.paths : DEFAULT_INGEST_PATHS;
   const chunkSize = ingestCfg?.chunkSize ?? 800;

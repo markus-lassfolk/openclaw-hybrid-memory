@@ -24,6 +24,14 @@ function linkIfMissing(
   strength: number,
 ): boolean {
   if (sourceId === targetId) return false;
+  const db = factsDb.getRawDb();
+  const existing = db
+    .prepare(
+      `SELECT id FROM memory_links
+         WHERE source_fact_id = ? AND target_fact_id = ? AND link_type = ?`,
+    )
+    .get(sourceId, targetId, linkType);
+  if (existing) return false;
   try {
     factsDb.createLink(sourceId, targetId, linkType, strength);
     return true;
@@ -50,21 +58,27 @@ export function createGraphLinksForIssueFacts(
     if (linkIfMissing(factsDb, anchorId, unique[i], "RELATED_TO", 0.75)) created++;
   }
 
-  if (context?.rootCause?.trim() && context.fix?.trim() && unique.length >= 2) {
+  if (context?.rootCause?.trim() && unique.length >= 2) {
     const rootIdx = unique.findIndex((id) => {
       const entry = factsDb.getById(id);
       if (!entry) return false;
       const lower = entry.text.toLowerCase();
       return lower.includes(context.rootCause!.trim().toLowerCase().slice(0, 40));
     });
-    const fixIdx = unique.findIndex((id) => {
-      const entry = factsDb.getById(id);
-      if (!entry) return false;
-      const lower = entry.text.toLowerCase();
-      return lower.includes(context.fix!.trim().toLowerCase().slice(0, 40));
-    });
-    if (rootIdx >= 0 && fixIdx >= 0 && rootIdx !== fixIdx) {
-      if (linkIfMissing(factsDb, unique[fixIdx], unique[rootIdx], "CAUSED_BY", 0.9)) created++;
+    // Effect CAUSED_BY cause: anchor symptom/fact was caused by root-cause fact.
+    if (rootIdx >= 0 && anchorId !== unique[rootIdx]) {
+      if (linkIfMissing(factsDb, anchorId, unique[rootIdx], "CAUSED_BY", 0.9)) created++;
+    }
+    if (context.fix?.trim()) {
+      const fixIdx = unique.findIndex((id) => {
+        const entry = factsDb.getById(id);
+        if (!entry) return false;
+        const lower = entry.text.toLowerCase();
+        return lower.includes(context.fix!.trim().toLowerCase().slice(0, 40));
+      });
+      if (fixIdx >= 0 && rootIdx >= 0 && fixIdx !== rootIdx) {
+        if (linkIfMissing(factsDb, unique[fixIdx], unique[rootIdx], "RELATED_TO", 0.85)) created++;
+      }
     }
   }
 
@@ -92,11 +106,16 @@ export function autoLinkIssueToFacts(
   });
 
   const linked = new Set(issue.relatedFacts);
+  let newLinks = 0;
   for (const r of results) {
-    if (linked.size >= maxLinks + issue.relatedFacts.length) break;
-    if (linked.has(r.entry.id)) continue;
-    issueStore.linkFact(issue.id, r.entry.id);
-    linked.add(r.entry.id);
+    if (newLinks >= maxLinks) break;
+    const factId = r.entry.id;
+    if (linked.has(factId)) continue;
+    const live = factsDb.getById(factId);
+    if (!live || live.supersededAt != null) continue;
+    issueStore.linkFact(issue.id, factId);
+    linked.add(factId);
+    newLinks++;
   }
 
   const allLinked = [...linked];

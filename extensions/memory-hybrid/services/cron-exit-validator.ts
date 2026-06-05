@@ -255,11 +255,21 @@ const DREAM_CYCLE_FINISHED_WITH_ERRORS_RE = /Dream cycle finished with errors:/i
 const DREAM_CYCLE_CORE_STAGE_FAILURES_RE = /Core stage failures:/i;
 const DREAM_CYCLE_FOLLOW_UP_FAILURES_RE = /follow-up-failures=([1-9]\d*)/i;
 const DREAM_CYCLE_FOLLOW_UP_FAILURE_LIST_RE = /Dream cycle follow-ups:\s*([1-9]\d*)\s+failure/i;
+const DREAM_CYCLE_STATUS_LINE_RE = /Dream cycle status:\s*success=false\b/i;
 
 function detectDreamCyclePipelineFailures(logContent: string): Array<{ step: string; reason: string; line: string }> {
   const failures: Array<{ step: string; reason: string; line: string }> = [];
-  if (DREAM_CYCLE_FINISHED_WITH_ERRORS_RE.test(logContent) || DREAM_CYCLE_CORE_STAGE_FAILURES_RE.test(logContent)) {
-    failures.push({
+  const pushUnique = (failure: { step: string; reason: string; line: string }) => {
+    if (!failures.some((f) => f.step === failure.step && f.reason === failure.reason)) {
+      failures.push(failure);
+    }
+  };
+  if (
+    DREAM_CYCLE_FINISHED_WITH_ERRORS_RE.test(logContent) ||
+    DREAM_CYCLE_CORE_STAGE_FAILURES_RE.test(logContent) ||
+    DREAM_CYCLE_STATUS_LINE_RE.test(logContent)
+  ) {
+    pushUnique({
       step: "dream-cycle-core",
       reason: "core_stage_failed",
       line: "Dream cycle core stages reported failures",
@@ -267,7 +277,7 @@ function detectDreamCyclePipelineFailures(logContent: string): Array<{ step: str
   }
   for (const line of logContent.split("\n")) {
     if (DREAM_CYCLE_CORE_STAGE_FAILED_RE.test(line)) {
-      failures.push({
+      pushUnique({
         step: "dream-cycle-core",
         reason: "core_stage_failed",
         line: line.trim(),
@@ -278,7 +288,7 @@ function detectDreamCyclePipelineFailures(logContent: string): Array<{ step: str
   const followUpMatch = logContent.match(DREAM_CYCLE_FOLLOW_UP_FAILURES_RE);
   const followUpListMatch = logContent.match(DREAM_CYCLE_FOLLOW_UP_FAILURE_LIST_RE);
   if (followUpMatch || followUpListMatch) {
-    failures.push({
+    pushUnique({
       step: "dream-cycle-follow-ups",
       reason: "follow_up_failed",
       line: followUpMatch?.[0] ?? followUpListMatch?.[0] ?? "follow-up failures detected",

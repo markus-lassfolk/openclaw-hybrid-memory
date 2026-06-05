@@ -741,7 +741,11 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               followUpCompleted++;
               return result;
             } catch (err) {
-              recordDreamCycleFollowUpFailure(followUpPlan.length > 0 ? `${phaseLabel} (stage ${stageIndex}/${followUpPlan.length})` : phaseLabel, err);
+              recordDreamCycleFollowUpFailure(
+                followUpFailures,
+                followUpPlan.length > 0 ? `${phaseLabel} (stage ${stageIndex}/${followUpPlan.length})` : phaseLabel,
+                err,
+              );
               throw err;
             }
           };
@@ -956,6 +960,9 @@ export function registerManageReflectionPipeline(mem: Chainable, b: ManageBindin
               coreFailedStages: res.failedStages,
               followUpFailures,
             });
+            console.log(
+              `Dream cycle status: success=${res.success && followUpFailures.length === 0} core_success=${res.success} failed_stages=${res.failedStages.length} follow_up_failures=${followUpFailures.length}`,
+            );
             const totalElapsedSec = Math.floor((Date.now() - pipelineStartedAt) / 1000);
             const followUpElapsedSec = Math.max(0, totalElapsedSec - coreElapsedSec);
             console.log(

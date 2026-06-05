@@ -1,10 +1,11 @@
-import { getEnv } from "./env-manager.js";
+import { resolveOpenClawWorkspaceRoot } from "./openclaw-workspace.js";
 /**
  * Path utilities for memory-hybrid extension.
  */
 
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, relative } from "node:path";
+import { getEnv } from "./env-manager.js";
 
 /**
  * Expand tilde (~) in path to user's home directory.
@@ -32,10 +33,10 @@ export function expandHomePlaceholders(p: string): string {
 
 /**
  * Resolve the OpenClaw workspace root directory.
- * Defaults to ~/.openclaw/workspace if OPENCLAW_WORKSPACE is not set.
+ * Uses OPENCLAW_WORKSPACE, then openclaw.json agents.defaults.workspace, then default.
  */
 export function resolveWorkspaceRoot(): string {
-  return getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+  return resolveOpenClawWorkspaceRoot();
 }
 
 /**

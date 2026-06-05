@@ -229,18 +229,32 @@ describe("HybridMemoryContextEngine.compact()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const result = await engine.compact({ sessionId: "summary-session", sessionFile: "/tmp/s.json" });
 
     expect(result.ok).toBe(true);
-    // The result field should carry the memory summary for SDK consumption
-    const summary = result.result as { topFacts?: unknown[]; factCount?: number } | undefined;
-    if (summary) {
-      // If populated, verify shape
-      expect(typeof summary).toBe("object");
-    }
+    const summary = result.result as { topFacts?: unknown[]; factCount?: number; memorySummary?: string } | undefined;
+    expect(summary?.memorySummary).toBeDefined();
+    expect(summary?.memorySummary).toContain("Important context fact");
     // The reason string should mention the flush
     expect(result.reason).toMatch(/flushed/i);
+  });
+
+  it("skips memorySummary when autoRecall is enabled (after_compaction hook owns injection)", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Should not be summarized by ContextEngine compact",
+      category: "fact",
+      importance: 0.9,
+      source: "test",
+    });
+
+    const engine = makeEngine();
+    const result = await engine.compact({ sessionId: "no-summary-session", sessionFile: "/tmp/s.json" });
+    const summary = result.result as { memorySummary?: string } | undefined;
+    expect(summary?.memorySummary).toBeUndefined();
   });
 });
 

@@ -3659,6 +3659,24 @@ describe("FactsDB migration #237: access_count and last_accessed_at", () => {
     expect(entry.lastAccessedAt).toBeNull();
   });
 
+  it("deferAccessRefresh skips recall_count bump until caller refreshes", () => {
+    const entry = db.store({
+      text: "Deferred refresh fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+    });
+
+    db.search("Deferred refresh", 5, { deferAccessRefresh: true });
+    expect(db.getById(entry.id)?.accessCount).toBe(0);
+
+    db.refreshAccessedFacts([entry.id]);
+    expect(db.getById(entry.id)?.accessCount).toBe(1);
+  });
+
   it("refreshAccessedFacts increments access_count and sets last_accessed_at", () => {
     const entry = db.store({
       text: "Recall tracking fact",

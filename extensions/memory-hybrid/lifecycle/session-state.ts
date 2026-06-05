@@ -56,6 +56,7 @@ export function createSessionState(): SessionState {
   const ambientLastEmbeddingMap = new Map<string, number[] | null>();
   const sessionLastActivity = new Map<string, number>();
   const capabilityHintsSessionsSeen = new Set<string>();
+  const recallInFlightBySession = new Map<string, number>();
 
   function touchSession(sessionKey: string): void {
     sessionLastActivity.set(sessionKey, Date.now());
@@ -73,6 +74,7 @@ export function createSessionState(): SessionState {
     for (const key of authFailureRecallsThisSession.keys()) {
       if (key.startsWith(prefix)) authFailureRecallsThisSession.delete(key);
     }
+    recallInFlightBySession.delete(sessionKey);
   }
 
   function pruneSessionMaps(): void {
@@ -141,6 +143,7 @@ export function createSessionState(): SessionState {
     authFailureRecallsThisSession.clear();
     sessionLastActivity.clear();
     capabilityHintsSessionsSeen.clear();
+    recallInFlightBySession.clear();
   };
 
   return {
@@ -151,6 +154,7 @@ export function createSessionState(): SessionState {
     authFailureRecallsThisSession,
     sessionLastActivity,
     capabilityHintsSessionsSeen,
+    recallInFlightBySession,
     touchSession,
     clearSessionState,
     pruneSessionMaps,

@@ -39,8 +39,12 @@ import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
+import {
+  isSubstantiveMemoryText,
+  prepareMemoryMetadataForStorage,
+  prepareMemoryTextForStorage,
+} from "../../services/recalled-context-assembler.js";
 import { extractTags } from "../../utils/tags.js";
-import { truncateForStorage } from "../../utils/text.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 
 export function registerStoreTools(runtime: MemoryToolRuntime): void {
@@ -203,8 +207,19 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
 
-          let textToStore = text;
-          textToStore = truncateForStorage(textToStore, cfg.captureMaxChars);
+          const textToStore = prepareMemoryTextForStorage(text, cfg.captureMaxChars);
+          if (!textToStore || !isSubstantiveMemoryText(textToStore)) {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "memory_store: text is empty after sanitization (prompt-injection markers removed).",
+                },
+              ],
+              details: { error: "invalid_text" },
+            };
+          }
+          const whyStored = prepareMemoryMetadataForStorage(why);
 
           const importanceValue = importance as number;
           if (!Number.isFinite(importanceValue) || importanceValue < 0 || importanceValue > 1) {
@@ -252,9 +267,11 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           };
 
           const extracted = extractStructuredFields(textToStore, category as MemoryCategory);
-          const entity = paramEntity || extracted.entity;
-          const key = paramKey || extracted.key;
-          const value = paramValue || extracted.value;
+          const entity =
+            prepareMemoryMetadataForStorage(paramEntity) ?? prepareMemoryMetadataForStorage(extracted.entity);
+          const key = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
+          const value =
+            prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
 
           if (factsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
             return {
@@ -386,7 +403,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 }
 
                 const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "conversation", {
-                  why,
+                  why: whyStored,
                   importance,
                   decayClass: paramDecayClass ?? "permanent",
                   provenanceSession: provenanceSessionId,
@@ -447,7 +464,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     await storeActiveCanonicalVector({
                       factId: pointerEntry.id,
                       text: pointerText,
-                      why,
+                      why: whyStored,
                       vector,
                       importance,
                       category: "technical",
@@ -512,7 +529,9 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           const tags =
             paramTags && paramTags.length > 0
-              ? paramTags.map((t) => t.trim().toLowerCase()).filter(Boolean)
+              ? paramTags
+                  .map((t) => prepareMemoryMetadataForStorage(t.trim().toLowerCase()))
+                  .filter((t): t is string => Boolean(t))
               : extractTags(textToStore, entity);
 
           const summaryThreshold = cfg.autoRecall.summaryThreshold;
@@ -628,7 +647,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     "update",
                     {
                       text: textToStore,
-                      why,
+                      why: whyStored,
                       category,
                       importance: Math.max(importance, oldFact.importance),
                       entity: entity || oldFact.entity,
@@ -653,7 +672,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   const nowSec = Math.floor(Date.now() / 1000);
                   const updateStoreResult = factsDb.storeWithResult({
                     text: textToStore,
-                    why,
+                    why: whyStored,
                     category: category as MemoryCategory,
                     importance: Math.max(importance, oldFact.importance),
                     entity: entity || oldFact.entity,
@@ -707,7 +726,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       await storeActiveCanonicalVector({
                         factId: newEntry.id,
                         text: newEntry.text,
-                        why,
+                        why: whyStored,
                         vector: mergedVector,
                         importance: Math.max(importance, oldFact.importance),
                         category,
@@ -757,7 +776,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                         await storeActiveCanonicalVector({
                           factId: newEntry.id,
                           text: textToStore,
-                          why,
+                          why: whyStored,
                           vector,
                           importance: finalImportance,
                           category,
@@ -804,7 +823,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       details: {
                         action: "updated",
                         id: newEntry.id,
-                        why: why ?? undefined,
+                        why: whyStored ?? undefined,
                         superseded: classification.targetId,
                         reason: classification.reason,
                         backend: "both",
@@ -844,7 +863,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             "store",
             {
               text: textToStore,
-              why,
+              why: whyStored,
               category,
               importance,
               entity,
@@ -873,7 +892,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const storeSessionId = api.context?.sessionId ?? null;
           const storeResult = factsDb.storeWithResult({
             text: textToStore,
-            why,
+            why: whyStored,
             category: category as MemoryCategory,
             importance,
             entity,
@@ -934,7 +953,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 await storeActiveCanonicalVector({
                   factId: entry.id,
                   text: textToStore,
-                  why,
+                  why: whyStored,
                   vector,
                   importance,
                   category,
@@ -1140,7 +1159,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               details: {
                 action: supersedes?.trim() ? "updated" : "created",
                 id: entry.id,
-                why: why ?? undefined,
+                why: whyStored ?? undefined,
                 backend: "both",
                 decayClass: entry.decayClass,
                 ...(supersedes?.trim() ? { superseded: supersedes.trim() } : {}),

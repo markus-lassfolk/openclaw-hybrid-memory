@@ -453,7 +453,10 @@ export function buildGoalEscalationHeartbeatBlock(
     "<goal-escalation>",
     "**Heartbeat — blocked or stalled goals**",
     "Do not reply HEARTBEAT_OK as if everything is fine until these are triaged or unblocked.",
-    ...bad.map((g) => `- **[${g.label}]** (${g.status})`),
+    ...bad.map((g) => {
+      const label = sanitizePromptInjection(g.label);
+      return label ? `- **[${label}]** (${g.status})` : `- **(redacted label)** (${g.status})`;
+    }),
     "</goal-escalation>",
   ];
   const closingTag = "</goal-escalation>";

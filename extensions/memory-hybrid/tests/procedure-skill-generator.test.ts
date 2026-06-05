@@ -120,6 +120,8 @@ describe("generateAutoSkills", () => {
         db,
         {
           skillsAutoPath: skillsDir,
+          skillsPendingPath: join(tmpDir, "skills-pending"),
+          requireApprovalForPromote: false,
           validationThreshold: 3,
           skillTTLDays: 30,
           dryRun: false,
@@ -205,6 +207,8 @@ describe("generateAutoSkills", () => {
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         apply: true,
@@ -295,6 +299,8 @@ description: Existing skill occupying the representative base slug only.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         apply: true,
@@ -349,6 +355,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         apply: true,
@@ -390,6 +398,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         dryRun: true,
@@ -439,6 +449,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         dryRun: true,
@@ -494,6 +506,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         dryRun: true,
@@ -535,6 +549,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         apply: true,
@@ -578,6 +594,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         apply: true,
@@ -632,6 +650,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         apply: true,
@@ -676,6 +696,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         procedureId: proc.id,
@@ -711,6 +733,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         procedureId: proc.id,
@@ -749,6 +773,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         procedureId: proc.id,
@@ -793,6 +819,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         procedureId: proc.id,
@@ -839,6 +867,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         dryRun: true,
@@ -885,6 +915,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         dryRun: true,
@@ -951,6 +983,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         apply: true,
@@ -1017,6 +1051,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
         procedureId: proc.id,
@@ -1048,6 +1084,8 @@ description: Existing legacy skill created before completion markers.
       db,
       {
         skillsAutoPath: skillsDir,
+        skillsPendingPath: join(tmpDir, "skills-pending"),
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         skillTTLDays: 30,
       },
@@ -1057,5 +1095,49 @@ description: Existing legacy skill created before completion markers.
     expect(result.generated).toBe(0);
     expect(result.paths).toHaveLength(0);
     expect(result.summary?.candidates).toBe(0);
+  });
+
+  it("writes to skillsPendingPath when requireApprovalForPromote is true", () => {
+    const proc = db.upsertProcedure({
+      taskPattern: "Pending path promotion check",
+      recipeJson: JSON.stringify([
+        { tool: "read", args: { path: "notifications.json" }, summary: "Read notifications" },
+        { tool: "exec", args: { command: "npm test" }, summary: "Run validation test" },
+        { tool: "read", args: { path: "report.json" }, summary: "Verify report output" },
+      ]),
+      procedureType: "positive",
+      successCount: 3,
+      confidence: 0.8,
+      sourceSessionId: "s1",
+      ttlDays: 30,
+    });
+    db.recordProcedureSuccess(proc.id, undefined, "s2");
+    db.recordProcedureSuccess(proc.id, undefined, "s3");
+
+    const pendingDir = join(tmpDir, "memory", "skills-pending");
+    const previousWorkspace = getEnv("OPENCLAW_WORKSPACE");
+    setEnv("OPENCLAW_WORKSPACE", tmpDir);
+    try {
+      const result = generateAutoSkills(
+        db,
+        {
+          skillsAutoPath: skillsDir,
+          skillsPendingPath: "memory/skills-pending",
+          requireApprovalForPromote: true,
+          validationThreshold: 3,
+          skillTTLDays: 30,
+          dryRun: false,
+          apply: true,
+          policy: "auto-safe",
+        },
+        { info: () => {}, warn: () => {} },
+      );
+      expect(result.generated).toBe(1);
+      expect(existsSync(join(pendingDir, "pending-path-promotion-check", "SKILL.md"))).toBe(true);
+      expect(existsSync(join(skillsDir, "pending-path-promotion-check", "SKILL.md"))).toBe(false);
+    } finally {
+      if (previousWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
+      else setEnv("OPENCLAW_WORKSPACE", undefined);
+    }
   });
 });

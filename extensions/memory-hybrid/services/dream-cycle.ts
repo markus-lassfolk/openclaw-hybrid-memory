@@ -296,29 +296,31 @@ export function buildConsolidatedFactText(
 
   const prefix = `[consolidated from ${eventTexts.length} events${entityLabel ? ` about ${entityLabel}` : ""}] `;
   let result = prefix;
-  let included = 0;
+  let lastRepresentedIndex = -1;
   for (let i = 0; i < eventTexts.length; i++) {
-    const sep = included > 0 ? "; " : "";
+    const sep = lastRepresentedIndex >= 0 ? "; " : "";
     const snippet = eventTexts[i];
     const candidate = result + sep + snippet;
     if (candidate.length <= maxLength) {
       result = candidate;
-      included++;
+      lastRepresentedIndex = i;
       continue;
     }
     const room = maxLength - result.length - sep.length;
     if (room > 10) {
       result += sep + snippet.slice(0, room);
-      included++;
+      lastRepresentedIndex = i;
     }
     break;
   }
-  const omitted = eventTexts.length - included;
+  const omitted = lastRepresentedIndex >= 0 ? eventTexts.length - (lastRepresentedIndex + 1) : eventTexts.length;
   if (omitted > 0) {
     const suffix = ` (+${omitted} more)`;
-    if (result.length + suffix.length <= maxLength) {
-      result += suffix;
+    const allowedBodyLen = maxLength - suffix.length;
+    if (result.length > allowedBodyLen) {
+      result = result.slice(0, allowedBodyLen).replace(/; [^;]*$/, "");
     }
+    result += suffix;
   }
   return result.slice(0, maxLength);
 }
@@ -840,6 +842,9 @@ export async function runDreamCycle(
         logger.warn(
           `memory-hybrid: dream-cycle — expired vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
         );
+        stageCoreError ??= new Error(
+          `expired vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
       }
     } catch (err) {
       stageCoreError ??= err;
@@ -896,6 +901,9 @@ export async function runDreamCycle(
       if (vectorCleanup.failed > 0) {
         logger.warn(
           `memory-hybrid: dream-cycle — decay vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
+        );
+        stageCoreError ??= new Error(
+          `decay vector cleanup partial: deleted ${vectorCleanup.deleted}/${vectorCleanup.attempted}, failed ${vectorCleanup.failed}`,
         );
       }
     } catch (err) {
@@ -965,6 +973,9 @@ export async function runDreamCycle(
     if (reconcile.failed > 0) {
       logger.warn(
         `memory-hybrid: dream-cycle — orphan reconciliation partial: deleted ${reconcile.orphanVectorsRemoved}/${reconcile.orphansFound}, failed ${reconcile.failed}`,
+      );
+      stageCoreError ??= new Error(
+        `orphan reconciliation partial: deleted ${reconcile.orphanVectorsRemoved}/${reconcile.orphansFound}, failed ${reconcile.failed}`,
       );
     }
     if (isVectorBackendAvailable(vectorDb)) {
@@ -1047,7 +1058,7 @@ export async function runDreamCycle(
   }
 
   // ── Step 2c: Clean up old unconsolidated events ──────────────────────────
-  if (eventLog && config.maxUnconsolidatedAgeDays > 0) {
+  if (eventLog && config.maxUnconsolidatedAgeDays > 0 && !config.walFlushFailed) {
     eventLogPhase = "archive-old";
     const archiveAgeDays = Math.max(config.maxUnconsolidatedAgeDays, config.consolidateAfterDays);
     if (archiveAgeDays !== config.maxUnconsolidatedAgeDays && v) {
@@ -1070,6 +1081,10 @@ export async function runDreamCycle(
         subsystem: "event-log",
       });
     }
+  } else if (eventLog && config.walFlushFailed && config.maxUnconsolidatedAgeDays > 0 && v) {
+    logger.info(
+      "memory-hybrid: dream-cycle — skipping archiveOld for unconsolidated events (WAL pre-flush failed; would risk deleting unprocessed episodic data)",
+    );
   }
   {
     const summary = `eventsConsolidated=${eventsConsolidated}, factsCreated=${factsCreated}`;
@@ -1153,6 +1168,10 @@ export async function runDreamCycle(
       logger.info(
         `memory-hybrid: dream-cycle — reflect-rules complete: ${rulesGenerated} rules stored (status=${rulesResult.diagnostics.status}${rulesResult.diagnostics.zeroRulesReason ? `, zero_rules_reason=${rulesResult.diagnostics.zeroRulesReason}` : ""})`,
       );
+      if (rulesResult.diagnostics.status === "degraded") {
+        stageReflectRulesError = new Error(rulesResult.diagnostics.zeroRulesReason ?? "reflect_rules_degraded");
+        recordStageFailure("reflect-rules", stageReflectRulesError);
+      }
     } catch (err) {
       stageReflectRulesError ??= err;
       recordStageFailure("reflect-rules", err);
@@ -1230,9 +1249,6 @@ export async function runDreamCycle(
   }
   if (stageMemoryIndexError === undefined) stageMemoryIndex.complete();
   else stageMemoryIndex.fail(stageMemoryIndexError);
-  if (stageMemoryIndexError !== undefined) {
-    recordStageFailure("MEMORY_INDEX.md refresh", stageMemoryIndexError);
-  }
 
   // ── Stage 6: Operational table/index cleanup ──────────────────────────────
   let logRowsPruned = 0;

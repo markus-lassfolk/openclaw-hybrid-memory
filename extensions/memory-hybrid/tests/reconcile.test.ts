@@ -164,6 +164,27 @@ describe("FactsDB.getAllIds()", () => {
   });
 });
 
+describe("FactsDB.filterActiveFactIds()", () => {
+  it("returns only active IDs from a candidate list", () => {
+    const activeId = storeFactInSqlite(factsDb, { text: "active fact" });
+    const expired = factsDb.store({
+      text: "expired fact",
+      category: "fact",
+      importance: 0.5,
+      entity: null,
+      key: null,
+      value: null,
+      source: "test",
+      expiresAt: Math.floor(Date.now() / 1000) - 3600,
+      decayClass: "short",
+    });
+    const active = factsDb.filterActiveFactIds([activeId, expired.id, "missing-id"]);
+    expect(active.has(activeId.toLowerCase())).toBe(true);
+    expect(active.has(expired.id.toLowerCase())).toBe(false);
+    expect(active.has("missing-id")).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Orphan detection logic (mirrors what cmd-verify.ts does)
 // ---------------------------------------------------------------------------

@@ -165,7 +165,9 @@ function buildNarrativePart(
     });
     if (recentNarratives.length === 0) return "";
     const narrative = recentNarratives[0];
-    const narrativeBlock = `<recent-history-narratives>\n- [${narrative.source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${narrative.sessionId})\n${clipNarrativeText(sanitizePromptInjection(narrative.text))}\n</recent-history-narratives>\n\n`;
+    const source = sanitizePromptInjection(narrative.source);
+    const sessionId = sanitizePromptInjection(narrative.sessionId);
+    const narrativeBlock = `<recent-history-narratives>\n- [${source}/${formatNarrativeRange(narrative.periodStart, narrative.periodEnd)}] (sessionKey: ${sessionId})\n${clipNarrativeText(sanitizePromptInjection(narrative.text))}\n</recent-history-narratives>\n\n`;
     return capAndTrackBlock("narrative", narrativeBlock, narrativeCapTokens, budgetState);
   } catch {
     return "";
@@ -198,7 +200,11 @@ export async function buildDegradedFtsHotRecallStage(
     narrativeBlockCapCfg ?? (hasNarrativesDb ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
   const hotCapTokens = hotBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.25));
   const sessionKey = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
-  const budgetState: BudgetState = { remainingBudget: totalBudget, audit: [] };
+  const edictReserve = edictMaxTokensForBudget(totalBudget);
+  const budgetState: BudgetState = {
+    remainingBudget: Math.max(0, totalBudget - edictReserve),
+    audit: [],
+  };
   const narrativePart = buildNarrativePart(ctx, prompt, narrativeCapTokens, budgetState, sessionKey);
   const hotPart = buildHotPart(ctx, scopeFilter, hotCapTokens, budgetState);
 
@@ -211,6 +217,7 @@ export async function buildDegradedFtsHotRecallStage(
       reinforcementBoost: ctx.cfg.distill?.reinforcementBoost ?? 0.1,
       diversityWeight: ctx.cfg.reinforcement?.diversityWeight ?? 1.0,
       interactiveFtsFastPath: true,
+      deferAccessRefresh: true,
     };
     const ftsOnly = ctx.factsDb.search(prompt.trim(), ctx.cfg.autoRecall.limit, recallOpts);
     const memoryLines = formatRecallLines(ftsOnly, ctx.cfg.autoRecall.limit);
@@ -222,7 +229,7 @@ export async function buildDegradedFtsHotRecallStage(
 
   const inner = narrativePart + hotPart + recallPart;
   const marker = degradedMarkerForReason(reason);
-  if (ctx.prependBudgetRef) {
+  if (ctx.prependBudgetRef && !ctx.prependBudgetRef.value) {
     initPrependBudget(ctx.prependBudgetRef, totalBudget, sessionKey);
   }
 
@@ -260,12 +267,15 @@ export async function buildDegradedFtsHotRecallStage(
   const prepend =
     assembleRecallPrependContext(ctx, inner, {
       prefix: marker.trim(),
-      edictMaxTokens: edictMaxTokensForBudget(totalBudget),
+      edictMaxTokens: edictReserve,
     }) ??
     (marker.trim() ? `${marker}\n\n` : undefined);
   if (prepend) consumePrependBudget(ctx.prependBudgetRef, prepend);
   if (prepend) return { kind: "degraded", prependContext: prepend };
-  return { kind: "degraded", prependContext: `${marker}\n\n` };
+  const markerOnly =
+    assembleRecallPrependContext(ctx, "", { prefix: marker.trim(), edictMaxTokens: edictReserve }) ??
+    `${marker}\n\n`;
+  return { kind: "degraded", prependContext: markerOnly };
 }
 
 /** Fixed blocks (HOT, narrative) for prompts too short to search. */

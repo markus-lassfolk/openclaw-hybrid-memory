@@ -42,7 +42,10 @@ import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
 import { isRecallContextSuperseded, shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
 import { extractTags } from "../../utils/tags.js";
-import { truncateForStorage } from "../../utils/text.js";
+import {
+  isSubstantiveMemoryText,
+  prepareMemoryTextForStorage,
+} from "../../services/recalled-context-assembler.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import type { LifecycleContext, SessionState } from "../types.js";
 
@@ -353,8 +356,8 @@ export async function runCapture(
             clearSessionState(sessionKey);
             return;
           }
-          let textToStore = candidate.text;
-          textToStore = truncateForStorage(textToStore, ctx.cfg.captureMaxChars);
+          const textToStore = prepareMemoryTextForStorage(candidate.text, ctx.cfg.captureMaxChars);
+          if (!textToStore || !isSubstantiveMemoryText(textToStore)) continue;
           const category: MemoryCategory = ctx.detectCategory(textToStore);
           const extracted = extractStructuredFields(textToStore, category);
           if (ctx.factsDb.hasDuplicate(textToStore, "auto-capture")) {

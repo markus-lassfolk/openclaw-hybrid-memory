@@ -3,8 +3,9 @@
  */
 
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { inferTargetFile } from "../cli/cmd-store.js";
+import { isPathInsideDir } from "../cli/install/workspace.js";
 import { insertRulesUnderSection } from "./tools-md-section.js";
 
 export type ParsedCorrectionRules = {
@@ -21,6 +22,47 @@ const SKILL_PATH_IN_TEXT = /\b(skills\/[^\s:]+\.md)\b/i;
 const SKILL_UPDATE_PREFIX = /^\[SKILL_UPDATE\]\s*/i;
 const AGENTS_RULE_PREFIX = /^\[AGENTS_RULE\]\s*/i;
 const TOOLS_RULE_PREFIX = /^\[TOOLS_RULE\]\s*/i;
+
+const ALLOWED_PERSONA_TARGET_FILES = new Set(["SOUL.md", "USER.md", "IDENTITY.md", "AGENTS.md", "TOOLS.md"]);
+
+function isSafePersonaTargetFile(fileName: string): boolean {
+  return ALLOWED_PERSONA_TARGET_FILES.has(fileName) && !fileName.includes("/") && !fileName.includes("..");
+}
+
+function isSafeSkillPathUnderWorkspace(workspaceRoot: string, skillPath: string): boolean {
+  return isPathInsideDir(workspaceRoot, skillPath) && skillPath.replace(/\\/g, "/").includes("/skills/");
+}
+
+/** Extract change text from a SKILL_UPDATE body after the target path prefix. */
+export function parseSkillUpdateChange(body: string): string {
+  const trimmed = body.trim();
+  const explicit = trimmed.match(SKILL_PATH_IN_TEXT);
+  if (explicit) {
+    const after = trimmed.slice(trimmed.indexOf(explicit[1]) + explicit[1].length).replace(/^\s*:\s*/, "").trim();
+    return after || trimmed;
+  }
+  const colonSplit = trimmed.match(/^([^\s:]+):\s*(.+)$/s);
+  if (colonSplit) return colonSplit[2].trim();
+  return trimmed;
+}
+
+/**
+ * Format a SKILL_UPDATE proposal line with an explicit skills/.../SKILL.md prefix when resolvable.
+ */
+export function formatSkillUpdateProposal(line: string, workspaceRoot: string): string {
+  const trimmed = line.trim();
+  if (!trimmed) return "[SKILL_UPDATE] ";
+  if (SKILL_PATH_IN_TEXT.test(trimmed)) {
+    return SKILL_UPDATE_PREFIX.test(trimmed) ? trimmed : `[SKILL_UPDATE] ${trimmed}`;
+  }
+  const resolved = resolveSkillUpdateTarget(`[SKILL_UPDATE] ${trimmed}`, workspaceRoot);
+  if (resolved) {
+    const rel = relative(workspaceRoot, resolved.skillPath).split("\\").join("/");
+    const change = parseSkillUpdateChange(trimmed);
+    return `[SKILL_UPDATE] ${rel}: ${change}`;
+  }
+  return `[SKILL_UPDATE] ${trimmed}`;
+}
 
 /** Extract items from "Suggested TOOLS.md rules" and "Proposed" sections for list display. */
 export function parseReportProposedSections(content: string): string[] {
@@ -116,16 +158,21 @@ export function parseReportRulesForApply(content: string, workspaceRoot: string)
     if (SKILL_UPDATE_PREFIX.test(text)) {
       const body = text.replace(SKILL_UPDATE_PREFIX, "").trim();
       const resolved = resolveSkillUpdateTarget(text, workspaceRoot);
-      if (resolved) {
-        const change =
-          body.replace(SKILL_PATH_IN_TEXT, "").replace(/^[\w-]+:\s*/, "").trim() || body;
-        skillUpdates.push({ skillPath: resolved.skillPath, change });
+      if (resolved && isSafeSkillPathUnderWorkspace(workspaceRoot, resolved.skillPath)) {
+        skillUpdates.push({ skillPath: resolved.skillPath, change: parseSkillUpdateChange(body) });
+      } else if (resolved) {
+        unresolvedSkillUpdates.push(`${body} (path outside workspace)`);
       } else {
         unresolvedSkillUpdates.push(body);
       }
     } else if (AGENTS_RULE_PREFIX.test(text)) {
       const rule = text.replace(AGENTS_RULE_PREFIX, "").trim();
-      pushAgentsRule(inferTargetFile(rule), rule);
+      const targetFile = inferTargetFile(rule);
+      if (!isSafePersonaTargetFile(targetFile)) {
+        unresolvedSkillUpdates.push(`[AGENTS_RULE] unsafe target ${targetFile}: ${rule.slice(0, 80)}`);
+        continue;
+      }
+      pushAgentsRule(targetFile, rule);
     } else if (TOOLS_RULE_PREFIX.test(text)) {
       toolsRules.push(text.replace(TOOLS_RULE_PREFIX, "").trim());
     } else {
@@ -137,6 +184,11 @@ export function parseReportRulesForApply(content: string, workspaceRoot: string)
 }
 
 const SKILL_UPDATE_SECTION = "Self-correction skill updates";
+
+function defaultHeadingForMarkdownFile(fileName: string): string {
+  const base = fileName.replace(/\.md$/i, "");
+  return `# ${base.toUpperCase()}`;
+}
 
 /** Apply parsed correction rules to workspace files. */
 export function applyParsedCorrectionRules(opts: {
@@ -155,15 +207,25 @@ export function applyParsedCorrectionRules(opts: {
   }
 
   for (const [targetFile, rules] of parsed.agentsRulesByFile) {
+    if (!isSafePersonaTargetFile(targetFile)) {
+      errors.push(`Unsafe persona target file: ${targetFile}`);
+      continue;
+    }
     const targetPath = join(workspaceRoot, targetFile);
-    const defaultHeading = targetFile.replace(/\.md$/i, "").startsWith("#")
-      ? targetFile
-      : `# ${targetFile.replace(/\.md$/i, "").toUpperCase()}`;
-    const { inserted } = insertRulesUnderSection(targetPath, toolsSection, rules, defaultHeading);
+    const { inserted } = insertRulesUnderSection(
+      targetPath,
+      toolsSection,
+      rules,
+      defaultHeadingForMarkdownFile(targetFile),
+    );
     applied += inserted;
   }
 
   for (const { skillPath, change } of parsed.skillUpdates) {
+    if (!isSafeSkillPathUnderWorkspace(workspaceRoot, skillPath)) {
+      errors.push(`Skill path outside workspace: ${skillPath}`);
+      continue;
+    }
     if (!existsSync(skillPath)) {
       errors.push(`Skill file not found: ${skillPath}`);
       continue;

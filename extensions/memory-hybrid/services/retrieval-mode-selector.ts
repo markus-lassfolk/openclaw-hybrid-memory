@@ -62,8 +62,15 @@ export function inferRetrievalModeFromQuery(
  * Extract implicit entity filter from query when none was provided explicitly.
  */
 export function inferEntityFilterFromQuery(query: string): string | undefined {
-  const m = query.match(
+  const explicit = query.match(
     /\b(?:project|repo|repository|service|entity)\s+[:=]?\s*([a-z0-9][a-z0-9_.-]{1,60})/i,
   );
-  return m?.[1]?.trim();
+  if (explicit?.[1]) return explicit[1].trim();
+
+  // Single hyphenated token queries: "openclaw-hybrid-memory deploy status"
+  const tokens = query.match(/\b[a-z0-9][a-z0-9_-]{3,}\b/gi) ?? [];
+  const hyphenated = tokens.filter((t) => t.includes("-") && t.length >= 4);
+  if (hyphenated.length === 1) return hyphenated[0].toLowerCase();
+
+  return undefined;
 }
