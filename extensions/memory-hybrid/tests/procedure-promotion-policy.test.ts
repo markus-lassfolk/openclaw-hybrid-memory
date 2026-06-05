@@ -94,6 +94,7 @@ describe("procedure promotion policy and adapter", () => {
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         dryRun: true,
         policy: "auto-safe",
@@ -118,6 +119,7 @@ describe("procedure promotion policy and adapter", () => {
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         apply: true,
         policy: "auto-safe",
@@ -218,6 +220,7 @@ describe("procedure promotion policy and adapter", () => {
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         apply: true,
         policy: "auto-safe",
@@ -274,6 +277,7 @@ describe("procedure promotion policy and adapter", () => {
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         apply: true,
         policy: "auto-safe",
@@ -313,6 +317,7 @@ describe("procedure promotion policy and adapter", () => {
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         dryRun: true,
         policy: "auto-safe",
@@ -384,6 +389,7 @@ Source procedure id: proc-weather
       policy,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
       },
     );
@@ -392,6 +398,7 @@ Source procedure id: proc-weather
       policy,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
       },
     );
@@ -703,6 +710,7 @@ Use for collecting markerless legacy reports.
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         apply: true,
         policy: "auto-safe",
@@ -722,6 +730,7 @@ Use for collecting markerless legacy reports.
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         dryRun: true,
         policy: "auto-safe",
@@ -985,6 +994,7 @@ Use for collecting markerless legacy reports.
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         dryRun: true,
         policy: "auto-safe",
@@ -1006,6 +1016,7 @@ Use for collecting markerless legacy reports.
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         apply: true,
         policy: "auto-safe",
@@ -1018,6 +1029,7 @@ Use for collecting markerless legacy reports.
       db,
       {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         apply: true,
         policy: "auto-safe",
@@ -1338,6 +1350,7 @@ metadata:
       const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
       const baseOpts = {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         minDistinctContexts: 1,
       };
@@ -1368,6 +1381,7 @@ metadata:
       const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
       const baseOpts = {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         minDistinctContexts: 1,
       };
@@ -1417,6 +1431,7 @@ metadata:
       const item = createProcedurePromotionItem(requireProcedure(proc.id), policy);
       const baseOpts = {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         minDistinctContexts: 1,
       };
@@ -1503,6 +1518,7 @@ metadata:
       };
       const baseOpts = {
         skillsAutoPath: skillsDir,
+        requireApprovalForPromote: false,
         validationThreshold: 3,
         minDistinctContexts: 1,
         evidence: sharedEvidence,
