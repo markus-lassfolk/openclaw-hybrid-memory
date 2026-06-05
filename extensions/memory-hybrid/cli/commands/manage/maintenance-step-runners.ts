@@ -11,6 +11,11 @@ import type { VectorDB } from "../../../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../../../config.js";
 import { getDefaultCronModel, getCronModelConfig } from "../../../config.js";
 import { CrystallizationProposer } from "../../../services/crystallization-proposer.js";
+import {
+  DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
+  ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
+  runContradictionMaintenanceAutoStep,
+} from "../../../services/contradiction-progress-summary.js";
 import { syncLifecycleFromGitHub } from "../../../services/lifecycle/github-adapter.js";
 import { runAnalyzeMaintenanceLogs } from "./register-analyze-maintenance-logs.js";
 import { buildAuditHealthReport } from "./storage-stats-helpers.js";
@@ -43,6 +48,14 @@ import {
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
 } from "../../../services/maintenance-job-run/index.js";
+import {
+  DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
+  DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,
+  evaluateContradictionProgress,
+  formatContradictionProgressSummaryLine,
+  persistConsecutiveNoProgressState,
+  readConsecutiveNoProgressRuns,
+} from "../../../services/contradiction-progress-summary.js";
 
 function reflectRulesDiagnosticsIndicateFailure(
   d:
@@ -215,6 +228,22 @@ function assertRecordStorageSampleSummaryDoesNotBlock(summary: string): string {
   return summary;
 }
 
+function resolveOpenclawHomeFromSqlitePath(resolvedSqlitePath: string | null | undefined): string {
+  if (resolvedSqlitePath) return join(dirname(resolvedSqlitePath), "..");
+  return join(homedir(), ".openclaw");
+}
+
+function assertContradictionMaintenanceSummaryDoesNotBlock(
+  summary: string,
+  evaluation: { degraded: boolean },
+): string {
+  const semantic = parseSemanticTokenFromSummary(summary);
+  if (evaluation.degraded || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
+    throw new Error(`resolve-contradictions degraded backlog (${summary})`);
+  }
+  return summary;
+}
+
 export function buildCliMaintenanceRunners(
   b: ManageBindings,
   opts: BuildCliRunnersOptions = {},
@@ -344,7 +373,24 @@ export function buildCliMaintenanceRunners(
 
   set("resolve-contradictions", async () => {
     const r = await b.runResolveContradictions();
-    return `autoResolved=${r.autoResolved.length} ambiguous=${r.ambiguous.length}`;
+    const autoResolvedCount = r.autoResolved.length;
+    const ambiguousCount = r.ambiguous.length;
+    const metrics = {
+      autoResolved: autoResolvedCount,
+      ambiguous: ambiguousCount,
+      totalConsidered: autoResolvedCount + ambiguousCount,
+    };
+    const evaluation = evaluateContradictionProgress(metrics, {
+      degradedAmbiguousThreshold: DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
+      degradedConsecutiveThreshold: DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,
+      previousConsecutiveNoProgressRuns: readConsecutiveNoProgressRuns(),
+    });
+    persistConsecutiveNoProgressState(metrics, evaluation);
+    const summary = `${formatContradictionProgressSummaryLine("default", metrics, evaluation)} semantic=${evaluation.degraded ? "partial" : "success"}`;
+    if (evaluation.degraded) {
+      throw new Error(`resolve-contradictions degraded backlog (${evaluation.exitReason}): ${summary}`);
+    }
+    return summary;
   });
 
   set("enrich-entities", async () => {
@@ -462,6 +508,7 @@ export function buildCliMaintenanceRunners(
     if (r.semanticOutcome === "failed") {
       throw new Error(`reflect-identity semantic failure (${summary})`);
     }
+    assertSemanticOutcomeDoesNotBlockStep("reflect-identity", r.semanticOutcome, summary);
     return summary;
   });
 

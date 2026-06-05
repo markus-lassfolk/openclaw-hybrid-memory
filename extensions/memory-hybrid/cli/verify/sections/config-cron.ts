@@ -34,7 +34,11 @@ import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../../../utils/openclaw-agent-defaults.js";
-import { isConsolidatedMaintenanceCronEnabled, readConsolidatedCronJobsFlag } from "../../install/cron-jobs.js";
+import {
+  getConsolidatedSupersededLegacyCronJobKeys,
+  isConsolidatedMaintenanceCronEnabled,
+  readConsolidatedCronJobsFlag,
+} from "../../install/cron-jobs.js";
 import { approxIntervalMs, relativeTime } from "../../shared.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
@@ -276,30 +280,9 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     consolidatedCronJobs: readConsolidatedCronJobsFlag(cfg),
   });
 
-  const legacyCronJobKeys = [
-    "nightly-memory-sweep",
-    "weekly-reflection",
-    "weekly-extract-procedures",
-    "self-correction-analysis",
-    "weekly-deep-maintenance",
-    "monthly-consolidation",
-    "weekly-persona-proposals",
-    "nightly-dream-cycle",
-    "sensor-sweep",
-  ] as const;
+  const legacyCronJobKeys = getConsolidatedSupersededLegacyCronJobKeys();
 
-  const knownJobSlugs = new Set([
-    "maintenance-nightly",
-    "nightly-memory-sweep",
-    "weekly-reflection",
-    "weekly-extract-procedures",
-    "self-correction-analysis",
-    "weekly-deep-maintenance",
-    "monthly-consolidation",
-    "weekly-persona-proposals",
-    "nightly-dream-cycle",
-    "sensor-sweep",
-  ]);
+  const knownJobSlugs = new Set(["maintenance-nightly", ...legacyCronJobKeys]);
   const maintenanceNightlyRe = /maintenance[- ]?nightly|orchestrator.*maintenance/i;
   const nightlyDreamCycleRe = /nightly[- ]?dream[- ]?cycle|dream[- ]?cycle/i;
   const sensorSweepRe = /sensor[- ]?sweep/i;

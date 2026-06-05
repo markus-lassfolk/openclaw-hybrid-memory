@@ -19,6 +19,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 import { traceIntegration } from "../utils/integration-trace.js";
+import { isCredentialFact, isInternalWikiArtifact } from "./wiki-fact-filter.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export type PublicArtifact = {
@@ -59,10 +60,8 @@ function factKind(entry: MemoryEntry): PublicArtifact["kind"] {
 }
 
 /** Hide internal bookkeeping facts from the memory-wiki bridge. */
-function isInternalWikiArtifact(entry: MemoryEntry): boolean {
-  if (entry.tags?.includes("dream-ingester-sentinel")) return true;
-  if (entry.entity === "system" && entry.key?.startsWith("dream-ingested-run:")) return true;
-  return false;
+function isExcludedWikiArtifact(entry: MemoryEntry): boolean {
+  return isCredentialFact(entry) || isInternalWikiArtifact(entry);
 }
 
 export function createPublicArtifactsProvider(factsDb: FactsDB, verbose = false): PublicArtifactsProvider {
@@ -87,7 +86,7 @@ export function createPublicArtifactsProvider(factsDb: FactsDB, verbose = false)
         }
 
         const sorted = filtered
-          .filter((entry) => !isInternalWikiArtifact(entry))
+          .filter((entry) => !isExcludedWikiArtifact(entry))
           .sort((a, b) => {
             const ta = a.lastAccessed ?? a.sourceDate ?? a.createdAt;
             const tb = b.lastAccessed ?? b.sourceDate ?? b.createdAt;

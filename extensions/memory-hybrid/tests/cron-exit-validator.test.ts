@@ -805,6 +805,94 @@ error: unknown command 'bar'
       );
     });
 
+    it("detects enrich-entities llmFailures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities processed=20 enriched=5 llmFailures=2 stopReason=provider_budget remaining=100 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities",
+          failureClass: "enrich_entities_llm_failures",
+        }),
+      );
+    });
+
+    it("detects consolidate cluster failures on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "consolidate.exit.txt");
+      const logPath = join(tmpDir, "consolidate.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z consolidate exit=0\n");
+      writeFileSync(
+        logPath,
+        "consolidate merged=1 clusters=3 clustersFailed=2 vector_failures=0 semantic=partial\nmemory-hybrid: consolidate LLM failed for cluster: timeout\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["consolidate"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "consolidate",
+          failureClass: "consolidate_cluster_failures",
+        }),
+      );
+    });
+
+    it("detects reflect-identity LLM failure on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "reflect-identity.exit.txt");
+      const logPath = join(tmpDir, "reflect-identity.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z reflect-identity exit=0\n");
+      writeFileSync(
+        logPath,
+        "reflect-identity insightsStored=0 insightsExtracted=0 semantic=failed\nmemory-hybrid: reflect-identity LLM failed: 429\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["reflect-identity"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "reflect-identity",
+          failureClass: "reflect_identity_llm_failure",
+        }),
+      );
+    });
+
+    it("detects resolve-contradictions degraded backlog on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "resolve-contradictions.exit.txt");
+      const logPath = join(tmpDir, "resolve-contradictions.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z resolve-contradictions exit=0\n");
+      writeFileSync(
+        logPath,
+        "resolve-contradictions summary mode=default auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 threshold_enabled=1 threshold=200 consecutive=1 consecutive_threshold=1\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["resolve-contradictions"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "resolve-contradictions",
+          failureClass: "resolve_contradictions_degraded_backlog",
+        }),
+      );
+    });
+
     it("detects degraded implicit-feedback collapse backlogs that change nothing", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "weekly-implicit-feedback-collapse-20260508T021500Z-111.exit.txt");

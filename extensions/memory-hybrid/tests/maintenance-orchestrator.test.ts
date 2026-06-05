@@ -343,6 +343,27 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it("parses semantic token from resolve-contradictions degraded backlog", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "resolve-contradictions",
+        async () => {
+          throw new Error(
+            "resolve-contradictions degraded backlog (ambiguous_backlog_no_progress): resolve-contradictions summary mode=default auto_resolved=0 ambiguous=250 no_progress=1 degraded=1 semantic=partial",
+          );
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["resolve-contradictions"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
   it("fails reflect-rules when runner summary has parse_success=false without semantic token", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([

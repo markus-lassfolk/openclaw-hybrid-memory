@@ -498,7 +498,7 @@ export async function runGenerateProposalsForCli(
     );
   }
   return finishProposals(created, {
-    semanticEmpty: created === 0 && items.length === 0,
+    semanticEmpty: created === 0,
     inputsProcessed: insights.length,
   });
 }

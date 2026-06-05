@@ -36,6 +36,14 @@ function walkDirs(root: string, out: string[]): void {
   }
 }
 
+function isJobRunSummaryPath(file: string): boolean {
+  return file.endsWith("summary.json") && (file.includes("/job-runs/") || file.includes("/job-runs-standalone/"));
+}
+
+function isOrchestratorSummaryPath(file: string): boolean {
+  return file.endsWith(".summary.json") && !file.includes("/job-runs/") && !file.includes("/job-runs-standalone/");
+}
+
 export function listMaintenanceRuns(opts?: {
   logRoot?: string;
   openclawDir?: string;
@@ -48,34 +56,15 @@ export function listMaintenanceRuns(opts?: {
   const runs: ListedMaintenanceRun[] = [];
 
   for (const file of files) {
+    let mtimeMs: number;
     try {
-      const st = statSync(file);
-      if (st.mtimeMs < sinceMs) continue;
+      mtimeMs = statSync(file).mtimeMs;
+      if (mtimeMs < sinceMs) continue;
     } catch {
       continue;
     }
 
-    if (file.endsWith(".summary.json") && !file.includes("/job-runs/")) {
-      try {
-        const summary = JSON.parse(readFileSync(file, "utf-8")) as OrchestratorRunSummary;
-        const startedMs = summary.startedAt ? Date.parse(summary.startedAt) : NaN;
-        const finishedMs = summary.finishedAt ? Date.parse(summary.finishedAt) : NaN;
-        const tsMs = Number.isFinite(finishedMs) ? finishedMs : Number.isFinite(startedMs) ? startedMs : st.mtimeMs;
-        if (tsMs < sinceMs) continue;
-        runs.push({
-          kind: "orchestrator",
-          id: summary.runId,
-          path: file,
-          startedAt: summary.startedAt,
-          exitCode: summary.exitCode,
-        });
-      } catch {
-        /* skip */
-      }
-      continue;
-    }
-
-    if (file.endsWith("summary.json") && (file.includes("/job-runs/") || file.includes("/job-runs-standalone/"))) {
+    if (isJobRunSummaryPath(file)) {
       try {
         const record = JSON.parse(readFileSync(file, "utf-8")) as MaintenanceJobRunRecord;
         if (record.schemaVersion !== 1 || !record.jobRunId) continue;
@@ -86,6 +75,27 @@ export function listMaintenanceRuns(opts?: {
           startedAt: record.startedAt,
           command: record.command,
           semanticOutcome: record.semanticOutcome,
+        });
+      } catch {
+        /* skip */
+      }
+      continue;
+    }
+
+    if (isOrchestratorSummaryPath(file)) {
+      try {
+        const summary = JSON.parse(readFileSync(file, "utf-8")) as OrchestratorRunSummary;
+        if (!summary.runId) continue;
+        const startedMs = summary.startedAt ? Date.parse(summary.startedAt) : NaN;
+        const finishedMs = summary.finishedAt ? Date.parse(summary.finishedAt) : NaN;
+        const tsMs = Number.isFinite(finishedMs) ? finishedMs : Number.isFinite(startedMs) ? startedMs : mtimeMs;
+        if (tsMs < sinceMs) continue;
+        runs.push({
+          kind: "orchestrator",
+          id: summary.runId,
+          path: file,
+          startedAt: summary.startedAt,
+          exitCode: summary.exitCode,
         });
       } catch {
         /* skip */

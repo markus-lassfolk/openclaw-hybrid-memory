@@ -383,6 +383,34 @@ describe("maintenance log analyzer", () => {
     expect(summarySteps[1].line).toContain("summary.json self-correction-run status=failed");
   });
 
+  it("treats ok summary steps with semantic=partial as non-zero exit", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260605");
+    mkdirSync(day, { recursive: true });
+    const summaryPath = join(day, "maintenance-nightly-20260605T040000Z-43.summary.json");
+    writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        runId: "20260605T040000Z-43",
+        tierLabel: "nightly",
+        finishedAt: "2026-06-05T04:15:00.000Z",
+        exitCode: 0,
+        steps: [
+          {
+            name: "enrich-entities",
+            status: "ok",
+            summary: "processed=10 enriched=2 llmFailures=1 stopReason=provider_budget remaining=50 semantic=partial",
+          },
+        ],
+      }),
+    );
+
+    const nowMs = Date.UTC(2026, 5, 5, 5, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs);
+    const enrich = steps.find((s) => s.step === "enrich-entities");
+    expect(enrich?.exitCode).toBe(1);
+  });
+
   it("dedupes HM_EXIT steps when summary.json already ingested the same run", () => {
     const root = tmpRoot();
     const day = join(root, "20260605");

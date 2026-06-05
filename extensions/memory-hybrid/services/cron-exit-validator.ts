@@ -761,6 +761,114 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const enrichEntitiesDetected =
+    requiredSteps.includes("enrich-entities") || /\benrich-entities\b/i.test(logContent);
+  const enrichLlmFailures = parsePositiveMetric(logContent, "llmFailures");
+  const enrichRemaining = parsePositiveMetric(logContent, "remaining");
+  const enrichStopReasonIncomplete = /\bstopReason=(exhausted|time_budget|provider_budget)\b/i.test(logContent);
+  const enrichSemanticPartial =
+    /\benrich-entities\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    (/\bllmFailures=\d+/i.test(logContent) && /\bsemantic=partial\b/i.test(logContent));
+  if (
+    enrichEntitiesDetected &&
+    ((typeof enrichLlmFailures === "number" && enrichLlmFailures > 0) ||
+      enrichSemanticPartial ||
+      (enrichStopReasonIncomplete && (enrichRemaining ?? 0) > 0))
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "enrich-entities",
+        failureCategory: "semantic_failure",
+        failureClass:
+          typeof enrichLlmFailures === "number" && enrichLlmFailures > 0
+            ? "enrich_entities_llm_failures"
+            : "enrich_entities_incomplete_catchup",
+        message: `${jobName}:enrich-entities had partial LLM enrichment or incomplete catch-up despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const consolidateDetected =
+    requiredSteps.includes("consolidate") || /\bconsolidate\b/i.test(logContent);
+  const consolidateClustersFailed = parsePositiveMetric(logContent, "clustersFailed");
+  const consolidateVectorFailures = parsePositiveMetric(logContent, "vector_failures");
+  const consolidateSemanticPartial =
+    /\bconsolidate\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    (/\bclustersFailed=\d+/i.test(logContent) && /\bsemantic=partial\b/i.test(logContent));
+  const consolidatePartialLog =
+    /\bconsolidate LLM failed\b/i.test(logContent) ||
+    /\bconsolidate embed failed\b/i.test(logContent) ||
+    /\bconsolidate vector store failed\b/i.test(logContent);
+  if (
+    consolidateDetected &&
+    ((typeof consolidateClustersFailed === "number" && consolidateClustersFailed > 0) ||
+      (typeof consolidateVectorFailures === "number" && consolidateVectorFailures > 0) ||
+      consolidateSemanticPartial ||
+      consolidatePartialLog)
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "consolidate",
+        failureCategory: "semantic_failure",
+        failureClass:
+          typeof consolidateClustersFailed === "number" && consolidateClustersFailed > 0
+            ? "consolidate_cluster_failures"
+            : "consolidate_vector_partial",
+        message: `${jobName}:consolidate had partial cluster merge or vector failures despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const reflectIdentityDetected =
+    requiredSteps.includes("reflect-identity") || /\breflect-identity\b/i.test(logContent);
+  const reflectIdentitySemanticFailed =
+    /\breflect-identity\b[\s\S]{0,160}\bsemantic=failed\b/i.test(logContent) ||
+    (/\binsightsStored=\d+/i.test(logContent) && /\bsemantic=failed\b/i.test(logContent));
+  const reflectIdentityLlmFailed = /\breflect-identity LLM failed\b/i.test(logContent);
+  if (reflectIdentityDetected && (reflectIdentitySemanticFailed || reflectIdentityLlmFailed)) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "reflect-identity",
+        failureCategory: "semantic_failure",
+        failureClass: reflectIdentityLlmFailed ? "reflect_identity_llm_failure" : "reflect_identity_semantic_failed",
+        message: `${jobName}:reflect-identity failed to produce usable identity insights despite a mechanically successful run`,
+        semanticStatus: "semantic_fail",
+      }),
+    );
+  }
+
+  const resolveContradictionsDetected =
+    requiredSteps.includes("resolve-contradictions") || /\bresolve-contradictions\b/i.test(logContent);
+  const resolveDegraded =
+    /\bresolve-contradictions summary\b/i.test(logContent) &&
+    /\bdegraded=1\b/i.test(logContent) &&
+    /\bno_progress=1\b/i.test(logContent);
+  if (resolveContradictionsDetected && resolveDegraded) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "resolve-contradictions",
+        failureCategory: "semantic_failure",
+        failureClass: "resolve_contradictions_degraded_backlog",
+        message: `${jobName}:resolve-contradictions hit degraded ambiguous backlog with no auto-resolution progress`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected =
@@ -897,7 +1005,11 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "extract-daily" ||
     issue.stepName === "extract-procedures" ||
     issue.stepName === "reflect" ||
-    issue.stepName === "reflect-meta"
+    issue.stepName === "reflect-meta" ||
+    issue.stepName === "enrich-entities" ||
+    issue.stepName === "consolidate" ||
+    issue.stepName === "reflect-identity" ||
+    issue.stepName === "resolve-contradictions"
   );
 }
 

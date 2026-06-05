@@ -598,6 +598,11 @@ const MAINTENANCE_CRON_JOBS: Array<
   },
 ];
 
+/** Cron job `name` values superseded by consolidated `maintenance-nightly` orchestrator mode. */
+export function getConsolidatedSupersededLegacyCronJobKeys(): string[] {
+  return MAINTENANCE_CRON_JOBS.map((job) => String(job.name));
+}
+
 /**
  * When `agents.defaults.model.primary` is set, use it for maintenance cron `model` so agent-bound
  * runs match `resolveLiveSessionModelSelection` (OpenClaw #963 / hybrid-memory #963). Otherwise

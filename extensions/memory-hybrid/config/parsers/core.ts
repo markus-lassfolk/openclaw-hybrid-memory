@@ -221,10 +221,11 @@ export function resolveCredentialsEncryptionKeyCandidates(raw: string): string[]
 
   if (trimmed.startsWith("file:")) {
     const fromFile = resolveSecretRef(trimmed);
-    const candidates: string[] = [];
-    if (fromFile && fromFile.length >= 16) candidates.push(fromFile);
-    if (trimmed.length >= 16) candidates.push(trimmed);
-    return candidates.length > 0 ? candidates : [""];
+    if (fromFile && fromFile.length >= 16) {
+      return trimmed.length >= 16 ? [fromFile, trimmed] : [fromFile];
+    }
+    // Unreadable key file — never treat the path string as passphrase material.
+    return [""];
   }
 
   if (trimmed.startsWith("env:") || trimmed.includes("${")) {

@@ -36,8 +36,9 @@ function warnLegacyFileRefLiteralKey(dbPath: string, raw: string): void {
     "memory-hybrid: credentials vault opened using legacy literal file: SecretRef key material " +
       `(configured as "${raw.slice(0, 48)}${raw.length > 48 ? "…" : ""}"). ` +
       "New installs should use file contents via file:/path/to/key. " +
-      "To migrate: store the desired passphrase in that file, then run " +
-      "`openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes` after updating encryptionKey to resolve file contents.",
+      "To migrate from legacy literal file: key material, store the desired passphrase in that file, " +
+      "set credentials.encryptionKey to the file: ref, then run " +
+      "`openclaw hybrid-mem credentials rekey-vault --backup --verify --yes`.",
   );
 }
 
@@ -47,7 +48,11 @@ function warnLegacyFileRefLiteralKey(dbPath: string, raw: string): void {
  */
 export function resolveCredentialsVaultKeyMaterial(raw: string, dbPath: string): string {
   const trimmed = raw.trim();
-  const candidates = resolveCredentialsEncryptionKeyCandidates(trimmed).filter((c) => c.length >= 16);
+  let candidates = resolveCredentialsEncryptionKeyCandidates(trimmed).filter((c) => c.length >= 16);
+  // Legacy vaults may have been encrypted with the literal `file:/path` string when the key file was missing.
+  if (trimmed.startsWith("file:") && existsSync(dbPath) && trimmed.length >= 16 && !candidates.includes(trimmed)) {
+    candidates = [...candidates, trimmed];
+  }
   if (candidates.length === 0) return "";
 
   if (!existsSync(dbPath)) {

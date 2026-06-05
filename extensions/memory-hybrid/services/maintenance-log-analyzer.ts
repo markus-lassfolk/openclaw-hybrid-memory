@@ -6,6 +6,10 @@ import { DatabaseSync } from "node:sqlite";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import { normalizeExitStepName } from "./cron-exit-validator.js";
 import { resolveMaintenanceExitPathForSummary } from "./maintenance-artifact-paths.js";
+import {
+  parseSemanticTokenFromSummary,
+  semanticOutcomeBlocksOrchestratorGuard,
+} from "./maintenance-job-run/index.js";
 import { capturePluginError } from "./error-reporter.js";
 import { nowIso, formatTimestampUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
 import {
@@ -440,8 +444,18 @@ export function collectMaintenanceSteps(
         if (step.status === "skipped_guard" || step.status === "skipped_gate" || step.status === "skipped_dep") {
           continue;
         }
+        const summarySemantic = parseSemanticTokenFromSummary(String(step.summary ?? ""));
+        const semanticBlocksGuard = semanticOutcomeBlocksOrchestratorGuard(
+          step.semanticOutcome ?? summarySemantic,
+        );
         const exitCode =
-          step.status === "failed" || step.status === "rate_limited" ? 1 : step.status === "deferred" ? 2 : 0;
+          step.status === "failed" ||
+          step.status === "rate_limited" ||
+          semanticBlocksGuard
+            ? 1
+            : step.status === "deferred"
+              ? 2
+              : 0;
         steps.push({
           occurredAt,
           iso: finishedIso,
