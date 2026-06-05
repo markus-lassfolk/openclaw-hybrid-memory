@@ -934,6 +934,47 @@ error: unknown command 'bar'
       );
     });
 
+    it("detects distill partial on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "distill.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(logPath, "distill stored=5 sessions=3 batchFailures=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "distill",
+          failureClass: "distill_partial_batch_failures",
+        }),
+      );
+    });
+
+    it("detects continuous-verification degraded on exit=0 and blocks guard", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "continuous-verification.exit.txt");
+      const logPath = join(tmpDir, "continuous-verification.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z continuous-verification exit=0\n");
+      writeFileSync(
+        logPath,
+        "continuous-verification checked=12 confirmed=0 stale=0 uncertain=12 errors=0 semantic=partial Machine status: status=degraded reason=all_uncertain checked=12 confirmed=0 stale=0 uncertain=12 errors=0\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["continuous-verification"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "continuous-verification",
+          failureClass: "continuous_verification_all_uncertain",
+        }),
+      );
+    });
+
     it("detects degraded implicit-feedback collapse backlogs that change nothing", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "weekly-implicit-feedback-collapse-20260508T021500Z-111.exit.txt");
@@ -943,7 +984,8 @@ error: unknown command 'bar'
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["implicit-feedback-collapse"]);
 
-      expect(result.maintenanceStatus).toBe("success");
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
       expect(result.semanticStatus).toBe("degraded");
       expect(result.reportableIssues).toContainEqual(
         expect.objectContaining({

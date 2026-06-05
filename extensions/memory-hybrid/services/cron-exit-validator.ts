@@ -762,7 +762,9 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const enrichEntitiesDetected =
-    requiredSteps.includes("enrich-entities") || /\benrich-entities\b/i.test(logContent);
+    requiredSteps.includes("enrich-entities") ||
+    requiredSteps.includes("enrich-entities-deep") ||
+    /\benrich-entities(?:-deep)?\b/i.test(logContent);
   const enrichLlmFailures = parsePositiveMetric(logContent, "llmFailures");
   const enrichRemaining = parsePositiveMetric(logContent, "remaining");
   const enrichStopReasonIncomplete = /\bstopReason=(exhausted|time_budget|provider_budget)\b/i.test(logContent);
@@ -997,6 +999,115 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const distillDetected = requiredSteps.includes("distill") || /\bdistill\b/i.test(logContent);
+  const distillBatchFailures = parsePositiveMetric(logContent, "batchFailures");
+  const distillSemanticPartial =
+    /\bdistill\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
+    (typeof distillBatchFailures === "number" && distillBatchFailures > 0);
+  if (distillDetected && distillSemanticPartial) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "distill",
+        failureCategory: "semantic_failure",
+        failureClass: "distill_partial_batch_failures",
+        message: `${jobName}:distill had partial batch failures despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const extractImplicitDetected =
+    requiredSteps.includes("extract-implicit") || /\bextract-implicit\b/i.test(logContent);
+  const extractImplicitPartial = /\bextract-implicit\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent);
+  if (extractImplicitDetected && extractImplicitPartial) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "extract-implicit",
+        failureCategory: "semantic_failure",
+        failureClass: "extract_implicit_partial",
+        message: `${jobName}:extract-implicit ended with partial session processing`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const continuousVerificationDetected =
+    requiredSteps.includes("continuous-verification") || /\bcontinuous-verification\b/i.test(logContent);
+  const continuousVerificationDegraded = detectDegradedContinuousVerificationStatus(logContent);
+  if (continuousVerificationDetected && continuousVerificationDegraded) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "continuous-verification",
+        failureCategory: "semantic_failure",
+        failureClass: `continuous_verification_${continuousVerificationDegraded.reason ?? "degraded"}`,
+        message: `${jobName}:continuous-verification reported degraded machine status`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const lifecycleSyncDetected =
+    requiredSteps.includes("lifecycle-sync") || /\blifecycle-sync\b/i.test(logContent);
+  const lifecycleSyncErrors = parsePositiveMetric(logContent, "sync_errors");
+  if (lifecycleSyncDetected && typeof lifecycleSyncErrors === "number" && lifecycleSyncErrors > 0) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "lifecycle-sync",
+        failureCategory: "semantic_failure",
+        failureClass: "lifecycle_sync_errors",
+        message: `${jobName}:lifecycle-sync had ${lifecycleSyncErrors} sync error(s)`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const autoClassifyDetected =
+    requiredSteps.includes("auto-classify") || /\bauto-classify\b/i.test(logContent);
+  const autoClassifyBatchFailures = parsePositiveMetric(logContent, "batchFailures");
+  if (autoClassifyDetected && typeof autoClassifyBatchFailures === "number" && autoClassifyBatchFailures > 0) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "auto-classify",
+        failureCategory: "semantic_failure",
+        failureClass: "auto_classify_batch_failures",
+        message: `${jobName}:auto-classify had ${autoClassifyBatchFailures} batch failure(s)`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const generateProposalsSemanticFail =
+    /\bgenerate-proposals\b[\s\S]{0,120}\bsemantic=(failed|semantic_empty|partial)\b/i.test(logContent);
+  if (generateProposalsDetected && generateProposalsSemanticFail) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "generate-proposals",
+        failureCategory: "semantic_failure",
+        failureClass: "generate_proposals_semantic_failure",
+        message: `${jobName}:generate-proposals reported semantic failure despite a mechanically successful run`,
+        semanticStatus: "semantic_fail",
+      }),
+    );
+  }
+
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected =
@@ -1143,7 +1254,13 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "repair-vectors" ||
     issue.stepName === "prune" ||
     issue.stepName === "extract-directives" ||
-    issue.stepName === "reembed-vectorless"
+    issue.stepName === "reembed-vectorless" ||
+    issue.stepName === "distill" ||
+    issue.stepName === "extract-implicit" ||
+    issue.stepName === "continuous-verification" ||
+    issue.stepName === "lifecycle-sync" ||
+    issue.stepName === "auto-classify" ||
+    issue.stepName === "implicit-feedback-collapse"
   );
 }
 
