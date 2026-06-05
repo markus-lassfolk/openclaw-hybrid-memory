@@ -162,6 +162,19 @@ export function resolveRunArtifacts(listed: ListedMaintenanceRun): Record<string
       report: record.artifactPaths.report,
     };
   }
+  // Orchestrator summaries live under DAY_DIR (e.g., YYYYMMDD/) while HM_LOG/HM_EXIT stay at log root.
+  // Derive the root path from the dated summary path: strip /YYYYMMDD/ segment.
+  const match = listed.path.match(/^(.+)\/\d{8}\/([^/]+)\.summary\.json$/);
+  if (match) {
+    const [, logRoot, baseFile] = match;
+    return {
+      summary: listed.path,
+      log: `${logRoot}/${baseFile}.log`,
+      exit: `${logRoot}/${baseFile}.exit.txt`,
+      validation: listed.path.replace(/\.summary\.json$/, ".validation.json"),
+    };
+  }
+  // Fallback for non-dated summaries.
   const base = listed.path.replace(/\.summary\.json$/, "");
   return {
     summary: listed.path,

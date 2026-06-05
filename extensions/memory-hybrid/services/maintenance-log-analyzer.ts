@@ -419,8 +419,10 @@ export function collectMaintenanceSteps(
       };
       if (!Array.isArray(summary.steps)) continue;
       const job = extractJobFromPath(summaryPath, ".summary.json");
-      const logPath = summaryPath.replace(/\.summary\.json$/, ".log");
-      const exitPath = summaryPath.replace(/\.summary\.json$/, ".exit.txt");
+      // Orchestrator summaries live under DAY_DIR while HM_LOG/HM_EXIT stay at log root.
+      const match = summaryPath.match(/^(.+)\/\d{8}\/([^/]+)\.summary\.json$/);
+      const logPath = match ? `${match[1]}/${match[2]}.log` : summaryPath.replace(/\.summary\.json$/, ".log");
+      const exitPath = match ? `${match[1]}/${match[2]}.exit.txt` : summaryPath.replace(/\.summary\.json$/, ".exit.txt");
       const logContent = safeRead(logPath);
       const finishedIso = summary.finishedAt ?? new Date(summaryMtime).toISOString();
       const occurredAt = Math.floor(new Date(finishedIso).getTime() / 1000);

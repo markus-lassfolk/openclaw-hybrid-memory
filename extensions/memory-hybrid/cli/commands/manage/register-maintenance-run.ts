@@ -2,7 +2,7 @@
  * Operator CLI for maintenance JobRun inspection (#1877).
  */
 
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "../../../utils/process-runner.js";
 import {
   explainJobRun,
   findMaintenanceRunById,

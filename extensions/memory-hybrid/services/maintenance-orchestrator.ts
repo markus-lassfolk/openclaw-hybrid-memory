@@ -393,6 +393,8 @@ function parseStepRunnerMetadata(summary: string): Pick<StepResult, "jobRunId" |
 
 function computeExitCode(results: StepResult[]): 0 | 1 | 2 {
   if (results.some((r) => r.status === "failed")) return 1;
+  // Check for semantic failures in JobRun-backed steps even when status is "ok".
+  if (results.some((r) => r.semanticOutcome === "failed" || r.semanticOutcome === "failed_semantic_empty")) return 1;
   if (results.some((r) => r.status === "deferred" || r.status === "rate_limited")) return 2;
   return 0;
 }
