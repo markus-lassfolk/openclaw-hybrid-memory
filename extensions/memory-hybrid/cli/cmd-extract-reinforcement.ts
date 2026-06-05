@@ -761,29 +761,28 @@ export async function runExtractReinforcementForCli(
               const similar = await findSimilarByEmbedding(vectorDb, factsDb, vector, 1, 0.55);
               if (similar.length > 0) {
                 const entry = similar[0];
-                const now = Date.now();
-                if (entry.expiresAt != null && entry.expiresAt <= now) {
-                  continue;
-                }
-                const context: ReinforcementContext = {
-                  querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
-                  topic: analysisCategory,
-                  toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
-                  sessionFile: incident.sessionFile,
-                };
-                const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
-                const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
-                const diversityScore = factsDb.calculateDiversityScore(entry.id);
-                const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
-                const ok = factsDb.reinforceFact(entry.id, incident.userMessage, context, {
-                  trackContext,
-                  maxEventsPerFact,
-                  boostAmount: effectiveBoost,
-                });
-                if (ok) {
-                  reinforcedViaSimilarity = true;
-                  annotated++;
-                  annotationReasons.reinforced++;
+                const nowSec = Math.floor(Date.now() / 1000);
+                if (entry.expiresAt == null || entry.expiresAt > nowSec) {
+                  const context: ReinforcementContext = {
+                    querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
+                    topic: analysisCategory,
+                    toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
+                    sessionFile: incident.sessionFile,
+                  };
+                  const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
+                  const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
+                  const diversityScore = factsDb.calculateDiversityScore(entry.id);
+                  const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+                  const ok = factsDb.reinforceFact(entry.id, incident.userMessage, context, {
+                    trackContext,
+                    maxEventsPerFact,
+                    boostAmount: effectiveBoost,
+                  });
+                  if (ok) {
+                    reinforcedViaSimilarity = true;
+                    annotated++;
+                    annotationReasons.reinforced++;
+                  }
                 }
               }
             }
