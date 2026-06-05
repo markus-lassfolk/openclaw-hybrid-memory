@@ -51,6 +51,7 @@ import {
   listLowConfidenceFactIdsPendingPrune as listLowConfidenceFactIdsPendingPruneImpl,
   listSessionFactIdsPendingPrune as listSessionFactIdsPendingPruneImpl,
   promoteScope as promoteScopeImpl,
+  promoteScopeToGlobalWithOutcome as promoteScopeToGlobalWithOutcomeImpl,
   pruneExpired as pruneExpiredImpl,
   pruneExpiredWithDetails as pruneExpiredWithDetailsImpl,
   pruneSessionScope as pruneSessionScopeImpl,
@@ -233,6 +234,10 @@ export class FactsDBLayer2 extends FactsDBLayer1 {
     newScopeTarget: string | null,
   ): boolean {
     return promoteScopeImpl(this.liveDb, factId, newScope, newScopeTarget);
+  }
+
+  promoteScopeToGlobalWithOutcome(factId: string): "promoted" | "skipped" | "failed" {
+    return promoteScopeToGlobalWithOutcomeImpl(this.liveDb, factId);
   }
 
   decayConfidence(nowSec?: number): number {

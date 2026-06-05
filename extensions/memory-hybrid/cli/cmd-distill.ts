@@ -879,6 +879,10 @@ export async function runDistillForCli(
       // Use allCandidatePaths (pre-filter input) so skipped sessions advance the watermark.
       const lastSessionTs = getMaxMtime(allCandidatePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, allCandidatePaths.length);
+    } else if (!opts.dryRun && semanticEmpty) {
+      sink.warn(
+        `memory-hybrid: distill semantic_empty: scan cursor not advanced (${filesToProcess.length} session(s) remain eligible for retry)`,
+      );
     } else if (batchFailures > 0) {
       sink.warn(`memory-hybrid: distill partial failure: ${batchFailures} batch(es) failed; scan cursor not advanced`);
     }

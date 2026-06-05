@@ -462,13 +462,15 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
         }
 
         let promoted = 0;
+        let skipped = 0;
+        let failed = 0;
         for (const f of candidates) {
-          if (factsDb.promoteScope(f.id, "global", null)) {
-            promoted++;
-          }
+          const outcome = factsDb.promoteScopeToGlobalWithOutcome(f.id);
+          if (outcome === "promoted") promoted++;
+          else if (outcome === "skipped") skipped++;
+          else failed++;
         }
-        const failed = candidates.length - promoted;
-        const summary = `scope-promote promoted=${promoted}/${candidates.length} failed=${failed} semantic=${failed > 0 ? "partial" : "success"}`;
+        const summary = `scope-promote promoted=${promoted}/${candidates.length} skipped=${skipped} failed=${failed} semantic=${failed > 0 ? "partial" : "success"}`;
         console.log(summary);
         if (failed > 0) {
           process.exitCode = 2;

@@ -583,13 +583,16 @@ export function buildCliMaintenanceRunners(
   set("scope-promote", async () => {
     const candidates = b.factsDb.findSessionFactsForPromotion(7, 0.7);
     let promoted = 0;
+    let skipped = 0;
     let failed = 0;
     for (const f of candidates) {
-      if (b.factsDb.promoteScope(f.id, "global", null)) promoted++;
+      const outcome = b.factsDb.promoteScopeToGlobalWithOutcome(f.id);
+      if (outcome === "promoted") promoted++;
+      else if (outcome === "skipped") skipped++;
       else failed++;
     }
     const partial = failed > 0;
-    const summary = `promoted=${promoted}/${candidates.length} failed=${failed} semantic=${partial ? "partial" : "success"}`;
+    const summary = `promoted=${promoted}/${candidates.length} skipped=${skipped} failed=${failed} semantic=${partial ? "partial" : "success"}`;
     if (partial) {
       throw new Error(`scope-promote partial failure (${summary})`);
     }
@@ -630,7 +633,11 @@ export function buildCliMaintenanceRunners(
       if (res.resumeAfterRowid === null) break;
       afterRowid = res.resumeAfterRowid;
     }
-    return `scanned=${scanned} collapsed=${collapsed}`;
+    const summary = `scanned=${scanned} collapsed=${collapsed} semantic=${scanned >= 1000 && collapsed === 0 ? "partial" : "success"}`;
+    if (scanned >= 1000 && collapsed === 0) {
+      throw new Error(`implicit-feedback-collapse no-op on large backlog (${summary})`);
+    }
+    return summary;
   });
 
   set("audit-health", async () => {
