@@ -38,6 +38,10 @@ import {
 import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
 import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
 import { nowIso } from "../../../utils/dates.js";
+import {
+  jobRunOutcomeFailsOrchestratorStep,
+  type JobRunSemanticOutcome,
+} from "../../../services/maintenance-job-run/index.js";
 
 export interface BuildCliRunnersOptions {
   verbose?: boolean;
@@ -175,7 +179,15 @@ export function buildCliMaintenanceRunners(
   set("distill", async () => {
     if (!b.runDistill) throw new Error("distill unavailable");
     const r = await b.runDistill({ dryRun: false, verbose, days: maxCatchUpDays, ...scanFlags }, sink);
-    return `stored=${r.stored} sessions=${r.sessionsScanned}`;
+    const summary = `stored=${r.stored} sessions=${r.sessionsScanned} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? "unknown"}`;
+    const semantic = r.semanticOutcome;
+    if (semantic && jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome)) {
+      throw new Error(`distill semantic failure: ${semantic} (${summary})`);
+    }
+    if (semantic === "partial" || r.partialFailure) {
+      throw new Error(`distill partial failure (${summary})`);
+    }
+    return summary;
   });
 
   set("resolve-contradictions", async () => {
@@ -227,7 +239,16 @@ export function buildCliMaintenanceRunners(
 
   set("self-correction-run", async () => {
     const r = await b.runSelfCorrectionRun({ dryRun: false, days: 1, verbose, ...scanFlags });
-    return `incidents=${r.incidentsFound} analysed=${r.analysed} toolsApplied=${r.toolsApplied ?? 0}`;
+    const summary = `incidents=${r.incidentsFound} analysed=${r.analysed} toolsApplied=${r.toolsApplied ?? 0} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? r.status ?? "unknown"}`;
+    const semantic = (r.semanticOutcome ?? r.status) as JobRunSemanticOutcome | string | undefined;
+    if (
+      semantic &&
+      (jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome) ||
+        semantic === "failed_partial")
+    ) {
+      throw new Error(`self-correction-run semantic failure: ${semantic} (${summary})`);
+    }
+    return summary;
   });
 
   // --- Weekly cadence ---
@@ -276,7 +297,15 @@ export function buildCliMaintenanceRunners(
   set("extract-reinforcement", async () => {
     if (!b.runExtractReinforcement) throw new Error("extract-reinforcement unavailable");
     const r = await b.runExtractReinforcement({ dryRun: false, verbose, ...scanFlags });
-    return `sessions=${r.sessionsScanned}`;
+    const summary = `sessions=${r.sessionsScanned} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? "unknown"}`;
+    const semantic = (r.semanticOutcome ?? undefined) as JobRunSemanticOutcome | string | undefined;
+    if (semantic && jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome)) {
+      throw new Error(`extract-reinforcement semantic failure: ${semantic} (${summary})`);
+    }
+    if (semantic === "partial" || semantic === "failed_partial") {
+      throw new Error(`extract-reinforcement partial failure (${summary})`);
+    }
+    return summary;
   });
 
   set("generate-auto-skills", async () => {
@@ -387,7 +416,12 @@ export function buildCliMaintenanceRunners(
   set("generate-proposals", async () => {
     if (!b.runGenerateProposals) throw new Error("generate-proposals unavailable");
     const r = await b.runGenerateProposals({ dryRun: false, verbose });
-    return `created=${r.created}`;
+    const summary = `created=${r.created} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? "unknown"}`;
+    const semantic = r.semanticOutcome as JobRunSemanticOutcome | string | undefined;
+    if (semantic && jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome)) {
+      throw new Error(`generate-proposals semantic failure: ${semantic} (${summary})`);
+    }
+    return summary;
   });
 
   set("pending-digest", async () => {

@@ -25,6 +25,9 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('HM_LOG_BASE="$OW/logs/cron-hybrid-mem"');
     expect(bash).toContain('if [ -n "${OPENCLAW_HOME:-}" ]; then OW="$OPENCLAW_HOME"; else OW=~/.openclaw; fi');
     expect(bash).toContain('HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"');
+    expect(bash).toContain('export HM_RUN_ID="$RUN_ID"');
+    expect(bash).toContain('HM_VALIDATION_JSON="${DAY_DIR}/${HM_JOB}-${RUN_ID}.validation.json"');
+    expect(bash).toContain('HM_SUMMARY="${DAY_DIR}/${HM_JOB}-${RUN_ID}.summary.json"');
     expect(bash).toContain('HM_REQUIRED_STEPS=("prune")');
     expect(bash).toContain('local step_ec="${PIPESTATUS[0]}"');
     expect(bash).toContain("failed(?:_[A-Za-z0-9_-]+)?");

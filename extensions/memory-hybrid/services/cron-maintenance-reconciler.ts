@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import { type ExitValidationResult, validateMaintenanceExecution } from "./cron-exit-validator.js";
+import { type ExitValidationResult, validateFromSummaryJson, validateMaintenanceExecution } from "./cron-exit-validator.js";
 
 export interface CronRunLedgerEntry {
   // Legacy format (action-based)
@@ -290,8 +290,10 @@ export function reconcileCronRunLedger(
       continue;
     }
 
-    // Validate the maintenance execution
-    const validation = validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);
+    const summaryPath = exitPath.replace(/\.exit\.txt$/, ".summary.json");
+    const validation = existsSync(summaryPath)
+      ? validateFromSummaryJson(summaryPath, exitPath, logPath, requiredSteps, true)
+      : validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);
 
     // Check if this is a false-OK (status:ok but validation failed/partial)
     if (validation.maintenanceStatus === "failed" || validation.maintenanceStatus === "partial") {

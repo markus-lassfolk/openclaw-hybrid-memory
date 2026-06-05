@@ -742,6 +742,27 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:scan-cron-exit-logs" });
   }
 
+  // #1877 — warn when recent maintenance-nightly runs lack orchestrator summary.json artifacts.
+  try {
+    const logsRoot = join(openclawDir, "logs", "cron-hybrid-mem");
+    if (existsSync(logsRoot)) {
+      const cutoffMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs);
+      const nightlyWithoutSummary = exitFiles.filter((exitPath) => {
+        if (!/maintenance-nightly/i.test(exitPath)) return false;
+        const summaryPath = exitPath.replace(/\.exit\.txt$/, ".summary.json");
+        return !existsSync(summaryPath);
+      });
+      if (nightlyWithoutSummary.length > 0) {
+        state.warnings.push(
+          `recent maintenance-nightly run(s) missing .summary.json (${nightlyWithoutSummary.length}); upgrade plugin and use maintenance nightly --summary-out or see docs/maintenance-job-runs.md`,
+        );
+      }
+    }
+  } catch (e) {
+    capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:scan-summary-json" });
+  }
+
   // Issue #965 — isolated hybrid-mem cron runs must not request a different provider family than
   // agents.defaults.model.primary or OpenClaw may throw LiveSessionModelSwitchError.
   try {

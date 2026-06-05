@@ -18,6 +18,11 @@ import {
 import { parseStructuredItemsAcceptingEmpty, stripThinkingWrapperBlocks } from "../utils/llm-json-array.js";
 import { fillPrompt, loadPrompt } from "../utils/prompt-loader.js";
 import { formatDateUtc } from "../utils/dates.js";
+import {
+  createLightJobRun,
+  finishLightJobRun,
+} from "../services/maintenance-job-run/light-job-run-bridge.js";
+import type { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
 import type { HandlerContext } from "./handlers.js";
 import { resolvePipelineProposalTarget } from "./proposals.js";
 import { workshopStoresFromHandlerContext } from "../services/unified-proposals.js";
@@ -67,13 +72,27 @@ export async function runGenerateProposalsForCli(
   opts: { dryRun: boolean; verbose?: boolean },
   api: { resolvePath: (file: string) => string },
   argv: readonly string[] = process.argv,
-): Promise<{ created: number }> {
+): Promise<{ created: number; jobRunId?: string; semanticOutcome?: string }> {
   const verbose = resolveHybridMemVerbose(opts, undefined, argv);
   const { factsDb, proposalsDb, cfg, openai } = ctx;
   if (!cfg.personaProposals.enabled || !proposalsDb) {
     return { created: 0 };
   }
   const nowSec = Math.floor(Date.now() / 1000);
+  const jobRun: MaintenanceJobRun = createLightJobRun("generate-proposals", `${nowSec}`);
+  const finishProposals = (
+    created: number,
+    params: { semanticEmpty?: boolean; skipped?: boolean; inputsProcessed?: number },
+  ) => {
+    const finished = finishLightJobRun(jobRun, {
+      semanticEmpty: params.semanticEmpty,
+      skipped: params.skipped,
+      inputsProcessed: params.inputsProcessed ?? (params.skipped ? 0 : 1),
+      outputsProduced: created,
+      dryRun: opts.dryRun,
+    });
+    return { created, jobRunId: finished.jobRunId, semanticOutcome: finished.semanticOutcome };
+  };
   const scopeFilter = cfg.autoRecall?.scopeFilter ?? undefined;
   const hasScopeFilter = hasAnyScopeFilter(scopeFilter);
   const allRelevant = factsDb
@@ -195,7 +214,7 @@ export async function runGenerateProposalsForCli(
   if (insights.length === 0) {
     if (verbose)
       ctx.logger.info?.("memory-hybrid: generate-proposals — no patterns/rules/meta in memory; skipping.");
-    return { created: 0 };
+    return finishProposals(0, { skipped: true });
   }
   const insightsBlock = insights.join("\n\n");
   const allowedFiles = cfg.personaProposals.allowedFiles;
@@ -383,7 +402,7 @@ export async function runGenerateProposalsForCli(
       model: allModels[0] ?? null,
       zeroReason: "semantic_empty",
     });
-    return { created: 0 };
+    return finishProposals(0, { semanticEmpty: true, inputsProcessed: insights.length });
   }
   const weekDays = 7;
   const separateSCQuota = cfg.personaProposals.separateSelfCorrectionQuota !== false;
@@ -481,5 +500,8 @@ export async function runGenerateProposalsForCli(
         `memory-hybrid: generate-proposals — identity_gap_score=${identityGapResult.score.toFixed(2)} created=${created}`,
       );
     }
-  return { created };
+  return finishProposals(created, {
+    semanticEmpty: created === 0 && items.length === 0,
+    inputsProcessed: insights.length,
+  });
 }

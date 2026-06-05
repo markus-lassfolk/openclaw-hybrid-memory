@@ -404,6 +404,54 @@ export function collectMaintenanceSteps(
   const exitFiles = collectFilesRecursive(root, ".exit.txt");
   const seenExit = new Set(exitFiles);
 
+  const summaryFiles = collectFilesRecursive(root, ".summary.json");
+  for (const summaryPath of summaryFiles) {
+    if (summaryPath.includes("/job-runs/")) continue;
+    const summaryMtime = safeStatMtimeMs(summaryPath);
+    if (summaryMtime < cutoff) continue;
+    try {
+      const summary = JSON.parse(safeRead(summaryPath)) as {
+        runId?: string;
+        tierLabel?: string;
+        finishedAt?: string;
+        exitCode?: number;
+        steps?: Array<{ name: string; status: string; summary: string }>;
+      };
+      if (!Array.isArray(summary.steps)) continue;
+      const job = extractJobFromPath(summaryPath, ".summary.json");
+      const logPath = summaryPath.replace(/\.summary\.json$/, ".log");
+      const exitPath = summaryPath.replace(/\.summary\.json$/, ".exit.txt");
+      const logContent = safeRead(logPath);
+      const finishedIso = summary.finishedAt ?? new Date(summaryMtime).toISOString();
+      const occurredAt = Math.floor(new Date(finishedIso).getTime() / 1000);
+      if (!Number.isFinite(occurredAt) || occurredAt * 1000 < cutoff) continue;
+      for (const step of summary.steps) {
+        if (step.status === "skipped_guard" || step.status === "skipped_gate" || step.status === "skipped_dep") {
+          continue;
+        }
+        const exitCode =
+          step.status === "failed" || step.status === "rate_limited"
+            ? 1
+            : step.status === "deferred"
+              ? 2
+              : 0;
+        steps.push({
+          occurredAt,
+          iso: finishedIso,
+          job,
+          step: step.name,
+          exitCode,
+          exitPath,
+          logPath,
+          logContent,
+          line: `summary.json ${step.name} status=${step.status} ${step.summary}`,
+        });
+      }
+    } catch {
+      /* skip malformed summary */
+    }
+  }
+
   for (const exitPath of exitFiles) {
     const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
     const exitMtime = safeStatMtimeMs(exitPath);

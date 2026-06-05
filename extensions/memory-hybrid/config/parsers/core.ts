@@ -237,6 +237,11 @@ export function resolveCredentialsEncryptionKeyCandidates(raw: string): string[]
 
 /** Preferred key material for config validation when the vault file may not exist yet. */
 export function resolveCredentialsEncryptionKeyForConfig(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("file:")) {
+    const fromFile = resolveSecretRef(trimmed);
+    return fromFile && fromFile.length >= 16 ? fromFile : "";
+  }
   const candidates = resolveCredentialsEncryptionKeyCandidates(raw);
   return candidates.find((c) => c.length >= 16) ?? "";
 }

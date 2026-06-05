@@ -211,6 +211,8 @@ export type DistillCliResult = {
   semanticEmpty?: boolean;
   partialFailure?: boolean;
   batchFailures?: number;
+  jobRunId?: string;
+  semanticOutcome?: string;
 };
 export type DistillCliSink = {
   log: (s: string) => void;
@@ -265,6 +267,10 @@ export type SelfCorrectionRunResult = {
   /** Batches fully completed in the last run (for resume / HM_EXIT). */
   batchesCompleted?: number;
   totalBatches?: number;
+  /** Maintenance JobRun id when JobRun framework is active (#1877). */
+  jobRunId?: string;
+  /** Unified semantic outcome from JobRun framework. */
+  semanticOutcome?: string;
 };
 
 export type AnalyzeFeedbackPhrasesResult = {

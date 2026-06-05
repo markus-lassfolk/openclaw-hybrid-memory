@@ -147,6 +147,8 @@ export interface PluginRuntime {
   /** Unified maintenance orchestrator tick (cycle tier). */
   maintenanceTick: { value: ReturnType<typeof setInterval> | null };
   maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
+  /** Workboard bidirectional sync timer. */
+  workboardSync?: { value: ReturnType<typeof setInterval> | null };
 };
 }
 
@@ -215,5 +217,9 @@ export function clearRuntimeTimers(timers: PluginRuntime["timers"]): void {
   if (timers.maintenanceStartupTimeout.value) {
     clearTimeout(timers.maintenanceStartupTimeout.value);
     timers.maintenanceStartupTimeout.value = null;
+  }
+  if (timers.workboardSync?.value) {
+    clearInterval(timers.workboardSync.value);
+    timers.workboardSync.value = null;
   }
 }

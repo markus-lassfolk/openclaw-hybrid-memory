@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkForUnknownCommands,
   parseExitLine,
+  validateFromSummaryJson,
   validateMaintenanceExecution,
 } from "../services/cron-exit-validator.js";
 
@@ -834,6 +835,77 @@ error: unknown command 'bar'
           message: expect.stringContaining("unknown-fancy-command"),
         }),
       );
+    });
+  });
+
+  describe("validateFromSummaryJson", () => {
+    it("detects failed orchestrator inner steps from summary.json", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-test",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 1,
+          summaryLine: "failed",
+          steps: [
+            { name: "self-correction-run", status: "failed", summary: "semantic=failed_semantic_empty", durationMs: 10, semanticOutcome: "failed_semantic_empty" },
+          ],
+          counts: { ok: 0, skipped: 0, deferred: 0, failed: 1, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=1\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
+    });
+
+    it("treats ok status with failed semanticOutcome as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-semantic-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-semantic",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with bad semantic",
+          steps: [
+            {
+              name: "self-correction-run",
+              status: "ok",
+              summary: "semantic=failed_semantic_empty",
+              durationMs: 10,
+              semanticOutcome: "failed_semantic_empty",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("semantic_fail");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
     });
   });
 });

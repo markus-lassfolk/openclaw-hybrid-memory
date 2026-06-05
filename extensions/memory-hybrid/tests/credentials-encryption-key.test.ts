@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import {
   resolveCredentialsEncryptionKeyCandidates,
   resolveCredentialsEncryptionKeyForConfig,
 } from "../config/parsers/core.js";
+import { CredentialsDB } from "../backends/credentials-db.js";
 import { getCredentialsEncryptionKeyRaw } from "../services/credentials-path.js";
 import { pluginLogger } from "../utils/logger.js";
 
@@ -48,6 +49,11 @@ describe("resolveCredentialsEncryptionKeyCandidates", () => {
     } finally {
       delete process.env.TEST_CRED_KEY_1884;
     }
+  });
+
+  it("resolveCredentialsEncryptionKeyForConfig rejects unreadable file: refs", () => {
+    const missing = `file:${join(tmpdir(), "cred-key-missing", "vault.key")}`;
+    expect(resolveCredentialsEncryptionKeyForConfig(missing)).toBe("");
   });
 });
 
@@ -106,10 +112,10 @@ describe.skipIf(!hasNodeSqlite)("credentials vault key probe", () => {
     const legacyDb = createLegacyVaultEncryptedWithKey(dbPath, ref);
     legacyDb.close();
 
+    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const material = resolveCredentialsVaultKeyMaterial(ref, dbPath);
     expect(material).toBe(ref);
 
-    const warnSpy = vi.spyOn(pluginLogger, "warn").mockImplementation(() => {});
     const cfg = hybridConfigSchema.parse({
       embedding: { provider: "openai", apiKey: "sk-test-key-that-is-long-enough", model: "text-embedding-3-small" },
       credentials: { enabled: true, encryptionKey: ref },
@@ -137,10 +143,26 @@ describe.skipIf(!hasNodeSqlite)("credentials vault key probe", () => {
     expect(probeCredentialsVaultKey(dbPath, TEST_KEY)).toBe(true);
     expect(probeCredentialsVaultKey(dbPath, ref)).toBe(false);
   });
+
+  it("returns empty key when no candidate opens an existing vault", async () => {
+    const { resolveCredentialsVaultKeyMaterial } = await import("../services/credentials-encryption-key.js");
+    const vault = createLegacyVaultEncryptedWithKey(dbPath, TEST_KEY);
+    vault.close();
+
+    expect(resolveCredentialsVaultKeyMaterial("wrong-key-material-not-vault-key", dbPath)).toBe("");
+  });
+
+  it("does not bootstrap a new vault with literal file: path when key file is missing", async () => {
+    const { resolveCredentialsVaultKeyMaterial } = await import("../services/credentials-encryption-key.js");
+    const missingKeyFile = join(tmpDir, "missing-vault.key");
+    const ref = `file:${missingKeyFile}`;
+
+    expect(existsSync(dbPath)).toBe(false);
+    expect(resolveCredentialsVaultKeyMaterial(ref, dbPath)).toBe("");
+  });
 });
 
 function createLegacyVaultEncryptedWithKey(dbPath: string, keyMaterial: string) {
-  const { CredentialsDB } = require("../backends/credentials-db.js") as typeof import("../backends/credentials-db.js");
   const { mkdirSync } = require("node:fs") as typeof import("node:fs");
   mkdirSync(join(dbPath, ".."), { recursive: true });
   const db = new CredentialsDB(dbPath, keyMaterial);

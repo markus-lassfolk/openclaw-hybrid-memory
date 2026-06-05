@@ -467,6 +467,95 @@ export function createPluginService(ctx: PluginServiceContext) {
         api.logger.warn?.(`memory-hybrid: cron guard sync failed (non-fatal): ${err}`);
       }
 
+      // Wiki integration: register corpus supplement so facts appear in `memory_search corpus=all`
+      if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.corpusSupplement) {
+        try {
+          const { createMemoryCorpusSupplement } = await import("../services/memory-corpus-supplement.js");
+          const supplement = createMemoryCorpusSupplement({ factsDb });
+          const registerCorpus = (api as { registerMemoryCorpusSupplement?: (s: unknown) => void })
+            .registerMemoryCorpusSupplement;
+          if (typeof registerCorpus === "function") {
+            registerCorpus(supplement);
+            api.logger.info("memory-hybrid: registered MemoryCorpusSupplement for wiki/search integration");
+          } else {
+            api.logger.debug?.(
+              "memory-hybrid: api.registerMemoryCorpusSupplement not available — corpus supplement skipped",
+            );
+          }
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: corpus supplement registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "corpus-supplement-register",
+          });
+        }
+      }
+
+      // Workboard integration: start adapter for bidirectional task/goal sync
+      if (cfg.workboard?.enabled) {
+        try {
+          const { createWorkboardAdapter } = await import("../services/workboard-adapter.js");
+          const { loadTaskLedgerFromFacts } = await import("../services/task-ledger-facts.js");
+          const { listGoals } = await import("../services/goal-registry.js");
+
+          const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          const goalsDir = cfg.goalStewardship?.enabled
+            ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir)
+            : undefined;
+
+          const gatewayToken =
+            cfg.gateway?.token ??
+            process.env.OPENCLAW_GATEWAY_TOKEN ??
+            undefined;
+
+          const adapter = createWorkboardAdapter({
+            cfg: cfg.workboard,
+            loadTasks: () => loadTaskLedgerFromFacts(factsDb),
+            loadGoals: async () => {
+              if (!goalsDir) return [];
+              try {
+                return await listGoals(goalsDir);
+              } catch {
+                return [];
+              }
+            },
+            gatewayToken,
+          });
+
+          const available = await adapter.isAvailable();
+          if (available) {
+            api.logger.info("memory-hybrid: Workboard adapter connected — starting initial sync");
+            const result = await adapter.sync();
+            if (result.errors.length > 0) {
+              api.logger.warn(`memory-hybrid: Workboard initial sync had errors: ${result.errors.join("; ")}`);
+            }
+
+            // Recurring sync timer
+            const intervalMs = cfg.workboard.syncIntervalMinutes * 60 * 1000;
+            timers.workboardSync = { value: setInterval(() => {
+              if (shuttingDown) return;
+              adapter.sync().catch((err) => {
+                api.logger.debug?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
+              });
+            }, intervalMs) };
+          } else {
+            api.logger.info(
+              "memory-hybrid: Workboard plugin not reachable — sync disabled (will retry on next maintenance cycle)",
+            );
+          }
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: Workboard adapter startup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "workboard-adapter-start",
+          });
+        }
+      }
+
       // Issue #309: Mission Control dashboard HTTP server
       if (cfg.dashboard.enabled) {
         try {

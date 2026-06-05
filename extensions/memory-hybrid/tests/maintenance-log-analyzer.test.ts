@@ -346,6 +346,42 @@ describe("maintenance log analyzer", () => {
     expect(report.digestMd).toContain("nightly-distill");
   });
 
+  it("ingests orchestrator summary.json inner step failures (#1891)", () => {
+    const root = tmpRoot();
+    const day = join(root, "20260605");
+    mkdirSync(day, { recursive: true });
+    const summaryPath = join(day, "maintenance-nightly-20260605T030000Z-42.summary.json");
+    const logPath = summaryPath.replace(/\.summary\.json$/, ".log");
+    const exitPath = summaryPath.replace(/\.summary\.json$/, ".exit.txt");
+    writeFileSync(
+      summaryPath,
+      JSON.stringify({
+        runId: "20260605T030000Z-42",
+        tierLabel: "nightly",
+        finishedAt: "2026-06-05T03:15:00.000Z",
+        exitCode: 1,
+        steps: [
+          { name: "distill", status: "ok", summary: "stored=12 sessions=3" },
+          {
+            name: "self-correction-run",
+            status: "failed",
+            summary: "semantic=failed_semantic_empty jobRunId=distill-abc",
+          },
+          { name: "extract-reinforcement", status: "skipped_guard", summary: "cooldown" },
+        ],
+      }),
+    );
+    writeFileSync(logPath, "self-correction-run semantic_empty\n");
+    writeFileSync(exitPath, "2026-06-05T03:15:00Z self-correction-run exit=1\n");
+
+    const nowMs = Date.UTC(2026, 5, 5, 4, 0, 0);
+    const steps = collectMaintenanceSteps(root, "24h", nowMs);
+    const summarySteps = steps.filter((s) => s.line.startsWith("summary.json "));
+    expect(summarySteps.map((s) => s.step)).toEqual(["distill", "self-correction-run"]);
+    expect(summarySteps[1].exitCode).toBe(1);
+    expect(summarySteps[1].line).toContain("summary.json self-correction-run status=failed");
+  });
+
   it("parses extended HM_EXIT lines with step=<name> format", () => {
     const root = tmpRoot();
     const day = join(root, "20260513");

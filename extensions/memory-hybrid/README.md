@@ -283,6 +283,8 @@ $HOME/.openclaw/logs/cron-hybrid-mem/YYYYMMDD/
   <job>-<timestamp>-<pid>.exit.txt
 ```
 
+Orchestrator runs may also write `{job}-{runId}.summary.json` and `{job}-{runId}.validation.json` (see [docs/maintenance-job-runs.md](../../docs/maintenance-job-runs.md)). Per-command JobRun artifacts live under `job-runs/{jobRunId}/`.
+
 Each `.exit.txt` file contains one line per step:
 
 ```text

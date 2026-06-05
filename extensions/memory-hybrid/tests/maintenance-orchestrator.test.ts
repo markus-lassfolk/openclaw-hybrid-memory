@@ -7,6 +7,7 @@ import {
   getMaintenanceStep,
   resolveStepGuardIntervalMs,
   runMaintenanceOrchestrator,
+  toOrchestratorRunSummary,
 } from "../services/maintenance-orchestrator.js";
 import { readStepGuardTimestampMs, writeStepGuardTimestampMs } from "../services/cron-guard.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -107,6 +108,26 @@ describe("maintenance-orchestrator", () => {
     );
     expect(order).toEqual(["reflect", "reflect-rules"]);
     expect(result.steps.find((s) => s.name === "reflect-rules")?.status).toBe("ok");
+  });
+
+  it("builds orchestrator run summary with run metadata", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([["prune", async () => "pruned=1"]]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["prune"] },
+    );
+    expect(result.runId).toBeTruthy();
+    expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    const summary = toOrchestratorRunSummary(result, {
+      runId: result.runId,
+      startedAt: result.startedAt,
+      finishedAt: result.finishedAt,
+      durationMs: result.durationMs,
+    });
+    expect(summary.schemaVersion).toBe(1);
+    expect(summary.steps).toHaveLength(1);
+    expect(summary.counts.ok).toBe(1);
   });
 
   it("writes step guard on success", async () => {

@@ -85,6 +85,9 @@ export type ReinforcementExtractResult = {
    * Set by CLI; used to determine exit code 2.
    */
   partialBatchFailure?: boolean;
+  /** Maintenance JobRun id when JobRun framework is active (#1877). */
+  jobRunId?: string;
+  semanticOutcome?: string;
 };
 
 /** Hard cap on bytes read per file per run to avoid unbounded JSONL reads (matches passive observer). */

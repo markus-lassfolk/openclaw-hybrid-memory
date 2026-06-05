@@ -66,6 +66,8 @@ import {
   parseSelfExtensionConfig,
   parseToolEffectivenessConfig,
   parseWorkflowTrackingConfig,
+  parseWikiIntegrationConfig,
+  parseWorkboardConfig,
 } from "./features.js";
 import {
   parseHealthConfig,
@@ -857,6 +859,8 @@ export function parseConfig(value: unknown): HybridMemoryConfig {
     verbosity: parseVerbosityLevel(cfg),
     mode: hasPresetOverrides ? "custom" : appliedMode,
     gateway: parseGatewayConfig(cfg),
+    wikiIntegration: parseWikiIntegrationConfig(cfg),
+    workboard: parseWorkboardConfig(cfg),
   };
 }
 

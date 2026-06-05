@@ -4,6 +4,8 @@ This matrix shows **which maintenance tasks run** in each context (installation,
 
 Use `openclaw hybrid-mem maintenance steps` to inspect guard intervals and eligibility.
 
+For resumable command execution, semantic outcomes, and run artifacts, see [maintenance-job-runs.md](maintenance-job-runs.md) (#1877).
+
 ---
 
 ## Architecture (hybrid)
@@ -76,6 +78,7 @@ The orchestrator runs due steps only (staggered guards: 20h / 44h / 68h / 5d / 2
 | `maintenance nightly` | All non-cycle steps (guards decide which run) |
 | `maintenance full` | Cycle + nightly |
 | `maintenance steps` | List steps, guard intervals, last run, eligibility |
+| `maintenance run list\|status\|artifacts\|explain\|resume` | Inspect JobRun / orchestrator artifacts |
 | `run-all` | Alias for `maintenance full` |
 
 ### Scan windows

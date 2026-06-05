@@ -39,6 +39,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
+import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenance-job-run/types.js";
+import {
+  jobRunOutcomeFailsOrchestratorStep,
+  jobRunOutcomeToValidatorSemantic,
+} from "./maintenance-job-run/semantic-outcome.js";
 
 const SKIP_REASON_COOLDOWN = "skipped_cooldown";
 const SKIP_REASON_CONCURRENCY = "skipped_concurrency";
@@ -1073,6 +1078,126 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
     null,
     2,
   );
+}
+
+/**
+ * Validate maintenance run using orchestrator summary.json when available (#1877).
+ * Falls back to HM_EXIT validation when summary is missing or invalid.
+ */
+export function validateFromSummaryJson(
+  summaryPath: string,
+  exitPath: string,
+  logPath: string | undefined,
+  requiredSteps: string[],
+  allowSkip = false,
+): ExitValidationResult {
+  try {
+    if (!existsSync(summaryPath)) {
+      return validateMaintenanceExecution(exitPath, logPath, requiredSteps, allowSkip);
+    }
+    const summary = JSON.parse(readFileSync(summaryPath, "utf-8")) as OrchestratorRunSummary;
+    if (summary.schemaVersion !== 1 || !Array.isArray(summary.steps)) {
+      return validateMaintenanceExecution(exitPath, logPath, requiredSteps, allowSkip);
+    }
+
+    const stepFailed = (s: OrchestratorRunSummary["steps"][number]): boolean =>
+      s.status === "failed" ||
+      s.status === "rate_limited" ||
+      (s.semanticOutcome != null && jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome));
+
+    const steps: ExitStep[] = summary.steps.map((s) => {
+      const failed = stepFailed(s);
+      const exitCode =
+        failed ? 1 : s.status.startsWith("skipped") ? 0 : 0;
+      return {
+        timestamp: summary.finishedAt,
+        step: s.name,
+        exitCode,
+        line: `${s.name} exit=${exitCode} status=${s.status} summary=${s.summary}`,
+        status: failed ? "failed" : s.status === "ok" ? "ok" : s.status.startsWith("skipped") ? "skipped" : "failed",
+        reason: s.semanticOutcome ?? s.status,
+      };
+    });
+
+    const present = new Set(steps.map((s) => s.step));
+    const missingSteps = requiredSteps.filter((name) => !present.has(name));
+    const failedSteps = steps.filter(
+      (s) => requiredSteps.includes(s.step) && (s.exitCode !== 0 || s.status === "failed"),
+    );
+
+    const semanticOutcomes = summary.steps
+      .map((s) => s.semanticOutcome as JobRunSemanticOutcome | undefined)
+      .filter(Boolean) as JobRunSemanticOutcome[];
+    let semanticStatus: ExitValidationResult["semanticStatus"] = "ok";
+    if (semanticOutcomes.some((o) => jobRunOutcomeToValidatorSemantic(o) === "semantic_fail")) {
+      semanticStatus = "semantic_fail";
+    } else if (semanticOutcomes.some((o) => jobRunOutcomeToValidatorSemantic(o) === "degraded")) {
+      semanticStatus = "degraded";
+    }
+
+    let maintenanceStatus: ExitValidationResult["maintenanceStatus"] = "success";
+    if (missingSteps.length === requiredSteps.length && steps.length === 0) {
+      maintenanceStatus = allowSkip ? "skipped" : "failed";
+    } else if (failedSteps.length > 0 || summary.exitCode === 1) {
+      maintenanceStatus = "failed";
+    } else if (missingSteps.length > 0) {
+      maintenanceStatus = "partial";
+    } else if (summary.exitCode === 2) {
+      maintenanceStatus = "success";
+      semanticStatus = semanticStatus === "ok" ? "degraded" : semanticStatus;
+    }
+
+    if (maintenanceStatus === "success" && semanticStatus !== "ok") {
+      const guardBlockingSemantic = summary.steps.some(
+        (s) =>
+          requiredSteps.includes(s.name) &&
+          s.semanticOutcome != null &&
+          jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome) &&
+          isGuardBlockingSemanticIssue(
+            buildMaintenanceIssue({
+              jobName: summary.job ?? extractMaintenanceJobName(exitPath),
+              stepName: s.name,
+              failureCategory: "semantic_failure",
+              failureClass: "orchestrator_step_failed",
+              message: s.summary,
+              semanticStatus: "semantic_fail",
+              hmExitPath: exitPath,
+              hmLogPath: logPath,
+              guardStateAfter: "not_updated",
+            }),
+          ),
+      );
+      if (guardBlockingSemantic || failedSteps.length > 0) {
+        maintenanceStatus = "failed";
+      }
+    }
+
+    return {
+      maintenanceStatus,
+      semanticStatus,
+      steps,
+      missingSteps,
+      failedSteps,
+      guardUpdated: maintenanceStatus === "success" && semanticStatus === "ok",
+      exitPath,
+      logPath,
+      reportableIssues: failedSteps.map((s) =>
+        buildMaintenanceIssue({
+          jobName: summary.job ?? extractMaintenanceJobName(exitPath),
+          stepName: s.step,
+          failureCategory: "semantic_failure",
+          failureClass: "orchestrator_step_failed",
+          message: s.line,
+          semanticStatus: semanticStatus === "semantic_fail" ? "semantic_fail" : "degraded",
+          hmExitPath: exitPath,
+          hmLogPath: logPath,
+          guardStateAfter: "not_updated",
+        }),
+      ),
+    };
+  } catch {
+    return validateMaintenanceExecution(exitPath, logPath, requiredSteps, allowSkip);
+  }
 }
 
 function safeReadLog(logPath: string): string {

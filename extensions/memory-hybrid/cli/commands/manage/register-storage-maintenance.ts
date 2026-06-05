@@ -51,6 +51,9 @@ import {
   writeReembedVectorlessMetrics,
   writeReindexCheckpoint,
 } from "./storage-stats-helpers.js";
+import { MaintenanceJobRun } from "../../../services/maintenance-job-run/job-run.js";
+import { createReindexJobRunCheckpointAdapter } from "../../../services/maintenance-job-run/reindex-bridge.js";
+import { finishBatchJobRun } from "../../../services/maintenance-job-run/batch-job-run-bridge.js";
 
 type FactsDbWithBatch = {
   getBatch: (
@@ -1267,6 +1270,22 @@ function registerManageStorageMaintenanceOnParent(
               : factsDb.getAll({ includeSuperseded: false }).length;
 
           const runReindex = async () => {
+            const reindexFingerprint = `${totalFacts}-${batchSize}-${minFractionSuccess}`;
+            const jobRun = MaintenanceJobRun.create({
+              command: "storage-re-index",
+              inputFingerprint: reindexFingerprint,
+              resumeCommand: "openclaw hybrid-mem storage re-index --resume",
+            });
+            jobRun.startPhase("embed");
+            const jobRunCheckpoint = createReindexJobRunCheckpointAdapter(
+              jobRun,
+              checkpointPath.length > 0 ? checkpointPath : undefined,
+            );
+            const finishReindexJobRun = (outcome: "success" | "partial" | "failed", clear: boolean) => {
+              jobRun.endPhase("embed", outcome === "success" ? "completed" : "failed");
+              finishBatchJobRun(jobRun, outcome, { clearCheckpoint: clear });
+            };
+
             console.log(`Re-index: starting non-destructive re-index of ${totalFacts} facts...`);
             if (resumeCheckpoint) {
               console.log(
@@ -1312,9 +1331,17 @@ function registerManageStorageMaintenanceOnParent(
               checkpoint:
                 checkpointPath.length > 0
                   ? {
-                      load: () => (resumeCheckpoint ? { offset: resumeCheckpoint.offset } : null),
-                      save: (state) => writeReindexCheckpoint(checkpointPath, state),
+                      load: () => {
+                        const loaded = jobRunCheckpoint.load();
+                        if (loaded) return loaded;
+                        return resumeCheckpoint ? { offset: resumeCheckpoint.offset } : null;
+                      },
+                      save: (state) => {
+                        jobRunCheckpoint.save(state);
+                        writeReindexCheckpoint(checkpointPath, state);
+                      },
                       clear: () => {
+                        jobRunCheckpoint.clear();
                         if (existsSync(checkpointPath)) unlinkSync(checkpointPath);
                       },
                     }
@@ -1371,6 +1398,7 @@ function registerManageStorageMaintenanceOnParent(
               console.error("Live vector store was NOT modified.");
               console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
               console.error("Recommendation: Re-run 'openclaw hybrid-mem storage re-index --resume' to continue.");
+              finishReindexJobRun("partial", false);
               process.exit(1);
             }
 
@@ -1384,6 +1412,7 @@ function registerManageStorageMaintenanceOnParent(
               console.error("Aborting swap to preserve live vector store.");
               console.error(`Shadow table preserved for inspection: ${shadowTableName}`);
               console.error("To retry, clean up shadow table and run re-index again.");
+              finishReindexJobRun("failed", false);
               process.exit(1);
             }
 
@@ -1444,6 +1473,7 @@ function registerManageStorageMaintenanceOnParent(
 
             console.log(`\nRe-index complete: ${result.migrated} facts successfully re-indexed.`);
             console.log("Live vector store updated atomically. Semantic search is fully operational.");
+            finishReindexJobRun("success", true);
           };
 
           if (typeof (vectorDb as { runWithReindexLock?: unknown }).runWithReindexLock === "function") {

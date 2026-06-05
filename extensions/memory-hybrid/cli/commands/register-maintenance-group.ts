@@ -18,6 +18,7 @@ import {
 } from "./manage/register-backfill-maintenance.js";
 import { registerMaintenanceHealthCommands } from "./manage/register-maintenance-health.js";
 import { registerMaintenanceOrchestratorCommands } from "./manage/register-maintenance-orchestrator.js";
+import { registerMaintenanceRunCommands } from "./manage/register-maintenance-run.js";
 import { registerSensorSweepCommand } from "./manage/register-sensor-sweep.js";
 import { registerReconcileCronLedgers } from "./manage/register-reconcile-cron-ledgers.js";
 import { registerValidateCronExit } from "./manage/register-validate-cron-exit.js";
@@ -63,6 +64,7 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
 
   registerMaintenanceHealthCommands(maintenance, b.cfg);
   registerMaintenanceOrchestratorCommands(maintenance, b);
+  registerMaintenanceRunCommands(maintenance);
   registerSensorSweepCommand(mem, b);
   registerRunAllCommand(maintenance, b, GROUPED_MAINTENANCE_COMMAND_NAMES.runAll);
 

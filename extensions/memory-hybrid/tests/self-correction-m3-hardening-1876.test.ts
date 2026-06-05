@@ -3,7 +3,7 @@
  * semantic-empty detection, batch resume, retry/backoff, and verbose diagnostics.
  */
 
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -55,6 +55,27 @@ function listSelfCorrectionBatchStateFiles(workspace: string): string[] {
   if (!existsSync(stateDir)) return [];
   return readdirSync(stateDir).filter((name) => name.startsWith(SELF_CORRECTION_BATCH_STATE_PREFIX));
 }
+
+function walkFiles(root: string, out: string[]): void {
+  if (!existsSync(root)) return;
+  for (const name of readdirSync(root)) {
+    const full = join(root, name);
+    try {
+      if (statSync(full).isDirectory()) walkFiles(full, out);
+      else out.push(full);
+    } catch {
+      /* skip */
+    }
+  }
+}
+
+function listJobRunCheckpointFiles(logRoot: string): string[] {
+  const files: string[] = [];
+  walkFiles(logRoot, files);
+  return files.filter((f) => f.endsWith("checkpoint.json"));
+}
+
+const jobRunOpts = () => ({ workspace: tmpDir, jobRunLogRoot: tmpDir, applyTools: false });
 
 function makeOpenAIMock(responseText: string) {
   return {
@@ -299,14 +320,13 @@ describe("#1876 — CLI M3 integration and semantic outcomes", () => {
     (ctxFirst.cfg as any).selfCorrection = { ...(ctxFirst.cfg as any).selfCorrection, analysisBatchSize: 1 };
 
     await runSelfCorrectionRunForCli(ctxFirst, {
+      ...jobRunOpts(),
       incidents,
-      workspace: tmpDir,
-      applyTools: false,
     });
 
-    const stateFiles = listSelfCorrectionBatchStateFiles(tmpDir);
-    expect(stateFiles).toHaveLength(1);
-    const statePath = join(resolveSelfCorrectionBatchStateDir(tmpDir), stateFiles[0] as string);
+    const checkpointFiles = listJobRunCheckpointFiles(tmpDir);
+    expect(checkpointFiles.length).toBeGreaterThan(0);
+    const statePath = checkpointFiles[0] as string;
     const state = JSON.parse(readFileSync(statePath, "utf-8"));
     state.analysed = [];
     state.completedBatchIndexes = [0, 1];
@@ -327,9 +347,8 @@ describe("#1876 — CLI M3 integration and semantic outcomes", () => {
     (ctxSecond.cfg as any).selfCorrection = { ...(ctxSecond.cfg as any).selfCorrection, analysisBatchSize: 1 };
 
     const res = await runSelfCorrectionRunForCli(ctxSecond, {
+      ...jobRunOpts(),
       incidents,
-      workspace: tmpDir,
-      applyTools: false,
     });
 
     expect(res.status).toBe("failed_suspect_zero_parsed");
@@ -454,12 +473,12 @@ describe("#1876 — retry/backoff and resume resilience", () => {
     const ctxFirst = makeCtx(openaiFirst);
     (ctxFirst.cfg as any).selfCorrection = { ...(ctxFirst.cfg as any).selfCorrection, analysisBatchSize: 1 };
 
-    const first = await runSelfCorrectionRunForCli(ctxFirst, { incidents, workspace: tmpDir, applyTools: false });
+    const first = await runSelfCorrectionRunForCli(ctxFirst, { ...jobRunOpts(), incidents });
     expect(first.error).toBeDefined();
 
-    const stateFiles = listSelfCorrectionBatchStateFiles(tmpDir);
-    expect(stateFiles).toHaveLength(1);
-    const statePath = join(resolveSelfCorrectionBatchStateDir(tmpDir), stateFiles[0] as string);
+    const checkpointFiles = listJobRunCheckpointFiles(tmpDir);
+    expect(checkpointFiles).toHaveLength(1);
+    const statePath = checkpointFiles[0] as string;
     expect(JSON.parse(readFileSync(statePath, "utf-8")).completedBatchIndexes).toEqual([0]);
 
     const openaiSecond = {
@@ -477,9 +496,8 @@ describe("#1876 — retry/backoff and resume resilience", () => {
     (ctxSecond.cfg as any).selfCorrection = { ...(ctxSecond.cfg as any).selfCorrection, analysisBatchSize: 1 };
 
     const second = await runSelfCorrectionRunForCli(ctxSecond, {
+      ...jobRunOpts(),
       incidents,
-      workspace: tmpDir,
-      applyTools: false,
     });
 
     expect(second.status).toBe("success_analyzed");
@@ -507,16 +525,25 @@ describe("#1876 — retry/backoff and resume resilience", () => {
     const ctxA = makeCtx(partialOpenai);
     (ctxA.cfg as any).selfCorrection = { ...(ctxA.cfg as any).selfCorrection, analysisBatchSize: 1 };
 
-    await runSelfCorrectionRunForCli(ctxA, { incidents, workspace: tmpDir, model: "model-a", applyTools: false });
-    expect(listSelfCorrectionBatchStateFiles(tmpDir)).toHaveLength(1);
+    await runSelfCorrectionRunForCli(ctxA, {
+      ...jobRunOpts(),
+      incidents,
+      model: "model-a",
+    });
+    expect(listJobRunCheckpointFiles(tmpDir)).toHaveLength(1);
 
     const openaiB = makeOpenAIMock(JSON.stringify([SAMPLE_REMEDIATION]));
     const ctxB = makeCtx(openaiB);
     (ctxB.cfg as any).selfCorrection = { ...(ctxB.cfg as any).selfCorrection, analysisBatchSize: 1 };
 
-    await runSelfCorrectionRunForCli(ctxB, { incidents, workspace: tmpDir, model: "model-b", applyTools: false });
+    const second = await runSelfCorrectionRunForCli(ctxB, {
+      ...jobRunOpts(),
+      incidents,
+      model: "model-b",
+    });
     expect(openaiB.chat.completions.create).toHaveBeenCalledTimes(2);
-    expect(listSelfCorrectionBatchStateFiles(tmpDir)).toHaveLength(0);
+    expect(second.status).toBe("success_analyzed");
+    // model-a partial checkpoint may remain in job-runs/; model-b must not reuse it (2 LLM calls).
   });
 
   it("does not write resume state during dry-run", async () => {
@@ -539,8 +566,9 @@ describe("#1876 — retry/backoff and resume resilience", () => {
       },
     } as any;
 
-    await runSelfCorrectionRunForCli(makeCtx(openai), { incidents, workspace: tmpDir, dryRun: true });
+    await runSelfCorrectionRunForCli(makeCtx(openai), { incidents, workspace: tmpDir, jobRunLogRoot: tmpDir, dryRun: true });
     expect(listSelfCorrectionBatchStateFiles(tmpDir)).toHaveLength(0);
+    expect(listJobRunCheckpointFiles(tmpDir)).toHaveLength(0);
   });
 });
 
@@ -588,15 +616,16 @@ describe("#1876 — verbose diagnostics and partial failure semantics", () => {
     (ctx.cfg as any).selfCorrection = { ...(ctx.cfg as any).selfCorrection, analysisBatchSize: 1 };
 
     const res = await runSelfCorrectionRunForCli(ctx, {
+      ...jobRunOpts(),
       incidents: [SAMPLE_INCIDENT, incident2],
-      workspace: tmpDir,
     });
 
     expect(res.status).toBe("failed_partial");
     expect(res.batchesCompleted).toBe(1);
     expect(res.totalBatches).toBe(2);
     expect(res.analysed).toBeGreaterThan(0);
-    expect(listSelfCorrectionBatchStateFiles(tmpDir).length).toBeGreaterThan(0);
+    expect(listJobRunCheckpointFiles(tmpDir).length).toBeGreaterThan(0);
+    expect(res.jobRunId).toBeTruthy();
   });
 
   it("records fallback usage when primary model fails and fallback succeeds", async () => {

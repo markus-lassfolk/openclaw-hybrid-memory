@@ -51,6 +51,8 @@ export interface PublicApiRoutesContext {
   variantQueue?: { queueLength: number } | null;
   /** Resolved goals directory when goal stewardship is enabled (for projection mirror refresh). */
   goalsDir?: string;
+  /** Enable fact mutation HTTP endpoints for wiki bidirectional editing. */
+  factMutationsEnabled?: boolean;
 }
 
 export const PUBLIC_API_PREFIX = "/plugins/memory-public";
@@ -457,4 +459,81 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     });
     return toJson(200, diag);
   });
+
+  // ========================================================================
+  // Fact mutation endpoints (wiki bidirectional editing)
+  // ========================================================================
+  if (ctx.factMutationsEnabled) {
+    makeRoute(`${PUBLIC_API_PREFIX}/fact/mutate`, async (req) => {
+      try {
+        const body = req.body ? JSON.parse(req.body) : {};
+        const action = typeof body.action === "string" ? body.action : "";
+        const factId = typeof body.id === "string" ? body.id : "";
+
+        if (action === "update" && factId) {
+          const existing = ctx.factsDb.getById(factId);
+          if (!existing) return toJson(404, { error: "not found" });
+
+          const text = typeof body.text === "string" ? body.text : undefined;
+          const confidence = typeof body.confidence === "number" ? body.confidence : undefined;
+          const entity = typeof body.entity === "string" ? body.entity : undefined;
+          const key = typeof body.key === "string" ? body.key : undefined;
+          const value = typeof body.value === "string" ? body.value : undefined;
+          const tags = Array.isArray(body.tags)
+            ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
+            : undefined;
+
+          const hasStructural = text !== undefined || entity !== undefined || key !== undefined || value !== undefined || tags !== undefined;
+
+          if (hasStructural) {
+            const stored = ctx.factsDb.store({
+              text: text ?? existing.text,
+              category: existing.category,
+              importance: existing.importance,
+              source: "wiki-edit",
+              entity: entity ?? existing.entity ?? undefined,
+              key: key ?? existing.key ?? undefined,
+              value: value ?? existing.value ?? undefined,
+              confidence: confidence !== undefined ? Math.max(0, Math.min(1, confidence)) : existing.confidence,
+              tags: tags ?? existing.tags ?? undefined,
+            });
+            ctx.factsDb.supersede(factId, stored.entry.id);
+            return toJson(200, { ok: true, superseded: factId, newFact: ctx.factsDb.getById(stored.entry.id) });
+          } else if (confidence !== undefined) {
+            ctx.factsDb.setConfidenceTo(factId, Math.max(0, Math.min(1, confidence)));
+            return toJson(200, { ok: true, fact: ctx.factsDb.getById(factId) });
+          }
+          return toJson(200, { ok: true, noop: true });
+        }
+
+        if (action === "supersede" && factId) {
+          const existing = ctx.factsDb.getById(factId);
+          if (!existing) return toJson(404, { error: "not found" });
+          ctx.factsDb.supersede(factId, null);
+          return toJson(200, { ok: true, superseded: factId });
+        }
+
+        if (action === "create") {
+          const text = typeof body.text === "string" ? body.text?.trim() : "";
+          if (!text) return toJson(400, { error: "missing text" });
+          const stored = ctx.factsDb.store({
+            text,
+            category: (typeof body.category === "string" ? body.category : "general") as import("../config.js").MemoryCategory,
+            importance: typeof body.importance === "number" ? body.importance : 0.5,
+            source: "wiki-create",
+            entity: typeof body.entity === "string" ? body.entity : undefined,
+            key: typeof body.key === "string" ? body.key : undefined,
+            value: typeof body.value === "string" ? body.value : undefined,
+            confidence: typeof body.confidence === "number" ? Math.max(0, Math.min(1, body.confidence)) : 0.8,
+            tags: Array.isArray(body.tags) ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string") : undefined,
+          });
+          return toJson(201, { ok: true, fact: ctx.factsDb.getById(stored.entry.id) ?? stored.entry });
+        }
+
+        return toJson(400, { error: `unknown action: ${action}` });
+      } catch (err) {
+        return toJson(500, { error: err instanceof Error ? err.message : String(err) });
+      }
+    });
+  }
 }

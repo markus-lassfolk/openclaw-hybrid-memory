@@ -57,6 +57,14 @@ import { acquireScanSlot, clearScanLock } from "./shared.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { nowIso } from "../utils/dates.js";
 import type { ReinforcementIncident } from "../services/reinforcement-extract.js";
+import { MaintenanceJobRun } from "../services/maintenance-job-run/job-run.js";
+import {
+  finishReinforcementJobRun,
+  loadReinforcementBatchResume,
+  persistReinforcementBatchState,
+  reinforcementRunToJobRunOutcome,
+  removeLegacyReinforcementState,
+} from "../services/maintenance-job-run/reinforcement-bridge.js";
 
 const REINFORCEMENT_BATCH_STATE_VERSION = 1;
 
@@ -227,6 +235,8 @@ export async function runExtractReinforcementForCli(
     workspace?: string;
     full?: boolean;
     force?: boolean;
+    /** Override JobRun artifact root (tests). */
+    jobRunLogRoot?: string;
   },
 ): Promise<ReinforcementExtractResult> {
   const { bypassScanCooldown, bypassWatermark } = resolveScanMaintenanceOverrides(opts);
@@ -291,6 +301,8 @@ export async function runExtractReinforcementForCli(
 
     let llmAnalysisFailed = false;
     let incidentsTruncatedForAnalysis = false;
+    let jobRun: MaintenanceJobRun | null = null;
+    let analysedCount = 0;
     const reinfCfg = cfg.reinforcement ?? {};
     const scCfg = cfg.selfCorrection;
     const llmEnabled = (reinfCfg.reinforcementLLMAnalysis ?? scCfg?.reinforcementLLMAnalysis) !== false;
@@ -328,23 +340,34 @@ export async function runExtractReinforcementForCli(
         totalBatches = batches.length;
         const runFingerprint = buildReinforcementRunFingerprint(incidentsForAnalysis, model, batchSize, false);
         const stateDir = resolveReinforcementBatchStateDir(workspaceRoot);
-        const statePath = join(stateDir, `${REINFORCEMENT_BATCH_STATE_PREFIX}${runFingerprint}.json`);
+        const legacyStatePath = join(stateDir, `${REINFORCEMENT_BATCH_STATE_PREFIX}${runFingerprint}.json`);
         ensureReinforcementStateDir(workspaceRoot);
-        pruneStaleReinforcementStateFiles(stateDir, statePath);
+        pruneStaleReinforcementStateFiles(stateDir, legacyStatePath);
+        jobRun = MaintenanceJobRun.create({
+          command: SCAN_TYPE,
+          inputFingerprint: runFingerprint,
+          modelPolicy: { model, fallbacks: fallbackModels },
+          resumeCommand: "openclaw hybrid-mem extract-reinforcement",
+          logRoot: opts.jobRunLogRoot,
+        });
+        jobRun.startPhase("extract");
+        jobRun.endPhase("extract", "completed", `incidents=${incidentsForAnalysis.length}`);
+        jobRun.startPhase("analyze");
         const completedBatchIndexes = new Set<number>();
-        const resumeState = readReinforcementBatchState(statePath);
-        if (
-          resumeState &&
-          resumeState.incidentsHash === runFingerprint &&
-          resumeState.batchSize === batchSize &&
-          resumeState.totalBatches === batches.length
-        ) {
+        const resumeState = loadReinforcementBatchResume<ReinforcementRemediation>(
+          jobRun,
+          legacyStatePath,
+          runFingerprint,
+          batchSize,
+          batches.length,
+        );
+        if (resumeState) {
           analysed = [...resumeState.analysed];
           Object.assign(diagnostics, resumeState.diagnostics);
           for (const idx of resumeState.completedBatchIndexes) completedBatchIndexes.add(idx);
           completedBatches = completedBatchIndexes.size;
           logger.info?.(
-            `memory-hybrid: extract-reinforcement resume completed=${completedBatchIndexes.size}/${batches.length} state=${statePath}`,
+            `memory-hybrid: extract-reinforcement JobRun resume ${jobRun.jobRunId}; completed=${completedBatchIndexes.size}/${batches.length}`,
           );
         } else {
           logger.info?.(
@@ -353,15 +376,13 @@ export async function runExtractReinforcementForCli(
         }
 
         const persistBatchState = () => {
-          writeReinforcementBatchState(statePath, {
-            version: REINFORCEMENT_BATCH_STATE_VERSION,
+          persistReinforcementBatchState(jobRun!, {
             incidentsHash: runFingerprint,
             batchSize,
             totalBatches: batches.length,
             completedBatchIndexes: [...completedBatchIndexes].sort((a, b) => a - b),
             analysed,
-            diagnostics,
-            updatedAt: nowIso(),
+            diagnostics: { ...diagnostics },
           });
         };
 
@@ -538,12 +559,20 @@ export async function runExtractReinforcementForCli(
           }
         }
 
+        analysedCount = analysed.length;
         if (completedBatchIndexes.size === batches.length) {
-          removeReinforcementBatchState(statePath);
+          removeLegacyReinforcementState(stateDir, runFingerprint, REINFORCEMENT_BATCH_STATE_PREFIX);
         } else if (completedBatchIndexes.size > 0 && completedBatchIndexes.size < batches.length) {
           result.partialBatchFailure = true;
           logger.warn?.(
             `memory-hybrid: extract-reinforcement partial batch failure: completed=${completedBatchIndexes.size}/${batches.length} analysed=${analysed.length}`,
+          );
+        }
+        if (jobRun) {
+          jobRun.endPhase(
+            "analyze",
+            result.partialBatchFailure ? "failed" : "completed",
+            `analysed=${analysedCount}`,
           );
         }
         completedBatches = completedBatchIndexes.size;
@@ -1027,6 +1056,24 @@ export async function runExtractReinforcementForCli(
       const lastSessionTs = getMaxMtime(filePaths);
       factsDb.updateScanCursor(SCAN_TYPE, lastSessionTs ?? 0, result.sessionsScanned);
     }
+
+    const semanticOutcome = opts.dryRun
+      ? result.incidents.length === 0
+        ? "empty"
+        : "skipped"
+      : reinforcementRunToJobRunOutcome({
+          partialBatchFailure: result.partialBatchFailure,
+          llmAnalysisFailed,
+          incidentsCount: result.incidents.length,
+          analysedCount,
+          annotated: result.annotated,
+        });
+    const allBatchesDone = !result.partialBatchFailure && !llmAnalysisFailed;
+    result.jobRunId = finishReinforcementJobRun(jobRun, semanticOutcome, {
+      clearCheckpoint: allBatchesDone && semanticOutcome !== "failed_semantic_empty",
+    });
+    result.semanticOutcome = semanticOutcome;
+
     return result;
   } finally {
     if (!bypassScanCooldown && !opts.dryRun) clearScanLock(SCAN_TYPE);

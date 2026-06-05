@@ -4,7 +4,9 @@
  */
 
 import type { HybridMemoryConfig } from "../config.js";
+import { nowIso } from "../utils/dates.js";
 import { is429OrWrapped } from "./chat.js";
+import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
 import {
   stepGuardEligible,
   writeStepGuardTimestampMs,
@@ -28,6 +30,8 @@ export interface StepResult {
   status: StepStatus;
   summary: string;
   durationMs: number;
+  jobRunId?: string;
+  semanticOutcome?: string;
 }
 
 export interface MaintenanceStepDef {
@@ -59,6 +63,10 @@ export interface MaintenanceOrchestratorResult {
   steps: StepResult[];
   exitCode: 0 | 1 | 2;
   summaryLine: string;
+  runId: string;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
 }
 
 export type MaintenanceStepRunner = () => Promise<string>;
@@ -372,6 +380,15 @@ export function formatMaintenanceSummary(
   return { summaryLine, lines };
 }
 
+function parseStepRunnerMetadata(summary: string): Pick<StepResult, "jobRunId" | "semanticOutcome"> {
+  const jobRunId = summary.match(/jobRunId=([^\s]+)/)?.[1];
+  const semantic = summary.match(/semantic=([^\s]+)/)?.[1];
+  return {
+    jobRunId: jobRunId && jobRunId !== "-" ? jobRunId : undefined,
+    semanticOutcome: semantic && semantic !== "-" ? semantic : undefined,
+  };
+}
+
 function computeExitCode(results: StepResult[]): 0 | 1 | 2 {
   if (results.some((r) => r.status === "failed")) return 1;
   if (results.some((r) => r.status === "deferred" || r.status === "rate_limited")) return 2;
@@ -387,7 +404,15 @@ export async function runMaintenanceOrchestrator(
   const orchestratorCfg = cfg.maintenance?.orchestrator;
   const llmCooldownMs = orchestratorCfg?.llmCooldownBetweenStepsMs ?? 30_000;
   const rateLimitMaxRetries = orchestratorCfg?.rateLimitMaxRetries ?? 2;
-  const startedAt = Date.now();
+  const startedAtMs = Date.now();
+  const startedAtIso = nowIso();
+  const runId =
+    process.env.HM_RUN_ID?.trim() ||
+    process.env.HM_ORCHESTRATOR_RUN_ID?.trim() ||
+    generateOrchestratorRunId();
+  if (!process.env.HM_ORCHESTRATOR_RUN_ID) {
+    process.env.HM_ORCHESTRATOR_RUN_ID = runId;
+  }
   const maxRuntimeMs =
     options.maxRuntimeMs ??
     (orchestratorCfg?.maxRuntimeMinutes ? orchestratorCfg.maxRuntimeMinutes * 60_000 : undefined);
@@ -410,7 +435,7 @@ export async function runMaintenanceOrchestrator(
   let lastWasLlmStep = false;
 
   for (const step of steps) {
-    if (maxRuntimeMs !== undefined && Date.now() - startedAt >= maxRuntimeMs) {
+    if (maxRuntimeMs !== undefined && Date.now() - startedAtMs >= maxRuntimeMs) {
       results.push({
         name: step.name,
         status: "deferred",
@@ -512,6 +537,7 @@ export async function runMaintenanceOrchestrator(
         status: "ok",
         summary,
         durationMs: Date.now() - stepStarted,
+        ...parseStepRunnerMetadata(summary),
       });
       completedThisRun.add(step.name);
       consecutiveRateLimitErrors = 0;
@@ -549,8 +575,20 @@ export async function runMaintenanceOrchestrator(
     for (const line of lines) logger?.info?.(line);
   }
 
-  return { tierLabel, steps: results, exitCode: computeExitCode(results), summaryLine };
+  const finishedAt = nowIso();
+  return {
+    tierLabel,
+    steps: results,
+    exitCode: computeExitCode(results),
+    summaryLine,
+    runId,
+    startedAt: startedAtIso,
+    finishedAt,
+    durationMs: Date.now() - startedAtMs,
+  };
 }
+
+export { toOrchestratorRunSummary, generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
 
 export async function runMaintenanceTiers(
   ctx: MaintenanceOrchestratorContext,

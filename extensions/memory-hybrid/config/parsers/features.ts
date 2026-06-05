@@ -3,6 +3,16 @@ import { DEFAULT_PLACEHOLDER_EMAIL_DOMAINS } from "../../services/skill-validato
 import { pluginLogger } from "../../utils/logger.js";
 import type { SectionDefinition, SectionTaxonomyOverrides } from "../skill-sections.js";
 import type { PersonaProposalsConfig, WorkshopConfig } from "../types/agents.js";
+import {
+  type WikiIntegrationConfig,
+  DEFAULT_WIKI_INTEGRATION_CONFIG,
+} from "../types/wiki-integration.js";
+import {
+  type WorkboardConfig,
+  type WorkboardColumnMapping,
+  DEFAULT_WORKBOARD_CONFIG,
+  DEFAULT_WORKBOARD_COLUMNS,
+} from "../types/workboard.js";
 import { IDENTITY_FILE_TYPES, type IdentityFileType } from "../types/agents.js";
 import type {
   AliasesConfig,
@@ -1206,4 +1216,83 @@ export function parseLiveChangeFeedConfig(cfg: Record<string, unknown>): import(
     maxInChatEventsPerTurn: parseLiveChangeFeedPositiveInt(raw?.maxInChatEventsPerTurn, 5, "maxInChatEventsPerTurn", 1, 20),
     inChatBudgetTokens: parseLiveChangeFeedPositiveInt(raw?.inChatBudgetTokens, 150, "inChatBudgetTokens", 50, 500),
   };
+}
+
+export function parseWikiIntegrationConfig(cfg: Record<string, unknown>): WikiIntegrationConfig {
+  const raw = cfg.wikiIntegration as Record<string, unknown> | undefined;
+  if (!raw || raw.enabled !== true) return { ...DEFAULT_WIKI_INTEGRATION_CONFIG };
+
+  const mutations = raw.mutations as Record<string, unknown> | undefined;
+  return {
+    enabled: true,
+    publicArtifacts: raw.publicArtifacts !== false,
+    corpusSupplement: raw.corpusSupplement !== false,
+    workspaceExportIntervalMinutes: parsePositiveIntClamped(
+      raw.workspaceExportIntervalMinutes,
+      DEFAULT_WIKI_INTEGRATION_CONFIG.workspaceExportIntervalMinutes,
+      5,
+      1440,
+    ),
+    mutations: {
+      enabled: mutations?.enabled === true,
+    },
+  };
+}
+
+export function parseWorkboardConfig(cfg: Record<string, unknown>): WorkboardConfig {
+  const raw = cfg.workboard as Record<string, unknown> | undefined;
+  if (!raw || raw.enabled !== true) return { ...DEFAULT_WORKBOARD_CONFIG };
+
+  const columnsRaw = raw.columns as Record<string, unknown> | undefined;
+  const columns: WorkboardColumnMapping = {
+    taskInProgress: parseColumnName(columnsRaw?.taskInProgress, DEFAULT_WORKBOARD_COLUMNS.taskInProgress),
+    taskDone: parseColumnName(columnsRaw?.taskDone, DEFAULT_WORKBOARD_COLUMNS.taskDone),
+    taskFailed: parseNullableColumnName(columnsRaw?.taskFailed, DEFAULT_WORKBOARD_COLUMNS.taskFailed),
+    taskStale: parseNullableColumnName(columnsRaw?.taskStale, DEFAULT_WORKBOARD_COLUMNS.taskStale),
+    taskParked: parseNullableColumnName(columnsRaw?.taskParked, DEFAULT_WORKBOARD_COLUMNS.taskParked),
+    goalActive: parseColumnName(columnsRaw?.goalActive, DEFAULT_WORKBOARD_COLUMNS.goalActive),
+    goalBlocked: parseNullableColumnName(columnsRaw?.goalBlocked, DEFAULT_WORKBOARD_COLUMNS.goalBlocked),
+    goalStalled: parseNullableColumnName(columnsRaw?.goalStalled, DEFAULT_WORKBOARD_COLUMNS.goalStalled),
+    goalCompleted: parseColumnName(columnsRaw?.goalCompleted, DEFAULT_WORKBOARD_COLUMNS.goalCompleted),
+  };
+
+  return {
+    enabled: true,
+    gatewayUrl:
+      typeof raw.gatewayUrl === "string" && raw.gatewayUrl.trim().length > 0
+        ? raw.gatewayUrl.trim()
+        : DEFAULT_WORKBOARD_CONFIG.gatewayUrl,
+    syncIntervalMinutes: parsePositiveIntClamped(
+      raw.syncIntervalMinutes,
+      DEFAULT_WORKBOARD_CONFIG.syncIntervalMinutes,
+      1,
+      60,
+    ),
+    syncTasks: raw.syncTasks !== false,
+    syncGoals: raw.syncGoals !== false,
+    columns,
+    bidirectional: raw.bidirectional !== false,
+    cardTag:
+      typeof raw.cardTag === "string" && raw.cardTag.trim().length > 0
+        ? raw.cardTag.trim()
+        : DEFAULT_WORKBOARD_CONFIG.cardTag,
+  };
+}
+
+function parsePositiveIntClamped(value: unknown, fallback: number, min: number, max: number): number {
+  if (value === undefined || value === null) return fallback;
+  const n = typeof value === "number" ? Math.floor(value) : Number.NaN;
+  if (!Number.isFinite(n) || n < min) return fallback;
+  return Math.min(n, max);
+}
+
+function parseColumnName(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  return fallback;
+}
+
+function parseNullableColumnName(value: unknown, fallback: string | null): string | null {
+  if (value === null || value === false) return null;
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  return fallback;
 }

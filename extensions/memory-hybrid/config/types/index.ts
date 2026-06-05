@@ -6,6 +6,8 @@ export * from "./maintenance.js";
 export * from "./features.js";
 export * from "./agents.js";
 export * from "./sensors.js";
+export * from "./wiki-integration.js";
+export * from "./workboard.js";
 
 // Re-export all types from domain files and define HybridMemoryConfig and other shared types
 
@@ -73,6 +75,8 @@ import type {
 import type { MultiAgentConfig, PersonaProposalsConfig, WorkshopConfig } from "./agents.js";
 
 import type { SensorSweepConfig } from "./sensors.js";
+import type { WikiIntegrationConfig } from "./wiki-integration.js";
+import type { WorkboardConfig } from "./workboard.js";
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 /** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
@@ -830,4 +834,8 @@ export type HybridMemoryConfig = {
    * Overrides the OPENCLAW_GATEWAY_TOKEN environment variable when set.
    */
   gateway?: GatewayConfig;
+  /** Wiki integration — memory-wiki bridge, corpus supplement, bidirectional fact editing. */
+  wikiIntegration: WikiIntegrationConfig;
+  /** Workboard integration — bidirectional sync of active tasks and goals to OpenClaw Workboard Kanban. */
+  workboard: WorkboardConfig;
 };

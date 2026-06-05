@@ -50,6 +50,11 @@ export function resolveCredentialsVaultKeyMaterial(raw: string, dbPath: string):
   if (candidates.length === 0) return "";
 
   if (!existsSync(dbPath)) {
+    if (trimmed.startsWith("file:")) {
+      // New vault: require resolved file contents; never bootstrap with literal `file:/path`.
+      const fromFile = candidates.find((c) => c !== trimmed);
+      return fromFile ?? "";
+    }
     return candidates[0];
   }
 
@@ -63,7 +68,7 @@ export function resolveCredentialsVaultKeyMaterial(raw: string, dbPath: string):
     }
   }
 
-  return candidates[0];
+  return "";
 }
 
 /** @internal Test hook */
