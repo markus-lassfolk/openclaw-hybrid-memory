@@ -1167,6 +1167,138 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const closedLoopDetected =
+    requiredSteps.includes("closed-loop-analysis") ||
+    /\bclosed-loop-analysis\b/i.test(logContent) ||
+    /memory-hybrid:\s*closed-loop\b/i.test(logContent);
+  const closedLoopInterrupted =
+    /\bclosed-loop-analysis interrupted\b/i.test(logContent) ||
+    /memory-hybrid:\s*closed-loop\s*—\s*interrupted\b/i.test(logContent) ||
+    (closedLoopDetected &&
+      /\binterrupted\b/i.test(logContent) &&
+      /\bsemantic=partial\b/i.test(logContent));
+  if (closedLoopDetected && closedLoopInterrupted) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "closed-loop-analysis",
+        failureCategory: "semantic_failure",
+        failureClass: "closed_loop_analysis_interrupted",
+        message: `${jobName}:closed-loop-analysis was interrupted despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const crossAgentDetected =
+    requiredSteps.includes("cross-agent-learning") || /\bcross-agent-learning\b/i.test(logContent);
+  const crossAgentErrors =
+    parsePositiveMetric(logContent, "errors") ??
+    (() => {
+      const match = logContent.match(/\bErrors:\s*(\d+)\b/);
+      if (!match) return undefined;
+      const value = Number.parseInt(match[1], 10);
+      return Number.isFinite(value) ? value : undefined;
+    })();
+  if (crossAgentDetected && typeof crossAgentErrors === "number" && crossAgentErrors > 0) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "cross-agent-learning",
+        failureCategory: "semantic_failure",
+        failureClass: "cross_agent_learning_errors",
+        message: `${jobName}:cross-agent-learning reported batch errors despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const toolEffectivenessDetected =
+    requiredSteps.includes("tool-effectiveness") || /\btool-effectiveness\b/i.test(logContent);
+  if (toolEffectivenessDetected && /\bunexpected empty output\b/i.test(logContent)) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "tool-effectiveness",
+        failureCategory: "semantic_failure",
+        failureClass: "tool_effectiveness_empty_output",
+        message: `${jobName}:tool-effectiveness produced no usable output despite a mechanically successful run`,
+        semanticStatus: "semantic_fail",
+      }),
+    );
+  }
+
+  const digestAutopilotDetected =
+    requiredSteps.includes("digest-autopilot") ||
+    /\bdigest-autopilot\b/i.test(logContent) ||
+    /\bpending digest autopilot cron\b/i.test(logContent);
+  const digestAutopilotSemanticFail =
+    /\bdigest-autopilot\b[^\n]*\bstatus=(failed|partial)\b/i.test(logContent) ||
+    /\bpending digest autopilot cron (failed|partial)\b/i.test(logContent) ||
+    (digestAutopilotDetected &&
+      /\bStatus:\s*(failed|partial)\b/i.test(logContent) &&
+      /\bPending digest autopilot cron\b/i.test(logContent));
+  if (digestAutopilotDetected && digestAutopilotSemanticFail) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "digest-autopilot",
+        failureCategory: "semantic_failure",
+        failureClass: "digest_autopilot_failed_status",
+        message: `${jobName}:digest-autopilot reported failed or partial status despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const auditHealthDetected =
+    requiredSteps.includes("audit-health") ||
+    /\baudit-health\b/i.test(logContent) ||
+    /\baudit health\b/i.test(logContent);
+  const auditHealthSucceededInLedger = !failedSteps.some((s) => s.step === "audit-health");
+  if (auditHealthDetected && auditHealthSucceededInLedger) {
+    const extracted = extractAuditHealthJsonFromLog(logContent);
+    if (extracted.kind === "ok") {
+      const report = extracted.value;
+      const warningCount =
+        typeof report.warningCount === "number" ? Math.max(0, report.warningCount) : 0;
+      const errorCount = typeof report.errorCount === "number" ? Math.max(0, report.errorCount) : 0;
+      const reportExitCode = typeof report.exitCode === "number" ? report.exitCode : 0;
+      const exitReason = typeof report.exitReason === "string" ? report.exitReason.trim() : "";
+      if (
+        warningCount > 0 ||
+        errorCount > 0 ||
+        report.ok === false ||
+        reportExitCode !== 0 ||
+        exitReason.startsWith("strict_")
+      ) {
+        addMaintenanceIssue(
+          issues,
+          buildMaintenanceIssue({
+            ...commonFields,
+            jobName,
+            stepName: "audit-health",
+            failureCategory: "semantic_failure",
+            failureClass:
+              exitReason === "strict_warnings" || exitReason === "strict_errors"
+                ? exitReason
+                : "audit_health_degraded_despite_success_exit",
+            message: `${jobName}:audit-health reported degraded health despite a mechanically successful run`,
+            semanticStatus: errorCount > 0 ? "semantic_fail" : "degraded",
+          }),
+        );
+      }
+    }
+  }
+
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected =
@@ -1327,6 +1459,11 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "analyze-maintenance-logs" ||
     issue.stepName === "passive-observer" ||
     issue.stepName === "active-tasks-maintain" ||
+    issue.stepName === "closed-loop-analysis" ||
+    issue.stepName === "cross-agent-learning" ||
+    issue.stepName === "tool-effectiveness" ||
+    issue.stepName === "digest-autopilot" ||
+    issue.stepName === "audit-health" ||
     issue.stepName === "maintenance" ||
     issue.stepName === "cursor" ||
     issue.stepName === "persona-proposals"

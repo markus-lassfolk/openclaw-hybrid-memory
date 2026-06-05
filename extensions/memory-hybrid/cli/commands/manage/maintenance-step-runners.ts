@@ -684,10 +684,12 @@ export function buildCliMaintenanceRunners(
 
   set("digest-autopilot", async () => {
     const result = await runPendingDigestAutopilotCron({ cfg: b.cfg, factsDb: b.factsDb });
+    const semantic =
+      result.summary.status === "failed" || result.summary.status === "partial" ? "partial" : "success";
     if (result.summary.status === "failed" || result.summary.status === "partial") {
-      throw new Error(result.summary.status);
+      throw new Error(`digest-autopilot ${result.summary.status} (status=${result.summary.status} semantic=${semantic})`);
     }
-    return `status=${result.summary.status}`;
+    return `status=${result.summary.status} semantic=${semantic}`;
   });
 
   set("consolidate", async () => {

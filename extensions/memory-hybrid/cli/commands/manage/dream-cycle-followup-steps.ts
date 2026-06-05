@@ -77,9 +77,9 @@ export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, ve
     verbose,
     logger: () => {},
   });
-  const summary = `${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted`;
+  const summary = `${clReport.rulesAnalyzed} rules measured, ${clReport.deprecated} deprecated, ${clReport.boosted} boosted semantic=${clReport.interrupted ? "partial" : "success"}`;
   if (clReport.interrupted) {
-    throw new Error(`closed-loop-analysis interrupted (${summary}) semantic=partial`);
+    throw new Error(`closed-loop-analysis interrupted (${summary})`);
   }
   return summary;
 }
@@ -87,10 +87,11 @@ export async function runClosedLoopAnalysisStep(deps: DreamCycleFollowUpDeps, ve
 export async function runCrossAgentLearningStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
   if (!deps.runCrossAgentLearning) return "skipped (handler unavailable)";
   const res = await deps.runCrossAgentLearning(verbose ? { verbose: true } : undefined);
+  const summary = `${res.generalisedStored} patterns from ${res.agentsScanned} agents errors=${res.errors} semantic=${res.errors > 0 ? "partial" : "success"}`;
   if (res.errors > 0) {
-    throw new Error(`cross-agent-learning batch errors=${res.errors}`);
+    throw new Error(`cross-agent-learning batch errors=${res.errors} (${summary})`);
   }
-  return `${res.generalisedStored} patterns from ${res.agentsScanned} agents`;
+  return summary;
 }
 
 export async function runToolEffectivenessStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {

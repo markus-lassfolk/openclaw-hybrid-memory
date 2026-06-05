@@ -1218,6 +1218,131 @@ error: unknown command 'bar'
         }),
       );
     });
+
+    it("blocks guard updates when closed-loop analysis was interrupted", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "closed-loop.exit.txt");
+      const logPath = join(tmpDir, "closed-loop.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z closed-loop-analysis exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: closed-loop — interrupted by wall-clock limit after 500 rows\nclosed-loop-analysis interrupted (500 rules measured, 0 deprecated, 0 boosted semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["closed-loop-analysis"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "closed-loop-analysis",
+          failureClass: "closed_loop_analysis_interrupted",
+        }),
+      );
+    });
+
+    it("blocks guard updates when cross-agent-learning reports batch errors", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "cross-agent.exit.txt");
+      const logPath = join(tmpDir, "cross-agent.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z cross-agent-learning exit=0\n");
+      writeFileSync(
+        logPath,
+        "Cross-agent learning complete:\n  Agents scanned: 3\n  Errors: 2\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["cross-agent-learning"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "cross-agent-learning",
+          failureClass: "cross_agent_learning_errors",
+        }),
+      );
+    });
+
+    it("blocks guard updates when tool-effectiveness returns empty output", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "tool-effectiveness.exit.txt");
+      const logPath = join(tmpDir, "tool-effectiveness.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z tool-effectiveness exit=0\n");
+      writeFileSync(logPath, "tool-effectiveness: unexpected empty output\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["tool-effectiveness"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "tool-effectiveness",
+          failureClass: "tool_effectiveness_empty_output",
+        }),
+      );
+    });
+
+    it("blocks guard updates when digest-autopilot reports partial status", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "digest-autopilot.exit.txt");
+      const logPath = join(tmpDir, "digest-autopilot.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z digest-autopilot exit=0\n");
+      writeFileSync(
+        logPath,
+        "Pending digest autopilot cron weekly-pending-digest-autopilot-20260508T082000Z\nStatus: partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["digest-autopilot"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "digest-autopilot",
+          failureClass: "digest_autopilot_failed_status",
+        }),
+      );
+    });
+
+    it("blocks guard updates when audit-health JSON reports strict warnings on exit=0", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "audit-health.exit.txt");
+      const logPath = join(tmpDir, "audit-health.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z audit-health exit=0\n");
+      writeFileSync(
+        logPath,
+        JSON.stringify(
+          {
+            schemaVersion: 1,
+            generatedAt: "2026-05-09T15:06:34Z",
+            status: "partial",
+            ok: false,
+            warningCount: 2,
+            errorCount: 0,
+            activeFacts: 42,
+            exitCode: 2,
+            exitReason: "strict_warnings",
+            strictFailureReason: "2 warning(s) present and --strict was set",
+            warnings: ["stale vector backlog", "missing storage sample"],
+            errors: [],
+            remediation: [],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["audit-health"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "audit-health",
+          failureClass: "strict_warnings",
+        }),
+      );
+    });
   });
 
   describe("validateFromSummaryJson", () => {
