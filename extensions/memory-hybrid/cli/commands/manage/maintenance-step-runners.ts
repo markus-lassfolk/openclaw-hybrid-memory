@@ -39,6 +39,7 @@ import { cleanupImplicitFeedbackDuplicates } from "../../cmd-feedback.js";
 import { resolveScanMaintenanceOverrides, type ScanMaintenanceOverrideInput } from "../../maintenance-overrides.js";
 import { nowIso } from "../../../utils/dates.js";
 import {
+  parseSemanticTokenFromSummary,
   semanticOutcomeBlocksOrchestratorGuard,
   semanticOutcomeIsPartialFailure,
 } from "../../../services/maintenance-job-run/index.js";
@@ -133,6 +134,22 @@ function assertVectorCleanupNotPartial(stepName: string, cleanups: Array<{ faile
   throw new Error(`${stepName} partial vector cleanup failure (${summary})`);
 }
 
+function assertActiveTasksMaintainSummaryDoesNotBlock(summary: string): string {
+  const status = summary.match(/\bstatus=(partial|failed)\b/i)?.[1]?.toLowerCase();
+  const failed = Number.parseInt(summary.match(/\bfailed=(\d+)\b/i)?.[1] ?? "0", 10);
+  const semantic = parseSemanticTokenFromSummary(summary);
+  if (
+    status === "partial" ||
+    status === "failed" ||
+    failed > 0 ||
+    semanticOutcomeBlocksOrchestratorGuard(semantic)
+  ) {
+    const semanticSummary = summary.includes("semantic=") ? summary : `${summary} semantic=partial`;
+    throw new Error(`active-tasks-maintain ${status ?? semantic ?? "partial"} failure (${semanticSummary})`);
+  }
+  return summary;
+}
+
 export function buildCliMaintenanceRunners(
   b: ManageBindings,
   opts: BuildCliRunnersOptions = {},
@@ -225,7 +242,7 @@ export function buildCliMaintenanceRunners(
   set("active-tasks-maintain", async () => {
     if (!b.cfg.activeTask?.enabled) return "skipped (activeTask disabled)";
     if (!b.runActiveTasksMaintain) return "skipped (active-tasks maintain unavailable)";
-    return b.runActiveTasksMaintain();
+    return assertActiveTasksMaintainSummaryDoesNotBlock(await b.runActiveTasksMaintain());
   });
 
   // --- Nightly staggered ---
@@ -310,7 +327,11 @@ export function buildCliMaintenanceRunners(
       model: b.reflectionConfig.model ?? getDefaultCronModel(getCronModelConfig(b.cfg), "maintenance"),
       verbose,
     });
-    return `patternsStored=${r.patternsStored} facts=${r.factsAnalyzed}`;
+    const summary = `patternsStored=${r.patternsStored} facts=${r.factsAnalyzed} semantic=${r.semanticOutcome ?? "success"}`;
+    if (r.semanticOutcome === "failed") {
+      throw new Error(`reflect LLM failure (${summary})`);
+    }
+    return summary;
   });
 
   set("reflect-rules", async () => {
@@ -680,7 +701,9 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
   }
 
   if (deps.runActiveTasksMaintain) {
-    runners.set("active-tasks-maintain", deps.runActiveTasksMaintain);
+    runners.set("active-tasks-maintain", async () =>
+      assertActiveTasksMaintainSummaryDoesNotBlock(await deps.runActiveTasksMaintain!()),
+    );
   }
 
   return runners;

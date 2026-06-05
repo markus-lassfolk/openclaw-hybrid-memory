@@ -68,5 +68,7 @@ describe("gateway-memory-diagnostics", () => {
     expect(sanitized.startupAttribution).toEqual([]);
     expect(sanitized.hybridMemory.vectorObservability?.vectorDb.path).toBeNull();
     expect(sanitized.hybridMemory.vectorObservability?.lancedb.basePath).toBeNull();
+    expect(sanitized.disk.sqliteBytes).toBeNull();
+    expect(sanitized.disk.lanceDirBytes).toBeNull();
   });
 });

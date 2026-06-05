@@ -212,6 +212,8 @@ describe("wiki-dream-ingester", () => {
     });
 
     expect(result.findingsIngested).toBe(2);
+    const storeCall = factsDb.storeWithResult.mock.calls[0][0];
+    expect(storeCall.key).toMatch(/^pattern:[a-f0-9]{16}$/);
   });
 
   it("skips non-JSON files in run directory", async () => {

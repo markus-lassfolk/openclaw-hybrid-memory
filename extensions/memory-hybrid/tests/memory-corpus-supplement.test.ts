@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryCorpusSupplement } from "../services/memory-corpus-supplement.js";
+import { GLOBAL_ONLY_SCOPE_SENTINEL } from "../utils/scope-filter.js";
 import type { MemoryEntry } from "../types/memory.js";
 
 const FACT_ID = "a1b2c3d4-e5f6-0000-0000-000000000001";
@@ -137,7 +138,7 @@ describe("memory-corpus-supplement", () => {
       expect(result).toBeNull();
     });
 
-    it("uses unrestricted scope when includeAllScopes is enabled", async () => {
+    it("uses global-only scope when includeAllScopes is enabled without session key", async () => {
       const fact = makeFact();
       const factsDb = {
         search: vi.fn(() => [makeSearchResult(fact)]),
@@ -150,7 +151,9 @@ describe("memory-corpus-supplement", () => {
       expect(factsDb.search).toHaveBeenCalledWith(
         "TypeScript",
         10,
-        expect.objectContaining({ scopeFilter: undefined }),
+        expect.objectContaining({
+          scopeFilter: { agentId: GLOBAL_ONLY_SCOPE_SENTINEL },
+        }),
       );
     });
   });

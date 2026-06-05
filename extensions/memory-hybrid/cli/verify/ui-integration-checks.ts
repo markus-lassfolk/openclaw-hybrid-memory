@@ -8,6 +8,7 @@ import type { HybridMemoryConfig } from "../../config.js";
 import { WIKI_WORKSPACE_EXPORT_SUBDIR } from "../../services/wiki-workspace-export.js";
 import { createWorkboardHttpRpcClient } from "../../services/workboard-rpc-client.js";
 import { isWikiExportableFact } from "../../services/wiki-fact-filter.js";
+import { globalOnlyScopeFilter } from "../../utils/scope-filter.js";
 import type { FactsDB } from "../../backends/facts-db.js";
 
 export type WikiMirrorInspectResult = {
@@ -50,7 +51,9 @@ export function inspectWikiWorkspaceMirror(
 ): WikiMirrorInspectResult {
   const intervalMinutes = cfg.wikiIntegration?.workspaceExportIntervalMinutes ?? 0;
   const exportRoot = join(workspaceRoot, WIKI_WORKSPACE_EXPORT_SUBDIR);
-  const exportableFactCount = factsDb.getAll({ includeSuperseded: false }).filter(isWikiExportableFact).length;
+  const exportableFactCount = factsDb
+    .getAll({ scopeFilter: globalOnlyScopeFilter(), includeSuperseded: false })
+    .filter(isWikiExportableFact).length;
 
   let lastSyncedAt: string | null = null;
   let lastSyncFactCount: number | null = null;

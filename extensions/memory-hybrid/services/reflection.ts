@@ -88,6 +88,7 @@ interface ReflectionResult {
   patternsExtracted: number;
   patternsStored: number;
   window: number;
+  semanticOutcome?: string;
 }
 
 interface ReflectionRulesResult {
@@ -674,7 +675,13 @@ export async function runReflection(
       retryAttempt,
     });
     touchReflectLastRun();
-    return { factsAnalyzed: recentFacts.length, patternsExtracted: 0, patternsStored: 0, window: windowDays };
+    return {
+      factsAnalyzed: recentFacts.length,
+      patternsExtracted: 0,
+      patternsStored: 0,
+      window: windowDays,
+      semanticOutcome: "failed",
+    };
   }
 
   const uniqueNewPatterns = parsePatternsFromReflectionResponse(rawResponse);

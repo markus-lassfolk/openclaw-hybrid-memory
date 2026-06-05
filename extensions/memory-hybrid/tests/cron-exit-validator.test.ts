@@ -1009,6 +1009,44 @@ error: unknown command 'bar'
       expect(result.failedSteps.some((s) => s.step === "repair-vectors")).toBe(true);
     });
 
+    it("treats active-tasks-maintain partial semantic as maintenance failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-active-tasks-"));
+      const summaryPath = join(tmpDir, "maintenance-cycle-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-cycle-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-cycle-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-active-tasks",
+          tierLabel: "cycle",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok with active tasks partial",
+          steps: [
+            {
+              name: "active-tasks-maintain",
+              status: "ok",
+              summary: "status=partial reconciled=2 failed=1 semantic=partial",
+              durationMs: 10,
+              semanticOutcome: "partial",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-cycle exit=0\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["active-tasks-maintain"], true);
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "active-tasks-maintain")).toBe(true);
+    });
+
     it("treats ok status with legacy failed_suspect_zero_parsed in summary text as maintenance failure", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-legacy-"));
       const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");

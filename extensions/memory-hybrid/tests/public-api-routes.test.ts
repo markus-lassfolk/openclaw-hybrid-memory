@@ -574,6 +574,7 @@ describe("registerPublicApiRoutes", () => {
     expect(body.facts.activeFacts).toBeNull();
     expect(body.facts.topSources).toBeNull();
     expect(body.startupAttribution).toEqual([]);
+    expect(body.disk.sqliteBytes).toBeNull();
   });
 
   it("memory-diagnostics rejects unauthenticated callers", async () => {
@@ -609,6 +610,21 @@ describe("registerPublicApiRoutes", () => {
     const res = await invokeNodeHttpRoute(
       route.handler,
       fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}?sessionId=s-1`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
+  it("fact mutate rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes(
+      { cfg: makeCfg(false), factsDb, narrativesDb, factMutationsEnabled: true },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}/fact/mutate`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}/fact/mutate`),
     );
     expect(res.status).toBe(403);
     expect(JSON.parse(res.body).error).toBe("authentication required");

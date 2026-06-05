@@ -232,6 +232,27 @@ describe("maintenance-orchestrator", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it("parses semantic token from active-tasks-maintain partial failure", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "active-tasks-maintain",
+        async () => {
+          throw new Error(
+            "active-tasks-maintain partial failure (status=partial reconciled=2 failed=1 semantic=partial)",
+          );
+        },
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["cycle"], force: true, verbose: false, include: ["active-tasks-maintain"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(result.steps[0]?.semanticOutcome).toBe("partial");
+    expect(result.exitCode).toBe(1);
+  });
+
   it("fails reflect-rules when runner summary has parse_success=false without semantic token", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([

@@ -537,7 +537,10 @@ export function createHybridMemCliContext(
           const { runActiveTaskMaintain } = await import("../../cli/active-tasks.js");
           const result = await runActiveTaskMaintain(activeCtx, handlerCtx.cfg, { apply: true, jsonMode: true });
           const reconciled = result.reconcile?.reconciled ?? 0;
-          return `status=${result.status} reconciled=${reconciled}`;
+          const failed = result.reconcile?.failed ?? 0;
+          const semantic =
+            result.status === "partial" || result.status === "failed" || failed > 0 ? "partial" : "success";
+          return `status=${result.status} reconciled=${reconciled} failed=${failed} semantic=${semantic}`;
         }
       : undefined,
     runExport: services.runExport,

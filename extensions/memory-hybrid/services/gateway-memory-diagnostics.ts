@@ -167,6 +167,11 @@ export function sanitizePublicMemoryDiagnostics(diag: GatewayMemoryDiagnostics):
     ...diag,
     facts: { activeFacts: null, topSources: null },
     startupAttribution: [],
+    disk: {
+      sqliteBytes: null,
+      sqliteWalBytes: null,
+      lanceDirBytes: null,
+    },
     hybridMemory: {
       ...diag.hybridMemory,
       vectorObservability: vectorObs

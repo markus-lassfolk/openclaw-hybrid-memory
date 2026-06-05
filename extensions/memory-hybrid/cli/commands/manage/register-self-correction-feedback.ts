@@ -303,6 +303,7 @@ function registerManageSelfCorrectionFeedbackOnParent(
             console.log(`  Trajectories built: ${res.trajectoriesBuilt}`);
             if (res.partial) {
               console.log(`  Partial run: yes (${res.partialReason ?? "capped"})`);
+              process.exitCode = 2;
             }
             if (res.closedLoopReport) {
               console.log(`\n${res.closedLoopReport}`);
@@ -351,6 +352,7 @@ function registerManageSelfCorrectionFeedbackOnParent(
             console.log(`  Provenance sources recorded: ${res.provenanceRecorded}`);
             console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
             if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
+            if (res.errors > 0) process.exitCode = 1;
           },
         ),
       ),
