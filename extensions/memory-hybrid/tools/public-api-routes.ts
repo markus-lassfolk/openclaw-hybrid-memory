@@ -15,6 +15,7 @@ import {
   refreshActiveTaskProjectionBestEffort,
 } from "../services/task-ledger-facts.js";
 import { globalOnlyScopeFilter, scopeFieldsFromEntry, scopeFieldsFromFilter } from "../utils/scope-filter.js";
+import { pluginLogger } from "../utils/logger.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { nowIso } from "../utils/dates.js";
@@ -502,6 +503,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   // ========================================================================
   if (ctx.factMutationsEnabled) {
     makeRoute(`${PUBLIC_API_PREFIX}/fact/mutate`, async (req) => {
+      if (!ctx.cfg.health.authenticated) {
+        return toJson(403, { error: "authentication required" });
+      }
       try {
         const scopeFilter = resolveScopeFilter(req);
         const body = req.body ? JSON.parse(req.body) : {};
@@ -538,6 +542,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               ...scopeFieldsFromEntry(existing),
             });
             ctx.factsDb.supersede(factId, stored.id);
+            pluginLogger.info(`memory-hybrid: fact ${factId} updated (superseded → ${stored.id}) via HTTP /fact/mutate`);
             return toJson(200, {
               ok: true,
               superseded: factId,
@@ -545,6 +550,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
             });
           } else if (confidence !== null) {
             ctx.factsDb.setConfidenceTo(factId, Math.max(0, Math.min(1, confidence)));
+            pluginLogger.info(`memory-hybrid: fact ${factId} confidence updated via HTTP /fact/mutate`);
             return toJson(200, { ok: true, fact: ctx.factsDb.getById(factId, { scopeFilter }) });
           }
           return toJson(200, { ok: true, noop: true });
@@ -569,6 +575,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               ...scopeFieldsFromEntry(existing),
             });
             ctx.factsDb.supersede(factId, stored.id);
+            pluginLogger.info(`memory-hybrid: fact ${factId} superseded by ${stored.id} via HTTP /fact/mutate`);
             return toJson(200, {
               ok: true,
               superseded: factId,
@@ -577,6 +584,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
           }
 
           ctx.factsDb.supersede(factId, null);
+          pluginLogger.info(`memory-hybrid: fact ${factId} superseded (removed) via HTTP /fact/mutate`);
           return toJson(200, { ok: true, superseded: factId });
         }
 
@@ -599,6 +607,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               : undefined,
             ...scopeFieldsFromFilter(scopeFilter),
           });
+          pluginLogger.info(`memory-hybrid: fact ${stored.id} created via HTTP /fact/mutate`);
           return toJson(201, { ok: true, fact: ctx.factsDb.getById(stored.id, { scopeFilter }) ?? stored });
         }
 

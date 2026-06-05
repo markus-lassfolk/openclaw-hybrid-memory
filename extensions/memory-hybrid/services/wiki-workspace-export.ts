@@ -13,6 +13,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 import { nowIso } from "../utils/dates.js";
+import { traceIntegration } from "../utils/integration-trace.js";
 import { pluginLogger } from "../utils/logger.js";
 import {
   isWikiExportableFact,
@@ -86,7 +87,11 @@ function collectMarkdownFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-export function syncWikiWorkspaceExport(factsDb: FactsDB, workspaceRoot: string): WikiWorkspaceExportResult {
+export function syncWikiWorkspaceExport(
+  factsDb: FactsDB,
+  workspaceRoot: string,
+  verbose = false,
+): WikiWorkspaceExportResult {
   const exportRoot = resolve(workspaceRoot, WIKI_WORKSPACE_EXPORT_SUBDIR);
   mkdirSync(exportRoot, { recursive: true });
 
@@ -116,8 +121,10 @@ export function syncWikiWorkspaceExport(factsDb: FactsDB, workspaceRoot: string)
     if (needsWrite) {
       writeFileSync(fullPath, nextContent, "utf-8");
       factsWritten++;
+      traceIntegration(verbose, `wiki workspace export wrote ${rel} (${entry.id})`);
     } else {
       factsSkipped++;
+      traceIntegration(verbose, `wiki workspace export skipped unchanged ${rel}`);
     }
   }
 
@@ -128,6 +135,7 @@ export function syncWikiWorkspaceExport(factsDb: FactsDB, workspaceRoot: string)
       try {
         rmSync(filePath, { force: true });
         filesRemoved++;
+        traceIntegration(verbose, `wiki workspace export removed stale ${rel}`);
       } catch (err) {
         pluginLogger.warn?.(
           `memory-hybrid: wiki workspace export — failed to remove stale file ${rel}: ${err instanceof Error ? err.message : String(err)}`,
@@ -152,7 +160,7 @@ export function syncWikiWorkspaceExport(factsDb: FactsDB, workspaceRoot: string)
     "utf-8",
   );
 
-  if (factsWritten > 0 || filesRemoved > 0) {
+  if (verbose || factsWritten > 0 || filesRemoved > 0) {
     pluginLogger.info(
       `memory-hybrid: wiki workspace export — wrote ${factsWritten}, skipped ${factsSkipped}, removed ${filesRemoved} stale file(s) → ${WIKI_WORKSPACE_EXPORT_SUBDIR}/`,
     );

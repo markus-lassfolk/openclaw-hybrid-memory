@@ -7,16 +7,19 @@
  * sentinel fact (`entity: "system", key: "dream-ingested-run:<runId>"`).
  */
 
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryCategory } from "../types/memory.js";
+import { traceIntegration } from "../utils/integration-trace.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export interface DreamIngesterContext {
   factsDb: FactsDB;
   dreamCycleLogDir: string;
   maxRunsToProcess?: number;
+  verbose?: boolean;
 }
 
 export interface DreamIngesterResult {
@@ -30,7 +33,13 @@ const INGEST_SENTINEL_ENTITY = "system";
 const INGEST_SENTINEL_KEY_PREFIX = "dream-ingested-run:";
 const MAX_RUNS_DEFAULT = 3;
 
+function stablePatternKey(text: string): string {
+  const normalized = text.trim().toLowerCase().slice(0, 500);
+  return `pattern:${createHash("sha256").update(normalized).digest("hex").slice(0, 16)}`;
+}
+
 export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<DreamIngesterResult> {
+  const verbose = ctx.verbose ?? false;
   const result: DreamIngesterResult = {
     runsProcessed: 0,
     runsSkipped: 0,
@@ -53,11 +62,13 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
       const runId = runDir;
       if (isRunAlreadyIngested(ctx.factsDb, runId)) {
         result.runsSkipped++;
+        traceIntegration(verbose, `dream ingester skip run ${runId} — already ingested`);
         continue;
       }
 
       try {
         const findings = extractFindingsFromRun(join(ctx.dreamCycleLogDir, runDir));
+        traceIntegration(verbose, `dream ingester run ${runId} — ${findings.length} finding(s) extracted`);
         const runErrors: string[] = [];
         for (const finding of findings) {
           try {
@@ -74,29 +85,36 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
             });
             if (!storeResult.skipped) {
               result.findingsIngested++;
+              traceIntegration(verbose, `dream ingester stored finding from run ${runId}`);
             }
           } catch (err) {
             const msg = `Failed to store finding: ${err instanceof Error ? err.message : String(err)}`;
             runErrors.push(msg);
             result.errors.push(msg);
+            pluginLogger.warn(`memory-hybrid: dream ingester — ${msg}`);
           }
         }
 
         if (runErrors.length === 0) {
           markRunAsIngested(ctx.factsDb, runId);
           result.runsProcessed++;
+          traceIntegration(verbose, `dream ingester completed run ${runId}`);
         }
       } catch (err) {
-        result.errors.push(`Failed to process run ${runId}: ${err instanceof Error ? err.message : String(err)}`);
+        const msg = `Failed to process run ${runId}: ${err instanceof Error ? err.message : String(err)}`;
+        result.errors.push(msg);
+        pluginLogger.warn(`memory-hybrid: dream ingester — ${msg}`);
       }
     }
   } catch (err) {
-    result.errors.push(`Failed to read dream cycle log dir: ${err instanceof Error ? err.message : String(err)}`);
+    const msg = `Failed to read dream cycle log dir: ${err instanceof Error ? err.message : String(err)}`;
+    result.errors.push(msg);
+    pluginLogger.warn(`memory-hybrid: dream ingester — ${msg}`);
   }
 
-  if (result.findingsIngested > 0) {
+  if (verbose || result.findingsIngested > 0 || result.errors.length > 0) {
     pluginLogger.info(
-      `memory-hybrid: dream ingester — processed ${result.runsProcessed} run(s), ingested ${result.findingsIngested} finding(s)`,
+      `memory-hybrid: dream ingester — processed ${result.runsProcessed} run(s), skipped ${result.runsSkipped}, ingested ${result.findingsIngested} finding(s), errors=${result.errors.length}`,
     );
   }
 
@@ -188,6 +206,7 @@ function extractPatterns(artifact: Record<string, unknown>): Finding[] {
           category: "meta",
           importance: 0.6,
           entity: "behavioral-pattern",
+          key: stablePatternKey(text),
         });
       }
     }

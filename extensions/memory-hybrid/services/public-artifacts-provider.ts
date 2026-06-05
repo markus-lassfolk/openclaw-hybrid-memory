@@ -18,6 +18,7 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
+import { traceIntegration } from "../utils/integration-trace.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export type PublicArtifact = {
@@ -64,13 +65,17 @@ function isInternalWikiArtifact(entry: MemoryEntry): boolean {
   return false;
 }
 
-export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifactsProvider {
+export function createPublicArtifactsProvider(factsDb: FactsDB, verbose = false): PublicArtifactsProvider {
   return {
     async listArtifacts(opts) {
       const limit = Math.min(opts?.limit ?? DEFAULT_ARTIFACT_LIMIT, 500);
       const sinceEpoch = opts?.since ? Math.floor(new Date(opts.since).getTime() / 1000) : undefined;
 
       try {
+        traceIntegration(
+          verbose,
+          `publicArtifacts.listArtifacts called limit=${limit}${sinceEpoch ? ` since=${opts?.since}` : ""}`,
+        );
         const allFacts = factsDb.getAll({ scopeFilter: globalOnlyScopeFilter() });
         let filtered = allFacts;
 
@@ -89,6 +94,11 @@ export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifacts
             return (typeof tb === "number" ? tb : 0) - (typeof ta === "number" ? ta : 0);
           })
           .slice(0, limit);
+
+        traceIntegration(
+          verbose,
+          `publicArtifacts.listArtifacts returning ${sorted.length} artifact(s) from ${allFacts.length} total fact(s)`,
+        );
 
         return sorted.map(
           (entry): PublicArtifact => ({
@@ -128,6 +138,7 @@ export function registerPublicArtifactsBestEffort(
     logger?: { info?: (msg: string) => void; warn?: (msg: string) => void; debug?: (msg: string) => void };
   },
   factsDb: FactsDB,
+  verbose = false,
 ): boolean {
   const register = api.registerMemoryCapability;
   if (typeof register !== "function") {
@@ -136,7 +147,7 @@ export function registerPublicArtifactsBestEffort(
   }
 
   try {
-    const provider = createPublicArtifactsProvider(factsDb);
+    const provider = createPublicArtifactsProvider(factsDb, verbose);
     register({
       publicArtifacts: provider,
     });

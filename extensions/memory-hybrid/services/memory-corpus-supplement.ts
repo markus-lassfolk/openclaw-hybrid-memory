@@ -8,7 +8,8 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
-import { resolveCorpusScopeFilter } from "../utils/scope-filter.js";
+import { traceIntegration } from "../utils/integration-trace.js";
+import { globalOnlyScopeFilter, resolveCorpusScopeFilter } from "../utils/scope-filter.js";
 
 export type MemoryCorpusSearchResult = {
   corpus: string;
@@ -92,12 +93,15 @@ export interface CorpusSupplementContext {
   scopeFilter?: ScopeFilter | null;
   /** When true, include all scopes in search/get unless agentSessionKey narrows (wiki bridge). */
   includeAllScopes?: boolean;
+  /** Emit per-query trace lines when hybrid-memory verbosity=verbose. */
+  verbose?: boolean;
 }
 
 export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): MemoryCorpusSupplement {
+  const verbose = ctx.verbose ?? false;
   const resolveScope = (agentSessionKey?: string): ScopeFilter | undefined => {
     if (ctx.includeAllScopes && !agentSessionKey?.trim()) {
-      return undefined;
+      return globalOnlyScopeFilter();
     }
     return resolveCorpusScopeFilter(agentSessionKey, ctx.scopeFilter);
   };
@@ -115,6 +119,11 @@ export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): Memo
           deferAccessRefresh: true,
         });
 
+        traceIntegration(
+          verbose,
+          `corpus supplement search query="${query.slice(0, 80)}" limit=${limit} hits=${results.length}`,
+        );
+
         return results.map((r) => ({
           corpus: CORPUS_ID,
           path: factVirtualPath(r.entry),
@@ -128,6 +137,7 @@ export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): Memo
           updatedAt: epochToIso(r.entry.lastAccessed ?? r.entry.createdAt),
         }));
       } catch {
+        traceIntegration(verbose, `corpus supplement search failed query="${query.slice(0, 80)}"`);
         return [];
       }
     },
@@ -136,6 +146,7 @@ export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): Memo
       if (!lookup?.trim()) return null;
 
       try {
+        traceIntegration(verbose, `corpus supplement get lookup="${lookup.slice(0, 120)}"`);
         const scopeFilter = resolveScope(agentSessionKey);
         const factId = extractFactId(lookup);
         if (!factId) return null;
@@ -149,6 +160,7 @@ export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): Memo
         }
         if (!entry) return null;
 
+        traceIntegration(verbose, `corpus supplement get hit id=${entry.id}`);
         const content = factToContent(entry);
         const lines = content.split("\n");
 
@@ -166,6 +178,7 @@ export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): Memo
           updatedAt: epochToIso(entry.lastAccessed ?? entry.createdAt),
         };
       } catch {
+        traceIntegration(verbose, `corpus supplement get failed lookup="${lookup.slice(0, 120)}"`);
         return null;
       }
     },

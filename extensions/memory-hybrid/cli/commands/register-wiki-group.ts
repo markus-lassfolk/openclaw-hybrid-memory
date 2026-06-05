@@ -28,7 +28,8 @@ export function registerWikiGroup(mem: Chainable, ctx: ManageContext): void {
 
         try {
           const workspaceRoot = resolveOpenClawWorkspaceRoot();
-          const result = syncWikiWorkspaceExport(ctx.factsDb, workspaceRoot);
+          const verbose = (ctx.cfg.verbosity ?? "normal") === "verbose";
+          const result = syncWikiWorkspaceExport(ctx.factsDb, workspaceRoot, verbose);
           const payload = {
             ok: true,
             exportRoot: result.exportRoot,

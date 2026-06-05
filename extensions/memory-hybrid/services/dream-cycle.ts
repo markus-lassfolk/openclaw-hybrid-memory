@@ -1476,23 +1476,35 @@ export async function runDreamCycle(
 
   // Optional: Ingest dream cycle findings into facts for wiki surface
   let dreamFindingsIngested = 0;
+  let dreamIngestSuccess = true;
   if (config.ingestDreamFindings && config.stageArtifactDir && success) {
     try {
       const { ingestDreamFindings } = await import("./wiki-dream-ingester.js");
       const ingesterResult = await ingestDreamFindings({
         factsDb,
         dreamCycleLogDir: config.stageArtifactDir.replace(/\/[^/]+$/, ""),
+        verbose: !!config.verbose,
       });
       dreamFindingsIngested = ingesterResult.findingsIngested;
-      if (ingesterResult.findingsIngested > 0) {
+      if (ingesterResult.errors.length > 0) {
+        dreamIngestSuccess = false;
+        logger.warn(
+          `memory-hybrid: dream-cycle — dream findings ingest errors: ${ingesterResult.errors.slice(0, 3).join("; ")}`,
+        );
+      } else if (ingesterResult.findingsIngested > 0) {
         logger.info(
           `memory-hybrid: dream-cycle — ingested ${ingesterResult.findingsIngested} finding(s) from ${ingesterResult.runsProcessed} run(s)`,
         );
       }
     } catch (err) {
-      logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed (non-fatal): ${err}`);
+      dreamIngestSuccess = false;
+      logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed: ${err}`);
     }
   }
+
+  const finalSuccess = success && dreamIngestSuccess;
+  const finalFailedStages =
+    dreamIngestSuccess || !config.ingestDreamFindings ? failedStages : [...failedStages, "dream-findings-ingest"];
 
   return {
     factsPruned,
@@ -1510,7 +1522,7 @@ export async function runDreamCycle(
     digestSummary,
     dreamFindingsIngested,
     skipped: false,
-    success,
-    failedStages,
+    success: finalSuccess,
+    failedStages: finalFailedStages,
   };
 }

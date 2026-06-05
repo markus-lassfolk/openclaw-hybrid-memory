@@ -59,6 +59,7 @@ import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { resolveOpenClawWorkspaceRoot } from "../utils/openclaw-workspace.js";
 import { getLanguageKeywordsFilePath } from "../utils/language-keywords.js";
+import { integrationVerbose } from "../utils/integration-trace.js";
 import { findPluginRoot } from "../utils/plugin-root.js";
 import {
   fetchLatestPublishedVersion,
@@ -465,10 +466,15 @@ export function createPluginService(ctx: PluginServiceContext) {
       }
 
       // Wiki integration: register corpus supplement so facts appear in `memory_search corpus=all`
+      const uiIntegrationVerbose = integrationVerbose(cfg.verbosity);
       if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.corpusSupplement) {
         try {
           const { createMemoryCorpusSupplement } = await import("../services/memory-corpus-supplement.js");
-          const supplement = createMemoryCorpusSupplement({ factsDb, includeAllScopes: true });
+          const supplement = createMemoryCorpusSupplement({
+            factsDb,
+            includeAllScopes: true,
+            verbose: uiIntegrationVerbose,
+          });
           const registerCorpus = (api as { registerMemoryCorpusSupplement?: (s: unknown) => void })
             .registerMemoryCorpusSupplement;
           if (typeof registerCorpus === "function") {
@@ -494,7 +500,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.publicArtifacts) {
         try {
           const { registerPublicArtifactsBestEffort } = await import("../services/public-artifacts-provider.js");
-          registerPublicArtifactsBestEffort(api as Parameters<typeof registerPublicArtifactsBestEffort>[0], factsDb);
+          registerPublicArtifactsBestEffort(api as Parameters<typeof registerPublicArtifactsBestEffort>[0], factsDb, uiIntegrationVerbose);
         } catch (err) {
           api.logger.warn?.(
             `memory-hybrid: publicArtifacts registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
@@ -517,9 +523,9 @@ export function createPluginService(ctx: PluginServiceContext) {
             if (shuttingDown || wikiExportInFlight) return;
             wikiExportInFlight = true;
             try {
-              syncWikiWorkspaceExport(factsDb, wikiWorkspaceRoot);
+              syncWikiWorkspaceExport(factsDb, wikiWorkspaceRoot, uiIntegrationVerbose);
             } catch (err) {
-              api.logger.debug?.(
+              api.logger.warn?.(
                 `memory-hybrid: wiki workspace export failed: ${err instanceof Error ? err.message : String(err)}`,
               );
             } finally {
@@ -595,6 +601,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                   )
               : undefined,
             gatewayToken,
+            verbose: uiIntegrationVerbose,
           });
 
           const available = await adapter.isAvailable();
@@ -610,8 +617,14 @@ export function createPluginService(ctx: PluginServiceContext) {
             (timers as Record<string, unknown>).workboardSync = {
               value: setInterval(() => {
                 if (shuttingDown) return;
-                adapter.sync().catch((err) => {
-                  api.logger.debug?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
+                adapter.sync().then((syncResult) => {
+                  if (syncResult.errors.length > 0) {
+                    api.logger.warn?.(
+                      `memory-hybrid: Workboard sync tick errors: ${syncResult.errors.slice(0, 5).join("; ")}`,
+                    );
+                  }
+                }).catch((err) => {
+                  api.logger.warn?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
                 });
               }, intervalMs),
             };
@@ -779,7 +792,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 flushOnComplete: cfg.activeTask.flushOnComplete !== false,
                 memoryDir: join(workspaceRoot, "memory"),
               });
-              return `reconciled=${r.reconciledLabels.length}`;
+              return `reconciled=${r.reconciledLabels.length} failed=${r.failed} semantic=${r.failed > 0 ? "partial" : "success"}`;
             }
             return "ledger=file (watchdog handles)";
           };
