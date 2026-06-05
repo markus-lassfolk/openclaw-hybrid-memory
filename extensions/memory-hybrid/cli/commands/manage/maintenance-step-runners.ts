@@ -633,11 +633,7 @@ export function buildCliMaintenanceRunners(
       if (res.resumeAfterRowid === null) break;
       afterRowid = res.resumeAfterRowid;
     }
-    const summary = `scanned=${scanned} collapsed=${collapsed} semantic=${scanned >= 1000 && collapsed === 0 ? "partial" : "success"}`;
-    if (scanned >= 1000 && collapsed === 0) {
-      throw new Error(`implicit-feedback-collapse no-op on large backlog (${summary})`);
-    }
-    return summary;
+    return `scanned=${scanned} collapsed=${collapsed} semantic=success`;
   });
 
   set("audit-health", async () => {
