@@ -55,17 +55,13 @@ function reflectRulesDiagnosticsIndicateFailure(
   rulesStored: number,
 ): boolean {
   if (!d) return false;
-  if (d.status === "degraded") return true;
   if (d.zeroRulesReason === "insufficient_patterns" || d.zeroRulesReason === "valid_no_actionable_rules") {
     return false;
   }
-  if (
-    d.zeroRulesReason === "invalid_response_format" &&
-    d.status === "degraded" &&
-    (d.modelResponseChars ?? 0) > 0
-  ) {
+  if (d.zeroRulesReason === "invalid_response_format" && d.status === "degraded" && (d.modelResponseChars ?? 0) > 0) {
     return false;
   }
+  if (d.status === "degraded") return true;
   if (d.status === "ok") return false;
   return !d.parseSuccess || rulesStored === 0;
 }
@@ -326,9 +322,7 @@ export function buildCliMaintenanceRunners(
       d ? `parse_success=${d.parseSuccess}` : null,
       d?.zeroRulesReason ? `zero_rules_reason=${d.zeroRulesReason}` : null,
       d ? `status=${d.status}` : null,
-      d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored)
-        ? "semantic=failed"
-        : null,
+      d?.status === "degraded" || reflectRulesDiagnosticsIndicateFailure(d, r.rulesStored) ? "semantic=failed" : null,
     ]
       .filter(Boolean)
       .join(" ");
