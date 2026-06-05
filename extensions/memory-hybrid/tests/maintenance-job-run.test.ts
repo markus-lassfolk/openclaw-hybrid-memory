@@ -18,6 +18,7 @@ import {
   parseSemanticTokenFromSummary,
   reflectRulesStepSummaryIndicatesFailure,
   resolveLightJobRunOutcome,
+  reinforcementRunToJobRunOutcome,
 } from "../services/maintenance-job-run/index.js";
 
 describe("maintenance-job-run", () => {
@@ -112,6 +113,33 @@ describe("maintenance-job-run", () => {
         "rulesStored=0 zero_rules_reason=insufficient_patterns status=partial",
       ),
     ).toBe(false);
+  });
+
+  it("maps reinforcement run signals to semantic outcomes", () => {
+    expect(
+      reinforcementRunToJobRunOutcome({
+        llmAnalysisExpected: true,
+        incidentsCount: 3,
+        analysedCount: 0,
+        annotated: 0,
+      }),
+    ).toBe("failed_semantic_empty");
+    expect(
+      reinforcementRunToJobRunOutcome({
+        llmAnalysisExpected: false,
+        incidentsCount: 3,
+        analysedCount: 0,
+        annotated: 0,
+      }),
+    ).toBe("success_with_review");
+    expect(
+      reinforcementRunToJobRunOutcome({
+        llmAnalysisExpected: true,
+        incidentsCount: 3,
+        analysedCount: 2,
+        annotated: 0,
+      }),
+    ).toBe("success_with_review");
   });
 
   it("resolves light JobRun semantic outcomes", () => {

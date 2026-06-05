@@ -1063,6 +1063,7 @@ export async function runExtractReinforcementForCli(
       : reinforcementRunToJobRunOutcome({
           partialBatchFailure: result.partialBatchFailure,
           llmAnalysisFailed,
+          llmAnalysisExpected: runLLMAnalysis,
           incidentsCount: result.incidents.length,
           analysedCount,
           annotated: result.annotated,
