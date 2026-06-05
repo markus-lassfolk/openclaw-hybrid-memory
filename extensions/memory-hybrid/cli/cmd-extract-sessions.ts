@@ -45,7 +45,7 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
   if (!existsSync(sessionDir)) return [];
   const cutoff = sinceTimestamp !== undefined ? sinceTimestamp : Date.now() - days * 24 * 60 * 60 * 1000;
 
-  const collectFromDir = (dir: string): string[] => {
+  const collectFromDir = (dir: string, propagateErrors = false): string[] => {
     if (!existsSync(dir)) return [];
     try {
       return readdirSync(dir)
@@ -63,13 +63,17 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
             return false;
           }
         });
-    } catch {
+    } catch (err) {
+      if (propagateErrors) throw err;
       return [];
     }
   };
 
   try {
-    return [...collectFromDir(sessionDir), ...collectFromDir(join(sessionDir, "archive"))];
+    return [
+      ...collectFromDir(sessionDir, true),
+      ...collectFromDir(join(sessionDir, "archive"), false),
+    ];
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",

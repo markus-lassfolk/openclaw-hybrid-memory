@@ -26,6 +26,7 @@ import {
 } from "../cli/cmd-selfcorrection.js";
 import type { HandlerContext } from "../cli/handlers.js";
 import type { CorrectionIncident } from "../services/self-correction-extract.js";
+import * as adaptiveLlm from "../services/adaptive-maintenance-llm.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -119,6 +120,12 @@ function makeOpenAIFailoverMock(
   } as any;
 }
 
+function mockAdaptiveLlm(content: string): void {
+  vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+    content,
+  } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
+}
+
 function makeCtx(openai: any): HandlerContext {
   return {
     factsDb,
@@ -148,6 +155,14 @@ function makeCtx(openai: any): HandlerContext {
       llm: { default: ["test-model"], heavy: ["test-model"], _source: undefined },
       store: { classifyBeforeWrite: false },
       autoRecall: { enabled: false },
+      personaProposals: {
+        enabled: true,
+        allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"],
+        proposalTTLDays: 30,
+        minConfidence: 0.5,
+        maxProposalsPerWeek: 5,
+        autoApply: false,
+      },
     } as any,
     credentialsDb: null,
     aliasDb: null,
@@ -870,13 +885,17 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
   });
 
   it("AGENTS_RULE proposal uses source incident from batch order", async () => {
+    writeFileSync(join(tmpDir, "AGENTS.md"), "# Agents\n\n", "utf-8");
     const agentsRule = {
+      incidentIndex: 0,
       category: "behavior",
       severity: "medium",
       remediationType: "AGENTS_RULE",
       remediationContent: "Always verify in AGENTS.md",
     };
-    const openai = makeOpenAIMock(JSON.stringify([agentsRule]));
+    const llmResponse = JSON.stringify([agentsRule]);
+    const openai = makeOpenAIMock(llmResponse);
+    mockAdaptiveLlm(llmResponse);
     const create = vi.fn();
     const proposalsDb = { create };
     const ctx = makeCtx(openai);

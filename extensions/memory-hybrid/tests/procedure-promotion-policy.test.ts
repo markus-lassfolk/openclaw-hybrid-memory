@@ -17,20 +17,27 @@ import { determineRiskLevel, parseRecipeOrRaw } from "../utils/procedure-risk.js
 import type { ProcedureEntry } from "../types/memory.js";
 import { SKILL_COMPLETE_MARKER } from "../utils/atomic-write.js";
 import { expectStandaloneAndParentDecisionsEquivalent } from "./helpers/pending-autopilot-equivalence.js";
+import { getEnv, setEnv } from "../utils/env-manager.js";
 
 let tmpDir: string;
 let db: FactsDB;
 let skillsDir: string;
+let previousWorkspace: string | undefined;
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "procedure-promotion-policy-"));
   db = new FactsDB(join(tmpDir, "facts.db"));
   skillsDir = join(tmpDir, "skills-auto");
+  previousWorkspace = getEnv("OPENCLAW_WORKSPACE");
+  setEnv("OPENCLAW_WORKSPACE", tmpDir);
+  mkdirSync(join(tmpDir, "memory", "skills-pending"), { recursive: true });
 });
 
 afterEach(() => {
   db.close();
   rmSync(tmpDir, { recursive: true, force: true });
+  if (previousWorkspace !== undefined) setEnv("OPENCLAW_WORKSPACE", previousWorkspace);
+  else setEnv("OPENCLAW_WORKSPACE", undefined);
 });
 
 function goodRecipe(extra: Record<string, unknown> = {}) {

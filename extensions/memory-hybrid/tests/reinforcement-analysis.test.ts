@@ -16,6 +16,21 @@ import { FactsDB } from "../backends/facts-db.js";
 import { ProposalsDB } from "../backends/proposals-db.js";
 import { inferTargetFile, runExtractReinforcementForCli, runSelfCorrectionRunForCli } from "../cli/handlers.js";
 import type { HandlerContext } from "../cli/handlers.js";
+import { clearScanLock } from "../cli/shared.js";
+import * as adaptiveLlm from "../services/adaptive-maintenance-llm.js";
+
+const DEFAULT_PERSONA_PROPOSALS = {
+  enabled: true,
+  allowedFiles: ["SOUL.md", "IDENTITY.md", "USER.md", "AGENTS.md", "TOOLS.md"],
+  proposalTTLDays: 30,
+  minConfidence: 0.5,
+  maxProposalsPerWeek: 5,
+  autoApply: false,
+} as const;
+
+vi.mock("../services/vector-search.js", () => ({
+  findSimilarByEmbedding: vi.fn().mockResolvedValue([]),
+}));
 
 // ---------------------------------------------------------------------------
 // inferTargetFile
@@ -28,11 +43,16 @@ describe("inferTargetFile (#260)", () => {
     expect(inferTargetFile("Agent role definition")).toBe("IDENTITY.md");
   });
 
-  it("returns USER.md for preference/style/workflow content", () => {
-    expect(inferTargetFile("User preference for dark mode")).toBe("USER.md");
-    expect(inferTargetFile("Working style: async-first communication")).toBe("USER.md");
-    expect(inferTargetFile("Workflow for code reviews")).toBe("USER.md");
-    expect(inferTargetFile("Tooling setup: use bun not npm")).toBe("USER.md");
+  it("returns USER.md for explicit user/operator preference facts", () => {
+    expect(inferTargetFile("The user prefers dark mode")).toBe("USER.md");
+    expect(inferTargetFile("The operator wants async-first communication")).toBe("USER.md");
+    expect(inferTargetFile("The human needs concise status updates")).toBe("USER.md");
+  });
+
+  it("routes agent working-style content to SOUL.md (not USER.md)", () => {
+    expect(inferTargetFile("Working style: async-first communication")).toBe("SOUL.md");
+    expect(inferTargetFile("Workflow for code reviews")).toBe("SOUL.md");
+    expect(inferTargetFile("Tooling setup: use bun not npm")).toBe("SOUL.md");
   });
 
   it("returns SOUL.md for behavioral/communication content", () => {
@@ -66,6 +86,12 @@ function makeOpenAIMock(responseText: string) {
       },
     },
   } as any;
+}
+
+function mockAdaptiveLlm(content: string): void {
+  vi.spyOn(adaptiveLlm, "chatCompleteWithAdaptiveMaintenanceRetry").mockResolvedValue({
+    content,
+  } as Awaited<ReturnType<typeof adaptiveLlm.chatCompleteWithAdaptiveMaintenanceRetry>>);
 }
 
 function makeCtx(openai: any, extra: Partial<HandlerContext> = {}): HandlerContext {
@@ -111,6 +137,7 @@ function makeCtx(openai: any, extra: Partial<HandlerContext> = {}): HandlerConte
       llm: { default: ["test-model"], heavy: ["test-model"], _source: undefined },
       store: { classifyBeforeWrite: false },
       autoRecall: { enabled: false },
+      personaProposals: DEFAULT_PERSONA_PROPOSALS,
     } as any,
     credentialsDb: null,
     aliasDb: null,
@@ -135,6 +162,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearScanLock("extract-reinforcement");
+  vi.restoreAllMocks();
   factsDb.close();
   proposalsDb.close();
   rmSync(tmpDir, { recursive: true, force: true });
@@ -402,8 +431,11 @@ describe("MEMORY_STORE stores fact with semantic dedup (#260)", () => {
 
 describe("PROPOSAL creates entry in proposals DB (#260)", () => {
   it("stores proposal with correct target file", async () => {
+    writeFileSync(join(tmpDir, "USER.md"), "# User\n\n", "utf-8");
+
     const llmResponse = JSON.stringify([
       {
+        incidentIndex: 0,
         category: "workflow",
         severity: "strong",
         remediationType: "PROPOSAL",
@@ -415,6 +447,7 @@ describe("PROPOSAL creates entry in proposals DB (#260)", () => {
     ]);
 
     const openai = makeOpenAIMock(llmResponse);
+    mockAdaptiveLlm(llmResponse);
 
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeFileSync(
@@ -487,8 +520,11 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
   });
 
   it("creates proposal when AGENTS_RULE remediation is returned", async () => {
+    writeFileSync(join(tmpDir, "SOUL.md"), "# Soul\n\n", "utf-8");
+
     const llmResponse = JSON.stringify([
       {
+        incidentIndex: 0,
         category: "PASSIVE_WAITING",
         severity: "MEDIUM",
         remediationType: "AGENTS_RULE",
@@ -498,6 +534,7 @@ describe("AGENTS_RULE from self-correction creates proposal in DB (#260)", () =>
     ]);
 
     const openai = makeOpenAIMock(llmResponse);
+    mockAdaptiveLlm(llmResponse);
 
     const sessionFile = join(tmpDir, "2026-01-01-session.jsonl");
     writeFileSync(

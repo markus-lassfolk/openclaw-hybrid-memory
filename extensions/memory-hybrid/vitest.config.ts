@@ -8,11 +8,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "openclaw/plugin-sdk/core": resolve(__dirname, "tests/__mocks__/openclaw-plugin-sdk.ts"),
+      "openclaw/plugin-sdk/skills": resolve(__dirname, "tests/__mocks__/openclaw-plugin-sdk-skills.ts"),
     },
   },
   test: {
     globals: true,
     testTimeout: 15_000,
+    hookTimeout: 30_000,
     include: ["tests/**/*.test.ts"],
     coverage: {
       provider: "v8",

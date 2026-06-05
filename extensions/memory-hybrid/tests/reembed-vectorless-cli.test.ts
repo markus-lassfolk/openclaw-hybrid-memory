@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerManageStorageAndStats } from "../cli/commands/manage/register-storage-and-stats.js";
+import { registerManageStorageMaintenance } from "../cli/commands/manage/register-storage-maintenance.js";
 import { AllEmbeddingProvidersFailed } from "../services/embeddings.js";
 import { EMBED_CALL_MAX_ATTEMPTS } from "../utils/embed-call.js";
 
@@ -47,7 +47,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embed: vi.fn(),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},
@@ -117,7 +117,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embed: vi.fn(),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},
@@ -198,7 +198,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embed: vi.fn().mockRejectedValue(providerError),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},
@@ -278,7 +278,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embed: vi.fn().mockResolvedValue([0.6, 0.7, 0.8]),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},
@@ -382,7 +382,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embed: vi.fn().mockResolvedValue([0.6, 0.7, 0.8]),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},
@@ -481,7 +481,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embed: vi.fn().mockResolvedValue([0.6, 0.7, 0.8]),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},
@@ -575,7 +575,7 @@ describe("reembed-vectorless CLI partial success reporting", () => {
       embed: vi.fn().mockRejectedValue(embedError),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},
@@ -689,7 +689,7 @@ describe("reembed-vectorless metrics persistence (#1808)", () => {
         embed: vi.fn(),
       };
 
-      registerManageStorageAndStats(mem, {
+      registerManageStorageMaintenance(mem, {
         factsDb,
         vectorDb,
         aliasDb: {},
@@ -760,7 +760,7 @@ describe("reembed-vectorless metrics persistence (#1808)", () => {
       embed: vi.fn(),
     };
 
-    registerManageStorageAndStats(mem, {
+    registerManageStorageMaintenance(mem, {
       factsDb,
       vectorDb,
       aliasDb: {},

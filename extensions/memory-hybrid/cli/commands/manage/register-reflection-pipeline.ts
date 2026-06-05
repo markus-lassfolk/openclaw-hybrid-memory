@@ -32,6 +32,7 @@ import {
   shouldSkipDreamCycleFollowUps,
   runVerboseFollowUp,
 } from "./dream-cycle-followup.js";
+import { runMaintenanceHeartbeat } from "./maintenance-heartbeat.js";
 import {
   DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
   DEFAULT_DEGRADED_CONSECUTIVE_THRESHOLD,

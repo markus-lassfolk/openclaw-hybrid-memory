@@ -70,6 +70,7 @@ export function buildPluginApiForRegisterHooks(
     prependBudgetRef: { value: null },
     registrationGeneration: 0,
     currentRegistrationGenerationRef: { value: 0 },
+    sessionStateRef: { value: null },
   };
 }
 

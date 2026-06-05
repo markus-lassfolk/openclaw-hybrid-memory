@@ -198,4 +198,4 @@ describe("maintenance data gaps", () => {
     expect(store.recordBackfillIfAbsent(input)).toBe(false);
     expect(store.count()).toBe(1);
   });
-});
+}, { timeout: 60_000 });

@@ -220,7 +220,9 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
     });
     throw err;
   }
-  ctx.sessionStateRef.value = hooks.sessionState;
+  if (ctx.sessionStateRef) {
+    ctx.sessionStateRef.value = hooks.sessionState;
+  }
   try {
     hooks.onAgentStart(guardedApi);
     hooks.onAgentEnd(guardedApi);
