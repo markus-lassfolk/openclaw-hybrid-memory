@@ -35,7 +35,9 @@ function skillWorkshopRoot(): string {
   return join(state, "skill-workshop", "proposals");
 }
 
-export function writeSkillWorkshopProposal(input: SkillWorkshopBridgeInput): { ok: true; path: string } | { ok: false; error: string } {
+export function writeSkillWorkshopProposal(
+  input: SkillWorkshopBridgeInput,
+): { ok: true; path: string } | { ok: false; error: string } {
   try {
     const id = input.proposalId ?? randomUUID();
     const dir = join(skillWorkshopRoot(), id);
@@ -55,7 +57,11 @@ export function writeSkillWorkshopProposal(input: SkillWorkshopBridgeInput): { o
     atomicWriteFile(proposalPath, `${frontmatter}${input.skillContent}`);
     atomicWriteFile(
       join(dir, "proposal.json"),
-      JSON.stringify({ id, name: input.name, description: input.description, createdAt: date, source: "hybrid-memory-bridge" }, null, 2),
+      JSON.stringify(
+        { id, name: input.name, description: input.description, createdAt: date, source: "hybrid-memory-bridge" },
+        null,
+        2,
+      ),
     );
     return { ok: true, path: proposalPath };
   } catch (err) {

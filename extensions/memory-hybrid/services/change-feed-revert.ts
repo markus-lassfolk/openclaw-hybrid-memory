@@ -7,7 +7,11 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { HybridMemoryConfig } from "../config.js";
 import type { SessionState } from "../lifecycle/types.js";
 import type { ChangeEvent, ChangeFeed } from "./change-feed.js";
-import { BROADCAST_CHANGE_SESSION_KEY, emitChangeReverted, supersedeActiveFrustrationEvents } from "./change-feed-emit.js";
+import {
+  BROADCAST_CHANGE_SESSION_KEY,
+  emitChangeReverted,
+  supersedeActiveFrustrationEvents,
+} from "./change-feed-emit.js";
 import { removeSkillWorkshopProposal } from "./skill-workshop-bridge.js";
 import { parseUnifiedKey } from "./unified-proposals.js";
 import {
@@ -95,10 +99,7 @@ export function buildChangeRevertContext(opts: {
   };
 }
 
-function pruneDisplayRevertMap(
-  displayRevertMap: Map<number, string> | null | undefined,
-  eventId: string,
-): void {
+function pruneDisplayRevertMap(displayRevertMap: Map<number, string> | null | undefined, eventId: string): void {
   if (!displayRevertMap) return;
   for (const [slot, id] of displayRevertMap.entries()) {
     if (id === eventId) displayRevertMap.delete(slot);

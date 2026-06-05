@@ -118,7 +118,10 @@ function makeOpenAINativeToolCallsMock(argumentsJson: string) {
   } as any;
 }
 
-function makeCtx(openai: any, overrides?: { selfCorrection?: Record<string, unknown>; llm?: Record<string, unknown> }): HandlerContext {
+function makeCtx(
+  openai: any,
+  overrides?: { selfCorrection?: Record<string, unknown>; llm?: Record<string, unknown> },
+): HandlerContext {
   return {
     factsDb,
     vectorDb: {
@@ -566,7 +569,12 @@ describe("#1876 — retry/backoff and resume resilience", () => {
       },
     } as any;
 
-    await runSelfCorrectionRunForCli(makeCtx(openai), { incidents, workspace: tmpDir, jobRunLogRoot: tmpDir, dryRun: true });
+    await runSelfCorrectionRunForCli(makeCtx(openai), {
+      incidents,
+      workspace: tmpDir,
+      jobRunLogRoot: tmpDir,
+      dryRun: true,
+    });
     expect(listSelfCorrectionBatchStateFiles(tmpDir)).toHaveLength(0);
     expect(listJobRunCheckpointFiles(tmpDir)).toHaveLength(0);
   });

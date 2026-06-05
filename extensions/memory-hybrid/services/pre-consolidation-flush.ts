@@ -14,8 +14,7 @@ export interface PreConsolidationFlushDeps {
 
 export type WalFlushResult = { committed: number; skipped: number; failed: boolean };
 
-export const WAL_FLUSH_ABORT_MESSAGE =
-  "WAL pre-flush failed; aborting to avoid stale SQLite state";
+export const WAL_FLUSH_ABORT_MESSAGE = "WAL pre-flush failed; aborting to avoid stale SQLite state";
 
 /** Throw when WAL replay failed and downstream mutation must not proceed. */
 export function assertWalFlushSucceeded(flush: WalFlushResult, operation: string): void {

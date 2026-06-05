@@ -143,10 +143,7 @@ describe("maintenance-orchestrator", () => {
   it("does not write step guard when runner reports failing semantic outcome", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([
-      [
-        "distill",
-        async () => "stored=0 sessions=0 jobRunId=abc semantic=failed_semantic_empty",
-      ],
+      ["distill", async () => "stored=0 sessions=0 jobRunId=abc semantic=failed_semantic_empty"],
     ]);
     const result = await runMaintenanceOrchestrator(
       { cfg: minimalCfg(), runners, openclawDir },
@@ -159,10 +156,7 @@ describe("maintenance-orchestrator", () => {
   it("does not write step guard when runner reports legacy failed_partial semantic token", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([
-      [
-        "self-correction-run",
-        async () => "incidents=2 analysed=1 jobRunId=abc semantic=failed_partial",
-      ],
+      ["self-correction-run", async () => "incidents=2 analysed=1 jobRunId=abc semantic=failed_partial"],
     ]);
     const result = await runMaintenanceOrchestrator(
       { cfg: minimalCfg(), runners, openclawDir },
@@ -175,10 +169,7 @@ describe("maintenance-orchestrator", () => {
   it("does not write step guard when runner reports legacy failed_suspect_zero_parsed semantic token", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     const runners = new Map<string, () => Promise<string>>([
-      [
-        "self-correction-run",
-        async () => "incidents=3 analysed=0 jobRunId=abc semantic=failed_suspect_zero_parsed",
-      ],
+      ["self-correction-run", async () => "incidents=3 analysed=0 jobRunId=abc semantic=failed_suspect_zero_parsed"],
     ]);
     const result = await runMaintenanceOrchestrator(
       { cfg: minimalCfg(), runners, openclawDir },
@@ -217,10 +208,13 @@ describe("maintenance-orchestrator", () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     let pruneCalls = 0;
     const runners = new Map<string, () => Promise<string>>([
-      ["prune", async () => {
-        pruneCalls++;
-        return "pruned=3";
-      }],
+      [
+        "prune",
+        async () => {
+          pruneCalls++;
+          return "pruned=3";
+        },
+      ],
     ]);
     const result = await runMaintenanceOrchestrator(
       {

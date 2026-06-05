@@ -12,10 +12,7 @@ import {
   semanticOutcomeBlocksOrchestratorGuard,
 } from "./maintenance-job-run/semantic-outcome.js";
 import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
-import {
-  stepGuardEligible,
-  writeStepGuardTimestampMs,
-} from "./cron-guard.js";
+import { stepGuardEligible, writeStepGuardTimestampMs } from "./cron-guard.js";
 
 export type StepTier = "cycle" | "nightly";
 export type StepLlmTier = "none" | "nano" | "maintenance" | "default" | "heavy" | "embed" | "local";
@@ -118,7 +115,12 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     featureGate: (cfg) => cfg.sensorSweep?.enabled === true,
   },
   { name: "record-storage-sample", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
-  { name: "analyze-maintenance-logs", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none" },
+  {
+    name: "analyze-maintenance-logs",
+    tier: "cycle",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+  },
   {
     name: "lifecycle-sync",
     tier: "cycle",
@@ -133,7 +135,13 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     llmTier: "none",
     featureGate: (cfg) => cfg.passiveObserver?.enabled === true,
   },
-  { name: "proposals-prune", tier: "cycle", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20, llmTier: "none", featureGate: (cfg) => cfg.personaProposals?.enabled !== false },
+  {
+    name: "proposals-prune",
+    tier: "cycle",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h20,
+    llmTier: "none",
+    featureGate: (cfg) => cfg.personaProposals?.enabled !== false,
+  },
   {
     name: "build-languages",
     tier: "cycle",
@@ -159,7 +167,12 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     llmTier: "default",
     featureGate: (cfg) => cfg.distill?.enabled !== false,
   },
-  { name: "resolve-contradictions", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44, llmTier: "local" },
+  {
+    name: "resolve-contradictions",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44,
+    llmTier: "local",
+  },
   {
     name: "enrich-entities",
     tier: "nightly",
@@ -174,7 +187,12 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     llmTier: "local",
     featureGate: (cfg) => cfg.implicitFeedback?.enabled !== false,
   },
-  { name: "entity-mentions-cleanup", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h68, llmTier: "none" },
+  {
+    name: "entity-mentions-cleanup",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h68,
+    llmTier: "none",
+  },
   {
     name: "dream-cycle-core",
     tier: "nightly",
@@ -224,8 +242,7 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
     tier: "nightly",
     guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h68,
     llmTier: "none",
-    featureGate: (cfg) =>
-      cfg.costTracking?.enabled !== false && cfg.costTracking?.pruneInNightlyCycle !== false,
+    featureGate: (cfg) => cfg.costTracking?.enabled !== false && cfg.costTracking?.pruneInNightlyCycle !== false,
   },
   { name: "self-correction-run", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.h44, llmTier: "heavy" },
 
@@ -255,7 +272,12 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
   },
   { name: "extract-procedures", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "local" },
   { name: "extract-directives", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "embed" },
-  { name: "extract-reinforcement", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "maintenance" },
+  {
+    name: "extract-reinforcement",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5,
+    llmTier: "maintenance",
+  },
   {
     name: "generate-auto-skills",
     tier: "nightly",
@@ -267,7 +289,12 @@ export const MAINTENANCE_STEPS: MaintenanceStepDef[] = [
   { name: "vectordb-optimize", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none" },
   { name: "scope-promote", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none" },
   { name: "decay-reclassify", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d25, llmTier: "none" },
-  { name: "implicit-feedback-collapse", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none" },
+  {
+    name: "implicit-feedback-collapse",
+    tier: "nightly",
+    guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5,
+    llmTier: "none",
+  },
   { name: "audit-health", tier: "nightly", guardIntervalMs: MAINTENANCE_GUARD_INTERVALS.d5, llmTier: "none" },
   {
     name: "crystallization-rescan",
@@ -418,9 +445,7 @@ export async function runMaintenanceOrchestrator(
   const startedAtMs = Date.now();
   const startedAtIso = nowIso();
   const runId =
-    process.env.HM_RUN_ID?.trim() ||
-    process.env.HM_ORCHESTRATOR_RUN_ID?.trim() ||
-    generateOrchestratorRunId();
+    process.env.HM_RUN_ID?.trim() || process.env.HM_ORCHESTRATOR_RUN_ID?.trim() || generateOrchestratorRunId();
   if (!process.env.HM_ORCHESTRATOR_RUN_ID) {
     process.env.HM_ORCHESTRATOR_RUN_ID = runId;
   }
@@ -542,9 +567,7 @@ export async function runMaintenanceOrchestrator(
       const summary = await runner();
       const meta = parseStepRunnerMetadata(summary);
       if (stepSemanticBlocksGuard(meta.semanticOutcome)) {
-        logger?.warn?.(
-          `maintenance-orchestrator: ${step.name} semantic failure (${meta.semanticOutcome}): ${summary}`,
-        );
+        logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (${meta.semanticOutcome}): ${summary}`);
         results.push({
           name: step.name,
           status: "failed",

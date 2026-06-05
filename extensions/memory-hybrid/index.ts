@@ -8,7 +8,11 @@ import { isHybridMemHelpInvocation } from "./index-help.js";
 
 export { isHybridMemHelpInvocation };
 export { isHybridMemCredentialsOnlyInvocation } from "./index-credentials-cli.js";
-export { isHybridMemJsonInvocation, isHybridMemCredentialsValueOnlyInvocation, isHybridMemMachineOutputInvocation } from "./utils/hybrid-mem-json-cli.js";
+export {
+  isHybridMemJsonInvocation,
+  isHybridMemCredentialsValueOnlyInvocation,
+  isHybridMemMachineOutputInvocation,
+} from "./utils/hybrid-mem-json-cli.js";
 export type {
   GraphExpandedResult,
   GraphExpansionStats,

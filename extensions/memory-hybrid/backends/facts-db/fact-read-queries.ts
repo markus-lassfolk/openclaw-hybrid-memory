@@ -290,7 +290,9 @@ const ACTIVE_FACT_ID_CHUNK = 500;
 export function filterActiveFactIds(db: DatabaseSync, ids: readonly string[]): Set<string> {
   const nowSec = Math.floor(Date.now() / 1000);
   const active = new Set<string>();
-  const unique = [...new Set(ids.filter((id) => typeof id === "string" && id.length > 0).map((id) => id.toLowerCase()))];
+  const unique = [
+    ...new Set(ids.filter((id) => typeof id === "string" && id.length > 0).map((id) => id.toLowerCase())),
+  ];
   for (let i = 0; i < unique.length; i += ACTIVE_FACT_ID_CHUNK) {
     const chunk = unique.slice(i, i + ACTIVE_FACT_ID_CHUNK);
     const placeholders = chunk.map(() => "?").join(",");

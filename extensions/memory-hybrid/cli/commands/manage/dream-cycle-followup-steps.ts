@@ -42,10 +42,7 @@ export interface DreamCycleFollowUpDeps {
   pruneCostLog?: (retainDays?: number) => number | Promise<number>;
 }
 
-export async function runContinuousVerificationStep(
-  deps: DreamCycleFollowUpDeps,
-  verbose = false,
-): Promise<string> {
+export async function runContinuousVerificationStep(deps: DreamCycleFollowUpDeps, verbose = false): Promise<string> {
   if (!deps.runContinuousVerification) return "skipped (handler unavailable)";
   const res = await deps.runContinuousVerification(verbose ? { verbose: true } : undefined);
   if (res.errors > 0) {
@@ -111,7 +108,9 @@ export async function runCostLogPruneStep(deps: DreamCycleFollowUpDeps): Promise
   return pruned > 0 ? `pruned ${pruned} entries` : "nothing to prune";
 }
 
-export function buildDreamCycleFollowUpDepsFromBindings(b: import("./bindings.js").ManageBindings): DreamCycleFollowUpDeps {
+export function buildDreamCycleFollowUpDepsFromBindings(
+  b: import("./bindings.js").ManageBindings,
+): DreamCycleFollowUpDeps {
   return {
     cfg: b.cfg,
     factsDb: b.factsDb,

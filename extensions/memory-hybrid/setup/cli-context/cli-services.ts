@@ -70,11 +70,7 @@ interface CliContextServices {
       status: "ok" | "partial" | "degraded";
     };
   }>;
-  runReflectionMeta: (opts: {
-    dryRun: boolean;
-    model: string;
-    verbose?: boolean;
-  }) => Promise<{
+  runReflectionMeta: (opts: { dryRun: boolean; model: string; verbose?: boolean }) => Promise<{
     metaExtracted: number;
     metaStored: number;
     diagnostics?: import("../../services/reflection.js").ReflectionMetaDiagnostics;
@@ -298,11 +294,7 @@ export function buildCliContextServices(
         explicitModel ?? configuredModel,
       );
       const effectiveModel = explicitModel ?? configuredModel ?? defaultModel;
-      const modelSource = explicitModel
-        ? "--model"
-        : configuredModel
-          ? "reflection.model"
-          : "llm.maintenance[0]";
+      const modelSource = explicitModel ? "--model" : configuredModel ? "reflection.model" : "llm.maintenance[0]";
       return runReflectionRules(
         factsDb,
         vectorDb,
@@ -406,21 +398,21 @@ export function buildCliContextServices(
         await guardWal("cli_compaction_retier");
       }
       return factsDb.retier(
-          {
-            inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
-            hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
-            hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
-            coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
-            hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
-            hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
-            hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
-            hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
-            hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
-            structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
-            structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
-          },
-          opts?.apply !== false,
-        );
+        {
+          inactivePreferenceDays: cfg.memoryTiering.inactivePreferenceDays,
+          hotMaxTokens: cfg.memoryTiering.hotMaxTokens,
+          hotMaxFacts: cfg.memoryTiering.hotMaxFacts,
+          coldAfterInactivityDays: cfg.memoryTiering.coldAfterInactivityDays,
+          hotMinAccessCount: cfg.memoryTiering.hotMinAccessCount,
+          hotAccessWindowDays: cfg.memoryTiering.hotAccessWindowDays,
+          hotPreferenceImportance: cfg.memoryTiering.hotPreferenceImportance,
+          hotByRecallWindowDays: cfg.memoryTiering.hotByRecall.windowDays,
+          hotByRecallTopN: cfg.memoryTiering.hotByRecall.topN,
+          structuralByCategoryEnabled: cfg.memoryTiering.structuralByCategory,
+          structuralPermanentEnabled: cfg.memoryTiering.structuralPermanent,
+        },
+        opts?.apply !== false,
+      );
     },
     runBuildLanguageKeywords: async (opts) => {
       await guardWalUnlessDryRun("cli_build_language_keywords", opts.dryRun);
@@ -514,7 +506,16 @@ export function buildCliContextServices(
         },
         logSink,
         provenanceService,
-        { cfg, proposalsDb: proposalsDb ?? null, crystallizationStore: ctx.crystallizationStore ?? null, toolProposalStore: ctx.toolProposalStore ?? null, workflowStore: ctx.workflowStore ?? null, api, changeFeed: ctx.changeFeed ?? null, resolvedSqlitePath },
+        {
+          cfg,
+          proposalsDb: proposalsDb ?? null,
+          crystallizationStore: ctx.crystallizationStore ?? null,
+          toolProposalStore: ctx.toolProposalStore ?? null,
+          workflowStore: ctx.workflowStore ?? null,
+          api,
+          changeFeed: ctx.changeFeed ?? null,
+          resolvedSqlitePath,
+        },
       );
     },
     runContinuousVerification: async (opts?: { verbose?: boolean }) => {

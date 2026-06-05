@@ -434,19 +434,14 @@ export function collectMaintenanceSteps(
       const resolvedExitPath = resolveMaintenanceExitPathForSummary(summaryPath);
       exitPathsFromSummary.add(siblingExitPath);
       if (resolvedExitPath) exitPathsFromSummary.add(resolvedExitPath);
-      const exitPath =
-        existsSync(siblingExitPath) ? siblingExitPath : resolvedExitPath ?? siblingExitPath;
+      const exitPath = existsSync(siblingExitPath) ? siblingExitPath : (resolvedExitPath ?? siblingExitPath);
       const logContent = safeRead(logPath);
       for (const step of summary.steps) {
         if (step.status === "skipped_guard" || step.status === "skipped_gate" || step.status === "skipped_dep") {
           continue;
         }
         const exitCode =
-          step.status === "failed" || step.status === "rate_limited"
-            ? 1
-            : step.status === "deferred"
-              ? 2
-              : 0;
+          step.status === "failed" || step.status === "rate_limited" ? 1 : step.status === "deferred" ? 2 : 0;
         steps.push({
           occurredAt,
           iso: finishedIso,

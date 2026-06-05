@@ -228,7 +228,8 @@ function selectPersonaToolsContext({
 }
 
 function installPersonaTools(ctx: PersonaInstallerContext, api: ClawdbotPluginApi): void {
-  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore, timers } = ctx;
+  const { proposalsDb, cfg, resolvedSqlitePath, changeFeed, factsDb, crystallizationStore, toolProposalStore, timers } =
+    ctx;
   if (!(cfg.personaProposals.enabled && proposalsDb)) return;
 
   registerPersonaTools(
@@ -365,7 +366,12 @@ function installDashboardRoutes({ cfg }: DashboardRoutesContext, api: ClawdbotPl
 
 type HealthInstallerContext = Pick<ToolsContext, "factsDb" | "cfg" | "resolvedSqlitePath" | "vectorDb">;
 
-function selectHealthToolsContext({ factsDb, cfg, resolvedSqlitePath, vectorDb }: ToolsContext): HealthInstallerContext {
+function selectHealthToolsContext({
+  factsDb,
+  cfg,
+  resolvedSqlitePath,
+  vectorDb,
+}: ToolsContext): HealthInstallerContext {
   return { factsDb, cfg, resolvedSqlitePath, vectorDb };
 }
 

@@ -65,9 +65,7 @@ describe("public-artifacts-provider", () => {
     });
 
     it("respects limit", async () => {
-      const facts = Array.from({ length: 10 }, (_, i) =>
-        makeFact({ id: `fact-${String(i).padStart(4, "0")}` })
-      );
+      const facts = Array.from({ length: 10 }, (_, i) => makeFact({ id: `fact-${String(i).padStart(4, "0")}` }));
       const factsDb = { getAll: vi.fn(() => facts) } as any;
 
       const provider = createPublicArtifactsProvider(factsDb);
@@ -100,19 +98,23 @@ describe("public-artifacts-provider", () => {
       const provider = createPublicArtifactsProvider(factsDb);
       const artifacts = await provider.listArtifacts();
 
-      expect(artifacts[0].metadata).toEqual(expect.objectContaining({
-        category: "technical",
-        confidence: "0.9",
-        source: "conversation",
-        entity: "TypeScript",
-        key: "description",
-        tags: "tag1,tag2",
-      }));
+      expect(artifacts[0].metadata).toEqual(
+        expect.objectContaining({
+          category: "technical",
+          confidence: "0.9",
+          source: "conversation",
+          entity: "TypeScript",
+          key: "description",
+          tags: "tag1,tag2",
+        }),
+      );
     });
 
     it("returns empty array on error", async () => {
       const factsDb = {
-        getAll: vi.fn(() => { throw new Error("db failure"); }),
+        getAll: vi.fn(() => {
+          throw new Error("db failure");
+        }),
       } as any;
 
       const provider = createPublicArtifactsProvider(factsDb);
@@ -194,7 +196,9 @@ describe("public-artifacts-provider", () => {
 
     it("catches errors and returns false", () => {
       const api = {
-        registerMemoryCapability: vi.fn(() => { throw new Error("slot taken"); }),
+        registerMemoryCapability: vi.fn(() => {
+          throw new Error("slot taken");
+        }),
         logger: { warn: vi.fn() },
       } as any;
       const factsDb = { getAll: vi.fn(() => []) } as any;

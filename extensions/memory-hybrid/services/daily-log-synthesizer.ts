@@ -37,10 +37,7 @@ export type DailySessionSummaryInput = {
 export function formatDailySessionSummary(input: DailySessionSummaryInput): string {
   const date = input.date ?? formatDateUtc(nowSec());
   const agent = input.agentId ?? "unknown";
-  const tools =
-    input.toolsUsed.length > 0
-      ? input.toolsUsed.slice(0, 8).join(", ")
-      : "(none)";
+  const tools = input.toolsUsed.length > 0 ? input.toolsUsed.slice(0, 8).join(", ") : "(none)";
   const outcome = input.outcome ?? "unknown";
   const topic = input.topicLine ? redactMaintenancePrivateText(input.topicLine).slice(0, 120) : "session activity";
   return [

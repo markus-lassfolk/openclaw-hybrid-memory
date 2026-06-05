@@ -349,7 +349,7 @@ describe("resolvePipelineProposalTarget", () => {
 
   it("returns null when unified workshop queue is at maxPending cap", () => {
     const dbPath = join(tmpDir, "facts-cap.db");
-    const factsDb = new (_testing.FactsDB)(dbPath);
+    const factsDb = new _testing.FactsDB(dbPath);
     const proposalsDb = new ProposalsDB(join(tmpDir, "proposals-cap.db"));
     for (let i = 0; i < 50; i++) {
       proposalsDb.create({

@@ -10,7 +10,11 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled, resolveWorkshopRevertSessionKey } from "../services/workshop-config.js";
+import {
+  DEFAULT_WORKSHOP_LIST_LIMIT,
+  isWorkshopEnabled,
+  resolveWorkshopRevertSessionKey,
+} from "../services/workshop-config.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { revertChangeById, revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
@@ -68,7 +72,12 @@ function workshopCtx(ctx: ProposalRoutesContext): WorkshopServiceContext {
   });
 }
 
-function parseBody(req: { method: string; url: string; headers: Record<string, string>; body?: string }): Record<string, unknown> {
+function parseBody(req: {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: string;
+}): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   try {
     const u = new URL(req.url, "http://127.0.0.1");
@@ -103,15 +112,18 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
 
   register(
     `${PROPOSAL_API_PREFIX}/list`,
-    async (req) => json(200, { proposals: workshopList(wctx(), { status: "pending", limit: DEFAULT_WORKSHOP_LIST_LIMIT, includeUndoable: true }) }),
+    async (req) =>
+      json(200, {
+        proposals: workshopList(wctx(), {
+          status: "pending",
+          limit: DEFAULT_WORKSHOP_LIST_LIMIT,
+          includeUndoable: true,
+        }),
+      }),
     routeOpts,
   );
 
-  register(
-    `${PROPOSAL_API_PREFIX}/digest`,
-    async () => json(200, buildWorkshopDigestReport(wctx())),
-    routeOpts,
-  );
+  register(`${PROPOSAL_API_PREFIX}/digest`, async () => json(200, buildWorkshopDigestReport(wctx())), routeOpts);
 
   register(
     `${PROPOSAL_API_PREFIX}/inspect`,
@@ -228,11 +240,14 @@ export function registerProposalHttpRoutes(ctx: ProposalRoutesContext): void {
       async (req) => {
         const body = parseBody(req);
         const chatSessionKey =
-          (ctx.api.context?.sessionKey as string | undefined) ??
-          (ctx.api.context?.sessionId as string | undefined);
+          (ctx.api.context?.sessionKey as string | undefined) ?? (ctx.api.context?.sessionId as string | undefined);
         const sessionKey = resolveWorkshopRevertSessionKey(
           ctx.cfgFull,
-          typeof body.session === "string" ? body.session : typeof body.sessionKey === "string" ? body.sessionKey : undefined,
+          typeof body.session === "string"
+            ? body.session
+            : typeof body.sessionKey === "string"
+              ? body.sessionKey
+              : undefined,
           chatSessionKey,
         );
         const revertCtx = buildChangeRevertContext({

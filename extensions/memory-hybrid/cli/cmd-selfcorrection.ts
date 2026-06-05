@@ -40,7 +40,12 @@ import {
   resolveSelfCorrectionThinkingMode,
   type SelfCorrectionRemediationItem,
 } from "../services/self-correction-batch-analyze.js";
-import { type CorrectionIncident, collectHeuristicFeedbackCandidates, mergeCorrectionIncidents, runSelfCorrectionExtract } from "../services/self-correction-extract.js";
+import {
+  type CorrectionIncident,
+  collectHeuristicFeedbackCandidates,
+  mergeCorrectionIncidents,
+  runSelfCorrectionExtract,
+} from "../services/self-correction-extract.js";
 import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";

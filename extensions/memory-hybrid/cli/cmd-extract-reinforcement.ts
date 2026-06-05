@@ -569,11 +569,7 @@ export async function runExtractReinforcementForCli(
           );
         }
         if (jobRun) {
-          jobRun.endPhase(
-            "analyze",
-            result.partialBatchFailure ? "failed" : "completed",
-            `analysed=${analysedCount}`,
-          );
+          jobRun.endPhase("analyze", result.partialBatchFailure ? "failed" : "completed", `analysed=${analysedCount}`);
         }
         completedBatches = completedBatchIndexes.size;
         if (incidentsForAnalysis.length > 0 && analysed.length === 0) {

@@ -4,7 +4,10 @@ import { resolveOrchestratorJobFromEnv, resolveOrchestratorRunIdFromEnv } from "
 import { nowIso } from "../../utils/dates.js";
 
 export function generateOrchestratorRunId(): string {
-  const iso = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  const iso = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
   return `orch-${iso}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 

@@ -37,10 +37,7 @@ import {
 import { resolveGoalsDir, runGoalHealthCheck } from "../services/goal-stewardship.js";
 import { runBuildLanguageKeywords } from "../services/language-keywords-build.js";
 import { runCredentialsPruneForCli } from "../cli/cmd-credentials.js";
-import {
-  analyzeMaintenanceSteps,
-  collectMaintenanceSteps,
-} from "../services/maintenance-log-analyzer.js";
+import { analyzeMaintenanceSteps, collectMaintenanceSteps } from "../services/maintenance-log-analyzer.js";
 import { runMaintenanceTiers } from "../services/maintenance-orchestrator.js";
 import { buildPluginCycleRunners } from "../cli/commands/manage/maintenance-step-runners.js";
 import { syncLifecycleFromGitHub } from "../services/lifecycle/github-adapter.js";
@@ -610,12 +607,14 @@ export function createPluginService(ctx: PluginServiceContext) {
 
             // Recurring sync timer
             const intervalMs = cfg.workboard.syncIntervalMinutes * 60 * 1000;
-            (timers as Record<string, unknown>).workboardSync = { value: setInterval(() => {
-              if (shuttingDown) return;
-              adapter.sync().catch((err) => {
-                api.logger.debug?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
-              });
-            }, intervalMs) };
+            (timers as Record<string, unknown>).workboardSync = {
+              value: setInterval(() => {
+                if (shuttingDown) return;
+                adapter.sync().catch((err) => {
+                  api.logger.debug?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
+                });
+              }, intervalMs),
+            };
           } else {
             api.logger.info(
               "memory-hybrid: Workboard plugin not reachable — sync disabled (will retry on next maintenance cycle)",
@@ -765,10 +764,10 @@ export function createPluginService(ctx: PluginServiceContext) {
           const runCredentialsPrune =
             credentialsDb && cfg.credentials?.enabled
               ? async () =>
-                  runCredentialsPruneForCli(
-                    { credentialsDb } as import("../cli/handlers.js").HandlerContext,
-                    { dryRun: false, yes: true },
-                  )
+                  runCredentialsPruneForCli({ credentialsDb } as import("../cli/handlers.js").HandlerContext, {
+                    dryRun: false,
+                    yes: true,
+                  })
               : undefined;
 
           const runActiveTasksMaintain = async () => {
@@ -808,13 +807,13 @@ export function createPluginService(ctx: PluginServiceContext) {
             runCredentialsPrune,
           });
 
-          const result = await runMaintenanceTiers(
-            { cfg, runners, logger: api.logger, openclawDir },
-            ["cycle"],
-            { verbose: false },
-          );
+          const result = await runMaintenanceTiers({ cfg, runners, logger: api.logger, openclawDir }, ["cycle"], {
+            verbose: false,
+          });
           if (result.exitCode !== 0) {
-            api.logger.warn?.(`memory-hybrid: maintenance tick (${label}) exit=${result.exitCode}: ${result.summaryLine}`);
+            api.logger.warn?.(
+              `memory-hybrid: maintenance tick (${label}) exit=${result.exitCode}: ${result.summaryLine}`,
+            );
           }
         } catch (err) {
           api.logger.warn(`memory-hybrid: maintenance tick failed: ${err}`);

@@ -59,10 +59,7 @@ describe("runScopedFtsVectorFallback", () => {
       getById: vi.fn((id: string) => makeEntry(id, id.includes("cold") ? "cold" : "warm")),
     };
     const vectorDb = {
-      search: vi.fn(async () => [
-        makeResult("vec-cold", "lancedb", "cold"),
-        makeResult("vec-warm", "lancedb", "warm"),
-      ]),
+      search: vi.fn(async () => [makeResult("vec-cold", "lancedb", "cold"), makeResult("vec-warm", "lancedb", "warm")]),
     };
 
     const results = await runScopedFtsVectorFallback({

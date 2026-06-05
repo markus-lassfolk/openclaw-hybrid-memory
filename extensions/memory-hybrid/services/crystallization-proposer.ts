@@ -39,10 +39,7 @@ import {
   CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH,
   crystallizeSkill,
 } from "./skill-crystallizer.js";
-import {
-  formatYamlFrontmatterScalar,
-  sanitizeApprovedSkillSlug,
-} from "./skill-crystallizer-helpers.js";
+import { formatYamlFrontmatterScalar, sanitizeApprovedSkillSlug } from "./skill-crystallizer-helpers.js";
 import {
   findQuarantinedSkillDir,
   quarantineCrystallizedSkillOnDisk,
@@ -235,15 +232,15 @@ export class CrystallizationProposer {
     const autoApprove = opts?.autoApproveOverride ?? this.cfg.autoApprove;
     const remainingSlots = Math.max(0, this.cfg.maxCrystallized - approvedCount);
     const pendingRemaining =
-      this.cfg.maxPendingProposals > 0 ? Math.max(0, this.cfg.maxPendingProposals - pendingCount) : Number.POSITIVE_INFINITY;
+      this.cfg.maxPendingProposals > 0
+        ? Math.max(0, this.cfg.maxPendingProposals - pendingCount)
+        : Number.POSITIVE_INFINITY;
     const cycleCap = autoApprove
       ? Math.min(remainingSlots, pendingRemaining)
       : Math.min(MAX_PROPOSALS_PER_CYCLE, Math.max(remainingSlots, 1), pendingRemaining);
     const batch = candidates.slice(0, cycleCap);
     if (batch.length < candidates.length) {
-      reasons.push(
-        `Processing ${batch.length} of ${candidates.length} candidate(s) this cycle (cap=${cycleCap})`,
-      );
+      reasons.push(`Processing ${batch.length} of ${candidates.length} candidate(s) this cycle (cap=${cycleCap})`);
     }
 
     for (const candidate of batch) {
@@ -614,10 +611,7 @@ export class CrystallizationProposer {
   /**
    * Restore a quarantined proposal: re-validate, move skill back to the active output tree, mark installed.
    */
-  restoreProposal(
-    proposalId: string,
-    opts?: { overrideWarnings?: boolean },
-  ): ApproveResult {
+  restoreProposal(proposalId: string, opts?: { overrideWarnings?: boolean }): ApproveResult {
     const proposal = this.crystallizationStore.getById(proposalId);
     if (!proposal) {
       return { success: false, message: `Proposal '${proposalId}' not found` };

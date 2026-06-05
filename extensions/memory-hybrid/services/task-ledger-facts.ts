@@ -761,9 +761,7 @@ export async function planActiveTaskHygiene(
   }
 
   const staleSessionCandidates = tasks
-    .filter(
-      (task) => task.status === "In progress" || task.status === "Waiting" || task.status === "Stalled",
-    )
+    .filter((task) => task.status === "In progress" || task.status === "Waiting" || task.status === "Stalled")
     .filter((task) => !taskReferencesExternalPr(task))
     .map((task) => ({ task, sessionRef: task.subagent?.trim() ?? "" }))
     .filter(({ sessionRef }) => sessionRef.length > 0 && looksLikeOpenClawSessionRef(sessionRef))
@@ -1138,28 +1136,12 @@ async function rollbackActiveTaskFactsSync(
     try {
       if (mutation.kind === "retire") {
         if (mutation.previous.value != null) {
-          await upsertProjectTaskKey(
-            factsDb,
-            vectorDb,
-            embeddings,
-            entity,
-            mutation.key,
-            mutation.previous.value,
-            log,
-          );
+          await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, mutation.key, mutation.previous.value, log);
         }
         continue;
       }
       if (mutation.previous?.value != null) {
-        await upsertProjectTaskKey(
-          factsDb,
-          vectorDb,
-          embeddings,
-          entity,
-          mutation.key,
-          mutation.previous.value,
-          log,
-        );
+        await upsertProjectTaskKey(factsDb, vectorDb, embeddings, entity, mutation.key, mutation.previous.value, log);
       } else {
         factsDb.supersede(mutation.newEntry.id, null);
         retireProjectTaskKeyFacts(factsDb, entity, mutation.key);

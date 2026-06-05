@@ -83,7 +83,9 @@ export function cutoffIsoHoursAgo(hours: number, referenceMs = Date.now()): stri
 
 /** Compact UTC run id segment (e.g. `20260602T061400Z`) for artifact paths. */
 export function formatCompactRunIdUtc(referenceMs = Date.now()): string {
-  return formatTimestampUtcFromMs(referenceMs).replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  return formatTimestampUtcFromMs(referenceMs)
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
 }
 
 /** Filesystem-safe run id slug from ISO UTC (e.g. `2026-06-05T12-34-56`). */

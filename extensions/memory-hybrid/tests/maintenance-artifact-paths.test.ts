@@ -3,7 +3,10 @@ import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { resolveMaintenanceExitPathForSummary, resolveMaintenanceSummaryPath } from "../services/maintenance-artifact-paths.js";
+import {
+  resolveMaintenanceExitPathForSummary,
+  resolveMaintenanceSummaryPath,
+} from "../services/maintenance-artifact-paths.js";
 
 describe("resolveMaintenanceSummaryPath", () => {
   it("finds summary in YYYYMMDD day subdir", () => {

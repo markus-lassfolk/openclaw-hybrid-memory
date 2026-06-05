@@ -5,10 +5,7 @@
 
 export type InjectedFactIdsBySession = Map<string, Set<string>>;
 
-export function clearSessionInjectionDedup(
-  map: InjectedFactIdsBySession | undefined,
-  sessionKey: string,
-): void {
+export function clearSessionInjectionDedup(map: InjectedFactIdsBySession | undefined, sessionKey: string): void {
   map?.delete(sessionKey);
 }
 

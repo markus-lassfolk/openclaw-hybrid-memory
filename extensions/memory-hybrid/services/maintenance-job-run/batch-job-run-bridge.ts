@@ -85,8 +85,7 @@ export function finishBatchJobRun(
   if (!jobRun) return undefined;
   jobRun.setSemanticOutcome(outcome, options?.reason);
   const clearCheckpoint =
-    options?.clearCheckpoint ??
-    (outcome !== "partial" && outcome !== "failed" && outcome !== "failed_semantic_empty");
+    options?.clearCheckpoint ?? (outcome !== "partial" && outcome !== "failed" && outcome !== "failed_semantic_empty");
   jobRun.finish({ clearCheckpoint });
   return jobRun.jobRunId;
 }

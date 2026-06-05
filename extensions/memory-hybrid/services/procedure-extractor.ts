@@ -281,9 +281,7 @@ export async function extractProceduresFromSessions(
       return { sessionsScanned: 0, proceduresStored: 0, positiveCount: 0, negativeCount: 0, dryRun, readFailures: 0 };
     }
     const files = fs.readdirSync(dir);
-    filePaths = files
-      .filter((f) => isSessionTranscriptCandidate(f))
-      .map((f) => path.join(dir, f));
+    filePaths = files.filter((f) => isSessionTranscriptCandidate(f)).map((f) => path.join(dir, f));
     const archiveDir = path.join(dir, "archive");
     if (fs.existsSync(archiveDir)) {
       const archived = fs

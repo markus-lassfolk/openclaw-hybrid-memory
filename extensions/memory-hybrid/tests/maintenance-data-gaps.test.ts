@@ -181,7 +181,10 @@ describe("maintenance data gaps", { timeout: 60_000 }, () => {
     writeFileSync(
       join(dir, "2026-06-04-dedupe.trajectory.jsonl"),
       [
-        JSON.stringify({ type: "tool.call", data: { toolCallId: "t1", name: "memory_recall", arguments: { query: "prefs" } } }),
+        JSON.stringify({
+          type: "tool.call",
+          data: { toolCallId: "t1", name: "memory_recall", arguments: { query: "prefs" } },
+        }),
         JSON.stringify({
           type: "tool.result",
           data: { toolCallId: "t1", name: "memory_recall", content: `Memory (id: ${memoryId})` },

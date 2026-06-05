@@ -1,11 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { TEXT_TIMESTAMP_COLUMN_SPECS } from "../../utils/timestamp-migration.js";
-import {
-  buildSchemaRegistry,
-  findUnknownSqlColumnViolations,
-  type SqlSchemaRegistry,
-} from "./sql-schema-extract.js";
+import { buildSchemaRegistry, findUnknownSqlColumnViolations, type SqlSchemaRegistry } from "./sql-schema-extract.js";
 
 export const GUARDRAIL_SCAN_ROOTS = ["backends", "services", "cli", "benchmark"] as const;
 

@@ -10,7 +10,11 @@ import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled, resolveWorkshopRevertSessionKey } from "../services/workshop-config.js";
+import {
+  DEFAULT_WORKSHOP_LIST_LIMIT,
+  isWorkshopEnabled,
+  resolveWorkshopRevertSessionKey,
+} from "../services/workshop-config.js";
 import { buildWorkshopDigestReport } from "../services/unified-proposals.js";
 import type { ChangeFeed } from "../services/change-feed.js";
 import { revertChangeById, revertChangeByOrdinal, buildChangeRevertContext } from "../services/change-feed-revert.js";
@@ -45,10 +49,7 @@ export interface ProposalGatewayContext {
 
 type GatewayRespond = (ok: boolean, payload?: unknown, error?: { message: string }) => void;
 
-type GatewayHandler = (opts: {
-  params: Record<string, unknown>;
-  respond: GatewayRespond;
-}) => void | Promise<void>;
+type GatewayHandler = (opts: { params: Record<string, unknown>; respond: GatewayRespond }) => void | Promise<void>;
 
 function resolveProposalCfg(ctx: ProposalGatewayContext): HybridMemoryConfig {
   return ctx.cfgFull ?? ctx.cfg;
@@ -155,7 +156,7 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
     respond(true, buildWorkshopDigestReport(w()));
   });
 
-    register("hybrid-mem.proposals.undo", async ({ params, respond }) => {
+  register("hybrid-mem.proposals.undo", async ({ params, respond }) => {
     const id = typeof params.id === "string" ? params.id : "";
     if (!id) return respond(false, undefined, { message: "missing id" });
     const changeEventId = typeof params.changeEventId === "string" ? params.changeEventId : undefined;
@@ -184,8 +185,7 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
       const sessionKey = resolveWorkshopRevertSessionKey(
         resolveProposalCfg(ctx),
         typeof params.sessionKey === "string" ? params.sessionKey : undefined,
-        (ctx.api.context?.sessionKey as string | undefined) ??
-          (ctx.api.context?.sessionId as string | undefined),
+        (ctx.api.context?.sessionKey as string | undefined) ?? (ctx.api.context?.sessionId as string | undefined),
       );
       const revertCtx = changeRevertCtx(ctx, sessionKey);
       if (typeof params.ordinal === "number") {
@@ -207,7 +207,5 @@ export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): voi
 
   refreshWorkshopControlUi(ctx, workshopPendingCount(w()));
 
-  ctx.api.logger?.info?.(
-    `memory-hybrid: registered proposal gateway methods (pending=${workshopPendingCount(w())})`,
-  );
+  ctx.api.logger?.info?.(`memory-hybrid: registered proposal gateway methods (pending=${workshopPendingCount(w())})`);
 }

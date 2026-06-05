@@ -46,9 +46,7 @@ describe("isHybridMemCredentialsOnlyInvocation", () => {
         "--value-only",
       ]),
     ).toBe(true);
-    expect(
-      isHybridMemCredentialsOnlyInvocation(["node", "openclaw", "hybrid-mem", "credentials", "list"]),
-    ).toBe(true);
+    expect(isHybridMemCredentialsOnlyInvocation(["node", "openclaw", "hybrid-mem", "credentials", "list"])).toBe(true);
     expect(
       isHybridMemCredentialsOnlyInvocation(["node", "openclaw", "hybrid-mem", "credentials", "vault-status"]),
     ).toBe(true);
@@ -56,13 +54,7 @@ describe("isHybridMemCredentialsOnlyInvocation", () => {
 
   it("rejects migrate-to-vault and non-credentials commands", () => {
     expect(
-      isHybridMemCredentialsOnlyInvocation([
-        "node",
-        "openclaw",
-        "hybrid-mem",
-        "credentials",
-        "migrate-to-vault",
-      ]),
+      isHybridMemCredentialsOnlyInvocation(["node", "openclaw", "hybrid-mem", "credentials", "migrate-to-vault"]),
     ).toBe(false);
     expect(isHybridMemCredentialsOnlyInvocation(["node", "openclaw", "hybrid-mem", "verify"])).toBe(false);
   });
@@ -111,38 +103,29 @@ describe("hybrid-mem credentials-only invocations", () => {
   it.skipIf(!hasNodeSqlite)(
     "credentials get --value-only registers CLI only (no tools/services, no facts.db bootstrap)",
     () => {
-    process.argv = [
-      "node",
-      "openclaw",
-      "hybrid-mem",
-      "credentials",
-      "get",
-      "--service",
-      "github",
-      "--value-only",
-    ];
-    const api = makeMockApi();
-    const sqlitePath = join(tmpDir, "facts.db");
-    const lanceDbPath = join(tmpDir, "lancedb");
-    const pluginConfig = hybridConfigSchema.parse({
-      sqlitePath,
-      lanceDbPath,
-      embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
-      credentials: { enabled: true, encryptionKey: "test-encryption-key-for-unit-tests-32chars" },
-    });
-    const mockApi = {
-      ...api,
-      pluginConfig,
-      registrationMode: "full" as const,
-      resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
-    };
+      process.argv = ["node", "openclaw", "hybrid-mem", "credentials", "get", "--service", "github", "--value-only"];
+      const api = makeMockApi();
+      const sqlitePath = join(tmpDir, "facts.db");
+      const lanceDbPath = join(tmpDir, "lancedb");
+      const pluginConfig = hybridConfigSchema.parse({
+        sqlitePath,
+        lanceDbPath,
+        embedding: { apiKey: "sk-test-key-that-is-long-enough-to-pass", model: "text-embedding-3-small" },
+        credentials: { enabled: true, encryptionKey: "test-encryption-key-for-unit-tests-32chars" },
+      });
+      const mockApi = {
+        ...api,
+        pluginConfig,
+        registrationMode: "full" as const,
+        resolvePath: (p: string) => (p.startsWith("/") || /^[A-Z]:/.test(p) ? p : join(tmpDir, p)),
+      };
 
-    expect(memoryHybridPlugin.register(mockApi as never)).toBeUndefined();
-    expect(existsSync(sqlitePath)).toBe(false);
-    expect(api.registerCli).toHaveBeenCalled();
-    expect(api.registerTool).not.toHaveBeenCalled();
-    expect(api.registerService).not.toHaveBeenCalled();
-  },
+      expect(memoryHybridPlugin.register(mockApi as never)).toBeUndefined();
+      expect(existsSync(sqlitePath)).toBe(false);
+      expect(api.registerCli).toHaveBeenCalled();
+      expect(api.registerTool).not.toHaveBeenCalled();
+      expect(api.registerService).not.toHaveBeenCalled();
+    },
   );
 
   it.skipIf(!hasNodeSqlite)("credentials migrate-to-vault uses full registration", () => {

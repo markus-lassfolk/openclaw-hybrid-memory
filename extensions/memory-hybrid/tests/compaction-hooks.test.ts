@@ -78,9 +78,7 @@ describe("compaction lifecycle hooks", () => {
 
     await handler?.({ messageCount: 10, tokenCount: 5000 }, {});
 
-    expect(api.logger.error).toHaveBeenCalledWith(
-      expect.stringContaining("before_compaction — WAL pre-flush failed"),
-    );
+    expect(api.logger.error).toHaveBeenCalledWith(expect.stringContaining("before_compaction — WAL pre-flush failed"));
   });
 
   it("after_compaction returns undefined in silent verbosity without injecting", async () => {

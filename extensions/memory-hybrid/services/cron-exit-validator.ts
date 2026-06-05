@@ -1266,8 +1266,7 @@ export function validateFromSummaryJson(
     }
 
     const presentEarly = new Set(summary.steps.map((s) => s.name));
-    const isConsolidatedEarly =
-      requiredSteps.length > 0 && requiredSteps.every((name) => !presentEarly.has(name));
+    const isConsolidatedEarly = requiredSteps.length > 0 && requiredSteps.every((name) => !presentEarly.has(name));
     if (isConsolidatedEarly && summary.steps.length === 0) {
       return validateMaintenanceExecution(exitPath, logPath, requiredSteps, allowSkip);
     }
@@ -1343,30 +1342,28 @@ export function validateFromSummaryJson(
     }
 
     if (maintenanceStatus === "success" && semanticStatus !== "ok") {
-      const guardBlockingSemantic = summary.steps.some(
-        (s) => {
-          const semantic = resolveSummaryStepSemantic(s);
-          return (
-            (isConsolidatedMode || requiredSteps.includes(s.name)) &&
-            semantic != null &&
-            semanticOutcomeBlocksOrchestratorGuard(semantic) &&
-            !semanticOutcomeIsPartialFailure(semantic) &&
-            isGuardBlockingSemanticIssue(
-              buildMaintenanceIssue({
-                jobName: summary.job ?? extractMaintenanceJobName(exitPath),
-                stepName: s.name,
-                failureCategory: "semantic_failure",
-                failureClass: "orchestrator_step_failed",
-                message: s.summary,
-                semanticStatus: "semantic_fail",
-                hmExitPath: exitPath,
-                hmLogPath: logPath,
-                guardStateAfter: "not_updated",
-              }),
-            )
-          );
-        },
-      );
+      const guardBlockingSemantic = summary.steps.some((s) => {
+        const semantic = resolveSummaryStepSemantic(s);
+        return (
+          (isConsolidatedMode || requiredSteps.includes(s.name)) &&
+          semantic != null &&
+          semanticOutcomeBlocksOrchestratorGuard(semantic) &&
+          !semanticOutcomeIsPartialFailure(semantic) &&
+          isGuardBlockingSemanticIssue(
+            buildMaintenanceIssue({
+              jobName: summary.job ?? extractMaintenanceJobName(exitPath),
+              stepName: s.name,
+              failureCategory: "semantic_failure",
+              failureClass: "orchestrator_step_failed",
+              message: s.summary,
+              semanticStatus: "semantic_fail",
+              hmExitPath: exitPath,
+              hmLogPath: logPath,
+              guardStateAfter: "not_updated",
+            }),
+          )
+        );
+      });
       if (guardBlockingSemantic || failedSteps.length > 0) {
         maintenanceStatus = "failed";
       }

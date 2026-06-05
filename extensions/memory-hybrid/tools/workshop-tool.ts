@@ -76,12 +76,24 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
         ],
         { description: "Workshop action to perform." },
       ),
-      id: Type.Optional(Type.String({ description: "Unified proposal key (type:storeId) for inspect/approve/reject/etc." })),
-      ordinal: Type.Optional(Type.Integer({ minimum: 1, description: "Change feed ordinal (#N) for revert_by_ordinal." })),
-      sessionKey: Type.Optional(Type.String({ description: "Session key for revert_by_ordinal (defaults to current session)." })),
+      id: Type.Optional(
+        Type.String({ description: "Unified proposal key (type:storeId) for inspect/approve/reject/etc." }),
+      ),
+      ordinal: Type.Optional(
+        Type.Integer({ minimum: 1, description: "Change feed ordinal (#N) for revert_by_ordinal." }),
+      ),
+      sessionKey: Type.Optional(
+        Type.String({ description: "Session key for revert_by_ordinal (defaults to current session)." }),
+      ),
       reason: Type.Optional(Type.String({ description: "Rejection or quarantine reason." })),
       revision: Type.Optional(Type.String({ description: "Revised suggested_change body (persona proposals only)." })),
-      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: `Max proposals for list (default ${DEFAULT_WORKSHOP_TOOL_LIST_LIMIT}).` })),
+      limit: Type.Optional(
+        Type.Integer({
+          minimum: 1,
+          maximum: 100,
+          description: `Max proposals for list (default ${DEFAULT_WORKSHOP_TOOL_LIST_LIMIT}).`,
+        }),
+      ),
     }),
     async execute(_toolCallId: string, params: Record<string, unknown>) {
       const action = params.action as string;
@@ -114,7 +126,8 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
             const id = params.id as string | undefined;
             if (!id) return { content: [{ type: "text", text: "id is required for inspect" }], details: { ok: false } };
             const item = workshopInspect(workshopCtx, id);
-            if (!item) return { content: [{ type: "text", text: `Proposal not found: ${id}` }], details: { ok: false } };
+            if (!item)
+              return { content: [{ type: "text", text: `Proposal not found: ${id}` }], details: { ok: false } };
             return {
               content: [{ type: "text", text: `${item.type} ${item.title}\n\n${item.fullContent ?? item.preview}` }],
               details: item,
@@ -140,7 +153,8 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
           }
           case "quarantine": {
             const id = params.id as string | undefined;
-            if (!id) return { content: [{ type: "text", text: "id is required for quarantine" }], details: { ok: false } };
+            if (!id)
+              return { content: [{ type: "text", text: "id is required for quarantine" }], details: { ok: false } };
             const result = workshopQuarantine(workshopCtx, id, params.reason as string | undefined);
             return {
               content: [{ type: "text", text: result.ok ? result.message : result.error }],
@@ -151,7 +165,10 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
             const id = params.id as string | undefined;
             const revision = params.revision as string | undefined;
             if (!id || !revision) {
-              return { content: [{ type: "text", text: "id and revision are required for revise" }], details: { ok: false } };
+              return {
+                content: [{ type: "text", text: "id and revision are required for revise" }],
+                details: { ok: false },
+              };
             }
             const result = workshopRevise(workshopCtx, id, revision);
             return {
@@ -183,8 +200,7 @@ export function registerWorkshopTools(ctx: WorkshopToolsContext, api: ClawdbotPl
               };
             }
             const chatSessionKey =
-              (api.context?.sessionKey as string | undefined) ??
-              (api.context?.sessionId as string | undefined);
+              (api.context?.sessionKey as string | undefined) ?? (api.context?.sessionId as string | undefined);
             const sessionKey = resolveWorkshopRevertSessionKey(
               ctx.cfg,
               params.sessionKey as string | undefined,

@@ -98,9 +98,7 @@ export function runIssueRetrievalStrategy(
     .map((issue) => ({ issue, score: scoreIssueRelevance(issue, queryLower) }))
     .filter(
       (row) =>
-        matchedIds.has(row.issue.id) ||
-        row.score > 0 ||
-        (includeCriticalBaseline && row.issue.severity === "critical"),
+        matchedIds.has(row.issue.id) || row.score > 0 || (includeCriticalBaseline && row.issue.severity === "critical"),
     )
     .sort((a, b) => b.score - a.score);
 

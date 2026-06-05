@@ -14,11 +14,7 @@ import {
   readActiveTaskRowsFromFacts,
   refreshActiveTaskProjectionBestEffort,
 } from "../services/task-ledger-facts.js";
-import {
-  globalOnlyScopeFilter,
-  scopeFieldsFromEntry,
-  scopeFieldsFromFilter,
-} from "../utils/scope-filter.js";
+import { globalOnlyScopeFilter, scopeFieldsFromEntry, scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { nowIso } from "../utils/dates.js";
@@ -525,7 +521,8 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
             ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
             : undefined;
 
-          const hasStructural = text !== null || entity !== null || key !== null || value !== null || tags !== undefined;
+          const hasStructural =
+            text !== null || entity !== null || key !== null || value !== null || tags !== undefined;
 
           if (hasStructural) {
             const stored = ctx.factsDb.store({
@@ -557,8 +554,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
           const existing = ctx.factsDb.getById(factId, { scopeFilter });
           if (!existing) return toJson(404, { error: "not found" });
 
-          const replacement =
-            typeof body.replacementText === "string" ? body.replacementText.trim() : "";
+          const replacement = typeof body.replacementText === "string" ? body.replacementText.trim() : "";
           if (replacement) {
             const stored = ctx.factsDb.store({
               text: replacement,
@@ -589,14 +585,18 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
           if (!text) return toJson(400, { error: "missing text" });
           const stored = ctx.factsDb.store({
             text,
-            category: (typeof body.category === "string" ? body.category : "general") as import("../config.js").MemoryCategory,
+            category: (typeof body.category === "string"
+              ? body.category
+              : "general") as import("../config.js").MemoryCategory,
             importance: typeof body.importance === "number" ? body.importance : 0.5,
             source: "wiki-create",
             entity: typeof body.entity === "string" ? body.entity : null,
             key: typeof body.key === "string" ? body.key : null,
             value: typeof body.value === "string" ? body.value : null,
             confidence: typeof body.confidence === "number" ? Math.max(0, Math.min(1, body.confidence)) : 0.8,
-            tags: Array.isArray(body.tags) ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string") : undefined,
+            tags: Array.isArray(body.tags)
+              ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
+              : undefined,
             ...scopeFieldsFromFilter(scopeFilter),
           });
           return toJson(201, { ok: true, fact: ctx.factsDb.getById(stored.id, { scopeFilter }) ?? stored });

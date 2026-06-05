@@ -84,11 +84,7 @@ describe("workboard-card-mapper", () => {
     });
 
     it("includes branch and next in description", () => {
-      const card = taskToCard(
-        makeTask({ branch: "feat/x", next: "fix tests" }),
-        DEFAULT_WORKBOARD_COLUMNS,
-        TAG,
-      );
+      const card = taskToCard(makeTask({ branch: "feat/x", next: "fix tests" }), DEFAULT_WORKBOARD_COLUMNS, TAG);
       expect(card!.description).toContain("Branch: feat/x");
       expect(card!.description).toContain("Next: fix tests");
     });
@@ -115,11 +111,7 @@ describe("workboard-card-mapper", () => {
     });
 
     it("includes acceptance criteria and blockers in description", () => {
-      const card = goalToCard(
-        makeGoal({ currentBlockers: ["Dependency on team B"] }),
-        DEFAULT_WORKBOARD_COLUMNS,
-        TAG,
-      );
+      const card = goalToCard(makeGoal({ currentBlockers: ["Dependency on team B"] }), DEFAULT_WORKBOARD_COLUMNS, TAG);
       expect(card!.description).toContain("Acceptance criteria:");
       expect(card!.description).toContain("Tests pass");
       expect(card!.description).toContain("Blockers:");

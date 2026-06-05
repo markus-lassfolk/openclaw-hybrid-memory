@@ -135,7 +135,7 @@ describe("change feed lifecycle e2e", () => {
     const notice = await notifyHandler({ prompt: "What should I work on next?" }, hookCtx);
     expect(notice?.prependContext).toContain("<memory-change-notice>");
     expect(notice?.prependContext).toContain("#1 [session/persistent]");
-    expect(notice?.prependContext).toContain('revert change 1');
+    expect(notice?.prependContext).toContain("revert change 1");
 
     const revertMap = sessionState.displayRevertMap.get(SESSION_KEY);
     expect(revertMap?.get(1)).toBeDefined();

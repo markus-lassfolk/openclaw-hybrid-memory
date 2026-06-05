@@ -134,8 +134,6 @@ describe("SKILL_UPDATE multi-skill resolution", () => {
   });
 
   it("rejects explicit path when SKILL.md does not exist", () => {
-    expect(
-      resolveSkillUpdateTarget("[SKILL_UPDATE] skills/auto/nonexistent/SKILL.md: Change", tmpDir),
-    ).toBeNull();
+    expect(resolveSkillUpdateTarget("[SKILL_UPDATE] skills/auto/nonexistent/SKILL.md: Change", tmpDir)).toBeNull();
   });
 });

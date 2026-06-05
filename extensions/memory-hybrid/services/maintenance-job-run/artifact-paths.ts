@@ -31,15 +31,13 @@ export function buildJobRunId(command: string, fingerprint: string): string {
   return `job-${safeCmd}-${fp}`;
 }
 
-export function resolveJobRunArtifactDir(
-  opts: {
-    logRoot?: string;
-    openclawDir?: string;
-    jobRunId: string;
-    orchestratorRunId?: string;
-    startedAt?: Date;
-  },
-): { runDayDir: string; jobRunDir: string } {
+export function resolveJobRunArtifactDir(opts: {
+  logRoot?: string;
+  openclawDir?: string;
+  jobRunId: string;
+  orchestratorRunId?: string;
+  startedAt?: Date;
+}): { runDayDir: string; jobRunDir: string } {
   const logRoot = opts.logRoot ?? resolveMaintenanceLogRoot(opts.openclawDir);
   const runDayDir = resolveRunDayDir(logRoot, opts.startedAt);
   const orchSegment = opts.orchestratorRunId ? `job-runs` : `job-runs-standalone`;

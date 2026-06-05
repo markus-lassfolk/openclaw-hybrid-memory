@@ -90,10 +90,7 @@ function formatExtractImplicitSummary(res: {
   return `${res.signalsExtracted} signals (${res.positiveCount}+/${res.negativeCount}-) from ${res.sessionsProcessed}/${res.sessionsScanned} sessions semantic=${res.partial ? "partial" : "success"}`;
 }
 
-function assertExtractImplicitNotPartial(
-  res: { partial?: boolean; partialReason?: string },
-  summary: string,
-): void {
+function assertExtractImplicitNotPartial(res: { partial?: boolean; partialReason?: string }, summary: string): void {
   if (res.partial) {
     throw new Error(`extract-implicit partial failure (${res.partialReason ?? "capped"}): ${summary}`);
   }
@@ -336,9 +333,7 @@ export function buildCliMaintenanceRunners(
     const r = await b.runExtractReinforcement({ dryRun: false, verbose, ...scanFlags });
     const summary = `sessions=${r.sessionsScanned} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? "unknown"}`;
     if (r.annotationStatus === "degraded_model_or_parser" || r.annotationStatus === "failed_annotation") {
-      throw new Error(
-        `extract-reinforcement annotation failure: ${r.annotationStatus} (${summary})`,
-      );
+      throw new Error(`extract-reinforcement annotation failure: ${r.annotationStatus} (${summary})`);
     }
     assertSemanticOutcomeDoesNotBlockStep("extract-reinforcement", r.semanticOutcome, summary);
     return summary;
@@ -434,14 +429,17 @@ export function buildCliMaintenanceRunners(
       status: report.status,
     });
     if (exitInfo.exitCode !== 0) {
-      throw new Error(exitInfo.strictFailureReason ?? `${exitInfo.errorCount} error(s), ${exitInfo.warningCount} warning(s)`);
+      throw new Error(
+        exitInfo.strictFailureReason ?? `${exitInfo.errorCount} error(s), ${exitInfo.warningCount} warning(s)`,
+      );
     }
     return `warnings=${report.warningCount} errors=${report.errorCount}`;
   });
 
   set("crystallization-rescan", async () => {
-    const store = (b as { crystallizationStore?: import("../../../backends/crystallization-store.js").CrystallizationStore | null })
-      .crystallizationStore;
+    const store = (
+      b as { crystallizationStore?: import("../../../backends/crystallization-store.js").CrystallizationStore | null }
+    ).crystallizationStore;
     if (!store) return "skipped (crystallization store unavailable)";
     const proposer = new CrystallizationProposer(null, store, b.cfg.crystallization);
     const result = proposer.rescanInstalledSkills();

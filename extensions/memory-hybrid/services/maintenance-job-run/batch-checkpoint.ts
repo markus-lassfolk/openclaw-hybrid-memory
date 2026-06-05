@@ -5,9 +5,7 @@ import { nowIso } from "../../utils/dates.js";
 
 export const BATCH_CHECKPOINT_VERSION = 1;
 
-export function createBatchCheckpointStore<TItem>(
-  path: string,
-): CheckpointStore<BatchCheckpointState<TItem>> {
+export function createBatchCheckpointStore<TItem>(path: string): CheckpointStore<BatchCheckpointState<TItem>> {
   const store = createFileCheckpointStore<BatchCheckpointState<TItem>>(path);
   return {
     path,
@@ -35,9 +33,5 @@ export function isBatchResumeCompatible<TItem>(
   totalBatches: number,
 ): state is BatchCheckpointState<TItem> {
   if (!state) return false;
-  return (
-    state.incidentsHash === fingerprint &&
-    state.batchSize === batchSize &&
-    state.totalBatches === totalBatches
-  );
+  return state.incidentsHash === fingerprint && state.batchSize === batchSize && state.totalBatches === totalBatches;
 }

@@ -986,7 +986,9 @@ export async function runDreamCycle(
     });
     orphanVectorsRemoved = reconcile.orphanVectorsRemoved;
     if (reconcile.orphansFound > 0 && reconcile.orphanVectorsRemoved > 0) {
-      logger.info(`memory-hybrid: dream-cycle — removed ${reconcile.orphanVectorsRemoved} orphaned vector(s) from LanceDB`);
+      logger.info(
+        `memory-hybrid: dream-cycle — removed ${reconcile.orphanVectorsRemoved} orphaned vector(s) from LanceDB`,
+      );
     }
     if (reconcile.failed > 0) {
       logger.warn(

@@ -81,10 +81,7 @@ describe("wiki-dream-ingester", () => {
       join(runDir, "reflection.json"),
       JSON.stringify({
         stage: "reflection",
-        patterns: [
-          "User consistently prefers TypeScript over JavaScript in new projects",
-          "short",
-        ],
+        patterns: ["User consistently prefers TypeScript over JavaScript in new projects", "short"],
       }),
     );
 

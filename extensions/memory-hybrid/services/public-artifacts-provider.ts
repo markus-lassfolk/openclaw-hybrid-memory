@@ -19,13 +19,6 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry } from "../types/memory.js";
 import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 import { pluginLogger } from "../utils/logger.js";
-import {
-  isInternalWikiArtifact,
-  isWikiExportableFact,
-  wikiFactKind,
-  wikiFactTitle,
-  wikiFactUpdatedIso,
-} from "./wiki-fact-filter.js";
 
 export type PublicArtifact = {
   id: string;
@@ -42,6 +35,35 @@ export type PublicArtifactsProvider = {
 
 const DEFAULT_ARTIFACT_LIMIT = 200;
 
+function epochToIso(epoch: number | null | undefined): string {
+  if (!epoch) return new Date().toISOString();
+  try {
+    return new Date(epoch * 1000).toISOString();
+  } catch {
+    return new Date().toISOString();
+  }
+}
+
+function factTitle(entry: MemoryEntry): string {
+  if (entry.entity && entry.key) return `${entry.entity} / ${entry.key}`;
+  if (entry.entity) return entry.entity;
+  const first = entry.text.split("\n")[0]?.trim() ?? "";
+  return first.length > 80 ? `${first.slice(0, 77)}...` : first || entry.id;
+}
+
+function factKind(entry: MemoryEntry): PublicArtifact["kind"] {
+  if (entry.source?.startsWith("dream-cycle")) return "dream-report";
+  if (entry.category === "meta" && entry.entity === "behavioral-pattern") return "pattern";
+  return "fact";
+}
+
+/** Hide internal bookkeeping facts from the memory-wiki bridge. */
+function isInternalWikiArtifact(entry: MemoryEntry): boolean {
+  if (entry.tags?.includes("dream-ingester-sentinel")) return true;
+  if (entry.entity === "system" && entry.key?.startsWith("dream-ingested-run:")) return true;
+  return false;
+}
+
 export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifactsProvider {
   return {
     async listArtifacts(opts) {
@@ -49,18 +71,18 @@ export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifacts
       const sinceEpoch = opts?.since ? Math.floor(new Date(opts.since).getTime() / 1000) : undefined;
 
       try {
-        let filtered = factsDb
-          .getAll({ scopeFilter: globalOnlyScopeFilter(), includeSuperseded: false })
-          .filter(isWikiExportableFact);
+        const allFacts = factsDb.getAll({ scopeFilter: globalOnlyScopeFilter() });
+        let filtered = allFacts;
 
         if (sinceEpoch) {
-          filtered = filtered.filter((f) => {
+          filtered = allFacts.filter((f) => {
             const ts = f.lastAccessed ?? f.sourceDate ?? f.createdAt;
             return typeof ts === "number" && ts >= sinceEpoch;
           });
         }
 
         const sorted = filtered
+          .filter((entry) => !isInternalWikiArtifact(entry))
           .sort((a, b) => {
             const ta = a.lastAccessed ?? a.sourceDate ?? a.createdAt;
             const tb = b.lastAccessed ?? b.sourceDate ?? b.createdAt;
@@ -68,14 +90,23 @@ export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifacts
           })
           .slice(0, limit);
 
-        return sorted.map((entry): PublicArtifact => ({
-          id: entry.id,
-          kind: wikiFactKind(entry),
-          title: wikiFactTitle(entry),
-          content: entry.text,
-          updatedAt: wikiFactUpdatedIso(entry),
-          metadata: buildArtifactMetadata(entry),
-        }));
+        return sorted.map(
+          (entry): PublicArtifact => ({
+            id: entry.id,
+            kind: factKind(entry),
+            title: factTitle(entry),
+            content: entry.text,
+            updatedAt: epochToIso(entry.lastAccessed ?? entry.sourceDate ?? entry.createdAt),
+            metadata: {
+              category: entry.category,
+              confidence: String(entry.confidence),
+              source: entry.source,
+              ...(entry.entity ? { entity: entry.entity } : {}),
+              ...(entry.key ? { key: entry.key } : {}),
+              ...(entry.tags?.length ? { tags: entry.tags.join(",") } : {}),
+            },
+          }),
+        );
       } catch (err) {
         pluginLogger.warn?.(
           `memory-hybrid: publicArtifacts.listArtifacts failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -86,24 +117,16 @@ export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifacts
   };
 }
 
-function buildArtifactMetadata(entry: MemoryEntry): Record<string, string> {
-  return {
-    category: entry.category,
-    confidence: String(entry.confidence),
-    source: entry.source,
-    ...(entry.entity ? { entity: entry.entity } : {}),
-    ...(entry.key ? { key: entry.key } : {}),
-    ...(entry.tags?.length ? { tags: entry.tags.join(",") } : {}),
-  };
-}
-
 /**
  * Attempt to register the publicArtifacts provider with OpenClaw's memory capability slot.
  * This is best-effort — if the API is not available or the slot is already taken,
  * registration is skipped gracefully.
  */
 export function registerPublicArtifactsBestEffort(
-  api: { registerMemoryCapability?: (capability: unknown) => void; logger?: { info?: (msg: string) => void; warn?: (msg: string) => void; debug?: (msg: string) => void } },
+  api: {
+    registerMemoryCapability?: (capability: unknown) => void;
+    logger?: { info?: (msg: string) => void; warn?: (msg: string) => void; debug?: (msg: string) => void };
+  },
   factsDb: FactsDB,
 ): boolean {
   const register = api.registerMemoryCapability;
@@ -126,6 +149,3 @@ export function registerPublicArtifactsBestEffort(
     return false;
   }
 }
-
-// Re-export for tests that assert on internal filtering.
-export { isInternalWikiArtifact };

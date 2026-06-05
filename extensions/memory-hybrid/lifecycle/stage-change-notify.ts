@@ -6,10 +6,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 
 import { applyPrependBudget } from "../services/prepend-budget.js";
 import { capturePluginError } from "../services/error-reporter.js";
-import {
-  BROADCAST_CHANGE_SESSION_KEY,
-  shouldNotifyChangeInChat,
-} from "../services/change-feed-emit.js";
+import { BROADCAST_CHANGE_SESSION_KEY, shouldNotifyChangeInChat } from "../services/change-feed-emit.js";
 import type { ChangeEvent } from "../services/change-feed.js";
 import { estimateTokens } from "../utils/text.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -31,11 +28,7 @@ function truncateLineForTokenBudget(line: string, budgetTokens: number): string 
   return line.slice(0, Math.min(40, line.length));
 }
 
-function truncateEventTitleForDisplay(
-  ev: ChangeEvent,
-  displayOrdinal: number,
-  budgetTokens: number,
-): ChangeEvent {
+function truncateEventTitleForDisplay(ev: ChangeEvent, displayOrdinal: number, budgetTokens: number): ChangeEvent {
   const line = formatChangeLine(ev, displayOrdinal);
   if (estimateTokens(line) <= budgetTokens) return ev;
   const truncatedLine = truncateLineForTokenBudget(line, budgetTokens);
@@ -43,8 +36,7 @@ function truncateEventTitleForDisplay(
   const scopeEnd = truncatedLine.indexOf("] ");
   if (scopeEnd < 0) return ev;
   const revertIdx = truncatedLine.indexOf(' (revert: "revert change');
-  const titlePart =
-    revertIdx >= 0 ? truncatedLine.slice(scopeEnd + 2, revertIdx) : truncatedLine.slice(scopeEnd + 2);
+  const titlePart = revertIdx >= 0 ? truncatedLine.slice(scopeEnd + 2, revertIdx) : truncatedLine.slice(scopeEnd + 2);
   const trimmedTitle = titlePart.endsWith("…") ? titlePart.slice(0, -1) : titlePart;
   return { ...ev, title: trimmedTitle };
 }
@@ -74,9 +66,7 @@ function formatChangeLine(ev: ChangeEvent, displayOrdinal: number): string {
   const scope = ev.sessionKey === BROADCAST_CHANGE_SESSION_KEY ? "system" : "session";
   const tierLabel = ev.tier === "session" ? "session" : "persistent";
   const revertHint =
-    ev.rollbackAvailable && ev.status === "active"
-      ? ' (revert: "revert change ' + displayOrdinal + '")'
-      : "";
+    ev.rollbackAvailable && ev.status === "active" ? ' (revert: "revert change ' + displayOrdinal + '")' : "";
   return `#${displayOrdinal} [${scope}/${tierLabel}] ${ev.title}${revertHint}`;
 }
 

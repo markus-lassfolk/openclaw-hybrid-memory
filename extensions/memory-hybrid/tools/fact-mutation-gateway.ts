@@ -9,11 +9,7 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { pluginLogger } from "../utils/logger.js";
-import {
-  resolveGatewayScopeFilter,
-  scopeFieldsFromEntry,
-  scopeFieldsFromFilter,
-} from "../utils/scope-filter.js";
+import { resolveGatewayScopeFilter, scopeFieldsFromEntry, scopeFieldsFromFilter } from "../utils/scope-filter.js";
 import type { MemoryEntry } from "../types/memory.js";
 import type { ScopeFilter } from "../types/memory.js";
 
@@ -24,10 +20,7 @@ export interface FactMutationGatewayContext {
 }
 
 type GatewayRespond = (ok: boolean, payload?: unknown, error?: { message: string }) => void;
-type GatewayHandler = (opts: {
-  params: Record<string, unknown>;
-  respond: GatewayRespond;
-}) => void | Promise<void>;
+type GatewayHandler = (opts: { params: Record<string, unknown>; respond: GatewayRespond }) => void | Promise<void>;
 
 export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayContext): void {
   if (!ctx.cfg.wikiIntegration.mutations.enabled) return;

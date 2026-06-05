@@ -125,7 +125,10 @@ export function loadJobRunSummary(path: string): MaintenanceJobRunRecord | null 
   }
 }
 
-export function explainJobRun(record: MaintenanceJobRunRecord, eventsPath: string): {
+export function explainJobRun(
+  record: MaintenanceJobRunRecord,
+  eventsPath: string,
+): {
   diagnosis: string;
   lastEvent?: string;
   resumeHint?: string;
@@ -136,7 +139,8 @@ export function explainJobRun(record: MaintenanceJobRunRecord, eventsPath: strin
   const parts: string[] = [];
   parts.push(`Command ${record.command} ended with semantic outcome ${record.semanticOutcome}.`);
   if (record.semanticReason) parts.push(record.semanticReason);
-  if (failedPhase) parts.push(`Failed phase: ${failedPhase.name}${failedPhase.summary ? ` (${failedPhase.summary})` : ""}.`);
+  if (failedPhase)
+    parts.push(`Failed phase: ${failedPhase.name}${failedPhase.summary ? ` (${failedPhase.summary})` : ""}.`);
   if (record.progress) {
     parts.push(
       `Progress: ${record.progress.completedUnits}/${record.progress.totalUnits} ${record.progress.unitLabel}.`,

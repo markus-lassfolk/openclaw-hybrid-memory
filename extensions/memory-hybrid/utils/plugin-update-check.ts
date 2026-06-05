@@ -141,10 +141,7 @@ export function shouldEmitUpdateNudge(
   return nowMs - lastNudgedMs >= updateNudge.intervalHours * 3600_000;
 }
 
-export function markUpdateNudged(
-  entry: VersionCheckCacheEntry,
-  nowIso = currentIsoUtc(),
-): VersionCheckCacheEntry {
+export function markUpdateNudged(entry: VersionCheckCacheEntry, nowIso = currentIsoUtc()): VersionCheckCacheEntry {
   return { ...entry, lastNudgedAt: nowIso };
 }
 

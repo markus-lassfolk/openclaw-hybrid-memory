@@ -99,8 +99,7 @@ function renderEdictLine(edict: EdictEntry): string {
   // Edicts are intended to be short and declarative, but cap pathological cases so
   // forced injection cannot explode prompt size.
   const MAX_EDICT_PROMPT_TEXT_CHARS = 1000;
-  const tag =
-    edict.tags.length > 0 ? sanitizePromptInjection(edict.tags[0] ?? "") : "";
+  const tag = edict.tags.length > 0 ? sanitizePromptInjection(edict.tags[0] ?? "") : "";
   const tagStr = tag ? `[${tag}] ` : "";
   const text =
     edict.text.length > MAX_EDICT_PROMPT_TEXT_CHARS

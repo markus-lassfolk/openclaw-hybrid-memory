@@ -31,9 +31,7 @@ function loadKnownEntitySurfacesUncached(db: DatabaseSync, limit = 500): KnownEn
 
   try {
     const contacts = db
-      .prepare(
-        `SELECT id, display_name, normalized_key, aliases_json FROM contacts ORDER BY display_name LIMIT ?`,
-      )
+      .prepare(`SELECT id, display_name, normalized_key, aliases_json FROM contacts ORDER BY display_name LIMIT ?`)
       .all(limit) as Array<{ id: string; display_name: string; normalized_key: string; aliases_json: string | null }>;
 
     for (const c of contacts) {
@@ -96,13 +94,7 @@ function loadKnownEntitySurfacesUncached(db: DatabaseSync, limit = 500): KnownEn
       if (!key || seen.has(key)) continue;
       seen.add(key);
       const label =
-        row.label === "PERSON"
-          ? "PERSON"
-          : row.label === "ORG"
-            ? "ORG"
-            : row.label === "PROJECT"
-              ? "PROJECT"
-              : "OTHER";
+        row.label === "PERSON" ? "PERSON" : row.label === "ORG" ? "ORG" : row.label === "PROJECT" ? "PROJECT" : "OTHER";
       surfaces.push({
         key,
         displayName: row.normalized_surface,

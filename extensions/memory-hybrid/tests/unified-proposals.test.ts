@@ -29,7 +29,18 @@ describe("unified-proposals", () => {
       proposalsDb: {
         list: (filters?: { status?: string }) =>
           filters?.status === "pending"
-            ? [{ id: "p1", title: "x", status: "pending", confidence: 0.5, createdAt: 1, targetFile: "SOUL.md", observation: "", suggestedChange: "" }]
+            ? [
+                {
+                  id: "p1",
+                  title: "x",
+                  status: "pending",
+                  confidence: 0.5,
+                  createdAt: 1,
+                  targetFile: "SOUL.md",
+                  observation: "",
+                  suggestedChange: "",
+                },
+              ]
             : [],
       },
       crystallizationStore: null,
@@ -95,7 +106,18 @@ describe("unified-proposals", () => {
       proposalsDb: {
         list: (filters?: { status?: string }) =>
           filters?.status === "applied"
-            ? [{ id: "u1", title: "Undo me", status: "applied", confidence: 0.8, createdAt: 1, targetFile: "SOUL.md", observation: "", suggestedChange: "" }]
+            ? [
+                {
+                  id: "u1",
+                  title: "Undo me",
+                  status: "applied",
+                  confidence: 0.8,
+                  createdAt: 1,
+                  targetFile: "SOUL.md",
+                  observation: "",
+                  suggestedChange: "",
+                },
+              ]
             : [],
       },
       crystallizationStore: null,
@@ -112,7 +134,18 @@ describe("unified-proposals", () => {
       proposalsDb: {
         list: (filters?: { status?: string }) =>
           filters?.status === "applied"
-            ? [{ id: "u1", title: "Undo me", status: "applied", confidence: 0.8, createdAt: 1, targetFile: "SOUL.md", observation: "", suggestedChange: "" }]
+            ? [
+                {
+                  id: "u1",
+                  title: "Undo me",
+                  status: "applied",
+                  confidence: 0.8,
+                  createdAt: 1,
+                  targetFile: "SOUL.md",
+                  observation: "",
+                  suggestedChange: "",
+                },
+              ]
             : [],
       },
       crystallizationStore: null,
@@ -192,7 +225,18 @@ describe("unified-proposals", () => {
       proposalsDb: {
         list: (filters?: { status?: string }) =>
           filters?.status === "pending"
-            ? [{ id: "p1", title: "x", status: "pending", confidence: 0.5, createdAt: 1, targetFile: "SOUL.md", observation: "", suggestedChange: "" }]
+            ? [
+                {
+                  id: "p1",
+                  title: "x",
+                  status: "pending",
+                  confidence: 0.5,
+                  createdAt: 1,
+                  targetFile: "SOUL.md",
+                  observation: "",
+                  suggestedChange: "",
+                },
+              ]
             : [],
       },
       crystallizationStore: null,

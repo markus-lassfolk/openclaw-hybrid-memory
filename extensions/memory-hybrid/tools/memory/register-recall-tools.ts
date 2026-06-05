@@ -17,10 +17,7 @@ import {
 } from "../../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
 import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
-import {
-  inferEntityFilterFromQuery,
-  inferRetrievalModeFromQuery,
-} from "../../services/retrieval-mode-selector.js";
+import { inferEntityFilterFromQuery, inferRetrievalModeFromQuery } from "../../services/retrieval-mode-selector.js";
 import {
   getFactIdsForEntitySurfaces,
   loadKnownEntitySurfaces,
@@ -35,10 +32,7 @@ import {
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { getSessionLogFileSuffix } from "../../utils/constants.js";
 import { formatDateUtc, formatTimestampUtc } from "../../utils/dates.js";
-import {
-  getProgressiveIndexIds,
-  resolveProgressiveIndexSessionKey,
-} from "../../utils/progressive-index-session.js";
+import { getProgressiveIndexIds, resolveProgressiveIndexSessionKey } from "../../utils/progressive-index-session.js";
 import { parseSourceDate } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import type { MemoryToolRuntime } from "./runtime.js";
@@ -602,9 +596,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
                   score: 1,
                   backend: "sqlite" as const,
                   tags: entry.tags?.length ? entry.tags : undefined,
-                  sourceDate: entry.sourceDate
-                    ? formatDateUtc(entry.sourceDate)
-                    : undefined,
+                  sourceDate: entry.sourceDate ? formatDateUtc(entry.sourceDate) : undefined,
                 },
               ],
             },
@@ -682,8 +674,9 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     const shouldUseConstrainedMode =
       retrievalMode === "constrained-recall" ||
       (!retrievalMode && (hasAdditionalConstrainedFilters || inferredMode === "constrained-recall"));
-    const effectiveMode =
-      shouldUseConstrainedMode ? "constrained-recall" : (retrievalMode ?? inferredMode ?? "explicit-deep");
+    const effectiveMode = shouldUseConstrainedMode
+      ? "constrained-recall"
+      : (retrievalMode ?? inferredMode ?? "explicit-deep");
     const constrainedFilters = shouldUseConstrainedMode
       ? {
           ...(inferredEntity ? { entity: inferredEntity } : {}),
@@ -702,8 +695,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         content: [
           {
             type: "text" as const,
-            text:
-              "constrained-recall requires at least one filter (entity, tag, category, source, verificationTier, sourceSession, or validFrom/validUntil).",
+            text: "constrained-recall requires at least one filter (entity, tag, category, source, verificationTier, sourceSession, or validFrom/validUntil).",
           },
         ],
         details: { count: 0, error: "missing_constrained_filters" },

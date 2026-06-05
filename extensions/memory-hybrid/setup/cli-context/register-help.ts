@@ -361,7 +361,10 @@ function buildListCommands(
         [...parsed.agentsRulesByFile.values()].reduce((n, rules) => n + rules.length, 0) +
         parsed.skillUpdates.length;
       if (totalRules === 0 && parsed.unresolvedSkillUpdates.length === 0) {
-        return { applied: 0, error: "No suggested TOOLS, persona, or skill rules in report (run self-correction-run first)" };
+        return {
+          applied: 0,
+          error: "No suggested TOOLS, persona, or skill rules in report (run self-correction-run first)",
+        };
       }
       const scCfg = cfg.selfCorrection ?? { toolsSection: "Self-correction rules" };
       const section =

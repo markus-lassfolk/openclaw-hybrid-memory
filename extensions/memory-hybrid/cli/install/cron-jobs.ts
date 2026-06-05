@@ -192,9 +192,9 @@ export function isConsolidatedMaintenanceCronEnabled(options: { consolidatedCron
 }
 
 /** Read orchestrator.consolidatedCronJobs from plugin or hybrid config (default: consolidated). */
-export function readConsolidatedCronJobsFlag(
-  cfg?: { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } },
-): boolean | undefined {
+export function readConsolidatedCronJobsFlag(cfg?: {
+  maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } };
+}): boolean | undefined {
   return cfg?.maintenance?.orchestrator?.consolidatedCronJobs;
 }
 

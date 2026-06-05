@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
 import type { CredentialType } from "../config.js";
-import {
-  resolveCredentialsEncryptionKeyCandidates,
-} from "../config/parsers/core.js";
+import { resolveCredentialsEncryptionKeyCandidates } from "../config/parsers/core.js";
 import { CredentialsDB } from "../backends/credentials-db.js";
 import { pluginLogger } from "../utils/logger.js";
 
-export { resolveCredentialsEncryptionKeyCandidates, resolveCredentialsEncryptionKeyForConfig } from "../config/parsers/core.js";
+export {
+  resolveCredentialsEncryptionKeyCandidates,
+  resolveCredentialsEncryptionKeyForConfig,
+} from "../config/parsers/core.js";
 export { getCredentialsEncryptionKeyRaw } from "./credentials-path.js";
 
 const legacyFileRefWarnedPaths = new Set<string>();

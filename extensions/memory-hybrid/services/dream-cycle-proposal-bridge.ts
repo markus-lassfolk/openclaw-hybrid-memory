@@ -92,7 +92,8 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
   let personaProposalsCreated = 0;
   let crystallizationProposalsCreated = 0;
   let skillWorkshopBridged = 0;
-  const workspaceRoot = input.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+  const workspaceRoot =
+    input.workspaceRoot ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
   const allowedFiles = input.cfg.personaProposals.allowedFiles;
   const minConf = input.cfg.personaProposals.minConfidence;
   const evidenceSessions = Array.from(
@@ -121,9 +122,7 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
 
       const cap = enforceMaxPendingCap(capStores, resolveWorkshopMaxPending(input.cfg));
       if (!cap.ok) {
-        input.logger.warn(
-          `memory-hybrid: dream-cycle auto-propose stopped (${cap.error}, pending=${cap.pending})`,
-        );
+        input.logger.warn(`memory-hybrid: dream-cycle auto-propose stopped (${cap.error}, pending=${cap.pending})`);
         break;
       }
 
@@ -174,8 +173,7 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
       MAX_SKILL_PROPOSALS_PER_CYCLE,
     );
 
-    const crystallizationEnabled =
-      input.crystallizationStore != null && input.cfg.crystallization?.enabled !== false;
+    const crystallizationEnabled = input.crystallizationStore != null && input.cfg.crystallization?.enabled !== false;
 
     for (const { id, text } of newPatterns) {
       const slug = `dream-pattern-${id.slice(0, 8)}`;

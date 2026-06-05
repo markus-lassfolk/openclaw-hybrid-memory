@@ -75,10 +75,10 @@ export function scopeFieldsFromFilter(filter: ScopeFilter): {
   return { scope: "global" };
 }
 
-export function scopeFieldsFromEntry(entry: {
-  scope?: MemoryScope | null;
-  scopeTarget?: string | null;
-}): { scope: MemoryScope; scopeTarget?: string } {
+export function scopeFieldsFromEntry(entry: { scope?: MemoryScope | null; scopeTarget?: string | null }): {
+  scope: MemoryScope;
+  scopeTarget?: string;
+} {
   const scope = entry.scope ?? "global";
   if (scope === "global") return { scope: "global" };
   return { scope, scopeTarget: entry.scopeTarget ?? undefined };

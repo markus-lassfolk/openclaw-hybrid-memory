@@ -18,8 +18,7 @@ export type RetrievalModeSelectorInput = {
 const ENTITY_IN_QUERY =
   /\b(?:project|repo|repository|service|person|contact|org(?:anization)?|team)\s+[:=]?\s*[\w.-]+/i;
 const TAG_IN_QUERY = /(?:#|tag:)[\w-]+/i;
-const BOUNDED_TIME =
-  /\b(?:last|past|recent|since|from)\s+\d+\s*(?:day|week|month|hour)s?\b/i;
+const BOUNDED_TIME = /\b(?:last|past|recent|since|from)\s+\d+\s*(?:day|week|month|hour)s?\b/i;
 
 /**
  * Infer retrieval mode when caller did not specify one explicitly.
@@ -62,9 +61,7 @@ export function inferRetrievalModeFromQuery(
  * Extract implicit entity filter from query when none was provided explicitly.
  */
 export function inferEntityFilterFromQuery(query: string): string | undefined {
-  const explicit = query.match(
-    /\b(?:project|repo|repository|service|entity)\s+[:=]?\s*([a-z0-9][a-z0-9_.-]{1,60})/i,
-  );
+  const explicit = query.match(/\b(?:project|repo|repository|service|entity)\s+[:=]?\s*([a-z0-9][a-z0-9_.-]{1,60})/i);
   if (explicit?.[1]) return explicit[1].trim();
 
   // Single hyphenated token queries: "openclaw-hybrid-memory deploy status"

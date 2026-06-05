@@ -73,7 +73,9 @@ export function registerMaintenanceRunCommands(maintenance: Chainable): void {
           return;
         }
         console.log(`JobRun ${record?.jobRunId ?? id} command=${record?.command}`);
-        console.log(`  semantic=${record?.semanticOutcome} started=${record?.startedAt} finished=${record?.finishedAt ?? "-"}`);
+        console.log(
+          `  semantic=${record?.semanticOutcome} started=${record?.startedAt} finished=${record?.finishedAt ?? "-"}`,
+        );
         if (record?.progress) {
           console.log(
             `  progress=${record.progress.completedUnits}/${record.progress.totalUnits} ${record.progress.unitLabel}`,

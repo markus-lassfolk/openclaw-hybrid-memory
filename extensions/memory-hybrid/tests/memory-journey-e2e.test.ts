@@ -400,7 +400,11 @@ describe("Memory journey e2e — full register() stack", () => {
     const text = "Exactly the same memory journey dedupe fact for fuzzy match";
 
     await store.execute("c1", { text, category: "fact", importance: 0.7 });
-    const second = (await store.execute("c2", { text: `  ${text.toUpperCase()}  `, category: "fact", importance: 0.8 })) as {
+    const second = (await store.execute("c2", {
+      text: `  ${text.toUpperCase()}  `,
+      category: "fact",
+      importance: 0.8,
+    })) as {
       details?: { action?: string };
     };
 

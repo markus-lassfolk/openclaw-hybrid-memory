@@ -78,7 +78,9 @@ export function withWorkshopDefaults(
   };
 }
 
-export type WorkshopActionResult = { ok: true; message: string; details?: Record<string, unknown> } | { ok: false; error: string };
+export type WorkshopActionResult =
+  | { ok: true; message: string; details?: Record<string, unknown> }
+  | { ok: false; error: string };
 
 function resolveKey(unifiedKey: string): { type: string; storeId: string } | { error: string } {
   const parsed = parseUnifiedKey(unifiedKey);
@@ -253,7 +255,8 @@ export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: s
   if ("error" in parsed) return { ok: false, error: parsed.error };
   const item = inspectUnifiedProposal(ctx, unifiedKey);
   if (!item) return { ok: false, error: `Proposal not found: ${unifiedKey}` };
-  if (!item.actions.approveSupported) return { ok: false, error: `Approve not supported for ${item.type} proposal in status ${item.status}` };
+  if (!item.actions.approveSupported)
+    return { ok: false, error: `Approve not supported for ${item.type} proposal in status ${item.status}` };
 
   switch (parsed.type) {
     case "persona": {
@@ -280,11 +283,19 @@ export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: s
         ctx.proposalsDb.updateStatusIf(parsed.storeId, "pending", "approved");
         return { ok: false, error: applyResult.error };
       }
-      return { ok: true, message: `Applied persona proposal to ${applyResult.targetFile}`, details: { targetFile: applyResult.targetFile } };
+      return {
+        ok: true,
+        message: `Applied persona proposal to ${applyResult.targetFile}`,
+        details: { targetFile: applyResult.targetFile },
+      };
     }
     case "crystallization": {
       if (!ctx.crystallizationStore || !ctx.workflowStore) return { ok: false, error: "Crystallization not available" };
-      const proposer = new CrystallizationProposer(ctx.workflowStore, ctx.crystallizationStore, ctx.cfg.crystallization);
+      const proposer = new CrystallizationProposer(
+        ctx.workflowStore,
+        ctx.crystallizationStore,
+        ctx.cfg.crystallization,
+      );
       const result = proposer.approveProposal(parsed.storeId);
       if (result.success) {
         emitSkillApplied(ctx.changeFeed, ctx.cfg, {
@@ -347,7 +358,11 @@ export async function workshopApprove(ctx: WorkshopServiceContext, unifiedKey: s
           category: "procedure-skill",
         });
       }
-      return { ok: true, message: `Generated skill at ${result.skillPath ?? "skills/auto"}`, details: { skillPath: result.skillPath } };
+      return {
+        ok: true,
+        message: `Generated skill at ${result.skillPath ?? "skills/auto"}`,
+        details: { skillPath: result.skillPath },
+      };
     }
     default:
       return { ok: false, error: `Unknown proposal type: ${parsed.type}` };
@@ -395,7 +410,11 @@ export function workshopReject(
         if (existing.status === "rejected") return { ok: true, message: "Crystallization proposal already rejected" };
         return { ok: false, error: "Proposal not pending" };
       }
-      const proposer = new CrystallizationProposer(ctx.workflowStore, ctx.crystallizationStore, ctx.cfg.crystallization);
+      const proposer = new CrystallizationProposer(
+        ctx.workflowStore,
+        ctx.crystallizationStore,
+        ctx.cfg.crystallization,
+      );
       const result = proposer.rejectProposal(parsed.storeId, reason);
       if (!result.success) return { ok: false, error: result.message };
       if (!opts?.skipChangeFeed) {
@@ -476,10 +495,7 @@ export function workshopQuarantine(
     const isPending = proposal.status === "drafted" || proposal.status === "validated";
     const proposer = new CrystallizationProposer(ctx.workflowStore, ctx.crystallizationStore, ctx.cfg.crystallization);
     if (isPending) {
-      const result = proposer.rejectProposal(
-        parsed.storeId,
-        reason ? `quarantine: ${reason}` : "workshop quarantine",
-      );
+      const result = proposer.rejectProposal(parsed.storeId, reason ? `quarantine: ${reason}` : "workshop quarantine");
       if (!result.success) return { ok: false, error: result.message };
       if (!opts?.skipChangeFeed) {
         syncProposalWithdrawnInChangeFeed(
@@ -561,7 +577,8 @@ export function workshopRevertProcedureSkill(
   const skillPath = proc.skillPath.trim();
   const now = Math.floor(Date.now() / 1000);
   const summary = reason ?? "reverted via change feed";
-  ctx.factsDb.getRawDb()
+  ctx.factsDb
+    .getRawDb()
     .prepare(
       `UPDATE procedures
          SET promoted_to_skill = 0,
@@ -582,12 +599,7 @@ export function workshopRevertProcedureSkill(
   }
   const procedureKey = makeUnifiedKey("procedure-skill", procedureId);
   if (!opts?.skipChangeFeed) {
-    syncAppliedWithdrawnInChangeFeed(
-      ctx.changeFeed,
-      ctx.cfg,
-      procedureKey,
-      summary,
-    );
+    syncAppliedWithdrawnInChangeFeed(ctx.changeFeed, ctx.cfg, procedureKey, summary);
   }
   return { ok: true, message: `Procedure skill uninstalled (${skillPath})` };
 }
@@ -599,7 +611,8 @@ export function workshopRevise(
 ): WorkshopActionResult {
   const parsed = resolveKey(unifiedKey);
   if ("error" in parsed) return { ok: false, error: parsed.error };
-  if (parsed.type !== "persona") return { ok: false, error: "In-place revision is only supported for persona proposals" };
+  if (parsed.type !== "persona")
+    return { ok: false, error: "In-place revision is only supported for persona proposals" };
   if (!ctx.proposalsDb) return { ok: false, error: "Persona proposals not available" };
   const p = ctx.proposalsDb.get(parsed.storeId);
   if (!p || p.status !== "pending") return { ok: false, error: "Proposal not pending" };
@@ -609,7 +622,11 @@ export function workshopRevise(
   if (!contentCheck.ok) {
     return { ok: false, error: `Revision failed safety validation (${contentCheck.reason})` };
   }
-  if (!ctx.cfg.personaProposals.allowedFiles.includes(p.targetFile as (typeof ctx.cfg.personaProposals.allowedFiles)[number])) {
+  if (
+    !ctx.cfg.personaProposals.allowedFiles.includes(
+      p.targetFile as (typeof ctx.cfg.personaProposals.allowedFiles)[number],
+    )
+  ) {
     return { ok: false, error: `Target file ${p.targetFile} is not in allowedFiles` };
   }
   const workspace = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");

@@ -81,7 +81,5 @@ const cov = buildMaintenanceCoverageReport({
   days: 7,
 });
 
-console.log(
-  JSON.stringify({ recall, daily, langs, traces, skippedDupes, sessions: paths.length }, null, 2),
-);
+console.log(JSON.stringify({ recall, daily, langs, traces, skippedDupes, sessions: paths.length }, null, 2));
 console.log(formatMaintenanceCoverageReport(cov));

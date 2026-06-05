@@ -92,11 +92,7 @@ describe("lifecycle agent_end workflow tracking", () => {
       { sessionKey: "agent:main:telegram:wf-2", sessionId: "agent:main:telegram:wf-2", agentId: "main" },
     );
 
-    expect(flush).toHaveBeenCalledWith(
-      "agent:main:telegram:wf-2",
-      "Summarize blockers on PR #1043",
-      "success",
-    );
+    expect(flush).toHaveBeenCalledWith("agent:main:telegram:wf-2", "Summarize blockers on PR #1043", "success");
   });
 
   it("captures tool_use blocks from v3 assistant content", async () => {
@@ -104,7 +100,11 @@ describe("lifecycle agent_end workflow tracking", () => {
     ctx.cfg.workflowTracking = { enabled: true, maxTracesPerDay: 100, retentionDays: 90 };
     const push = vi.fn();
     const flush = vi.fn().mockReturnValue("trace-v3");
-    ctx.workflowTracker = { push, flush, getBuffer: vi.fn().mockReturnValue(["read"]) } as unknown as typeof ctx.workflowTracker;
+    ctx.workflowTracker = {
+      push,
+      flush,
+      getBuffer: vi.fn().mockReturnValue(["read"]),
+    } as unknown as typeof ctx.workflowTracker;
 
     const api = makeMockHookApi("agent:main:telegram:wf-3");
     createLifecycleHooks(ctx).onAgentEnd(api as never);

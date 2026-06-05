@@ -18,12 +18,11 @@ describe("SQL guardrails — cross-cutting regression patterns", () => {
   });
 
   it("uses a canonical ISO TEXT column registry for timestamp comparisons", () => {
-    expect(TEXT_TIMESTAMP_COLUMN_SPECS.some((s) => s.table === "workflow_traces" && s.columns.includes("created_at")))
-      .toBe(true);
     expect(
-      TEXT_TIMESTAMP_COLUMN_SPECS.some(
-        (s) => s.table === "verified_facts" && s.columns.includes("next_verification"),
-      ),
+      TEXT_TIMESTAMP_COLUMN_SPECS.some((s) => s.table === "workflow_traces" && s.columns.includes("created_at")),
+    ).toBe(true);
+    expect(
+      TEXT_TIMESTAMP_COLUMN_SPECS.some((s) => s.table === "verified_facts" && s.columns.includes("next_verification")),
     ).toBe(true);
   });
 
@@ -45,9 +44,7 @@ describe("SQL guardrails — cross-cutting regression patterns", () => {
   });
 
   it("flags hypothetical verified_facts.tier references (detector sanity check)", () => {
-    const registry = new Map<string, Set<string>>([
-      ["verified_facts", new Set(["fact_id", "next_verification"])],
-    ]);
+    const registry = new Map<string, Set<string>>([["verified_facts", new Set(["fact_id", "next_verification"])]]);
     const bad = `
       db.prepare(\`SELECT vf.fact_id FROM verified_facts vf WHERE vf.tier = ?\`).get("critical");
     `;

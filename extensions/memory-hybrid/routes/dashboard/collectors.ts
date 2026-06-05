@@ -537,8 +537,10 @@ async function collectCronJobs(): Promise<CronJobStatus[]> {
           name: String(job.name ?? ""),
           schedule: typeof schedule?.expr === "string" ? schedule.expr : "",
           enabled: job.enabled !== false,
-          lastRunAt: typeof state.lastRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.lastRunAtMs / 1000)) : null,
-          nextRunAt: typeof state.nextRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.nextRunAtMs / 1000)) : null,
+          lastRunAt:
+            typeof state.lastRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.lastRunAtMs / 1000)) : null,
+          nextRunAt:
+            typeof state.nextRunAtMs === "number" ? formatTimestampUtc(Math.floor(state.nextRunAtMs / 1000)) : null,
           lastStatus:
             typeof state.lastStatus === "string"
               ? state.lastStatus

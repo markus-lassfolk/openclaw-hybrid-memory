@@ -1,19 +1,10 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { atomicWriteFile } from "../../utils/atomic-write.js";
 import { nowIso } from "../../utils/dates.js";
-import {
-  buildJobRunId,
-  resolveJobRunArtifactDir,
-  resolveOrchestratorRunIdFromEnv,
-} from "./artifact-paths.js";
+import { buildJobRunId, resolveJobRunArtifactDir, resolveOrchestratorRunIdFromEnv } from "./artifact-paths.js";
 import { appendJobRunEvent } from "./event-log.js";
 import { createFileCheckpointStore, type CheckpointStore } from "./checkpoint-store.js";
-import type {
-  JobRunEvent,
-  JobRunPhaseStatus,
-  JobRunSemanticOutcome,
-  MaintenanceJobRunRecord,
-} from "./types.js";
+import type { JobRunEvent, JobRunPhaseStatus, JobRunSemanticOutcome, MaintenanceJobRunRecord } from "./types.js";
 import { JOB_RUN_SCHEMA_VERSION } from "./types.js";
 
 export interface CreateJobRunOptions {
@@ -84,7 +75,8 @@ export class MaintenanceJobRun {
       const record = JSON.parse(readFileSync(summaryPath, "utf-8")) as MaintenanceJobRunRecord;
       if (record.schemaVersion !== JOB_RUN_SCHEMA_VERSION) return null;
       const eventsPath = record.artifactPaths.events;
-      const checkpointPath = record.artifactPaths.checkpoint ?? `${summaryPath.replace(/summary\.json$/, "")}checkpoint.json`;
+      const checkpointPath =
+        record.artifactPaths.checkpoint ?? `${summaryPath.replace(/summary\.json$/, "")}checkpoint.json`;
       return new MaintenanceJobRun(record, eventsPath, checkpointPath);
     } catch {
       return null;

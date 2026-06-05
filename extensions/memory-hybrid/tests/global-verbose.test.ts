@@ -12,9 +12,7 @@ describe("resolveHybridMemVerbose", () => {
   });
 
   it("detects --verbose in raw argv after hybrid-mem when Commander opts are false", () => {
-    expect(
-      argvHasHybridMemVerbose(["node", "openclaw", "hybrid-mem", "generate-proposals", "--verbose"]),
-    ).toBe(true);
+    expect(argvHasHybridMemVerbose(["node", "openclaw", "hybrid-mem", "generate-proposals", "--verbose"])).toBe(true);
     expect(
       resolveHybridMemVerbose({ verbose: false }, undefined, [
         "node",

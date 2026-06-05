@@ -4,10 +4,7 @@ import { pluginLogger } from "../../utils/logger.js";
 import { resolveOpenClawGatewayRootUrlFromEnv } from "../../utils/openclaw-gateway-http.js";
 import type { SectionDefinition, SectionTaxonomyOverrides } from "../skill-sections.js";
 import type { PersonaProposalsConfig, WorkshopConfig } from "../types/agents.js";
-import {
-  type WikiIntegrationConfig,
-  DEFAULT_WIKI_INTEGRATION_CONFIG,
-} from "../types/wiki-integration.js";
+import { type WikiIntegrationConfig, DEFAULT_WIKI_INTEGRATION_CONFIG } from "../types/wiki-integration.js";
 import {
   type WorkboardConfig,
   type WorkboardColumnMapping,
@@ -1200,7 +1197,9 @@ function parseLiveChangeFeedBoolean(value: unknown, defaultValue: boolean): bool
   throw new Error(`Invalid liveChangeFeed boolean: expected boolean, received ${typeof value} (${String(value)})`);
 }
 
-export function parseLiveChangeFeedConfig(cfg: Record<string, unknown>): import("../types/features.js").LiveChangeFeedConfig {
+export function parseLiveChangeFeedConfig(
+  cfg: Record<string, unknown>,
+): import("../types/features.js").LiveChangeFeedConfig {
   const raw = cfg.liveChangeFeed as Record<string, unknown> | undefined;
   const notifyOnRaw = raw?.notifyOn as Record<string, unknown> | undefined;
   return {
@@ -1214,7 +1213,13 @@ export function parseLiveChangeFeedConfig(cfg: Record<string, unknown>): import(
       proposalReverted: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalReverted, false),
       dreamCycleComplete: parseLiveChangeFeedBoolean(notifyOnRaw?.dreamCycleComplete, false),
     },
-    maxInChatEventsPerTurn: parseLiveChangeFeedPositiveInt(raw?.maxInChatEventsPerTurn, 5, "maxInChatEventsPerTurn", 1, 20),
+    maxInChatEventsPerTurn: parseLiveChangeFeedPositiveInt(
+      raw?.maxInChatEventsPerTurn,
+      5,
+      "maxInChatEventsPerTurn",
+      1,
+      20,
+    ),
     inChatBudgetTokens: parseLiveChangeFeedPositiveInt(raw?.inChatBudgetTokens, 150, "inChatBudgetTokens", 50, 500),
   };
 }

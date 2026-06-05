@@ -856,7 +856,13 @@ error: unknown command 'bar'
           exitCode: 1,
           summaryLine: "failed",
           steps: [
-            { name: "self-correction-run", status: "failed", summary: "semantic=failed_semantic_empty", durationMs: 10, semanticOutcome: "failed_semantic_empty" },
+            {
+              name: "self-correction-run",
+              status: "failed",
+              summary: "semantic=failed_semantic_empty",
+              durationMs: 10,
+              semanticOutcome: "failed_semantic_empty",
+            },
           ],
           counts: { ok: 0, skipped: 0, deferred: 0, failed: 1, rateLimited: 0 },
         }),

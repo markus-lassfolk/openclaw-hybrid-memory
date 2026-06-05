@@ -122,27 +122,33 @@ export function registerMaintenanceOrchestratorCommands(maintenance: Chainable, 
     maintenance
       .command("cycle")
       .description("Run cycle-tier maintenance steps (local gateway-native work)")
-      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
-        await runTier(["cycle"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
-      })),
+      .action(
+        withExit(async (opts, cmd?: CommanderOptsParent) => {
+          await runTier(["cycle"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+        }),
+      ),
   );
 
   commonOptions(
     maintenance
       .command("nightly")
       .description("Run all non-cycle steps (staggered guards decide which execute)")
-      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
-        await runTier(["nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
-      })),
+      .action(
+        withExit(async (opts, cmd?: CommanderOptsParent) => {
+          await runTier(["nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+        }),
+      ),
   );
 
   commonOptions(
     maintenance
       .command("full")
       .description("Run cycle + nightly tiers in sequence")
-      .action(withExit(async (opts, cmd?: CommanderOptsParent) => {
-        await runTier(["cycle", "nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
-      })),
+      .action(
+        withExit(async (opts, cmd?: CommanderOptsParent) => {
+          await runTier(["cycle", "nightly"], { ...opts, verbose: !!opts?.verbose || readHybridMemVerbose(cmd) });
+        }),
+      ),
   );
 
   maintenance

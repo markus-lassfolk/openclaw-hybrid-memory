@@ -1299,7 +1299,12 @@ export async function runReflectionRules(
         vectorDb,
         embeddings,
         openai,
-        { ...opts, formatRetryWithThinking: true, thinkingMode: "adaptive", fallbackModels: opts.fallbackModels?.filter((m) => m !== modelUsed) },
+        {
+          ...opts,
+          formatRetryWithThinking: true,
+          thinkingMode: "adaptive",
+          fallbackModels: opts.fallbackModels?.filter((m) => m !== modelUsed),
+        },
         logger,
         provenanceService,
       );
@@ -1454,7 +1459,9 @@ export async function runReflectionRules(
       continue;
     }
     if (/^<[^>]+>$/i.test(ruleText) || /^<imperative\s+one-line\s+rule>/i.test(ruleText)) {
-      logger.warn(`memory-hybrid: reflect-rules — rejected template placeholder at store gate: ${ruleText.slice(0, 60)}`);
+      logger.warn(
+        `memory-hybrid: reflect-rules — rejected template placeholder at store gate: ${ruleText.slice(0, 60)}`,
+      );
       continue;
     }
     if (opts.dryRun) {

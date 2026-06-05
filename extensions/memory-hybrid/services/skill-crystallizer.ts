@@ -14,13 +14,16 @@ import type { WorkflowPattern } from "../backends/workflow-store.js";
 import type { CrystallizationConfig } from "../config/types/features.js";
 import { ACTION_VERB_PATTERN } from "../utils/constants.js";
 import { formatDateUtc, nowSec } from "../utils/dates.js";
-import {
-  deriveSkillName,
-  formatYamlFrontmatterScalar,
-} from "./skill-crystallizer-helpers.js";
+import { deriveSkillName, formatYamlFrontmatterScalar } from "./skill-crystallizer-helpers.js";
 import { filterUserFacingGoals, isSystemWorkflowGoal } from "./workflow-goal-classifier.js";
 
-export { deriveSkillName, formatYamlFrontmatterScalar, isExecOnlySequence, normalizeSkillName, sanitizeApprovedSkillSlug } from "./skill-crystallizer-helpers.js";
+export {
+  deriveSkillName,
+  formatYamlFrontmatterScalar,
+  isExecOnlySequence,
+  normalizeSkillName,
+  sanitizeApprovedSkillSlug,
+} from "./skill-crystallizer-helpers.js";
 
 /** Relative path for exec-only workflow scaffold scripts (written on install). */
 export const CRYSTALLIZATION_EXEC_SCRIPT_REL_PATH = "scripts/run.sh";
@@ -275,19 +278,11 @@ export function crystallizeSkill(input: CrystallizationInput, cfg: Crystallizati
   const createdAt = formatDateUtc(nowSec());
 
   const userGoals = filterUserFacingGoals(pattern.exampleGoals, cfg);
-  const effectivePattern: WorkflowPattern =
-    userGoals.length > 0 ? { ...pattern, exampleGoals: userGoals } : pattern;
+  const effectivePattern: WorkflowPattern = userGoals.length > 0 ? { ...pattern, exampleGoals: userGoals } : pattern;
 
   const skillName = deriveSkillName(effectivePattern.exampleGoals, effectivePattern.toolSequence, patternId);
   const proposalCard = buildProposalCard(skillName, effectivePattern, patternId, evidenceHash, cfg);
-  const skillContent = buildSkillContent(
-    skillName,
-    effectivePattern,
-    patternId,
-    evidenceHash,
-    createdAt,
-    proposalCard,
-  );
+  const skillContent = buildSkillContent(skillName, effectivePattern, patternId, evidenceHash, createdAt, proposalCard);
 
   // Resolve output directory (expand ~ for home dir)
   const outputDir = cfg.outputDir.replace(/^~/, getEnv("HOME") || homedir());

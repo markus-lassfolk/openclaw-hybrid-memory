@@ -103,9 +103,7 @@ describe.skipIf(!hasNodeSqlite)("credentials vault key probe", () => {
   });
 
   it("opens legacy vault encrypted with literal file: ref", async () => {
-    const {
-      resolveCredentialsVaultKeyMaterial,
-    } = await import("../services/credentials-encryption-key.js");
+    const { resolveCredentialsVaultKeyMaterial } = await import("../services/credentials-encryption-key.js");
     const { createCredentialsDbForConfig } = await import("../services/credentials-bootstrap.js");
 
     const ref = fileRef();
@@ -129,10 +127,9 @@ describe.skipIf(!hasNodeSqlite)("credentials vault key probe", () => {
   });
 
   it("opens vault encrypted with file contents when file: ref is configured", async () => {
-    const {
-      probeCredentialsVaultKey,
-      resolveCredentialsVaultKeyMaterial,
-    } = await import("../services/credentials-encryption-key.js");
+    const { probeCredentialsVaultKey, resolveCredentialsVaultKeyMaterial } = await import(
+      "../services/credentials-encryption-key.js"
+    );
 
     writeFileSync(keyFile, TEST_KEY, "utf8");
     const ref = fileRef();

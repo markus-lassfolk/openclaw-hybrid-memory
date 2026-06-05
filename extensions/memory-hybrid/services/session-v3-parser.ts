@@ -82,10 +82,7 @@ function memoryRecallQueryFromArguments(args: unknown): string | undefined {
   return typeof query === "string" ? query : undefined;
 }
 
-function registerMemoryRecallPendingFromContent(
-  content: unknown,
-  pending: Map<string, { query?: string }>,
-): void {
+function registerMemoryRecallPendingFromContent(content: unknown, pending: Map<string, { query?: string }>): void {
   if (!Array.isArray(content)) return;
   for (const block of content) {
     if (!block || typeof block !== "object") continue;

@@ -44,10 +44,7 @@ export function writeProposalRollback(
   }
 }
 
-export function readProposalRollback(
-  resolvedSqlitePath: string,
-  proposalId: string,
-): ProposalRollbackRecord | null {
+export function readProposalRollback(resolvedSqlitePath: string, proposalId: string): ProposalRollbackRecord | null {
   const path = rollbackPath(resolvedSqlitePath, proposalId);
   if (!existsSync(path)) return null;
   try {

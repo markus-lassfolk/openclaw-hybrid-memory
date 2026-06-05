@@ -176,18 +176,14 @@ export function heuristicNeedsHeavyAttention(goals: Goal[]): boolean {
 export function buildStewardshipBlockFull(goal: Goal, allActive: number): string {
   const label = sanitizeGoalField(goal.label);
   const description = sanitizeGoalField(goal.description);
-  const criteria = goal.acceptanceCriteria
-    .map((c, i) => `  ${i + 1}. ${sanitizeGoalField(c)}`)
-    .join("\n");
+  const criteria = goal.acceptanceCriteria.map((c, i) => `  ${i + 1}. ${sanitizeGoalField(c)}`).join("\n");
   const blockers =
     goal.currentBlockers.length > 0
       ? goal.currentBlockers.map((b) => `  - ${sanitizeGoalField(b)}`).join("\n")
       : "  none";
   const linked =
     goal.linkedTasks.length > 0
-      ? goal.linkedTasks
-          .map((t) => `  - ${sanitizeGoalField(t.label)}: ${sanitizeGoalField(t.status)}`)
-          .join("\n")
+      ? goal.linkedTasks.map((t) => `  - ${sanitizeGoalField(t.label)}: ${sanitizeGoalField(t.status)}`).join("\n")
       : "  (none)";
   const lastOutcome = goal.lastOutcome ? sanitizeGoalField(goal.lastOutcome) : "none";
   let directive = "Assess progress toward acceptance criteria; dispatch work or call goal_assess.";

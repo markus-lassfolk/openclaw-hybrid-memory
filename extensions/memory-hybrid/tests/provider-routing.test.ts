@@ -323,7 +323,6 @@ describe("MiniMax provider routing — direct API key", () => {
     expect((minimaxCall?.[0] as Record<string, unknown>).apiKey).toBe("sk-cp-bare-prefix-test");
   });
 
-
   it("records bare MiniMax alias costs under minimax instead of bogus openai/minimax on failure", async () => {
     const cfg = getTestConfig(tmpDir, {
       llm: {
@@ -402,10 +401,9 @@ describe("MiniMax provider routing — direct API key", () => {
       messages: [{ role: "user", content: "bare OpenAI o-series" }],
     });
 
-    const rows = ctx.factsDb
-      .getRawDb()
-      .prepare("SELECT model FROM llm_cost_log ORDER BY id ASC")
-      .all() as Array<{ model: string }> | undefined;
+    const rows = ctx.factsDb.getRawDb().prepare("SELECT model FROM llm_cost_log ORDER BY id ASC").all() as
+      | Array<{ model: string }>
+      | undefined;
     expect(rows?.map((r) => r.model)).toEqual([
       "minimax/MiniMax-M2.7",
       "minimax/MiniMax-M2.7",

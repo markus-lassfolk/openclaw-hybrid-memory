@@ -208,12 +208,15 @@ export function runInstallForCli(opts: { dryRun: boolean }): InstallCliResult {
       cronSummary = ensureMaintenanceCronJobs(openclawDir, pluginConfig, {
         normalizeExisting: false,
         reEnableDisabled: false,
-        consolidatedCronJobs: readConsolidatedCronJobsFlag(pluginCfg as { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } }),
+        consolidatedCronJobs: readConsolidatedCronJobsFlag(
+          pluginCfg as { maintenance?: { orchestrator?: { consolidatedCronJobs?: boolean } } },
+        ),
         scheduleOverrides: Object.keys(installScheduleOverrides).length > 0 ? installScheduleOverrides : undefined,
         featureGates: {
           "sensorSweep.enabled": (sensorSweepRaw?.enabled as boolean | undefined) === true,
           "nightlyCycle.enabled": (dreamCycleRaw?.enabled as boolean | undefined) === true,
-          "crystallization.enabled": (pluginCfg?.crystallization as { enabled?: boolean } | undefined)?.enabled === true,
+          "crystallization.enabled":
+            (pluginCfg?.crystallization as { enabled?: boolean } | undefined)?.enabled === true,
         },
         digestWeeklyDelivery: parseDigestWeeklyDeliveryOnly(getPluginEntryConfig(config) ?? {}),
       });

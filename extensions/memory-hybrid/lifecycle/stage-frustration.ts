@@ -151,9 +151,7 @@ export function registerFrustrationHandlers(
 
       const adaptation = frustrationResult.suggestedAdaptation;
       const adaptationLine =
-        adaptation.action !== "none"
-          ? `\nAdaptation: ${adaptation.action} — ${adaptation.reasoning}`
-          : "";
+        adaptation.action !== "none" ? `\nAdaptation: ${adaptation.action} — ${adaptation.reasoning}` : "";
 
       const combinedPrepend = [
         hint ? `\n<frustration-signal>${hint}${adaptationLine}</frustration-signal>\n` : "",

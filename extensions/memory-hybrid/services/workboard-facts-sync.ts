@@ -9,11 +9,7 @@ import { nowIso } from "../utils/dates.js";
 import type { ActiveTaskStatus } from "./active-task.js";
 import type { GoalStatus } from "./goal-stewardship-types.js";
 import { updateGoal } from "./goal-registry.js";
-import {
-  displayStatusToFact,
-  loadTaskLedgerFromFacts,
-  syncActiveTaskEntryToFacts,
-} from "./task-ledger-facts.js";
+import { displayStatusToFact, loadTaskLedgerFromFacts, syncActiveTaskEntryToFacts } from "./task-ledger-facts.js";
 
 export async function applyWorkboardTaskStatusUpdate(
   factsDb: FactsDB,
@@ -24,8 +20,7 @@ export async function applyWorkboardTaskStatusUpdate(
   log?: { warn?: (m: string) => void },
 ): Promise<void> {
   const { active, completed } = loadTaskLedgerFromFacts(factsDb);
-  const task =
-    active.find((t) => t.label === label) ?? completed.find((t) => t.label === label);
+  const task = active.find((t) => t.label === label) ?? completed.find((t) => t.label === label);
   if (!task) {
     throw new Error(`Active task not found: ${label}`);
   }

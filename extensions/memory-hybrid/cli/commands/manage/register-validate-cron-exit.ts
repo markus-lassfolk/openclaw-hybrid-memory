@@ -49,12 +49,7 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
                 opts.requiredSteps,
                 !!opts.allowSkip,
               )
-            : validateMaintenanceExecution(
-                opts.exitPath,
-                opts.logPath,
-                opts.requiredSteps,
-                !!opts.allowSkip,
-              );
+            : validateMaintenanceExecution(opts.exitPath, opts.logPath, opts.requiredSteps, !!opts.allowSkip);
 
           if (opts.json) {
             console.log(generateCronStatusReport(result));

@@ -268,9 +268,7 @@ export async function runContextAudit(opts: {
 
   const totalTokens =
     workspaceTokens +
-    (cfg.autoRecall.enabled
-      ? autoRecallBudget
-      : hotTokens + proceduresTokens + activeTasksTokens + staleWarningTokens);
+    (cfg.autoRecall.enabled ? autoRecallBudget : hotTokens + proceduresTokens + activeTasksTokens + staleWarningTokens);
 
   const recommendations: string[] = [];
   if (workspaceTokens > 3000) {

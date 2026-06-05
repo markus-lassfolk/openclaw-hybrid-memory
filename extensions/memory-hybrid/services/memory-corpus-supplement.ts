@@ -40,11 +40,7 @@ export type MemoryCorpusGetResult = {
 };
 
 export type MemoryCorpusSupplement = {
-  search(params: {
-    query: string;
-    maxResults?: number;
-    agentSessionKey?: string;
-  }): Promise<MemoryCorpusSearchResult[]>;
+  search(params: { query: string; maxResults?: number; agentSessionKey?: string }): Promise<MemoryCorpusSearchResult[]>;
   get(params: {
     lookup: string;
     fromLine?: number;

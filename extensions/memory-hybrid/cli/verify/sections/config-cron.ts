@@ -34,10 +34,7 @@ import {
   extractCronStoreJobModel,
   readEffectiveAgentChatPrimaryFromOpenclawJsonRoot,
 } from "../../../utils/openclaw-agent-defaults.js";
-import {
-  isConsolidatedMaintenanceCronEnabled,
-  readConsolidatedCronJobsFlag,
-} from "../../install/cron-jobs.js";
+import { isConsolidatedMaintenanceCronEnabled, readConsolidatedCronJobsFlag } from "../../install/cron-jobs.js";
 import { approxIntervalMs, relativeTime } from "../../shared.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
@@ -674,9 +671,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
 
   // Truly external jobs: those not in the hybrid-mem canonical list AND not pluginJobId hybrid-mem:*
   const knownKeys = new Set(
-    useConsolidatedCron
-      ? ["maintenance-nightly", ...legacyCronJobKeys]
-      : jobsToDisplay.map((j) => j.key),
+    useConsolidatedCron ? ["maintenance-nightly", ...legacyCronJobKeys] : jobsToDisplay.map((j) => j.key),
   );
   const otherJobs = Array.from(allJobs.entries()).filter(([key, job]) => !knownKeys.has(key) && !job.isHybridMem);
 

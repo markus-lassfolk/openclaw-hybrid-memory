@@ -212,8 +212,7 @@ describe("heartbeat active-task + goal stewardship (facts ledger)", () => {
   });
 
   it("merged heartbeat prepend places goal stewardship before active tasks", async () => {
-    const handlers: Array<(event: unknown, hookCtx?: unknown) => Promise<{ prependContext?: string } | undefined>> =
-      [];
+    const handlers: Array<(event: unknown, hookCtx?: unknown) => Promise<{ prependContext?: string } | undefined>> = [];
     const api = createMockPluginApi();
     const logger = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
     const apiWithLogger = {

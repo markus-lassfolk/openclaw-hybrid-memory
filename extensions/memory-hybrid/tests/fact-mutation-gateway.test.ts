@@ -85,10 +85,13 @@ describe("fact-mutation-gateway", () => {
       const respond = vi.fn();
       await handlers.get("hybrid-mem.facts.list")!({ params: {}, respond });
 
-      expect(respond).toHaveBeenCalledWith(true, expect.objectContaining({
-        count: 1,
-        facts: expect.arrayContaining([expect.objectContaining({ id: fact.id })]),
-      }));
+      expect(respond).toHaveBeenCalledWith(
+        true,
+        expect.objectContaining({
+          count: 1,
+          facts: expect.arrayContaining([expect.objectContaining({ id: fact.id })]),
+        }),
+      );
     });
 
     it("searches by query when provided", async () => {
@@ -153,9 +156,7 @@ describe("fact-mutation-gateway", () => {
       const existing = makeFact();
       const updated = makeFact({ id: "aabb0011-0000-0000-0000-000000000002", text: "React uses fiber" });
       const { handlers, factsDb } = captureHandlers();
-      factsDb.getById
-        .mockReturnValueOnce(existing)
-        .mockReturnValueOnce(updated);
+      factsDb.getById.mockReturnValueOnce(existing).mockReturnValueOnce(updated);
       factsDb.store.mockReturnValue(updated);
 
       const respond = vi.fn();
@@ -173,9 +174,7 @@ describe("fact-mutation-gateway", () => {
       const existing = makeFact();
       const afterUpdate = makeFact({ confidence: 0.5 });
       const { handlers, factsDb } = captureHandlers();
-      factsDb.getById
-        .mockReturnValueOnce(existing)
-        .mockReturnValueOnce(afterUpdate);
+      factsDb.getById.mockReturnValueOnce(existing).mockReturnValueOnce(afterUpdate);
 
       const respond = vi.fn();
       await handlers.get("hybrid-mem.facts.update")!({
@@ -254,16 +253,18 @@ describe("fact-mutation-gateway", () => {
         respond,
       });
 
-      expect(factsDb.store).toHaveBeenCalledWith(expect.objectContaining({
-        text: "New discovery",
-        category: "technical",
-        importance: 0.7,
-        entity: "Testing",
-        key: "insight",
-        confidence: 0.85,
-        tags: ["manual"],
-        source: "wiki-create",
-      }));
+      expect(factsDb.store).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "New discovery",
+          category: "technical",
+          importance: 0.7,
+          entity: "Testing",
+          key: "insight",
+          confidence: 0.85,
+          tags: ["manual"],
+          source: "wiki-create",
+        }),
+      );
       expect(respond).toHaveBeenCalledWith(true, { fact: expect.objectContaining({ id: stored.id }) });
     });
 
@@ -286,12 +287,14 @@ describe("fact-mutation-gateway", () => {
         respond,
       });
 
-      expect(factsDb.store).toHaveBeenCalledWith(expect.objectContaining({
-        text: "Minimal fact",
-        category: "general",
-        importance: 0.5,
-        confidence: 0.8,
-      }));
+      expect(factsDb.store).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: "Minimal fact",
+          category: "general",
+          importance: 0.5,
+          confidence: 0.8,
+        }),
+      );
     });
   });
 });

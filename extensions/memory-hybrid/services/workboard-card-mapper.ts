@@ -43,7 +43,9 @@ export function isHybridMemoryCard(card: WorkboardCardRecord): boolean {
   return !!card.externalId?.startsWith(TASK_EXTERNAL_PREFIX) || !!card.externalId?.startsWith(GOAL_EXTERNAL_PREFIX);
 }
 
-export function parseExternalId(extId: string): { type: "task"; label: string } | { type: "goal"; goalId: string } | null {
+export function parseExternalId(
+  extId: string,
+): { type: "task"; label: string } | { type: "goal"; goalId: string } | null {
   if (extId.startsWith(TASK_EXTERNAL_PREFIX)) {
     return { type: "task", label: extId.slice(TASK_EXTERNAL_PREFIX.length) };
   }
@@ -84,11 +86,7 @@ export function taskToCard(
   };
 }
 
-export function goalToCard(
-  goal: Goal,
-  columns: WorkboardColumnMapping,
-  cardTag: string,
-): WorkboardCardPayload | null {
+export function goalToCard(goal: Goal, columns: WorkboardColumnMapping, cardTag: string): WorkboardCardPayload | null {
   const column = goalStatusToColumn(goal.status, columns);
   if (!column) return null;
 
@@ -159,10 +157,7 @@ function goalStatusToColumn(status: GoalStatus, columns: WorkboardColumnMapping)
   }
 }
 
-export function columnToTaskStatus(
-  column: string,
-  columns: WorkboardColumnMapping,
-): ActiveTaskStatus | null {
+export function columnToTaskStatus(column: string, columns: WorkboardColumnMapping): ActiveTaskStatus | null {
   const lower = column.toLowerCase();
   const match = (col: string | null) => col?.toLowerCase() === lower;
 
@@ -174,10 +169,7 @@ export function columnToTaskStatus(
   return null;
 }
 
-export function columnToGoalStatus(
-  column: string,
-  columns: WorkboardColumnMapping,
-): GoalStatus | null {
+export function columnToGoalStatus(column: string, columns: WorkboardColumnMapping): GoalStatus | null {
   const lower = column.toLowerCase();
   const match = (col: string | null) => col?.toLowerCase() === lower;
 

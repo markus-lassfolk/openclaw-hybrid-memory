@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HybridMemoryConfig } from "../config.js";
-import { collectDreamCycleLog, collectWorkshopChanges, collectWorkshopProposals } from "../routes/dashboard/workshop-collectors.js";
+import {
+  collectDreamCycleLog,
+  collectWorkshopChanges,
+  collectWorkshopProposals,
+} from "../routes/dashboard/workshop-collectors.js";
 import { ChangeFeed } from "../services/change-feed.js";
 import { BROADCAST_CHANGE_SESSION_KEY } from "../services/change-feed-emit.js";
 import { MISSION_CONTROL_SESSION_KEY } from "../services/workshop-config.js";
@@ -55,10 +59,32 @@ describe("collectWorkshopProposals", () => {
       proposalsDb: {
         list: (filters?: { status?: string }) => {
           if (filters?.status === "pending") {
-            return [{ id: "p1", title: "Pending", status: "pending", confidence: 0.7, createdAt: 50, targetFile: "SOUL.md", observation: "", suggestedChange: "" }];
+            return [
+              {
+                id: "p1",
+                title: "Pending",
+                status: "pending",
+                confidence: 0.7,
+                createdAt: 50,
+                targetFile: "SOUL.md",
+                observation: "",
+                suggestedChange: "",
+              },
+            ];
           }
           if (filters?.status === "applied") {
-            return [{ id: "p2", title: "Applied", status: "applied", confidence: 0.9, createdAt: 100, targetFile: "USER.md", observation: "", suggestedChange: "" }];
+            return [
+              {
+                id: "p2",
+                title: "Applied",
+                status: "applied",
+                confidence: 0.9,
+                createdAt: 100,
+                targetFile: "USER.md",
+                observation: "",
+                suggestedChange: "",
+              },
+            ];
           }
           return [];
         },

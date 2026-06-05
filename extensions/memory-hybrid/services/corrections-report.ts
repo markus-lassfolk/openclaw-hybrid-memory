@@ -39,7 +39,10 @@ export function parseSkillUpdateChange(body: string): string {
   const trimmed = body.trim();
   const explicit = trimmed.match(SKILL_PATH_IN_TEXT);
   if (explicit) {
-    const after = trimmed.slice(trimmed.indexOf(explicit[1]) + explicit[1].length).replace(/^\s*:\s*/, "").trim();
+    const after = trimmed
+      .slice(trimmed.indexOf(explicit[1]) + explicit[1].length)
+      .replace(/^\s*:\s*/, "")
+      .trim();
     return after || trimmed;
   }
   const colonSplit = trimmed.match(/^([^\s:]+):\s*(.+)$/s);

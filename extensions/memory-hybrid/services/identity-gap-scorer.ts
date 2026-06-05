@@ -34,11 +34,7 @@ function overlapRatio(insightTokens: Set<string>, fileText: string): number {
   return hit / insightTokens.size;
 }
 
-export function scoreIdentityGaps(
-  insights: MemoryEntry[],
-  workspaceRoot: string,
-  topN = 12,
-): IdentityGapResult {
+export function scoreIdentityGaps(insights: MemoryEntry[], workspaceRoot: string, topN = 12): IdentityGapResult {
   const bullets: string[] = [];
   const identityContents: Record<string, string> = {};
   for (const file of IDENTITY_GAP_FILES) {

@@ -56,11 +56,7 @@ const MAINTENANCE_FLAT_PATHS: Record<string, string> = {
 };
 
 export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx: ManageContext): void {
-  const maintenance = createCommandGroup(
-    mem,
-    "maintenance",
-    "Cron, backfill, and operational health (Issue #281)",
-  );
+  const maintenance = createCommandGroup(mem, "maintenance", "Cron, backfill, and operational health (Issue #281)");
 
   registerMaintenanceHealthCommands(maintenance, b.cfg);
   registerMaintenanceOrchestratorCommands(maintenance, b);
@@ -83,7 +79,11 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
     groupedBackfillParent: true,
   });
 
-  registerRunAllCommand(wrapChainableWithDeprecated(mem, { "run-all": MAINTENANCE_FLAT_PATHS["run-all"]! }), b, "run-all");
+  registerRunAllCommand(
+    wrapChainableWithDeprecated(mem, { "run-all": MAINTENANCE_FLAT_PATHS["run-all"]! }),
+    b,
+    "run-all",
+  );
   registerBackfillMaintenanceCommands(wrapChainableWithDeprecated(mem, BACKFILL_FLAT_PATHS), b, {
     onlyBackfill: true,
   });
@@ -92,7 +92,9 @@ export function registerMaintenanceGroup(mem: Chainable, b: ManageBindings, ctx:
     b,
   );
   registerAnalyzeMaintenanceLogsCommand(
-    wrapChainableWithDeprecated(mem, { "analyze-maintenance-logs": MAINTENANCE_FLAT_PATHS["analyze-maintenance-logs"]! }),
+    wrapChainableWithDeprecated(mem, {
+      "analyze-maintenance-logs": MAINTENANCE_FLAT_PATHS["analyze-maintenance-logs"]!,
+    }),
     b,
   );
   registerValidateCronExit(

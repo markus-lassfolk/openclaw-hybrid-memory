@@ -247,11 +247,7 @@ function installStdoutPatchForMachineOutputCli(mode: MachineOutputMode): void {
   installCleanupHooks();
 }
 
-function mirrorOnlyToStderr(
-  chunk: WriteChunk,
-  encoding?: BufferEncoding,
-  callback?: WriteCallback,
-): boolean {
+function mirrorOnlyToStderr(chunk: WriteChunk, encoding?: BufferEncoding, callback?: WriteCallback): boolean {
   const stderr = process.stderr;
   if (!stderr || typeof stderr.write !== "function") {
     callback?.();

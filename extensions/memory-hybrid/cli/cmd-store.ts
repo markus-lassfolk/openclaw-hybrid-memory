@@ -46,7 +46,8 @@ export function inferTargetFile(content: string): string {
   if (/\b(identity|creature|persona)\b/.test(lower)) return "IDENTITY.md";
   if (/\b(my (name|role)|agent (name|role|identity)|who (i am|you are))\b/.test(lower)) return "IDENTITY.md";
   // USER.md only for explicit user/operator facts — not agent behavioural style
-  if (/\bthe (user|operator|human|markus)\b.*\b(prefers?|likes?|wants?|expects?|needs?)\b/.test(lower)) return "USER.md";
+  if (/\bthe (user|operator|human|markus)\b.*\b(prefers?|likes?|wants?|expects?|needs?)\b/.test(lower))
+    return "USER.md";
   return "SOUL.md";
 }
 

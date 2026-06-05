@@ -137,10 +137,7 @@ export async function runVerboseFollowUp<T>(
 }
 
 /** Skip follow-ups when the core cycle was skipped or WAL replay failed before mutation. */
-export function shouldSkipDreamCycleFollowUps(result: {
-  skipped: boolean;
-  failedStages: readonly string[];
-}): boolean {
+export function shouldSkipDreamCycleFollowUps(result: { skipped: boolean; failedStages: readonly string[] }): boolean {
   return result.skipped || result.failedStages.includes("wal pre-flush");
 }
 

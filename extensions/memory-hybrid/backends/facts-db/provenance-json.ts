@@ -79,7 +79,16 @@ export type ProvenanceSourceFactSummary = {
 };
 
 type ProvenanceFactLookup = {
-  getById(id: string): { id: string; text: string; category?: string; source?: string; supersededAt?: number | null; expiresAt?: number | null } | null;
+  getById(
+    id: string,
+  ): {
+    id: string;
+    text: string;
+    category?: string;
+    source?: string;
+    supersededAt?: number | null;
+    expiresAt?: number | null;
+  } | null;
 };
 
 /**

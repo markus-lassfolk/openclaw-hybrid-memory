@@ -186,32 +186,34 @@ export function registerManageCredentialsAndScope(mem: Chainable, b: ManageBindi
       "Reveal the secret value in the default (metadata) output. Without this flag the value is masked for safety.",
     )
     .action(
-      withExit(async (opts: { service: string; type?: string; valueOnly?: boolean; quiet?: boolean; showValue?: boolean }) => {
-        const valueOnly = opts.valueOnly === true || opts.quiet === true;
-        const entry = runCredentialsGet({ service: opts.service, type: opts.type });
-        if (!entry) {
-          console.error(
-            `No credential found for service "${opts.service}"${opts.type ? ` (type: ${opts.type})` : ""}.`,
-          );
-          process.exitCode = 1;
-          return;
-        }
-        if (valueOnly) {
-          withMachineOutputStdoutSuppressed(() => {
-            process.stdout.write(entry.value);
-          });
-          return;
-        }
-        console.log(`service: ${entry.service}`);
-        console.log(`type: ${entry.type}`);
-        if (opts.showValue) {
-          console.log(`value: ${entry.value}`);
-        } else {
-          console.log("value: *** (use --show-value to reveal, or --value-only to pipe)");
-        }
-        if (entry.url) console.log(`url: ${entry.url}`);
-        if (entry.notes) console.log(`notes: ${entry.notes}`);
-      }),
+      withExit(
+        async (opts: { service: string; type?: string; valueOnly?: boolean; quiet?: boolean; showValue?: boolean }) => {
+          const valueOnly = opts.valueOnly === true || opts.quiet === true;
+          const entry = runCredentialsGet({ service: opts.service, type: opts.type });
+          if (!entry) {
+            console.error(
+              `No credential found for service "${opts.service}"${opts.type ? ` (type: ${opts.type})` : ""}.`,
+            );
+            process.exitCode = 1;
+            return;
+          }
+          if (valueOnly) {
+            withMachineOutputStdoutSuppressed(() => {
+              process.stdout.write(entry.value);
+            });
+            return;
+          }
+          console.log(`service: ${entry.service}`);
+          console.log(`type: ${entry.type}`);
+          if (opts.showValue) {
+            console.log(`value: ${entry.value}`);
+          } else {
+            console.log("value: *** (use --show-value to reveal, or --value-only to pipe)");
+          }
+          if (entry.url) console.log(`url: ${entry.url}`);
+          if (entry.notes) console.log(`notes: ${entry.notes}`);
+        },
+      ),
     );
 
   credentials

@@ -20,15 +20,15 @@ export function registerSensorSweepCommand(mem: Chainable, b: ManageBindings): v
           console.log("sensor-sweep: skipped (sensorSweep.enabled = false)");
           return;
         }
-        const eventBusPath = b.resolvedSqlitePath
-          ? join(dirname(b.resolvedSqlitePath), "event-bus.db")
-          : null;
+        const eventBusPath = b.resolvedSqlitePath ? join(dirname(b.resolvedSqlitePath), "event-bus.db") : null;
         if (!eventBusPath) {
           throw new Error("sensor-sweep requires resolvedSqlitePath to locate event-bus.db");
         }
         const eventBus = new EventBus(eventBusPath);
         try {
-          const tierRaw = String(opts?.tier ?? "all").trim().toLowerCase();
+          const tierRaw = String(opts?.tier ?? "all")
+            .trim()
+            .toLowerCase();
           const tier = tierRaw === "all" ? "all" : tierRaw === "2" ? 2 : 1;
           const result = await sweepAll(eventBus, b.cfg.sensorSweep, b.factsDb, {
             tier,

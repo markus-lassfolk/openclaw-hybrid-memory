@@ -101,9 +101,9 @@ describe("isHybridMemCredentialsValueOnlyInvocation", () => {
   });
 
   it("returns false for credentials list", () => {
-    expect(
-      isHybridMemCredentialsValueOnlyInvocation(["node", "openclaw", "hybrid-mem", "credentials", "list"]),
-    ).toBe(false);
+    expect(isHybridMemCredentialsValueOnlyInvocation(["node", "openclaw", "hybrid-mem", "credentials", "list"])).toBe(
+      false,
+    );
   });
 
   it("returns false for credentials get without value-only", () => {

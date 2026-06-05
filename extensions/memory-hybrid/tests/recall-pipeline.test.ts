@@ -744,9 +744,7 @@ describe("runRecallPipelineQuery — HyDE fallback, FTS/embed ordering, vector t
     (deps.factsDb.getById as ReturnType<typeof vi.fn>).mockImplementation((id: string) =>
       id === "fts-1" ? makeEntry("fts-1") : null,
     );
-    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockImplementation(
-      () => new Promise(() => undefined),
-    );
+    (deps.embeddings.embed as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => undefined));
 
     const pipelineStatusRef = { semanticDegraded: false };
     await runRecallPipelineQuery(
@@ -1103,9 +1101,15 @@ describe("runRecallPipelineQuery — stage abort signal", () => {
     const controller = new AbortController();
     controller.abort();
 
-    const result = await runRecallPipelineQuery("hello", 5, deps, { value: false }, {
-      stageSignal: controller.signal,
-    });
+    const result = await runRecallPipelineQuery(
+      "hello",
+      5,
+      deps,
+      { value: false },
+      {
+        stageSignal: controller.signal,
+      },
+    );
 
     expect(result).toEqual([]);
     expect(deps.factsDb.search).not.toHaveBeenCalled();
@@ -1142,11 +1146,17 @@ describe("runRecallPipelineQuery — stage abort signal", () => {
     const controller = new AbortController();
     const statusRef = { semanticDegraded: false };
 
-    const pending = runRecallPipelineQuery("semantic query", 5, deps, { value: false }, {
-      stageSignal: controller.signal,
-      policy: DEFAULT_INTERACTIVE_RECALL_POLICY,
-      pipelineStatusRef: statusRef,
-    });
+    const pending = runRecallPipelineQuery(
+      "semantic query",
+      5,
+      deps,
+      { value: false },
+      {
+        stageSignal: controller.signal,
+        policy: DEFAULT_INTERACTIVE_RECALL_POLICY,
+        pipelineStatusRef: statusRef,
+      },
+    );
     await new Promise<void>((resolve) => setImmediate(resolve));
     controller.abort();
     const result = await pending;

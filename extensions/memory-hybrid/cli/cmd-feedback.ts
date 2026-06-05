@@ -12,7 +12,13 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { FactsDB, ReinforcementContext } from "../backends/facts-db.js";
-import { getCronModelConfig, getDefaultCronModel, getLLMModelPreference, isCompactVerbosity, resolveReflectionModelAndFallbacks } from "../config.js";
+import {
+  getCronModelConfig,
+  getDefaultCronModel,
+  getLLMModelPreference,
+  isCompactVerbosity,
+  resolveReflectionModelAndFallbacks,
+} from "../config.js";
 import { chatCompleteWithRetry } from "../services/chat.js";
 import { CostFeature } from "../services/cost-feature-labels.js";
 import { runCrossAgentLearning } from "../services/cross-agent-learning.js";

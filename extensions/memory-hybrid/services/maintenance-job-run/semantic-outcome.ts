@@ -13,9 +13,7 @@ const SELF_CORRECTION_CLI_STATUSES = new Set<string>([
 ]);
 
 /** Map self-correction CLI status to unified JobRun outcome. */
-export function selfCorrectionStatusToJobRunOutcome(
-  status: string | undefined,
-): JobRunSemanticOutcome {
+export function selfCorrectionStatusToJobRunOutcome(status: string | undefined): JobRunSemanticOutcome {
   switch (status) {
     case "success_analyzed":
       return "success";
@@ -52,9 +50,7 @@ export function resolveSemanticGuardToken(semantic: string | undefined): JobRunS
 }
 
 /** Map JobRun outcome to cron validator semantic class. */
-export function jobRunOutcomeToValidatorSemantic(
-  outcome: JobRunSemanticOutcome,
-): "ok" | "degraded" | "semantic_fail" {
+export function jobRunOutcomeToValidatorSemantic(outcome: JobRunSemanticOutcome): "ok" | "degraded" | "semantic_fail" {
   switch (outcome) {
     case "success":
     case "empty":

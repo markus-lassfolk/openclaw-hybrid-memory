@@ -569,7 +569,8 @@ describe("task-ledger-facts", () => {
             label: stored!.label,
             kind: "pr-live-blocker" as const,
             toStatus: "stage-4-feedback" as const,
-            reason: "[PR hygiene #99] Live GitHub state: unresolved_review_threads — task updated to reflect actual PR state.",
+            reason:
+              "[PR hygiene #99] Live GitHub state: unresolved_review_threads — task updated to reflect actual PR state.",
             prBlockerStatus: "unresolved_review_threads|owner:repo:99",
           },
         ],

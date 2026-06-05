@@ -529,7 +529,9 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.end(JSON.stringify(payload));
       } catch (err: unknown) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        pluginLogger.error(`[dashboard-server] /api/viewer/correlation: ${err instanceof Error ? err.message : String(err)}`);
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/correlation: ${err instanceof Error ? err.message : String(err)}`,
+        );
         res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
@@ -661,10 +663,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(
           JSON.stringify({
-            changes: collectWorkshopChanges(
-              wctx,
-              Number.isFinite(limit) ? limit : DEFAULT_WORKSHOP_LIST_LIMIT,
-            ),
+            changes: collectWorkshopChanges(wctx, Number.isFinite(limit) ? limit : DEFAULT_WORKSHOP_LIST_LIMIT),
           }),
         );
       } catch (err) {
@@ -764,8 +763,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
               return;
             }
             if (action === "undo") {
-              const changeEventId =
-                typeof body.changeEventId === "string" ? body.changeEventId.trim() : undefined;
+              const changeEventId = typeof body.changeEventId === "string" ? body.changeEventId.trim() : undefined;
               const result = undoWorkshopProposal(wctx, id, changeEventId ? { changeEventId } : undefined);
               res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
               res.end(JSON.stringify(result));
