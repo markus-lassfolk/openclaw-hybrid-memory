@@ -177,14 +177,18 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
       withExit(async (opts?: { days?: string; json?: boolean }) => {
         const days = Number.parseInt(opts?.days ?? "60", 10);
         const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
-        let traces = 0;
-        const paths = resolveExtractSessionFilePaths(cfg, days);
-        for (const filePath of paths) {
-          traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath, cfg);
+        try {
+          let traces = 0;
+          const paths = resolveExtractSessionFilePaths(cfg, days);
+          for (const filePath of paths) {
+            traces += backfillWorkflowTracesFromFile(factsDb, workflowStore, filePath, cfg);
+          }
+          const report = { files: paths.length, workflowTraces: traces, days };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else console.log(`backfill-workflow-traces: recorded ${traces} trace(s) from ${paths.length} session(s)`);
+        } finally {
+          workflowStore.close();
         }
-        const report = { files: paths.length, workflowTraces: traces, days };
-        if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else console.log(`backfill-workflow-traces: recorded ${traces} trace(s) from ${paths.length} session(s)`);
       }),
     );
 
@@ -259,17 +263,21 @@ export function registerBackfillMaintenanceCommands(mem: Chainable, b: ManageBin
     .action(
       withExit(async (opts?: { dryRun?: boolean; json?: boolean }) => {
         const workflowStore = new WorkflowStore(defaultWorkflowDbPath());
-        const result = workflowStore.dedupeBySessionAndArgsHash({ dryRun: !!opts?.dryRun });
-        const report = { ...result, dryRun: !!opts?.dryRun };
-        if (opts?.json) console.log(JSON.stringify(report, null, 2));
-        else if (opts?.dryRun) {
-          console.log(
-            `dedupe-workflow-traces (dry-run): ${result.duplicateGroups} duplicate group(s), would remove ${result.removed} row(s)`,
-          );
-        } else {
-          console.log(
-            `dedupe-workflow-traces: removed ${result.removed} duplicate row(s), kept ${result.kept} canonical row(s)`,
-          );
+        try {
+          const result = workflowStore.dedupeBySessionAndArgsHash({ dryRun: !!opts?.dryRun });
+          const report = { ...result, dryRun: !!opts?.dryRun };
+          if (opts?.json) console.log(JSON.stringify(report, null, 2));
+          else if (opts?.dryRun) {
+            console.log(
+              `dedupe-workflow-traces (dry-run): ${result.duplicateGroups} duplicate group(s), would remove ${result.removed} row(s)`,
+            );
+          } else {
+            console.log(
+              `dedupe-workflow-traces: removed ${result.removed} duplicate row(s), kept ${result.kept} canonical row(s)`,
+            );
+          }
+        } finally {
+          workflowStore.close();
         }
       }),
     );

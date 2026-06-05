@@ -16,7 +16,7 @@ import type { SQLInputValue } from "node:sqlite";
 
 import { capturePluginError } from "../services/error-reporter.js";
 import { isSystemWorkflowGoal } from "../services/workflow-goal-classifier.js";
-import { nowIso, cutoffIsoDaysAgo } from "../utils/dates.js";
+import { nowIso, cutoffIsoDaysAgo, formatTimestampUtc } from "../utils/dates.js";
 import { backfillWorkflowTextTimestamps } from "../utils/timestamp-migration.js";
 import { BaseSqliteStore } from "./base-sqlite-store.js";
 import { readSchemaVersion, runVersionedSchemaMigration } from "./sqlite-schema-meta.js";
@@ -359,9 +359,9 @@ export class WorkflowStore extends BaseSqliteStore {
         sinceSec != null
           ? this.liveDb
               .prepare(
-                `SELECT goal FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch')`,
+                `SELECT goal FROM workflow_traces WHERE created_at >= ?`,
               )
-              .all(sinceSec)
+              .all(formatTimestampUtc(sinceSec))
           : this.liveDb.prepare("SELECT goal FROM workflow_traces").all()
       ) as Array<{ goal: string }>;
       let systemGoals = 0;
