@@ -405,24 +405,32 @@ function registerManageStorageMaintenanceOnParent(
                   2,
                 ),
               );
+              if (r.reason === "storage_unavailable") {
+                process.exitCode = 2;
+              }
               return;
             }
             if (r.status === "recorded") {
               console.log(
-                `record-storage-sample: inserted row (unix=${r.recordedAt}; sampleId=${r.sampleId ?? "n/a"}) status=success_recorded`,
+                `record-storage-sample: inserted row (unix=${r.recordedAt}; sampleId=${r.sampleId ?? "n/a"}) status=success_recorded semantic=success`,
               );
               return;
             }
             if (r.status === "dry_run") {
               console.log(
-                `record-storage-sample: dry-run (unix=${r.sample.recordedAt}; sqliteBytes=${r.sample.sqliteBytes ?? "null"}; lanceBytes=${r.sample.lanceBytes ?? "null"}; linkCount=${r.sample.linkCount}; factCount=${r.sample.factCount}) status=success_dry_run`,
+                `record-storage-sample: dry-run (unix=${r.sample.recordedAt}; sqliteBytes=${r.sample.sqliteBytes ?? "null"}; lanceBytes=${r.sample.lanceBytes ?? "null"}; linkCount=${r.sample.linkCount}; factCount=${r.sample.factCount}) status=success_dry_run semantic=success`,
               );
               return;
             }
+            if (r.reason === "storage_unavailable") {
+              console.log(
+                `record-storage-sample: skipped (storage database unavailable; unix=${r.recordedAt}) status=skipped_storage_unavailable reason=storage_unavailable semantic=partial`,
+              );
+              process.exitCode = 2;
+              return;
+            }
             console.log(
-              r.reason === "storage_unavailable"
-                ? `record-storage-sample: skipped (storage database unavailable; unix=${r.recordedAt}) status=skipped_storage_unavailable`
-                : `record-storage-sample: skipped (already sampled today UTC; unix=${r.recordedAt}) status=skipped_already_sampled_today`,
+              `record-storage-sample: skipped (already sampled today UTC; unix=${r.recordedAt}) status=skipped_already_sampled_today semantic=success`,
             );
           },
         ),

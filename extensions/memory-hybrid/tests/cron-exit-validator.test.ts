@@ -557,6 +557,22 @@ error: unknown command 'bar'
       expect(result.failedSteps.some((s) => s.step === "dream-cycle-core")).toBe(true);
     });
 
+    it("fails dream-cycle-core validation when required step is dream-cycle-core", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "test.exit.txt");
+      const logPath = join(tmpDir, "test.log");
+      writeFileSync(exitPath, "2024-05-08T02:15:30Z dream-cycle-core exit=0\n");
+      writeFileSync(
+        logPath,
+        "memory-hybrid: dream-cycle — stage 3 failed after 12s: reflection (patterns): Error: llm down",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle-core"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.failedSteps.some((s) => s.step === "dream-cycle-core")).toBe(true);
+    });
+
     it("fails dream-cycle validation from machine-readable status line without duplicate core entries", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
       const exitPath = join(tmpDir, "test.exit.txt");
@@ -1085,6 +1101,120 @@ error: unknown command 'bar'
           failureCategory: "mechanical_failure",
           failureClass: "unknown_maintenance_command",
           message: expect.stringContaining("unknown-fancy-command"),
+        }),
+      );
+    });
+
+    it("blocks guard updates when hidden LLM failures are logged without a non-zero exit", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "maintenance-nightly.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z maintenance-nightly exit=0\n");
+      writeFileSync(logPath, "distill: LLM call failed after retries\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["maintenance-nightly"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "maintenance",
+          failureClass: "hidden_llm_failure",
+        }),
+      );
+    });
+
+    it("blocks guard updates when maintenance cursor did not advance", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "distill.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(logPath, "distill cursor_advanced=false scanned=1200\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "cursor",
+          failureClass: "cursor_not_advanced",
+        }),
+      );
+    });
+
+    it("detects record-storage-sample storage_unavailable as semantic failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "record-storage-sample.exit.txt");
+      const logPath = join(tmpDir, "record-storage-sample.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z record-storage-sample exit=0\n");
+      writeFileSync(
+        logPath,
+        "record-storage-sample: skipped (storage database unavailable) status=skipped_storage_unavailable reason=storage_unavailable semantic=partial",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["record-storage-sample"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "record-storage-sample",
+          failureClass: "record_storage_unavailable",
+        }),
+      );
+    });
+
+    it("detects analyze-maintenance-logs strict failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "analyze-maintenance-logs.exit.txt");
+      const logPath = join(tmpDir, "analyze-maintenance-logs.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z analyze-maintenance-logs exit=0\n");
+      writeFileSync(logPath, "analyze-maintenance-logs steps=12 findings=3 strict=fail semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["analyze-maintenance-logs"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "analyze-maintenance-logs",
+          failureClass: "analyze_maintenance_logs_strict_fail",
+        }),
+      );
+    });
+
+    it("detects passive-observer errors as semantic failure", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "passive-observer.exit.txt");
+      const logPath = join(tmpDir, "passive-observer.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z passive-observer exit=0\n");
+      writeFileSync(logPath, "passive-observer scanned=42 errors=2 semantic=partial\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["passive-observer"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "passive-observer",
+          failureClass: "passive_observer_errors",
+        }),
+      );
+    });
+
+    it("does not false-positive implicit-feedback collapse on generic collapse text", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "distill.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(logPath, "distill: cluster collapse avoided scanned=5000 collapsed=0\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "implicit_feedback_large_backlog_zero_changes",
         }),
       );
     });

@@ -155,7 +155,7 @@ export async function runAnalyzeMaintenanceLogs(
 
   const strictFailed = shouldMaintenanceStrictFail(reportFindings);
   const summary = `steps=${steps.length} findings=${reportFindings.length} strict=${strictFailed ? "fail" : "ok"} semantic=${strictFailed ? "partial" : "success"}`;
-  if (opts?.strict && strictFailed) process.exitCode = 1;
+  if (opts?.strict && strictFailed) process.exitCode = 2;
   return { summary, strictFailed };
 }
 

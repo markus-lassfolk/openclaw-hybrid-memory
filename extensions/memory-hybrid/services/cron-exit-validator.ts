@@ -1108,12 +1108,70 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const recordStorageDetected =
+    requiredSteps.includes("record-storage-sample") || /\brecord-storage-sample\b/i.test(logContent);
+  const recordStorageUnavailable =
+    /\breason=storage_unavailable\b/i.test(logContent) ||
+    /\bstatus=skipped_storage_unavailable\b/i.test(logContent);
+  if (recordStorageDetected && recordStorageUnavailable) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "record-storage-sample",
+        failureCategory: "semantic_failure",
+        failureClass: "record_storage_unavailable",
+        message: `${jobName}:record-storage-sample skipped because storage database was unavailable`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const analyzeLogsDetected =
+    requiredSteps.includes("analyze-maintenance-logs") || /\banalyze-maintenance-logs\b/i.test(logContent);
+  if (analyzeLogsDetected && /\bstrict=fail\b/i.test(logContent)) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "analyze-maintenance-logs",
+        failureCategory: "semantic_failure",
+        failureClass: "analyze_maintenance_logs_strict_fail",
+        message: `${jobName}:analyze-maintenance-logs reported strict findings despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const passiveObserverDetected =
+    requiredSteps.includes("passive-observer") || /\bpassive-observer\b/i.test(logContent);
+  const passiveObserverErrors = parsePositiveMetric(logContent, "errors");
+  if (
+    passiveObserverDetected &&
+    typeof passiveObserverErrors === "number" &&
+    passiveObserverErrors > 0
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "passive-observer",
+        failureCategory: "semantic_failure",
+        failureClass: "passive_observer_errors",
+        message: `${jobName}:passive-observer reported errors despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected =
     /\bimplicit-feedback-collapse\b/i.test(logContent) ||
-    /\bweekly-implicit-feedback-collapse\b/i.test(logContent) ||
-    /\bcollapse\b/i.test(logContent);
+    /\bweekly-implicit-feedback-collapse\b/i.test(logContent);
   if (
     collapseDetected &&
     typeof collapseScanned === "number" &&
@@ -1236,6 +1294,9 @@ function combineSemanticStatus(
 
 function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
   if (issue.failureCategory !== "semantic_failure") return false;
+  if (issue.failureClass === "hidden_llm_failure" || issue.failureClass === "cursor_not_advanced") {
+    return true;
+  }
   return (
     issue.stepName === "reflect-rules" ||
     issue.stepName === "self-correction-run" ||
@@ -1246,6 +1307,7 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "reflect" ||
     issue.stepName === "reflect-meta" ||
     issue.stepName === "enrich-entities" ||
+    issue.stepName === "enrich-entities-deep" ||
     issue.stepName === "consolidate" ||
     issue.stepName === "reflect-identity" ||
     issue.stepName === "resolve-contradictions" ||
@@ -1260,7 +1322,20 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "continuous-verification" ||
     issue.stepName === "lifecycle-sync" ||
     issue.stepName === "auto-classify" ||
-    issue.stepName === "implicit-feedback-collapse"
+    issue.stepName === "implicit-feedback-collapse" ||
+    issue.stepName === "record-storage-sample" ||
+    issue.stepName === "analyze-maintenance-logs" ||
+    issue.stepName === "passive-observer" ||
+    issue.stepName === "active-tasks-maintain" ||
+    issue.stepName === "maintenance" ||
+    issue.stepName === "cursor" ||
+    issue.stepName === "persona-proposals"
+  );
+}
+
+function requiredStepsIncludeDreamPipeline(requiredSteps: string[]): boolean {
+  return requiredSteps.some(
+    (step) => step === "dream-cycle" || step === "dream-cycle-core" || step.startsWith("dream-cycle-"),
   );
 }
 
@@ -1385,10 +1460,13 @@ export function validateMaintenanceExecution(
     }
   }
 
-  if (logPath && requiredSteps.includes("dream-cycle")) {
+  if (logPath && requiredStepsIncludeDreamPipeline(requiredSteps)) {
+    const dreamCycleTimestamp =
+      stepMap.get("dream-cycle")?.timestamp ??
+      stepMap.get("dream-cycle-core")?.timestamp ??
+      SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
     const degradedVerification = detectDegradedContinuousVerificationStatus(logContent);
     if (degradedVerification) {
-      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
       failedSteps.push({
         timestamp: dreamCycleTimestamp,
         step: "continuous-verification",
@@ -1399,7 +1477,6 @@ export function validateMaintenanceExecution(
     }
     const dreamCycleFailures = detectDreamCyclePipelineFailures(logContent);
     if (dreamCycleFailures.length > 0) {
-      const dreamCycleTimestamp = stepMap.get("dream-cycle")?.timestamp ?? SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
       for (const failure of dreamCycleFailures) {
         failedSteps.push({
           timestamp: dreamCycleTimestamp,
