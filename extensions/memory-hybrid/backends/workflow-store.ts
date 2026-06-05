@@ -596,19 +596,55 @@ export class WorkflowStore extends BaseSqliteStore {
         return WorkflowStore.clonePatterns(memo.patterns);
       }
 
-      const allRows = this.liveDb
-        .prepare(
-          `SELECT goal, tool_sequence, outcome, duration_ms
-             FROM workflow_traces
-            ORDER BY created_at DESC
-            LIMIT ?`,
-        )
-        .all(traceSampleLimit) as {
+      let allRows: Array<{
         goal: string;
         tool_sequence: string;
         outcome: string;
         duration_ms: number;
-      }[];
+      }>;
+
+      if (excludeSystemGoals) {
+        allRows = [];
+        const BATCH_SIZE = 500;
+        let offset = 0;
+        while (allRows.length < traceSampleLimit) {
+          const batch = this.liveDb
+            .prepare(
+              `SELECT goal, tool_sequence, outcome, duration_ms
+               FROM workflow_traces
+               ORDER BY created_at DESC
+               LIMIT ? OFFSET ?`,
+            )
+            .all(BATCH_SIZE, offset) as Array<{
+            goal: string;
+            tool_sequence: string;
+            outcome: string;
+            duration_ms: number;
+          }>;
+          if (batch.length === 0) break;
+          for (const row of batch) {
+            if (!isSystemWorkflowGoal(row.goal, excludeGoalPatterns)) {
+              allRows.push(row);
+              if (allRows.length >= traceSampleLimit) break;
+            }
+          }
+          offset += BATCH_SIZE;
+        }
+      } else {
+        allRows = this.liveDb
+          .prepare(
+            `SELECT goal, tool_sequence, outcome, duration_ms
+               FROM workflow_traces
+              ORDER BY created_at DESC
+              LIMIT ?`,
+          )
+          .all(traceSampleLimit) as Array<{
+          goal: string;
+          tool_sequence: string;
+          outcome: string;
+          duration_ms: number;
+        }>;
+      }
 
       const clusters: {
         representative: string[];
@@ -618,8 +654,6 @@ export class WorkflowStore extends BaseSqliteStore {
       }[] = [];
 
       for (const row of allRows) {
-        if (excludeSystemGoals && isSystemWorkflowGoal(row.goal, excludeGoalPatterns)) continue;
-
         let seq: string[];
         try {
           seq = JSON.parse(row.tool_sequence) as string[];

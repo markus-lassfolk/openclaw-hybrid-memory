@@ -79,7 +79,7 @@ export type ProvenanceSourceFactSummary = {
 };
 
 type ProvenanceFactLookup = {
-  getById(id: string): { id: string; text: string; category?: string; source?: string } | null;
+  getById(id: string): { id: string; text: string; category?: string; source?: string; supersededAt?: number | null; expiresAt?: number | null } | null;
 };
 
 /**
@@ -92,14 +92,21 @@ export function resolveProvenanceSourceFacts(
 ): ProvenanceSourceFactSummary[] {
   const out: ProvenanceSourceFactSummary[] = [];
   const seen = new Set<string>();
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  function isLiveFact(entry: { supersededAt?: number | null; expiresAt?: number | null }): boolean {
+    return entry.supersededAt == null && (entry.expiresAt == null || entry.expiresAt > nowSec);
+  }
 
   if (provenance.sourceFacts?.length) {
     for (const row of provenance.sourceFacts) {
       if (!row?.id || seen.has(row.id)) continue;
       seen.add(row.id);
+      const entry = factsDb.getById(row.id);
+      if (entry && !isLiveFact(entry)) continue;
       out.push({
         id: row.id,
-        text: row.text ?? factsDb.getById(row.id)?.text ?? row.id,
+        text: row.text ?? entry?.text ?? row.id,
         category: row.category,
         source: row.source,
       });
@@ -111,7 +118,7 @@ export function resolveProvenanceSourceFacts(
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const entry = factsDb.getById(id);
-    if (!entry) continue;
+    if (!entry || !isLiveFact(entry)) continue;
     out.push({ id: entry.id, text: entry.text, category: entry.category, source: entry.source });
     if (out.length >= limit) return out;
   }
