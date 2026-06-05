@@ -296,7 +296,7 @@ export function filterActiveFactIds(db: DatabaseSync, ids: readonly string[]): S
     const placeholders = chunk.map(() => "?").join(",");
     const rows = db
       .prepare(
-        `SELECT id FROM facts WHERE id IN (${placeholders}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+        `SELECT id FROM facts WHERE LOWER(id) IN (${placeholders}) AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
       )
       .all(...chunk, nowSec) as Array<{ id: string }>;
     for (const row of rows) active.add(String(row.id).toLowerCase());
