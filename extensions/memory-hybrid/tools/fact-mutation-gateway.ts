@@ -9,7 +9,13 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { pluginLogger } from "../utils/logger.js";
+import {
+  resolveGatewayScopeFilter,
+  scopeFieldsFromEntry,
+  scopeFieldsFromFilter,
+} from "../utils/scope-filter.js";
 import type { MemoryEntry } from "../types/memory.js";
+import type { ScopeFilter } from "../types/memory.js";
 
 export interface FactMutationGatewayContext {
   cfg: HybridMemoryConfig;
@@ -33,8 +39,11 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
     return;
   }
 
+  const scopeFilter = (): ScopeFilter => resolveGatewayScopeFilter(ctx.api, ctx.cfg);
+
   register("hybrid-mem.facts.list", async ({ params, respond }) => {
     try {
+      const filter = scopeFilter();
       const query = typeof params.query === "string" ? params.query : "";
       const limit = typeof params.limit === "number" ? Math.min(params.limit, 100) : 20;
       const entity = typeof params.entity === "string" ? params.entity : undefined;
@@ -42,17 +51,18 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
 
       let results: { entry: MemoryEntry; score: number }[];
       if (entity) {
-        results = ctx.factsDb.lookup(entity, key, undefined, { limit });
+        results = ctx.factsDb.lookup(entity, key, undefined, { limit, scopeFilter: filter });
       } else if (query) {
         results = ctx.factsDb.search(query, limit, {
           tierFilter: "all",
+          scopeFilter: filter,
           deferAccessRefresh: true,
         });
       } else {
-        results = ctx.factsDb.search("*", limit, {
-          tierFilter: "all",
-          deferAccessRefresh: true,
-        });
+        results = ctx.factsDb
+          .getAll({ scopeFilter: filter })
+          .slice(0, limit)
+          .map((entry) => ({ entry, score: 1 }));
       }
 
       respond(true, {
@@ -66,10 +76,11 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
 
   register("hybrid-mem.facts.get", async ({ params, respond }) => {
     try {
+      const filter = scopeFilter();
       const id = typeof params.id === "string" ? params.id : "";
       if (!id) return respond(false, undefined, { message: "missing id" });
 
-      const entry = ctx.factsDb.getById(id);
+      const entry = ctx.factsDb.getById(id, { scopeFilter: filter });
       if (!entry) return respond(false, undefined, { message: "not found" });
       respond(true, { fact: factToWireFormat(entry) });
     } catch (err) {
@@ -79,44 +90,45 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
 
   register("hybrid-mem.facts.update", async ({ params, respond }) => {
     try {
+      const filter = scopeFilter();
       const id = typeof params.id === "string" ? params.id : "";
       if (!id) return respond(false, undefined, { message: "missing id" });
 
-      const existing = ctx.factsDb.getById(id);
+      const existing = ctx.factsDb.getById(id, { scopeFilter: filter });
       if (!existing) return respond(false, undefined, { message: "not found" });
 
-      const text = typeof params.text === "string" ? params.text : undefined;
-      const confidence = typeof params.confidence === "number" ? params.confidence : undefined;
-      const entity = typeof params.entity === "string" ? params.entity : undefined;
-      const key = typeof params.key === "string" ? params.key : undefined;
-      const value = typeof params.value === "string" ? params.value : undefined;
+      const text = typeof params.text === "string" ? params.text : null;
+      const confidence = typeof params.confidence === "number" ? params.confidence : null;
+      const entity = typeof params.entity === "string" ? params.entity : null;
+      const key = typeof params.key === "string" ? params.key : null;
+      const value = typeof params.value === "string" ? params.value : null;
       const tags = Array.isArray(params.tags)
         ? (params.tags as unknown[]).filter((t): t is string => typeof t === "string")
         : undefined;
 
       const hasStructuralChange =
-        text !== undefined || entity !== undefined || key !== undefined || value !== undefined || tags !== undefined;
+        text !== null || entity !== null || key !== null || value !== null || tags !== undefined;
 
       if (hasStructuralChange) {
-        // FactsDB doesn't support in-place text/field edits — supersede with a corrected copy.
         const stored = ctx.factsDb.store({
           text: text ?? existing.text,
           category: existing.category,
           importance: existing.importance,
           source: "wiki-edit",
-          entity: entity ?? existing.entity ?? undefined,
-          key: key ?? existing.key ?? undefined,
-          value: value ?? existing.value ?? undefined,
-          confidence: confidence !== undefined ? Math.max(0, Math.min(1, confidence)) : existing.confidence,
+          entity: entity ?? existing.entity,
+          key: key ?? existing.key,
+          value: value ?? existing.value,
+          confidence: confidence !== null ? Math.max(0, Math.min(1, confidence)) : existing.confidence,
           tags: tags ?? existing.tags ?? undefined,
+          ...scopeFieldsFromEntry(existing),
         });
-        ctx.factsDb.supersede(id, stored.entry.id);
-        const updated = ctx.factsDb.getById(stored.entry.id);
+        ctx.factsDb.supersede(id, stored.id);
+        const updated = ctx.factsDb.getById(stored.id, { scopeFilter: filter });
         respond(true, { fact: updated ? factToWireFormat(updated) : null, superseded: id });
-        pluginLogger.info(`memory-hybrid: fact ${id} updated (superseded → ${stored.entry.id}) via gateway RPC`);
-      } else if (confidence !== undefined) {
+        pluginLogger.info(`memory-hybrid: fact ${id} updated (superseded → ${stored.id}) via gateway RPC`);
+      } else if (confidence !== null) {
         ctx.factsDb.setConfidenceTo(id, Math.max(0, Math.min(1, confidence)));
-        const updated = ctx.factsDb.getById(id);
+        const updated = ctx.factsDb.getById(id, { scopeFilter: filter });
         respond(true, { fact: updated ? factToWireFormat(updated) : null });
         pluginLogger.info(`memory-hybrid: fact ${id} confidence updated via gateway RPC`);
       } else {
@@ -129,10 +141,11 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
 
   register("hybrid-mem.facts.supersede", async ({ params, respond }) => {
     try {
+      const filter = scopeFilter();
       const id = typeof params.id === "string" ? params.id : "";
       if (!id) return respond(false, undefined, { message: "missing id" });
 
-      const existing = ctx.factsDb.getById(id);
+      const existing = ctx.factsDb.getById(id, { scopeFilter: filter });
       if (!existing) return respond(false, undefined, { message: "not found" });
 
       const replacement = typeof params.replacementText === "string" ? params.replacementText : undefined;
@@ -142,18 +155,19 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
           category: existing.category,
           importance: existing.importance,
           source: "wiki-edit",
-          entity: existing.entity ?? undefined,
-          key: existing.key ?? undefined,
-          value: existing.value ?? undefined,
+          entity: existing.entity ?? null,
+          key: existing.key ?? null,
+          value: existing.value ?? null,
           confidence: existing.confidence,
           tags: existing.tags ?? undefined,
+          ...scopeFieldsFromEntry(existing),
         });
-        ctx.factsDb.supersede(id, stored.entry.id);
+        ctx.factsDb.supersede(id, stored.id);
         respond(true, {
           superseded: id,
-          newFact: factToWireFormat(stored.entry),
+          newFact: factToWireFormat(stored),
         });
-        pluginLogger.info(`memory-hybrid: fact ${id} superseded by ${stored.entry.id} via gateway RPC`);
+        pluginLogger.info(`memory-hybrid: fact ${id} superseded by ${stored.id} via gateway RPC`);
       } else {
         ctx.factsDb.supersede(id, null);
         respond(true, { superseded: id });
@@ -166,14 +180,15 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
 
   register("hybrid-mem.facts.create", async ({ params, respond }) => {
     try {
+      const filter = scopeFilter();
       const text = typeof params.text === "string" ? params.text?.trim() : "";
       if (!text) return respond(false, undefined, { message: "missing text" });
 
       const category = typeof params.category === "string" ? params.category : "general";
       const importance = typeof params.importance === "number" ? params.importance : 0.5;
-      const entity = typeof params.entity === "string" ? params.entity : undefined;
-      const key = typeof params.key === "string" ? params.key : undefined;
-      const value = typeof params.value === "string" ? params.value : undefined;
+      const entity = typeof params.entity === "string" ? params.entity : null;
+      const key = typeof params.key === "string" ? params.key : null;
+      const value = typeof params.value === "string" ? params.value : null;
       const confidence = typeof params.confidence === "number" ? Math.max(0, Math.min(1, params.confidence)) : 0.8;
       const tags = Array.isArray(params.tags)
         ? (params.tags as unknown[]).filter((t): t is string => typeof t === "string")
@@ -189,10 +204,11 @@ export function registerFactMutationGatewayMethods(ctx: FactMutationGatewayConte
         value,
         confidence,
         tags,
+        ...scopeFieldsFromFilter(filter),
       });
 
-      respond(true, { fact: factToWireFormat(stored.entry) });
-      pluginLogger.info(`memory-hybrid: fact ${stored.entry.id} created via gateway RPC`);
+      respond(true, { fact: factToWireFormat(stored) });
+      pluginLogger.info(`memory-hybrid: fact ${stored.id} created via gateway RPC`);
     } catch (err) {
       respond(false, undefined, { message: errMsg(err) });
     }

@@ -135,7 +135,7 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
           signal: controller.signal,
         });
         clearTimeout(timeout);
-        return response.ok || response.status === 401;
+        return response.ok;
       } catch {
         return false;
       }

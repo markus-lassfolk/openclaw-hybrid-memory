@@ -907,5 +907,45 @@ error: unknown command 'bar'
       expect(result.guardUpdated).toBe(false);
       expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
     });
+
+    it("does not treat deferred required steps as failed when summary exitCode is 2", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-deferred-"));
+      const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
+      const exitPath = join(tmpDir, "maintenance-nightly-run.exit.txt");
+      const logPath = join(tmpDir, "maintenance-nightly-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "orch-deferred",
+          tierLabel: "nightly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 2,
+          summaryLine: "deferred",
+          steps: [
+            { name: "prune", status: "ok", summary: "ok", durationMs: 10 },
+            {
+              name: "self-correction-run",
+              status: "deferred",
+              summary: "time budget exceeded",
+              durationMs: 0,
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 1, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z maintenance-nightly exit=2\n");
+      writeFileSync(logPath, "");
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["prune", "self-correction-run"], true);
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.semanticStatus).toBe("degraded");
+      expect(result.failedSteps).toHaveLength(0);
+      const deferred = result.steps.find((s) => s.step === "self-correction-run");
+      expect(deferred?.exitCode).toBe(2);
+      expect(deferred?.status).toBe("ok");
+    });
   });
 });

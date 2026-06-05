@@ -37,7 +37,7 @@ describe("cron-job-bash-harness", () => {
     expect(bash).toContain('timeout "$timeout_secs" "${cmd[@]}" 2>&1 | tee -a "$HM_LOG" "$step_output"');
     expect(bash).toContain("openclaw --version");
     expect(bash).toContain(
-      'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps',
+      'openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps',
     );
     expect(bash).toContain("trap 'ec=$?; trap - EXIT; hm_validate \"$ec\"; exit $?' EXIT");
     expect(bash).toContain("trap 'trap - TERM INT HUP QUIT; hm_validate 143; exit $?' TERM INT");

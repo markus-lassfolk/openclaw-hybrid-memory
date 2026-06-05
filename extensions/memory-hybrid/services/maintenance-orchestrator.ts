@@ -7,6 +7,8 @@ import type { HybridMemoryConfig } from "../config.js";
 import { nowIso } from "../utils/dates.js";
 import { is429OrWrapped } from "./chat.js";
 import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
+import { jobRunOutcomeFailsOrchestratorStep } from "./maintenance-job-run/semantic-outcome.js";
+import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
 import {
   stepGuardEligible,
   writeStepGuardTimestampMs,
@@ -395,6 +397,12 @@ function computeExitCode(results: StepResult[]): 0 | 1 | 2 {
   return 0;
 }
 
+function stepSemanticBlocksGuard(semantic?: string): boolean {
+  if (!semantic || semantic === "-") return false;
+  if (semantic === "partial") return true;
+  return jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome);
+}
+
 export async function runMaintenanceOrchestrator(
   ctx: MaintenanceOrchestratorContext,
   options: OrchestratorRunOptions,
@@ -529,6 +537,21 @@ export async function runMaintenanceOrchestrator(
     const stepStarted = Date.now();
     try {
       const summary = await runner();
+      const meta = parseStepRunnerMetadata(summary);
+      if (stepSemanticBlocksGuard(meta.semanticOutcome)) {
+        logger?.warn?.(
+          `maintenance-orchestrator: ${step.name} semantic failure (${meta.semanticOutcome}): ${summary}`,
+        );
+        results.push({
+          name: step.name,
+          status: "failed",
+          summary,
+          durationMs: Date.now() - stepStarted,
+          ...meta,
+        });
+        lastWasLlmStep = isLlmProviderStep(step.llmTier);
+        continue;
+      }
       if (!options.dryRun && guardMs >= 0) {
         writeStepGuardTimestampMs(step.name, Date.now(), openclawDir);
       }
@@ -537,7 +560,7 @@ export async function runMaintenanceOrchestrator(
         status: "ok",
         summary,
         durationMs: Date.now() - stepStarted,
-        ...parseStepRunnerMetadata(summary),
+        ...meta,
       });
       completedThisRun.add(step.name);
       consecutiveRateLimitErrors = 0;

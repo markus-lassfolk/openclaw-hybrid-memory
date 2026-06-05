@@ -113,6 +113,12 @@ export interface DreamCycleConfig {
    * is skipped to avoid operating on a stale SQLite view.
    */
   walFlushFailed?: boolean;
+  /**
+   * When true, run the wiki dream ingester as a post-cycle step.
+   * Reads dream cycle artifacts and stores novel findings as facts.
+   * Default: false.
+   */
+  ingestDreamFindings?: boolean;
 }
 
 /** Optional bridge context for auto-proposing reflection output (Phase 4). */
@@ -164,6 +170,8 @@ export interface DreamCycleResult {
   success: boolean;
   /** Labels of core stages that failed (non-fatal stages still run afterward). */
   failedStages: string[];
+  /** Number of dream findings ingested as facts by the wiki dream ingester post-step. */
+  dreamFindingsIngested?: number;
 }
 
 // Minimum patterns stored in one cycle before we also run reflect-rules.
@@ -1464,6 +1472,26 @@ export async function runDreamCycle(
     });
   }
 
+  // Optional: Ingest dream cycle findings into facts for wiki surface
+  let dreamFindingsIngested = 0;
+  if (config.ingestDreamFindings && config.stageArtifactDir && success) {
+    try {
+      const { ingestDreamFindings } = await import("./wiki-dream-ingester.js");
+      const ingesterResult = await ingestDreamFindings({
+        factsDb,
+        dreamCycleLogDir: config.stageArtifactDir.replace(/\/[^/]+$/, ""),
+      });
+      dreamFindingsIngested = ingesterResult.findingsIngested;
+      if (ingesterResult.findingsIngested > 0) {
+        logger.info(
+          `memory-hybrid: dream-cycle — ingested ${ingesterResult.findingsIngested} finding(s) from ${ingesterResult.runsProcessed} run(s)`,
+        );
+      }
+    } catch (err) {
+      logger.warn?.(`memory-hybrid: dream-cycle — dream findings ingest failed (non-fatal): ${err}`);
+    }
+  }
+
   return {
     factsPruned,
     factsDecayed,
@@ -1478,6 +1506,7 @@ export async function runDreamCycle(
     decayReclassified,
     orphanVectorsRemoved,
     digestSummary,
+    dreamFindingsIngested,
     skipped: false,
     success,
     failedStages,

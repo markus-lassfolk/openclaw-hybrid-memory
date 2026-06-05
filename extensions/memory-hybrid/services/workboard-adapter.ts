@@ -30,8 +30,8 @@ import {
 
 export type TaskLoader = () => { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[] };
 export type GoalLoader = () => Goal[] | Promise<Goal[]>;
-export type TaskStatusUpdater = (label: string, newStatus: string) => void;
-export type GoalStatusUpdater = (goalId: string, newStatus: string) => void;
+export type TaskStatusUpdater = (label: string, newStatus: string) => void | Promise<void>;
+export type GoalStatusUpdater = (goalId: string, newStatus: string) => void | Promise<void>;
 
 export interface WorkboardAdapterContext {
   cfg: WorkboardConfig;
@@ -107,12 +107,15 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
           await pullChanges(client, ctx, cardsByExternalId, result);
         }
 
-        // Remove stale cards (hybrid-memory items that no longer exist)
+        // Remove stale cards only for sync dimensions enabled this run
         for (const [extId, card] of cardsByExternalId) {
-          if (!desiredExternalIds.has(extId)) {
-            const deleted = await client.deleteCard(card.id);
-            if (deleted) result.cardsRemoved++;
-          }
+          if (desiredExternalIds.has(extId)) continue;
+          const parsed = parseExternalId(extId);
+          if (!parsed) continue;
+          if (parsed.type === "task" && !ctx.cfg.syncTasks) continue;
+          if (parsed.type === "goal" && !ctx.cfg.syncGoals) continue;
+          const deleted = await client.deleteCard(card.id);
+          if (deleted) result.cardsRemoved++;
         }
       } catch (err) {
         const msg = `Workboard sync failed: ${err instanceof Error ? err.message : String(err)}`;
@@ -204,7 +207,7 @@ async function pullChanges(
         const newStatus = columnToTaskStatus(card.column, ctx.cfg.columns);
         if (newStatus && newStatus !== task.status) {
           try {
-            ctx.updateTaskStatus(parsed.label, newStatus);
+            await ctx.updateTaskStatus(parsed.label, newStatus);
             result.pullChanges++;
             pluginLogger.info(
               `memory-hybrid: workboard pull — task "${parsed.label}" status changed to "${newStatus}" from column "${card.column}"`,
@@ -227,7 +230,7 @@ async function pullChanges(
         const newStatus = columnToGoalStatus(card.column, ctx.cfg.columns);
         if (newStatus && newStatus !== goal.status) {
           try {
-            ctx.updateGoalStatus(parsed.goalId, newStatus);
+            await ctx.updateGoalStatus(parsed.goalId, newStatus);
             result.pullChanges++;
             pluginLogger.info(
               `memory-hybrid: workboard pull — goal "${goal.label}" status changed to "${newStatus}" from column "${card.column}"`,

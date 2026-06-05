@@ -140,6 +140,22 @@ describe("maintenance-orchestrator", () => {
     expect(readStepGuardTimestampMs("prune", openclawDir)).not.toBeNull();
   });
 
+  it("does not write step guard when runner reports failing semantic outcome", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "distill",
+        async () => "stored=0 sessions=0 jobRunId=abc semantic=failed_semantic_empty",
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["distill"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(readStepGuardTimestampMs("distill", openclawDir)).toBeNull();
+  });
+
   it("skips backfill-decay when one-time marker exists", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     let calls = 0;

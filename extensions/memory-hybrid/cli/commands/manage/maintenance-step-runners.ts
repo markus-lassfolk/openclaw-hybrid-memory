@@ -241,12 +241,11 @@ export function buildCliMaintenanceRunners(
     const r = await b.runSelfCorrectionRun({ dryRun: false, days: 1, verbose, ...scanFlags });
     const summary = `incidents=${r.incidentsFound} analysed=${r.analysed} toolsApplied=${r.toolsApplied ?? 0} jobRunId=${r.jobRunId ?? "-"} semantic=${r.semanticOutcome ?? r.status ?? "unknown"}`;
     const semantic = (r.semanticOutcome ?? r.status) as JobRunSemanticOutcome | string | undefined;
-    if (
-      semantic &&
-      (jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome) ||
-        semantic === "failed_partial")
-    ) {
+    if (semantic && jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome)) {
       throw new Error(`self-correction-run semantic failure: ${semantic} (${summary})`);
+    }
+    if (semantic === "partial" || semantic === "failed_partial") {
+      throw new Error(`self-correction-run partial failure (${summary})`);
     }
     return summary;
   });

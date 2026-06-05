@@ -1102,32 +1102,49 @@ export function validateFromSummaryJson(
 
     const stepFailed = (s: OrchestratorRunSummary["steps"][number]): boolean =>
       s.status === "failed" ||
-      s.status === "rate_limited" ||
       (s.semanticOutcome != null && jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome));
+
+    const stepExitCode = (s: OrchestratorRunSummary["steps"][number], failed: boolean): number => {
+      if (failed) return 1;
+      if (s.status === "deferred" || s.status === "rate_limited") return 2;
+      return 0;
+    };
+
+    const stepExitStatus = (
+      s: OrchestratorRunSummary["steps"][number],
+      failed: boolean,
+    ): ExitStep["status"] => {
+      if (failed) return "failed";
+      if (s.status === "ok") return "ok";
+      if (s.status.startsWith("skipped")) return "skipped";
+      if (s.status === "deferred" || s.status === "rate_limited") return "ok";
+      return "failed";
+    };
 
     const steps: ExitStep[] = summary.steps.map((s) => {
       const failed = stepFailed(s);
-      const exitCode =
-        failed ? 1 : s.status.startsWith("skipped") ? 0 : 0;
+      const exitCode = stepExitCode(s, failed);
       return {
         timestamp: summary.finishedAt,
         step: s.name,
         exitCode,
         line: `${s.name} exit=${exitCode} status=${s.status} summary=${s.summary}`,
-        status: failed ? "failed" : s.status === "ok" ? "ok" : s.status.startsWith("skipped") ? "skipped" : "failed",
+        status: stepExitStatus(s, failed),
         reason: s.semanticOutcome ?? s.status,
       };
     });
 
     const present = new Set(steps.map((s) => s.step));
-    
+
     // Consolidated cron: requiredSteps are wrapper names (e.g., "maintenance-nightly")
     // while summary.steps are inner orchestrator steps (e.g., "distill", "prune").
     // Skip missing-step check when requiredSteps don't match any summary step names.
     const isConsolidatedMode = requiredSteps.length > 0 && requiredSteps.every((name) => !present.has(name));
     const missingSteps = isConsolidatedMode ? [] : requiredSteps.filter((name) => !present.has(name));
     const failedSteps = steps.filter(
-      (s) => (isConsolidatedMode || requiredSteps.includes(s.step)) && (s.exitCode !== 0 || s.status === "failed"),
+      (s) =>
+        (isConsolidatedMode || requiredSteps.includes(s.step)) &&
+        (s.exitCode !== 0 || s.status === "failed"),
     );
 
     const semanticOutcomes = summary.steps

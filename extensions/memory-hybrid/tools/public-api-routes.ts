@@ -14,6 +14,11 @@ import {
   readActiveTaskRowsFromFacts,
   refreshActiveTaskProjectionBestEffort,
 } from "../services/task-ledger-facts.js";
+import {
+  globalOnlyScopeFilter,
+  scopeFieldsFromEntry,
+  scopeFieldsFromFilter,
+} from "../utils/scope-filter.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { parseDuration } from "../utils/duration.js";
 import { nowIso } from "../utils/dates.js";
@@ -71,7 +76,6 @@ export const PUBLIC_API_PATHS = {
 } as const;
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
-const DEFAULT_PUBLIC_SCOPE_SENTINEL = "__public_api_unscoped__";
 const DEFAULT_ACTIVE_TASK_PROJECTION: ActiveTaskProjectionConfig = {
   mode: "readable",
   excludeGenericTitle: true,
@@ -160,7 +164,7 @@ function resolveScopeFilter(req: { headers?: Record<string, string> }): ScopeFil
   const sessionId = getHeader(req, "x-openclaw-session-id");
 
   if (!userId && !agentId && !sessionId) {
-    return { agentId: DEFAULT_PUBLIC_SCOPE_SENTINEL };
+    return globalOnlyScopeFilter();
   }
 
   return { userId: userId ?? undefined, agentId: agentId ?? undefined, sessionId: sessionId ?? undefined };
@@ -422,9 +426,35 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
 
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`, async (req) => {
     const url = parseReqUrl(req.url);
-    const sessionId = url.searchParams.get("sessionId")?.trim() ?? null;
-    const agentId = url.searchParams.get("agentId")?.trim() ?? null;
+    const trustedSessionId = getHeader(req, "x-openclaw-session-id");
+    const trustedAgentId = getHeader(req, "x-openclaw-agent-id");
+    const trustedUserId = getHeader(req, "x-openclaw-user-id");
+    const querySessionId = url.searchParams.get("sessionId")?.trim() ?? null;
+    const queryAgentId = url.searchParams.get("agentId")?.trim() ?? null;
     const limit = parseLimitParam(url.searchParams.get("limit"), 50, 200);
+
+    if (trustedSessionId && querySessionId && querySessionId !== trustedSessionId) {
+      return toJson(403, { error: "sessionId query param does not match trusted identity header" });
+    }
+    if (trustedAgentId && queryAgentId && queryAgentId !== trustedAgentId) {
+      return toJson(403, { error: "agentId query param does not match trusted identity header" });
+    }
+
+    const sessionId = trustedSessionId ?? querySessionId;
+    const agentId = trustedAgentId ?? queryAgentId;
+
+    if (!sessionId && !agentId) {
+      return toJson(400, {
+        error:
+          "Missing sessionId or agentId. Provide x-openclaw-session-id / x-openclaw-agent-id headers or matching query params.",
+      });
+    }
+
+    if (!trustedSessionId && !trustedAgentId && !trustedUserId && (querySessionId || queryAgentId)) {
+      return toJson(403, {
+        error: "Untrusted session/agent query params require gateway identity headers",
+      });
+    }
 
     const { buildSessionObservabilityReport } = await import("../services/session-observability.js");
 
@@ -466,12 +496,13 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   if (ctx.factMutationsEnabled) {
     makeRoute(`${PUBLIC_API_PREFIX}/fact/mutate`, async (req) => {
       try {
+        const scopeFilter = resolveScopeFilter(req);
         const body = req.body ? JSON.parse(req.body) : {};
         const action = typeof body.action === "string" ? body.action : "";
         const factId = typeof body.id === "string" ? body.id : "";
 
         if (action === "update" && factId) {
-          const existing = ctx.factsDb.getById(factId);
+          const existing = ctx.factsDb.getById(factId, { scopeFilter });
           if (!existing) return toJson(404, { error: "not found" });
 
           const text = typeof body.text === "string" ? body.text : undefined;
@@ -496,18 +527,23 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               value: value ?? existing.value ?? undefined,
               confidence: confidence !== undefined ? Math.max(0, Math.min(1, confidence)) : existing.confidence,
               tags: tags ?? existing.tags ?? undefined,
+              ...scopeFieldsFromEntry(existing),
             });
-            ctx.factsDb.supersede(factId, stored.entry.id);
-            return toJson(200, { ok: true, superseded: factId, newFact: ctx.factsDb.getById(stored.entry.id) });
+            ctx.factsDb.supersede(factId, stored.id);
+            return toJson(200, {
+              ok: true,
+              superseded: factId,
+              newFact: ctx.factsDb.getById(stored.id, { scopeFilter }),
+            });
           } else if (confidence !== undefined) {
             ctx.factsDb.setConfidenceTo(factId, Math.max(0, Math.min(1, confidence)));
-            return toJson(200, { ok: true, fact: ctx.factsDb.getById(factId) });
+            return toJson(200, { ok: true, fact: ctx.factsDb.getById(factId, { scopeFilter }) });
           }
           return toJson(200, { ok: true, noop: true });
         }
 
         if (action === "supersede" && factId) {
-          const existing = ctx.factsDb.getById(factId);
+          const existing = ctx.factsDb.getById(factId, { scopeFilter });
           if (!existing) return toJson(404, { error: "not found" });
           ctx.factsDb.supersede(factId, null);
           return toJson(200, { ok: true, superseded: factId });
@@ -526,8 +562,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
             value: typeof body.value === "string" ? body.value : undefined,
             confidence: typeof body.confidence === "number" ? Math.max(0, Math.min(1, body.confidence)) : 0.8,
             tags: Array.isArray(body.tags) ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string") : undefined,
+            ...scopeFieldsFromFilter(scopeFilter),
           });
-          return toJson(201, { ok: true, fact: ctx.factsDb.getById(stored.entry.id) ?? stored.entry });
+          return toJson(201, { ok: true, fact: ctx.factsDb.getById(stored.id, { scopeFilter }) ?? stored });
         }
 
         return toJson(400, { error: `unknown action: ${action}` });

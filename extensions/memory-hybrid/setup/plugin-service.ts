@@ -493,22 +493,38 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
       }
 
+      // Wiki integration: register publicArtifacts for memory-wiki bridge import
+      if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.publicArtifacts) {
+        try {
+          const { registerPublicArtifactsBestEffort } = await import("../services/public-artifacts-provider.js");
+          registerPublicArtifactsBestEffort(api as Parameters<typeof registerPublicArtifactsBestEffort>[0], factsDb);
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: publicArtifacts registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "public-artifacts-register",
+          });
+        }
+      }
+
       // Workboard integration: start adapter for bidirectional task/goal sync
       if (cfg.workboard?.enabled) {
         try {
           const { createWorkboardAdapter } = await import("../services/workboard-adapter.js");
           const { loadTaskLedgerFromFacts } = await import("../services/task-ledger-facts.js");
           const { listGoals } = await import("../services/goal-registry.js");
+          const { applyWorkboardTaskStatusUpdate, applyWorkboardGoalStatusUpdate } = await import(
+            "../services/workboard-facts-sync.js"
+          );
 
           const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
           const goalsDir = cfg.goalStewardship?.enabled
             ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir)
             : undefined;
 
-          const gatewayToken =
-            cfg.gateway?.token ??
-            process.env.OPENCLAW_GATEWAY_TOKEN ??
-            undefined;
+          const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN ?? undefined;
 
           const adapter = createWorkboardAdapter({
             cfg: cfg.workboard,
@@ -521,6 +537,23 @@ export function createPluginService(ctx: PluginServiceContext) {
                 return [];
               }
             },
+            updateTaskStatus: (label, newStatus) =>
+              applyWorkboardTaskStatusUpdate(
+                factsDb,
+                vectorDb,
+                embeddings,
+                label,
+                newStatus as import("../services/active-task.js").ActiveTaskStatus,
+                api.logger,
+              ),
+            updateGoalStatus: goalsDir
+              ? (goalId, newStatus) =>
+                  applyWorkboardGoalStatusUpdate(
+                    goalsDir,
+                    goalId,
+                    newStatus as import("../services/goal-stewardship-types.js").GoalStatus,
+                  )
+              : undefined,
             gatewayToken,
           });
 
@@ -534,7 +567,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
             // Recurring sync timer
             const intervalMs = cfg.workboard.syncIntervalMinutes * 60 * 1000;
-            timers.workboardSync = { value: setInterval(() => {
+            (timers as Record<string, unknown>).workboardSync = { value: setInterval(() => {
               if (shuttingDown) return;
               adapter.sync().catch((err) => {
                 api.logger.debug?.(`memory-hybrid: Workboard sync tick failed: ${err}`);

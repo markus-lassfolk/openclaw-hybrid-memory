@@ -495,6 +495,7 @@ export function buildCliContextServices(
           reclassifyInactiveDays: cfg.nightlyCycle.reclassifyInactiveDays,
           reclassifyPromoteRecallCount: cfg.nightlyCycle.reclassifyPromoteRecallCount,
           enableReflectionRules: cfg.nightlyCycle.enableReflectionRules,
+          ingestDreamFindings: cfg.nightlyCycle.ingestDreamFindings ?? cfg.wikiIntegration?.enabled,
           verbose,
           episodicConsolidationEventTypes: {
             allow: cfg.nightlyCycle.consolidationEventTypeAllow,

@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { type ExitValidationResult, validateFromSummaryJson, validateMaintenanceExecution } from "./cron-exit-validator.js";
+import { resolveMaintenanceSummaryPath } from "./maintenance-artifact-paths.js";
 
 export interface CronRunLedgerEntry {
   // Legacy format (action-based)
@@ -41,20 +42,6 @@ export interface CronRunCorrection {
   newStatus: string;
   validationResult: ExitValidationResult;
   ledgerPath: string;
-}
-
-/**
- * Derive the orchestrator summary.json path from a cron exit ledger path.
- * Exit ledgers live at {logRoot}/{job}-{runId}.exit.txt while summaries are in
- * {logRoot}/{YYYYMMDD}/{job}-{runId}.summary.json. Extract day from runId.
- */
-function deriveSummaryPathFromExitPath(exitPath: string): string {
-  const match = exitPath.match(/\/([^/]+)-(\d{8}T\d{6}Z-\d+)\.exit\.txt$/);
-  if (!match) return exitPath.replace(/\.exit\.txt$/, ".summary.json");
-  const [, job, runId] = match;
-  const day = runId.slice(0, 8);
-  const logsRoot = dirname(exitPath);
-  return join(logsRoot, day, `${job}-${runId}.summary.json`);
 }
 
 /**
@@ -304,13 +291,18 @@ export function reconcileCronRunLedger(
       continue;
     }
 
-    const summaryPath = deriveSummaryPathFromExitPath(exitPath);
-    const validation = existsSync(summaryPath)
+    const summaryPath = resolveMaintenanceSummaryPath(exitPath);
+    const validation = summaryPath
       ? validateFromSummaryJson(summaryPath, exitPath, logPath, requiredSteps, true)
       : validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);
 
-    // Check if this is a false-OK (status:ok but validation failed/partial)
-    if (validation.maintenanceStatus === "failed" || validation.maintenanceStatus === "partial") {
+    const isFalseOk =
+      validation.maintenanceStatus === "failed" ||
+      validation.maintenanceStatus === "partial" ||
+      (validation.maintenanceStatus === "success" && validation.semanticStatus === "semantic_fail");
+
+    // Check if this is a false-OK (status:ok but validation failed/partial/semantic)
+    if (isFalseOk) {
       result.falseOk++;
 
       // Correct the entry

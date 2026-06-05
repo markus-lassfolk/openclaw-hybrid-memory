@@ -8,6 +8,7 @@
 
 import type { FactsDB } from "../backends/facts-db.js";
 import type { MemoryEntry, ScopeFilter } from "../types/memory.js";
+import { resolveCorpusScopeFilter } from "../utils/scope-filter.js";
 
 export type MemoryCorpusSearchResult = {
   corpus: string;
@@ -96,15 +97,19 @@ export interface CorpusSupplementContext {
 }
 
 export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): MemoryCorpusSupplement {
+  const resolveScope = (agentSessionKey?: string): ScopeFilter =>
+    resolveCorpusScopeFilter(agentSessionKey, ctx.scopeFilter);
+
   return {
-    async search({ query, maxResults }): Promise<MemoryCorpusSearchResult[]> {
+    async search({ query, maxResults, agentSessionKey }): Promise<MemoryCorpusSearchResult[]> {
       const limit = Math.min(maxResults ?? DEFAULT_MAX_RESULTS, 50);
       if (!query?.trim()) return [];
 
       try {
+        const scopeFilter = resolveScope(agentSessionKey);
         const results = ctx.factsDb.search(query, limit, {
           tierFilter: "all",
-          scopeFilter: ctx.scopeFilter ?? null,
+          scopeFilter,
           deferAccessRefresh: true,
         });
 
@@ -125,14 +130,21 @@ export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): Memo
       }
     },
 
-    async get({ lookup }): Promise<MemoryCorpusGetResult | null> {
+    async get({ lookup, agentSessionKey }): Promise<MemoryCorpusGetResult | null> {
       if (!lookup?.trim()) return null;
 
       try {
+        const scopeFilter = resolveScope(agentSessionKey);
         const factId = extractFactId(lookup);
         if (!factId) return null;
 
-        const entry = ctx.factsDb.getById(factId);
+        let entry = ctx.factsDb.getById(factId, { scopeFilter });
+        if (!entry && factId.length >= 4 && factId.length < 36) {
+          const prefixMatches = ctx.factsDb.findByIdPrefixScoped(factId, scopeFilter);
+          if (prefixMatches && "id" in prefixMatches && prefixMatches.id) {
+            entry = ctx.factsDb.getById(prefixMatches.id, { scopeFilter });
+          }
+        }
         if (!entry) return null;
 
         const content = factToContent(entry);

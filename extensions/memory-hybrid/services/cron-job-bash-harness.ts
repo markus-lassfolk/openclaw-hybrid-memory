@@ -182,7 +182,7 @@ export function buildHybridMemCronBashBody(
     '  echo "--- validate-cron-exit ---" | tee -a "$HM_LOG"',
     "  local validate_output",
     '  validate_output="$(mktemp "${TMPDIR:-/tmp}/hm-validate-XXXXXX")"',
-    '  openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json 2>&1 | tee -a "$HM_LOG" "$validate_output"',
+    '  openclaw hybrid-mem validate-cron-exit --exit-path "$HM_EXIT" --log-path "$HM_LOG" --summary-path "$HM_SUMMARY" --required-steps "${HM_REQUIRED_STEPS[@]}" --allow-skip --json 2>&1 | tee -a "$HM_LOG" "$validate_output"',
     '  local validation_ec="${PIPESTATUS[0]}"',
     '  local maintenance_status=""',
     "  # Parse maintenanceStatus without jq to keep cron harness dependencies minimal/portable.",

@@ -2511,6 +2511,87 @@
           }
         },
         "description": "Long-running goal registry, stewardship injection, and watchdog (see docs/GOAL-STEWARDSHIP-DESIGN.md)"
+      },
+      "wikiIntegration": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable wiki integration (memory-wiki bridge, corpus supplement, bidirectional editing). Default: false."
+          },
+          "publicArtifacts": {
+            "type": "boolean",
+            "description": "Register publicArtifacts via registerMemoryCapability for memory-wiki bridge import. Default: true when enabled."
+          },
+          "corpusSupplement": {
+            "type": "boolean",
+            "description": "Register MemoryCorpusSupplement so facts appear in memory_search/wiki_search corpus=all. Default: true when enabled."
+          },
+          "workspaceExportIntervalMinutes": {
+            "type": "number",
+            "description": "How often to sync facts for bridge import (minutes). Default: 30."
+          },
+          "mutations": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "description": "Enable fact mutation endpoints (gateway RPC + HTTP) for bidirectional editing from wiki. Default: false."
+              }
+            },
+            "description": "Fact mutation configuration for bidirectional wiki editing."
+          }
+        },
+        "description": "Memory-wiki bridge integration: corpus supplement, public artifacts, and bidirectional fact editing."
+      },
+      "workboard": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable Workboard integration (bidirectional task/goal sync). Default: false."
+          },
+          "gatewayUrl": {
+            "type": "string",
+            "description": "Gateway HTTP base URL for Workboard RPC calls. Default: http://localhost:9119."
+          },
+          "syncIntervalMinutes": {
+            "type": "number",
+            "description": "How often to reconcile Workboard cards (minutes, 1-60). Default: 5."
+          },
+          "syncTasks": {
+            "type": "boolean",
+            "description": "Sync active tasks to Workboard. Default: true when enabled."
+          },
+          "syncGoals": {
+            "type": "boolean",
+            "description": "Sync goals to Workboard. Default: true when enabled."
+          },
+          "bidirectional": {
+            "type": "boolean",
+            "description": "Accept Workboard card moves back into hybrid-memory. Default: true when enabled."
+          },
+          "cardTag": {
+            "type": "string",
+            "description": "Tag for Workboard cards created by hybrid-memory. Default: hybrid-memory."
+          },
+          "columns": {
+            "type": "object",
+            "properties": {
+              "taskInProgress": { "type": "string", "description": "Column for in-progress tasks. Default: In Progress." },
+              "taskDone": { "type": "string", "description": "Column for completed tasks. Default: Done." },
+              "taskFailed": { "type": ["string", "null"], "description": "Column for failed tasks (null to skip). Default: Failed." },
+              "taskStale": { "type": ["string", "null"], "description": "Column for stale tasks (null to skip). Default: Backlog." },
+              "taskParked": { "type": ["string", "null"], "description": "Column for parked tasks (null to skip). Default: Backlog." },
+              "goalActive": { "type": "string", "description": "Column for active goals. Default: In Progress." },
+              "goalBlocked": { "type": ["string", "null"], "description": "Column for blocked goals (null to skip). Default: Blocked." },
+              "goalStalled": { "type": ["string", "null"], "description": "Column for stalled goals (null to skip). Default: Backlog." },
+              "goalCompleted": { "type": "string", "description": "Column for completed goals. Default: Done." }
+            },
+            "description": "Workboard column mapping for hybrid-memory statuses."
+          }
+        },
+        "description": "Workboard Kanban integration: bidirectional sync of active tasks and goals."
       }
     },
     "required": ["embedding"]

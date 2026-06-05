@@ -91,6 +91,12 @@ export type NightlyCycleConfig = {
    * (persona rules + optional Skill Workshop bridge). Default: false.
    */
   autoPropose?: boolean;
+  /**
+   * When true, run the wiki dream findings ingester as a post-cycle step.
+   * Reads dream cycle artifacts and stores novel patterns/summaries as facts
+   * so they surface in the Dreaming UI via memory-wiki bridge. Default: false.
+   */
+  ingestDreamFindings?: boolean;
 };
 
 /** Memory health dashboard configuration (Issue #148). */
