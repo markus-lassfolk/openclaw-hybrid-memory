@@ -493,7 +493,8 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.end(JSON.stringify(payload));
       } catch (err: unknown) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        pluginLogger.error(`[dashboard-server] /api/viewer/correlation: ${err instanceof Error ? err.message : String(err)}`);
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }

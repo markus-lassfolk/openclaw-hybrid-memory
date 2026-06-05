@@ -1590,6 +1590,10 @@
             "type": "string",
             "description": "Path for auto-generated skills (default: skills/auto)"
           },
+          "skillsPendingPath": {
+            "type": "string",
+            "description": "Pending skills awaiting human promote (default: memory/skills-pending)"
+          },
           "requireApprovalForPromote": {
             "type": "boolean",
             "description": "Require human move to promote auto-skill (default: true)"
