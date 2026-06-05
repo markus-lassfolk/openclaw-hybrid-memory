@@ -204,6 +204,26 @@ export class ProposalsDB extends BaseSqliteStore {
     return this.rowToEntry(row);
   }
 
+  /** Targeted duplicate check for pipeline proposal creation (avoids full-table list scans). */
+  findPendingOrAppliedDuplicate(
+    targetFile: string,
+    suggestedChange: string,
+    excludeId?: string,
+  ): ProposalEntry | null {
+    const normalized = suggestedChange.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!normalized) return null;
+    const rows = this.liveDb
+      .prepare("SELECT * FROM proposals WHERE target_file = ? AND status IN ('pending', 'applied')")
+      .all(targetFile) as unknown as ProposalRow[];
+    for (const row of rows) {
+      const entry = this.rowToEntry(row);
+      if (excludeId && entry.id === excludeId) continue;
+      const candidate = entry.suggestedChange.toLowerCase().replace(/\s+/g, " ").trim();
+      if (candidate === normalized) return entry;
+    }
+    return null;
+  }
+
   list(filters?: { status?: string; targetFile?: string }): ProposalEntry[] {
     let query = "SELECT * FROM proposals WHERE 1=1";
     const params: string[] = [];

@@ -7,7 +7,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { capturePluginError } from "./error-reporter.js";
-import { extractRecalledMemoryIds, extractToolCallSequence, type SessionMessage } from "./session-signal-context.js";
+import {
+  extractRecalledMemoryIds,
+  extractToolCallSequence,
+  parseSessionMessagesFromLines,
+  type SessionMessage,
+} from "./session-signal-context.js";
 
 export type ParsedRecallEvent = {
   query?: string;
@@ -45,7 +50,9 @@ export function extractFactIdsFromToolResultPayload(content: unknown, details?: 
       ids.add(match[0]);
     }
   };
-  if (Array.isArray(content)) {
+  if (typeof content === "string") {
+    scanText(content);
+  } else if (Array.isArray(content)) {
     for (const block of content) {
       if (block && typeof block === "object") {
         const b = block as { text?: string; type?: string };
@@ -231,6 +238,20 @@ export function capToolSequence(tools: string[], maxLen = 40): string[] {
 
 export function normalizeWorkflowToolSequence(tools: string[]): string[] {
   return capToolSequence(collapseConsecutiveTools(tools));
+}
+
+/** Prefer trajectory tool.call rows when a sidecar exists; fall back to session messages. */
+export function collectWorkflowToolsFromSessionFile(filePath: string, subsystem: string): string[] {
+  const lines = readFileSync(filePath, "utf-8").split("\n");
+  const messages = parseSessionMessagesFromLines(lines, subsystem);
+  const trajLines = readTrajectoryLines(filePath);
+  const tools = trajLines
+    ? extractToolSequenceFromTrajectoryLines(trajLines, subsystem)
+    : extractToolSequenceFromMessages(messages);
+  if (trajLines && tools.length === 0) {
+    return normalizeWorkflowToolSequence(extractToolSequenceFromMessages(messages));
+  }
+  return normalizeWorkflowToolSequence(tools);
 }
 
 export { normalizeSessionRole };

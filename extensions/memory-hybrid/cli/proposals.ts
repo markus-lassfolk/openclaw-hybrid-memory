@@ -217,10 +217,7 @@ export function resolvePipelineProposalTarget(input: {
   const contentCheck = validateProposalContent(input.suggestedChange);
   if (!contentCheck.ok) return null;
   if (input.proposalsDb) {
-    const duplicate = findDuplicateProposal(input.proposalsDb.list(), {
-      targetFile,
-      suggestedChange: input.suggestedChange,
-    });
+    const duplicate = input.proposalsDb.findPendingOrAppliedDuplicate(targetFile, input.suggestedChange);
     if (duplicate) return null;
   }
   if (input.workshopStores) {

@@ -1355,34 +1355,34 @@ export class VectorDB {
 
   private async withRetryableWriteConflictRetry<T>(operation: string, fn: () => Promise<T>): Promise<T> {
     const { withEmbedWriteLock } = await import("../../services/embeddings/shared.js");
-    return withEmbedWriteLock(async () => {
-      const maxAttempts = VECTORDB_WRITE_CONFLICT_MAX_RETRIES + 1;
-      let lastErr: unknown;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
+    const maxAttempts = VECTORDB_WRITE_CONFLICT_MAX_RETRIES + 1;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await withEmbedWriteLock(async () => {
           await this.waitForReindexLockRelease();
           if (isReindexLockHeld(this.dbPath)) {
             throw new Error("VectorDB write blocked by active re-index lock");
           }
           return await fn();
-        } catch (err) {
-          lastErr = err;
-          const isCommitConflict = this.isRetryableCommitConflictError(err);
-          const isReindexBlock = this.isRetryableReindexLockBlockError(err);
-          if (!isCommitConflict && !isReindexBlock) throw err;
-          if (attempt >= maxAttempts) throw err;
-          const delayMs = this.getWriteConflictRetryDelayMs(attempt);
-          const reason = isReindexBlock ? "re-index lock block" : "retryable commit conflict";
-          this.logWarn(
-            `memory-hybrid: ${operation} hit ${reason} (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
-          );
-          await this.sleep(delayMs);
-        }
+        });
+      } catch (err) {
+        lastErr = err;
+        const isCommitConflict = this.isRetryableCommitConflictError(err);
+        const isReindexBlock = this.isRetryableReindexLockBlockError(err);
+        if (!isCommitConflict && !isReindexBlock) throw err;
+        if (attempt >= maxAttempts) throw err;
+        const delayMs = this.getWriteConflictRetryDelayMs(attempt);
+        const reason = isReindexBlock ? "re-index lock block" : "retryable commit conflict";
+        this.logWarn(
+          `memory-hybrid: ${operation} hit ${reason} (attempt ${attempt}/${maxAttempts}) — retrying in ${delayMs}ms`,
+        );
+        await this.sleep(delayMs);
       }
-      throw lastErr instanceof Error
-        ? lastErr
-        : new Error(`memory-hybrid: retry loop failed for operation "${operation}"`);
-    });
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error(`memory-hybrid: retry loop failed for operation "${operation}"`);
   }
 
   /**

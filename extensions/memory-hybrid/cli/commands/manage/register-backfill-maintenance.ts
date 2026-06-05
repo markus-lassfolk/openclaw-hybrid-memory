@@ -15,12 +15,7 @@ import {
   formatMaintenanceCoverageReport,
 } from "../../../services/maintenance-coverage.js";
 import { parseSessionMessagesFromLines } from "../../../services/session-signal-context.js";
-import {
-  extractToolSequenceFromMessages,
-  extractToolSequenceFromTrajectoryLines,
-  normalizeWorkflowToolSequence,
-  readTrajectoryLines,
-} from "../../../services/session-v3-parser.js";
+import { collectWorkflowToolsFromSessionFile } from "../../../services/session-v3-parser.js";
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 import { redactMaintenancePrivateText } from "../../../utils/maintenance-privacy.js";
@@ -44,24 +39,13 @@ function backfillReflectionWatermark(factsDb: FactsDB): number {
   return maxCreated;
 }
 
-function collectWorkflowToolsFromSessionFile(filePath: string): string[] {
-  const lines = readFileSync(filePath, "utf-8").split("\n");
-  const messages = parseSessionMessagesFromLines(lines, "backfill-workflow-traces");
-  const tools = extractToolSequenceFromMessages(messages);
-  const trajLines = readTrajectoryLines(filePath);
-  if (trajLines) {
-    tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "backfill-workflow-traces"));
-  }
-  return normalizeWorkflowToolSequence(tools);
-}
-
 function backfillWorkflowTracesFromFile(
   _factsDb: FactsDB,
   workflowStore: WorkflowStore,
   filePath: string,
   cfg: HybridMemoryConfig,
 ): number {
-  const tools = collectWorkflowToolsFromSessionFile(filePath);
+  const tools = collectWorkflowToolsFromSessionFile(filePath, "backfill-workflow-traces");
   if (tools.length < 2) return 0;
 
   const lines = readFileSync(filePath, "utf-8").split("\n");

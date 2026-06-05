@@ -209,7 +209,7 @@ export function diffMissingColumns(
 export function extractSqlStrings(content: string): string[] {
   const blocks: string[] = [];
   const patterns = [
-    /\.(?:prepare|exec)\(\s*`([^`]*(?:\$\{[^}]+\}[^`]*)*)`/g,
+    /\.(?:prepare|exec)\(\s*`((?:[^`$]|\$(?!\{)|\$\{[^}]{0,200}\})*)`/g,
     /\.(?:prepare|exec)\(\s*"((?:[^"\\]|\\.)*)"/g,
     /\.(?:prepare|exec)\(\s*'((?:[^'\\]|\\.)*)'/g,
   ];

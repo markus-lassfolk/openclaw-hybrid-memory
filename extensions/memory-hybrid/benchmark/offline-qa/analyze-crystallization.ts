@@ -33,12 +33,7 @@ import { inferWorkflowOutcomeFromMessages } from "../../services/workflow-messag
 import type { CrystallizationConfig } from "../../config/types/features.js";
 import type { WorkflowPattern } from "../../backends/workflow-store.js";
 import { parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
-import {
-  extractToolSequenceFromMessages,
-  extractToolSequenceFromTrajectoryLines,
-  normalizeWorkflowToolSequence,
-  readTrajectoryLines,
-} from "../../services/session-v3-parser.js";
+import { collectWorkflowToolsFromSessionFile } from "../../services/session-v3-parser.js";
 import {
   countUsefulnessBuckets,
   pickCrystallizationVerdict,
@@ -128,10 +123,7 @@ function backfillWorkflowTraces(wf: WorkflowStore, paths: string[]): {
   for (const p of paths) {
     const rawLines = readFileSync(p, "utf-8").split("\n");
     const messages = parseSessionMessagesFromLines(rawLines, "crystallization-qa");
-    let tools = extractToolSequenceFromMessages(messages);
-    const trajLines = readTrajectoryLines(p);
-    if (trajLines) tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "crystallization-qa"));
-    tools = normalizeWorkflowToolSequence(tools);
+    const tools = collectWorkflowToolsFromSessionFile(p, "crystallization-qa");
     if (tools.length < 2) {
       noTools++;
       continue;
@@ -482,6 +474,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  const message = (err instanceof Error ? err.message : String(err)).replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]");
+  console.error(`offline-qa:crystallization failed: ${message}`);
   process.exit(1);
 });

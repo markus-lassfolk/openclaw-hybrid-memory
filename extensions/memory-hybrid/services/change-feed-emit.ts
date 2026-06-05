@@ -5,12 +5,12 @@
 import type { HybridMemoryConfig } from "../config.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import {
+  ChangeFeed,
   type ChangeEvent,
   type ChangeEventAction,
   type ChangeEventCategory,
   type ChangeEventInput,
   type ChangeEventTier,
-  type ChangeFeed,
 } from "./change-feed.js";
 
 /** Session key for system-wide events surfaced to every chat session (dream-cycle, pipelines). */

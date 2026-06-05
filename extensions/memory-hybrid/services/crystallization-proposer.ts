@@ -192,6 +192,13 @@ export class CrystallizationProposer {
     let skipped = 0;
     const reasons: string[] = [];
 
+    if (this.cfg.pruneUnusedDays > 0) {
+      const pruned = this.crystallizationStore.pruneStalePendingProposals(this.cfg.pruneUnusedDays);
+      if (pruned > 0) {
+        reasons.push(`Pruned ${pruned} stale pending proposal(s) older than ${this.cfg.pruneUnusedDays} days`);
+      }
+    }
+
     const pendingCount = this.crystallizationStore.count("pending");
     if (this.cfg.maxPendingProposals > 0 && pendingCount >= this.cfg.maxPendingProposals) {
       return {
@@ -199,13 +206,6 @@ export class CrystallizationProposer {
         skipped: 0,
         reasons: [`maxPendingProposals limit reached (${pendingCount}/${this.cfg.maxPendingProposals})`],
       };
-    }
-
-    if (this.cfg.pruneUnusedDays > 0) {
-      const pruned = this.crystallizationStore.pruneStalePendingProposals(this.cfg.pruneUnusedDays);
-      if (pruned > 0) {
-        reasons.push(`Pruned ${pruned} stale pending proposal(s) older than ${this.cfg.pruneUnusedDays} days`);
-      }
     }
 
     const candidates = detectCrystallizationCandidates(this.workflowStore, this.crystallizationStore, this.cfg);

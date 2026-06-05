@@ -1,5 +1,10 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import {
+  collectWorkflowToolsFromSessionFile,
+  extractFactIdsFromToolResultPayload,
   extractRecallEventsFromMessages,
   extractRecallEventsFromTrajectoryLines,
   extractToolSequenceFromMessages,
@@ -112,5 +117,43 @@ describe("session-v3-parser", () => {
       JSON.stringify({ type: "tool.call", data: { toolCallId: "b", name: "exec" } }),
     ];
     expect(extractToolSequenceFromTrajectoryLines(lines, "test")).toEqual(["read", "exec"]);
+  });
+
+  it("extracts fact ids from plain string trajectory tool.result content", () => {
+    const id = "11111111-2222-3333-4444-555555555555";
+    const ids = extractFactIdsFromToolResultPayload(`Found memory ${id} in context`);
+    expect(ids).toContain(id);
+  });
+
+  it("collectWorkflowToolsFromSessionFile prefers trajectory without doubling session tools", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wf-tools-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "c1", name: "memory_recall", arguments: { query: "x" } }],
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", id: "c2", name: "exec", arguments: { command: "ls" } }],
+          },
+        }),
+      ].join("\n"),
+    );
+    writeFileSync(
+      join(dir, "session.trajectory.jsonl"),
+      [
+        JSON.stringify({ type: "tool.call", data: { toolCallId: "c1", name: "memory_recall" } }),
+        JSON.stringify({ type: "tool.call", data: { toolCallId: "c2", name: "exec" } }),
+      ].join("\n"),
+    );
+    expect(collectWorkflowToolsFromSessionFile(sessionFile, "test")).toEqual(["memory_recall", "exec"]);
   });
 });

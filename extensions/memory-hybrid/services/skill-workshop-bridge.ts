@@ -26,6 +26,10 @@ export function isSkillWorkshopPluginActive(api?: { getTool?: (name: string) => 
   }
 }
 
+function escapeYamlDoubleQuoted(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 function skillWorkshopRoot(): string {
   const state = getEnv("OPENCLAW_STATE_DIR") ?? join(homedir(), ".openclaw");
   return join(state, "skill-workshop", "proposals");
@@ -39,8 +43,8 @@ export function writeSkillWorkshopProposal(input: SkillWorkshopBridgeInput): { o
     const date = nowIso();
     const frontmatter = [
       "---",
-      `name: "${input.name.replace(/"/g, '\\"')}"`,
-      `description: "${input.description.replace(/"/g, '\\"').slice(0, 160)}"`,
+      `name: "${escapeYamlDoubleQuoted(input.name)}"`,
+      `description: "${escapeYamlDoubleQuoted(input.description).slice(0, 160)}"`,
       "status: proposal",
       'version: "v1"',
       `date: "${date}"`,

@@ -169,6 +169,31 @@ describe("maintenance data gaps", { timeout: 60_000 }, () => {
     db.close();
   });
 
+  it("backfill recall_events dedupes trajectory and session sources", () => {
+    const db = openTestDb();
+    const dir = mkdtempSync(join(tmpdir(), "sess-dedupe-"));
+    const memoryId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const sessionFile = join(dir, "2026-06-04-dedupe.jsonl");
+    writeFileSync(
+      sessionFile,
+      `{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"t1","name":"memory_recall","arguments":{"query":"prefs"}},{"type":"tool_result","tool_use_id":"t1","content":"Memory (id: ${memoryId})"}]}}\n`,
+    );
+    writeFileSync(
+      join(dir, "2026-06-04-dedupe.trajectory.jsonl"),
+      [
+        JSON.stringify({ type: "tool.call", data: { toolCallId: "t1", name: "memory_recall", arguments: { query: "prefs" } } }),
+        JSON.stringify({
+          type: "tool.result",
+          data: { toolCallId: "t1", name: "memory_recall", content: `Memory (id: ${memoryId})` },
+        }),
+      ].join("\n"),
+    );
+    expect(backfillRecallEventsFromSessionFile(db, sessionFile)).toBe(1);
+    const row = db.prepare("SELECT COUNT(*) AS cnt FROM recall_events").get() as { cnt: number };
+    expect(row.cnt).toBe(1);
+    db.close();
+  });
+
   it("backfill recall_events is idempotent on rerun", () => {
     const db = openTestDb();
     const dir = mkdtempSync(join(tmpdir(), "sess-idem-"));

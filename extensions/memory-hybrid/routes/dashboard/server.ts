@@ -64,6 +64,12 @@ import {
 import { getDashboardHtml } from "./html.js";
 import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled } from "../../services/workshop-config.js";
 
+function workshopClientError(err: unknown, route: string): string {
+  pluginLogger.error(`[dashboard-server] ${route}: ${err instanceof Error ? err.message : String(err)}`);
+  if (err instanceof Error && err.message === "Request body too large") return err.message;
+  return "Request failed";
+}
+
 function workshopCtx(ctx: DashboardContext): WorkshopDashboardContext | null {
   if (!ctx.hybridCfg || !isWorkshopEnabled(ctx.hybridCfg)) return null;
   return {
@@ -642,7 +648,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.end(JSON.stringify({ proposals: collectWorkshopProposals(wctx) }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals") }));
       }
       return;
     }
@@ -663,7 +669,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         );
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes") }));
       }
       return;
     }
@@ -674,7 +680,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.end(JSON.stringify(collectWorkshopDigest(wctx)));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/digest") }));
       }
       return;
     }
@@ -685,7 +691,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.end(JSON.stringify({ runs: collectDreamCycleLog(wctx) }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/dream-log") }));
       }
       return;
     }
@@ -696,7 +702,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.end(JSON.stringify({ skills: collectSkillTelemetry(wctx) }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+        res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/skills") }));
       }
       return;
     }
@@ -716,7 +722,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         })
         .catch((err: unknown) => {
           res.writeHead(400, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+          res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/changes/revert") }));
         });
       return;
     }
@@ -788,7 +794,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           })
           .catch((err: unknown) => {
             res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+            res.end(JSON.stringify({ error: workshopClientError(err, "/api/workshop/proposals/*") }));
           });
         return;
       }

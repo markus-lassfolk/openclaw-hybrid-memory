@@ -70,10 +70,18 @@ export function getSessionFilePathsSince(sessionDir: string, days: number, since
   };
 
   try {
-    return [
+    const seen = new Set<string>();
+    const paths: string[] = [];
+    for (const p of [
       ...collectFromDir(sessionDir, true),
       ...collectFromDir(join(sessionDir, "archive"), false),
-    ];
+    ]) {
+      const base = basename(p);
+      if (seen.has(base)) continue;
+      seen.add(base);
+      paths.push(p);
+    }
+    return paths;
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",

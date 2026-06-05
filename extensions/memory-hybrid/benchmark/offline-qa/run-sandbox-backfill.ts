@@ -16,12 +16,7 @@ import {
   buildMaintenanceCoverageReport,
   formatMaintenanceCoverageReport,
 } from "../../services/maintenance-coverage.js";
-import {
-  extractToolSequenceFromMessages,
-  extractToolSequenceFromTrajectoryLines,
-  normalizeWorkflowToolSequence,
-  readTrajectoryLines,
-} from "../../services/session-v3-parser.js";
+import { collectWorkflowToolsFromSessionFile } from "../../services/session-v3-parser.js";
 import { parseSessionMessagesFromLines } from "../../services/session-signal-context.js";
 import { redactMaintenancePrivateText } from "../../utils/maintenance-privacy.js";
 import { extractUserWorkflowGoal, isSystemWorkflowGoal } from "../../services/workflow-goal-classifier.js";
@@ -51,10 +46,7 @@ for (const p of paths) {
   if (scanSessionFileForMetadata(factsDb.getRawDb(), p)) langs++;
   const rawLines = readFileSync(p, "utf-8").split("\n");
   const messages = parseSessionMessagesFromLines(rawLines, "sandbox-backfill");
-  let tools = extractToolSequenceFromMessages(messages);
-  const trajLines = readTrajectoryLines(p);
-  if (trajLines) tools.push(...extractToolSequenceFromTrajectoryLines(trajLines, "sandbox-backfill"));
-  tools = normalizeWorkflowToolSequence(tools);
+  const tools = collectWorkflowToolsFromSessionFile(p, "sandbox-backfill");
   if (tools.length >= 2) {
     const goal = redactMaintenancePrivateText(
       extractUserWorkflowGoal(messages, cfg.crystallization?.excludeGoalPatterns),

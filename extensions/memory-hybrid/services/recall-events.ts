@@ -6,6 +6,7 @@ import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import {
+  type ParsedRecallEvent,
   extractRecallEventsFromMessages,
   extractRecallEventsFromTrajectoryLines,
   readTrajectoryLines,
@@ -185,6 +186,39 @@ export function extractRecallEventsFromAssistantContent(content: unknown): Parse
   return events;
 }
 
+function recallEventFingerprint(ev: ParsedRecallEvent): string {
+  return `${ev.query ?? ""}\0${[...ev.factIds].sort().join(",")}\0${ev.hit ? 1 : 0}`;
+}
+
+/** Collect recall events from session JSONL and optional trajectory sidecar without double-counting. */
+function collectRecallEventsFromSession(
+  filePath: string,
+  messages: ReturnType<typeof parseSessionMessagesFromLines>,
+  subsystem: string,
+): ParsedRecallEvent[] {
+  const seen = new Set<string>();
+  const out: ParsedRecallEvent[] = [];
+  const add = (events: ParsedRecallEvent[]): void => {
+    for (const ev of events) {
+      const fp = recallEventFingerprint(ev);
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+      out.push(ev);
+    }
+  };
+
+  const trajLines = readTrajectoryLines(filePath);
+  if (trajLines) {
+    add(extractRecallEventsFromTrajectoryLines(trajLines, subsystem));
+  }
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    add(extractRecallEventsFromAssistantContent(msg.content));
+  }
+  add(extractRecallEventsFromMessages(messages));
+  return out;
+}
+
 function filenameToEpochSec(name: string, fallbackMtimeSec: number): number {
   const datePrefix = timestampFromFilename(name);
   if (datePrefix) {
@@ -208,41 +242,27 @@ export function backfillRecallEventsFromSessionFile(db: DatabaseSync, filePath: 
   let inserted = 0;
   let turnIndex = 0;
 
-  const logParsedEvents = (events: ReturnType<typeof extractRecallEventsFromMessages>): void => {
-    for (const ev of events) {
-      turnIndex++;
-      const occurredAtSec = occurredBase + turnIndex;
-      const query = ev.query ?? null;
-      const insertedRow = insertRecallEvent(
-        db,
-        {
-          occurredAtSec,
-          sessionKey,
-          query,
-          factIds: ev.factIds,
-          hit: ev.hit,
-          source: "backfill",
-        },
-        {
-          id: backfillRecallEventId({ sessionKey, occurredAtSec, query, factIds: ev.factIds }),
-        },
-      );
-      if (insertedRow) inserted++;
-    }
-  };
-
-  const trajLines = readTrajectoryLines(filePath);
-  if (trajLines) {
-    logParsedEvents(extractRecallEventsFromTrajectoryLines(trajLines, "backfill-recall-events"));
+  const events = collectRecallEventsFromSession(filePath, messages, "backfill-recall-events");
+  for (const ev of events) {
+    turnIndex++;
+    const occurredAtSec = occurredBase + turnIndex;
+    const query = ev.query ?? null;
+    const insertedRow = insertRecallEvent(
+      db,
+      {
+        occurredAtSec,
+        sessionKey,
+        query,
+        factIds: ev.factIds,
+        hit: ev.hit,
+        source: "backfill",
+      },
+      {
+        id: backfillRecallEventId({ sessionKey, occurredAtSec, query, factIds: ev.factIds }),
+      },
+    );
+    if (insertedRow) inserted++;
   }
-
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    const inline = extractRecallEventsFromAssistantContent(msg.content);
-    logParsedEvents(inline);
-  }
-
-  logParsedEvents(extractRecallEventsFromMessages(messages));
 
   return inserted;
 }
