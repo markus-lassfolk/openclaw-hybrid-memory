@@ -306,6 +306,43 @@ function detectDreamCyclePipelineFailures(logContent: string): Array<{ step: str
   return failures;
 }
 
+function collectDreamCyclePipelineLog(logContent: string): string {
+  const chunks = [extractStepLog(logContent, "dream-cycle"), extractStepLog(logContent, "dream-cycle-core")];
+  const embeddedContinuousVerification = logContent.match(
+    /Continuous verification complete:[\s\S]*?(?=\n(?:\[dream-cycle\]|memory-hybrid:|Dream cycle |\d{4}-\d{2}-\d{2}T|$))/im,
+  )?.[0];
+  if (embeddedContinuousVerification) {
+    chunks.push(embeddedContinuousVerification);
+  }
+  const markerLines = logContent
+    .split("\n")
+    .filter((line) =>
+      /\[dream-cycle\]|memory-hybrid:\s*dream-cycle\b|Dream cycle (?:status|finished|follow-ups)|Core stage failures:/i.test(
+        line,
+      ),
+    )
+    .join("\n");
+  if (markerLines) {
+    chunks.push(markerLines);
+  }
+  return chunks.filter(Boolean).join("\n");
+}
+
+function isDiagnosticsArtifactInScope(
+  jobName: string,
+  requiredSteps: string[],
+  ledgerSteps: ExitStep[],
+): boolean {
+  return (
+    isStepInValidationScope("diagnostics", requiredSteps, ledgerSteps) ||
+    /\b(?:incident|diagnostic)\b/i.test(jobName)
+  );
+}
+
+function isAuditArtifactInScope(jobName: string, requiredSteps: string[], ledgerSteps: ExitStep[]): boolean {
+  return isStepInValidationScope("audit-health", requiredSteps, ledgerSteps) || /\baudit\b/i.test(jobName);
+}
+
 function extractMaintenanceJobName(path: string | undefined): string {
   if (!path) return "unknown-job";
   const file = basename(path);
@@ -368,6 +405,20 @@ const STEP_LOG_LINE_ALIASES: Record<string, RegExp[]> = {
   "closed-loop-analysis": [/memory-hybrid:\s*closed-loop\b/i],
   "digest-autopilot": [/\bPending digest autopilot cron\b/i],
   "continuous-verification": [/\bcontinuous-verification\b/i, /\bMachine status:\s*status=degraded\b/i],
+  "dream-cycle": [
+    /\[dream-cycle\]/i,
+    /memory-hybrid:\s*dream-cycle\b/i,
+    /Dream cycle (?:status|finished|follow-ups)/i,
+    /Continuous verification complete:/i,
+  ],
+  "dream-cycle-core": [
+    /\[dream-cycle\]/i,
+    /memory-hybrid:\s*dream-cycle\b/i,
+    /Dream cycle (?:status|finished)/i,
+    /Core stage failures:/i,
+  ],
+  "diagnostics": [/vm memory incident/i, /incident bundle/i, /memory-diagnostics-live\.json/i],
+  "audit-health": [/final-audit\.json/i, /\bfinal audit\b/i],
 };
 
 function lineMentionsStep(line: string, stepName: string): boolean {
@@ -1574,8 +1625,14 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const finalAuditZeroByte =
-    /(?:final-audit\.json|final audit)[^\n]*(?:0 bytes|0-byte|size=0|empty)/i.test(logContent) ||
-    /final-audit\.json[^\n]*malformed/i.test(logContent);
+    isAuditArtifactInScope(jobName, requiredSteps, ledgerSteps) &&
+    (() => {
+      const auditArtifactLog = extractStepLog(logContent, "audit-health");
+      return (
+        /(?:final-audit\.json|final audit)[^\n]*(?:0 bytes|0-byte|size=0|empty)/i.test(auditArtifactLog) ||
+        /final-audit\.json[^\n]*malformed/i.test(auditArtifactLog)
+      );
+    })();
   if (finalAuditZeroByte) {
     addMaintenanceIssue(
       issues,
@@ -1592,9 +1649,13 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
+  const diagnosticsLog = isDiagnosticsArtifactInScope(jobName, requiredSteps, ledgerSteps)
+    ? extractStepLog(logContent, "diagnostics")
+    : "";
   const diagnosticsZeroByte =
-    /memory-diagnostics-live\.json[^\n]*(?:0 bytes|0-byte|size=0|empty|malformed)/i.test(logContent) &&
-    /incident bundle|vm memory incident/i.test(logContent);
+    diagnosticsLog.length > 0 &&
+    /memory-diagnostics-live\.json[^\n]*(?:0 bytes|0-byte|size=0|empty|malformed)/i.test(diagnosticsLog) &&
+    /incident bundle|vm memory incident/i.test(diagnosticsLog);
   if (diagnosticsZeroByte) {
     addMaintenanceIssue(
       issues,
@@ -1863,7 +1924,8 @@ export function validateMaintenanceExecution(
       stepMap.get("dream-cycle")?.timestamp ??
       stepMap.get("dream-cycle-core")?.timestamp ??
       SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
-    const degradedVerification = detectDegradedContinuousVerificationStatus(logContent);
+    const dreamCycleLog = collectDreamCyclePipelineLog(logContent);
+    const degradedVerification = detectDegradedContinuousVerificationStatus(dreamCycleLog);
     if (degradedVerification) {
       failedSteps.push({
         timestamp: dreamCycleTimestamp,
@@ -1873,7 +1935,7 @@ export function validateMaintenanceExecution(
         failureReason: degradedVerification.reason ?? "degraded",
       });
     }
-    const dreamCycleFailures = detectDreamCyclePipelineFailures(logContent);
+    const dreamCycleFailures = detectDreamCyclePipelineFailures(dreamCycleLog);
     if (dreamCycleFailures.length > 0) {
       for (const failure of dreamCycleFailures) {
         failedSteps.push({

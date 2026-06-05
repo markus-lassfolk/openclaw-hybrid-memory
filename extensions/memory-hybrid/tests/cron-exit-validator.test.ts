@@ -1742,6 +1742,64 @@ error: unknown command 'bar'
         }),
       );
     });
+
+    it("does not fail dream-cycle when standalone continuous-verification degraded lines appear in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "dream-cycle.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "continuous-verification checked=12 Machine status: status=degraded reason=all_uncertain errors=0 semantic=partial",
+          "Dream cycle status: success=true core_success=true failed_stages=0 follow_up_failures=0",
+          "[dream-cycle] pipeline complete in 120s (core=10s, follow-ups=6/6, follow-up-failures=0)",
+        ].join("\n"),
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["dream-cycle"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.failedSteps.some((s) => s.step === "continuous-verification")).toBe(false);
+    });
+
+    it("does not attribute incident diagnostics artifacts to unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "distill.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z distill exit=0\n");
+      writeFileSync(
+        logPath,
+        "vm memory incident bundle created at /tmp/bundle; memory-diagnostics-live.json 0 bytes and malformed\ndistill stored=5 sessions=3 batchFailures=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["distill"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          failureClass: "zero_byte_memory_diagnostics",
+        }),
+      );
+    });
+
+    it("detects final-audit.json artifact failures for audit-health scoped runs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "weekly-audit.exit.txt");
+      const logPath = join(tmpDir, "audit.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z audit-health exit=0\n");
+      writeFileSync(logPath, "audit-health wrote final-audit.json (0 bytes, malformed)\n");
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["audit-health"]);
+
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "audit",
+          failureClass: "missing_or_empty_required_artifact",
+          artifactPaths: ["final-audit.json"],
+        }),
+      );
+    });
   });
 
   describe("validateFromSummaryJson", () => {
