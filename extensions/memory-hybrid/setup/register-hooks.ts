@@ -317,7 +317,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         if (hooks.sessionState.capabilityHintsSessionsSeen.has(sessionKey)) return;
         hooks.sessionState.capabilityHintsSessionsSeen.add(sessionKey);
         hooks.sessionState.touchSession(sessionKey);
-        hooks.sessionState.pruneSessionMaps();
+        hooks.sessionState.pruneSessionMaps(ctx.injectedFactIdsBySession);
       }
       const remaining = getRemainingPrependTokens(lifecycleContext.prependBudgetRef);
       if (remaining !== undefined && remaining < 120) return;
@@ -418,9 +418,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
         const hotFacts = ctx.factsDb.getHotFacts(4000, scopeFilter);
         const pinnedRecallThreshold = ctx.cfg.autoRecall?.progressivePinnedRecallCount ?? 3;
 
-        const pinnedFacts = hotFacts.filter((x) =>
-          shouldPinFactForInjection(x.entry, pinnedRecallThreshold),
-        );
+        const pinnedFacts = hotFacts.filter((x) => shouldPinFactForInjection(x.entry, pinnedRecallThreshold));
 
         if (pinnedFacts.length > 0) {
           const lines = pinnedFacts
@@ -527,9 +525,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           const blocks: string[] = [];
           let usedRecallSnippet = false;
           const compactionSessionKey =
-            resolveSessionKeyFromHookEvent(event, hookCtx) ??
-            lifecycleContext.currentAgentIdRef.value ??
-            "default";
+            resolveSessionKeyFromHookEvent(event, hookCtx) ?? lifecycleContext.currentAgentIdRef.value ?? "default";
           const lastPrompt =
             lifecycleContext.lastAutoRecallPromptBySession.get(compactionSessionKey)?.trim() ??
             (typeof lifecycleContext.lastAutoRecallPromptRef.value === "string"
@@ -599,10 +595,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           }
 
           if (summaryInner.length > 0) {
-            const remaining = Math.max(
-              0,
-              postCompactionBudget - blocks.reduce((sum, b) => sum + estimateTokens(b), 0),
-            );
+            const remaining = Math.max(0, postCompactionBudget - blocks.reduce((sum, b) => sum + estimateTokens(b), 0));
             const wrapped = assembleRecallPrependContext(lifecycleContext, summaryInner.join("\n"), {
               edictMaxTokens: edictMaxTokensForBudget(remaining, DEFAULT_EDICT_BUDGET_FRACTION),
             });

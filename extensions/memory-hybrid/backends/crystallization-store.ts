@@ -792,7 +792,7 @@ export class CrystallizationStore extends BaseSqliteStore {
         });
         return installMilestoneHash === evidenceHash;
       } catch {
-        return true;
+        return false;
       }
     });
   }

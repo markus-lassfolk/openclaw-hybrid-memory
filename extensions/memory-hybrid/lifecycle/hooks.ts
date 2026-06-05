@@ -38,7 +38,7 @@ export type { LifecycleContext } from "./types.js";
 
 export function createLifecycleHooks(ctx: LifecycleContext) {
   const sessionState = createSessionState(ctx.progressiveIndexBySession, ctx.lastAutoRecallPromptBySession);
-  const staleSweepTimer = createStaleSweepTimer(sessionState);
+  const staleSweepTimer = createStaleSweepTimer(sessionState, ctx.injectedFactIdsBySession);
   let firstRecallCheckpointCaptured = false;
 
   const workspaceRoot = getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
@@ -79,9 +79,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
             return undefined;
           }
           if (!recallStageResult) {
-            api.logger.warn?.(
-              "memory-hybrid: recall stage returned no result — attempting FTS+HOT degraded fallback",
-            );
+            api.logger.warn?.("memory-hybrid: recall stage returned no result — attempting FTS+HOT degraded fallback");
             const degraded = await buildDegradedFtsHotRecallStage(event, rApi, ctx, sessionState, "timeout");
             if (capturedFirstRecallBegin) {
               recordStartupMemoryCheckpoint({
@@ -288,6 +286,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
       if (isStaleLifecycleGeneration(ctx)) {
         const sessionId = sessionState.resolveSessionKey(event, rApi) ?? ctx.currentAgentIdRef.value ?? "default";
         sessionState.clearSessionState(sessionId);
+        sessionState.clearInjectedFactIdsForSession(ctx.injectedFactIdsBySession, sessionId);
         return;
       }
       await runCaptureStage(event, rApi, ctx, sessionState);
@@ -411,7 +410,7 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
     });
   };
 
-  const dispose = getDispose(staleSweepTimer, sessionState);
+  const dispose = getDispose(staleSweepTimer, sessionState, ctx.injectedFactIdsBySession);
 
   return { onAgentStart, onAgentEnd, onFrustrationDetect, dispose, sessionState };
 }

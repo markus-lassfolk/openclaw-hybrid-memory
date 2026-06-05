@@ -14,10 +14,7 @@ import {
   generateAmbientQueries,
   searchAmbientIssues,
 } from "../../services/ambient-retrieval.js";
-import {
-  loadKnownEntitySurfaces,
-  matchEntitySurfacesInText,
-} from "../../services/entity-retrieval.js";
+import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../services/entity-retrieval.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
@@ -244,8 +241,7 @@ export async function runRecall(
 
   ctx.recallInFlightRef.value++;
   // Global ref supports plugin drain/shutdown; per-session recallInFlightBySession drives degradation.
-  const trackedSessionScopeKey =
-    sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
+  const trackedSessionScopeKey = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
   sessionState.recallInFlightBySession.set(
     trackedSessionScopeKey,
     (sessionState.recallInFlightBySession.get(trackedSessionScopeKey) ?? 0) + 1,
@@ -297,8 +293,14 @@ export async function runRecall(
     if (shouldAbortRecall()) return completeStage(emptyRecallStage());
 
     const { currentAgentIdRef } = ctx;
-    const { resolveSessionKey, ambientSeenFactsMap, ambientLastEmbeddingMap, pruneSessionMaps, sessionStartSeen, recallInFlightBySession } =
-      sessionState;
+    const {
+      resolveSessionKey,
+      ambientSeenFactsMap,
+      ambientLastEmbeddingMap,
+      pruneSessionMaps,
+      sessionStartSeen,
+      recallInFlightBySession,
+    } = sessionState;
     const sessionScopeKey = trackedSessionScopeKey;
 
     api.logger.debug?.(`memory-hybrid: auto-recall start (prompt length ${e.prompt.length})`);
@@ -484,8 +486,7 @@ export async function runRecall(
       query: string,
       limitNum: number,
       extra?: Omit<NonNullable<Parameters<typeof runRecallPipelineQuery>[4]>, "stageSignal">,
-    ) =>
-      runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
+    ) => runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
 
     const ambientCfg = ctx.cfg.ambient;
     const sessionKey = sessionScopeKey;
@@ -1018,9 +1019,7 @@ export async function runRecall(
     // ceiling — the injected context must not exceed either.
     const totalBudget = interactivePolicy.contextBudgetTokens;
     const issueCapTokens =
-      totalBudget < 80
-        ? Math.max(0, Math.floor(totalBudget * 0.15))
-        : Math.max(80, Math.floor(totalBudget * 0.15));
+      totalBudget < 80 ? Math.max(0, Math.floor(totalBudget * 0.15)) : Math.max(80, Math.floor(totalBudget * 0.15));
     const narrativeCapTokens =
       narrativeBlockCapCfg ?? (narrativeBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
     const hotCapTokens = hotBlockCapCfg ?? (hotBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.25)) : 0);

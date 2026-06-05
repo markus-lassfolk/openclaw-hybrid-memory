@@ -86,7 +86,14 @@ export function createSessionState(
     lastAutoRecallPromptBySession?.delete(sessionKey);
   }
 
-  function pruneSessionMaps(): void {
+  function clearInjectedFactIdsForSession(
+    injectedFactIdsBySession: Map<string, Set<string>> | undefined,
+    sessionKey: string,
+  ): void {
+    injectedFactIdsBySession?.delete(sessionKey);
+  }
+
+  function pruneSessionMaps(injectedFactIdsBySession?: Map<string, Set<string>>): void {
     if (ambientSeenFactsMap.size > MAX_TRACKED_SESSIONS) {
       const excess = ambientSeenFactsMap.size - MAX_TRACKED_SESSIONS;
       const keys = ambientSeenFactsMap.keys();
@@ -154,13 +161,21 @@ export function createSessionState(
         if (value) lastAutoRecallPromptBySession.delete(value);
       }
     }
+    if (injectedFactIdsBySession && injectedFactIdsBySession.size > MAX_TRACKED_SESSIONS) {
+      const excess = injectedFactIdsBySession.size - MAX_TRACKED_SESSIONS;
+      const keys = injectedFactIdsBySession.keys();
+      for (let i = 0; i < excess; i++) {
+        const { value } = keys.next();
+        if (value) injectedFactIdsBySession.delete(value);
+      }
+    }
   }
 
   function resolveSessionKey(event: unknown, api?: SessionKeyHookApi): string | null {
     return resolveSessionKeyFromHookEvent(event, api);
   }
 
-  const clearAll = (): void => {
+  const clearAll = (injectedFactIdsBySession?: Map<string, Set<string>>): void => {
     sessionStartSeen.clear();
     ambientSeenFactsMap.clear();
     ambientLastEmbeddingMap.clear();
@@ -173,6 +188,7 @@ export function createSessionState(
     recallInFlightBySession.clear();
     progressiveIndexBySession?.clear();
     lastAutoRecallPromptBySession?.clear();
+    injectedFactIdsBySession?.clear();
   };
 
   return {
@@ -188,6 +204,7 @@ export function createSessionState(
     recallInFlightBySession,
     touchSession,
     clearSessionState,
+    clearInjectedFactIdsForSession,
     pruneSessionMaps,
     resolveSessionKey,
     MAX_TRACKED_SESSIONS,

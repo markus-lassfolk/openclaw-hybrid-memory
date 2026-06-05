@@ -316,13 +316,14 @@ async function consumePendingTaskSignals(
   }
 }
 
-function sweepStaleSessions(sessionState: SessionState): number {
+function sweepStaleSessions(sessionState: SessionState, injectedFactIdsBySession?: Map<string, Set<string>>): number {
   const now = Date.now();
   const cutoff = now - STALE_SESSION_TTL_MS;
   let swept = 0;
   for (const [sessionKey, lastActive] of sessionState.sessionLastActivity) {
     if (lastActive < cutoff) {
       sessionState.clearSessionState(sessionKey);
+      sessionState.clearInjectedFactIdsForSession(injectedFactIdsBySession, sessionKey);
       sessionState.capabilityHintsSessionsSeen.delete(sessionKey);
       swept++;
     }
@@ -333,10 +334,13 @@ function sweepStaleSessions(sessionState: SessionState): number {
 /**
  * Start the periodic stale session sweep timer. Returns the timer handle for dispose.
  */
-export function createStaleSweepTimer(sessionState: SessionState): ReturnType<typeof setInterval> {
+export function createStaleSweepTimer(
+  sessionState: SessionState,
+  injectedFactIdsBySession?: Map<string, Set<string>>,
+): ReturnType<typeof setInterval> {
   return setInterval(() => {
     try {
-      sweepStaleSessions(sessionState);
+      sweepStaleSessions(sessionState, injectedFactIdsBySession);
     } catch (err) {
       // Suppress expected database connection errors during shutdown
       const e = err instanceof Error ? err : new Error(String(err));
@@ -353,10 +357,14 @@ export function createStaleSweepTimer(sessionState: SessionState): ReturnType<ty
 /**
  * Return a dispose function that clears the sweep timer and all session maps.
  */
-export function getDispose(timerRef: ReturnType<typeof setInterval> | null, sessionState: SessionState): () => void {
+export function getDispose(
+  timerRef: ReturnType<typeof setInterval> | null,
+  sessionState: SessionState,
+  injectedFactIdsBySession?: Map<string, Set<string>>,
+): () => void {
   return () => {
     if (timerRef) clearInterval(timerRef);
-    sessionState.clearAll?.();
+    sessionState.clearAll?.(injectedFactIdsBySession);
   };
 }
 

@@ -119,9 +119,7 @@ export async function runInjectionStage(
         return;
       }
       injectionAbort.abort();
-      api.logger.warn?.(
-        "memory-hybrid: injection stage timed out — returning unsummarized partial injection",
-      );
+      api.logger.warn?.("memory-hybrid: injection stage timed out — returning unsummarized partial injection");
       void runInjection(recallResult, api, ctx, event, { skipLlmSummarize: true, emitGate }).then(resolve);
     }, INJECTION_STAGE_TIMEOUT_MS);
   });

@@ -107,11 +107,15 @@ export interface SessionState {
   recallInFlightBySession: Map<string, number>;
   touchSession: (sessionKey: string) => void;
   clearSessionState: (sessionKey: string) => void;
-  pruneSessionMaps: () => void;
+  clearInjectedFactIdsForSession: (
+    injectedFactIdsBySession: Map<string, Set<string>> | undefined,
+    sessionKey: string,
+  ) => void;
+  pruneSessionMaps: (injectedFactIdsBySession?: Map<string, Set<string>>) => void;
   resolveSessionKey: (event: unknown, api?: { context?: { sessionId?: string; sessionKey?: string } }) => string | null;
   MAX_TRACKED_SESSIONS: number;
   /** Optional: clear all session maps (used by dispose). Set by hooks when creating sessionState. */
-  clearAll?: () => void;
+  clearAll?: (injectedFactIdsBySession?: Map<string, Set<string>>) => void;
 }
 
 /** Result of recall stage (candidates + blocks for injection). */

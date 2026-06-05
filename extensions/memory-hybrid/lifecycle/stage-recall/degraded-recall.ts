@@ -7,10 +7,7 @@ import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/n
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { trimBlockToBudget } from "../../services/context-block-trim.js";
 import { consumePrependBudget, initPrependBudget } from "../../services/prepend-budget.js";
-import {
-  assembleRecallPrependContext,
-  edictMaxTokensForBudget,
-} from "../../services/recalled-context-assembler.js";
+import { assembleRecallPrependContext, edictMaxTokensForBudget } from "../../services/recalled-context-assembler.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
@@ -191,10 +188,7 @@ export async function buildDegradedFtsHotRecallStage(
     ctx.cfg.retrieval,
   );
   const totalBudget = interactivePolicy.contextBudgetTokens;
-  const {
-    hotMaxTokens: hotBlockCapCfg,
-    narrativeMaxTokens: narrativeBlockCapCfg,
-  } = ctx.cfg.autoRecall;
+  const { hotMaxTokens: hotBlockCapCfg, narrativeMaxTokens: narrativeBlockCapCfg } = ctx.cfg.autoRecall;
   const hasNarrativesDb = ctx.narrativesDb != null || ctx.eventLog != null;
   const narrativeCapTokens =
     narrativeBlockCapCfg ?? (hasNarrativesDb ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
@@ -268,13 +262,11 @@ export async function buildDegradedFtsHotRecallStage(
     assembleRecallPrependContext(ctx, inner, {
       prefix: marker.trim(),
       edictMaxTokens: edictReserve,
-    }) ??
-    (marker.trim() ? `${marker}\n\n` : undefined);
+    }) ?? (marker.trim() ? `${marker}\n\n` : undefined);
   if (prepend) consumePrependBudget(ctx.prependBudgetRef, prepend);
   if (prepend) return { kind: "degraded", prependContext: prepend };
   const markerOnly =
-    assembleRecallPrependContext(ctx, "", { prefix: marker.trim(), edictMaxTokens: edictReserve }) ??
-    `${marker}\n\n`;
+    assembleRecallPrependContext(ctx, "", { prefix: marker.trim(), edictMaxTokens: edictReserve }) ?? `${marker}\n\n`;
   return { kind: "degraded", prependContext: markerOnly };
 }
 
