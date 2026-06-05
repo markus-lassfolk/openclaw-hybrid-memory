@@ -12,6 +12,7 @@ import {
   validateMaintenanceExecution,
   validateFromSummaryJson,
   generateCronStatusReport,
+  resolveValidateCronExitCode,
   type ExitValidationResult,
 } from "../../../services/cron-exit-validator.js";
 
@@ -68,13 +69,9 @@ export function registerValidateCronExit(hybrid: Chainable, context?: ValidateCr
             });
           }
 
-          if (
-            result.maintenanceStatus === "failed" ||
-            result.maintenanceStatus === "partial" ||
-            result.semanticStatus === "semantic_fail" ||
-            (result.maintenanceStatus === "success" && !result.guardUpdated && result.semanticStatus !== "ok")
-          ) {
-            process.exitCode = 1;
+          const exitCode = resolveValidateCronExitCode(result);
+          if (exitCode !== 0) {
+            process.exitCode = exitCode;
           }
         },
       ),

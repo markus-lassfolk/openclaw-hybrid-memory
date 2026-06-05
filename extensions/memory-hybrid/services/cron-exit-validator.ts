@@ -1527,54 +1527,99 @@ function combineSemanticStatus(
   return rank(summarySemantic) >= rank(derived) ? summarySemantic : derived;
 }
 
-function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
+export const GUARD_BLOCKING_SEMANTIC_STEP_NAMES = [
+  "reflect-rules",
+  "self-correction-run",
+  "generate-proposals",
+  "extract-reinforcement",
+  "extract-daily",
+  "extract-procedures",
+  "reflect",
+  "reflect-meta",
+  "enrich-entities",
+  "enrich-entities-deep",
+  "consolidate",
+  "reflect-identity",
+  "resolve-contradictions",
+  "generate-auto-skills",
+  "scope-promote",
+  "repair-vectors",
+  "prune",
+  "extract-directives",
+  "reembed-vectorless",
+  "distill",
+  "extract-implicit",
+  "continuous-verification",
+  "lifecycle-sync",
+  "auto-classify",
+  "implicit-feedback-collapse",
+  "record-storage-sample",
+  "analyze-maintenance-logs",
+  "passive-observer",
+  "active-tasks-maintain",
+  "closed-loop-analysis",
+  "cross-agent-learning",
+  "tool-effectiveness",
+  "digest-autopilot",
+  "audit-health",
+  "crystallization-proposals",
+  "crystallization-rescan",
+  "sensor-sweep",
+  "build-languages",
+  "maintenance",
+  "cursor",
+  "persona-proposals",
+] as const;
+
+export const CROSS_CUTTING_GUARD_FAILURE_CLASSES = ["hidden_llm_failure", "cursor_not_advanced"] as const;
+
+export function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
   if (issue.failureCategory !== "semantic_failure") return false;
-  if (issue.failureClass === "hidden_llm_failure" || issue.failureClass === "cursor_not_advanced") {
+  if (
+    issue.failureClass === "hidden_llm_failure" ||
+    issue.failureClass === "cursor_not_advanced"
+  ) {
     return true;
   }
-  return (
-    issue.stepName === "reflect-rules" ||
-    issue.stepName === "self-correction-run" ||
-    issue.stepName === "generate-proposals" ||
-    issue.stepName === "extract-reinforcement" ||
-    issue.stepName === "extract-daily" ||
-    issue.stepName === "extract-procedures" ||
-    issue.stepName === "reflect" ||
-    issue.stepName === "reflect-meta" ||
-    issue.stepName === "enrich-entities" ||
-    issue.stepName === "enrich-entities-deep" ||
-    issue.stepName === "consolidate" ||
-    issue.stepName === "reflect-identity" ||
-    issue.stepName === "resolve-contradictions" ||
-    issue.stepName === "generate-auto-skills" ||
-    issue.stepName === "scope-promote" ||
-    issue.stepName === "repair-vectors" ||
-    issue.stepName === "prune" ||
-    issue.stepName === "extract-directives" ||
-    issue.stepName === "reembed-vectorless" ||
-    issue.stepName === "distill" ||
-    issue.stepName === "extract-implicit" ||
-    issue.stepName === "continuous-verification" ||
-    issue.stepName === "lifecycle-sync" ||
-    issue.stepName === "auto-classify" ||
-    issue.stepName === "implicit-feedback-collapse" ||
-    issue.stepName === "record-storage-sample" ||
-    issue.stepName === "analyze-maintenance-logs" ||
-    issue.stepName === "passive-observer" ||
-    issue.stepName === "active-tasks-maintain" ||
-    issue.stepName === "closed-loop-analysis" ||
-    issue.stepName === "cross-agent-learning" ||
-    issue.stepName === "tool-effectiveness" ||
-    issue.stepName === "digest-autopilot" ||
-    issue.stepName === "audit-health" ||
-    issue.stepName === "crystallization-proposals" ||
-    issue.stepName === "crystallization-rescan" ||
-    issue.stepName === "sensor-sweep" ||
-    issue.stepName === "build-languages" ||
-    issue.stepName === "maintenance" ||
-    issue.stepName === "cursor" ||
-    issue.stepName === "persona-proposals"
-  );
+  return (GUARD_BLOCKING_SEMANTIC_STEP_NAMES as readonly string[]).includes(issue.stepName);
+}
+
+/**
+ * Map validation outcome to CLI exit codes:
+ * - 0: success (guard may update)
+ * - 1: mechanical failure (missing/non-zero steps, partial ledger)
+ * - 2: semantic failure without mechanical ledger failures (exit=0 but degraded log/summary)
+ */
+export function resolveValidateCronExitCode(result: ExitValidationResult): 0 | 1 | 2 {
+  if (result.maintenanceStatus === "success" && result.guardUpdated) {
+    return 0;
+  }
+  if (result.maintenanceStatus === "skipped") {
+    return 0;
+  }
+
+  const hasMechanicalIssue =
+    result.missingSteps.length > 0 ||
+    result.failedSteps.length > 0 ||
+    result.maintenanceStatus === "partial";
+
+  const hasBlockingSemanticIssue = result.reportableIssues.some(isGuardBlockingSemanticIssue);
+
+  if (!hasMechanicalIssue && (hasBlockingSemanticIssue || result.semanticStatus === "semantic_fail")) {
+    return 2;
+  }
+
+  if (
+    result.maintenanceStatus === "failed" ||
+    result.maintenanceStatus === "partial" ||
+    result.semanticStatus === "semantic_fail" ||
+    result.semanticStatus === "degraded" ||
+    (result.maintenanceStatus === "success" && !result.guardUpdated)
+  ) {
+    return 1;
+  }
+
+  return 1;
 }
 
 function requiredStepsIncludeDreamPipeline(requiredSteps: string[]): boolean {

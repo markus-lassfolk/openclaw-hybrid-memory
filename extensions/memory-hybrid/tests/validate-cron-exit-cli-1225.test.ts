@@ -188,7 +188,7 @@ describe("validate-cron-exit CLI (#1225)", () => {
       { from: "user" },
     );
 
-    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(1));
+    await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(2));
     const payload = JSON.parse(String(logSpy.mock.calls[0]?.[0] ?? "{}")) as {
       maintenanceStatus: string;
       semanticStatus: string;
