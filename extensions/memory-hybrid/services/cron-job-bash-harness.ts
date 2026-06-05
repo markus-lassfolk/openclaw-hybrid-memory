@@ -70,6 +70,7 @@ export function buildHybridMemCronBashBody(
     'DAY_DIR="${HM_LOG_BASE}/$(date -u +%Y%m%d)"',
     'mkdir -p "$DAY_DIR"',
     'HM_SUMMARY="${DAY_DIR}/${HM_JOB}-${RUN_ID}.summary.json"',
+    'export HM_SUMMARY',
     'HM_VALIDATION_JSON="${DAY_DIR}/${HM_JOB}-${RUN_ID}.validation.json"',
     'HM_LOG="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.log"',
     'HM_EXIT="${HM_LOG_BASE}/${HM_JOB}-${RUN_ID}.exit.txt"',

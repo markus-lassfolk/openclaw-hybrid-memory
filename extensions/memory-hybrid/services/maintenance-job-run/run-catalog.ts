@@ -71,7 +71,7 @@ export function listMaintenanceRuns(opts?: {
       continue;
     }
 
-    if (file.endsWith("summary.json") && file.includes("/job-runs/")) {
+    if (file.endsWith("summary.json") && (file.includes("/job-runs/") || file.includes("/job-runs-standalone/"))) {
       try {
         const record = JSON.parse(readFileSync(file, "utf-8")) as MaintenanceJobRunRecord;
         if (record.schemaVersion !== 1 || !record.jobRunId) continue;

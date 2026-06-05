@@ -7,7 +7,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { type ExitValidationResult, validateFromSummaryJson, validateMaintenanceExecution } from "./cron-exit-validator.js";
 
 export interface CronRunLedgerEntry {
@@ -41,6 +41,20 @@ export interface CronRunCorrection {
   newStatus: string;
   validationResult: ExitValidationResult;
   ledgerPath: string;
+}
+
+/**
+ * Derive the orchestrator summary.json path from a cron exit ledger path.
+ * Exit ledgers live at {logRoot}/{job}-{runId}.exit.txt while summaries are in
+ * {logRoot}/{YYYYMMDD}/{job}-{runId}.summary.json. Extract day from runId.
+ */
+function deriveSummaryPathFromExitPath(exitPath: string): string {
+  const match = exitPath.match(/\/([^/]+)-(\d{8}T\d{6}Z-\d+)\.exit\.txt$/);
+  if (!match) return exitPath.replace(/\.exit\.txt$/, ".summary.json");
+  const [, job, runId] = match;
+  const day = runId.slice(0, 8);
+  const logsRoot = dirname(exitPath);
+  return join(logsRoot, day, `${job}-${runId}.summary.json`);
 }
 
 /**
@@ -290,7 +304,7 @@ export function reconcileCronRunLedger(
       continue;
     }
 
-    const summaryPath = exitPath.replace(/\.exit\.txt$/, ".summary.json");
+    const summaryPath = deriveSummaryPathFromExitPath(exitPath);
     const validation = existsSync(summaryPath)
       ? validateFromSummaryJson(summaryPath, exitPath, logPath, requiredSteps, true)
       : validateMaintenanceExecution(exitPath, logPath, requiredSteps, true);

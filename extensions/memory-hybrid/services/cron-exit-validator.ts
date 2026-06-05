@@ -1120,9 +1120,14 @@ export function validateFromSummaryJson(
     });
 
     const present = new Set(steps.map((s) => s.step));
-    const missingSteps = requiredSteps.filter((name) => !present.has(name));
+    
+    // Consolidated cron: requiredSteps are wrapper names (e.g., "maintenance-nightly")
+    // while summary.steps are inner orchestrator steps (e.g., "distill", "prune").
+    // Skip missing-step check when requiredSteps don't match any summary step names.
+    const isConsolidatedMode = requiredSteps.length > 0 && requiredSteps.every((name) => !present.has(name));
+    const missingSteps = isConsolidatedMode ? [] : requiredSteps.filter((name) => !present.has(name));
     const failedSteps = steps.filter(
-      (s) => requiredSteps.includes(s.step) && (s.exitCode !== 0 || s.status === "failed"),
+      (s) => (isConsolidatedMode || requiredSteps.includes(s.step)) && (s.exitCode !== 0 || s.status === "failed"),
     );
 
     const semanticOutcomes = summary.steps
@@ -1150,7 +1155,7 @@ export function validateFromSummaryJson(
     if (maintenanceStatus === "success" && semanticStatus !== "ok") {
       const guardBlockingSemantic = summary.steps.some(
         (s) =>
-          requiredSteps.includes(s.name) &&
+          (isConsolidatedMode || requiredSteps.includes(s.name)) &&
           s.semanticOutcome != null &&
           jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome) &&
           isGuardBlockingSemanticIssue(

@@ -41,6 +41,20 @@ import { approxIntervalMs, relativeTime } from "../../shared.js";
 
 import type { VerifyRunState } from "../verify-run-state.js";
 
+/**
+ * Derive the orchestrator summary.json path from a cron exit ledger path.
+ * Exit ledgers live at {logRoot}/{job}-{runId}.exit.txt while summaries are in
+ * {logRoot}/{YYYYMMDD}/{job}-{runId}.summary.json. Extract day from runId.
+ */
+function deriveSummaryPathFromExitPath(exitPath: string): string {
+  const match = exitPath.match(/\/([^/]+)-(\d{8}T\d{6}Z-\d+)\.exit\.txt$/);
+  if (!match) return exitPath.replace(/\.exit\.txt$/, ".summary.json");
+  const [, job, runId] = match;
+  const day = runId.slice(0, 8);
+  const logsRoot = dirname(exitPath);
+  return join(logsRoot, day, `${job}-${runId}.summary.json`);
+}
+
 /** Former standalone cron jobs — now config-gated orchestrator modules (not separate cron entries). */
 const CONSOLIDATED_FORMER_STANDALONE_MODULES: Array<{
   step: string;
@@ -750,7 +764,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
       const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs);
       const nightlyWithoutSummary = exitFiles.filter((exitPath) => {
         if (!/maintenance-nightly/i.test(exitPath)) return false;
-        const summaryPath = exitPath.replace(/\.exit\.txt$/, ".summary.json");
+        const summaryPath = deriveSummaryPathFromExitPath(exitPath);
         return !existsSync(summaryPath);
       });
       if (nightlyWithoutSummary.length > 0) {
