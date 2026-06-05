@@ -351,8 +351,9 @@ function registerManageSelfCorrectionFeedbackOnParent(
             console.log(`  Generalised stored: ${res.generalisedStored}`);
             console.log(`  Provenance sources recorded: ${res.provenanceRecorded}`);
             console.log(`  Skipped duplicates: ${res.skippedDuplicates}`);
-            if (res.errors > 0) console.log(`  Errors: ${res.errors}`);
-            if (res.errors > 0) process.exitCode = 1;
+            const summary = `agents=${res.agentsScanned} generalised=${res.generalisedStored} errors=${res.errors} semantic=${res.errors > 0 ? "partial" : "success"}`;
+            console.log(`cross-agent-learning: ${summary}`);
+            if (res.errors > 0) process.exitCode = 2;
           },
         ),
       ),

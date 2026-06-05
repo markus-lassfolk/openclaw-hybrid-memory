@@ -1248,7 +1248,7 @@ error: unknown command 'bar'
       writeFileSync(exitPath, "2026-05-08T02:15:30Z cross-agent-learning exit=0\n");
       writeFileSync(
         logPath,
-        "Cross-agent learning complete:\n  Agents scanned: 3\n  Errors: 2\n",
+        "Cross-agent learning complete:\n  Agents scanned: 3\n  Errors: 2\ncross-agent-learning: agents=3 generalised=1 errors=2 semantic=partial\n",
       );
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["cross-agent-learning"]);
@@ -1340,6 +1340,94 @@ error: unknown command 'bar'
         expect.objectContaining({
           stepName: "audit-health",
           failureClass: "strict_warnings",
+        }),
+      );
+    });
+
+    it("blocks guard updates when sensor-sweep reports errors", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "sensor-sweep.exit.txt");
+      const logPath = join(tmpDir, "sensor-sweep.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z sensor-sweep exit=0\n");
+      writeFileSync(
+        logPath,
+        "sensor-sweep tier=all: written=4 skipped=1 errors=2 semantic=partial\n  disk sensor failed\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["sensor-sweep"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "sensor-sweep",
+          failureClass: "sensor_sweep_errors",
+        }),
+      );
+    });
+
+    it("blocks guard updates when crystallization-proposals stores are unavailable", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "crystallization-proposals.exit.txt");
+      const logPath = join(tmpDir, "crystallization-proposals.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z crystallization-proposals exit=0\n");
+      writeFileSync(
+        logPath,
+        "crystallization-proposals stores unavailable (change feed missing semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["crystallization-proposals"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "crystallization-proposals",
+          failureClass: "crystallization_proposals_stores_unavailable",
+        }),
+      );
+    });
+
+    it("blocks guard updates when crystallization-rescan reports errors", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "crystallization-rescan.exit.txt");
+      const logPath = join(tmpDir, "crystallization-rescan.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z crystallization-rescan exit=0\n");
+      writeFileSync(
+        logPath,
+        "crystallization-rescan errors=2 (skill A parse failed; skill B missing manifest semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["crystallization-rescan"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "crystallization-rescan",
+          failureClass: "crystallization_rescan_errors",
+        }),
+      );
+    });
+
+    it("blocks guard updates when implicit-feedback-collapse is interrupted", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "implicit-feedback-collapse.exit.txt");
+      const logPath = join(tmpDir, "implicit-feedback-collapse.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z implicit-feedback-collapse exit=0\n");
+      writeFileSync(
+        logPath,
+        "implicit-feedback-collapse interrupted (scanned=900 collapsed=12 interrupted=true semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["implicit-feedback-collapse"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "implicit-feedback-collapse",
+          failureClass: "implicit_feedback_collapse_interrupted",
         }),
       );
     });

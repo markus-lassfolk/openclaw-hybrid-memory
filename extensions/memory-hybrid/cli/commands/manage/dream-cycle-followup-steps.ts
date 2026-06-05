@@ -109,9 +109,11 @@ export async function runCrystallizationProposalsStep(deps: DreamCycleFollowUpDe
   });
   if (crystalRes.skippedReason === "disabled") return "skipped (disabled)";
   if (crystalRes.skippedReason === "stores-unavailable") {
-    throw new Error(crystalRes.reasons[0] ?? "crystallization stores unavailable");
+    throw new Error(
+      `crystallization-proposals stores unavailable (${crystalRes.reasons[0] ?? "stores-unavailable"} semantic=partial)`,
+    );
   }
-  return `proposed=${crystalRes.proposed}, skipped=${crystalRes.skipped}`;
+  return `proposed=${crystalRes.proposed} skipped=${crystalRes.skipped} semantic=success`;
 }
 
 export async function runCostLogPruneStep(deps: DreamCycleFollowUpDeps): Promise<string> {

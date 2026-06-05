@@ -1194,10 +1194,11 @@ function collectMaintenanceTelemetryIssues(params: {
 
   const crossAgentDetected =
     requiredSteps.includes("cross-agent-learning") || /\bcross-agent-learning\b/i.test(logContent);
+  const crossAgentLog = crossAgentDetected ? extractStepLog(logContent, "cross-agent-learning") : "";
   const crossAgentErrors =
-    parsePositiveMetric(logContent, "errors") ??
+    parsePositiveMetric(crossAgentLog, "errors") ??
     (() => {
-      const match = logContent.match(/\bErrors:\s*(\d+)\b/);
+      const match = crossAgentLog.match(/\bErrors:\s*(\d+)\b/);
       if (!match) return undefined;
       const value = Number.parseInt(match[1], 10);
       return Number.isFinite(value) ? value : undefined;
@@ -1299,11 +1300,92 @@ function collectMaintenanceTelemetryIssues(params: {
     }
   }
 
+  const sensorSweepDetected =
+    requiredSteps.includes("sensor-sweep") || /\bsensor-sweep\b/i.test(logContent);
+  const sensorSweepLog = sensorSweepDetected ? extractStepLog(logContent, "sensor-sweep") : "";
+  const sensorSweepErrors = parsePositiveMetric(sensorSweepLog, "errors");
+  if (sensorSweepDetected && typeof sensorSweepErrors === "number" && sensorSweepErrors > 0) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "sensor-sweep",
+        failureCategory: "semantic_failure",
+        failureClass: "sensor_sweep_errors",
+        message: `${jobName}:sensor-sweep reported errors despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const crystallizationProposalsDetected =
+    requiredSteps.includes("crystallization-proposals") || /\bcrystallization-proposals\b/i.test(logContent);
+  const crystallizationStoresUnavailable =
+    /\bcrystallization-proposals\b[\s\S]{0,200}\bstores unavailable\b/i.test(logContent) ||
+    (crystallizationProposalsDetected && /\bstores-unavailable\b/i.test(logContent));
+  if (crystallizationProposalsDetected && crystallizationStoresUnavailable) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "crystallization-proposals",
+        failureCategory: "semantic_failure",
+        failureClass: "crystallization_proposals_stores_unavailable",
+        message: `${jobName}:crystallization-proposals could not access required stores despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const crystallizationRescanDetected =
+    requiredSteps.includes("crystallization-rescan") || /\bcrystallization-rescan\b/i.test(logContent);
+  const crystallizationRescanErrors = crystallizationRescanDetected
+    ? parsePositiveMetric(extractStepLog(logContent, "crystallization-rescan"), "errors")
+    : undefined;
+  if (
+    crystallizationRescanDetected &&
+    typeof crystallizationRescanErrors === "number" &&
+    crystallizationRescanErrors > 0
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "crystallization-rescan",
+        failureCategory: "semantic_failure",
+        failureClass: "crystallization_rescan_errors",
+        message: `${jobName}:crystallization-rescan reported errors despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
   const collapseDetected =
     /\bimplicit-feedback-collapse\b/i.test(logContent) ||
     /\bweekly-implicit-feedback-collapse\b/i.test(logContent);
+  const collapseInterrupted =
+    collapseDetected &&
+    /\bimplicit-feedback-collapse interrupted\b/i.test(logContent) &&
+    /\binterrupted=true\b/i.test(logContent);
+  if (collapseInterrupted) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "implicit-feedback-collapse",
+        failureCategory: "semantic_failure",
+        failureClass: "implicit_feedback_collapse_interrupted",
+        message: `${jobName}:implicit-feedback-collapse was interrupted despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
   if (
     collapseDetected &&
     typeof collapseScanned === "number" &&
@@ -1464,6 +1546,9 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "tool-effectiveness" ||
     issue.stepName === "digest-autopilot" ||
     issue.stepName === "audit-health" ||
+    issue.stepName === "crystallization-proposals" ||
+    issue.stepName === "crystallization-rescan" ||
+    issue.stepName === "sensor-sweep" ||
     issue.stepName === "maintenance" ||
     issue.stepName === "cursor" ||
     issue.stepName === "persona-proposals"

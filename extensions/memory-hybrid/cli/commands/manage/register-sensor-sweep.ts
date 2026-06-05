@@ -36,11 +36,11 @@ export function registerSensorSweepCommand(mem: Chainable, b: ManageBindings): v
             resolvedSqlitePath: b.resolvedSqlitePath,
           });
           console.log(
-            `sensor-sweep tier=${tier}: written=${result.totalWritten} skipped=${result.totalSkipped} errors=${result.errors.length}`,
+            `sensor-sweep tier=${tier}: written=${result.totalWritten} skipped=${result.totalSkipped} errors=${result.errors.length} semantic=${result.errors.length > 0 ? "partial" : "success"}`,
           );
           if (result.errors.length > 0) {
             for (const err of result.errors.slice(0, 5)) console.error(`  ${err}`);
-            process.exitCode = 1;
+            process.exitCode = 2;
           }
         } finally {
           eventBus.close?.();

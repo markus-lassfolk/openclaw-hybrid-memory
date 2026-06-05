@@ -665,8 +665,12 @@ export function buildCliMaintenanceRunners(
     if (!store) return "skipped (crystallization store unavailable)";
     const proposer = new CrystallizationProposer(null, store, b.cfg.crystallization);
     const result = proposer.rescanInstalledSkills();
-    if (result.errors.length > 0) throw new Error(result.errors.join("; "));
-    return `scanned=${result.scanned} quarantined=${result.quarantined}`;
+    if (result.errors.length > 0) {
+      throw new Error(
+        `crystallization-rescan errors=${result.errors.length} (${result.errors.join("; ")} semantic=partial)`,
+      );
+    }
+    return `scanned=${result.scanned} quarantined=${result.quarantined} semantic=success`;
   });
 
   set("generate-proposals", async () => {
