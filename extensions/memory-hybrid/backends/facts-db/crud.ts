@@ -270,7 +270,6 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const sourceForPolicy = entry.source ?? "conversation";
   const profile = resolveDedupeProfile(sourceForPolicy, ctx.storeConfig ?? { fuzzyDedupe: ctx.fuzzyDedupe });
   const nowSec = Math.floor(Date.now() / 1000);
-  const nowIsoAt = formatTimestampUtc(nowSec);
   const day = formatDateUtc(nowSec);
 
   // Normalized-hash + lexical Jaccard dedupe (per-source profiles) before daily quota.
