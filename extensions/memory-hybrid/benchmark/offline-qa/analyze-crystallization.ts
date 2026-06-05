@@ -473,8 +473,7 @@ async function main(): Promise<void> {
   rmSync(qaTmp, { recursive: true, force: true });
 }
 
-main().catch((err) => {
-  const message = (err instanceof Error ? err.message : String(err)).replace(/sk-[A-Za-z0-9_-]+/g, "[REDACTED]");
-  console.error(`offline-qa:crystallization failed: ${message}`);
+main().catch(() => {
+  console.error("offline-qa:crystallization failed.");
   process.exit(1);
 });
