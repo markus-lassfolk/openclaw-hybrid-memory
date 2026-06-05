@@ -343,6 +343,57 @@ function isAuditArtifactInScope(jobName: string, requiredSteps: string[], ledger
   return isStepInValidationScope("audit-health", requiredSteps, ledgerSteps) || /\baudit\b/i.test(jobName);
 }
 
+function appendDreamPipelineLedgerFailures(
+  failedSteps: ExitStep[],
+  stepMap: Map<string, ExitStep>,
+  logContent: string,
+  requiredSteps: string[],
+): ExitStep[] {
+  if (!logContent || !requiredStepsIncludeDreamPipeline(requiredSteps)) {
+    return failedSteps;
+  }
+
+  const dreamCycleTimestamp =
+    stepMap.get("dream-cycle")?.timestamp ??
+    stepMap.get("dream-cycle-core")?.timestamp ??
+    SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
+  const dreamCycleLog = collectDreamCyclePipelineLog(logContent);
+  const additions: ExitStep[] = [];
+
+  const degradedVerification = detectDegradedContinuousVerificationStatus(dreamCycleLog);
+  if (degradedVerification) {
+    additions.push({
+      timestamp: dreamCycleTimestamp,
+      step: "continuous-verification",
+      exitCode: 2,
+      line: degradedVerification.machineLine,
+      failureReason: degradedVerification.reason ?? "degraded",
+    });
+  }
+
+  for (const failure of detectDreamCyclePipelineFailures(dreamCycleLog)) {
+    additions.push({
+      timestamp: dreamCycleTimestamp,
+      step: failure.step,
+      exitCode: 2,
+      line: failure.line,
+      failureReason: failure.reason,
+    });
+  }
+
+  if (additions.length === 0) {
+    return failedSteps;
+  }
+
+  const merged = [...failedSteps];
+  for (const addition of additions) {
+    if (!merged.some((step) => step.step === addition.step && step.failureReason === addition.failureReason)) {
+      merged.push(addition);
+    }
+  }
+  return merged;
+}
+
 function extractMaintenanceJobName(path: string | undefined): string {
   if (!path) return "unknown-job";
   const file = basename(path);
@@ -1883,7 +1934,7 @@ export function validateMaintenanceExecution(
 
   // Check for missing required steps
   const missingSteps: string[] = [];
-  const failedSteps: ExitStep[] = [];
+  let failedSteps: ExitStep[] = [];
   const skippedSteps: ExitStep[] = [];
 
   for (const required of requiredSteps) {
@@ -1913,40 +1964,17 @@ export function validateMaintenanceExecution(
   if (logPath && failedSteps.some((s) => s.step === "audit-health")) {
     for (const step of failedSteps) {
       if (step.step !== "audit-health") continue;
-      const inferred = inferAuditHealthFailureReason(step.exitCode, logContent);
+      const inferred = inferAuditHealthFailureReason(
+        step.exitCode,
+        extractStepLog(logContent, "audit-health"),
+      );
       step.failureReason = inferred.failureReason;
       step.strictFailureReason = inferred.strictFailureReason;
     }
   }
 
-  if (logPath && requiredStepsIncludeDreamPipeline(requiredSteps)) {
-    const dreamCycleTimestamp =
-      stepMap.get("dream-cycle")?.timestamp ??
-      stepMap.get("dream-cycle-core")?.timestamp ??
-      SYNTHETIC_CONTINUOUS_VERIFICATION_TIMESTAMP;
-    const dreamCycleLog = collectDreamCyclePipelineLog(logContent);
-    const degradedVerification = detectDegradedContinuousVerificationStatus(dreamCycleLog);
-    if (degradedVerification) {
-      failedSteps.push({
-        timestamp: dreamCycleTimestamp,
-        step: "continuous-verification",
-        exitCode: 2,
-        line: degradedVerification.machineLine,
-        failureReason: degradedVerification.reason ?? "degraded",
-      });
-    }
-    const dreamCycleFailures = detectDreamCyclePipelineFailures(dreamCycleLog);
-    if (dreamCycleFailures.length > 0) {
-      for (const failure of dreamCycleFailures) {
-        failedSteps.push({
-          timestamp: dreamCycleTimestamp,
-          step: failure.step,
-          exitCode: 2,
-          line: failure.line,
-          failureReason: failure.reason,
-        });
-      }
-    }
+  if (logPath) {
+    failedSteps = appendDreamPipelineLedgerFailures(failedSteps, stepMap, logContent, requiredSteps);
   }
 
   // Determine overall status
@@ -2210,6 +2238,15 @@ function mergeSummaryWithLedgerChecks(
             ? "partial"
             : maintenanceStatus;
       missingSteps = [...missingSteps, ...wrapperMissing.filter((m) => !missingSteps.includes(m))];
+    }
+  }
+
+  if (logPath) {
+    const stepMap = new Map(steps.map((step) => [step.step, step]));
+    const failedBeforeDreamPipeline = failedSteps.length;
+    failedSteps = appendDreamPipelineLedgerFailures(failedSteps, stepMap, logContent, requiredSteps);
+    if (failedSteps.length > failedBeforeDreamPipeline && maintenanceStatus === "success") {
+      maintenanceStatus = "failed";
     }
   }
 

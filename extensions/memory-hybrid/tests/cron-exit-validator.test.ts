@@ -1878,6 +1878,58 @@ error: unknown command 'bar'
       expect(result.failedSteps.some((s) => s.step === "self-correction-run")).toBe(true);
     });
 
+    it("applies dream-cycle embedded continuous verification failures from HM_LOG in summary mode", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-dream-cycle-"));
+      const summaryPath = join(tmpDir, "dream-cycle-run.summary.json");
+      const exitPath = join(tmpDir, "dream-cycle-run.exit.txt");
+      const logPath = join(tmpDir, "dream-cycle-run.log");
+      writeFileSync(
+        summaryPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "dream-cycle-orch",
+          tierLabel: "weekly",
+          startedAt: "2026-06-05T02:00:00.000Z",
+          finishedAt: "2026-06-05T02:30:00.000Z",
+          durationMs: 1000,
+          exitCode: 0,
+          summaryLine: "ok",
+          steps: [
+            {
+              name: "dream-cycle-core",
+              status: "ok",
+              summary: "semantic=success",
+              durationMs: 1000,
+              semanticOutcome: "success",
+            },
+          ],
+          counts: { ok: 1, skipped: 0, deferred: 0, failed: 0, rateLimited: 0 },
+        }),
+      );
+      writeFileSync(exitPath, "2026-06-05T02:30:00Z dream-cycle exit=0\n");
+      writeFileSync(
+        logPath,
+        [
+          "Continuous verification complete:",
+          "  Checked: 12",
+          "  Confirmed: 0",
+          "  Stale: 0",
+          "  Uncertain: 12",
+          "  Errors: 12",
+          "  Machine status: status=degraded reason=errors_present checked=12 confirmed=0 stale=0 uncertain=12 errors=12",
+        ].join("\n"),
+      );
+
+      const result = validateFromSummaryJson(summaryPath, exitPath, logPath, ["dream-cycle"], true);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.failedSteps.some((s) => s.step === "continuous-verification")).toBe(true);
+      expect(result.failedSteps.find((s) => s.step === "continuous-verification")?.failureReason).toBe(
+        "errors_present",
+      );
+    });
+
     it("treats ok status with partial semanticOutcome as maintenance failure", () => {
       const tmpDir = mkdtempSync(join(tmpdir(), "cron-summary-partial-"));
       const summaryPath = join(tmpDir, "maintenance-nightly-run.summary.json");
