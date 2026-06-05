@@ -1,6 +1,7 @@
 import { DEFAULT_GLITCHTIP_DSN } from "../../services/error-reporter.js";
 import { DEFAULT_PLACEHOLDER_EMAIL_DOMAINS } from "../../services/skill-validator.js";
 import { pluginLogger } from "../../utils/logger.js";
+import { resolveOpenClawGatewayRootUrlFromEnv } from "../../utils/openclaw-gateway-http.js";
 import type { SectionDefinition, SectionTaxonomyOverrides } from "../skill-sections.js";
 import type { PersonaProposalsConfig, WorkshopConfig } from "../types/agents.js";
 import {
@@ -1261,7 +1262,7 @@ export function parseWorkboardConfig(cfg: Record<string, unknown>): WorkboardCon
     gatewayUrl:
       typeof raw.gatewayUrl === "string" && raw.gatewayUrl.trim().length > 0
         ? raw.gatewayUrl.trim()
-        : DEFAULT_WORKBOARD_CONFIG.gatewayUrl,
+        : resolveOpenClawGatewayRootUrlFromEnv(),
     syncIntervalMinutes: parsePositiveIntClamped(
       raw.syncIntervalMinutes,
       DEFAULT_WORKBOARD_CONFIG.syncIntervalMinutes,

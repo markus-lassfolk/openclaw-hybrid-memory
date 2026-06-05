@@ -425,6 +425,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
   });
 
   makeRoute(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`, async (req) => {
+    if (!ctx.cfg.health.authenticated) {
+      return toJson(403, { error: "authentication required" });
+    }
     const url = parseReqUrl(req.url);
     const trustedSessionId = getHeader(req, "x-openclaw-session-id");
     const trustedAgentId = getHeader(req, "x-openclaw-agent-id");
@@ -511,16 +514,16 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
           const existing = ctx.factsDb.getById(factId, { scopeFilter });
           if (!existing) return toJson(404, { error: "not found" });
 
-          const text = typeof body.text === "string" ? body.text : undefined;
-          const confidence = typeof body.confidence === "number" ? body.confidence : undefined;
-          const entity = typeof body.entity === "string" ? body.entity : undefined;
-          const key = typeof body.key === "string" ? body.key : undefined;
-          const value = typeof body.value === "string" ? body.value : undefined;
+          const text = typeof body.text === "string" ? body.text : null;
+          const confidence = typeof body.confidence === "number" ? body.confidence : null;
+          const entity = typeof body.entity === "string" ? body.entity : null;
+          const key = typeof body.key === "string" ? body.key : null;
+          const value = typeof body.value === "string" ? body.value : null;
           const tags = Array.isArray(body.tags)
             ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string")
             : undefined;
 
-          const hasStructural = text !== undefined || entity !== undefined || key !== undefined || value !== undefined || tags !== undefined;
+          const hasStructural = text !== null || entity !== null || key !== null || value !== null || tags !== undefined;
 
           if (hasStructural) {
             const stored = ctx.factsDb.store({
@@ -528,10 +531,10 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               category: existing.category,
               importance: existing.importance,
               source: "wiki-edit",
-              entity: entity ?? existing.entity ?? undefined,
-              key: key ?? existing.key ?? undefined,
-              value: value ?? existing.value ?? undefined,
-              confidence: confidence !== undefined ? Math.max(0, Math.min(1, confidence)) : existing.confidence,
+              entity: entity ?? existing.entity,
+              key: key ?? existing.key,
+              value: value ?? existing.value,
+              confidence: confidence !== null ? Math.max(0, Math.min(1, confidence)) : existing.confidence,
               tags: tags ?? existing.tags ?? undefined,
               ...scopeFieldsFromEntry(existing),
             });
@@ -541,7 +544,7 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               superseded: factId,
               newFact: ctx.factsDb.getById(stored.id, { scopeFilter }),
             });
-          } else if (confidence !== undefined) {
+          } else if (confidence !== null) {
             ctx.factsDb.setConfidenceTo(factId, Math.max(0, Math.min(1, confidence)));
             return toJson(200, { ok: true, fact: ctx.factsDb.getById(factId, { scopeFilter }) });
           }
@@ -551,6 +554,30 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         if (action === "supersede" && factId) {
           const existing = ctx.factsDb.getById(factId, { scopeFilter });
           if (!existing) return toJson(404, { error: "not found" });
+
+          const replacement =
+            typeof body.replacementText === "string" ? body.replacementText.trim() : "";
+          if (replacement) {
+            const stored = ctx.factsDb.store({
+              text: replacement,
+              category: existing.category,
+              importance: existing.importance,
+              source: "wiki-edit",
+              entity: existing.entity ?? null,
+              key: existing.key ?? null,
+              value: existing.value ?? null,
+              confidence: existing.confidence,
+              tags: existing.tags ?? undefined,
+              ...scopeFieldsFromEntry(existing),
+            });
+            ctx.factsDb.supersede(factId, stored.id);
+            return toJson(200, {
+              ok: true,
+              superseded: factId,
+              newFact: ctx.factsDb.getById(stored.id, { scopeFilter }) ?? stored,
+            });
+          }
+
           ctx.factsDb.supersede(factId, null);
           return toJson(200, { ok: true, superseded: factId });
         }
@@ -563,9 +590,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
             category: (typeof body.category === "string" ? body.category : "general") as import("../config.js").MemoryCategory,
             importance: typeof body.importance === "number" ? body.importance : 0.5,
             source: "wiki-create",
-            entity: typeof body.entity === "string" ? body.entity : undefined,
-            key: typeof body.key === "string" ? body.key : undefined,
-            value: typeof body.value === "string" ? body.value : undefined,
+            entity: typeof body.entity === "string" ? body.entity : null,
+            key: typeof body.key === "string" ? body.key : null,
+            value: typeof body.value === "string" ? body.value : null,
             confidence: typeof body.confidence === "number" ? Math.max(0, Math.min(1, body.confidence)) : 0.8,
             tags: Array.isArray(body.tags) ? (body.tags as unknown[]).filter((t): t is string => typeof t === "string") : undefined,
             ...scopeFieldsFromFilter(scopeFilter),

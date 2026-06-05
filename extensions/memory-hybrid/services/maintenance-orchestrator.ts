@@ -7,7 +7,10 @@ import type { HybridMemoryConfig } from "../config.js";
 import { nowIso } from "../utils/dates.js";
 import { is429OrWrapped } from "./chat.js";
 import { generateOrchestratorRunId } from "./maintenance-job-run/orchestrator-summary.js";
-import { semanticOutcomeBlocksOrchestratorGuard } from "./maintenance-job-run/semantic-outcome.js";
+import {
+  parseSemanticTokenFromSummary,
+  semanticOutcomeBlocksOrchestratorGuard,
+} from "./maintenance-job-run/semantic-outcome.js";
 import type { JobRunSemanticOutcome } from "./maintenance-job-run/types.js";
 import {
   stepGuardEligible,
@@ -384,10 +387,10 @@ export function formatMaintenanceSummary(
 
 function parseStepRunnerMetadata(summary: string): Pick<StepResult, "jobRunId" | "semanticOutcome"> {
   const jobRunId = summary.match(/jobRunId=([^\s]+)/)?.[1];
-  const semantic = summary.match(/semantic=([^\s]+)/)?.[1];
+  const semantic = parseSemanticTokenFromSummary(summary);
   return {
     jobRunId: jobRunId && jobRunId !== "-" ? jobRunId : undefined,
-    semanticOutcome: semantic && semantic !== "-" ? semantic : undefined,
+    semanticOutcome: semantic,
   };
 }
 

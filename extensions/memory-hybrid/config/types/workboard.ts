@@ -8,7 +8,7 @@ export type WorkboardConfig = {
   enabled: boolean;
   /**
    * Gateway HTTP base URL for Workboard RPC calls.
-   * Default: "http://localhost:9119" (OpenClaw Gateway default).
+   * Default: http://127.0.0.1:18789 (or OPENCLAW_GATEWAY_PORT when set).
    */
   gatewayUrl: string;
   /** Sync interval in minutes — how often to reconcile cards. Default: 5. */
@@ -61,7 +61,7 @@ export const DEFAULT_WORKBOARD_COLUMNS: WorkboardColumnMapping = {
 
 export const DEFAULT_WORKBOARD_CONFIG: WorkboardConfig = {
   enabled: false,
-  gatewayUrl: "http://localhost:9119",
+  gatewayUrl: "http://127.0.0.1:18789",
   syncIntervalMinutes: 5,
   syncTasks: true,
   syncGoals: true,

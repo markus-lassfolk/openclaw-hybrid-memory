@@ -41,9 +41,11 @@ import { basename } from "node:path";
 import { extractAuditHealthJsonFromLog } from "./audit-health-json.js";
 import type { JobRunSemanticOutcome, OrchestratorRunSummary } from "./maintenance-job-run/types.js";
 import {
-  jobRunOutcomeFailsOrchestratorStep,
   jobRunOutcomeToValidatorSemantic,
+  parseSemanticTokenFromSummary,
+  resolveSemanticGuardToken,
   semanticOutcomeBlocksOrchestratorGuard,
+  semanticOutcomeIsPartialFailure,
 } from "./maintenance-job-run/semantic-outcome.js";
 
 const SKIP_REASON_COOLDOWN = "skipped_cooldown";
@@ -778,6 +780,17 @@ function deriveSemanticStatus(
   return issues.length > 0 ? "unknown" : "ok";
 }
 
+function combineSemanticStatus(
+  summarySemantic: ExitValidationResult["semanticStatus"],
+  maintenanceStatus: ExitValidationResult["maintenanceStatus"],
+  issues: MaintenanceTelemetryIssue[],
+): ExitValidationResult["semanticStatus"] {
+  const derived = deriveSemanticStatus(maintenanceStatus, issues);
+  const rank = (status: ExitValidationResult["semanticStatus"]) =>
+    status === "semantic_fail" ? 3 : status === "degraded" ? 2 : status === "ok" ? 1 : 0;
+  return rank(summarySemantic) >= rank(derived) ? summarySemantic : derived;
+}
+
 function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
   if (issue.failureCategory !== "semantic_failure") return false;
   return (
@@ -1080,6 +1093,158 @@ export function generateCronStatusReport(validation: ExitValidationResult): stri
   );
 }
 
+function buildValidationErrorMessage(
+  maintenanceStatus: ExitValidationResult["maintenanceStatus"],
+  missingSteps: string[],
+  failedSteps: ExitStep[],
+  reportableIssues: MaintenanceTelemetryIssue[],
+): string | undefined {
+  if (maintenanceStatus === "failed" || maintenanceStatus === "partial") {
+    const parts: string[] = [];
+    if (missingSteps.length > 0) {
+      parts.push(`Missing steps: ${missingSteps.join(", ")}`);
+    }
+    if (failedSteps.length > 0) {
+      parts.push(
+        `Failed steps: ${failedSteps
+          .map((s) => `${s.step} (exit=${s.exitCode}${s.failureReason ? ` ${s.failureReason}` : ""})`)
+          .join(", ")}`,
+      );
+    }
+    const blockingSemanticIssues = reportableIssues.filter(isGuardBlockingSemanticIssue);
+    if (blockingSemanticIssues.length > 0) {
+      parts.push(
+        `Semantic failures: ${blockingSemanticIssues
+          .map((issue) => `${issue.stepName} (${issue.failureClass})`)
+          .join(", ")}`,
+      );
+    }
+    return parts.join("; ");
+  }
+  return undefined;
+}
+
+/** Merge orchestrator summary validation with HM_EXIT ledger + HM_LOG pattern checks. */
+function mergeSummaryWithLedgerChecks(
+  summaryResult: Omit<ExitValidationResult, "error">,
+  exitPath: string,
+  logPath: string | undefined,
+  requiredSteps: string[],
+  allowSkip: boolean,
+  isConsolidatedMode: boolean,
+  summary: OrchestratorRunSummary,
+): ExitValidationResult {
+  let {
+    maintenanceStatus,
+    semanticStatus,
+    steps,
+    missingSteps,
+    failedSteps,
+    guardUpdated,
+    reportableIssues = [],
+  } = summaryResult;
+
+  const logContent = logPath ? safeReadLog(logPath) : "";
+  const unknownCommands = logPath ? checkUnknownCommandsInContent(logContent) : [];
+  if (unknownCommands.length > 0) {
+    const issues = collectMaintenanceTelemetryIssues({
+      exitPath,
+      logPath,
+      requiredSteps,
+      logContent,
+      failedSteps,
+      missingSteps,
+      unknownCommands,
+      maintenanceStatus: "failed",
+    });
+    return {
+      maintenanceStatus: "failed",
+      semanticStatus: deriveSemanticStatus("failed", issues),
+      steps,
+      missingSteps,
+      failedSteps,
+      guardUpdated: false,
+      exitPath,
+      logPath,
+      error: `Unknown command(s) detected: ${unknownCommands.join(", ")}`,
+      reportableIssues: issues,
+    };
+  }
+
+  if (isConsolidatedMode && existsSync(exitPath)) {
+    const ledgerSteps = readExitLedger(exitPath);
+    const ledgerMap = new Map(ledgerSteps.map((s) => [s.step, s]));
+    const wrapperMissing: string[] = [];
+    const wrapperFailures: ExitStep[] = [];
+
+    for (const required of requiredSteps) {
+      const wrapper = ledgerMap.get(required);
+      if (!wrapper) {
+        wrapperMissing.push(required);
+        continue;
+      }
+      if (wrapper.exitCode === 1 || (wrapper.exitCode === 2 && !allowSkip)) {
+        wrapperFailures.push(wrapper);
+      }
+      if (wrapper.exitCode !== 0 && summary.exitCode === 0) {
+        maintenanceStatus = "failed";
+      }
+    }
+
+    if (wrapperFailures.length > 0) {
+      maintenanceStatus = "failed";
+      failedSteps = [...failedSteps, ...wrapperFailures.filter((s) => !failedSteps.some((f) => f.step === s.step))];
+    } else if (wrapperMissing.length > 0 && maintenanceStatus === "success") {
+      maintenanceStatus =
+        wrapperMissing.length === requiredSteps.length
+          ? "failed"
+          : wrapperMissing.length > 0
+            ? "partial"
+            : maintenanceStatus;
+      missingSteps = [...missingSteps, ...wrapperMissing.filter((m) => !missingSteps.includes(m))];
+    }
+  }
+
+  const issueMap = new Map<string, MaintenanceTelemetryIssue>();
+  for (const issue of reportableIssues) {
+    addMaintenanceIssue(issueMap, issue);
+  }
+  const telemetryIssues = collectMaintenanceTelemetryIssues({
+    exitPath,
+    logPath,
+    requiredSteps,
+    logContent,
+    failedSteps,
+    missingSteps,
+    unknownCommands: [],
+    maintenanceStatus,
+  });
+  for (const issue of telemetryIssues) {
+    addMaintenanceIssue(issueMap, issue);
+  }
+  reportableIssues = [...issueMap.values()];
+
+  if (maintenanceStatus === "success" && reportableIssues.some(isGuardBlockingSemanticIssue)) {
+    maintenanceStatus = "failed";
+  }
+
+  semanticStatus = combineSemanticStatus(semanticStatus, maintenanceStatus, reportableIssues);
+  guardUpdated = maintenanceStatus === "success" && semanticStatus === "ok";
+
+  return {
+    maintenanceStatus,
+    semanticStatus,
+    steps,
+    missingSteps,
+    failedSteps,
+    guardUpdated,
+    exitPath,
+    logPath,
+    error: buildValidationErrorMessage(maintenanceStatus, missingSteps, failedSteps, reportableIssues),
+    reportableIssues,
+  };
+}
+
 /**
  * Validate maintenance run using orchestrator summary.json when available (#1877).
  * Falls back to HM_EXIT validation when summary is missing or invalid.
@@ -1100,9 +1265,20 @@ export function validateFromSummaryJson(
       return validateMaintenanceExecution(exitPath, logPath, requiredSteps, allowSkip);
     }
 
-    const stepFailed = (s: OrchestratorRunSummary["steps"][number]): boolean =>
-      s.status === "failed" ||
-      (s.semanticOutcome != null && semanticOutcomeBlocksOrchestratorGuard(s.semanticOutcome));
+    const presentEarly = new Set(summary.steps.map((s) => s.name));
+    const isConsolidatedEarly =
+      requiredSteps.length > 0 && requiredSteps.every((name) => !presentEarly.has(name));
+    if (isConsolidatedEarly && summary.steps.length === 0) {
+      return validateMaintenanceExecution(exitPath, logPath, requiredSteps, allowSkip);
+    }
+
+    const resolveSummaryStepSemantic = (s: OrchestratorRunSummary["steps"][number]): string | undefined =>
+      s.semanticOutcome ?? parseSemanticTokenFromSummary(s.summary);
+
+    const stepFailed = (s: OrchestratorRunSummary["steps"][number]): boolean => {
+      const semantic = resolveSummaryStepSemantic(s);
+      return s.status === "failed" || (semantic != null && semanticOutcomeBlocksOrchestratorGuard(semantic));
+    };
 
     const stepExitCode = (s: OrchestratorRunSummary["steps"][number], failed: boolean): number => {
       if (failed) return 1;
@@ -1127,7 +1303,7 @@ export function validateFromSummaryJson(
         exitCode,
         line: `${s.name} exit=${exitCode} status=${s.status} summary=${s.summary}`,
         status: stepExitStatus(s, failed),
-        reason: s.semanticOutcome ?? s.status,
+        reason: resolveSummaryStepSemantic(s) ?? s.status,
       };
     });
 
@@ -1143,7 +1319,7 @@ export function validateFromSummaryJson(
     );
 
     const semanticOutcomes = summary.steps
-      .map((s) => s.semanticOutcome as JobRunSemanticOutcome | undefined)
+      .map((s) => resolveSemanticGuardToken(s.semanticOutcome ?? parseSemanticTokenFromSummary(s.summary)))
       .filter(Boolean) as JobRunSemanticOutcome[];
     let semanticStatus: ExitValidationResult["semanticStatus"] = "ok";
     if (semanticOutcomes.some((o) => jobRunOutcomeToValidatorSemantic(o) === "semantic_fail")) {
@@ -1166,23 +1342,28 @@ export function validateFromSummaryJson(
 
     if (maintenanceStatus === "success" && semanticStatus !== "ok") {
       const guardBlockingSemantic = summary.steps.some(
-        (s) =>
-          (isConsolidatedMode || requiredSteps.includes(s.name)) &&
-          s.semanticOutcome != null &&
-          jobRunOutcomeFailsOrchestratorStep(s.semanticOutcome) &&
-          isGuardBlockingSemanticIssue(
-            buildMaintenanceIssue({
-              jobName: summary.job ?? extractMaintenanceJobName(exitPath),
-              stepName: s.name,
-              failureCategory: "semantic_failure",
-              failureClass: "orchestrator_step_failed",
-              message: s.summary,
-              semanticStatus: "semantic_fail",
-              hmExitPath: exitPath,
-              hmLogPath: logPath,
-              guardStateAfter: "not_updated",
-            }),
-          ),
+        (s) => {
+          const semantic = resolveSummaryStepSemantic(s);
+          return (
+            (isConsolidatedMode || requiredSteps.includes(s.name)) &&
+            semantic != null &&
+            semanticOutcomeBlocksOrchestratorGuard(semantic) &&
+            !semanticOutcomeIsPartialFailure(semantic) &&
+            isGuardBlockingSemanticIssue(
+              buildMaintenanceIssue({
+                jobName: summary.job ?? extractMaintenanceJobName(exitPath),
+                stepName: s.name,
+                failureCategory: "semantic_failure",
+                failureClass: "orchestrator_step_failed",
+                message: s.summary,
+                semanticStatus: "semantic_fail",
+                hmExitPath: exitPath,
+                hmLogPath: logPath,
+                guardStateAfter: "not_updated",
+              }),
+            )
+          );
+        },
       );
       if (guardBlockingSemantic || failedSteps.length > 0) {
         maintenanceStatus = "failed";
@@ -1212,29 +1393,37 @@ export function validateFromSummaryJson(
       semanticStatus = semanticStatus === "ok" ? "degraded" : semanticStatus;
     }
 
-    return {
-      maintenanceStatus,
-      semanticStatus,
-      steps,
-      missingSteps,
-      failedSteps,
-      guardUpdated: maintenanceStatus === "success" && semanticStatus === "ok",
+    return mergeSummaryWithLedgerChecks(
+      {
+        maintenanceStatus,
+        semanticStatus,
+        steps,
+        missingSteps,
+        failedSteps,
+        guardUpdated: maintenanceStatus === "success" && semanticStatus === "ok",
+        exitPath,
+        logPath,
+        reportableIssues: failedSteps.map((s) =>
+          buildMaintenanceIssue({
+            jobName: summary.job ?? extractMaintenanceJobName(exitPath),
+            stepName: s.step,
+            failureCategory: "semantic_failure",
+            failureClass: "orchestrator_step_failed",
+            message: s.line,
+            semanticStatus: semanticStatus === "semantic_fail" ? "semantic_fail" : "degraded",
+            hmExitPath: exitPath,
+            hmLogPath: logPath,
+            guardStateAfter: "not_updated",
+          }),
+        ),
+      },
       exitPath,
       logPath,
-      reportableIssues: failedSteps.map((s) =>
-        buildMaintenanceIssue({
-          jobName: summary.job ?? extractMaintenanceJobName(exitPath),
-          stepName: s.step,
-          failureCategory: "semantic_failure",
-          failureClass: "orchestrator_step_failed",
-          message: s.line,
-          semanticStatus: semanticStatus === "semantic_fail" ? "semantic_fail" : "degraded",
-          hmExitPath: exitPath,
-          hmLogPath: logPath,
-          guardStateAfter: "not_updated",
-        }),
-      ),
-    };
+      requiredSteps,
+      allowSkip,
+      isConsolidatedMode,
+      summary,
+    );
   } catch {
     return validateMaintenanceExecution(exitPath, logPath, requiredSteps, allowSkip);
   }

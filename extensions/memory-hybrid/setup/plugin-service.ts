@@ -471,7 +471,7 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.corpusSupplement) {
         try {
           const { createMemoryCorpusSupplement } = await import("../services/memory-corpus-supplement.js");
-          const supplement = createMemoryCorpusSupplement({ factsDb });
+          const supplement = createMemoryCorpusSupplement({ factsDb, includeAllScopes: true });
           const registerCorpus = (api as { registerMemoryCorpusSupplement?: (s: unknown) => void })
             .registerMemoryCorpusSupplement;
           if (typeof registerCorpus === "function") {
@@ -527,7 +527,10 @@ export function createPluginService(ctx: PluginServiceContext) {
           const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN ?? undefined;
 
           const adapter = createWorkboardAdapter({
-            cfg: cfg.workboard,
+            cfg: {
+              ...cfg.workboard,
+              syncGoals: cfg.workboard.syncGoals && !!goalsDir,
+            },
             loadTasks: () => loadTaskLedgerFromFacts(factsDb),
             loadGoals: async () => {
               if (!goalsDir) return [];

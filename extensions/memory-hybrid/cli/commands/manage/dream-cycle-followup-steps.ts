@@ -24,8 +24,20 @@ export interface DreamCycleFollowUpDeps {
     dryRun: boolean;
     includeClosedLoop?: boolean;
     verbose?: boolean;
-  }) => Promise<{ signalsExtracted: number; positiveCount: number; negativeCount: number; sessionsProcessed: number; sessionsScanned: number }>;
-  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<{ generalisedStored: number; agentsScanned: number }>;
+  }) => Promise<{
+    signalsExtracted: number;
+    positiveCount: number;
+    negativeCount: number;
+    sessionsProcessed: number;
+    sessionsScanned: number;
+    partial?: boolean;
+    partialReason?: string;
+  }>;
+  runCrossAgentLearning?: (opts?: { verbose?: boolean }) => Promise<{
+    generalisedStored: number;
+    agentsScanned: number;
+    errors: number;
+  }>;
   runToolEffectiveness?: (opts?: { verbose?: boolean }) => Promise<string>;
   pruneCostLog?: (retainDays?: number) => number | Promise<number>;
 }

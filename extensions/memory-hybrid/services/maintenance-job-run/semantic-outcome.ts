@@ -1,5 +1,17 @@
 import type { JobRunSemanticOutcome } from "./types.js";
 
+/** Raw self-correction CLI status tokens that may appear in orchestrator summary strings. */
+const SELF_CORRECTION_CLI_STATUSES = new Set<string>([
+  "success_analyzed",
+  "success_no_incidents",
+  "skipped_cooldown",
+  "skipped_concurrency",
+  "failed_partial",
+  "failed_suspect_zero_parsed",
+  "failed_parse",
+  "failed",
+]);
+
 /** Map self-correction CLI status to unified JobRun outcome. */
 export function selfCorrectionStatusToJobRunOutcome(
   status: string | undefined,
@@ -22,6 +34,21 @@ export function selfCorrectionStatusToJobRunOutcome(
     default:
       return "failed";
   }
+}
+
+/** Parse `semantic=` token from orchestrator step summary text. */
+export function parseSemanticTokenFromSummary(summary: string): string | undefined {
+  const semantic = summary.match(/\bsemantic=([^\s]+)/)?.[1];
+  return semantic && semantic !== "-" ? semantic : undefined;
+}
+
+/** Normalize unified outcomes and legacy CLI status tokens for guard/validation checks. */
+export function resolveSemanticGuardToken(semantic: string | undefined): JobRunSemanticOutcome | undefined {
+  if (!semantic || semantic === "-") return undefined;
+  if (SELF_CORRECTION_CLI_STATUSES.has(semantic)) {
+    return selfCorrectionStatusToJobRunOutcome(semantic);
+  }
+  return semantic as JobRunSemanticOutcome;
 }
 
 /** Map JobRun outcome to cron validator semantic class. */
@@ -49,7 +76,13 @@ export function jobRunOutcomeFailsOrchestratorStep(outcome: JobRunSemanticOutcom
 
 /** Whether a semantic token (unified outcome or legacy CLI status) blocks guard advancement. */
 export function semanticOutcomeBlocksOrchestratorGuard(semantic: string | undefined): boolean {
-  if (!semantic || semantic === "-") return false;
-  if (semantic === "partial" || semantic === "failed_partial") return true;
-  return jobRunOutcomeFailsOrchestratorStep(semantic as JobRunSemanticOutcome);
+  const resolved = resolveSemanticGuardToken(semantic);
+  if (!resolved) return false;
+  if (resolved === "partial") return true;
+  return jobRunOutcomeFailsOrchestratorStep(resolved);
+}
+
+/** Whether a resolved semantic outcome represents a partial batch/step failure. */
+export function semanticOutcomeIsPartialFailure(semantic: string | undefined): boolean {
+  return resolveSemanticGuardToken(semantic) === "partial";
 }

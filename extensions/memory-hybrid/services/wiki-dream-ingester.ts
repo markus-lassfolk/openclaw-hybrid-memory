@@ -58,6 +58,7 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
 
       try {
         const findings = extractFindingsFromRun(join(ctx.dreamCycleLogDir, runDir));
+        const runErrors: string[] = [];
         for (const finding of findings) {
           try {
             const storeResult = ctx.factsDb.storeWithResult({
@@ -65,8 +66,9 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
               category: finding.category as MemoryCategory,
               importance: finding.importance,
               source: `dream-cycle:${runId}`,
-              entity: finding.entity,
-              key: finding.key,
+              entity: finding.entity ?? null,
+              key: finding.key ?? null,
+              value: null,
               confidence: 0.7,
               tags: ["dream-finding", `run:${runId}`],
             });
@@ -74,11 +76,13 @@ export async function ingestDreamFindings(ctx: DreamIngesterContext): Promise<Dr
               result.findingsIngested++;
             }
           } catch (err) {
-            result.errors.push(`Failed to store finding: ${err instanceof Error ? err.message : String(err)}`);
+            const msg = `Failed to store finding: ${err instanceof Error ? err.message : String(err)}`;
+            runErrors.push(msg);
+            result.errors.push(msg);
           }
         }
 
-        if (result.errors.length === 0) {
+        if (runErrors.length === 0) {
           markRunAsIngested(ctx.factsDb, runId);
           result.runsProcessed++;
         }

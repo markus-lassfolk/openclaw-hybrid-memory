@@ -2557,7 +2557,7 @@
           },
           "gatewayUrl": {
             "type": "string",
-            "description": "Gateway HTTP base URL for Workboard RPC calls. Default: http://localhost:9119."
+            "description": "Gateway HTTP base URL for Workboard RPC calls. Default: http://127.0.0.1:18789 (or OPENCLAW_GATEWAY_PORT)."
           },
           "syncIntervalMinutes": {
             "type": "number",

@@ -599,6 +599,18 @@ describe("registerPublicApiRoutes", () => {
     expect(JSON.parse(res.body).error).toBe("authentication required");
   });
 
+  it("session observability rejects unauthenticated callers", async () => {
+    const { api, routes } = makeApi();
+    registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb }, api);
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.session}?sessionId=s-1`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
+
   it("does not register routes when health is disabled", () => {
     const { api, routes } = makeApi();
     registerPublicApiRoutes(

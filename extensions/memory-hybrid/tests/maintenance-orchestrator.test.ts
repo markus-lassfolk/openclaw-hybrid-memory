@@ -172,6 +172,22 @@ describe("maintenance-orchestrator", () => {
     expect(readStepGuardTimestampMs("self-correction-run", openclawDir)).toBeNull();
   });
 
+  it("does not write step guard when runner reports legacy failed_suspect_zero_parsed semantic token", async () => {
+    openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
+    const runners = new Map<string, () => Promise<string>>([
+      [
+        "self-correction-run",
+        async () => "incidents=3 analysed=0 jobRunId=abc semantic=failed_suspect_zero_parsed",
+      ],
+    ]);
+    const result = await runMaintenanceOrchestrator(
+      { cfg: minimalCfg(), runners, openclawDir },
+      { tiers: ["nightly"], force: true, verbose: false, include: ["self-correction-run"] },
+    );
+    expect(result.steps[0]?.status).toBe("failed");
+    expect(readStepGuardTimestampMs("self-correction-run", openclawDir)).toBeNull();
+  });
+
   it("skips backfill-decay when one-time marker exists", async () => {
     openclawDir = mkdtempSync(join(tmpdir(), "hm-orch-"));
     let calls = 0;

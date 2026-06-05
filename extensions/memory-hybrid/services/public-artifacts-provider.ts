@@ -57,6 +57,13 @@ function factKind(entry: MemoryEntry): PublicArtifact["kind"] {
   return "fact";
 }
 
+/** Hide internal bookkeeping facts from the memory-wiki bridge. */
+function isInternalWikiArtifact(entry: MemoryEntry): boolean {
+  if (entry.tags?.includes("dream-ingester-sentinel")) return true;
+  if (entry.entity === "system" && entry.key?.startsWith("dream-ingested-run:")) return true;
+  return false;
+}
+
 export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifactsProvider {
   return {
     async listArtifacts(opts) {
@@ -75,6 +82,7 @@ export function createPublicArtifactsProvider(factsDb: FactsDB): PublicArtifacts
         }
 
         const sorted = filtered
+          .filter((entry) => !isInternalWikiArtifact(entry))
           .sort((a, b) => {
             const ta = a.lastAccessed ?? a.sourceDate ?? a.createdAt;
             const tb = b.lastAccessed ?? b.sourceDate ?? b.createdAt;

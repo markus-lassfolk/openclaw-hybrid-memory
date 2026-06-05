@@ -57,9 +57,21 @@ export type WorkboardSyncResult = {
 
 export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardAdapter {
   const client = createWorkboardHttpRpcClient(ctx.cfg.gatewayUrl, ctx.gatewayToken);
+  let syncInFlight = false;
 
   return {
     async sync(): Promise<WorkboardSyncResult> {
+      if (syncInFlight) {
+        return {
+          cardsCreated: 0,
+          cardsUpdated: 0,
+          cardsRemoved: 0,
+          pullChanges: 0,
+          errors: ["sync already in progress"],
+        };
+      }
+
+      syncInFlight = true;
       const result: WorkboardSyncResult = {
         cardsCreated: 0,
         cardsUpdated: 0,
@@ -75,6 +87,11 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
           if (card.externalId && isHybridMemoryCard(card)) {
             cardsByExternalId.set(card.externalId, card);
           }
+        }
+
+        // Pull Workboard column moves before push so user edits are not overwritten.
+        if (ctx.cfg.bidirectional) {
+          await pullChanges(client, ctx, cardsByExternalId, result);
         }
 
         const desiredExternalIds = new Set<string>();
@@ -102,11 +119,6 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
           }
         }
 
-        // Pull changes from Workboard back to hybrid-memory
-        if (ctx.cfg.bidirectional) {
-          await pullChanges(client, ctx, cardsByExternalId, result);
-        }
-
         // Remove stale cards only for sync dimensions enabled this run
         for (const [extId, card] of cardsByExternalId) {
           if (desiredExternalIds.has(extId)) continue;
@@ -121,6 +133,8 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
         const msg = `Workboard sync failed: ${err instanceof Error ? err.message : String(err)}`;
         pluginLogger.warn(`memory-hybrid: ${msg}`);
         result.errors.push(msg);
+      } finally {
+        syncInFlight = false;
       }
 
       if (result.cardsCreated + result.cardsUpdated + result.cardsRemoved + result.pullChanges > 0) {

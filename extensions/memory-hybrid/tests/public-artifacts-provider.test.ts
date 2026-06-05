@@ -121,6 +121,23 @@ describe("public-artifacts-provider", () => {
       expect(artifacts).toEqual([]);
     });
 
+    it("excludes internal dream-ingester sentinel facts", async () => {
+      const sentinel = makeFact({
+        id: "sentinel-001",
+        entity: "system",
+        key: "dream-ingested-run:run-001",
+        text: "Dream cycle run run-001 findings ingested",
+        tags: ["dream-ingester-sentinel"],
+      });
+      const factsDb = { getAll: vi.fn(() => [makeFact(), sentinel]) } as any;
+
+      const provider = createPublicArtifactsProvider(factsDb);
+      const artifacts = await provider.listArtifacts();
+
+      expect(artifacts).toHaveLength(1);
+      expect(artifacts[0].id).toBe("aabb0011-0000-0000-0000-000000000001");
+    });
+
     it("sorts by most recent first", async () => {
       const older = makeFact({ id: "older", lastAccessed: 1717100000 });
       const newer = makeFact({ id: "newer", lastAccessed: 1717300000 });

@@ -136,5 +136,22 @@ describe("memory-corpus-supplement", () => {
 
       expect(result).toBeNull();
     });
+
+    it("uses unrestricted scope when includeAllScopes is enabled", async () => {
+      const fact = makeFact();
+      const factsDb = {
+        search: vi.fn(() => [makeSearchResult(fact)]),
+        getById: vi.fn(),
+      } as any;
+
+      const supplement = createMemoryCorpusSupplement({ factsDb, includeAllScopes: true });
+      await supplement.search({ query: "TypeScript" });
+
+      expect(factsDb.search).toHaveBeenCalledWith(
+        "TypeScript",
+        10,
+        expect.objectContaining({ scopeFilter: undefined }),
+      );
+    });
   });
 });

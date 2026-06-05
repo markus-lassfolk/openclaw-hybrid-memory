@@ -94,11 +94,17 @@ function epochToIso(epoch: number | null | undefined): string | undefined {
 export interface CorpusSupplementContext {
   factsDb: FactsDB;
   scopeFilter?: ScopeFilter | null;
+  /** When true, include all scopes in search/get unless agentSessionKey narrows (wiki bridge). */
+  includeAllScopes?: boolean;
 }
 
 export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): MemoryCorpusSupplement {
-  const resolveScope = (agentSessionKey?: string): ScopeFilter =>
-    resolveCorpusScopeFilter(agentSessionKey, ctx.scopeFilter);
+  const resolveScope = (agentSessionKey?: string): ScopeFilter | undefined => {
+    if (ctx.includeAllScopes && !agentSessionKey?.trim()) {
+      return undefined;
+    }
+    return resolveCorpusScopeFilter(agentSessionKey, ctx.scopeFilter);
+  };
 
   return {
     async search({ query, maxResults, agentSessionKey }): Promise<MemoryCorpusSearchResult[]> {
@@ -173,12 +179,12 @@ export function createMemoryCorpusSupplement(ctx: CorpusSupplementContext): Memo
 function extractFactId(lookup: string): string | null {
   const trimmed = lookup.trim();
 
+  // Virtual path: hybrid-memory/facts/<category>/<factId> — accept any id suffix
+  const pathMatch = trimmed.match(/^hybrid-memory\/facts\/[^/]+\/(.+)$/);
+  if (pathMatch?.[1]) return pathMatch[1];
+
   // Direct fact ID (UUID-like or alphanumeric)
   if (/^[a-f0-9-]{8,}$/i.test(trimmed)) return trimmed;
-
-  // Virtual path: hybrid-memory/facts/<category>/<factId>
-  const pathMatch = trimmed.match(/^hybrid-memory\/facts\/[^/]+\/(.+)$/);
-  if (pathMatch) return pathMatch[1];
 
   // Bare path with just an id suffix
   const slashParts = trimmed.split("/");

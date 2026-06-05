@@ -1385,7 +1385,7 @@ Bidirectional sync of active tasks and goals to OpenClaw's Workboard Kanban UI. 
         "config": {
           "workboard": {
             "enabled": true,
-            "gatewayUrl": "http://localhost:9119",
+            "gatewayUrl": "http://127.0.0.1:18789",
             "syncIntervalMinutes": 5,
             "syncTasks": true,
             "syncGoals": true,
@@ -1413,7 +1413,7 @@ Bidirectional sync of active tasks and goals to OpenClaw's Workboard Kanban UI. 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `enabled` | `false` | Master switch for Workboard integration |
-| `gatewayUrl` | `"http://localhost:9119"` | Gateway HTTP base URL for Workboard RPC calls |
+| `gatewayUrl` | `"http://127.0.0.1:18789"` | Gateway HTTP base URL for Workboard RPC calls (defaults to `OPENCLAW_GATEWAY_PORT` when unset) |
 | `syncIntervalMinutes` | `5` | How often to reconcile cards with Workboard (minutes) |
 | `syncTasks` | `true` | Sync active tasks (from `ACTIVE-TASKS.md` / project facts) to Workboard |
 | `syncGoals` | `true` | Sync goals (from `state/goals/`) to Workboard |

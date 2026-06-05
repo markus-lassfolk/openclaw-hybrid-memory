@@ -13,6 +13,9 @@ import {
   selfCorrectionStatusToJobRunOutcome,
   jobRunOutcomeFailsOrchestratorStep,
   semanticOutcomeBlocksOrchestratorGuard,
+  semanticOutcomeIsPartialFailure,
+  resolveSemanticGuardToken,
+  parseSemanticTokenFromSummary,
   resolveLightJobRunOutcome,
 } from "../services/maintenance-job-run/index.js";
 
@@ -91,8 +94,14 @@ describe("maintenance-job-run", () => {
     expect(jobRunOutcomeFailsOrchestratorStep("success")).toBe(false);
     expect(semanticOutcomeBlocksOrchestratorGuard("partial")).toBe(true);
     expect(semanticOutcomeBlocksOrchestratorGuard("failed_partial")).toBe(true);
+    expect(semanticOutcomeBlocksOrchestratorGuard("failed_suspect_zero_parsed")).toBe(true);
+    expect(semanticOutcomeBlocksOrchestratorGuard("failed_parse")).toBe(true);
     expect(semanticOutcomeBlocksOrchestratorGuard("success")).toBe(false);
     expect(semanticOutcomeBlocksOrchestratorGuard(undefined)).toBe(false);
+    expect(resolveSemanticGuardToken("failed_partial")).toBe("partial");
+    expect(resolveSemanticGuardToken("failed_suspect_zero_parsed")).toBe("failed_semantic_empty");
+    expect(semanticOutcomeIsPartialFailure("failed_partial")).toBe(true);
+    expect(parseSemanticTokenFromSummary("stored=1 semantic=partial jobRunId=abc")).toBe("partial");
   });
 
   it("resolves light JobRun semantic outcomes", () => {

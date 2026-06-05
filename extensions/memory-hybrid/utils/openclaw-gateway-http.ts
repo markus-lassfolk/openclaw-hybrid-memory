@@ -4,6 +4,20 @@ import { getEnv } from "./env-manager.js";
 /** Agent target model id required by OpenClaw gateway OpenAI-compatible HTTP APIs. */
 export const OPENCLAW_GATEWAY_AGENT_MODEL = "openclaw";
 
+const DEFAULT_GATEWAY_PORT = 18789;
+
+function parseGatewayPortFromEnv(fallbackPort = DEFAULT_GATEWAY_PORT): number {
+  const gatewayPortRaw = normalizeResolvedSecretValue(getEnv("OPENCLAW_GATEWAY_PORT"));
+  const gatewayPort = gatewayPortRaw ? Number.parseInt(gatewayPortRaw, 10) : fallbackPort;
+  if (!gatewayPort || gatewayPort < 1 || gatewayPort > 65535) return fallbackPort;
+  return gatewayPort;
+}
+
+/** Resolve local gateway root URL from `OPENCLAW_GATEWAY_PORT` (HTTP routes, Workboard RPC). */
+export function resolveOpenClawGatewayRootUrlFromEnv(fallbackPort = DEFAULT_GATEWAY_PORT): string {
+  return `http://127.0.0.1:${parseGatewayPortFromEnv(fallbackPort)}`;
+}
+
 /** Resolve local gateway `/v1` base URL from `OPENCLAW_GATEWAY_PORT` (same shape as provider-router). */
 export function resolveOpenClawGatewayBaseUrlFromEnv(): string | undefined {
   const gatewayPortRaw = normalizeResolvedSecretValue(getEnv("OPENCLAW_GATEWAY_PORT"));
