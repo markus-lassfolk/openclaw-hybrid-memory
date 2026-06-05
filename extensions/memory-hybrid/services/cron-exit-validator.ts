@@ -1315,7 +1315,9 @@ export function validateFromSummaryJson(
     const isConsolidatedMode = requiredSteps.length > 0 && requiredSteps.every((name) => !present.has(name));
     const missingSteps = isConsolidatedMode ? [] : requiredSteps.filter((name) => !present.has(name));
     const failedSteps = steps.filter(
-      (s) => (isConsolidatedMode || requiredSteps.includes(s.step)) && s.status === "failed",
+      (s) =>
+        (isConsolidatedMode || requiredSteps.includes(s.step)) &&
+        (s.exitCode !== 0 || s.status === "failed"),
     );
 
     const semanticOutcomes = summary.steps

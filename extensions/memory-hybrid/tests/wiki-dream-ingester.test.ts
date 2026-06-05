@@ -8,6 +8,11 @@ function createMockFactsDb() {
   return {
     lookup: vi.fn(() => []),
     store: vi.fn(() => ({ id: "stored-fact-id" })),
+    storeWithResult: vi.fn(() => ({
+      entry: { id: "stored-fact-id" },
+      skipped: false,
+      newlyStored: true,
+    })),
     getAll: vi.fn(() => []),
     getById: vi.fn(),
     search: vi.fn(() => []),
@@ -91,7 +96,7 @@ describe("wiki-dream-ingester", () => {
 
     expect(result.runsProcessed).toBe(1);
     expect(result.findingsIngested).toBe(1);
-    const storeCall = factsDb.store.mock.calls[0][0];
+    const storeCall = factsDb.storeWithResult.mock.calls[0][0];
     expect(storeCall.text).toContain("Pattern discovered:");
     expect(storeCall.tags).toContain("dream-finding");
   });
@@ -114,7 +119,7 @@ describe("wiki-dream-ingester", () => {
     });
 
     expect(result.findingsIngested).toBe(1);
-    const storeCall = factsDb.store.mock.calls[0][0];
+    const storeCall = factsDb.storeWithResult.mock.calls[0][0];
     expect(storeCall.text).toContain("consolidated 5 event(s)");
   });
 
@@ -136,7 +141,7 @@ describe("wiki-dream-ingester", () => {
     });
 
     expect(result.findingsIngested).toBe(1);
-    const storeCall = factsDb.store.mock.calls[0][0];
+    const storeCall = factsDb.storeWithResult.mock.calls[0][0];
     expect(storeCall.text).toContain("focused on TypeScript");
   });
 
@@ -231,5 +236,25 @@ describe("wiki-dream-ingester", () => {
     });
 
     expect(result.findingsIngested).toBe(1);
+  });
+
+  it("does not increment findingsIngested when storeWithResult skips duplicate", async () => {
+    const runDir = join(tempDir, "run-dedup");
+    mkdirSync(runDir);
+    writeFileSync(
+      join(runDir, "consolidation.json"),
+      JSON.stringify({ stage: "consolidation", factsCreated: 3 }),
+    );
+
+    const factsDb = createMockFactsDb();
+    factsDb.storeWithResult.mockReturnValue({
+      entry: { id: "finding-1" },
+      skipped: true,
+      newlyStored: false,
+    });
+
+    const result = await ingestDreamFindings({ factsDb, dreamCycleLogDir: tempDir });
+    expect(result.findingsIngested).toBe(0);
+    expect(result.runsProcessed).toBe(1);
   });
 });

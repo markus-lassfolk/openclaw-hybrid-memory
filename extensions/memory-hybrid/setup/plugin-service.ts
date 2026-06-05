@@ -509,6 +509,46 @@ export function createPluginService(ctx: PluginServiceContext) {
         }
       }
 
+      // Wiki integration: optional workspace markdown mirror (supplement to publicArtifacts RPC)
+      if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.workspaceExportIntervalMinutes > 0) {
+        try {
+          const { syncWikiWorkspaceExport } = await import("../services/wiki-workspace-export.js");
+          const wikiWorkspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
+          let wikiExportInFlight = false;
+
+          const runWikiWorkspaceExport = (): void => {
+            if (shuttingDown || wikiExportInFlight) return;
+            wikiExportInFlight = true;
+            try {
+              syncWikiWorkspaceExport(factsDb, wikiWorkspaceRoot);
+            } catch (err) {
+              api.logger.debug?.(
+                `memory-hybrid: wiki workspace export failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            } finally {
+              wikiExportInFlight = false;
+            }
+          };
+
+          runWikiWorkspaceExport();
+          const wikiExportIntervalMs = cfg.wikiIntegration.workspaceExportIntervalMinutes * 60 * 1000;
+          (timers as Record<string, unknown>).wikiWorkspaceExport = {
+            value: setInterval(runWikiWorkspaceExport, wikiExportIntervalMs),
+          };
+          api.logger.info(
+            `memory-hybrid: wiki workspace mirror enabled — syncing to memory/hybrid-wiki/ every ${cfg.wikiIntegration.workspaceExportIntervalMinutes} min`,
+          );
+        } catch (err) {
+          api.logger.warn?.(
+            `memory-hybrid: wiki workspace export startup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "plugin-service",
+            operation: "wiki-workspace-export-start",
+          });
+        }
+      }
+
       // Workboard integration: start adapter for bidirectional task/goal sync
       if (cfg.workboard?.enabled) {
         try {

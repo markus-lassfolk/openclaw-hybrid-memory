@@ -571,6 +571,9 @@ describe("registerPublicApiRoutes", () => {
     const body = JSON.parse(res.body);
     expect(body.hybridMemory.reregisterMetrics).toBeDefined();
     expect(body.process.nativeRssBytes).toBeGreaterThanOrEqual(0);
+    expect(body.facts.activeFacts).toBeNull();
+    expect(body.facts.topSources).toBeNull();
+    expect(body.startupAttribution).toEqual([]);
   });
 
   it("memory-diagnostics rejects unauthenticated callers", async () => {

@@ -19,9 +19,10 @@ export type WikiIntegrationConfig = {
    */
   corpusSupplement: boolean;
   /**
-   * How often to sync facts to workspace markdown files for bridge import.
-   * Only used when publicArtifacts is true.
-   * Default: 30 (minutes).
+   * Optional workspace markdown mirror interval (minutes).
+   * Writes facts to `{workspace}/memory/hybrid-wiki/` for human browsing and file-based
+   * wiki import fallback. Primary bridge path is `publicArtifacts` RPC — set to `0` to disable.
+   * Default: 30 (when wiki integration is enabled).
    */
   workspaceExportIntervalMinutes: number;
   /** Fact mutation endpoints (gateway RPC + HTTP) for bidirectional editing. */

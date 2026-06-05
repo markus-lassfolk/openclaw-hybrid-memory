@@ -1231,7 +1231,7 @@ export function parseWikiIntegrationConfig(cfg: Record<string, unknown>): WikiIn
     workspaceExportIntervalMinutes: parsePositiveIntClamped(
       raw.workspaceExportIntervalMinutes,
       DEFAULT_WIKI_INTEGRATION_CONFIG.workspaceExportIntervalMinutes,
-      5,
+      0,
       1440,
     ),
     mutations: {

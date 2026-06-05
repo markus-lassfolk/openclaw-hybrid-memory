@@ -287,7 +287,21 @@ export function buildCliMaintenanceRunners(
 
   set("reflect-rules", async () => {
     const r = await b.runReflectionRules({ dryRun: false, model: b.reflectionConfig.model, verbose });
-    return `rulesStored=${r.rulesStored}`;
+    const d = r.diagnostics;
+    const summary = [
+      `rulesStored=${r.rulesStored}`,
+      `rulesExtracted=${r.rulesExtracted}`,
+      d ? `parse_success=${d.parseSuccess}` : null,
+      d?.zeroRulesReason ? `zero_rules_reason=${d.zeroRulesReason}` : null,
+      d ? `status=${d.status}` : null,
+      d?.status === "degraded" ? "semantic=failed" : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    if (d?.status === "degraded") {
+      throw new Error(`reflect-rules semantic failure (${d.zeroRulesReason ?? "degraded"}): ${summary}`);
+    }
+    return summary;
   });
 
   set("reflect-meta", async () => {
@@ -479,6 +493,7 @@ export function buildCliMaintenanceRunners(
   set("reembed-vectorless", async () => {
     const candidates = b.factsDb.listVectorlessActiveFacts({ limit: 1000 });
     let embedded = 0;
+    let failures = 0;
     for (const fact of candidates) {
       try {
         const vec = await b.embeddings.embed(fact.text);
@@ -491,10 +506,14 @@ export function buildCliMaintenanceRunners(
         });
         embedded++;
       } catch {
-        /* continue */
+        failures++;
       }
     }
-    return `embedded=${embedded}/${candidates.length}`;
+    const summary = `embedded=${embedded}/${candidates.length} failures=${failures} semantic=${failures > 0 ? "partial" : "success"}`;
+    if (failures > 0) {
+      throw new Error(`reembed-vectorless partial failure (${summary})`);
+    }
+    return summary;
   });
 
   set("enrich-entities-deep", async () => {

@@ -6,7 +6,7 @@ import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
 import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
-import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot } from "../services/gateway-memory-diagnostics.js";
+import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot, sanitizePublicMemoryDiagnostics } from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   applyActiveTaskProjectionFilters,
@@ -488,14 +488,16 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     if (!ctx.vectorDb) {
       return toJson(503, { error: "vector_db_unavailable" });
     }
-    const diag = await buildGatewayMemoryDiagnostics({
-      factsDb: ctx.factsDb,
-      vectorDb: ctx.vectorDb,
-      resolvedSqlitePath: ctx.resolvedSqlitePath,
-      resolvedLancePath: ctx.resolvedLancePath,
-      recallInFlightRef: ctx.recallInFlightRef,
-      variantQueuePending: ctx.variantQueue?.queueLength,
-    });
+    const diag = sanitizePublicMemoryDiagnostics(
+      await buildGatewayMemoryDiagnostics({
+        factsDb: ctx.factsDb,
+        vectorDb: ctx.vectorDb,
+        resolvedSqlitePath: ctx.resolvedSqlitePath,
+        resolvedLancePath: ctx.resolvedLancePath,
+        recallInFlightRef: ctx.recallInFlightRef,
+        variantQueuePending: ctx.variantQueue?.queueLength,
+      }),
+    );
     return toJson(200, diag);
   });
 

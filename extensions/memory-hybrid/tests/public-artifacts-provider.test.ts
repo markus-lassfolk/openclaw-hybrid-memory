@@ -138,6 +138,22 @@ describe("public-artifacts-provider", () => {
       expect(artifacts[0].id).toBe("aabb0011-0000-0000-0000-000000000001");
     });
 
+    it("excludes credential facts", async () => {
+      const cred = makeFact({
+        id: "cred-001",
+        category: "credential",
+        entity: "Credentials",
+        text: "secret",
+      });
+      const factsDb = { getAll: vi.fn(() => [makeFact(), cred]) } as any;
+
+      const provider = createPublicArtifactsProvider(factsDb);
+      const artifacts = await provider.listArtifacts();
+
+      expect(artifacts).toHaveLength(1);
+      expect(artifacts[0].id).toBe("aabb0011-0000-0000-0000-000000000001");
+    });
+
     it("sorts by most recent first", async () => {
       const older = makeFact({ id: "older", lastAccessed: 1717100000 });
       const newer = makeFact({ id: "newer", lastAccessed: 1717300000 });

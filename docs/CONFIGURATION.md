@@ -1354,12 +1354,14 @@ Bridges hybrid-memory with OpenClaw's bundled `memory-wiki` plugin and the Dream
 | `enabled` | `false` | Master switch for all wiki integration features |
 | `publicArtifacts` | `true` | Register `publicArtifacts` via `registerMemoryCapability` so the memory-wiki bridge can import facts and dream reports into the Dreaming UI |
 | `corpusSupplement` | `true` | Register a `MemoryCorpusSupplement` so hybrid-memory facts appear in unified `corpus=all` searches |
-| `workspaceExportIntervalMinutes` | `30` | How often to sync facts to workspace files for bridge import (minutes) |
+| `workspaceExportIntervalMinutes` | `30` | Interval (minutes) for optional workspace markdown mirror at `{workspace}/memory/hybrid-wiki/`. Primary wiki bridge is `publicArtifacts` RPC; set to `0` to disable file mirror |
 | `mutations.enabled` | `false` | Enable bidirectional editing: registers `hybrid-mem.facts.*` Gateway RPC methods and HTTP endpoints so external clients (memory-wiki, Workboard, WebUI) can create, update, supersede, and delete facts |
 
 ### Bidirectional fact editing
 
 When `mutations.enabled` is true, the following Gateway RPC methods are registered:
+
+**Workspace mirror (`workspaceExportIntervalMinutes`):** When greater than `0`, facts are also written as markdown under `{workspace}/memory/hybrid-wiki/` on a timer. This is a human-readable supplement and file-based fallback — it does not replace the user's root `MEMORY.md`. The primary Dreaming UI import path is still `publicArtifacts.listArtifacts()`.
 
 | RPC method | Description |
 |------------|-------------|

@@ -2533,7 +2533,7 @@
           },
           "workspaceExportIntervalMinutes": {
             "type": "number",
-            "description": "How often to sync facts for bridge import (minutes). Default: 30."
+            "description": "Interval (minutes) for optional workspace markdown mirror at memory/hybrid-wiki/. Primary bridge is publicArtifacts RPC; set 0 to disable. Default: 30."
           },
           "mutations": {
             "type": "object",

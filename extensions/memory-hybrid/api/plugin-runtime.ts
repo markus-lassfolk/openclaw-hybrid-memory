@@ -149,6 +149,8 @@ export interface PluginRuntime {
   maintenanceStartupTimeout: { value: ReturnType<typeof setTimeout> | null };
   /** Workboard bidirectional sync timer. */
   workboardSync?: { value: ReturnType<typeof setInterval> | null };
+  /** Wiki workspace markdown mirror timer. */
+  wikiWorkspaceExport?: { value: ReturnType<typeof setInterval> | null };
 };
 }
 
@@ -221,5 +223,9 @@ export function clearRuntimeTimers(timers: PluginRuntime["timers"]): void {
   if (timers.workboardSync?.value) {
     clearInterval(timers.workboardSync.value);
     timers.workboardSync.value = null;
+  }
+  if (timers.wikiWorkspaceExport?.value) {
+    clearInterval(timers.wikiWorkspaceExport.value);
+    timers.wikiWorkspaceExport.value = null;
   }
 }

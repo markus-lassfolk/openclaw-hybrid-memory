@@ -205,9 +205,10 @@ Bridges hybrid-memory with the `memory-wiki` plugin and OpenClaw's Dreaming UI t
 - **Dreaming UI:** Facts appear in "Imported Insights" and "Memory Palace" sections
 - **Unified search:** Facts are included in `memory_search corpus=all` / `wiki_search corpus=all`
 - **Dream findings:** When the nightly dream cycle runs, discovered patterns and summaries are stored as tagged facts (`dream-finding`) and bridged to the Dreaming UI
+- **Workspace mirror:** When `workspaceExportIntervalMinutes` > 0, facts are also written to `{workspace}/memory/hybrid-wiki/` (human-readable; does not touch root `MEMORY.md`)
 - **Bidirectional editing:** When `mutations.enabled` is true, external clients (memory-wiki, WebUI) can create, update, supersede, and delete facts via `hybrid-mem.facts.*` Gateway RPC or HTTP endpoints
 
-Config: `wikiIntegration.enabled`, `wikiIntegration.publicArtifacts`, `wikiIntegration.corpusSupplement`, `wikiIntegration.mutations.enabled`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md#wiki-integration-wikiintegration).
+Config: `wikiIntegration.enabled`, `wikiIntegration.publicArtifacts`, `wikiIntegration.corpusSupplement`, `wikiIntegration.workspaceExportIntervalMinutes` (0 = disable mirror), `wikiIntegration.mutations.enabled`. See [CONFIGURATION.md](../../docs/CONFIGURATION.md#wiki-integration-wikiintegration).
 
 ## Configuration mindset
 
