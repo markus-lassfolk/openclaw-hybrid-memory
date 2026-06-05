@@ -3,7 +3,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { atomicWriteFile } from "../utils/atomic-write.js";
@@ -14,6 +14,8 @@ export type ProposalRollbackRecord = {
   targetPath: string;
   originalHash: string;
   originalContent: string;
+  /** Content hash immediately after apply — used to detect post-apply edits before undo. */
+  appliedHash?: string;
   appliedAt: string;
   changeType?: "append" | "replace";
 };
@@ -55,6 +57,16 @@ export function readProposalRollback(
   }
 }
 
+export function deleteProposalRollback(resolvedSqlitePath: string, proposalId: string): void {
+  const path = rollbackPath(resolvedSqlitePath, proposalId);
+  if (!existsSync(path)) return;
+  try {
+    unlinkSync(path);
+  } catch {
+    // Non-fatal cleanup failure.
+  }
+}
+
 export function undoProposalRollback(
   resolvedSqlitePath: string,
   proposalId: string,
@@ -63,19 +75,20 @@ export function undoProposalRollback(
   if (!record) {
     return { ok: false, error: `No rollback metadata found for proposal ${proposalId}` };
   }
-  if (!existsSync(record.targetPath)) {
-    return { ok: false, error: `Rollback target missing: ${record.targetPath}` };
-  }
   try {
-    const current = readFileSync(record.targetPath, "utf-8");
-    const currentHash = createHash("sha256").update(current).digest("hex");
-    atomicWriteFile(record.targetPath, record.originalContent);
-    if (currentHash !== record.originalHash) {
-      return {
-        ok: true,
-        targetPath: record.targetPath,
-      };
+    if (existsSync(record.targetPath)) {
+      const current = readFileSync(record.targetPath, "utf-8");
+      const currentHash = createHash("sha256").update(current).digest("hex");
+      const expectedHash = record.appliedHash ?? record.originalHash;
+      if (currentHash !== expectedHash) {
+        return {
+          ok: false,
+          error: `Target file changed since apply (current hash ${currentHash.slice(0, 8)}…); undo aborted to avoid data loss`,
+        };
+      }
     }
+    mkdirSync(dirname(record.targetPath), { recursive: true });
+    atomicWriteFile(record.targetPath, record.originalContent);
     return { ok: true, targetPath: record.targetPath };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

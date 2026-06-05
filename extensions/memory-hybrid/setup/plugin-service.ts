@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import { resolveDreamCycleLogDir } from "../utils/dream-cycle-paths.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { clearRuntimeTimers } from "../api/plugin-runtime.js";
@@ -444,11 +445,7 @@ export function createPluginService(ctx: PluginServiceContext) {
               proposalsDb,
               crystallizationStore: crystallizationStore ?? null,
               toolProposalStore: toolProposalStore ?? null,
-              dreamCycleLogDir: join(
-                getEnv("OPENCLAW_HOME")?.trim() || pathJoin(homedir(), ".openclaw"),
-                "logs",
-                "dream-cycle",
-              ),
+              dreamCycleLogDir: resolveDreamCycleLogDir(),
             },
             cfg.dashboard.port,
           );

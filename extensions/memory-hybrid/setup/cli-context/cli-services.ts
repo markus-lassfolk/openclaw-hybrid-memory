@@ -507,7 +507,7 @@ export function buildCliContextServices(
         },
         logSink,
         provenanceService,
-        { cfg, proposalsDb: proposalsDb ?? null, api },
+        { cfg, proposalsDb: proposalsDb ?? null, crystallizationStore: ctx.crystallizationStore ?? null, toolProposalStore: null, api },
       );
     },
     runContinuousVerification: async (opts?: { verbose?: boolean }) => {

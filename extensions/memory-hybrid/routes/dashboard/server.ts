@@ -215,7 +215,7 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     // GET /api/viewer/facts?limit=50&offset=0&category=&tier=&entity=&search=
     if (pathname === "/api/viewer/facts") {
       try {
-        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10)));
+        const limit = Math.min(500, Math.max(1, Number.parseInt(searchParams.get("limit") ?? "50", 10) || 50));
         const offset = Math.max(0, Number.parseInt(searchParams.get("offset") ?? "0", 10) || 0);
         const categoryFilter = searchParams.get("category") || undefined;
         const entityFilter = searchParams.get("entity") || undefined;
@@ -626,26 +626,46 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
     }
 
     if (pathname === "/api/workshop/proposals" && wctx) {
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
-      res.end(JSON.stringify({ proposals: collectWorkshopProposals(wctx) }));
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ proposals: collectWorkshopProposals(wctx) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
       return;
     }
 
     if (pathname === "/api/workshop/digest" && wctx) {
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
-      res.end(JSON.stringify(collectWorkshopDigest(wctx)));
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(collectWorkshopDigest(wctx)));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
       return;
     }
 
     if (pathname === "/api/workshop/dream-log" && wctx) {
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
-      res.end(JSON.stringify({ runs: collectDreamCycleLog(wctx) }));
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ runs: collectDreamCycleLog(wctx) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
       return;
     }
 
     if (pathname === "/api/workshop/skills" && wctx) {
-      res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
-      res.end(JSON.stringify({ skills: collectSkillTelemetry(wctx) }));
+      try {
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify({ skills: collectSkillTelemetry(wctx) }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
       return;
     }
 

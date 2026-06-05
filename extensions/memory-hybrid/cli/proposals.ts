@@ -4,6 +4,7 @@ import { getEnv } from "../utils/env-manager.js";
  */
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -415,6 +416,7 @@ export async function applyApprovedProposal(
         targetPath,
         originalHash: originalSnapshot.hash,
         originalContent: original,
+        appliedHash: createHash("sha256").update(applied.content).digest("hex"),
         appliedAt: timestamp,
         changeType: applied.changeType,
       });

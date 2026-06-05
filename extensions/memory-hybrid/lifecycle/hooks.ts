@@ -268,9 +268,12 @@ export function createLifecycleHooks(ctx: LifecycleContext) {
 
           // Flush buffer to workflow-traces.db
           const outcome = ev?.success === true ? "success" : ev?.success === false ? "failure" : "unknown";
+          const toolCount = ctx.workflowTracker?.getBuffer(sessionId).length ?? 0;
           const traceId = ctx.workflowTracker?.flush(sessionId, goal, outcome);
           if (traceId) {
-            api.logger.debug?.(`memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId}`);
+            api.logger.info?.(
+              `memory-hybrid: workflow trace recorded id=${traceId} session=${sessionId} outcome=${outcome} tools=${toolCount}`,
+            );
           }
         } catch (err) {
           capturePluginError(err instanceof Error ? err : new Error(String(err)), {

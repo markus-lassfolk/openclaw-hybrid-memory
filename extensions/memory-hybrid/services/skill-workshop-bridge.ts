@@ -2,7 +2,7 @@
  * Optional bridge to OpenClaw Skill Workshop proposal filesystem (Phase 5).
  */
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -48,7 +48,7 @@ export function writeSkillWorkshopProposal(input: SkillWorkshopBridgeInput): { o
     ].join("\n");
     const proposalPath = join(dir, "PROPOSAL.md");
     atomicWriteFile(proposalPath, `${frontmatter}${input.skillContent}`);
-    writeFileSync(
+    atomicWriteFile(
       join(dir, "proposal.json"),
       JSON.stringify({ id, name: input.name, description: input.description, createdAt: date, source: "hybrid-memory-bridge" }, null, 2),
     );

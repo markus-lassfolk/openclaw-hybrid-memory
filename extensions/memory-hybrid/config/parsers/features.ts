@@ -1141,3 +1141,41 @@ export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAda
     },
   };
 }
+
+function parseLiveChangeFeedPositiveInt(value: unknown, fallback: number, field: string, min = 1, max = 3650): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Invalid liveChangeFeed.${field}: ${String(value)}`);
+  }
+  const normalized = Math.floor(value);
+  if (normalized < min || normalized > max) {
+    throw new Error(`Invalid liveChangeFeed.${field}: ${String(value)}`);
+  }
+  return normalized;
+}
+
+function parseLiveChangeFeedBoolean(value: unknown, defaultValue: boolean): boolean {
+  if (value === undefined) return defaultValue;
+  if (value === true) return true;
+  if (value === false) return false;
+  throw new Error(`Invalid liveChangeFeed boolean: expected boolean, received ${typeof value} (${String(value)})`);
+}
+
+export function parseLiveChangeFeedConfig(cfg: Record<string, unknown>): import("../types/features.js").LiveChangeFeedConfig {
+  const raw = cfg.liveChangeFeed as Record<string, unknown> | undefined;
+  const notifyOnRaw = raw?.notifyOn as Record<string, unknown> | undefined;
+  return {
+    enabled: parseLiveChangeFeedBoolean(raw?.enabled, true),
+    retentionDays: parseLiveChangeFeedPositiveInt(raw?.retentionDays, 90, "retentionDays", 1, 3650),
+    notifyInChat: parseLiveChangeFeedBoolean(raw?.notifyInChat, true),
+    notifyOn: {
+      sessionAdaptation: parseLiveChangeFeedBoolean(notifyOnRaw?.sessionAdaptation, true),
+      proposalCreated: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalCreated, true),
+      proposalApplied: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalApplied, true),
+      proposalReverted: parseLiveChangeFeedBoolean(notifyOnRaw?.proposalReverted, true),
+      dreamCycleComplete: parseLiveChangeFeedBoolean(notifyOnRaw?.dreamCycleComplete, false),
+    },
+    maxInChatEventsPerTurn: parseLiveChangeFeedPositiveInt(raw?.maxInChatEventsPerTurn, 5, "maxInChatEventsPerTurn", 1, 20),
+    inChatBudgetTokens: parseLiveChangeFeedPositiveInt(raw?.inChatBudgetTokens, 150, "inChatBudgetTokens", 50, 500),
+  };
+}

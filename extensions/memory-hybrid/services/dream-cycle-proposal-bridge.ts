@@ -5,8 +5,10 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import type { CrystallizationStore } from "../backends/crystallization-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
+import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import { inferTargetFile } from "../cli/cmd-store.js";
 import { resolvePipelineProposalTarget } from "../cli/proposals.js";
 import type { HybridMemoryConfig } from "../config.js";
@@ -18,6 +20,8 @@ export type DreamCycleProposalBridgeInput = {
   cfg: HybridMemoryConfig;
   factsDb: FactsDB;
   proposalsDb: ProposalsDB | null;
+  crystallizationStore?: CrystallizationStore | null;
+  toolProposalStore?: ToolProposalStore | null;
   patternsStored: number;
   rulesGenerated: number;
   /** Rule fact IDs created during this dream cycle (avoids re-proposing existing rules). */
@@ -82,8 +86,8 @@ export function runDreamCycleProposalBridge(input: DreamCycleProposalBridgeInput
     cfg: input.cfg,
     factsDb: input.factsDb,
     proposalsDb: input.proposalsDb,
-    crystallizationStore: null,
-    toolProposalStore: null,
+    crystallizationStore: input.crystallizationStore ?? null,
+    toolProposalStore: input.toolProposalStore ?? null,
   };
 
   if (input.rulesGenerated > 0 && input.proposalsDb && input.cfg.personaProposals.enabled) {

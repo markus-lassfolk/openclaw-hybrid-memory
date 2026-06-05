@@ -54,6 +54,7 @@ function workshopCtx(ctx: ProposalGatewayContext): WorkshopServiceContext {
 }
 
 export function registerProposalGatewayMethods(ctx: ProposalGatewayContext): void {
+  if (!ctx.cfg.health.enabled) return;
   const register = (ctx.api as { registerGatewayMethod?: (method: string, handler: GatewayHandler) => void })
     .registerGatewayMethod;
   if (typeof register !== "function") {

@@ -50,6 +50,7 @@ import type {
   CrystallizationConfig,
   DashboardConfig,
   DigestConfig,
+  LiveChangeFeedConfig,
   DocumentsConfig,
   EntityExtractionConfig,
   FrequencyCaptureConfig,
@@ -807,6 +808,8 @@ export type HybridMemoryConfig = {
   humanizer: HumanizerConfig;
   /** Weekly digest delivery for cron + operator review (Issue #1197). */
   digest: DigestConfig;
+  /** Live change feed for operator notifications (session + persistent mutations). */
+  liveChangeFeed: LiveChangeFeedConfig;
   /** Entity lifecycle adapters — GitHub Phase 2 stub (Issue #1196). */
   lifecycle: LifecycleAdaptersConfig;
   /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784, default: disabled). */

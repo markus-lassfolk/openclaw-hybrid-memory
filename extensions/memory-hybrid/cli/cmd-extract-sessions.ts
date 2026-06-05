@@ -44,23 +44,32 @@ export function resolveSessionTranscriptPath(sessionDir: string, filePath: strin
 export function getSessionFilePathsSince(sessionDir: string, days: number, sinceTimestamp?: number): string[] {
   if (!existsSync(sessionDir)) return [];
   const cutoff = sinceTimestamp !== undefined ? sinceTimestamp : Date.now() - days * 24 * 60 * 60 * 1000;
+
+  const collectFromDir = (dir: string): string[] => {
+    if (!existsSync(dir)) return [];
+    try {
+      return readdirSync(dir)
+        .filter((f) => isSessionTranscriptCandidate(f))
+        .map((f) => join(dir, f))
+        .filter((p) => {
+          try {
+            return statSync(p).mtimeMs > cutoff;
+          } catch (err) {
+            capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+              operation: "stat-check",
+              severity: "info",
+              subsystem: "cli",
+            });
+            return false;
+          }
+        });
+    } catch {
+      return [];
+    }
+  };
+
   try {
-    const files = readdirSync(sessionDir);
-    return files
-      .filter((f) => isSessionTranscriptCandidate(f))
-      .map((f) => join(sessionDir, f))
-      .filter((p) => {
-        try {
-          return statSync(p).mtimeMs > cutoff;
-        } catch (err) {
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            operation: "stat-check",
-            severity: "info",
-            subsystem: "cli",
-          });
-          return false;
-        }
-      });
+    return [...collectFromDir(sessionDir), ...collectFromDir(join(sessionDir, "archive"))];
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",

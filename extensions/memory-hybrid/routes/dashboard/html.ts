@@ -405,6 +405,11 @@ async function refreshWorkshop() {
       fetch('/api/workshop/dream-log'),
       fetch('/api/workshop/skills'),
     ]);
+    if (!proposalsRes.ok || !dreamRes.ok || !skillsRes.ok) {
+      const failed = [proposalsRes, dreamRes, skillsRes].find(r => !r.ok);
+      const data = failed ? await failed.json().catch(() => ({})) : {};
+      throw new Error(data.message || data.error || 'Workshop API error');
+    }
     const proposals = (await proposalsRes.json()).proposals || [];
     const dream = (await dreamRes.json()).runs || [];
     const skills = (await skillsRes.json()).skills || [];

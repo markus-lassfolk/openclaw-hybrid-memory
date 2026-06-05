@@ -7,6 +7,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { ProposalsDB } from "../backends/proposals-db.js";
 import type { ToolProposalStore } from "../backends/tool-proposal-store.js";
 import type { HybridMemoryConfig } from "../config.js";
+import type { ProcedureEntry } from "../types/memory.js";
 import { summarizeSkillProposalValidation } from "./generated-skill-validation.js";
 import { buildPendingReviewDigestReport, pendingStorePaths } from "./pending-review-digest.js";
 
@@ -237,38 +238,46 @@ export function listUnifiedProposals(
     const ttlDays = stores.cfg.procedures?.skillTTLDays ?? 30;
     const procedures = stores.factsDb.getProceduresReadyForSkill(threshold, 50, ttlDays);
     for (const proc of procedures) {
-      const status: UnifiedProposalStatus = "pending";
-      if (filterStatus && status !== filterStatus) continue;
-      out.push({
-        id: proc.id,
-        unifiedKey: makeUnifiedKey("procedure-skill", proc.id),
-        type: "procedure-skill",
-        title: proc.taskPattern ?? proc.id,
-        status,
-        confidence: proc.confidence ?? 0.5,
-        createdAt: proc.lastValidated ?? proc.updatedAt ?? proc.createdAt ?? 0,
-        targetPath: stores.cfg.procedures?.skillsAutoPath ?? "skills/auto",
-        targetHash: null,
-        preview: truncatePreview(proc.taskPattern ?? proc.id),
-        evidence: { sessions: proc.sourceSessions ? [proc.sourceSessions] : [], factIds: [] },
-        sourceStore: "facts.procedures",
-        actions: {
-          approveSupported: true,
-          rejectSupported: false,
-          quarantineSupported: false,
-          reviseSupported: false,
-          undoSupported: false,
-        },
-        metadata: {
-          successCount: proc.successCount,
-          validationThreshold: threshold,
-        },
-      });
+      const proposal = buildProcedureSkillProposal(stores, proc, threshold);
+      if (filterStatus && proposal.status !== filterStatus) continue;
+      out.push(proposal);
     }
   }
 
   out.sort((a, b) => b.createdAt - a.createdAt);
   return out.slice(0, limit);
+}
+
+function buildProcedureSkillProposal(
+  stores: UnifiedProposalStores,
+  proc: ProcedureEntry,
+  threshold = stores.cfg.procedures?.validationThreshold ?? 3,
+): UnifiedProposal {
+  return {
+    id: proc.id,
+    unifiedKey: makeUnifiedKey("procedure-skill", proc.id),
+    type: "procedure-skill",
+    title: proc.taskPattern ?? proc.id,
+    status: "pending",
+    confidence: proc.confidence ?? 0.5,
+    createdAt: proc.lastValidated ?? proc.updatedAt ?? proc.createdAt ?? 0,
+    targetPath: stores.cfg.procedures?.skillsAutoPath ?? "skills/auto",
+    targetHash: null,
+    preview: truncatePreview(proc.taskPattern ?? proc.id),
+    evidence: { sessions: proc.sourceSessions ? [proc.sourceSessions] : [], factIds: [] },
+    sourceStore: "facts.procedures",
+    actions: {
+      approveSupported: true,
+      rejectSupported: false,
+      quarantineSupported: false,
+      reviseSupported: false,
+      undoSupported: false,
+    },
+    metadata: {
+      successCount: proc.successCount,
+      validationThreshold: threshold,
+    },
+  };
 }
 
 export function inspectUnifiedProposal(
@@ -277,6 +286,15 @@ export function inspectUnifiedProposal(
 ): UnifiedProposal | null {
   const parsed = parseUnifiedKey(unifiedKey);
   if (!parsed) return null;
+
+  if (parsed.type === "procedure-skill") {
+    const proc = stores.factsDb.getProcedureById(parsed.storeId);
+    if (!proc || proc.promotedToSkill) return null;
+    const threshold = stores.cfg.procedures?.validationThreshold ?? 3;
+    if (proc.successCount < threshold) return null;
+    return buildProcedureSkillProposal(stores, proc, threshold);
+  }
+
   const list = listUnifiedProposals(stores, { type: parsed.type, limit: 500 });
   return list.find((p) => p.id === parsed.storeId) ?? null;
 }

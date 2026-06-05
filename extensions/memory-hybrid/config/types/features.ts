@@ -512,6 +512,32 @@ export type DigestConfig = {
   autopilot: DigestAutopilotConfig;
 };
 
+/** Live change feed — operator visibility for session adaptations and persistent mutations. */
+export type LiveChangeFeedConfig = {
+  /** Enable change event logging and notifications (default: true). */
+  enabled: boolean;
+  /** Days to retain change events (default: 90). */
+  retentionDays: number;
+  /** Inject in-chat notices via prependContext (default: true). */
+  notifyInChat: boolean;
+  notifyOn: {
+    /** Tier 1 session adaptations (frustration detected). */
+    sessionAdaptation: boolean;
+    /** Tier 2 proposal created. */
+    proposalCreated: boolean;
+    /** Tier 2 proposal applied (critical). */
+    proposalApplied: boolean;
+    /** Revert confirmations. */
+    proposalReverted: boolean;
+    /** Dream-cycle batch summary (default: false — too noisy for in-chat). */
+    dreamCycleComplete: boolean;
+  };
+  /** Max events summarized per agent turn in-chat (default: 5). */
+  maxInChatEventsPerTurn: number;
+  /** Token budget for in-chat change notice prepend (default: 150). */
+  inChatBudgetTokens: number;
+};
+
 /**
  * Decay-class action applied to a fact whose lifecycle event matched (#1196).
  * - `expire-now`: set `expires_at` to now (eligible for the next prune).

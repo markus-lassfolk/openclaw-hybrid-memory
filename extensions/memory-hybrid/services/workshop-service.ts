@@ -29,7 +29,7 @@ import {
   parseUnifiedKey,
   type UnifiedProposalStores,
 } from "./unified-proposals.js";
-import { readProposalRollback, undoProposalRollback } from "./proposal-rollback.js";
+import { readProposalRollback, undoProposalRollback, deleteProposalRollback } from "./proposal-rollback.js";
 import { GapDetector } from "./gap-detector.js";
 import { ToolProposer } from "./tool-proposer.js";
 
@@ -174,11 +174,27 @@ export function workshopQuarantine(
     return { ok: true, message: "Persona proposal quarantined (marked rejected with quarantine reason)" };
   }
 
-  if (parsed.type === "crystallization" && ctx.crystallizationStore) {
-    const updated = ctx.crystallizationStore.quarantine(parsed.storeId, reason ?? "workshop quarantine");
-    return updated
-      ? { ok: true, message: "Crystallization proposal quarantined" }
-      : { ok: false, error: "Could not quarantine crystallization proposal" };
+  if (parsed.type === "crystallization" && ctx.crystallizationStore && ctx.workflowStore) {
+    const proposal = ctx.crystallizationStore.getById(parsed.storeId);
+    if (!proposal) return { ok: false, error: "Proposal not found" };
+    const isPending = proposal.status === "drafted" || proposal.status === "validated";
+    const proposer = new CrystallizationProposer(ctx.workflowStore, ctx.crystallizationStore, ctx.cfg.crystallization);
+    if (isPending) {
+      const result = proposer.rejectProposal(
+        parsed.storeId,
+        reason ? `quarantine: ${reason}` : "workshop quarantine",
+      );
+      return result.success
+        ? { ok: true, message: "Crystallization proposal quarantined (rejected)" }
+        : { ok: false, error: result.message };
+    }
+    if (proposal.status === "installed") {
+      const updated = ctx.crystallizationStore.quarantine(parsed.storeId, reason ?? "workshop quarantine");
+      return updated
+        ? { ok: true, message: "Crystallization proposal quarantined" }
+        : { ok: false, error: "Could not quarantine crystallization proposal" };
+    }
+    return { ok: false, error: `Cannot quarantine crystallization proposal in status ${proposal.status}` };
   }
 
   if (parsed.type === "tool" && ctx.toolProposalStore) {
@@ -234,12 +250,19 @@ export function workshopRevise(
 export function workshopUndo(ctx: WorkshopServiceContext, unifiedKey: string): WorkshopActionResult {
   const parsed = resolveKey(unifiedKey);
   if ("error" in parsed) return { ok: false, error: parsed.error };
+  if (parsed.type !== "persona") return { ok: false, error: "Undo is only supported for persona proposals" };
+  if (!ctx.proposalsDb) return { ok: false, error: "Persona proposals not available" };
+  const proposal = ctx.proposalsDb.get(parsed.storeId);
+  if (!proposal || proposal.status !== "applied") {
+    return { ok: false, error: "Proposal is not in applied state" };
+  }
   const record = readProposalRollback(ctx.resolvedSqlitePath, parsed.storeId);
   if (!record) return { ok: false, error: "No rollback metadata found for this proposal" };
   const result = undoProposalRollback(ctx.resolvedSqlitePath, parsed.storeId);
-  return result.ok
-    ? { ok: true, message: `Restored ${result.targetPath} from rollback metadata` }
-    : { ok: false, error: result.error };
+  if (!result.ok) return { ok: false, error: result.error };
+  ctx.proposalsDb.updateStatus(parsed.storeId, "pending");
+  deleteProposalRollback(ctx.resolvedSqlitePath, parsed.storeId);
+  return { ok: true, message: `Restored ${result.targetPath} and reverted proposal to pending` };
 }
 
 export function workshopPendingCount(ctx: WorkshopServiceContext): number {

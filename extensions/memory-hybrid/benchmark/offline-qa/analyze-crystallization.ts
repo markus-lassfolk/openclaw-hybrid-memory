@@ -6,7 +6,7 @@
  *   HOME=.offline-qa/sandbox-work npm run offline-qa:crystallization
  *   HOME=.offline-qa/sandbox-work npm run offline-qa:crystallization -- --days=14
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -140,25 +140,33 @@ function topPatterns(wf: WorkflowStore, minSuccessRate: number, minUsage: number
   }).filter((p) => p.totalCount >= minUsage);
 }
 
+function isCronOrSystemGoal(goal: string): boolean {
+  const g = goal.trim();
+  return (
+    /^\[cron:/i.test(g) ||
+    /^\[Retry after the previous model/i.test(g) ||
+    /^<!-- memory-hybrid:/i.test(g) ||
+    /^<recalled-context>/i.test(g) ||
+    /^\[Subagent Context\]/i.test(g) ||
+    /^\[Wed \d{4}-\d{2}-\d{2}/i.test(g)
+  );
+}
+
 function assessUsefulness(
   pattern: WorkflowPattern,
   validation: ReturnType<GeneratedSkillValidationService["validate"]>,
 ): string {
-  const seq = pattern.toolSequence.join(" → ");
   const goals = pattern.exampleGoals.filter((g) => g.trim().length > 8);
-  const genericStep = /only for the bounded task/i.test(
-    crystallizeSkill(
-      { patternId: "tmp", evidenceHash: "tmp", pattern },
-      { ...STRUCTURAL_CFG, outputDir: join(tmpdir(), "crystallization-qa-unused") },
-    ).skillContent,
-  );
+  const userGoals = goals.filter((g) => !isCronOrSystemGoal(g));
 
   if (validation.approvalDecision === "deny") return "garbage — validation denied";
+  if (goals.every(isCronOrSystemGoal)) return "garbage — cron/system prompt patterns only";
   if (pattern.toolSequence.length === 1) return "weak — single-tool pattern";
-  if (goals.length === 0 && pattern.exampleGoals.every((g) => g.length < 12))
+  if (userGoals.length === 0 && pattern.exampleGoals.every((g) => g.length < 12))
     return "weak — goals too terse/generic";
-  if (genericStep && goals.length === 0) return "mediocre — boilerplate steps, vague goals";
-  if (validation.overallStatus === "passed" && goals.length >= 1) return "potentially useful — concrete goals + validation pass";
+  if (userGoals.length === 0) return "mediocre — repeatable but not user-facing workflows";
+  if (validation.overallStatus === "passed" && userGoals.length >= 1)
+    return "potentially useful — user-facing goals + validation pass";
   if (validation.overallStatus === "warn") return "borderline — validation warnings";
   return "unclear — review manually";
 }
@@ -254,6 +262,29 @@ async function main(): Promise<void> {
     return acc;
   }, {});
 
+  const liveWfPath = join(home, ".openclaw/memory/workflow-traces.db");
+  let liveWfStats: { total: number; sinceWindow: number; outcomes: Record<string, number> } | null = null;
+  if (existsSync(liveWfPath)) {
+    const db = new DatabaseSync(liveWfPath);
+    try {
+      const sinceSec = Math.floor(Date.now() / 1000) - days * 86400;
+      const total = (db.prepare("SELECT COUNT(*) AS n FROM workflow_traces").get() as { n: number }).n;
+      const sinceWindow = (
+        db
+          .prepare(`SELECT COUNT(*) AS n FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch')`)
+          .get(sinceSec) as { n: number }
+      ).n;
+      const rows = db
+        .prepare(`SELECT outcome, COUNT(*) AS cnt FROM workflow_traces WHERE created_at >= datetime(?, 'unixepoch') GROUP BY outcome`)
+        .all(sinceSec) as Array<{ outcome: string; cnt: number }>;
+      const outcomes: Record<string, number> = {};
+      for (const r of rows) outcomes[r.outcome] = r.cnt;
+      liveWfStats = { total, sinceWindow, outcomes };
+    } finally {
+      db.close();
+    }
+  }
+
   const dataGapOk = gaps.length <= 2;
   const verdict =
     !dataGapOk
@@ -287,7 +318,10 @@ async function main(): Promise<void> {
     `- Data-gap gate (≤2 zero days): **${dataGapOk ? "PASS" : "FAIL"}**`,
     `- Sessions with <2 tools (no trace): **${backfill.noTools}**`,
     `- Workflow traces backfilled (isolated DB): **${backfill.traces}** (skipped dupes: ${backfill.skipped})`,
-    `- Trace outcomes: ${Object.entries(outcomes).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`,
+    `- Trace outcomes (backfill isolated DB): ${Object.entries(outcomes).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`,
+    liveWfStats
+      ? `- Live workflow-traces.db on sandbox: total=${liveWfStats.total}, last ${days}d=${liveWfStats.sinceWindow}, outcomes: ${Object.entries(liveWfStats.outcomes).map(([k, v]) => `${k}=${v}`).join(", ") || "(none)"}`
+      : `- Live workflow-traces.db on sandbox: (not present — backfill-only analysis)`,
     `- Maeve config workflowTracking.enabled: **${cfg.workflowTracking.enabled}**`,
     `- Maeve config crystallization.enabled: **${cfg.crystallization.enabled}**`,
     ``,

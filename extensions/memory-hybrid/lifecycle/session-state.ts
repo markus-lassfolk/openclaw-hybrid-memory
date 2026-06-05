@@ -55,6 +55,8 @@ export function createSessionState(
   const authFailureRecallsThisSession = new Map<string, number>();
   const sessionStartSeen = new Set<string>();
   const frustrationStateMap = new Map<string, { level: number; turns: FrustrationConversationTurn[] }>();
+  const frustrationThresholdBandMap = new Map<string, "none" | "medium" | "high" | "critical">();
+  const changeNotifyStateMap = new Map<string, { lastNotifiedTimestamp: number }>();
   const ambientSeenFactsMap = new Map<string, SessionSeenFacts>();
   const ambientLastEmbeddingMap = new Map<string, number[] | null>();
   const sessionLastActivity = new Map<string, number>();
@@ -70,6 +72,8 @@ export function createSessionState(
     ambientSeenFactsMap.delete(sessionKey);
     ambientLastEmbeddingMap.delete(sessionKey);
     frustrationStateMap.delete(sessionKey);
+    frustrationThresholdBandMap.delete(sessionKey);
+    changeNotifyStateMap.delete(sessionKey);
     sessionLastActivity.delete(sessionKey);
     // Do NOT clear capabilityHintsSessionsSeen here — that set persists across agent turns
     // within the same chat session so "session" mode injects once per chat, not once per turn.
@@ -161,6 +165,8 @@ export function createSessionState(
     ambientSeenFactsMap.clear();
     ambientLastEmbeddingMap.clear();
     frustrationStateMap.clear();
+    frustrationThresholdBandMap.clear();
+    changeNotifyStateMap.clear();
     authFailureRecallsThisSession.clear();
     sessionLastActivity.clear();
     capabilityHintsSessionsSeen.clear();
@@ -174,6 +180,8 @@ export function createSessionState(
     ambientSeenFactsMap,
     ambientLastEmbeddingMap,
     frustrationStateMap,
+    frustrationThresholdBandMap,
+    changeNotifyStateMap,
     authFailureRecallsThisSession,
     sessionLastActivity,
     capabilityHintsSessionsSeen,

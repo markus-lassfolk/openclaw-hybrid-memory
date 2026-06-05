@@ -112,7 +112,10 @@ export interface DreamCycleConfig {
 }
 
 /** Optional bridge context for auto-proposing reflection output (Phase 4). */
-export type DreamCycleBridgeOpts = Pick<DreamCycleProposalBridgeInput, "cfg" | "proposalsDb" | "api">;
+export type DreamCycleBridgeOpts = Pick<
+  DreamCycleProposalBridgeInput,
+  "cfg" | "proposalsDb" | "api" | "crystallizationStore" | "toolProposalStore"
+>;
 
 /** Result returned by a single dream cycle run. */
 export interface DreamCycleResult {
@@ -1256,6 +1259,8 @@ export async function runDreamCycle(
         cfg: bridge.cfg,
         factsDb,
         proposalsDb: bridge.proposalsDb ?? null,
+        crystallizationStore: bridge.crystallizationStore ?? null,
+        toolProposalStore: bridge.toolProposalStore ?? null,
         patternsStored: patternsFound,
         rulesGenerated,
         newRuleFactIds,
