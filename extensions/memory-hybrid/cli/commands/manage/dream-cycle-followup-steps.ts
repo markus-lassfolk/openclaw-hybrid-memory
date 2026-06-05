@@ -119,7 +119,7 @@ export async function runCrystallizationProposalsStep(deps: DreamCycleFollowUpDe
 export async function runCostLogPruneStep(deps: DreamCycleFollowUpDeps): Promise<string> {
   if (!deps.pruneCostLog) return "skipped (handler unavailable)";
   const pruned = await Promise.resolve(deps.pruneCostLog(deps.cfg.costTracking?.retainDays));
-  return pruned > 0 ? `pruned ${pruned} entries` : "nothing to prune";
+  return pruned > 0 ? `pruned=${pruned} semantic=success` : "nothing to prune semantic=success";
 }
 
 export function buildDreamCycleFollowUpDepsFromBindings(

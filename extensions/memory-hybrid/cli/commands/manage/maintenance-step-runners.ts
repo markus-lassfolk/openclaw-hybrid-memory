@@ -320,8 +320,9 @@ export function buildCliMaintenanceRunners(
 
   set("build-languages", async () => {
     const r = await b.runBuildLanguageKeywords({ dryRun: false });
-    if (!r.ok) throw new Error(r.error);
-    return `languagesAdded=${r.languagesAdded}`;
+    const summary = `languagesAdded=${r.languagesAdded ?? 0} semantic=${r.ok ? "success" : "partial"}`;
+    if (!r.ok) throw new Error(`build-languages failed (${r.error ?? "unknown"} ${summary})`);
+    return summary;
   });
 
   set("credentials-prune", async () => {

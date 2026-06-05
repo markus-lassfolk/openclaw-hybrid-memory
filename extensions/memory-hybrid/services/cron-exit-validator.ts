@@ -384,10 +384,19 @@ function extractStepLog(logContent: string, stepName: string): string {
   return relevantLines.length > 0 ? relevantLines.join("\n") : logContent;
 }
 
+function isStepInValidationScope(
+  stepName: string,
+  requiredSteps: string[],
+  ledgerSteps: ExitStep[],
+): boolean {
+  return requiredSteps.includes(stepName) || ledgerSteps.some((step) => step.step === stepName);
+}
+
 function collectMaintenanceTelemetryIssues(params: {
   exitPath: string;
   logPath?: string;
   requiredSteps: string[];
+  ledgerSteps: ExitStep[];
   logContent: string;
   failedSteps: ExitStep[];
   missingSteps: string[];
@@ -398,6 +407,7 @@ function collectMaintenanceTelemetryIssues(params: {
     exitPath,
     logPath,
     requiredSteps,
+    ledgerSteps,
     logContent,
     failedSteps,
     missingSteps,
@@ -624,8 +634,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const generateProposalsDetected =
-    requiredSteps.includes("generate-proposals") || /\bgenerate-proposals\b/i.test(logContent);
+  const generateProposalsDetected = isStepInValidationScope("generate-proposals", requiredSteps, ledgerSteps);
   const generateProposalsSemanticEmpty =
     /\bgenerate-proposals.*semantic_empty\b/i.test(logContent) ||
     (/\bgenerate-proposals\b/i.test(logContent) &&
@@ -647,8 +656,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const reinforcementDetected =
-    requiredSteps.includes("extract-reinforcement") || /\bextract-reinforcement\b/i.test(logContent);
+  const reinforcementDetected = isStepInValidationScope("extract-reinforcement", requiredSteps, ledgerSteps);
   const reinforcementDegraded =
     /\bdegraded_model_or_parser\b/i.test(logContent) || /\bstatus=degraded_model_or_parser\b/i.test(logContent);
   if (reinforcementDetected && reinforcementDegraded) {
@@ -666,8 +674,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const extractDailyDetected =
-    requiredSteps.includes("extract-daily") || /\bextract-daily\b/i.test(logContent);
+  const extractDailyDetected = isStepInValidationScope("extract-daily", requiredSteps, ledgerSteps);
   const extractDailyVectorFailures = parsePositiveMetric(logContent, "vector_failures");
   if (extractDailyDetected && typeof extractDailyVectorFailures === "number" && extractDailyVectorFailures > 0) {
     addMaintenanceIssue(
@@ -684,8 +691,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const extractProceduresDetected =
-    requiredSteps.includes("extract-procedures") || /\bextract-procedures\b/i.test(logContent);
+  const extractProceduresDetected = isStepInValidationScope("extract-procedures", requiredSteps, ledgerSteps);
   const extractProceduresReadFailures = parsePositiveMetric(logContent, "readFailures");
   const extractProceduresReadFailureLog = /\bsession read failure\(s\)/i.test(logContent);
   if (
@@ -708,7 +714,7 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const reflectDetected =
-    requiredSteps.includes("reflect") ||
+    isStepInValidationScope("reflect", requiredSteps, ledgerSteps) ||
     (/\breflect\b/i.test(logContent) && /\bpatternsStored=\d+/i.test(logContent));
   const reflectEmbedFailuresMatch = logContent.match(/(\d+)\s+new-pattern embed failure\(s\)/i);
   const reflectEmbedFailures =
@@ -731,8 +737,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const reflectMetaDetected =
-    requiredSteps.includes("reflect-meta") || /\breflect-meta\b/i.test(logContent);
+  const reflectMetaDetected = isStepInValidationScope("reflect-meta", requiredSteps, ledgerSteps);
   const reflectMetaStatusPartial =
     /\breflect-meta\b[\s\S]{0,120}\bstatus=(partial|degraded)\b/i.test(logContent) ||
     (/\bmetaStored=\d+/i.test(logContent) && /\bstatus=(partial|degraded)\b/i.test(logContent));
@@ -762,15 +767,16 @@ function collectMaintenanceTelemetryIssues(params: {
   }
 
   const enrichEntitiesDetected =
-    requiredSteps.includes("enrich-entities") ||
-    requiredSteps.includes("enrich-entities-deep") ||
-    /\benrich-entities(?:-deep)?\b/i.test(logContent);
-  const enrichLlmFailures = parsePositiveMetric(logContent, "llmFailures");
-  const enrichRemaining = parsePositiveMetric(logContent, "remaining");
-  const enrichStopReasonIncomplete = /\bstopReason=(exhausted|time_budget|provider_budget)\b/i.test(logContent);
-  const enrichSemanticPartial =
-    /\benrich-entities\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
-    (/\bllmFailures=\d+/i.test(logContent) && /\bsemantic=partial\b/i.test(logContent));
+    isStepInValidationScope("enrich-entities", requiredSteps, ledgerSteps) ||
+    isStepInValidationScope("enrich-entities-deep", requiredSteps, ledgerSteps);
+  const enrichStepName = isStepInValidationScope("enrich-entities-deep", requiredSteps, ledgerSteps)
+    ? "enrich-entities-deep"
+    : "enrich-entities";
+  const enrichLog = enrichEntitiesDetected ? extractStepLog(logContent, enrichStepName) : "";
+  const enrichLlmFailures = parsePositiveMetric(enrichLog, "llmFailures");
+  const enrichRemaining = parsePositiveMetric(enrichLog, "remaining");
+  const enrichStopReasonIncomplete = /\bstopReason=(exhausted|time_budget|provider_budget)\b/i.test(enrichLog);
+  const enrichSemanticPartial = /\bsemantic=partial\b/i.test(enrichLog);
   if (
     enrichEntitiesDetected &&
     ((typeof enrichLlmFailures === "number" && enrichLlmFailures > 0) ||
@@ -782,20 +788,19 @@ function collectMaintenanceTelemetryIssues(params: {
       buildMaintenanceIssue({
         ...commonFields,
         jobName,
-        stepName: "enrich-entities",
+        stepName: enrichStepName,
         failureCategory: "semantic_failure",
         failureClass:
           typeof enrichLlmFailures === "number" && enrichLlmFailures > 0
             ? "enrich_entities_llm_failures"
             : "enrich_entities_incomplete_catchup",
-        message: `${jobName}:enrich-entities had partial LLM enrichment or incomplete catch-up despite a mechanically successful run`,
+        message: `${jobName}:${enrichStepName} had partial LLM enrichment or incomplete catch-up despite a mechanically successful run`,
         semanticStatus: "degraded",
       }),
     );
   }
 
-  const consolidateDetected =
-    requiredSteps.includes("consolidate") || /\bconsolidate\b/i.test(logContent);
+  const consolidateDetected = isStepInValidationScope("consolidate", requiredSteps, ledgerSteps);
   const consolidateClustersFailed = parsePositiveMetric(logContent, "clustersFailed");
   const consolidateVectorFailures = parsePositiveMetric(logContent, "vector_failures");
   const consolidateSemanticPartial =
@@ -829,8 +834,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const reflectIdentityDetected =
-    requiredSteps.includes("reflect-identity") || /\breflect-identity\b/i.test(logContent);
+  const reflectIdentityDetected = isStepInValidationScope("reflect-identity", requiredSteps, ledgerSteps);
   const reflectIdentitySemanticFailed =
     /\breflect-identity\b[\s\S]{0,160}\bsemantic=failed\b/i.test(logContent) ||
     (/\binsightsStored=\d+/i.test(logContent) && /\bsemantic=failed\b/i.test(logContent));
@@ -850,8 +854,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const resolveContradictionsDetected =
-    requiredSteps.includes("resolve-contradictions") || /\bresolve-contradictions\b/i.test(logContent);
+  const resolveContradictionsDetected = isStepInValidationScope("resolve-contradictions", requiredSteps, ledgerSteps);
   const resolveDegraded =
     /\bresolve-contradictions summary\b/i.test(logContent) &&
     /\bdegraded=1\b/i.test(logContent) &&
@@ -871,8 +874,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const generateAutoSkillsDetected =
-    requiredSteps.includes("generate-auto-skills") || /\bgenerate-auto-skills\b/i.test(logContent);
+  const generateAutoSkillsDetected = isStepInValidationScope("generate-auto-skills", requiredSteps, ledgerSteps);
   const generateAutoSkillsFailedValidation = parsePositiveMetric(logContent, "failedValidation");
   const generateAutoSkillsFailedEval = parsePositiveMetric(logContent, "failedEval");
   if (
@@ -894,10 +896,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const scopePromoteDetected =
-    requiredSteps.includes("scope-promote") ||
-    /\bscope-promote\b/i.test(logContent) ||
-    /\bscope promote\b/i.test(logContent);
+  const scopePromoteDetected = isStepInValidationScope("scope-promote", requiredSteps, ledgerSteps);
   const scopePromoteFailed = parsePositiveMetric(logContent, "failed");
   const scopePromotePartial =
     /\bscope-promote\b[\s\S]{0,120}\bsemantic=partial\b/i.test(logContent) ||
@@ -920,8 +919,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const repairVectorsDetected =
-    requiredSteps.includes("repair-vectors") || /\brepair-vectors\b/i.test(logContent);
+  const repairVectorsDetected = isStepInValidationScope("repair-vectors", requiredSteps, ledgerSteps);
   const repairOrphanCleanupFailed = parsePositiveMetric(logContent, "orphan_cleanup_failed");
   const repairVectorsPartial =
     /\brepair-vectors\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
@@ -941,7 +939,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const pruneDetected = requiredSteps.includes("prune") || /\bprune\b/i.test(logContent);
+  const pruneDetected = isStepInValidationScope("prune", requiredSteps, ledgerSteps);
   const pruneVectorFailures = parsePositiveMetric(logContent, "vector_failures");
   if (pruneDetected && typeof pruneVectorFailures === "number" && pruneVectorFailures > 0) {
     addMaintenanceIssue(
@@ -958,8 +956,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const extractDirectivesDetected =
-    requiredSteps.includes("extract-directives") || /\bextract-directives\b/i.test(logContent);
+  const extractDirectivesDetected = isStepInValidationScope("extract-directives", requiredSteps, ledgerSteps);
   const extractDirectivesPartial =
     /\bextract-directives\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
     /\bcursorBlockedReason=/i.test(logContent);
@@ -978,8 +975,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const reembedVectorlessDetected =
-    requiredSteps.includes("reembed-vectorless") || /\breembed-vectorless\b/i.test(logContent);
+  const reembedVectorlessDetected = isStepInValidationScope("reembed-vectorless", requiredSteps, ledgerSteps);
   const reembedStoreFailures = parsePositiveMetric(logContent, "storeFailures");
   const reembedPartial =
     /\breembed-vectorless\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
@@ -999,7 +995,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const distillDetected = requiredSteps.includes("distill") || /\bdistill\b/i.test(logContent);
+  const distillDetected = isStepInValidationScope("distill", requiredSteps, ledgerSteps);
   const distillBatchFailures = parsePositiveMetric(logContent, "batchFailures");
   const distillSemanticPartial =
     /\bdistill\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent) ||
@@ -1019,8 +1015,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const extractImplicitDetected =
-    requiredSteps.includes("extract-implicit") || /\bextract-implicit\b/i.test(logContent);
+  const extractImplicitDetected = isStepInValidationScope("extract-implicit", requiredSteps, ledgerSteps);
   const extractImplicitPartial = /\bextract-implicit\b[\s\S]{0,160}\bsemantic=partial\b/i.test(logContent);
   if (extractImplicitDetected && extractImplicitPartial) {
     addMaintenanceIssue(
@@ -1037,8 +1032,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const continuousVerificationDetected =
-    requiredSteps.includes("continuous-verification") || /\bcontinuous-verification\b/i.test(logContent);
+  const continuousVerificationDetected = isStepInValidationScope("continuous-verification", requiredSteps, ledgerSteps);
   const continuousVerificationDegraded = detectDegradedContinuousVerificationStatus(logContent);
   if (continuousVerificationDetected && continuousVerificationDegraded) {
     addMaintenanceIssue(
@@ -1055,8 +1049,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const lifecycleSyncDetected =
-    requiredSteps.includes("lifecycle-sync") || /\blifecycle-sync\b/i.test(logContent);
+  const lifecycleSyncDetected = isStepInValidationScope("lifecycle-sync", requiredSteps, ledgerSteps);
   const lifecycleSyncErrors = parsePositiveMetric(logContent, "sync_errors");
   if (lifecycleSyncDetected && typeof lifecycleSyncErrors === "number" && lifecycleSyncErrors > 0) {
     addMaintenanceIssue(
@@ -1073,8 +1066,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const autoClassifyDetected =
-    requiredSteps.includes("auto-classify") || /\bauto-classify\b/i.test(logContent);
+  const autoClassifyDetected = isStepInValidationScope("auto-classify", requiredSteps, ledgerSteps);
   const autoClassifyBatchFailures = parsePositiveMetric(logContent, "batchFailures");
   if (autoClassifyDetected && typeof autoClassifyBatchFailures === "number" && autoClassifyBatchFailures > 0) {
     addMaintenanceIssue(
@@ -1108,8 +1100,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const recordStorageDetected =
-    requiredSteps.includes("record-storage-sample") || /\brecord-storage-sample\b/i.test(logContent);
+  const recordStorageDetected = isStepInValidationScope("record-storage-sample", requiredSteps, ledgerSteps);
   const recordStorageUnavailable =
     /\breason=storage_unavailable\b/i.test(logContent) ||
     /\bstatus=skipped_storage_unavailable\b/i.test(logContent);
@@ -1128,8 +1119,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const analyzeLogsDetected =
-    requiredSteps.includes("analyze-maintenance-logs") || /\banalyze-maintenance-logs\b/i.test(logContent);
+  const analyzeLogsDetected = isStepInValidationScope("analyze-maintenance-logs", requiredSteps, ledgerSteps);
   if (analyzeLogsDetected && /\bstrict=fail\b/i.test(logContent)) {
     addMaintenanceIssue(
       issues,
@@ -1145,9 +1135,9 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const passiveObserverDetected =
-    requiredSteps.includes("passive-observer") || /\bpassive-observer\b/i.test(logContent);
-  const passiveObserverErrors = parsePositiveMetric(logContent, "errors");
+  const passiveObserverDetected = isStepInValidationScope("passive-observer", requiredSteps, ledgerSteps);
+  const passiveObserverLog = passiveObserverDetected ? extractStepLog(logContent, "passive-observer") : "";
+  const passiveObserverErrors = parsePositiveMetric(passiveObserverLog, "errors");
   if (
     passiveObserverDetected &&
     typeof passiveObserverErrors === "number" &&
@@ -1167,10 +1157,54 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const closedLoopDetected =
-    requiredSteps.includes("closed-loop-analysis") ||
-    /\bclosed-loop-analysis\b/i.test(logContent) ||
-    /memory-hybrid:\s*closed-loop\b/i.test(logContent);
+  const activeTasksDetected = isStepInValidationScope("active-tasks-maintain", requiredSteps, ledgerSteps);
+  const activeTasksLog = activeTasksDetected ? extractStepLog(logContent, "active-tasks-maintain") : "";
+  const activeTasksFailed = parsePositiveMetric(activeTasksLog, "failed");
+  const activeTasksStatusPartial = /\bstatus=(partial|failed)\b/i.test(activeTasksLog);
+  const activeTasksSemanticPartial = /\bsemantic=partial\b/i.test(activeTasksLog);
+  if (
+    activeTasksDetected &&
+    (activeTasksStatusPartial ||
+      activeTasksSemanticPartial ||
+      (typeof activeTasksFailed === "number" && activeTasksFailed > 0))
+  ) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "active-tasks-maintain",
+        failureCategory: "semantic_failure",
+        failureClass: activeTasksStatusPartial
+          ? "active_tasks_maintain_status_partial"
+          : "active_tasks_maintain_reconcile_failures",
+        message: `${jobName}:active-tasks-maintain reported reconcile failures despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const buildLanguagesDetected = isStepInValidationScope("build-languages", requiredSteps, ledgerSteps);
+  const buildLanguagesLog = buildLanguagesDetected ? extractStepLog(logContent, "build-languages") : "";
+  const buildLanguagesFailed =
+    /\bError building language keywords\b/i.test(buildLanguagesLog) ||
+    (buildLanguagesDetected && /\bsemantic=partial\b/i.test(buildLanguagesLog));
+  if (buildLanguagesDetected && buildLanguagesFailed) {
+    addMaintenanceIssue(
+      issues,
+      buildMaintenanceIssue({
+        ...commonFields,
+        jobName,
+        stepName: "build-languages",
+        failureCategory: "semantic_failure",
+        failureClass: "build_languages_failed",
+        message: `${jobName}:build-languages failed despite a mechanically successful run`,
+        semanticStatus: "degraded",
+      }),
+    );
+  }
+
+  const closedLoopDetected = isStepInValidationScope("closed-loop-analysis", requiredSteps, ledgerSteps);
   const closedLoopInterrupted =
     /\bclosed-loop-analysis interrupted\b/i.test(logContent) ||
     /memory-hybrid:\s*closed-loop\s*—\s*interrupted\b/i.test(logContent) ||
@@ -1192,8 +1226,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const crossAgentDetected =
-    requiredSteps.includes("cross-agent-learning") || /\bcross-agent-learning\b/i.test(logContent);
+  const crossAgentDetected = isStepInValidationScope("cross-agent-learning", requiredSteps, ledgerSteps);
   const crossAgentLog = crossAgentDetected ? extractStepLog(logContent, "cross-agent-learning") : "";
   const crossAgentErrors =
     parsePositiveMetric(crossAgentLog, "errors") ??
@@ -1218,8 +1251,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const toolEffectivenessDetected =
-    requiredSteps.includes("tool-effectiveness") || /\btool-effectiveness\b/i.test(logContent);
+  const toolEffectivenessDetected = isStepInValidationScope("tool-effectiveness", requiredSteps, ledgerSteps);
   if (toolEffectivenessDetected && /\bunexpected empty output\b/i.test(logContent)) {
     addMaintenanceIssue(
       issues,
@@ -1235,10 +1267,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const digestAutopilotDetected =
-    requiredSteps.includes("digest-autopilot") ||
-    /\bdigest-autopilot\b/i.test(logContent) ||
-    /\bpending digest autopilot cron\b/i.test(logContent);
+  const digestAutopilotDetected = isStepInValidationScope("digest-autopilot", requiredSteps, ledgerSteps);
   const digestAutopilotSemanticFail =
     /\bdigest-autopilot\b[^\n]*\bstatus=(failed|partial)\b/i.test(logContent) ||
     /\bpending digest autopilot cron (failed|partial)\b/i.test(logContent) ||
@@ -1260,10 +1289,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const auditHealthDetected =
-    requiredSteps.includes("audit-health") ||
-    /\baudit-health\b/i.test(logContent) ||
-    /\baudit health\b/i.test(logContent);
+  const auditHealthDetected = isStepInValidationScope("audit-health", requiredSteps, ledgerSteps);
   const auditHealthSucceededInLedger = !failedSteps.some((s) => s.step === "audit-health");
   if (auditHealthDetected && auditHealthSucceededInLedger) {
     const extracted = extractAuditHealthJsonFromLog(logContent);
@@ -1300,8 +1326,7 @@ function collectMaintenanceTelemetryIssues(params: {
     }
   }
 
-  const sensorSweepDetected =
-    requiredSteps.includes("sensor-sweep") || /\bsensor-sweep\b/i.test(logContent);
+  const sensorSweepDetected = isStepInValidationScope("sensor-sweep", requiredSteps, ledgerSteps);
   const sensorSweepLog = sensorSweepDetected ? extractStepLog(logContent, "sensor-sweep") : "";
   const sensorSweepErrors = parsePositiveMetric(sensorSweepLog, "errors");
   if (sensorSweepDetected && typeof sensorSweepErrors === "number" && sensorSweepErrors > 0) {
@@ -1319,8 +1344,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const crystallizationProposalsDetected =
-    requiredSteps.includes("crystallization-proposals") || /\bcrystallization-proposals\b/i.test(logContent);
+  const crystallizationProposalsDetected = isStepInValidationScope("crystallization-proposals", requiredSteps, ledgerSteps);
   const crystallizationStoresUnavailable =
     /\bcrystallization-proposals\b[\s\S]{0,200}\bstores unavailable\b/i.test(logContent) ||
     (crystallizationProposalsDetected && /\bstores-unavailable\b/i.test(logContent));
@@ -1339,8 +1363,7 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const crystallizationRescanDetected =
-    requiredSteps.includes("crystallization-rescan") || /\bcrystallization-rescan\b/i.test(logContent);
+  const crystallizationRescanDetected = isStepInValidationScope("crystallization-rescan", requiredSteps, ledgerSteps);
   const crystallizationRescanErrors = crystallizationRescanDetected
     ? parsePositiveMetric(extractStepLog(logContent, "crystallization-rescan"), "errors")
     : undefined;
@@ -1365,9 +1388,7 @@ function collectMaintenanceTelemetryIssues(params: {
 
   const collapseScanned = parsePositiveMetric(logContent, "scanned") ?? parsePositiveMetric(logContent, "rows");
   const collapseCount = parsePositiveMetric(logContent, "collapsed") ?? parsePositiveMetric(logContent, "changed");
-  const collapseDetected =
-    /\bimplicit-feedback-collapse\b/i.test(logContent) ||
-    /\bweekly-implicit-feedback-collapse\b/i.test(logContent);
+  const collapseDetected = isStepInValidationScope("implicit-feedback-collapse", requiredSteps, ledgerSteps);
   const collapseInterrupted =
     collapseDetected &&
     /\bimplicit-feedback-collapse interrupted\b/i.test(logContent) &&
@@ -1549,6 +1570,7 @@ function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean
     issue.stepName === "crystallization-proposals" ||
     issue.stepName === "crystallization-rescan" ||
     issue.stepName === "sensor-sweep" ||
+    issue.stepName === "build-languages" ||
     issue.stepName === "maintenance" ||
     issue.stepName === "cursor" ||
     issue.stepName === "persona-proposals"
@@ -1618,6 +1640,7 @@ export function validateMaintenanceExecution(
       exitPath,
       logPath,
       requiredSteps,
+      ledgerSteps: [],
       logContent,
       failedSteps: [],
       missingSteps: requiredSteps,
@@ -1744,6 +1767,7 @@ export function validateMaintenanceExecution(
     exitPath,
     logPath,
     requiredSteps,
+    ledgerSteps: steps,
     logContent,
     failedSteps,
     missingSteps,
@@ -1756,6 +1780,7 @@ export function validateMaintenanceExecution(
       exitPath,
       logPath,
       requiredSteps,
+      ledgerSteps: steps,
       logContent,
       failedSteps,
       missingSteps,
@@ -1913,6 +1938,7 @@ function mergeSummaryWithLedgerChecks(
       exitPath,
       logPath,
       requiredSteps,
+      ledgerSteps: steps,
       logContent,
       failedSteps,
       missingSteps,
@@ -1979,6 +2005,7 @@ function mergeSummaryWithLedgerChecks(
     exitPath,
     logPath,
     requiredSteps,
+    ledgerSteps: steps,
     logContent,
     failedSteps,
     missingSteps,

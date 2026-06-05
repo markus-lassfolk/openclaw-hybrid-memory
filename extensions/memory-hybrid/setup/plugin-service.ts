@@ -722,8 +722,8 @@ export function createPluginService(ctx: PluginServiceContext) {
               model: cfg.autoClassify.model ?? getDefaultCronModel(getCronModelConfig(cfg), "default"),
               dryRun: false,
             });
-            if (!result.ok) throw new Error(result.error);
-            return `languagesAdded=${result.languagesAdded}`;
+            if (!result.ok) throw new Error(`build-languages failed (${result.error ?? "unknown"} semantic=partial)`);
+            return `languagesAdded=${result.languagesAdded} semantic=success`;
           };
 
           const runPassiveObserverOnce = async () => {

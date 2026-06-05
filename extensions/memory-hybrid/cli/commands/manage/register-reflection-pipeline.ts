@@ -1635,12 +1635,14 @@ export function registerManageReflectionPipeline(
             throw err;
           }
           if (res.ok) {
+            console.log(`build-languages: languagesAdded=${res.languagesAdded} semantic=success`);
             console.log(
               `Built language keywords: top languages=[${res.topLanguages.join(", ")}], added=${res.languagesAdded}, path=${res.path} ${dryRun ? "(dry-run)" : ""}`,
             );
           } else {
+            console.error(`build-languages: ok=false semantic=partial error=${res.error}`);
             console.error(`Error building language keywords: ${res.error}`);
-            process.exitCode = 1;
+            process.exitCode = 2;
           }
         }),
       );

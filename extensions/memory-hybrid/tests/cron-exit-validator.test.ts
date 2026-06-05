@@ -1431,6 +1431,91 @@ error: unknown command 'bar'
         }),
       );
     });
+
+    it("blocks guard updates when active-tasks-maintain reports reconcile failures", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "active-tasks-maintain.exit.txt");
+      const logPath = join(tmpDir, "active-tasks-maintain.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z active-tasks-maintain exit=0\n");
+      writeFileSync(
+        logPath,
+        "active-tasks-maintain partial failure (status=partial reconciled=2 failed=1 semantic=partial)\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["active-tasks-maintain"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "active-tasks-maintain",
+          failureClass: "active_tasks_maintain_status_partial",
+        }),
+      );
+    });
+
+    it("blocks guard updates when build-languages fails in the log", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "build-languages.exit.txt");
+      const logPath = join(tmpDir, "build-languages.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z build-languages exit=0\n");
+      writeFileSync(
+        logPath,
+        "build-languages: ok=false semantic=partial error=LLM timeout\nError building language keywords: LLM timeout\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["build-languages"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.guardUpdated).toBe(false);
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "build-languages",
+          failureClass: "build_languages_failed",
+        }),
+      );
+    });
+
+    it("labels enrich-entities-deep failures with the deep step name", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "enrich-entities-deep.exit.txt");
+      const logPath = join(tmpDir, "enrich-entities-deep.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z enrich-entities-deep exit=0\n");
+      writeFileSync(
+        logPath,
+        "enrich-entities-deep processed=10 enriched=4 llmFailures=2 stopReason=completed remaining=0 semantic=partial\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["enrich-entities-deep"]);
+
+      expect(result.maintenanceStatus).toBe("failed");
+      expect(result.reportableIssues).toContainEqual(
+        expect.objectContaining({
+          stepName: "enrich-entities-deep",
+          failureClass: "enrich_entities_llm_failures",
+        }),
+      );
+    });
+
+    it("does not attribute passive-observer errors from unrelated steps in combined logs", () => {
+      const tmpDir = mkdtempSync(join(tmpdir(), "cron-test-"));
+      const exitPath = join(tmpDir, "cross-agent.exit.txt");
+      const logPath = join(tmpDir, "combined.log");
+      writeFileSync(exitPath, "2026-05-08T02:15:30Z cross-agent-learning exit=0\n");
+      writeFileSync(
+        logPath,
+        "passive-observer scanned=42 errors=2 semantic=partial\ncross-agent-learning: agents=3 generalised=1 errors=0 semantic=success\n",
+      );
+
+      const result = validateMaintenanceExecution(exitPath, logPath, ["cross-agent-learning"]);
+
+      expect(result.maintenanceStatus).toBe("success");
+      expect(result.reportableIssues).not.toContainEqual(
+        expect.objectContaining({
+          stepName: "passive-observer",
+        }),
+      );
+    });
   });
 
   describe("validateFromSummaryJson", () => {
