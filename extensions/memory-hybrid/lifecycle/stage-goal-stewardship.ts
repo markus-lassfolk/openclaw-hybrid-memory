@@ -18,6 +18,7 @@ import { renderActiveTaskMarkdownFile } from "../services/task-ledger-facts.js";
 import { parseDuration } from "../utils/duration.js";
 import { getEnv } from "../utils/env-manager.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
 import { resolveSessionKeyFromHookEvent } from "./session-state.js";
 import type { LifecycleContext } from "./types.js";
@@ -71,10 +72,12 @@ export function registerGoalStewardshipInjection(
 
       if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
         api.logger?.warn?.("memory-hybrid: goal stewardship skipped — global dispatch rate limit");
-        return {
-          prependContext:
-            "<goal-stewardship>Global goal dispatch rate limit reached this hour. Assess without spawning if possible.</goal-stewardship>\n\n",
-        };
+        const prepend = applyPrependBudget(
+          ctx.prependBudgetRef,
+          "<goal-stewardship>Global goal dispatch rate limit reached this hour. Assess without spawning if possible.</goal-stewardship>\n\n",
+        );
+        if (!prepend) return undefined;
+        return { prependContext: prepend };
       }
 
       let triageHeavy = heuristicNeedsHeavyAttention(goals);
@@ -95,7 +98,9 @@ export function registerGoalStewardshipInjection(
       api.logger?.info?.(
         `memory-hybrid: goal stewardship bundle (${built.goalsIncluded.length} goal(s), heavyHint=${built.suggestHeavy})`,
       );
-      return { prependContext: built.prepend };
+      const prepend = applyPrependBudget(ctx.prependBudgetRef, built.prepend);
+      if (!prepend) return undefined;
+      return { prependContext: prepend };
     } catch (err) {
       api.logger?.warn?.(`memory-hybrid: goal stewardship injection error: ${String(err)}`);
       return undefined;

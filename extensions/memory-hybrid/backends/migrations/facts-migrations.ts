@@ -1367,6 +1367,19 @@ function migrateDerivedFromLinksToProvenanceJson(db: DatabaseSync): void {
   tx();
 }
 
+/** Optional FK from facts.entity to normalized contacts/orgs (#1802). */
+function migrateEntityForeignKeyColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "entity_contact_id")) {
+    db.exec("ALTER TABLE facts ADD COLUMN entity_contact_id TEXT");
+  }
+  if (!cols.some((c) => c.name === "entity_organization_id")) {
+    db.exec("ALTER TABLE facts ADD COLUMN entity_organization_id TEXT");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_entity_contact_id ON facts(entity_contact_id)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_entity_organization_id ON facts(entity_organization_id)");
+}
+
 export function runFactsMigrations(db: DatabaseSync): void {
   // Column migrations (depend on base facts table existing)
   migrateDecayColumns(db);
@@ -1476,6 +1489,9 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Denormalized degree columns for hub guard (#1192)
   migrateFactDegreeColumns(db);
+
+  // Entity FK normalization (#1802)
+  migrateEntityForeignKeyColumns(db);
 }
 
 /**

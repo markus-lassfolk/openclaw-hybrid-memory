@@ -163,3 +163,49 @@ describe("memory_recall_timeline tool", () => {
     );
   });
 });
+
+describe("memory_session_observability tool", () => {
+  let tmpDir: string;
+  let factsDb: FactsDB;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "session-observability-"));
+    factsDb = new FactsDB(join(tmpDir, "facts.db"));
+  });
+
+  afterEach(() => {
+    factsDb.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects caller-supplied sessionId that does not match authenticated context", async () => {
+    const api = makeMockApi();
+    registerMemoryTools(
+      {
+        factsDb,
+        vectorDb: makeMockVectorDb(),
+        cfg: makeCfg(),
+        embeddings: makeMockEmbeddings(),
+        embeddingRegistry: null,
+        openai: {} as never,
+        wal: null,
+        credentialsDb: null,
+        eventLog: null,
+        narrativesDb: null,
+        lastProgressiveIndexIds: [],
+        currentAgentIdRef: { value: null },
+        pendingLLMWarnings: createPendingLLMWarnings(),
+      },
+      api as never,
+      noopScopeFilter as never,
+      walWrite,
+      walRemove,
+      findSimilarByEmbedding as never,
+    );
+
+    const tool = api.getTool("memory_session_observability");
+    await expect(tool?.execute("tool-call", { sessionId: "other-session" })).rejects.toThrow(
+      /must match the authenticated session context/i,
+    );
+  });
+});

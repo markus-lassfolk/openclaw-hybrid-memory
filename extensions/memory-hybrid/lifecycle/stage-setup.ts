@@ -30,8 +30,12 @@ async function runSetup(
   ctx: LifecycleContext,
   sessionState: SessionState,
 ): Promise<void> {
-  const { currentAgentIdRef, restartPendingClearedRef } = ctx;
+  const { currentAgentIdRef, restartPendingClearedRef, prependBudgetRef } = ctx;
   const { touchSession, resolveSessionKey } = sessionState;
+
+  if (prependBudgetRef) {
+    prependBudgetRef.value = null;
+  }
 
   const touchKey = resolveSessionKey(event, api) ?? currentAgentIdRef.value ?? "default";
   touchSession(touchKey);

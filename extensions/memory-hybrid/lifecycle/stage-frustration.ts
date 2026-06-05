@@ -4,6 +4,7 @@
 
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { capturePluginError } from "../services/error-reporter.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
 import { buildFrustrationHint, detectFrustration, exportAsImplicitSignals } from "../services/frustration-detector.js";
 import { ToolEffectivenessStore, generateToolHint } from "../services/tool-effectiveness.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -119,7 +120,9 @@ export function registerFrustrationHandlers(
 
       if (combinedPrepend) {
         if (hint) api.logger.debug?.(`memory-hybrid: ${hint}`);
-        return { prependContext: combinedPrepend };
+        const prepend = applyPrependBudget(ctx.prependBudgetRef, combinedPrepend);
+        if (!prepend) return undefined;
+        return { prependContext: prepend };
       }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {

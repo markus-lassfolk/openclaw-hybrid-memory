@@ -22,6 +22,7 @@ import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { MemoryEntry } from "../types/memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { trimBlockToBudget } from "./context-block-trim.js";
 import { capturePluginError } from "./error-reporter.js";
 import { runPreConsolidationFlush } from "./pre-consolidation-flush.js";
 import { estimateTokenCount, serializeFactForContext } from "./retrieval-orchestrator.js";
@@ -493,6 +494,13 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
   }): Promise<SubagentSpawnPreparation | undefined> {
     const { factsDb, cfg, logger } = this.opts;
     try {
+      if (cfg.autoRecall?.enabled) {
+        logger.debug?.(
+          `memory-hybrid: prepareSubagentSpawn — skipped (autoRecall handles subagent injection via before_agent_start)`,
+        );
+        return { rollback: async () => {} };
+      }
+
       // Fetch top-N recent/important facts to seed the sub-agent's context
       const limit = cfg.autoRecall?.limit ?? 10;
       const topFacts = factsDb.list(Math.min(limit, 15));
@@ -505,11 +513,22 @@ export class HybridMemoryContextEngine implements MinimalContextEngine {
       // contextAddition is a non-standard field on the return type — populated so that
       // SDK versions that support it can inject the block; older versions ignore it.
       // Uses serializeFactForContext for consistent formatting with the retrieval pipeline.
-      const contextAddition = buildContextBlock(
+      const rawBlock = buildContextBlock(
         topFacts,
         `parent context injected for subagent ${params.childSessionKey}`,
         `Relevant memories from parent session (${params.parentSessionKey}):`,
       );
+      const tokenBudget = Math.min(cfg.autoRecall?.maxTokens ?? 800, cfg.retrieval.ambientBudgetTokens);
+      const contextAddition = rawBlock
+        ? trimBlockToBudget(rawBlock, tokenBudget).text || null
+        : null;
+
+      if (!contextAddition) {
+        logger.debug?.(
+          `memory-hybrid: prepareSubagentSpawn — block trimmed to empty for child=${params.childSessionKey}`,
+        );
+        return { rollback: async () => {} };
+      }
 
       logger.debug?.(
         `memory-hybrid: prepareSubagentSpawn — injecting ${topFacts.length} facts for child=${params.childSessionKey}`,

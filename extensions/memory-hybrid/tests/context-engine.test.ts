@@ -57,6 +57,14 @@ function makeMinimalConfig(): ContextEngineOptions["cfg"] {
   } as unknown as ContextEngineOptions["cfg"];
 }
 
+function makeSubagentSpawnConfig(): ContextEngineOptions["cfg"] {
+  return {
+    ...makeMinimalConfig(),
+    autoRecall: { enabled: false, limit: 10, minScore: 0.6, maxTokens: 2000, debounceMs: 200 },
+    retrieval: { ambientBudgetTokens: 400 },
+  } as unknown as ContextEngineOptions["cfg"];
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -241,6 +249,27 @@ describe("HybridMemoryContextEngine.compact()", () => {
 // ---------------------------------------------------------------------------
 
 describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
+  it("skips injection when autoRecall is enabled", async () => {
+    factsDb.store({
+      entity: null,
+      key: null,
+      value: null,
+      text: "Should not inject via ContextEngine",
+      category: "fact",
+      importance: 0.85,
+      source: "parent",
+    });
+
+    const engine = makeEngine();
+    const prep = await engine.prepareSubagentSpawn?.({
+      parentSessionKey: "parent-session",
+      childSessionKey: "child-session",
+    });
+
+    const extended = prep as { contextAddition?: string };
+    expect(extended.contextAddition).toBeUndefined();
+  });
+
   it("returns a SubagentSpawnPreparation with rollback when facts exist", async () => {
     // Seed some parent facts
     factsDb.store({
@@ -262,7 +291,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
       source: "parent",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const prep = await engine.prepareSubagentSpawn?.({
       parentSessionKey: "parent-session-abc",
       childSessionKey: "child-session-xyz",
@@ -279,7 +308,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
   });
 
   it("returns rollback-only preparation when no facts in store", async () => {
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const prep = await engine.prepareSubagentSpawn?.({
       parentSessionKey: "empty-parent",
       childSessionKey: "empty-child",
@@ -301,7 +330,7 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
       source: "test",
     });
 
-    const engine = makeEngine();
+    const engine = makeEngine({ cfg: makeSubagentSpawnConfig() });
     const prep = await engine.prepareSubagentSpawn?.({
       parentSessionKey: "parent",
       childSessionKey: "child",
@@ -325,8 +354,8 @@ describe("HybridMemoryContextEngine.prepareSubagentSpawn()", () => {
       });
     }
 
-    const cfgWithLimit = { ...makeMinimalConfig() };
-    (cfgWithLimit.autoRecall as { limit: number }).limit = 5;
+    const cfgWithLimit = { ...makeSubagentSpawnConfig() };
+    (cfgWithLimit.autoRecall as { enabled: boolean; limit: number }).limit = 5;
 
     const engine = makeEngine({ cfg: cfgWithLimit });
     const prep = await engine.prepareSubagentSpawn?.({ parentSessionKey: "p", childSessionKey: "c" });

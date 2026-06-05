@@ -83,3 +83,12 @@ export function finalizePrependCharge(ref: PrependBudgetRef | undefined, text: s
   if (!ref?.value || !text) return;
   consumePrependBudget(ref, text);
 }
+
+/** Trim prepend to remaining global budget, consume, and return trimmed text (undefined when empty). */
+export function applyPrependBudget(ref: PrependBudgetRef | undefined, text: string): string | undefined {
+  if (!text?.trim()) return undefined;
+  const { text: trimmed } = trimPrependToRemainingBudget(ref, text);
+  if (!trimmed.trim()) return undefined;
+  finalizePrependCharge(ref, trimmed);
+  return trimmed;
+}

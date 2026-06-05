@@ -43,6 +43,8 @@ import { type CorrectionIncident, collectHeuristicFeedbackCandidates, mergeCorre
 import { classifyAndFilterCorrectionIncidents } from "../services/feedback-signal-classifier.js";
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
+import { applyToolsMdRules } from "../services/tools-md-rewrite.js";
+import { resolveCliWorkspaceRoot } from "../utils/cli-workspace-root.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
@@ -429,12 +431,12 @@ async function applySelfCorrectionRemediations(params: {
 
   const noApplyTools = opts.applyTools === false;
   const shouldApplyTools = !opts.dryRun && (scCfg.applyToolsByDefault !== false || opts.approve) && !noApplyTools;
-  if (toolsSuggestions.length > 0 && !opts.dryRun) {
-    if (scCfg.autoRewriteTools && shouldApplyTools && existsSync(toolsPath)) {
-      try {
-        const currentTools = readFileSync(toolsPath, "utf-8");
+  if (toolsSuggestions.length > 0 && shouldApplyTools) {
+    try {
+      if (scCfg.autoRewriteTools) {
+        const currentTools = existsSync(toolsPath) ? readFileSync(toolsPath, "utf-8") : "";
         const rewritePrompt = fillPrompt(loadPrompt("self-correction-rewrite-tools"), {
-          current_tools: currentTools,
+          current_tools: currentTools || "# TOOLS\n",
           new_rules: toolsSuggestions.join("\n"),
         });
         const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
@@ -456,31 +458,33 @@ async function applySelfCorrectionRemediations(params: {
           enabled: adaptiveEnabled,
           thinkingMode: resolveSelfCorrectionThinkingMode(ctx.cfg),
         });
-        const cleaned = detail.content
-          .trim()
-          .replace(/^```\w*\n?|```\s*$/g, "")
-          .trim();
-        if (cleaned.length > 50) {
-          if (existsSync(toolsPath) && lstatSync(toolsPath).isSymbolicLink()) {
-            writeFileSync(toolsPath, cleaned, "utf-8");
-          } else {
-            atomicWriteFile(toolsPath, cleaned);
-          }
-          toolsApplied = 1;
-          autoFixed += 1;
+        const applyResult = applyToolsMdRules({
+          toolsPath,
+          sectionTitle: toolsSection,
+          newRules: toolsSuggestions,
+          autoRewrite: true,
+          rewrittenContent: detail.content,
+        });
+        if (applyResult.rewriteRejectedReasons?.length) {
+          logger.warn?.(
+            `memory-hybrid: self-correction TOOLS rewrite rejected (${applyResult.rewriteRejectedReasons.join("; ")}); used section insert`,
+          );
         }
-      } catch (err) {
-        logger.warn?.(`memory-hybrid: self-correction TOOLS rewrite failed: ${err}`);
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:tools-rewrite" });
+        toolsApplied = applyResult.toolsApplied;
+        autoFixed += applyResult.toolsApplied;
+      } else {
+        const applyResult = applyToolsMdRules({
+          toolsPath,
+          sectionTitle: toolsSection,
+          newRules: toolsSuggestions,
+          autoRewrite: false,
+        });
+        toolsApplied = applyResult.toolsApplied;
+        autoFixed += applyResult.toolsApplied;
       }
-    } else if (shouldApplyTools && existsSync(toolsPath)) {
-      try {
-        const { inserted } = insertRulesUnderSection(toolsPath, toolsSection, toolsSuggestions);
-        toolsApplied = inserted;
-        autoFixed += inserted;
-      } catch (err) {
-        capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
-      }
+    } catch (err) {
+      logger.warn?.(`memory-hybrid: self-correction TOOLS apply failed: ${err}`);
+      capturePluginError(err as Error, { subsystem: "cli", operation: "runSelfCorrectionRunForCli:insert-tools" });
     }
   }
 
@@ -629,7 +633,7 @@ export async function runSelfCorrectionRunForCli(
   }
 
   try {
-    const workspaceRoot = opts.workspace ?? getEnv("OPENCLAW_WORKSPACE") ?? join(homedir(), ".openclaw", "workspace");
+    const workspaceRoot = resolveCliWorkspaceRoot({ workspace: opts.workspace, config: ctx.cfg as unknown as Record<string, unknown> });
     const scCfg = cfg.selfCorrection ?? DEFAULT_SELF_CORRECTION;
     const reportDir = join(workspaceRoot, "memory", "reports");
     const today = new Date().toISOString().slice(0, 10);

@@ -14,6 +14,10 @@ import {
   generateAmbientQueries,
   searchAmbientIssues,
 } from "../../services/ambient-retrieval.js";
+import {
+  loadKnownEntitySurfaces,
+  matchEntitySurfacesInText,
+} from "../../services/entity-retrieval.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
@@ -22,6 +26,7 @@ import { filterCandidatesByInteractiveGrading } from "../../services/interactive
 import { consumePrependBudget, initPrependBudget } from "../../services/prepend-budget.js";
 import {
   assembleRecallPrependContext,
+  edictMaxTokensFromPrependBudget,
   promptMentionsEntity,
   sanitizeProcedureText,
 } from "../../services/recalled-context-assembler.js";
@@ -30,6 +35,7 @@ import { sanitizePromptInjection } from "../../services/skill-prompt-injection.j
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
 import { isConsolidatedDerivedFact } from "../../utils/consolidation-controls.js";
+import { isTierAllowedForWarmSearch } from "../../utils/tier-filter.js";
 import { resolveEntityLookupNames } from "../../utils/entity-lookup-resolve.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
 import { yieldEventLoop } from "../../utils/event-loop-yield.js";
@@ -46,9 +52,21 @@ import {
 function finishEmptyRecallPrepend(ctx: LifecycleContext, combinedContext: string): RecallStageResult {
   const trimmed = combinedContext.trim();
   if (!trimmed) return { kind: "empty", prependContext: undefined };
-  const prepend = assembleRecallPrependContext(ctx, trimmed);
+  const prepend = assembleRecallPrependContext(ctx, trimmed, {
+    edictMaxTokens: edictMaxTokensFromPrependBudget(ctx),
+  });
   if (prepend) consumePrependBudget(ctx.prependBudgetRef, prepend);
   return { kind: "empty", prependContext: prepend ?? undefined };
+}
+
+function finishPartialFixedBlocksRecall(
+  ctx: LifecycleContext,
+  issueBlock: string,
+  narrativeBlock: string,
+  hotBlock: string,
+  procedureBlock: string,
+): RecallStageResult {
+  return finishEmptyRecallPrepend(ctx, issueBlock + narrativeBlock + hotBlock + procedureBlock);
 }
 
 function emptyRecallStage(): RecallStageResult {
@@ -483,6 +501,7 @@ export async function runRecall(
     setRecallProbePhase("main_pipeline");
     const mainPipelineStartedAt = recallTiming.phaseStarted("main_pipeline");
     const pipelineStatusRef = { semanticDegraded: false };
+    let skipPostMainRecallEnrichment = false;
     let candidates = await runRecallPipelineQuery(e.prompt, limit, pipelineDeps, hydeUsedRef, {
       probeId: `${recallProbeId}:main`,
       hydeLabel: "HyDE",
@@ -495,9 +514,20 @@ export async function runRecall(
     });
     recallTiming.phaseCompleted("main_pipeline", mainPipelineStartedAt, { candidates: candidates.length });
 
-    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
-
-    if (interactivePolicy.allowAmbientMultiQuery && ambientCfg.enabled && ambientCfg.multiQuery) {
+    if (shouldAbortRecall()) {
+      if (isRecallContextSuperseded(ctx)) {
+        return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+      }
+      if (candidates.length > 0) {
+        skipPostMainRecallEnrichment = true;
+      }
+    }
+    if (
+      !skipPostMainRecallEnrichment &&
+      interactivePolicy.allowAmbientMultiQuery &&
+      ambientCfg.enabled &&
+      ambientCfg.multiQuery
+    ) {
       setRecallProbePhase("ambient_multi_query");
       const ambientStartedAt = recallTiming.phaseStarted("ambient_multi_query");
       let ambientQueriesRun = 0;
@@ -509,12 +539,24 @@ export async function runRecall(
         if (isTopicShift) api.logger.info?.("memory-hybrid: topic shift detected — re-running ambient retrieval");
         if (promptEmbedding !== null) ambientLastEmbeddingMap.set(sessionScopeKey, promptEmbedding);
         const knownEntities = ctx.factsDb.getKnownEntities ? ctx.factsDb.getKnownEntities() : [];
+        let mergedKnownEntities = knownEntities;
+        if (ctx.cfg.autoRecall.entityLookup?.enabled && typeof ctx.factsDb.getRawDb === "function") {
+          try {
+            const surfaces = loadKnownEntitySurfaces(ctx.factsDb.getRawDb(), 200);
+            const matched = matchEntitySurfacesInText(e.prompt, surfaces);
+            if (matched.length > 0) {
+              mergedKnownEntities = [...new Set([...knownEntities, ...matched.map((s) => s.key)])];
+            }
+          } catch {
+            /* non-fatal */
+          }
+        }
         const ambientSessionKey = resolveSessionKey(e, api);
         const ambientQueries = generateAmbientQueries(
           e.prompt,
           ambientCfg,
           { userId: api.context?.userId, channelId: ambientSessionKey ?? undefined, nowMs: Date.now() },
-          knownEntities,
+          mergedKnownEntities,
         );
         const extraQueries = ambientQueries.filter((q) => q.type !== "message");
         if (extraQueries.length > 0) {
@@ -525,7 +567,10 @@ export async function runRecall(
                 status: "aborted",
                 queries_run: ambientQueriesRun,
               });
-              return completeStage(emptyRecallStage());
+              if (isRecallContextSuperseded(ctx)) {
+                return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+              }
+              break;
             }
             await yieldEventLoop();
             try {
@@ -551,7 +596,10 @@ export async function runRecall(
                   status: "aborted",
                   queries_run: ambientQueriesRun,
                 });
-                return completeStage(emptyRecallStage());
+                if (isRecallContextSuperseded(ctx)) {
+                  return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+                }
+                break;
               }
               capturePluginError(err instanceof Error ? err : new Error(String(err)), {
                 operation: `ambient-query-${q.type}`,
@@ -578,17 +626,20 @@ export async function runRecall(
             status: "aborted",
             queries_run: ambientQueriesRun,
           });
-          return completeStage(emptyRecallStage());
+          if (isRecallContextSuperseded(ctx)) {
+            return completeStage(finishPartialFixedBlocksRecall(ctx, "", "", hotBlock, procedureBlock));
+          }
+        } else {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            operation: "ambient-multi-query",
+            subsystem: "auto-recall",
+          });
+          api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
+          recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
+            status: "error",
+            queries_run: ambientQueriesRun,
+          });
         }
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "ambient-multi-query",
-          subsystem: "auto-recall",
-        });
-        api.logger.warn?.(`memory-hybrid: ambient multi-query failed, continuing with main recall: ${err}`);
-        recallTiming.phaseCompleted("ambient_multi_query", ambientStartedAt, {
-          status: "error",
-          queries_run: ambientQueriesRun,
-        });
       }
     }
 
@@ -644,6 +695,7 @@ export async function runRecall(
           narrativesDb: ctx.narrativesDb,
           eventLog: ctx.eventLog,
           query: e.prompt,
+          sessionId: sessionKey,
           limit: 2,
         });
         if (recentNarratives.length > 0) {
@@ -671,7 +723,9 @@ export async function runRecall(
     recallTiming.phaseCompleted("narrative_block", narrativeStartedAt, { injected: narrativeBlock.length > 0 });
 
     await yieldEventLoop();
-    if (shouldAbortRecall()) return completeStage(emptyRecallStage());
+    if (isRecallContextSuperseded(ctx)) {
+      return completeStage(finishPartialFixedBlocksRecall(ctx, issueBlock, narrativeBlock, hotBlock, procedureBlock));
+    }
 
     const promptLower = e.prompt.toLowerCase();
     const { entityLookup } = ctx.cfg.autoRecall;
@@ -688,6 +742,7 @@ export async function runRecall(
             .lookup(entity, undefined, undefined, { scopeFilter })
             .slice(0, entityLookup.maxFactsPerEntity);
           for (const r of entityResults) {
+            if (ctx.cfg.memoryTiering.enabled && !isTierAllowedForWarmSearch(r.entry.tier)) continue;
             if (!seenIds.has(r.entry.id)) {
               seenIds.add(r.entry.id);
               candidates.push(r);
@@ -748,7 +803,7 @@ export async function runRecall(
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     };
-    if (directivesCfg.enabled) {
+    if (directivesCfg.enabled && !skipPostMainRecallEnrichment) {
       try {
         if (recallAborted(signal) || isRecallContextSuperseded(ctx)) {
           return abortDirectives();
@@ -922,7 +977,10 @@ export async function runRecall(
     // autoRecall.maxTokens is a user preference; ambientBudgetTokens is the architectural
     // ceiling — the injected context must not exceed either.
     const totalBudget = interactivePolicy.contextBudgetTokens;
-    const issueCapTokens = Math.max(80, Math.floor(totalBudget * 0.15));
+    const issueCapTokens =
+      totalBudget < 80
+        ? Math.max(0, Math.floor(totalBudget * 0.15))
+        : Math.max(80, Math.floor(totalBudget * 0.15));
     const narrativeCapTokens =
       narrativeBlockCapCfg ?? (narrativeBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
     const hotCapTokens = hotBlockCapCfg ?? (hotBlock.length > 0 ? Math.max(100, Math.floor(totalBudget * 0.25)) : 0);
@@ -993,7 +1051,7 @@ export async function runRecall(
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }
-    if (shouldAbortRecall()) {
+    if (isRecallContextSuperseded(ctx)) {
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
       return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
     }

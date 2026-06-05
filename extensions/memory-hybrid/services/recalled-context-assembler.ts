@@ -11,6 +11,22 @@ import type { LifecycleContext } from "../lifecycle/types.js";
 /** Max share of the interactive prepend budget reserved for edicts (remainder goes to memories). */
 export const DEFAULT_EDICT_BUDGET_FRACTION = 0.2;
 
+/** Edict token cap from a prepend or recall budget total. */
+export function edictMaxTokensForBudget(
+  totalBudgetTokens: number,
+  fraction: number = DEFAULT_EDICT_BUDGET_FRACTION,
+): number {
+  if (totalBudgetTokens <= 0) return 0;
+  return Math.max(0, Math.floor(totalBudgetTokens * fraction));
+}
+
+/** Edict cap from the active per-turn prepend budget ref, when initialized. */
+export function edictMaxTokensFromPrependBudget(ctx: LifecycleContext): number | undefined {
+  const total = ctx.prependBudgetRef?.value?.totalTokens;
+  if (total == null || total <= 0) return undefined;
+  return edictMaxTokensForBudget(total);
+}
+
 /** Get the edict block for forced prompt injection. */
 export function buildEdictBlock(ctx: LifecycleContext): string {
   try {
@@ -117,7 +133,10 @@ export function formatSanitizedMemoryPreview(
   if (!sanitized) return "";
   const max = opts?.maxChars ?? 200;
   const preview = sanitized.length > max ? `${sanitized.slice(0, max)}…` : sanitized;
-  if (opts?.entity) return `- [${opts.entity}] ${preview}`;
+  if (opts?.entity) {
+    const entity = sanitizePromptInjection(opts.entity);
+    return entity ? `- [${entity}] ${preview}` : `- ${preview}`;
+  }
   if (opts?.category) return `- [${opts.category}] ${preview}`;
   return `- ${preview}`;
 }

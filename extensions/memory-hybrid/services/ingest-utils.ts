@@ -5,6 +5,8 @@
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAtomicSkillWriteScratchDir } from "../utils/skill-discovery.js";
+import { isSkillDirComplete } from "../utils/atomic-write.js";
 
 function resolvedWorkspaceRoot(workspaceRoot: string): string {
   try {
@@ -35,14 +37,26 @@ export function gatherIngestFiles(workspaceRoot: string, patterns: string[]): st
   const out: string[] = [];
   const ws = resolvedWorkspaceRoot(workspaceRoot);
 
+  function shouldSkipIngestDir(name: string, parentDir: string): boolean {
+    if (isAtomicSkillWriteScratchDir(name)) return true;
+    if (name.startsWith(".")) return true;
+    const skillDir = join(parentDir, name);
+    if (existsSync(join(skillDir, "SKILL.md")) && !isSkillDirComplete(skillDir)) return true;
+    return false;
+  }
+
   function walk(dir: string): void {
     if (!isPathInsideWorkspace(ws, dir)) return;
     if (!existsSync(dir)) return;
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, e.name);
       if (!isPathInsideWorkspace(ws, full)) continue;
-      if (e.isDirectory()) walk(full);
-      else if (e.name.endsWith(".md")) out.push(full);
+      if (e.isDirectory()) {
+        if (shouldSkipIngestDir(e.name, dir)) continue;
+        walk(full);
+      } else if (e.name.endsWith(".md")) {
+        out.push(full);
+      }
     }
   }
 

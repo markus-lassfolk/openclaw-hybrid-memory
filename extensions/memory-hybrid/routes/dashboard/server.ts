@@ -32,6 +32,7 @@ import {
   collectMemoryViewerEpisodes,
   collectMemoryViewerIssues,
   collectMemoryViewerLinks,
+  collectMemoryViewerCorrelation,
   collectMemoryViewerNarratives,
   collectMemoryViewerProvenance,
   collectMemoryViewerStats,
@@ -471,6 +472,25 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         const links = collectMemoryViewerLinks(ctx, limit);
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(links));
+      } catch (err: unknown) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    // GET /api/viewer/correlation/:entityKey — unified entity → facts → issues → episodes (#1802)
+    if (pathname.startsWith("/api/viewer/correlation/")) {
+      const entityKey = parseUrlPathSegment(pathname.replace("/api/viewer/correlation/", ""));
+      if (!entityKey) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Missing entity key" }));
+        return;
+      }
+      try {
+        const payload = collectMemoryViewerCorrelation(ctx, entityKey);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(payload));
       } catch (err: unknown) {
         res.writeHead(500, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));

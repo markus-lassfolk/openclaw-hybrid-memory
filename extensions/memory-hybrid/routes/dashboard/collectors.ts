@@ -1093,6 +1093,91 @@ export function collectMemoryViewerProvenance(ctx: DashboardContext, factId: str
   }
 }
 
+/** Collect unified entity → facts → issues → episodes correlation view (#1802). */
+export type MemoryViewerCorrelation = {
+  entityKey: string;
+  facts: Array<{ id: string; text: string; category: string; entity: string | null }>;
+  issues: Array<{ id: string; title: string; status: string; severity: string }>;
+  episodes: Array<{ id: string; event: string; outcome: string }>;
+  links: Array<{ from: string; to: string; type: string }>;
+};
+
+export function collectMemoryViewerCorrelation(ctx: DashboardContext, entityKey: string): MemoryViewerCorrelation {
+  const key = entityKey.trim().toLowerCase();
+  const empty: MemoryViewerCorrelation = { entityKey: key, facts: [], issues: [], episodes: [], links: [] };
+  if (!key) return empty;
+
+  try {
+    const roDb = openFactsDbReadonly(ctx.resolvedSqlitePath);
+    if (!roDb) return empty;
+
+    try {
+      const nowSec = Math.floor(Date.now() / 1000);
+      const factRows = roDb
+        .prepare(
+          `SELECT id, text, category, entity FROM facts
+             WHERE superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+               AND (lower(entity) = ? OR id IN (
+                 SELECT fact_id FROM fact_entity_mentions WHERE normalized_surface = ?
+               ))
+             ORDER BY importance DESC, created_at DESC LIMIT 30`,
+        )
+        .all(nowSec, key, key) as Array<{ id: string; text: string; category: string; entity: string | null }>;
+
+      const factIds = factRows.map((r) => r.id);
+      let links: MemoryViewerCorrelation["links"] = [];
+      if (factIds.length > 0) {
+        const placeholders = factIds.map(() => "?").join(",");
+        const linkRows = roDb
+          .prepare(
+            `SELECT source_fact_id, target_fact_id, link_type FROM memory_links
+               WHERE source_fact_id IN (${placeholders}) OR target_fact_id IN (${placeholders})
+               LIMIT 100`,
+          )
+          .all(...factIds, ...factIds) as Array<{ source_fact_id: string; target_fact_id: string; link_type: string }>;
+        links = linkRows.map((r) => ({ from: r.source_fact_id, to: r.target_fact_id, type: r.link_type }));
+      }
+
+      const issues: MemoryViewerCorrelation["issues"] = [];
+      if (ctx.issueStore) {
+        const matched = ctx.issueStore.search(key).slice(0, 20);
+        for (const issue of matched) {
+          issues.push({
+            id: issue.id,
+            title: issue.title,
+            status: issue.status,
+            severity: issue.severity,
+          });
+        }
+      }
+
+      let episodes: MemoryViewerCorrelation["episodes"] = [];
+      try {
+        const epRows = roDb
+          .prepare(
+            `SELECT id, event, outcome FROM episodes
+               WHERE lower(event) LIKE ? OR lower(context) LIKE ?
+               ORDER BY timestamp DESC LIMIT 15`,
+          )
+          .all(`%${key}%`, `%${key}%`) as Array<{ id: string; event: string; outcome: string }>;
+        episodes = epRows;
+      } catch {
+        /* episodes table may be absent on older stores */
+      }
+
+      return { entityKey: key, facts: factRows, issues, episodes, links };
+    } finally {
+      try {
+        roDb.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    return empty;
+  }
+}
+
 /** Collect fact links from the memory_links table. */
 export function collectMemoryViewerLinks(ctx: DashboardContext, limit = 5000): MemoryViewerLinks[] {
   try {

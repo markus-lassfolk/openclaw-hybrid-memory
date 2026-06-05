@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import type { ActiveTaskEntry } from "./active-task.js";
 import { isNonActionableSubagentPlaceholderTask, isSubagentSession } from "./active-task.js";
 import type { ActiveTaskLongRunningRegistrationMode } from "../config/types/index.js";
+import { sanitizePromptInjection } from "./skill-prompt-injection.js";
 import { getEnv } from "../utils/env-manager.js";
 import { execFile } from "../utils/process-runner.js";
 
@@ -348,10 +349,14 @@ export function buildLongRunningTaskRegistrationBlock(
     sessionKey?: string | null;
   },
 ): string {
+  const label = sanitizePromptInjection(draft.label);
+  const description = sanitizePromptInjection(draft.description);
+  const next = sanitizePromptInjection(draft.next);
+  const repoContext = proposal.repoContext ? sanitizePromptInjection(proposal.repoContext) : undefined;
   const lines = [
     "<active-task-registration>",
     `**Long-running workflow detected:** ${proposal.kind.replace(/_/g, " ")}`,
-    `- Stable task label: \`${draft.label}\`${proposal.repoContext ? ` (repo context: \`${proposal.repoContext}\`)` : ""}`,
+    `- Stable task label: \`${label}\`${repoContext ? ` (repo context: \`${repoContext}\`)` : ""}`,
   ];
 
   if (opts.autoCreated) {
@@ -370,10 +375,10 @@ export function buildLongRunningTaskRegistrationBlock(
   lines.push(
     JSON.stringify(
       {
-        label: draft.label,
-        description: draft.description,
+        label,
+        description,
         status: draft.status,
-        next: draft.next,
+        next,
       },
       null,
       2,

@@ -12,6 +12,7 @@ import { SQLITE_BUSY_TIMEOUT_MS } from "../../utils/constants.js";
 import { calculateExpiry, classifyDecay } from "../../utils/decay.js";
 import { createTransaction, type SqliteTransactionBeginMode } from "../../utils/sqlite-transaction.js";
 import { normalizedHash, serializeTags } from "../../utils/tags.js";
+import { resolveEntityForeignKeys } from "./entity-layer.js";
 
 const SQLITE_BUSY_STORE_MAX_RETRIES = 3;
 const SQLITE_BUSY_STORE_BACKOFF_BASE_MS = 50;
@@ -560,6 +561,11 @@ export function storeFact(ctx: StoreFactContext, entry: StoreFactInput): StoreFa
   const loaded = ctx.getById(id);
   if (!loaded) {
     throw new Error(`memory-hybrid: store() failed to read back inserted fact ${id}`);
+  }
+  try {
+    resolveEntityForeignKeys(ctx.db, id, loaded.entity);
+  } catch {
+    /* non-fatal */
   }
   return { entry: loaded, evictedFactId, embeddingStale: false, newlyStored: true, preMergeText: null };
 }

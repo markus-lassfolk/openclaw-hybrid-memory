@@ -5,8 +5,12 @@
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
+import { trimBlockToBudget } from "../../services/context-block-trim.js";
 import { consumePrependBudget, initPrependBudget } from "../../services/prepend-budget.js";
-import { assembleRecallPrependContext } from "../../services/recalled-context-assembler.js";
+import {
+  assembleRecallPrependContext,
+  edictMaxTokensForBudget,
+} from "../../services/recalled-context-assembler.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
@@ -19,49 +23,6 @@ export type DegradedRecallReason = "queue" | "timeout";
 function clipNarrativeText(text: string, maxChars = 360): string {
   if (text.length <= maxChars) return text;
   return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
-}
-
-function trimBlockToBudget(
-  block: string,
-  maxTokens: number,
-): { text: string; sourceTokens: number; usedTokens: number } {
-  const sourceTokens = block ? estimateTokens(block) : 0;
-  if (!block || sourceTokens === 0 || maxTokens <= 0) {
-    return { text: "", sourceTokens, usedTokens: 0 };
-  }
-  if (sourceTokens <= maxTokens) {
-    return { text: block, sourceTokens, usedTokens: sourceTokens };
-  }
-
-  const trailingNewlines = block.match(/\n+$/)?.[0] ?? "";
-  const core = trailingNewlines.length > 0 ? block.slice(0, -trailingNewlines.length) : block;
-  const lines = core.split("\n");
-  if (lines.length === 0) return { text: "", sourceTokens, usedTokens: 0 };
-
-  const first = lines[0] ?? "";
-  const last = lines[lines.length - 1] ?? "";
-  const firstTagMatch = first.match(/^<([^>\s/]+)>$/);
-  const lastTagMatch = last.match(/^<\/([^>\s]+)>$/);
-  if (lines.length >= 3 && firstTagMatch && lastTagMatch && firstTagMatch[1] === lastTagMatch[1]) {
-    const middle = lines.slice(1, -1);
-    for (let keep = middle.length; keep >= 0; keep--) {
-      const candidate = [first, ...middle.slice(0, keep), last].join("\n") + trailingNewlines;
-      const candidateTokens = estimateTokens(candidate);
-      if (candidateTokens <= maxTokens) {
-        return { text: candidate, sourceTokens, usedTokens: candidateTokens };
-      }
-    }
-    return { text: "", sourceTokens, usedTokens: 0 };
-  }
-
-  for (let keep = lines.length; keep >= 1; keep--) {
-    const candidate = lines.slice(0, keep).join("\n") + trailingNewlines;
-    const candidateTokens = estimateTokens(candidate);
-    if (candidateTokens <= maxTokens) {
-      return { text: candidate, sourceTokens, usedTokens: candidateTokens };
-    }
-  }
-  return { text: "", sourceTokens, usedTokens: 0 };
 }
 
 type FixedBlockAudit = {
@@ -191,6 +152,7 @@ function buildNarrativePart(
   prompt: string,
   narrativeCapTokens: number,
   budgetState: BudgetState,
+  sessionId?: string | null,
 ): string {
   if (!ctx.narrativesDb && !ctx.eventLog) return "";
   try {
@@ -198,6 +160,7 @@ function buildNarrativePart(
       narrativesDb: ctx.narrativesDb,
       eventLog: ctx.eventLog,
       query: prompt,
+      sessionId: sessionId ?? undefined,
       limit: 1,
     });
     if (recentNarratives.length === 0) return "";
@@ -234,8 +197,9 @@ export async function buildDegradedFtsHotRecallStage(
   const narrativeCapTokens =
     narrativeBlockCapCfg ?? (hasNarrativesDb ? Math.max(100, Math.floor(totalBudget * 0.2)) : 0);
   const hotCapTokens = hotBlockCapCfg ?? Math.max(100, Math.floor(totalBudget * 0.25));
+  const sessionKey = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
   const budgetState: BudgetState = { remainingBudget: totalBudget, audit: [] };
-  const narrativePart = buildNarrativePart(ctx, prompt, narrativeCapTokens, budgetState);
+  const narrativePart = buildNarrativePart(ctx, prompt, narrativeCapTokens, budgetState, sessionKey);
   const hotPart = buildHotPart(ctx, scopeFilter, hotCapTokens, budgetState);
 
   let recallPart = "";
@@ -258,7 +222,6 @@ export async function buildDegradedFtsHotRecallStage(
 
   const inner = narrativePart + hotPart + recallPart;
   const marker = degradedMarkerForReason(reason);
-  const sessionKey = sessionState.resolveSessionKey(event, api) ?? ctx.currentAgentIdRef.value ?? "default";
   if (ctx.prependBudgetRef) {
     initPrependBudget(ctx.prependBudgetRef, totalBudget, sessionKey);
   }
@@ -295,7 +258,10 @@ export async function buildDegradedFtsHotRecallStage(
   }
 
   const prepend =
-    assembleRecallPrependContext(ctx, inner, { prefix: marker.trim() }) ??
+    assembleRecallPrependContext(ctx, inner, {
+      prefix: marker.trim(),
+      edictMaxTokens: edictMaxTokensForBudget(totalBudget),
+    }) ??
     (marker.trim() ? `${marker}\n\n` : undefined);
   if (prepend) consumePrependBudget(ctx.prependBudgetRef, prepend);
   if (prepend) return { kind: "degraded", prependContext: prepend };

@@ -154,7 +154,7 @@ describe("buildDigestSummary", () => {
     expect(s).toContain("VACUUM ran");
   });
 
-  it("reports failed stages in digest summary", () => {
+  it("reports failed stages in digest summary when no other changes", () => {
     const s = buildDigestSummary({
       factsPruned: 0,
       factsDecayed: 0,
@@ -164,6 +164,20 @@ describe("buildDigestSummary", () => {
       rulesGenerated: 0,
       failedStages: ["reflection (patterns)"],
     });
+    expect(s).toBe("Stages failed: reflection (patterns).");
+  });
+
+  it("reports failed stages alongside other changes", () => {
+    const s = buildDigestSummary({
+      factsPruned: 2,
+      factsDecayed: 0,
+      eventsConsolidated: 0,
+      factsCreated: 0,
+      patternsFound: 0,
+      rulesGenerated: 0,
+      failedStages: ["reflection (patterns)"],
+    });
+    expect(s).toContain("2 facts pruned");
     expect(s).toContain("1 stage(s) failed");
     expect(s).toContain("reflection (patterns)");
   });

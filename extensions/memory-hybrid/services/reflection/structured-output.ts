@@ -91,7 +91,10 @@ function normalizeRuleCandidate(text: string): {
   }
   if (
     /^<[^>]+>$/i.test(candidate) ||
-    /^<imperative\s+one-line\s+rule>/i.test(candidate)
+    /^<imperative\s+one-line\s+rule>/i.test(candidate) ||
+    /^<(?:imperative|one-line|rule)[^>]*>$/i.test(candidate) ||
+    /^(?:<)?imperative one-line rule(?:>)?$/i.test(candidate) ||
+    /^rule\s*#?\d*[:.]?\s*$/i.test(candidate)
   ) {
     return { text: candidate, rejectedLowConfidence: false, rejectedLength: true };
   }

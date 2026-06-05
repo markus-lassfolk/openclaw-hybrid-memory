@@ -45,6 +45,12 @@ import {
 } from "./rrf-fusion.js";
 import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
 import { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
+import type { IssueStore } from "../backends/issue-store.js";
+import {
+  getCriticalOpenIssueFactIds,
+  runIssueRetrievalStrategy,
+} from "./issue-retrieval.js";
+import { parseFactProvenanceJson, resolveProvenanceSourceFacts } from "../backends/facts-db/provenance-json.js";
 export { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
 
 // ---------------------------------------------------------------------------
@@ -524,14 +530,27 @@ function buildOrchestratorResult(
   budgetTokens: number,
 ): OrchestratorResult {
   const contradictedIds = collectContradictedIds(factsDb, orderedEntries);
-  const { packed, tokensUsed } = packIntoBudget(orderedEntries, budgetTokens, { contradictedIds });
-  const packedFactIds = orderedEntries.slice(0, packed.length).map((entry) => entry.factId);
+  const hydratedEntries = orderedEntries.map(({ factId, entry }) => {
+    const provenance = parseFactProvenanceJson(entry.provenanceJson);
+    const sourceFacts = resolveProvenanceSourceFacts(factsDb, provenance, 3);
+    if (sourceFacts.length === 0) return { factId, entry };
+    const sourceLines = sourceFacts.map((s) => `  - [${s.category ?? "fact"}] ${s.text.slice(0, 120)}`).join("\n");
+    return {
+      factId,
+      entry: {
+        ...entry,
+        text: `${entry.text}\n[consolidated from ${sourceFacts.length} source(s)]\n${sourceLines}`,
+      },
+    };
+  });
+  const { packed, tokensUsed } = packIntoBudget(hydratedEntries, budgetTokens, { contradictedIds });
+  const packedFactIds = hydratedEntries.slice(0, packed.length).map((entry) => entry.factId);
   return {
     fused,
     packed,
     packedFactIds,
     tokensUsed,
-    entries: orderedEntries.map((entry) => entry.entry),
+    entries: hydratedEntries.map((entry) => entry.entry),
   };
 }
 
@@ -641,6 +660,10 @@ export interface RetrievalPipelineOptions {
   graphHubDegreeCap?: number | null;
   /** Mirrors `graph.hubScorePenalty` for GraphRAG expansion (Issue #1192). */
   graphHubScorePenalty?: number | null;
+  /** Issue store for issue-aware RRF strategy and critical-issue candidate expansion (#1802). */
+  issueStore?: IssueStore | null;
+  /** Pre-filter fact IDs from NER entity-layer matching (#1802). Intersected with structured filters when both present. */
+  entityLayerCandidateIds?: string[];
 }
 
 /**
@@ -713,6 +736,8 @@ export async function runExplicitDeepRetrieval(
     constrainedFilters,
     graphHubDegreeCap,
     graphHubScorePenalty,
+    issueStore,
+    entityLayerCandidateIds,
   } = options;
 
   const validator = queryValidator ?? validateQueryForMemoryLookup;
@@ -733,10 +758,28 @@ export async function runExplicitDeepRetrieval(
   let candidateIds: Set<string> | null = null;
   if (policy.mode === "constrained-recall" && constrainedFilters) {
     const ids = getCandidateIdsByStructuredFilters(db, constrainedFilters, { limit: 1000, nowSec });
-    if (ids.length === 0) {
+    if (ids.length === 0 && !issueStore && !(entityLayerCandidateIds?.length)) {
       return { fused: [], packed: [], packedFactIds: [], tokensUsed: 0, entries: [] };
     }
     candidateIds = new Set(ids);
+  }
+
+  if (entityLayerCandidateIds && entityLayerCandidateIds.length > 0) {
+    const layerSet = new Set(entityLayerCandidateIds);
+    if (!candidateIds) candidateIds = layerSet;
+    else {
+      const intersected = [...candidateIds].filter((id) => layerSet.has(id));
+      candidateIds = new Set(intersected.length > 0 ? intersected : [...candidateIds, ...entityLayerCandidateIds]);
+    }
+  }
+
+  // Expand constrained candidate set with facts linked to open critical/high issues.
+  if (issueStore && (policy.mode === "constrained-recall" || policy.mode === "explicit-deep")) {
+    const issueFactIds = getCriticalOpenIssueFactIds(issueStore, 15);
+    if (issueFactIds.length > 0) {
+      if (!candidateIds) candidateIds = new Set(issueFactIds);
+      else for (const id of issueFactIds) candidateIds.add(id);
+    }
   }
 
   const applyConditionalReranking = async (
@@ -862,6 +905,16 @@ export async function runExplicitDeepRetrieval(
     if (strategies.includes("semantic") && currentQueryVector) {
       strategyPromises.push(
         safeStrategy("semantic", () => runSemanticStrategy(vectorDb, currentQueryVector, semanticTopK, candidateIds)),
+      );
+    }
+
+    if (issueStore && (policy as ExplicitDeepRetrievalPolicy).mode !== "interactive-recall") {
+      strategyPromises.push(
+        safeStrategy("issues", () => {
+          const results = runIssueRetrievalStrategy(queryText, issueStore, semanticTopK);
+          const filtered = candidateIds ? results.filter((r) => candidateIds!.has(r.factId)) : results;
+          return filtered.map((r, i) => ({ ...r, rank: i + 1 }));
+        }),
       );
     }
 

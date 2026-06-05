@@ -3,10 +3,23 @@
  * named section instead of appending at end. Dedup by normalized line.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { atomicWriteFile } from "../utils/atomic-write.js";
 
-function normalizeRuleLine(line: string): string {
+export function normalizeRuleLine(line: string): string {
   return line.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** True when normalized rule text already appears as its own bullet under any section. */
+export function ruleExistsInContent(content: string, rule: string): boolean {
+  const needle = normalizeRuleLine(rule);
+  if (!needle) return false;
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- ") && normalizeRuleLine(trimmed.slice(2)) === needle) return true;
+  }
+  return normalizeRuleLine(content).includes(needle);
 }
 
 /**
@@ -52,6 +65,7 @@ function getExistingRuleLines(lines: string[], startIndex: number, endIndex: num
 /**
  * Insert new rules under the given section. If section exists, append new rules
  * (dedup by normalized content). If section does not exist, append it at end of file.
+ * Creates the file (and parent dirs) when missing.
  * Each rule is written as "- <rule>\n".
  * @param defaultHeading - Heading used when file is empty (e.g. "# AGENTS" for AGENTS.md). Default "# TOOLS".
  */
@@ -101,6 +115,7 @@ export function insertRulesUnderSection(
     newContent = `${(content.trimEnd() || defaultHeading) + sectionHeader + bulletLines.join("\n")}\n`;
   }
 
-  writeFileSync(filePath, newContent, "utf-8");
+  mkdirSync(dirname(filePath), { recursive: true });
+  atomicWriteFile(filePath, newContent);
   return { inserted: toInsert.length, sectionExisted: sectionStart >= 0 };
 }

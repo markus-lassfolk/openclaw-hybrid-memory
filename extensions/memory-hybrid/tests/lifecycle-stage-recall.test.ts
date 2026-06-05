@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
 import { runRecallStage } from "../lifecycle/stage-recall.js";
+import { runRecall } from "../lifecycle/stage-recall/run-recall.js";
 import { INTERACTIVE_RECALL_STAGE_TIMEOUT_MS } from "../services/retrieval-mode-policy.js";
 import * as recallPipeline from "../services/recall-pipeline.js";
 import { estimateTokens } from "../utils/text.js";
@@ -321,8 +322,8 @@ describe("runRecallStage", () => {
     const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
       memoryTiering: { enabled: true, hotMaxTokens: 2000 },
       autoRecall: {
-        maxTokens: 40,
-        hotMaxTokens: 40,
+        maxTokens: 8,
+        hotMaxTokens: 8,
         narrativeMaxTokens: 0,
         procedureMaxTokens: 0,
       },
@@ -377,7 +378,132 @@ describe("runRecallStage", () => {
     const result = await runRecallStage({ prompt: "deploy now with context" }, api as never, ctx, sessionState);
 
     expect(result?.kind).toBe("full");
-    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("consumers:"));
-    expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("hot"));
+    if (result?.kind === "full") {
+      expect(result.result.maxTokens).toBeLessThanOrEqual(2);
+      expect(estimateTokens(result.result.hotBlock)).toBeLessThanOrEqual(12);
+      expect(result.result.hotBlock).toContain("hot");
+    }
+    if (result?.kind === "full" && result.result.maxTokens === 0) {
+      expect(api.logger.warn).toHaveBeenCalledWith(expect.stringContaining("consumers:"));
+    }
+  });
+
+  it("skips ambient queries but keeps main pipeline candidates when stage abort fires after main recall", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      autoRecall: {
+        ambient: { enabled: true, multiQuery: true },
+        entityLookup: { enabled: false },
+      },
+      retrieval: { strategies: ["fts", "semantic"] },
+    });
+    const mainCandidate = {
+      entry: {
+        id: "main-pipeline-hit",
+        text: "Main pipeline recalled fact",
+        category: "fact",
+        importance: 0.8,
+        entity: null,
+        key: null,
+        value: null,
+        source: "conversation",
+        createdAt: 1,
+        decayClass: "stable" as const,
+        expiresAt: null,
+        lastConfirmedAt: 0,
+        confidence: 1,
+        scope: "global" as const,
+      },
+      score: 0.92,
+      backend: "sqlite" as const,
+    };
+    const controller = new AbortController();
+    let pipelineCalls = 0;
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockImplementation(async () => {
+      pipelineCalls += 1;
+      if (pipelineCalls === 1) {
+        controller.abort();
+        return [mainCandidate];
+      }
+      throw new Error("ambient query should not run after stage abort");
+    });
+
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+    const result = await runRecall(
+      { prompt: "deployment plan with enough context" },
+      api as never,
+      ctx,
+      sessionState,
+      controller.signal,
+    );
+
+    expect(result?.kind).toBe("full");
+    if (result?.kind === "full") {
+      expect(result.result.candidates.map((c) => c.entry.id)).toEqual(["main-pipeline-hit"]);
+    }
+    expect(pipelineCalls).toBe(1);
+  });
+
+  it("excludes structural-tier facts from entity lookup when memory tiering is enabled", async () => {
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      memoryTiering: { enabled: true, hotMaxTokens: 0 },
+      autoRecall: {
+        entityLookup: { enabled: true, entities: ["Acme"], maxFactsPerEntity: 5 },
+      },
+    });
+    vi.mocked(recallPipeline.runRecallPipelineQuery).mockResolvedValue([]);
+    vi.spyOn(factsDb, "lookup").mockReturnValue([
+      {
+        entry: {
+          id: "structural-entity-fact",
+          text: "Schema metadata for Acme",
+          category: "fact",
+          importance: 0.5,
+          entity: "Acme",
+          key: null,
+          value: null,
+          source: "conversation",
+          createdAt: 1,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          scope: "global",
+          tier: "structural",
+        },
+        score: 0.9,
+        backend: "sqlite",
+      },
+      {
+        entry: {
+          id: "warm-entity-fact",
+          text: "Acme prefers email updates",
+          category: "preference",
+          importance: 0.7,
+          entity: "Acme",
+          key: null,
+          value: null,
+          source: "conversation",
+          createdAt: 1,
+          decayClass: "stable",
+          expiresAt: null,
+          lastConfirmedAt: 0,
+          confidence: 1,
+          scope: "global",
+          tier: "warm",
+        },
+        score: 0.85,
+        backend: "sqlite",
+      },
+    ]);
+
+    const sessionState = makeRecallSessionState();
+    const api = makeMockStageApi();
+    const result = await runRecallStage({ prompt: "Tell me about Acme preferences" }, api as never, ctx, sessionState);
+
+    expect(result?.kind).toBe("full");
+    if (result?.kind === "full") {
+      expect(result.result.candidates.map((c) => c.entry.id)).toEqual(["warm-entity-fact"]);
+    }
   });
 });

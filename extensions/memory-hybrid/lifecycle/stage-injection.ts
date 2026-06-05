@@ -69,25 +69,34 @@ export async function runInjectionStage(
   ctx: LifecycleContext,
   event: unknown,
 ): Promise<{ prependContext: string } | undefined> {
-  let completed = false;
-  const work = runInjection(recallResult, api, ctx, event).then((result) => {
-    completed = true;
+  const emitGate = { emitted: false };
+  let primarySettled = false;
+
+  const primary = runInjection(recallResult, api, ctx, event, { emitGate }).then((result) => {
+    primarySettled = true;
     return result;
   });
+
   const timeoutFallback = new Promise<{ prependContext: string } | undefined>((resolve) => {
     setTimeout(() => {
-      if (completed) return;
+      if (primarySettled || emitGate.emitted) {
+        resolve(undefined);
+        return;
+      }
       api.logger.warn?.(
         "memory-hybrid: injection stage timed out — returning unsummarized partial injection",
       );
-      void runInjection(recallResult, api, ctx, event, { skipLlmSummarize: true }).then(resolve);
+      void runInjection(recallResult, api, ctx, event, { skipLlmSummarize: true, emitGate }).then(resolve);
     }, INJECTION_STAGE_TIMEOUT_MS);
   });
-  return Promise.race([work, timeoutFallback]);
+
+  return Promise.race([primary, timeoutFallback]);
 }
 
 type RunInjectionOptions = {
   skipLlmSummarize?: boolean;
+  /** Prevents double prepend emission when primary and timeout paths race. */
+  emitGate?: { emitted: boolean };
 };
 
 async function runInjection(
@@ -157,11 +166,13 @@ async function runInjection(
   const effectiveIndexCap = Math.min(indexCap, memoryTokenBudget);
 
   const finishPrepend = (memoryContent: string, prefix?: string): { prependContext: string } | undefined => {
+    if (options.emitGate?.emitted) return undefined;
     const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(memoryContent), {
       prefix,
       edictBlock,
     });
     if (!prepend) return undefined;
+    if (options.emitGate) options.emitGate.emitted = true;
     consumePrependBudget(ctx.prependBudgetRef, prepend);
     return { prependContext: prepend };
   };
@@ -292,8 +303,8 @@ async function runInjection(
         emitAudit(estimateTokens(recalledAmbient));
         return finishPrepend(recalledAmbient) ?? undefined;
       }
-      if (buildEdictBlock(ctx)) {
-        emitAudit(estimateTokens(buildEdictBlock(ctx)));
+      if (edictBlock) {
+        emitAudit(estimateTokens(edictBlock));
         return finishPrepend("") ?? undefined;
       }
       return undefined;
@@ -341,8 +352,8 @@ async function runInjection(
         emitAudit(estimateTokens(recalledAmbient));
         return finishPrepend(recalledAmbient) ?? undefined;
       }
-      if (buildEdictBlock(ctx)) {
-        emitAudit(estimateTokens(buildEdictBlock(ctx)));
+      if (edictBlock) {
+        emitAudit(estimateTokens(edictBlock));
         return finishPrepend("") ?? undefined;
       }
       return undefined;

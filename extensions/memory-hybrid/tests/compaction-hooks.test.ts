@@ -90,7 +90,42 @@ describe("compaction lifecycle hooks", () => {
     expect(postCompactionRecall.buildPostCompactionRecallSnippet).not.toHaveBeenCalled();
   });
 
-  it("after_compaction injects post-compaction summary when facts exist", async () => {
+  it("after_compaction summary-only path wraps facts with untrusted-data boundary", async () => {
+    const api = makeHooksApi();
+    const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, {
+      verbosity: "normal",
+      autoRecall: { enabled: true },
+    });
+    (pluginApi.lastAutoRecallPromptRef as { value: string | null }).value =
+      "retained fact across compaction boundary test";
+    factsDb.store({
+      text: "retained fact across compaction boundary test",
+      category: "fact",
+      source: "test",
+      entity: null,
+      key: null,
+      value: null,
+      importance: 0.5,
+    });
+    const listSpy = vi.spyOn(factsDb, "list");
+    const searchSpy = vi.spyOn(factsDb, "search");
+    registerLifecycleHooks(pluginApi as never, api as never);
+    const handler = captureHookHandler(api, "after_compaction");
+
+    const out = (await handler?.({ messageCount: 8, compactedCount: 4, tokenCount: 8000 }, {})) as
+      | { prependContext?: string }
+      | undefined;
+
+    expect(out?.prependContext).toContain("post-compaction memory summary");
+    expect(out?.prependContext).toContain("retained fact across compaction boundary test");
+    expect(out?.prependContext).toContain("<recalled-context>");
+    expect(out?.prependContext).toContain("recalled data only");
+    expect(postCompactionRecall.buildPostCompactionRecallSnippet).toHaveBeenCalled();
+    expect(listSpy).not.toHaveBeenCalled();
+    expect(searchSpy).toHaveBeenCalled();
+  });
+
+  it("after_compaction prefers recall snippet over summary when recall succeeds", async () => {
     const api = makeHooksApi();
     const pluginApi = buildPluginApiForRegisterHooks(tmpDir, factsDb, {
       verbosity: "normal",
@@ -116,8 +151,10 @@ describe("compaction lifecycle hooks", () => {
       | { prependContext?: string }
       | undefined;
 
-    expect(out?.prependContext).toContain("post-compaction memory summary");
-    expect(out?.prependContext).toContain("retained fact across compaction");
+    expect(out?.prependContext).toContain("post-compaction recall");
+    expect(out?.prependContext).toContain("<recalled-context>");
+    expect(out?.prependContext).not.toContain("post-compaction memory summary");
+    expect(out?.prependContext).not.toContain("retained fact across compaction");
     expect(postCompactionRecall.buildPostCompactionRecallSnippet).toHaveBeenCalled();
   });
 });

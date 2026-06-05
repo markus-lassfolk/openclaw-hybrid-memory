@@ -17,6 +17,15 @@ import {
   type ExplicitDeepRetrievalPolicy,
 } from "../../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import {
+  inferEntityFilterFromQuery,
+  inferRetrievalModeFromQuery,
+} from "../../services/retrieval-mode-selector.js";
+import {
+  getFactIdsForEntitySurfaces,
+  loadKnownEntitySurfaces,
+  matchEntitySurfacesInText,
+} from "../../services/entity-retrieval.js";
 import type { MemoryEntry, ScopeFilter, SearchResult } from "../../types/memory.js";
 import { getSessionLogFileSuffix } from "../../utils/constants.js";
 import { parseSourceDate } from "../../utils/dates.js";
@@ -50,6 +59,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     api,
     auditAppend,
     agentIdForAudit,
+    issueStore,
     maybeRefreshProjectActiveTaskProjection,
     storeActiveCanonicalVector,
     storeRegistryEmbeddings,
@@ -335,8 +345,19 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const sessionId =
+        const requestedSessionId =
           typeof params.sessionId === "string" && params.sessionId.trim().length > 0 ? params.sessionId.trim() : null;
+        const contextSessionId =
+          typeof api.context?.sessionId === "string" && api.context.sessionId.trim().length > 0
+            ? api.context.sessionId.trim()
+            : null;
+        if (!contextSessionId) {
+          throw new Error("memory_session_observability requires an authenticated session context");
+        }
+        if (requestedSessionId && requestedSessionId !== contextSessionId) {
+          throw new Error("memory_session_observability sessionId must match the authenticated session context");
+        }
+        const sessionId = contextSessionId;
         const agentId =
           typeof params.agentId === "string" && params.agentId.trim().length > 0 ? params.agentId.trim() : null;
         const limit =
@@ -634,12 +655,25 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     const hasAdditionalConstrainedFilters = Boolean(
       category || source || verificationTier || validFromSec != null || validUntilSec != null || sourceSession,
     );
+    const inferredMode = inferRetrievalModeFromQuery(query, {
+      entity,
+      tag,
+      category,
+      source,
+      verificationTier,
+      sourceSession,
+      validFromSec,
+      validUntilSec,
+    });
+    const inferredEntity = entity ?? inferEntityFilterFromQuery(query);
     const shouldUseConstrainedMode =
-      retrievalMode === "constrained-recall" || (!retrievalMode && hasAdditionalConstrainedFilters);
-    const effectiveMode = shouldUseConstrainedMode ? "constrained-recall" : retrievalMode;
+      retrievalMode === "constrained-recall" ||
+      (!retrievalMode && (hasAdditionalConstrainedFilters || inferredMode === "constrained-recall"));
+    const effectiveMode =
+      shouldUseConstrainedMode ? "constrained-recall" : (retrievalMode ?? inferredMode ?? "explicit-deep");
     const constrainedFilters = shouldUseConstrainedMode
       ? {
-          ...(entity ? { entity } : {}),
+          ...(inferredEntity ? { entity: inferredEntity } : {}),
           ...(tag ? { tag } : {}),
           ...(category ? { category } : {}),
           ...(source ? { source } : {}),
@@ -649,6 +683,33 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           ...(sourceSession ? { sourceSession } : {}),
         }
       : undefined;
+
+    if (shouldUseConstrainedMode && Object.keys(constrainedFilters ?? {}).length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text:
+              "constrained-recall requires at least one filter (entity, tag, category, source, verificationTier, sourceSession, or validFrom/validUntil).",
+          },
+        ],
+        details: { count: 0, error: "missing_constrained_filters" },
+      };
+    }
+
+    // Entity-layer pre-filter: when NER tables match query surfaces, narrow constrained candidates.
+    let entityLayerFactIds: string[] | undefined;
+    if (shouldUseConstrainedMode && typeof factsDb.getRawDb === "function") {
+      try {
+        const surfaces = loadKnownEntitySurfaces(factsDb.getRawDb(), 300);
+        const matched = matchEntitySurfacesInText(query, surfaces);
+        if (matched.length > 0) {
+          entityLayerFactIds = getFactIdsForEntitySurfaces(factsDb.getRawDb(), matched, 80);
+        }
+      } catch {
+        /* non-fatal */
+      }
+    }
 
     // Entity-targeted lookup is useful for legacy explicit recall, but it bypasses
     // filter → rank → hydrate semantics, so disable it in constrained mode.
@@ -678,7 +739,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
             ? resolveConstrainedRetrievalPolicy(rrfConfig)
             : resolveExplicitDeepRetrievalPolicy(rrfConfig)
           : undefined;
-      if (!useLegacyTagShortcut && effectivePolicy !== undefined) {
+      const embedPolicy =
+        effectivePolicy ??
+        (effectiveMode === "interactive-recall" && rrfStrategies.includes("semantic")
+          ? resolveExplicitDeepRetrievalPolicy(rrfConfig)
+          : undefined);
+      if (!useLegacyTagShortcut && embedPolicy) {
         const vectorPrep = await buildExplicitSemanticQueryVector({
           query,
           cfg,
@@ -686,7 +752,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           openai,
           pendingLLMWarnings,
           logger: api.logger,
-          policy: effectivePolicy as ExplicitDeepRetrievalPolicy,
+          policy: embedPolicy,
         });
         queryVector = vectorPrep.queryVector;
         semanticWarning = vectorPrep.warning;
@@ -724,6 +790,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         rerankingOpenai: openai,
         adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
         documentGradingConfig: cfg.documentGrading,
+        issueStore: issueStore ?? null,
+        ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
       });
 
       // Merge entity-lookup results first, then append RRF results (deduped).

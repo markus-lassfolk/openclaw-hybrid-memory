@@ -49,7 +49,7 @@ type DocumentInstallerContext = Pick<
   "factsDb" | "vectorDb" | "cfg" | "embeddings" | "pythonBridge" | "openai" | "provenanceService"
 >;
 type VerificationInstallerContext = Pick<ToolsContext, "factsDb" | "verificationStore" | "cfg">;
-type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "cfg">;
+type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "factsDb" | "cfg">;
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore">;
 type CrystallizationInstallerContext = Pick<ToolsContext, "crystallizationStore" | "workflowStore" | "cfg">;
 type SelfExtensionInstallerContext = Pick<ToolsContext, "toolProposalStore" | "workflowStore" | "cfg">;
@@ -90,6 +90,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     walWrite,
     walRemove,
     auditStore,
+    issueStore,
   } = ctx;
 
   return {
@@ -115,6 +116,7 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     walRemove: (id, logger) => walRemove(wal, id, logger),
     findSimilarByEmbedding,
     auditStore,
+    issueStore,
   };
 }
 
@@ -259,13 +261,13 @@ function installVerificationTools(ctx: VerificationInstallerContext, api: Clawdb
   }
 }
 
-function selectIssueToolsContext({ issueStore, cfg }: ToolsContext): IssueInstallerContext {
-  return { issueStore, cfg };
+function selectIssueToolsContext({ issueStore, factsDb, cfg }: ToolsContext): IssueInstallerContext {
+  return { issueStore, factsDb, cfg };
 }
 
 function installIssueTools(ctx: IssueInstallerContext, api: ClawdbotPluginApi): void {
   if (ctx.issueStore) {
-    registerIssueTools({ issueStore: ctx.issueStore, cfg: ctx.cfg }, api);
+    registerIssueTools({ issueStore: ctx.issueStore, factsDb: ctx.factsDb, cfg: ctx.cfg }, api);
   }
 }
 

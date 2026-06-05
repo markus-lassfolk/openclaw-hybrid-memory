@@ -66,3 +66,55 @@ export function appendFactProvenance(db: DatabaseSync, factId: string, patch: Fa
     factId,
   );
 }
+
+export function parseFactProvenanceJson(raw: string | null | undefined): FactProvenanceJson {
+  return parseProvenance(raw);
+}
+
+export type ProvenanceSourceFactSummary = {
+  id: string;
+  text: string;
+  category?: string | null;
+  source?: string | null;
+};
+
+type ProvenanceFactLookup = {
+  getById(id: string): { id: string; text: string; category?: string; source?: string } | null;
+};
+
+/**
+ * Resolve source facts for consolidated/derived facts (for recall hydration).
+ */
+export function resolveProvenanceSourceFacts(
+  factsDb: ProvenanceFactLookup,
+  provenance: FactProvenanceJson,
+  limit = 5,
+): ProvenanceSourceFactSummary[] {
+  const out: ProvenanceSourceFactSummary[] = [];
+  const seen = new Set<string>();
+
+  if (provenance.sourceFacts?.length) {
+    for (const row of provenance.sourceFacts) {
+      if (!row?.id || seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push({
+        id: row.id,
+        text: row.text ?? factsDb.getById(row.id)?.text ?? row.id,
+        category: row.category,
+        source: row.source,
+      });
+      if (out.length >= limit) return out;
+    }
+  }
+
+  for (const id of provenance.sourceFactIds ?? []) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const entry = factsDb.getById(id);
+    if (!entry) continue;
+    out.push({ id: entry.id, text: entry.text, category: entry.category, source: entry.source });
+    if (out.length >= limit) return out;
+  }
+
+  return out;
+}

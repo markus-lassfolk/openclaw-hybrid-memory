@@ -106,6 +106,8 @@ export type ProceduresConfig = {
   skillTTLDays: number;
   /** Path to auto-generated skills (default: workspace/skills/auto) */
   skillsAutoPath: string;
+  /** Pending skills awaiting human promote (default: memory/skills-pending; outside skills/ loader tree) */
+  skillsPendingPath: string;
   /** Require human approval before promoting auto-skill to permanent (default: true) */
   requireApprovalForPromote: boolean;
   /** Max tokens for procedure block injected into recall (default: 500). Prevents procedure context from dominating. */

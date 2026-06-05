@@ -36,6 +36,7 @@ import {
 import { preFilterSessions } from "../services/session-pre-filter.js";
 import { insertRulesUnderSection } from "../services/tools-md-section.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { CLI_STORE_IMPORTANCE } from "../utils/constants.js";
 import { getEnv } from "../utils/env-manager.js";
 import { getReinforcementSignalRegex } from "../utils/language-keywords.js";
@@ -734,8 +735,50 @@ export async function runExtractReinforcementForCli(
       for (const incident of result.incidents) {
         if (incident.recalledMemoryIds.length === 0) {
           annotationReasons.noRecalledIds++;
-          // Store standalone praise signal when no memory_recall IDs (sparse recall usage).
-          if (!opts.dryRun && incident.confidence >= 0.55) {
+          let reinforcedViaSimilarity = false;
+          // Embedding-similarity fallback when agent did not call memory_recall (#1802).
+          try {
+            const contextText = [incident.agentBehavior, incident.precedingUserMessage, incident.userMessage]
+              .filter(Boolean)
+              .join(" ")
+              .slice(0, 500);
+            if (contextText.trim().length >= 20) {
+              const vector = await embeddings.embed(contextText);
+              const similar = await findSimilarByEmbedding(vectorDb, factsDb, vector, 3, 0.45);
+              if (similar.length > 0) {
+                const context: ReinforcementContext = {
+                  querySnippet: incident.precedingUserMessage.slice(0, 200) || incident.userMessage.slice(0, 200),
+                  topic: analysisCategory,
+                  toolSequence: incident.toolCallSequence.length > 0 ? incident.toolCallSequence : undefined,
+                  sessionFile: incident.sessionFile,
+                };
+                const diversityWeight = cfg.reinforcement?.diversityWeight ?? 1.0;
+                const baseBoost = cfg.reinforcement?.boostAmount ?? 1.0;
+                for (const entry of similar) {
+                  const diversityScore = factsDb.calculateDiversityScore(entry.id);
+                  const effectiveBoost = baseBoost * (1 - diversityWeight + diversityWeight * diversityScore);
+                  const ok = factsDb.reinforceFact(entry.id, incident.userMessage, context, {
+                    trackContext,
+                    maxEventsPerFact,
+                    boostAmount: effectiveBoost,
+                  });
+                  if (ok) {
+                    reinforcedViaSimilarity = true;
+                    annotated++;
+                    annotationReasons.reinforced++;
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            capturePluginError(err as Error, {
+              subsystem: "cli",
+              operation: "runExtractReinforcementForCli:similarity-fallback",
+            });
+          }
+
+          // Store standalone praise signal when similarity fallback found nothing.
+          if (!reinforcedViaSimilarity && incident.confidence >= 0.55) {
             try {
               const praiseText = redactMaintenancePrivateText(
                 `[Reinforcement praise] User: "${incident.userMessage.slice(0, 180)}" — praised behavior: ${incident.agentBehavior.slice(0, 180)}`,

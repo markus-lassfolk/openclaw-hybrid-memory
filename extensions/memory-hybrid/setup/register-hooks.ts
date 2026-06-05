@@ -12,12 +12,18 @@ import { resolveOpenclawJsonPathForWorkspace } from "../cli/cmd-install.js";
 import { getMemoryCategories } from "../config.js";
 import { withHookResolutionApi } from "../lifecycle/hook-resolution-api.js";
 import { type LifecycleContext, createLifecycleHooks } from "../lifecycle/hooks.js";
+import { resolveRecallScopeFilter } from "../lifecycle/stage-recall/degraded-recall.js";
 import { resolveSessionKeyFromHookEvent } from "../lifecycle/session-state.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { trimBlockToBudget } from "../services/context-block-trim.js";
 import { shouldPinFactForInjection } from "../services/pinned-recall-policy.js";
 import { buildPostCompactionRecallSnippet } from "../services/post-compaction-recall.js";
-import { formatSanitizedMemoryPreview } from "../services/recalled-context-assembler.js";
+import {
+  assembleRecallPrependContext,
+  DEFAULT_EDICT_BUDGET_FRACTION,
+  edictMaxTokensForBudget,
+  formatSanitizedMemoryPreview,
+} from "../services/recalled-context-assembler.js";
 import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { estimateTokens } from "../utils/text.js";
@@ -508,10 +514,13 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
           );
           const blocks: string[] = [];
           let usedRecallSnippet = false;
+          const lastPrompt =
+            typeof lifecycleContext.lastAutoRecallPromptRef.value === "string"
+              ? lifecycleContext.lastAutoRecallPromptRef.value.trim()
+              : "";
 
           if (ctx.cfg.autoRecall.enabled) {
-            const lastPrompt = lifecycleContext.lastAutoRecallPromptRef.value;
-            if (typeof lastPrompt === "string" && lastPrompt.trim().length >= 5) {
+            if (lastPrompt.length >= 5) {
               const recallBlock = await buildPostCompactionRecallSnippet(
                 lifecycleContext,
                 api,
@@ -526,19 +535,25 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
             }
           }
 
-          const summaryLines: string[] = [];
+          const summaryInner: string[] = [];
 
           if (!usedRecallSnippet) {
-            const summaryFacts = ctx.factsDb.list(8);
+            const scopeFilter = resolveRecallScopeFilter(lifecycleContext);
+            const tierFilter = ctx.cfg.memoryTiering.enabled ? ("warm" as const) : ("all" as const);
+            const summaryFacts =
+              lastPrompt.length >= 5
+                ? ctx.factsDb.search(lastPrompt, 8, { scopeFilter, tierFilter }).map((r) => r.entry)
+                : ctx.cfg.memoryTiering.enabled
+                  ? ctx.factsDb.getHotFacts(8, scopeFilter).map((r) => r.entry)
+                  : [];
             if (summaryFacts.length > 0) {
-              summaryLines.push("<!-- memory-hybrid: post-compaction memory summary -->");
-              summaryLines.push("Key memories retained across compaction:");
+              summaryInner.push("Key memories retained across compaction:");
               for (const f of summaryFacts) {
                 const line = formatSanitizedMemoryPreview(f.text, {
                   entity: f.entity,
                   maxChars: 150,
                 });
-                if (line) summaryLines.push(line);
+                if (line) summaryInner.push(line);
               }
             }
           }
@@ -550,11 +565,11 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
                 limit: 5,
               });
               if (openIssues.length > 0) {
-                summaryLines.push("");
-                summaryLines.push("Open issues:");
+                if (summaryInner.length > 0) summaryInner.push("");
+                summaryInner.push("Open issues:");
                 for (const issue of openIssues) {
                   const title = sanitizePromptInjection(issue.title);
-                  summaryLines.push(`- [${issue.severity}] ${title} (${issue.status})`);
+                  summaryInner.push(`- [${issue.severity}] ${title} (${issue.status})`);
                 }
               }
             } catch {
@@ -562,14 +577,22 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
             }
           }
 
-          if (summaryLines.length > 0) {
-            summaryLines.push("<!-- /memory-hybrid: post-compaction memory summary -->");
-            const summaryBlock = summaryLines.join("\n");
+          if (summaryInner.length > 0) {
             const remaining = Math.max(
               0,
               postCompactionBudget - blocks.reduce((sum, b) => sum + estimateTokens(b), 0),
             );
-            blocks.push(trimBlockToBudget(summaryBlock, remaining).text);
+            const wrapped = assembleRecallPrependContext(lifecycleContext, summaryInner.join("\n"), {
+              edictMaxTokens: edictMaxTokensForBudget(remaining, DEFAULT_EDICT_BUDGET_FRACTION),
+            });
+            if (wrapped) {
+              const summaryBlock = [
+                "<!-- memory-hybrid: post-compaction memory summary -->",
+                trimBlockToBudget(wrapped, remaining).text,
+                "<!-- /memory-hybrid: post-compaction memory summary -->",
+              ].join("\n");
+              blocks.push(summaryBlock);
+            }
           }
 
           const combined = blocks.filter((b) => b.trim().length > 0).join("\n\n");

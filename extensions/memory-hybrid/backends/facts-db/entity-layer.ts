@@ -972,3 +972,52 @@ export function cleanupEntityMentions(
     removedRows,
   };
 }
+
+/**
+ * Link facts.entity string to contacts/organizations FK columns when resolvable (#1802).
+ */
+export function resolveEntityForeignKeys(db: DatabaseSync, factId: string, entity: string | null | undefined): void {
+  if (!entity?.trim()) return;
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "entity_contact_id") && !cols.some((c) => c.name === "entity_organization_id")) {
+    return;
+  }
+
+  const key = normalizeEntityKey(entity);
+  if (!key) return;
+
+  let contactId: string | null = null;
+  let organizationId: string | null = null;
+
+  const contact = db
+    .prepare(`SELECT id FROM contacts WHERE normalized_key = ? OR lower(display_name) = lower(?) LIMIT 1`)
+    .get(key, entity.trim()) as { id: string } | undefined;
+  if (contact) contactId = contact.id;
+
+  const org = db
+    .prepare(`SELECT id FROM organizations WHERE canonical_key = ? OR lower(display_name) = lower(?) LIMIT 1`)
+    .get(key, entity.trim()) as { id: string } | undefined;
+  if (org) organizationId = org.id;
+
+  if (!contactId && !organizationId) {
+    const mention = db
+      .prepare(
+        `SELECT contact_id, organization_id FROM fact_entity_mentions
+           WHERE fact_id = ? OR normalized_surface = ?
+           ORDER BY confidence DESC LIMIT 1`,
+      )
+      .get(factId, key) as { contact_id: string | null; organization_id: string | null } | undefined;
+    if (mention) {
+      contactId = mention.contact_id;
+      organizationId = mention.organization_id;
+    }
+  }
+
+  if (!contactId && !organizationId) return;
+
+  db.prepare(`UPDATE facts SET entity_contact_id = ?, entity_organization_id = ? WHERE id = ?`).run(
+    contactId,
+    organizationId,
+    factId,
+  );
+}

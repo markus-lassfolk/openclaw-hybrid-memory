@@ -21,6 +21,10 @@ import { dirname, isAbsolute, join, resolve as pathResolve, relative } from "nod
 import { getEnv } from "../../utils/env-manager.js";
 import { expandTilde } from "../../utils/path.js";
 import { escapeRegExp } from "../../utils/text.js";
+import {
+  TOOLS_MD_MANAGED_BEGIN,
+  TOOLS_MD_MANAGED_END,
+} from "../../services/tools-md-rewrite.js";
 
 import type { HybridMemoryConfig } from "../../config.js";
 import { compileHeartbeatMatchers } from "../../services/goal-stewardship-heartbeat.js";
@@ -197,9 +201,19 @@ export function ensureHybridMemoryWorkspaceSkillIfMissing(opts: {
   if (existsSync(dest)) {
     return { path: dest, deployed: false, skippedReason: "already_exists" };
   }
-  // Avoid clobbering a partial or hand-edited tree when SKILL.md alone is missing.
   if (existsSync(destDir)) {
-    return { path: dest, deployed: false, skippedReason: "destination_dir_exists" };
+    try {
+      mkdirSync(destDir, { recursive: true });
+      cpSync(skillMd, dest);
+      const srcRefs = join(bundledHybridMemorySkillDir(opts.pluginRootDir), "references");
+      const destRefs = join(destDir, "references");
+      if (existsSync(srcRefs) && !existsSync(destRefs)) {
+        cpSync(srcRefs, destRefs, { recursive: true });
+      }
+      return { path: dest, deployed: true };
+    } catch (err) {
+      return { path: dest, deployed: false, skippedReason: String(err) };
+    }
   }
   try {
     const skillsDir = join(workspaceRoot, "skills");
@@ -223,8 +237,7 @@ export function ensureHybridMemoryWorkspaceSkillIfMissing(opts: {
   }
 }
 
-const TOOLS_MD_MANAGED_BEGIN = "<!-- openclaw-hybrid-memory:managed-begin -->";
-const TOOLS_MD_MANAGED_END = "<!-- openclaw-hybrid-memory:managed-end -->";
+export { TOOLS_MD_MANAGED_BEGIN, TOOLS_MD_MANAGED_END } from "../../services/tools-md-rewrite.js";
 
 function getToolsMdManagedBlockRe(): RegExp {
   return new RegExp(`${escapeRegExp(TOOLS_MD_MANAGED_BEGIN)}[\\s\\S]*?${escapeRegExp(TOOLS_MD_MANAGED_END)}`);

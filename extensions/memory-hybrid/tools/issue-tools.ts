@@ -10,10 +10,12 @@ import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
 import { stringEnum } from "../utils/typebox.js";
 
 import type { IssueStore } from "../backends/issue-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { isCompactVerbosity } from "../config.js";
 import type { IssueSeverity, IssueStatus } from "../types/issue-types.js";
 import { withErrorTracking } from "../utils/error-tracking.js";
+import { autoLinkIssueToFacts } from "../services/issue-fact-correlation.js";
 
 const ISSUE_STATUSES = ["open", "diagnosed", "fix-attempted", "resolved", "verified", "wont-fix"] as const;
 
@@ -21,13 +23,23 @@ const ISSUE_SEVERITIES = ["low", "medium", "high", "critical"] as const;
 
 interface IssueToolsContext {
   issueStore: IssueStore;
+  factsDb?: FactsDB | null;
   /** Optional config for verbosity-aware output (Issue #282). */
   cfg?: Pick<HybridMemoryConfig, "verbosity">;
 }
 
 export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginApi): void {
-  const { issueStore } = ctx;
+  const { issueStore, factsDb } = ctx;
   const verbosity = ctx.cfg?.verbosity ?? "normal";
+
+  const maybeAutoLink = (issue: import("../types/issue-types.js").Issue): void => {
+    if (!factsDb) return;
+    try {
+      autoLinkIssueToFacts(issue, factsDb, issueStore);
+    } catch {
+      /* non-fatal */
+    }
+  };
 
   // -------------------------------------------------------------------------
   // memory_issue_create
@@ -59,6 +71,7 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
           operation: "issue-create",
           phase: "runtime",
         })();
+        maybeAutoLink(issue);
         const createText = isCompactVerbosity(verbosity)
           ? `Issue: ${issue.id}.`
           : `Created issue "${issue.title}" [${issue.id}] (status: ${issue.status}, severity: ${issue.severity})`;
@@ -117,6 +130,8 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
             phase: "runtime",
           },
         )();
+
+        maybeAutoLink(issue);
 
         const updateText = isCompactVerbosity(verbosity)
           ? `Issue ${issue.id}: ${issue.status}.`
@@ -245,6 +260,10 @@ export function registerIssueTools(ctx: IssueToolsContext, api: ClawdbotPluginAp
           operation: "issue-link-fact",
           phase: "runtime",
         })();
+        if (factsDb) {
+          const issue = issueStore.get(issueId);
+          if (issue) maybeAutoLink(issue);
+        }
         return {
           content: [
             {

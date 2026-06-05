@@ -14,6 +14,7 @@ import {
 import { VAULT_POINTER_PREFIX } from "../services/auto-capture.js";
 import { shouldSuppressEmbeddingError } from "../services/embeddings.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { applyPrependBudget } from "../services/prepend-budget.js";
 import { filterByScope, mergeResults } from "../services/merge-results.js";
 import type { ScopeFilter } from "../types/memory.js";
 import { withHookResolutionApi } from "./hook-resolution-api.js";
@@ -151,7 +152,9 @@ export function registerAuthFailureRecall(
           `memory-hybrid: injecting ${credentialFacts.length} credential facts for ${detection.target}`,
         );
         authFailureRecallsThisSession.set(recallKey, recallCount + 1);
-        return { prependContext: `${hint}\n\n` };
+        const prepend = applyPrependBudget(ctx.prependBudgetRef, `${hint}\n\n`);
+        if (!prepend) return;
+        return { prependContext: prepend };
       }
     } catch (err) {
       if (isRecallContextSuperseded(ctx)) {
