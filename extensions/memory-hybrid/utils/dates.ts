@@ -58,12 +58,12 @@ export function formatDateUtc(sec: number): string {
   return new Date(sec * 1000).toISOString().slice(0, 10);
 }
 
-/** Format epoch milliseconds as ISO 8601 UTC. */
+/** Format epoch milliseconds as ISO 8601 UTC (preserves sub-second precision). */
 export function formatTimestampUtcFromMs(ms: number): string {
   if (!Number.isFinite(ms)) {
     throw new Error(`Invalid epoch milliseconds: ${ms}`);
   }
-  return formatTimestampUtc(Math.floor(ms / 1000));
+  return new Date(ms).toISOString();
 }
 
 /** ISO UTC timestamp for a cutoff N whole days before reference (default: now). */

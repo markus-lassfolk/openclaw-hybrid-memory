@@ -301,6 +301,7 @@ describe("cutoff and offset helpers", () => {
 
   it("formatTimestampUtcFromMs formats milliseconds", () => {
     expect(formatTimestampUtcFromMs(refMs)).toBe("2026-06-05T12:00:00.000Z");
+    expect(formatTimestampUtcFromMs(refMs + 876)).toBe("2026-06-05T12:00:00.876Z");
   });
 
   it("cutoffIsoDaysAgo subtracts whole days", () => {

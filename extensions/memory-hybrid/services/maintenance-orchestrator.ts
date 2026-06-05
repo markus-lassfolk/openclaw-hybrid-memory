@@ -6,7 +6,6 @@
 import type { HybridMemoryConfig } from "../config.js";
 import { is429OrWrapped } from "./chat.js";
 import {
-  readStepGuardTimestampMs,
   stepGuardEligible,
   writeStepGuardTimestampMs,
 } from "./cron-guard.js";
