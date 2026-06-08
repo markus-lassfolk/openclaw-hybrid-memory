@@ -39,6 +39,8 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
 
   if (!cfg.workboard?.enabled) return;
   if (shouldAbort?.()) return;
+  
+  const checkSuperseded = () => shouldAbort?.() ?? false;
 
   const uiIntegrationVerbose = integrationVerbose(cfg);
 
@@ -100,10 +102,19 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
       return;
     }
 
+    if (checkSuperseded()) {
+      api.logger.debug?.(`memory-hybrid: Workboard arm superseded after isAvailable (${connectLabel})`);
+      return;
+    }
+
     clearWorkboardSyncTimer(timers);
 
     api.logger.info(`memory-hybrid: Workboard adapter connected (${connectLabel}) — starting sync`);
     const result = await adapter.sync();
+    if (checkSuperseded()) {
+      api.logger.debug?.(`memory-hybrid: Workboard arm superseded after sync (${connectLabel})`);
+      return;
+    }
     if (result.errors.length > 0) {
       api.logger.warn(
         `memory-hybrid: Workboard sync errors (${connectLabel}): ${result.errors.slice(0, 5).join("; ")}`,

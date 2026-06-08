@@ -700,6 +700,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
         cfg: runtime.cfg,
         api: logApi,
         timers: runtime.timers,
+        shouldAbort: () => registrationGenerationRef.value !== registrationGeneration,
       });
     });
   }
