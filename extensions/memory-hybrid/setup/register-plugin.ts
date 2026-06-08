@@ -646,6 +646,8 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
 
   // Service
 
+  const wasReregister = old != null;
+
   try {
     api.registerService(
       createPluginService({
@@ -686,6 +688,20 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
       operation: "plugin-register:service",
     });
     throw err;
+  }
+
+  // Issue #1893: OpenClaw does not re-run plugin-service.start() on hot reload; re-arm Workboard sync.
+  if (wasReregister && cfg.workboard?.enabled) {
+    void import("./workboard-integration.js").then(({ scheduleWorkboardIntegrationAfterReregister }) => {
+      scheduleWorkboardIntegrationAfterReregister({
+        factsDb: runtime.factsDb,
+        vectorDb: runtime.vectorDb,
+        embeddings: runtime.embeddings,
+        cfg: runtime.cfg,
+        api: logApi,
+        timers: runtime.timers,
+      });
+    });
   }
 
   // Issue #281 -- Verify cron health on boot

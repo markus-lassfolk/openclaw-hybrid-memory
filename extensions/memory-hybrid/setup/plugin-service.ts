@@ -5,7 +5,7 @@ import { resolveDreamCycleLogDir } from "../utils/dream-cycle-paths.js";
 import { nowIso } from "../utils/dates.js";
 import type OpenAI from "openai";
 import type { ClawdbotPluginApi } from "openclaw/plugin-sdk/core";
-import { clearRuntimeTimers } from "../api/plugin-runtime.js";
+import { clearRuntimeTimers, type PluginRuntime } from "../api/plugin-runtime.js";
 import type { CredentialsDB } from "../backends/credentials-db.js";
 import type { EdictStore } from "../backends/edict-store.js";
 import type { FactsDB } from "../backends/facts-db.js";
@@ -560,94 +560,17 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       // Workboard integration: start adapter for bidirectional task/goal sync
       if (cfg.workboard?.enabled) {
-        try {
-          const { createWorkboardAdapter } = await import("../services/workboard-adapter.js");
-          const { loadTaskLedgerFromFacts } = await import("../services/task-ledger-facts.js");
-          const { listGoals } = await import("../services/goal-registry.js");
-          const { applyWorkboardTaskStatusUpdate, applyWorkboardGoalStatusUpdate } = await import(
-            "../services/workboard-facts-sync.js"
-          );
-
-          const workspaceRoot = process.env.OPENCLAW_WORKSPACE ?? join(homedir(), ".openclaw", "workspace");
-          const goalsDir = cfg.goalStewardship?.enabled
-            ? resolveGoalsDir(workspaceRoot, cfg.goalStewardship.goalsDir)
-            : undefined;
-
-          const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN ?? undefined;
-
-          const adapter = createWorkboardAdapter({
-            cfg: {
-              ...cfg.workboard,
-              syncGoals: cfg.workboard.syncGoals && !!goalsDir,
-            },
-            loadTasks: () => loadTaskLedgerFromFacts(factsDb),
-            loadGoals: async () => {
-              if (!goalsDir) return [];
-              try {
-                return await listGoals(goalsDir);
-              } catch {
-                return [];
-              }
-            },
-            updateTaskStatus: (label, newStatus) =>
-              applyWorkboardTaskStatusUpdate(
-                factsDb,
-                vectorDb,
-                embeddings,
-                label,
-                newStatus as import("../services/active-task.js").ActiveTaskStatus,
-                api.logger,
-              ),
-            updateGoalStatus: goalsDir
-              ? (goalId, newStatus) =>
-                  applyWorkboardGoalStatusUpdate(
-                    goalsDir,
-                    goalId,
-                    newStatus as import("../services/goal-stewardship-types.js").GoalStatus,
-                  )
-              : undefined,
-            gatewayToken,
-            verbose: uiIntegrationVerbose,
-          });
-
-          const available = await adapter.isAvailable();
-          if (available) {
-            api.logger.info("memory-hybrid: Workboard adapter connected — starting initial sync");
-            const result = await adapter.sync();
-            if (result.errors.length > 0) {
-              api.logger.warn(`memory-hybrid: Workboard initial sync had errors: ${result.errors.join("; ")}`);
-            }
-
-            // Recurring sync timer
-            const intervalMs = cfg.workboard.syncIntervalMinutes * 60 * 1000;
-            (timers as Record<string, unknown>).workboardSync = {
-              value: setInterval(() => {
-                if (shuttingDown) return;
-                adapter.sync().then((syncResult) => {
-                  if (syncResult.errors.length > 0) {
-                    api.logger.warn?.(
-                      `memory-hybrid: Workboard sync tick errors: ${syncResult.errors.slice(0, 5).join("; ")}`,
-                    );
-                  }
-                }).catch((err) => {
-                  api.logger.warn?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
-                });
-              }, intervalMs),
-            };
-          } else {
-            api.logger.info(
-              "memory-hybrid: Workboard plugin not reachable — sync disabled (will retry on next maintenance cycle)",
-            );
-          }
-        } catch (err) {
-          api.logger.warn?.(
-            `memory-hybrid: Workboard adapter startup failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
-          );
-          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-            subsystem: "plugin-service",
-            operation: "workboard-adapter-start",
-          });
-        }
+        const { armWorkboardIntegration } = await import("./workboard-integration.js");
+        await armWorkboardIntegration({
+          factsDb,
+          vectorDb,
+          embeddings,
+          cfg,
+          api,
+          timers: timers as PluginRuntime["timers"],
+          shouldAbort: () => shuttingDown,
+          connectLabel: "startup",
+        });
       }
 
       // Issue #309: Mission Control dashboard HTTP server
