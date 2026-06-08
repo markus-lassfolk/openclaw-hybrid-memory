@@ -568,7 +568,7 @@ export function createPluginService(ctx: PluginServiceContext) {
           cfg,
           api,
           timers: timers as PluginRuntime["timers"],
-          shouldAbort: () => shuttingDown,
+          shouldAbort: () => timers.shuttingDownRef.value,
           connectLabel: "startup",
         });
       }
@@ -1001,6 +1001,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     },
     stop: async () => {
       shuttingDown = true;
+      timers.shuttingDownRef.value = true;
       // Flush pending error reports with timeout so persisted queue replay can reduce dropped diagnostics.
       if (isErrorReporterActive()) {
         const flushed = await flushErrorReporter(2000).catch(() => false);
