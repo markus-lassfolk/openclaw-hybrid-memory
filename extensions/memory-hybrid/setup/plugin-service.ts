@@ -172,6 +172,7 @@ export function createPluginService(ctx: PluginServiceContext) {
     id: PLUGIN_ID,
     _getVersionCheckPromise: () => versionCheckPromise,
     start: async () => {
+      timers.shuttingDownRef.value = false;
       // Issue #422: surface missing Python deps early; deferred from register() for lighter CLI (issue #1111).
       if (pythonBridge) {
         const { ok, missing, spawnError } = pythonBridge.checkDependencies();
