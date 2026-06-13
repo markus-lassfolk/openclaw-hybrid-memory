@@ -589,16 +589,24 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     if (!ctx.cfg.health.authenticated) {
       return toJson(403, { error: "authentication required" });
     }
-    if (!ctx.vectorDb) {
-      return toJson(503, { error: "vector_db_unavailable" });
-    }
     const url = parseReqUrl(req.url);
     const heapSnapshotRequested = parseBooleanParam(url.searchParams.get("heapSnapshot"));
     const leakVerdict = readLeakVerdictFromHints();
+    const autoMode = (getEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO") ?? "").trim().toLowerCase();
     const shouldAutoSnapshot =
       !heapSnapshotRequested &&
-      parseBooleanParam(getEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO") ?? null) &&
+      autoMode === "critical" &&
       leakVerdict === "likely_leak";
+    if (heapSnapshotRequested || shouldAutoSnapshot) {
+      const snap = writeV8HeapSnapshotWithMeta({
+        trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
+        verdict: leakVerdict,
+      });
+      return toJson(200, { heapSnapshot: snap });
+    }
+    if (!ctx.vectorDb) {
+      return toJson(503, { error: "vector_db_unavailable" });
+    }
     const diag = sanitizePublicMemoryDiagnostics(
       await buildGatewayMemoryDiagnostics({
         factsDb: ctx.factsDb,
@@ -609,13 +617,6 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         variantQueuePending: ctx.variantQueue?.queueLength,
       }),
     );
-    if (heapSnapshotRequested || shouldAutoSnapshot) {
-      const snap = writeV8HeapSnapshotWithMeta({
-        trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
-        verdict: leakVerdict,
-      });
-      return toJson(200, { ...diag, heapSnapshot: snap });
-    }
     return toJson(200, diag);
   });
 
