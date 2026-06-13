@@ -676,4 +676,100 @@ describe("registerPublicApiRoutes", () => {
 
     expect(routes).toHaveLength(0);
   });
+
+  // -----------------------------------------------------------------------
+  // ?heapSnapshot=1 support (Ref #1897 Phase 1 Option 1a)
+  // -----------------------------------------------------------------------
+
+  it("memory-diagnostics writes a V8 heap snapshot when ?heapSnapshot=1 is set", async () => {
+    setEnv("OPENCLAW_HEAP_SNAPSHOT_DIR", join(tmp, "snapshots"));
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(true),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}?heapSnapshot=1`),
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.heapSnapshot).toBeDefined();
+    expect(body.heapSnapshot.trigger).toBe("manual_query");
+    expect(body.heapSnapshot.path).toMatch(/snapshots\/[^/]+\.heapsnapshot$/);
+    expect(body.heapSnapshot.bytes).toBeGreaterThan(0);
+    expect(body.heapSnapshot.pid).toBe(process.pid);
+    expect(typeof body.heapSnapshot.durationMs).toBe("number");
+    // Backwards compat: the diagnostics body is still shaped the same when
+    // the snapshot block is present, no field is dropped.
+    expect(body.process.nativeRssBytes).toBeGreaterThanOrEqual(0);
+    expect(body.hybridMemory.reregisterMetrics).toBeDefined();
+  });
+
+  it("memory-diagnostics with heapSnapshot=0 omits the snapshot block", async () => {
+    setEnv("OPENCLAW_HEAP_SNAPSHOT_DIR", join(tmp, "snapshots-noop"));
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(true),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`),
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.heapSnapshot).toBeUndefined();
+  });
+
+  it("memory-diagnostics rejects ?heapSnapshot=1 when unauthenticated", async () => {
+    setEnv("OPENCLAW_HEAP_SNAPSHOT_DIR", join(tmp, "snapshots-auth"));
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(false),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}?heapSnapshot=1`),
+    );
+    expect(res.status).toBe(403);
+    expect(JSON.parse(res.body).error).toBe("authentication required");
+  });
 });
