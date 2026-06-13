@@ -937,10 +937,7 @@ error: unknown command 'bar'
       const exitPath = join(tmpDir, "generate-auto-skills.exit.txt");
       const logPath = join(tmpDir, "generate-auto-skills.log");
       writeFileSync(exitPath, "2026-05-08T02:15:30Z generate-auto-skills exit=0\n");
-      writeFileSync(
-        logPath,
-        "generate-auto-skills failedValidation=2 failedEval=1 semantic=partial\n",
-      );
+      writeFileSync(logPath, "generate-auto-skills failedValidation=2 failedEval=1 semantic=partial\n");
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["generate-auto-skills"]);
 
@@ -1394,10 +1391,7 @@ error: unknown command 'bar'
       const exitPath = join(tmpDir, "crystallization-proposals.exit.txt");
       const logPath = join(tmpDir, "crystallization-proposals.log");
       writeFileSync(exitPath, "2026-05-08T02:15:30Z crystallization-proposals exit=0\n");
-      writeFileSync(
-        logPath,
-        "crystallization-proposals stores unavailable (change feed missing semantic=partial)\n",
-      );
+      writeFileSync(logPath, "crystallization-proposals stores unavailable (change feed missing semantic=partial)\n");
 
       const result = validateMaintenanceExecution(exitPath, logPath, ["crystallization-proposals"]);
 
@@ -1988,8 +1982,7 @@ error: unknown command 'bar'
             {
               name: "repair-vectors",
               status: "ok",
-              summary:
-                "reembedded=1/1 failures=0 orphans=2 orphan_cleanup_failed=1 semantic=partial",
+              summary: "reembedded=1/1 failures=0 orphans=2 orphan_cleanup_failed=1 semantic=partial",
               durationMs: 10,
               semanticOutcome: "partial",
             },

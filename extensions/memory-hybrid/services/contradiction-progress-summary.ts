@@ -174,8 +174,7 @@ export async function runContradictionMaintenanceAutoStep(params: {
   };
   const previousConsecutive = readConsecutiveNoProgressRuns(params.openclawHome);
   const evaluation = evaluateContradictionProgress(metrics, {
-    degradedAmbiguousThreshold:
-      params.degradedAmbiguousThreshold ?? DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
+    degradedAmbiguousThreshold: params.degradedAmbiguousThreshold ?? DEFAULT_AMBIGUOUS_BACKLOG_DEGRADED_THRESHOLD,
     degradedConsecutiveThreshold:
       params.degradedConsecutiveThreshold ?? ORCHESTRATOR_CONTRADICTION_DEGRADED_CONSECUTIVE_THRESHOLD,
     previousConsecutiveNoProgressRuns: previousConsecutive,

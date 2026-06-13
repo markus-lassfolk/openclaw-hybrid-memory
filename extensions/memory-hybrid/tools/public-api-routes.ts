@@ -9,7 +9,11 @@ import type { NarrativesDB } from "../backends/narratives-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ActiveTaskProjectionConfig } from "../config.js";
 import { isNonActionableSubagentPlaceholderTask } from "../services/active-task.js";
-import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot, sanitizePublicMemoryDiagnostics } from "../services/gateway-memory-diagnostics.js";
+import {
+  buildGatewayMemoryDiagnostics,
+  buildProcessMemorySnapshot,
+  sanitizePublicMemoryDiagnostics,
+} from "../services/gateway-memory-diagnostics.js";
 import { buildPublicExportBundle } from "../services/public-export-bundle.js";
 import {
   applyActiveTaskProjectionFilters,
@@ -107,20 +111,16 @@ function parseBooleanParam(raw: string | null): boolean {
 }
 
 /**
- * Read the current V8 heap leak verdict without forcing a full diagnostics
- * build. Mirrors the conservative bounds used in buildLeakHints so the
- * auto-snapshot path is consistent with the public-facing `leakHints` block.
+ * Derive leak verdict from the diagnostics leakHints array. Mirrors the
+ * severity classification used in buildLeakHints so the auto-snapshot path
+ * is consistent with the public-facing `leakHints` block.
  */
-function readLeakVerdictFromHints(): "likely_leak" | "watch" | "ok" | "unknown" {
-  try {
-    const usage = process.memoryUsage();
-    const heapUsedMb = usage.heapUsed / (1024 * 1024);
-    if (heapUsedMb >= 1500) return "likely_leak";
-    if (heapUsedMb >= 1000) return "watch";
-    return "ok";
-  } catch {
-    return "unknown";
-  }
+function readLeakVerdictFromHints(leakHints: string[]): "likely_leak" | "watch" | "ok" | "unknown" {
+  if (!Array.isArray(leakHints) || leakHints.length === 0) return "ok";
+  const hasRepeatedTeardown = leakHints.some((h) => h.startsWith("repeated_lance_sqlite_teardown"));
+  const hasHighNativeRss = leakHints.some((h) => h.startsWith("native_rss_high_with_db_reuse"));
+  if (hasRepeatedTeardown || hasHighNativeRss) return "likely_leak";
+  return "watch";
 }
 
 const HEAP_SNAPSHOT_DIR = "memory/heap-snapshots";
@@ -191,7 +191,6 @@ function writeV8HeapSnapshotWithMeta(opts: {
     durationMs: Date.now() - started,
   };
 }
-
 
 function resolveActiveTaskConfig(cfg: PublicApiConfig): ActiveTaskConfigSubset {
   const raw = cfg.activeTask ?? {};
@@ -589,24 +588,11 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
     if (!ctx.cfg.health.authenticated) {
       return toJson(403, { error: "authentication required" });
     }
-    const url = parseReqUrl(req.url);
-    const heapSnapshotRequested = parseBooleanParam(url.searchParams.get("heapSnapshot"));
-    const leakVerdict = readLeakVerdictFromHints();
-    const autoMode = (getEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO") ?? "").trim().toLowerCase();
-    const shouldAutoSnapshot =
-      !heapSnapshotRequested &&
-      autoMode === "critical" &&
-      leakVerdict === "likely_leak";
-    if (heapSnapshotRequested || shouldAutoSnapshot) {
-      const snap = writeV8HeapSnapshotWithMeta({
-        trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
-        verdict: leakVerdict,
-      });
-      return toJson(200, { heapSnapshot: snap });
-    }
     if (!ctx.vectorDb) {
       return toJson(503, { error: "vector_db_unavailable" });
     }
+    const url = parseReqUrl(req.url);
+    const heapSnapshotRequested = parseBooleanParam(url.searchParams.get("heapSnapshot"));
     const diag = sanitizePublicMemoryDiagnostics(
       await buildGatewayMemoryDiagnostics({
         factsDb: ctx.factsDb,
@@ -617,6 +603,16 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
         variantQueuePending: ctx.variantQueue?.queueLength,
       }),
     );
+    const leakVerdict = readLeakVerdictFromHints(diag.leakHints);
+    const autoMode = (getEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO") ?? "").trim().toLowerCase();
+    const shouldAutoSnapshot = !heapSnapshotRequested && autoMode === "critical" && leakVerdict === "likely_leak";
+    if (heapSnapshotRequested || shouldAutoSnapshot) {
+      const snap = writeV8HeapSnapshotWithMeta({
+        trigger: shouldAutoSnapshot ? "auto_critical_leak" : "manual_query",
+        verdict: leakVerdict,
+      });
+      return toJson(200, { ...diag, heapSnapshot: snap });
+    }
     return toJson(200, diag);
   });
 
@@ -664,7 +660,9 @@ export function registerPublicApiRoutes(ctx: PublicApiRoutesContext, api: Clawdb
               ...scopeFieldsFromEntry(existing),
             });
             ctx.factsDb.supersede(factId, stored.id);
-            pluginLogger.info(`memory-hybrid: fact ${factId} updated (superseded → ${stored.id}) via HTTP /fact/mutate`);
+            pluginLogger.info(
+              `memory-hybrid: fact ${factId} updated (superseded → ${stored.id}) via HTTP /fact/mutate`,
+            );
             return toJson(200, {
               ok: true,
               superseded: factId,

@@ -332,7 +332,8 @@ describe("maintenance-orchestrator", () => {
       ],
     ]);
     const result = await runMaintenanceOrchestrator(
-      { cfg: { ...minimalCfg(), autoClassify: { enabled: true, batchSize: 20 } } as HybridMemoryConfig,
+      {
+        cfg: { ...minimalCfg(), autoClassify: { enabled: true, batchSize: 20 } } as HybridMemoryConfig,
         runners,
         openclawDir,
       },

@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FactsDB } from "../backends/facts-db.js";
-import { buildGatewayMemoryDiagnostics, buildProcessMemorySnapshot, sanitizePublicMemoryDiagnostics } from "../services/gateway-memory-diagnostics.js";
+import {
+  buildGatewayMemoryDiagnostics,
+  buildProcessMemorySnapshot,
+  sanitizePublicMemoryDiagnostics,
+} from "../services/gateway-memory-diagnostics.js";
 import { resetReregisterPolicyForTests } from "../setup/reregister-policy.js";
 import { setEnv } from "../utils/env-manager.js";
 

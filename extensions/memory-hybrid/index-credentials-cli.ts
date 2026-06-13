@@ -1,5 +1,13 @@
 /** Credentials subcommands that only need parsed config + CredentialsDB (issue #1883). */
-const CREDENTIALS_FAST_PATH_SUBCOMMANDS = new Set(["get", "list", "vault-status", "audit", "encrypt-vault", "rekey-vault", "prune"]);
+const CREDENTIALS_FAST_PATH_SUBCOMMANDS = new Set([
+  "get",
+  "list",
+  "vault-status",
+  "audit",
+  "encrypt-vault",
+  "rekey-vault",
+  "prune",
+]);
 
 /**
  * Detect vault-only CLI invocations that should skip full hybrid-memory bootstrap.

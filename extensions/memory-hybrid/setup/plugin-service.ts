@@ -506,7 +506,11 @@ export function createPluginService(ctx: PluginServiceContext) {
       if (cfg.wikiIntegration?.enabled && cfg.wikiIntegration.publicArtifacts) {
         try {
           const { registerPublicArtifactsBestEffort } = await import("../services/public-artifacts-provider.js");
-          registerPublicArtifactsBestEffort(api as Parameters<typeof registerPublicArtifactsBestEffort>[0], factsDb, uiIntegrationVerbose);
+          registerPublicArtifactsBestEffort(
+            api as Parameters<typeof registerPublicArtifactsBestEffort>[0],
+            factsDb,
+            uiIntegrationVerbose,
+          );
         } catch (err) {
           api.logger.warn?.(
             `memory-hybrid: publicArtifacts registration failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
@@ -623,15 +627,18 @@ export function createPluginService(ctx: PluginServiceContext) {
             (timers as Record<string, unknown>).workboardSync = {
               value: setInterval(() => {
                 if (shuttingDown) return;
-                adapter.sync().then((syncResult) => {
-                  if (syncResult.errors.length > 0) {
-                    api.logger.warn?.(
-                      `memory-hybrid: Workboard sync tick errors: ${syncResult.errors.slice(0, 5).join("; ")}`,
-                    );
-                  }
-                }).catch((err) => {
-                  api.logger.warn?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
-                });
+                adapter
+                  .sync()
+                  .then((syncResult) => {
+                    if (syncResult.errors.length > 0) {
+                      api.logger.warn?.(
+                        `memory-hybrid: Workboard sync tick errors: ${syncResult.errors.slice(0, 5).join("; ")}`,
+                      );
+                    }
+                  })
+                  .catch((err) => {
+                    api.logger.warn?.(`memory-hybrid: Workboard sync tick failed: ${err}`);
+                  });
               }, intervalMs),
             };
           } else {

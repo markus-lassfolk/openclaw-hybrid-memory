@@ -617,15 +617,9 @@ describe("registerPublicApiRoutes", () => {
 
   it("fact mutate rejects unauthenticated callers", async () => {
     const { api, routes } = makeApi();
-    registerPublicApiRoutes(
-      { cfg: makeCfg(false), factsDb, narrativesDb, factMutationsEnabled: true },
-      api,
-    );
+    registerPublicApiRoutes({ cfg: makeCfg(false), factsDb, narrativesDb, factMutationsEnabled: true }, api);
     const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}/fact/mutate`)!;
-    const res = await invokeNodeHttpRoute(
-      route.handler,
-      fakeReq(`${PUBLIC_API_PREFIX}/fact/mutate`),
-    );
+    const res = await invokeNodeHttpRoute(route.handler, fakeReq(`${PUBLIC_API_PREFIX}/fact/mutate`));
     expect(res.status).toBe(403);
     expect(JSON.parse(res.body).error).toBe("authentication required");
   });
