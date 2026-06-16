@@ -336,8 +336,16 @@ export function buildCliMaintenanceRunners(
 
   set("evolution-pass", async () => {
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const r = await runEvolutionPass(b.factsDb.getRawDb(), 200, b.cfg.lifecycle);
-    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} semantic=success`;
+    const { getCronModelConfig, getLLMModelPreference } = await import("../../../config/index.js");
+    const nanoModels = getLLMModelPreference(getCronModelConfig(b.cfg), "nano");
+    const openai = (b as unknown as { openai?: import("openai").default }).openai;
+    const logger = (b as unknown as { logger?: { info?: (s: string) => void; warn?: (s: string) => void } }).logger;
+    const r = await runEvolutionPass(b.factsDb.getRawDb(), 200, b.cfg.lifecycle, {
+      openai,
+      nanoModels,
+      logger,
+    });
+    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} llm_calls=${r.llmCalls} semantic=success`;
   });
 
   set("per-folder-context", async () => {
