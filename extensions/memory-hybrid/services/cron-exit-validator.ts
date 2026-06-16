@@ -328,14 +328,9 @@ function collectDreamCyclePipelineLog(logContent: string): string {
   return chunks.filter(Boolean).join("\n");
 }
 
-function isDiagnosticsArtifactInScope(
-  jobName: string,
-  requiredSteps: string[],
-  ledgerSteps: ExitStep[],
-): boolean {
+function isDiagnosticsArtifactInScope(jobName: string, requiredSteps: string[], ledgerSteps: ExitStep[]): boolean {
   return (
-    isStepInValidationScope("diagnostics", requiredSteps, ledgerSteps) ||
-    /\b(?:incident|diagnostic)\b/i.test(jobName)
+    isStepInValidationScope("diagnostics", requiredSteps, ledgerSteps) || /\b(?:incident|diagnostic)\b/i.test(jobName)
   );
 }
 
@@ -468,7 +463,7 @@ const STEP_LOG_LINE_ALIASES: Record<string, RegExp[]> = {
     /Dream cycle (?:status|finished)/i,
     /Core stage failures:/i,
   ],
-  "diagnostics": [/vm memory incident/i, /incident bundle/i, /memory-diagnostics-live\.json/i],
+  diagnostics: [/vm memory incident/i, /incident bundle/i, /memory-diagnostics-live\.json/i],
   "audit-health": [/final-audit\.json/i, /\bfinal audit\b/i],
 };
 
@@ -534,11 +529,7 @@ function getValidationScopeStepNames(requiredSteps: string[], ledgerSteps: ExitS
   return [...names];
 }
 
-function collectValidationScopeLog(
-  logContent: string,
-  requiredSteps: string[],
-  ledgerSteps: ExitStep[],
-): string {
+function collectValidationScopeLog(logContent: string, requiredSteps: string[], ledgerSteps: ExitStep[]): string {
   const orchestratorStepNames = new Set(MAINTENANCE_STEPS.map((step) => step.name));
   const scopeSteps = getValidationScopeStepNames(requiredSteps, ledgerSteps);
   const knownSteps = scopeSteps.filter((step) => orchestratorStepNames.has(step));
@@ -549,11 +540,7 @@ function collectValidationScopeLog(
     .join("\n");
 }
 
-function isStepInValidationScope(
-  stepName: string,
-  requiredSteps: string[],
-  ledgerSteps: ExitStep[],
-): boolean {
+function isStepInValidationScope(stepName: string, requiredSteps: string[], ledgerSteps: ExitStep[]): boolean {
   return requiredSteps.includes(stepName) || ledgerSteps.some((step) => step.step === stepName);
 }
 
@@ -924,17 +911,15 @@ function collectMaintenanceTelemetryIssues(params: {
   const reflectMetaStatusPartial =
     /\breflect-meta\b[\s\S]{0,120}\bstatus=(partial|degraded)\b/i.test(reflectMetaLog) ||
     (/\bmetaStored=\d+/i.test(reflectMetaLog) && /\bstatus=(partial|degraded)\b/i.test(reflectMetaLog));
-  const reflectMetaEmbedFailuresMatch = reflectMetaLog.match(/reflect-meta — finished:[\s\S]*?(\d+) embed failure\(s\)/i);
+  const reflectMetaEmbedFailuresMatch = reflectMetaLog.match(
+    /reflect-meta — finished:[\s\S]*?(\d+) embed failure\(s\)/i,
+  );
   const reflectMetaEmbedFailures =
     reflectMetaEmbedFailuresMatch != null ? Number.parseInt(reflectMetaEmbedFailuresMatch[1] ?? "0", 10) : 0;
   const reflectMetaValidSkip =
     /\bzero_metas_reason\s*[=:]\s*valid_no_actionable_metas\b/i.test(reflectMetaLog) ||
     /\bzero_metas_reason\s*[=:]\s*insufficient_patterns\b/i.test(reflectMetaLog);
-  if (
-    reflectMetaDetected &&
-    !reflectMetaValidSkip &&
-    (reflectMetaStatusPartial || reflectMetaEmbedFailures > 0)
-  ) {
+  if (reflectMetaDetected && !reflectMetaValidSkip && (reflectMetaStatusPartial || reflectMetaEmbedFailures > 0)) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -1341,11 +1326,7 @@ function collectMaintenanceTelemetryIssues(params: {
   const passiveObserverDetected = isStepInValidationScope("passive-observer", requiredSteps, ledgerSteps);
   const passiveObserverLog = passiveObserverDetected ? extractStepLog(logContent, "passive-observer") : "";
   const passiveObserverErrors = parsePositiveMetric(passiveObserverLog, "errors");
-  if (
-    passiveObserverDetected &&
-    typeof passiveObserverErrors === "number" &&
-    passiveObserverErrors > 0
-  ) {
+  if (passiveObserverDetected && typeof passiveObserverErrors === "number" && passiveObserverErrors > 0) {
     addMaintenanceIssue(
       issues,
       buildMaintenanceIssue({
@@ -1499,8 +1480,7 @@ function collectMaintenanceTelemetryIssues(params: {
     const extracted = extractAuditHealthJsonFromLog(auditHealthLog);
     if (extracted.kind === "ok") {
       const report = extracted.value;
-      const warningCount =
-        typeof report.warningCount === "number" ? Math.max(0, report.warningCount) : 0;
+      const warningCount = typeof report.warningCount === "number" ? Math.max(0, report.warningCount) : 0;
       const errorCount = typeof report.errorCount === "number" ? Math.max(0, report.errorCount) : 0;
       const reportExitCode = typeof report.exitCode === "number" ? report.exitCode : 0;
       const exitReason = typeof report.exitReason === "string" ? report.exitReason.trim() : "";
@@ -1548,7 +1528,11 @@ function collectMaintenanceTelemetryIssues(params: {
     );
   }
 
-  const crystallizationProposalsDetected = isStepInValidationScope("crystallization-proposals", requiredSteps, ledgerSteps);
+  const crystallizationProposalsDetected = isStepInValidationScope(
+    "crystallization-proposals",
+    requiredSteps,
+    ledgerSteps,
+  );
   const crystallizationProposalsLog = crystallizationProposalsDetected
     ? extractStepLog(logContent, "crystallization-proposals")
     : "";
@@ -1640,9 +1624,8 @@ function collectMaintenanceTelemetryIssues(params: {
 
   const scopedValidationLog = collectValidationScopeLog(logContent, requiredSteps, ledgerSteps);
   const hiddenLlmFailure =
-    /(?:llm call failed|failed its llm call|provider call failed|model request failed)/i.test(
-      scopedValidationLog,
-    ) && failedSteps.length === 0;
+    /(?:llm call failed|failed its llm call|provider call failed|model request failed)/i.test(scopedValidationLog) &&
+    failedSteps.length === 0;
   if (hiddenLlmFailure) {
     addMaintenanceIssue(
       issues,
@@ -1795,10 +1778,7 @@ export const CROSS_CUTTING_GUARD_FAILURE_CLASSES = ["hidden_llm_failure", "curso
 
 export function isGuardBlockingSemanticIssue(issue: MaintenanceTelemetryIssue): boolean {
   if (issue.failureCategory !== "semantic_failure") return false;
-  if (
-    issue.failureClass === "hidden_llm_failure" ||
-    issue.failureClass === "cursor_not_advanced"
-  ) {
+  if (issue.failureClass === "hidden_llm_failure" || issue.failureClass === "cursor_not_advanced") {
     return true;
   }
   return (GUARD_BLOCKING_SEMANTIC_STEP_NAMES as readonly string[]).includes(issue.stepName);
@@ -1819,9 +1799,7 @@ export function resolveValidateCronExitCode(result: ExitValidationResult): 0 | 1
   }
 
   const hasMechanicalIssue =
-    result.missingSteps.length > 0 ||
-    result.failedSteps.length > 0 ||
-    result.maintenanceStatus === "partial";
+    result.missingSteps.length > 0 || result.failedSteps.length > 0 || result.maintenanceStatus === "partial";
 
   const hasBlockingSemanticIssue = result.reportableIssues.some(isGuardBlockingSemanticIssue);
 
@@ -1964,10 +1942,7 @@ export function validateMaintenanceExecution(
   if (logPath && failedSteps.some((s) => s.step === "audit-health")) {
     for (const step of failedSteps) {
       if (step.step !== "audit-health") continue;
-      const inferred = inferAuditHealthFailureReason(
-        step.exitCode,
-        extractStepLog(logContent, "audit-health"),
-      );
+      const inferred = inferAuditHealthFailureReason(step.exitCode, extractStepLog(logContent, "audit-health"));
       step.failureReason = inferred.failureReason;
       step.strictFailureReason = inferred.strictFailureReason;
     }
@@ -2215,11 +2190,7 @@ function mergeSummaryWithLedgerChecks(
         wrapperMissing.push(required);
         continue;
       }
-      if (
-        wrapper.exitCode === 1 ||
-        (wrapper.exitCode === 2 && !allowSkip) ||
-        wrapper.status === "failed"
-      ) {
+      if (wrapper.exitCode === 1 || (wrapper.exitCode === 2 && !allowSkip) || wrapper.status === "failed") {
         wrapperFailures.push(wrapper);
       }
       if ((wrapper.exitCode !== 0 || wrapper.status === "failed") && summary.exitCode === 0) {
@@ -2364,9 +2335,7 @@ export function validateFromSummaryJson(
     const isConsolidatedMode = requiredSteps.length > 0 && requiredSteps.every((name) => !present.has(name));
     const missingSteps = isConsolidatedMode ? [] : requiredSteps.filter((name) => !present.has(name));
     const failedSteps = steps.filter(
-      (s) =>
-        (isConsolidatedMode || requiredSteps.includes(s.step)) &&
-        (s.exitCode !== 0 || s.status === "failed"),
+      (s) => (isConsolidatedMode || requiredSteps.includes(s.step)) && (s.exitCode !== 0 || s.status === "failed"),
     );
 
     const semanticOutcomes = summary.steps

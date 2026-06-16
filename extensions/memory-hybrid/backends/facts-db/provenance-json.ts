@@ -79,9 +79,7 @@ export type ProvenanceSourceFactSummary = {
 };
 
 type ProvenanceFactLookup = {
-  getById(
-    id: string,
-  ): {
+  getById(id: string): {
     id: string;
     text: string;
     category?: string;

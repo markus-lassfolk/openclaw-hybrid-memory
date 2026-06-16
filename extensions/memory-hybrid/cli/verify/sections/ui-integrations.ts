@@ -39,7 +39,9 @@ export async function runVerifyUiIntegrationsSection(state: VerifyRunState): Pro
           );
         }
         if (mirror.lastSyncFactCount != null && mirror.lastSyncFactCount < mirror.exportableFactCount) {
-          log(`${WARN_LINE} Mirror may be stale — run \`openclaw hybrid-mem wiki export\` or wait for the next timer tick`);
+          log(
+            `${WARN_LINE} Mirror may be stale — run \`openclaw hybrid-mem wiki export\` or wait for the next timer tick`,
+          );
           warnings.push("wiki integration: workspace mirror fact count lags database");
         }
       } else {
@@ -68,7 +70,9 @@ export async function runVerifyUiIntegrationsSection(state: VerifyRunState): Pro
     log(
       `  syncTasks: ${workboard.syncTasks ? "on" : "off"}, syncGoals: ${workboard.syncGoals ? "on" : "off"}, bidirectional: ${workboard.bidirectional ? "on" : "off"}`,
     );
-    log(`  gatewayUrl: ${workboard.gatewayUrl}, interval: ${workboard.syncIntervalMinutes} min, tag: ${workboard.cardTag}`);
+    log(
+      `  gatewayUrl: ${workboard.gatewayUrl}, interval: ${workboard.syncIntervalMinutes} min, tag: ${workboard.cardTag}`,
+    );
 
     const token = getEnv("OPENCLAW_GATEWAY_TOKEN")?.trim() || undefined;
     const probe = await probeWorkboardRpc(workboard.gatewayUrl, token);
