@@ -111,9 +111,8 @@ function parseBooleanParam(raw: string | null): boolean {
 }
 
 /**
- * Derive leak verdict from the diagnostics leakHints array. Mirrors the
- * severity classification used in buildLeakHints so the auto-snapshot path
- * is consistent with the public-facing `leakHints` block.
+ * Derive leak verdict from `leakHints` strings emitted by buildLeakHints.
+ * `likely_leak` when repeated teardown or high native RSS hints are present.
  */
 function readLeakVerdictFromHints(leakHints: string[]): "likely_leak" | "watch" | "ok" | "unknown" {
   if (!Array.isArray(leakHints) || leakHints.length === 0) return "ok";
@@ -161,7 +160,9 @@ function writeV8HeapSnapshotWithMeta(opts: {
     dir = resolveHeapSnapshotDir();
     mkdirSync(dir, { recursive: true });
   } catch (err) {
-    pluginLogger.warn(`memory-diagnostics: failed to create heap snapshot dir: ${(err as Error).message}`);
+    pluginLogger.warn(
+      `memory-diagnostics: failed to create heap snapshot dir: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
   const filename = `${timestampSlug()}-${process.pid}.heapsnapshot`;
@@ -170,7 +171,9 @@ function writeV8HeapSnapshotWithMeta(opts: {
   try {
     actualPath = writeHeapSnapshot(fullPath);
   } catch (err) {
-    pluginLogger.warn(`memory-diagnostics: v8.writeHeapSnapshot failed: ${(err as Error).message}`);
+    pluginLogger.warn(
+      `memory-diagnostics: v8.writeHeapSnapshot failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return null;
   }
   let bytes = 0;

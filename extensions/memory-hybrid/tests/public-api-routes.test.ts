@@ -14,6 +14,7 @@ import {
   PUBLIC_API_PREFIX,
   registerPublicApiRoutes,
 } from "../tools/public-api-routes.js";
+import { recordReregisterFullTeardown, resetReregisterPolicyForTests } from "../setup/reregister-policy.js";
 import { setEnv } from "../utils/env-manager.js";
 import { invokeNodeHttpRoute } from "./helpers/invoke-node-http-route.js";
 
@@ -39,6 +40,7 @@ describe("registerPublicApiRoutes", () => {
 
   afterEach(() => {
     setEnv("OPENCLAW_WORKSPACE", prevWorkspace);
+    resetReregisterPolicyForTests();
     rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -714,6 +716,38 @@ describe("registerPublicApiRoutes", () => {
 
   it("memory-diagnostics with heapSnapshot=0 omits the snapshot block", async () => {
     setEnv("OPENCLAW_HEAP_SNAPSHOT_DIR", join(tmp, "snapshots-noop"));
+    resetReregisterPolicyForTests();
+    const { api, routes } = makeApi();
+    const vectorDb = {
+      getPath: () => join(tmp, "lancedb"),
+      count: async () => 0,
+      isInitialized: () => false,
+    };
+    registerPublicApiRoutes(
+      {
+        cfg: makeCfg(true),
+        factsDb,
+        narrativesDb,
+        vectorDb: vectorDb as never,
+        resolvedSqlitePath: join(tmp, "facts.db"),
+      },
+      api,
+    );
+    const route = routes.find((r) => r.path === `${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}`)!;
+    const res = await invokeNodeHttpRoute(
+      route.handler,
+      fakeReq(`${PUBLIC_API_PREFIX}${PUBLIC_API_PATHS.memoryDiagnostics}?heapSnapshot=0`),
+    );
+    expect(res.status).toBe(200);
+    const body = JSON.parse(res.body);
+    expect(body.heapSnapshot).toBeUndefined();
+  });
+
+  it("memory-diagnostics auto-snapshots on likely_leak when OPENCLAW_HEAP_SNAPSHOT_AUTO=critical", async () => {
+    setEnv("OPENCLAW_HEAP_SNAPSHOT_DIR", join(tmp, "snapshots-auto"));
+    setEnv("OPENCLAW_HEAP_SNAPSHOT_AUTO", "critical");
+    resetReregisterPolicyForTests();
+    for (let i = 0; i < 3; i++) recordReregisterFullTeardown();
     const { api, routes } = makeApi();
     const vectorDb = {
       getPath: () => join(tmp, "lancedb"),
@@ -737,7 +771,11 @@ describe("registerPublicApiRoutes", () => {
     );
     expect(res.status).toBe(200);
     const body = JSON.parse(res.body);
-    expect(body.heapSnapshot).toBeUndefined();
+    expect(body.leakHints.some((h: string) => h.startsWith("repeated_lance_sqlite_teardown"))).toBe(true);
+    expect(body.heapSnapshot).toBeDefined();
+    expect(body.heapSnapshot.trigger).toBe("auto_critical_leak");
+    expect(body.heapSnapshot.verdict).toBe("likely_leak");
+    expect(body.heapSnapshot.path).toMatch(/snapshots-auto\/[^/]+\.heapsnapshot$/);
   });
 
   it("memory-diagnostics rejects ?heapSnapshot=1 when unauthenticated", async () => {
