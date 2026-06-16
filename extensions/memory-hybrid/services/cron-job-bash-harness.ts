@@ -281,3 +281,8 @@ export function buildHybridMemCronTaskMessage(
   ].join("\n");
   return [preamble, orchestration].filter(Boolean).join("\n\n");
 }
+
+/** True when a cron payload uses the bash harness that exports HM_SUMMARY (#1877, #1925). */
+export function maintenanceCronExpectsSummaryArtifact(message: string): boolean {
+  return message.includes("HM_SUMMARY") || message.includes("validate-cron-exit");
+}

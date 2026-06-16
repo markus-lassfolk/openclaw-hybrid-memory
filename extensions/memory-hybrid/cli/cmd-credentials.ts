@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 
 import type { CredentialType } from "../config.js";
 import { CREDENTIAL_REDACTION_MIGRATION_FLAG, migrateCredentialsToVault } from "../services/credential-migration.js";
-import { auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
+import { auditCredentialType, auditCredentialValue, auditServiceName, normalizeServiceForDedup } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import type { HandlerContext } from "./handlers.js";
 import type {
@@ -215,7 +215,7 @@ export function runCredentialsAuditForCli(ctx: HandlerContext): CredentialsAudit
   for (const row of list) {
     const value = row.value;
     const updated = row.updated;
-    const flags = [...auditCredentialValue(value, row.type), ...auditServiceName(row.service)];
+    const flags = [...auditCredentialType(row.type), ...auditCredentialValue(value, row.type), ...auditServiceName(row.service)];
     const normKey = `${normalizeServiceForDedup(row.service)}:${row.type}`;
     if (!valueToEntries.has(value)) valueToEntries.set(value, []);
     valueToEntries.get(value)?.push({ service: row.service, type: row.type, updated });

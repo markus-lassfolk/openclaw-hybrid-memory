@@ -39,12 +39,14 @@ export function registerCredentialTools(ctx: PluginContext, api: ClawdbotPluginA
         name: "credential_store",
         label: "Store Credential",
         description:
-          "Store a credential (API key, token, password, SSH key, etc.) in encrypted storage. Use exact service names for reliable retrieval.",
+          "Store a credential (API key, token, password, SSH key, etc.) in encrypted storage. Use exact service names for reliable retrieval. Put endpoint/base URLs in the optional `url` parameter — not in `type` (allowed types: token, password, api_key, ssh, bearer, other).",
         parameters: Type.Object({
           service: Type.String({ description: "Service name (e.g. 'home-assistant', 'github', 'openai')" }),
           type: stringEnum(CREDENTIAL_TYPES as unknown as readonly string[]),
-          value: Type.String({ description: "The secret value (token, password, API key)" }),
-          url: Type.Optional(Type.String({ description: "Optional URL or endpoint" })),
+          value: Type.String({ description: "The secret value (token, password, API key, bearer token, etc.)" }),
+          url: Type.Optional(
+            Type.String({ description: "Optional endpoint/base URL for this service (not a credential type)" }),
+          ),
           notes: Type.Optional(Type.String({ description: "Optional notes" })),
           expires: Type.Optional(Type.Number({ description: "Optional Unix timestamp when credential expires" })),
         }),

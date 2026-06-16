@@ -21,6 +21,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Credentials vault type=url:** Reject invalid credential types at store time; auto-migrate legacy `type=url` rows (merge URL into sibling bearer/token entry or convert to `type=other` with `url` field). Clarify in tools/docs that endpoint URLs use the `url` parameter, not `type`.
+
+---
+
+## [2026.6.170] - 2026-06-17
+
+### Fixed
+
+- **#1925 verify false positives:** Standalone plugin cron jobs (`workshop-approval-reminder`, pending digests, log analyzer, sensor sweep, lifecycle sync) are no longer flagged as superseded legacy jobs or disabled by `verify --fix` under consolidated orchestrator mode. Workboard verify/sync falls back to `openclaw gateway call` when HTTP `/rpc/*` is unavailable on OpenClaw 6.8+. Summary.json warnings are scoped to harness-enabled cron payloads and the most recent nightly run only.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.170**.
+
 ---
 
 ## [2026.6.161] - 2026-06-16

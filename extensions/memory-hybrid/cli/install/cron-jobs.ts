@@ -233,6 +233,8 @@ const MAINTENANCE_CRON_JOBS: Array<
     featureGate?: string;
     /** When true, normalize existing jobs but do not add if missing (#1921). */
     normalizeOnly?: boolean;
+    /** When false, consolidated orchestrator mode must not warn/disable this job (#1925). */
+    supersededByOrchestrator?: boolean;
   }
 > = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill → extract-daily → resolve-contradictions → enrich
@@ -436,6 +438,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     modelTier: "nano",
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.daily,
+    supersededByOrchestrator: false,
   },
 
   // Monday 08:00 | weekly-pending-digest | digest pending --since 7d --format md
@@ -454,6 +457,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     modelTier: "nano",
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
+    supersededByOrchestrator: false,
   },
 
   // Monday 08:20 | weekly-pending-digest-autopilot | guarded pending digest autopilot cron wrapper
@@ -472,6 +476,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     modelTier: "nano",
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.weekly,
+    supersededByOrchestrator: false,
   },
 
   // Twice daily 01:50 + 13:50 UTC | workshop-approval-reminder | digest pending for operator announce (#1921)
@@ -487,6 +492,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: false,
     minIntervalMs: MIN_INTERVAL_MS.twiceDaily,
     featureGate: "workshop.enabled",
+    supersededByOrchestrator: false,
   },
 
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
@@ -592,6 +598,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: true,
     minIntervalMs: 3 * 60 * 60 * 1000,
     featureGate: "sensorSweep.enabled",
+    supersededByOrchestrator: false,
   },
   // Daily 04:00 | daily-lifecycle-sync — GitHub lifecycle adapter Phase 2 (#1196).
   // Cron job is installed disabled by default; enable when `lifecycle.adapters.github.enabled` is true.
@@ -616,12 +623,35 @@ const MAINTENANCE_CRON_JOBS: Array<
     enabled: false,
     minIntervalMs: MIN_INTERVAL_MS.daily,
     featureGate: "lifecycle.adapters.github.enabled",
+    supersededByOrchestrator: false,
   },
 ];
 
+function isSupersededByConsolidatedOrchestrator(job: (typeof MAINTENANCE_CRON_JOBS)[number]): boolean {
+  if (job.supersededByOrchestrator === false) return false;
+  if (job.normalizeOnly === true) return false;
+  return true;
+}
+
+/** All canonical maintenance cron job `name` values (standalone + orchestrator-superseded). */
+export function getMaintenanceCronJobKeys(): string[] {
+  return MAINTENANCE_CRON_JOBS.map((job) => String(job.name));
+}
+
 /** Cron job `name` values superseded by consolidated `maintenance-nightly` orchestrator mode. */
 export function getConsolidatedSupersededLegacyCronJobKeys(): string[] {
-  return MAINTENANCE_CRON_JOBS.map((job) => String(job.name));
+  return MAINTENANCE_CRON_JOBS.filter(isSupersededByConsolidatedOrchestrator).map((job) => String(job.name));
+}
+
+/** Whether verify --fix should disable a hybrid-mem cron job under consolidated orchestrator mode. */
+export function shouldDisableJobUnderConsolidatedOrchestrator(pluginJobId: string, jobName?: string): boolean {
+  if (!pluginJobId.startsWith(PLUGIN_JOB_ID_PREFIX)) return false;
+  if (pluginJobId === `${PLUGIN_JOB_ID_PREFIX}maintenance-nightly`) return false;
+  const def = MAINTENANCE_CRON_JOBS.find(
+    (j) => j.pluginJobId === pluginJobId || (jobName != null && jobName.length > 0 && j.name === jobName),
+  );
+  if (!def) return false;
+  return isSupersededByConsolidatedOrchestrator(def);
 }
 
 /**
@@ -779,7 +809,13 @@ export function ensureMaintenanceCronJobs(
       if (typeof job !== "object" || job === null) continue;
       const pluginJobId = String(job.pluginJobId ?? "");
       if (!pluginJobId.startsWith(PLUGIN_JOB_ID_PREFIX)) continue;
-      if (pluginJobId === `${PLUGIN_JOB_ID_PREFIX}maintenance-nightly`) continue;
+      if (!shouldDisableJobUnderConsolidatedOrchestrator(pluginJobId, String(job.name ?? ""))) {
+        if (job.superseded === true) {
+          job.superseded = undefined;
+          jobsChanged = true;
+        }
+        continue;
+      }
       if (job.enabled !== false || job.superseded !== true) {
         job.enabled = false;
         job.superseded = true;

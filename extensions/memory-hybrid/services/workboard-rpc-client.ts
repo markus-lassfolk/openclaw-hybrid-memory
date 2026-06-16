@@ -1,11 +1,12 @@
 /**
  * Workboard Gateway RPC client — communicates with OpenClaw's Workboard plugin
- * via HTTP Gateway RPC calls.
+ * via HTTP Gateway RPC calls, with CLI fallback on OpenClaw 6.8+ hosts.
  *
  * Uses the `workboard.cards.*` RPC namespace. Designed for easy migration to
  * a direct plugin-to-plugin API if that becomes available.
  */
 
+import { spawnSync } from "../utils/process-runner.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export type WorkboardRpcCard = {
@@ -46,6 +47,33 @@ export interface WorkboardRpcClient {
 }
 
 const REQUEST_TIMEOUT_MS = 10_000;
+
+function normalizeWorkboardCardsResult(result: unknown): WorkboardRpcCard[] {
+  if (Array.isArray(result)) return result as WorkboardRpcCard[];
+  if (typeof result === "object" && result !== null) {
+    const obj = result as { cards?: WorkboardRpcCard[]; result?: { cards?: WorkboardRpcCard[] } };
+    if (Array.isArray(obj.cards)) return obj.cards;
+    if (obj.result && Array.isArray(obj.result.cards)) return obj.result.cards;
+  }
+  return [];
+}
+
+function normalizeWorkboardCardResult(result: unknown): WorkboardRpcCard | null {
+  if (typeof result !== "object" || result === null) return null;
+  const obj = result as WorkboardRpcCard & { result?: WorkboardRpcCard };
+  if (typeof obj.id === "string") return obj;
+  if (obj.result && typeof obj.result.id === "string") return obj.result;
+  return null;
+}
+
+function normalizeWorkboardDeleteResult(result: unknown): boolean {
+  if (typeof result === "object" && result !== null) {
+    const obj = result as { deleted?: boolean; result?: { deleted?: boolean } };
+    if (typeof obj.deleted === "boolean") return obj.deleted;
+    if (obj.result && typeof obj.result.deleted === "boolean") return obj.result.deleted;
+  }
+  return false;
+}
 
 export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string): WorkboardRpcClient {
   const baseUrl = gatewayUrl.replace(/\/+$/, "");
@@ -139,6 +167,129 @@ export function createWorkboardHttpRpcClient(gatewayUrl: string, token?: string)
       } catch {
         return false;
       }
+    },
+  };
+}
+
+function runWorkboardGatewayCliCall(method: string, params: Record<string, unknown>, token?: string): unknown | null {
+  const args = [
+    "gateway",
+    "call",
+    method,
+    "--params",
+    JSON.stringify(params),
+    "--json",
+    "--timeout",
+    String(REQUEST_TIMEOUT_MS),
+  ];
+
+  try {
+    const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
+    const result = spawnSync("openclaw", args, {
+      encoding: "utf-8",
+      env,
+      timeout: REQUEST_TIMEOUT_MS + 2000,
+    });
+    if (result.error || result.status !== 0) {
+      const detail = (result.stderr || result.stdout || "").trim();
+      pluginLogger.warn(
+        `memory-hybrid: workboard gateway call ${method} failed${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+      );
+      return null;
+    }
+    const stdout = result.stdout.trim();
+    if (!stdout) return null;
+    return JSON.parse(stdout) as unknown;
+  } catch (err) {
+    pluginLogger.warn(
+      `memory-hybrid: workboard gateway call ${method} failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
+/** Gateway RPC via `openclaw gateway call` (OpenClaw 6.8+ when HTTP /rpc/* is unavailable). */
+export function createWorkboardGatewayCliRpcClient(token?: string): WorkboardRpcClient {
+  async function rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown | null> {
+    return runWorkboardGatewayCliCall(method, params, token);
+  }
+
+  return {
+    async listCards(opts) {
+      const params: Record<string, unknown> = {};
+      if (opts?.tag) params.tag = opts.tag;
+      if (opts?.column) params.column = opts.column;
+      const result = await rpc("workboard.cards.list", params);
+      return normalizeWorkboardCardsResult(result);
+    },
+
+    async createCard(card) {
+      const result = await rpc("workboard.cards.create", card);
+      return normalizeWorkboardCardResult(result);
+    },
+
+    async updateCard(cardId, patch) {
+      const result = await rpc("workboard.cards.update", { id: cardId, ...patch });
+      return normalizeWorkboardCardResult(result);
+    },
+
+    async deleteCard(cardId) {
+      const result = await rpc("workboard.cards.delete", { id: cardId });
+      return normalizeWorkboardDeleteResult(result);
+    },
+
+    async findByExternalId(externalId) {
+      const cards = await this.listCards();
+      return cards.find((c) => c.externalId === externalId) ?? null;
+    },
+
+    async isAvailable() {
+      const result = runWorkboardGatewayCliCall("workboard.cards.list", {}, token);
+      return result != null;
+    },
+  };
+}
+
+/**
+ * Workboard RPC client with HTTP probe first, then `openclaw gateway call` fallback (#1925).
+ */
+export function createWorkboardRpcClient(gatewayUrl: string, token?: string): WorkboardRpcClient {
+  const httpClient = createWorkboardHttpRpcClient(gatewayUrl, token);
+  const cliClient = createWorkboardGatewayCliRpcClient(token);
+  let activeClient: WorkboardRpcClient | null = null;
+
+  async function resolveClient(): Promise<WorkboardRpcClient> {
+    if (activeClient) return activeClient;
+    if (await httpClient.isAvailable()) {
+      activeClient = httpClient;
+      return httpClient;
+    }
+    if (await cliClient.isAvailable()) {
+      activeClient = cliClient;
+      return cliClient;
+    }
+    return httpClient;
+  }
+
+  return {
+    async listCards(opts) {
+      return (await resolveClient()).listCards(opts);
+    },
+    async createCard(card) {
+      return (await resolveClient()).createCard(card);
+    },
+    async updateCard(cardId, patch) {
+      return (await resolveClient()).updateCard(cardId, patch);
+    },
+    async deleteCard(cardId) {
+      return (await resolveClient()).deleteCard(cardId);
+    },
+    async findByExternalId(externalId) {
+      return (await resolveClient()).findByExternalId(externalId);
+    },
+    async isAvailable() {
+      if (await httpClient.isAvailable()) return true;
+      return cliClient.isAvailable();
     },
   };
 }
