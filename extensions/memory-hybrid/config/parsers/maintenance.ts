@@ -181,10 +181,48 @@ function parseStepGuards(raw: unknown): Record<string, number> | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+function parseWorkerLeasesConfig(raw: unknown) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const quietRaw = o.quietWindow as Record<string, unknown> | undefined;
+  const quietWindow =
+    quietRaw && typeof quietRaw === "object"
+      ? {
+          enabled: quietRaw.enabled !== false,
+          start:
+            typeof quietRaw.start === "string" && quietRaw.start.trim().length > 0
+              ? quietRaw.start.trim()
+              : "01:00",
+          end:
+            typeof quietRaw.end === "string" && quietRaw.end.trim().length > 0 ? quietRaw.end.trim() : "06:00",
+          tz:
+            typeof quietRaw.tz === "string" && quietRaw.tz.trim().length > 0 ? quietRaw.tz.trim() : "UTC",
+        }
+      : undefined;
+  return {
+    enabled: o.enabled !== false,
+    defaultTtlSeconds:
+      typeof o.defaultTtlSeconds === "number" && o.defaultTtlSeconds > 0
+        ? Math.floor(o.defaultTtlSeconds)
+        : 120,
+    heartbeatIntervalSeconds:
+      typeof o.heartbeatIntervalSeconds === "number" && o.heartbeatIntervalSeconds > 0
+        ? Math.floor(o.heartbeatIntervalSeconds)
+        : 30,
+    ...(quietWindow ? { quietWindow } : {}),
+    ...(typeof o.contextUsageThreshold === "number" &&
+    o.contextUsageThreshold >= 0 &&
+    o.contextUsageThreshold <= 1
+      ? { contextUsageThreshold: o.contextUsageThreshold }
+      : {}),
+  };
+}
+
 function parseMaintenanceOrchestratorConfig(cfg: Record<string, unknown>) {
   const maintenanceRaw = cfg.maintenance as Record<string, unknown> | undefined;
   const orchestratorRaw = maintenanceRaw?.orchestrator as Record<string, unknown> | undefined;
   if (!orchestratorRaw) return undefined;
+  const workerLeases = parseWorkerLeasesConfig(orchestratorRaw.workerLeases);
   return {
     stepGuards: parseStepGuards(orchestratorRaw.stepGuards),
     maxCatchUpDays:
@@ -205,6 +243,7 @@ function parseMaintenanceOrchestratorConfig(cfg: Record<string, unknown>) {
         : undefined,
     consolidatedCronJobs:
       typeof orchestratorRaw.consolidatedCronJobs === "boolean" ? orchestratorRaw.consolidatedCronJobs : undefined,
+    ...(workerLeases ? { workerLeases } : {}),
   };
 }
 

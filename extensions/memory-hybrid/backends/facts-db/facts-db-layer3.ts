@@ -26,8 +26,11 @@ import {
   isContradicted as isContradictedImpl,
   isFactVerified,
   PROJECT_STATE_LWW_KEYS,
+  queryContradictionSurface as queryContradictionSurfaceImpl,
   recordContradiction as recordContradictionImpl,
+  repairUndetectedContradictions as repairUndetectedContradictionsImpl,
   resolveContradiction as resolveContradictionImpl,
+  type ContradictionDetectionResult,
   previewResolveContradictionsAuto as previewResolveContradictionsAutoImpl,
   resolveContradictionsAuto as resolveContradictionsAutoImpl,
   resolveContradictionsAutonomously as resolveContradictionsAutonomouslyImpl,
@@ -255,7 +258,8 @@ export class FactsDB extends FactsDBLayer2 {
     value: string | null | undefined,
     scope?: string | null,
     scopeTarget?: string | null,
-  ): Array<{ contradictionId: string; oldFactId: string; oldFactOriginalConfidence: number }> {
+    newText?: string | null,
+  ): ContradictionDetectionResult[] {
     const results = detectContradictionsImpl(
       this.liveDb,
       newFactId,
@@ -265,6 +269,7 @@ export class FactsDB extends FactsDBLayer2 {
       scope,
       scopeTarget,
       (a, b, t, s) => this.createLink(a, b, t, s ?? 1.0),
+      newText,
     );
 
     // Project-state LWW: immediately resolve contradictions for known mutable keys so
@@ -294,6 +299,20 @@ export class FactsDB extends FactsDBLayer2 {
 
   getContradictions(factId?: string): ContradictionRecord[] {
     return getContradictionsImpl(this.liveDb, factId);
+  }
+
+  queryContradictionSurface(
+    options: Parameters<typeof queryContradictionSurfaceImpl>[1],
+  ): ReturnType<typeof queryContradictionSurfaceImpl> {
+    return queryContradictionSurfaceImpl(this.liveDb, options);
+  }
+
+  repairUndetectedContradictions(limitGroups?: number): ReturnType<typeof repairUndetectedContradictionsImpl> {
+    return repairUndetectedContradictionsImpl(
+      this.liveDb,
+      (a, b, t, s) => this.createLink(a, b, t, s ?? 1.0),
+      limitGroups,
+    );
   }
 
   resolveContradiction(contradictionId: string, resolution: "superseded" | "kept" | "merged"): boolean {
@@ -481,6 +500,12 @@ export class FactsDB extends FactsDBLayer2 {
   // ============================================================================
 
   recordEpisode(input: Parameters<typeof recordEpisodeImpl>[1]): Episode {
+    return recordEpisodeImpl(this.liveDb, input).episode;
+  }
+
+  recordEpisodeWithCausalLinks(
+    input: Parameters<typeof recordEpisodeImpl>[1],
+  ): ReturnType<typeof recordEpisodeImpl> {
     return recordEpisodeImpl(this.liveDb, input);
   }
 

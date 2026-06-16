@@ -142,6 +142,27 @@ export type MaintenanceOrchestratorConfig = {
   maxRuntimeMinutes?: number;
   /** Use consolidated single-job cron layout (default: true for new installs). */
   consolidatedCronJobs?: boolean;
+  /** DB-backed worker leases for background maintenance (Issue #1904). */
+  workerLeases?: WorkerLeasesConfig;
+};
+
+/** Worker lease + quiet-window configuration (Issue #1904). */
+export type WorkerLeasesConfig = {
+  /** Enable lease acquisition for background workers (default: true). */
+  enabled: boolean;
+  /** Default lease TTL in seconds (default: 120). */
+  defaultTtlSeconds: number;
+  /** Heartbeat interval in seconds (default: 30). */
+  heartbeatIntervalSeconds: number;
+  /** Quiet window: heavy maintenance only outside this range (UTC by default). */
+  quietWindow?: {
+    enabled: boolean;
+    start: string;
+    end: string;
+    tz: string;
+  };
+  /** Skip worker when estimated context usage exceeds this threshold (0–1). */
+  contextUsageThreshold?: number;
 };
 
 /** Maintenance configuration group. */

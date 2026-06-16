@@ -8,7 +8,10 @@
 import { Type } from "@sinclair/typebox";
 import { stringEnum } from "../../utils/typebox.js";
 
+import { buildEpisodeCausalChain } from "../../services/episode-causal-inference.js";
+import { detectEpisodeFailureContradictions } from "../../backends/facts-db/contradictions.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import type { EpisodeOutcome } from "../../types/memory.js";
 import { formatTimestampUtc } from "../../utils/dates.js";
 
@@ -57,8 +60,9 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
       "Record a structured episodic memory: a significant event with an explicit outcome (success/failure/partial/unknown), timestamp, and optional context. Use after deployments, migrations, incidents, or other notable events to build a queryable history of what happened and how it turned out.";
     const _execRecordEpisode = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
+        const episodeStarted = Date.now();
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
-        const episode = factsDb.recordEpisode({
+        const recorded = factsDb.recordEpisodeWithCausalLinks({
           event: params.event as string,
           outcome: params.outcome as EpisodeOutcome,
           timestamp: params.timestamp as number | undefined,
@@ -75,6 +79,29 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
           userId: (params.userId as string | undefined) ?? scopeFilter?.userId ?? undefined,
           sessionId: (params.sessionId as string | undefined) ?? scopeFilter?.sessionId ?? undefined,
         });
+        const episode = recorded.episode;
+
+        const contradictions =
+          params.outcome === "failure"
+            ? detectEpisodeFailureContradictions(
+                factsDb.getRawDb(),
+                params.event as string,
+                params.procedureId as string | undefined,
+              )
+            : [];
+
+        emitFeatureTelemetry(api.logger, {
+          feature: "episode_causal",
+          operation: "memory_record_episode",
+          durationMs: Date.now() - episodeStarted,
+          warnBudgetMs: cfg.retrieval.episodeCausalLatencyWarnMs,
+          outcome: "ok",
+          fields: {
+            inferred_links: recorded.causallyInferredLinks.length,
+            contradiction_hits: contradictions.length,
+            outcome: episode.outcome,
+          },
+        });
 
         return {
           content: [
@@ -83,7 +110,18 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
               text: `Episode recorded: [${episode.outcome}] "${episode.event}" at ${formatTimestampUtc(episode.timestamp)} (id: ${episode.id})`,
             },
           ],
-          details: { episode },
+          details: {
+            episode,
+            causally_inferred_links: recorded.causallyInferredLinks.map((l) => ({
+              episode_id: l.episodeId,
+              event_preview: l.eventPreview,
+              outcome: l.outcome,
+              score: l.score,
+              confidence: l.confidence,
+              score_breakdown: l.scoreBreakdown,
+            })),
+            ...(contradictions.length > 0 ? { contradictions } : {}),
+          },
         };
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
@@ -171,6 +209,46 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
       { name: "memory_search_episodes" },
     );
   }
+
+  api.registerTool(
+    {
+      name: "memory_episode_causal_chain",
+      description:
+        "Walk inferred and explicit causal links from an episode to build an upstream causal chain (BFS, deduped by max confidence).",
+      parameters: Type.Object({
+        episodeId: Type.String({ description: "Starting episode id." }),
+        depth: Type.Optional(Type.Number({ description: "Max traversal depth (default 5)." })),
+        includeExplicitOnly: Type.Optional(
+          Type.Boolean({ description: "When true, use only explicit memory_link/episode_relations links." }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const episodeId = typeof params.episodeId === "string" ? params.episodeId.trim() : "";
+        if (!episodeId) throw new Error("episodeId is required");
+        const depth = typeof params.depth === "number" && params.depth > 0 ? Math.min(10, Math.floor(params.depth)) : 5;
+        const includeExplicitOnly = params.includeExplicitOnly === true;
+        const chain = buildEpisodeCausalChain(factsDb.getRawDb(), episodeId, depth, includeExplicitOnly);
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                chain.length === 0
+                  ? `No causal chain found for episode ${episodeId}.`
+                  : chain
+                      .map(
+                        (c) =>
+                          `- [d=${c.depth}] ${c.eventPreview} (${c.outcome}, ${c.linkType}, conf=${c.confidence.toFixed(2)})`,
+                      )
+                      .join("\n"),
+            },
+          ],
+          details: { episodeId, depth, includeExplicitOnly, chain },
+        };
+      },
+    },
+    { name: "memory_episode_causal_chain" },
+  );
 
   // ---------------------------------------------------------------------------
 }

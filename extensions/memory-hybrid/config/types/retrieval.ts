@@ -133,6 +133,17 @@ export type RetrievalConfig = {
   semanticTopK: number;
   /** Top-K candidates from FTS5 search passed to RRF (default 20). Independent of semanticTopK. */
   fts5TopK: number;
+  /**
+   * Default recall mode when `memory_recall` is called without an explicit `mode` argument.
+   * Default: "semantic" (preserves pre-#1901 behavior). Set to "hybrid" to enable BM25+RRF fusion by default.
+   */
+  defaultRecallMode: "semantic" | "hybrid" | "keyword";
+  /** Warn in logs when explicit `memory_recall` exceeds this latency (default 150ms). */
+  recallLatencyWarnMs: number;
+  /** Warn when episode causal inference exceeds this latency (default 30ms). */
+  episodeCausalLatencyWarnMs: number;
+  /** Warn when contradiction detection exceeds this latency (default 20ms). */
+  contradictionLatencyWarnMs: number;
 };
 
 /** Search options: HyDE query expansion

@@ -22,7 +22,9 @@ import { CONSOLIDATED_FACT_DECAY_CLASS } from "../utils/consolidation-controls.j
 import { atomicWriteFile } from "../utils/atomic-write.js";
 import { nowIso, formatCompactRunIdUtc, formatTimestampUtcFromMs } from "../utils/dates.js";
 import type { EmbeddingProvider } from "./embeddings.js";
+import { decayEpisodeCausalLinks } from "./episode-causal-inference.js";
 import { capturePluginError } from "./error-reporter.js";
+import { emitFeatureTelemetry } from "./feature-telemetry.js";
 import { writeMemoryIndex } from "./memory-index.js";
 import type { ProvenanceService } from "./provenance.js";
 import {
@@ -1019,6 +1021,60 @@ export async function runDreamCycle(
   }
   if (stageCoreError !== undefined) {
     recordStageFailure("core prune/decay/link/vector maintenance", stageCoreError);
+  }
+
+  try {
+    const causalDecay = decayEpisodeCausalLinks(factsDb.getRawDb());
+    if (v && (causalDecay.updated > 0 || causalDecay.deleted > 0)) {
+      logger.info(
+        `memory-hybrid: dream-cycle — episode causal link decay: updated=${causalDecay.updated}, deleted=${causalDecay.deleted}`,
+      );
+    }
+    const repair = factsDb.repairUndetectedContradictions(200);
+    if (repair.pairsRepaired > 0 || repair.pairsFailed > 0) {
+      emitFeatureTelemetry(logger, {
+        feature: "contradiction_repair",
+        operation: "dream_cycle_repair",
+        outcome: repair.pairsFailed > 0 ? "degraded" : "ok",
+        fields: {
+          groups_scanned: repair.groupsScanned,
+          pairs_repaired: repair.pairsRepaired,
+          pairs_fallback: repair.pairsFallback,
+          pairs_failed: repair.pairsFailed,
+        },
+      });
+    }
+    if (repair.pairsRepaired > 0) {
+      logger.warn(
+        `memory-hybrid: dream-cycle — repaired ${repair.pairsRepaired} undetected contradiction pair(s) across ${repair.groupsScanned} entity+key group(s)${repair.pairsFallback > 0 ? ` (${repair.pairsFallback} via store-time fallback)` : ""}`,
+      );
+    }
+    if (repair.pairsFailed > 0) {
+      logger.warn(
+        `memory-hybrid: dream-cycle — ${repair.pairsFailed} contradiction pair(s) could not be repaired; will retry next dream cycle`,
+      );
+      capturePluginError(
+        new Error(`contradiction repair partial failure: ${repair.pairsFailed} pair(s) unresolved`),
+        {
+          subsystem: "maintenance",
+          operation: "contradiction-repair-partial",
+          phase: "dream-cycle",
+          severity: "warning",
+          tags: {
+            pairs_failed: repair.pairsFailed,
+            pairs_fallback: repair.pairsFallback,
+            pairs_repaired: repair.pairsRepaired,
+          },
+        },
+      );
+    }
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "maintenance",
+      operation: "contradiction-repair",
+      phase: "dream-cycle",
+    });
+    logger.warn(`memory-hybrid: dream-cycle — episode causal/dec contradiction maintenance failed: ${err}`);
   }
 
   // ── Stage 2: Episodic consolidation + event log maintenance ──────────────

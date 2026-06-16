@@ -67,7 +67,7 @@ describe("sqlite-outcome-compat — episodes", () => {
   it("recordEpisode maps failure/unknown to failed on legacy CHECK", () => {
     const db = new DatabaseSync(":memory:");
     createLegacyEpisodesSchema(db);
-    const ep = recordEpisode(db, { event: "tool_error", outcome: "failure" });
+    const ep = recordEpisode(db, { event: "tool_error", outcome: "failure" }).episode;
     expect(ep.outcome).toBe("failure");
     const row = db.prepare("SELECT outcome FROM episodes WHERE id = ?").get(ep.id) as { outcome: string };
     expect(row.outcome).toBe("failed");
@@ -78,7 +78,7 @@ describe("sqlite-outcome-compat — episodes", () => {
   it("recordEpisode preserves unknown in return on legacy CHECK (stored as failed)", () => {
     const db = new DatabaseSync(":memory:");
     createLegacyEpisodesSchema(db);
-    const ep = recordEpisode(db, { event: "ambiguous", outcome: "unknown" });
+    const ep = recordEpisode(db, { event: "ambiguous", outcome: "unknown" }).episode;
     expect(ep.outcome).toBe("unknown");
     const row = db.prepare("SELECT outcome FROM episodes WHERE id = ?").get(ep.id) as { outcome: string };
     expect(row.outcome).toBe("failed");
@@ -130,7 +130,7 @@ describe("sqlite-outcome-compat — episodes", () => {
       )
     `);
     expect(episodesTableIsLegacyFailedOutcomeCheck(db)).toBe(false);
-    const ep = recordEpisode(db, { event: "x", outcome: "failure" });
+    const ep = recordEpisode(db, { event: "x", outcome: "failure" }).episode;
     const row = db.prepare("SELECT outcome FROM episodes WHERE id = ?").get(ep.id) as { outcome: string };
     expect(row.outcome).toBe("failure");
   });
