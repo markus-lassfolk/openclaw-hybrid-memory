@@ -19,6 +19,7 @@ import { appendVectorLifecycleAuditEvent } from "../../../services/vector-lifecy
 import { findOrphanVectorIds, reconcileOrphanVectors } from "../../../services/vector-maintenance.js";
 import { PLUGIN_ID } from "../../../utils/constants.js";
 import { nowIso, formatTimestampUtcFromMs } from "../../../utils/dates.js";
+import { describeCronStoreLocation } from "../../../services/openclaw-cron-store.js";
 import { ensureGoalStewardshipHeartbeatCronJob, ensureMaintenanceCronJobs } from "../../cmd-install.js";
 import { readConsolidatedCronJobsFlag } from "../../install/cron-jobs.js";
 
@@ -328,8 +329,7 @@ export async function runVerifyReconcileSection(state: VerifyRunState): Promise<
         }
 
         // Add cron jobs (same logic as install)
-        const cronDir = join(openclawDir, "cron");
-        const cronStorePath = join(cronDir, "jobs.json");
+        const cronStorePath = describeCronStoreLocation(openclawDir);
 
         try {
           const scheduleOverrides: Record<string, string> = {};

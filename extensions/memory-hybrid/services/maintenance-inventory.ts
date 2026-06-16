@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { relativeTime } from "../cli/shared.js";
+import { describeCronStoreLocation, readOpenClawCronStore } from "./openclaw-cron-store.js";
 import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { readExitLedger, validateMaintenanceExecution } from "./cron-exit-validator.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "./hybrid-mem-cron-default-job-steps.js";
@@ -545,6 +546,7 @@ function parseGatewayJobs(
   rawJobs: unknown[],
   artifacts: Map<string, MaintenanceArtifacts>,
 ): MaintenanceInventoryJob[] {
+  const cronStoreDisplayPath = describeCronStoreLocation(openclawDir);
   const jobsByInventoryId = new Map<string, MaintenanceInventoryJob>();
   const rawPluginJobIdByInventoryId = new Map<string, string | undefined>();
   for (const rawJob of rawJobs) {
@@ -601,7 +603,7 @@ function parseGatewayJobs(
       scheduleKind: schedule.scheduleKind,
       timezone: schedule.timezone,
       prompt,
-      sourceRef: join(openclawDir, "cron", "jobs.json"),
+      sourceRef: cronStoreDisplayPath,
       guardPath,
       lastRunAt: lastRun.lastRunAt,
       lastRunSource: lastRun.lastRunSource,
@@ -710,7 +712,7 @@ export function collectMaintenanceInventory(
   openclawDir: string,
   options: MaintenanceInventoryOptions = {},
 ): MaintenanceInventoryReport {
-  const cronStorePath = join(openclawDir, "cron", "jobs.json");
+  const cronStorePath = describeCronStoreLocation(openclawDir);
   const logRoot = join(openclawDir, "logs", "cron-hybrid-mem");
   const crontab =
     options.crontabText !== undefined || options.crontabError !== undefined
@@ -728,13 +730,20 @@ export function collectMaintenanceInventory(
   let cronStoreStatus: CronStoreStatus = "missing";
   let cronStoreError: string | undefined;
   let cronStoreJobs: unknown[] = [];
-  const cronStoreText =
-    options.cronStoreText ?? (existsSync(cronStorePath) ? readFileSync(cronStorePath, "utf-8") : undefined);
-  if (cronStoreText != null) {
+  if (options.cronStoreText != null) {
     try {
-      const parsed = JSON.parse(cronStoreText) as { jobs?: unknown[] };
+      const parsed = JSON.parse(options.cronStoreText) as { jobs?: unknown[] };
       cronStoreJobs = Array.isArray(parsed.jobs) ? parsed.jobs : [];
       cronStoreStatus = "present";
+    } catch (error) {
+      cronStoreStatus = "invalid";
+      cronStoreError = error instanceof Error ? error.message : String(error);
+    }
+  } else {
+    try {
+      const snapshot = readOpenClawCronStore(openclawDir);
+      cronStoreJobs = Array.isArray(snapshot.store.jobs) ? snapshot.store.jobs : [];
+      cronStoreStatus = cronStoreJobs.length > 0 || snapshot.backend === "sqlite" ? "present" : "missing";
     } catch (error) {
       cronStoreStatus = "invalid";
       cronStoreError = error instanceof Error ? error.message : String(error);

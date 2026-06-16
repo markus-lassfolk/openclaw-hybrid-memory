@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import type { DigestWeeklyDeliveryConfig } from "../../config.js";
@@ -11,6 +11,10 @@ import {
 } from "../../services/cron-job-bash-harness.js";
 import { findDeprecatedHybridMemCronTokens } from "../../services/deprecated-cron-commands.js";
 import { capturePluginError } from "../../services/error-reporter.js";
+import {
+  readOpenClawCronStore,
+  writeOpenClawCronStore,
+} from "../../services/openclaw-cron-store.js";
 import {
   extractCronStoreJobModel,
   readAgentsPrimaryModelFromOpenclawJsonPath,
@@ -28,12 +32,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
   openclawDir: string,
   options: { heartbeatPatterns: string[] },
 ): { added: boolean; normalized: boolean; skippedReason?: string } {
-  const cronDir = join(openclawDir, "cron");
-  const cronStorePath = join(cronDir, "jobs.json");
-  mkdirSync(cronDir, { recursive: true });
-  const store: { jobs?: unknown[] } = existsSync(cronStorePath)
-    ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] })
-    : {};
+  const cronSnapshot = readOpenClawCronStore(openclawDir);
+  const store = cronSnapshot.store;
   if (!Array.isArray(store.jobs)) store.jobs = [];
   const jobsArr = store.jobs as Array<Record<string, unknown>>;
   const existing = jobsArr.find(
@@ -68,10 +68,7 @@ export function ensureGoalStewardshipHeartbeatCronJob(
         text: desiredMessage,
       },
     });
-    const payload = JSON.stringify(store, null, 2);
-    const tmpPath = `${cronStorePath}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tmpPath, payload, "utf-8");
-    renameSync(tmpPath, cronStorePath);
+    writeOpenClawCronStore(openclawDir, store, cronSnapshot.backend);
     return { added: true, normalized: false };
   }
 
@@ -146,10 +143,7 @@ export function ensureGoalStewardshipHeartbeatCronJob(
 
   if (!changed) return { added: false, normalized: false };
 
-  const nextPayload = JSON.stringify(store, null, 2);
-  const tmpPath = `${cronStorePath}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tmpPath, nextPayload, "utf-8");
-  renameSync(tmpPath, cronStorePath);
+  writeOpenClawCronStore(openclawDir, store, cronSnapshot.backend);
   return { added: false, normalized: true };
 }
 
@@ -764,9 +758,9 @@ export function ensureMaintenanceCronJobs(
   const normalized: string[] = [];
   const openclawConfigPath = join(openclawDir, "openclaw.json");
   const agentPrimary = readAgentsPrimaryModelFromOpenclawJsonPath(openclawConfigPath);
-  const cronDir = join(openclawDir, "cron");
-  const cronStorePath = join(cronDir, "jobs.json");
-  mkdirSync(cronDir, { recursive: true });
+  const cronSnapshot = readOpenClawCronStore(openclawDir);
+  const store = cronSnapshot.store;
+  mkdirSync(join(openclawDir, "cron"), { recursive: true });
   try {
     mkdirSync(join(openclawDir, "logs", "cron-hybrid-mem"), { recursive: true });
   } catch (err) {
@@ -776,9 +770,6 @@ export function ensureMaintenanceCronJobs(
       severity: "info",
     });
   }
-  const store: { jobs?: unknown[] } = existsSync(cronStorePath)
-    ? (JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] })
-    : {};
   if (!Array.isArray(store.jobs)) store.jobs = [];
   const jobsArr = store.jobs as Array<Record<string, unknown>>;
   let jobsChanged = false;
@@ -1056,10 +1047,7 @@ export function ensureMaintenanceCronJobs(
     }
   }
   if (jobsChanged) {
-    const payload = JSON.stringify(store, null, 2);
-    const tmpPath = `${cronStorePath}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tmpPath, payload, "utf-8");
-    renameSync(tmpPath, cronStorePath);
+    writeOpenClawCronStore(openclawDir, store, cronSnapshot.backend);
   }
   return { added, normalized };
 }

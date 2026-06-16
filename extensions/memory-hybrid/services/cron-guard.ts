@@ -19,9 +19,11 @@
  *   runner processes the queue on startup.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+
+import { readOpenClawCronStore, writeOpenClawCronStore } from "./openclaw-cron-store.js";
 
 /** Subdirectory (relative to openclawDir) where guard files are kept. */
 export const GUARD_SUBDIR = join("cron", "guard");
@@ -121,19 +123,16 @@ type Logger = { info: (s: string) => void; warn: (s: string) => void };
 export function syncCronLastRunFromGuards(logger: Logger, openclawDir?: string): void {
   const dir = openclawDir ?? join(homedir(), ".openclaw");
   const guardDir = getGuardDir(dir);
-  const cronStorePath = join(dir, "cron", "jobs.json");
 
-  if (!existsSync(cronStorePath)) return;
-
-  let store: { jobs?: unknown[] };
+  let snapshot: ReturnType<typeof readOpenClawCronStore>;
   try {
-    store = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+    snapshot = readOpenClawCronStore(dir);
   } catch {
     return;
   }
-  if (!Array.isArray(store.jobs)) return;
+  if (!Array.isArray(snapshot.store.jobs) || snapshot.store.jobs.length === 0) return;
 
-  const jobs = store.jobs as Array<Record<string, unknown>>;
+  const jobs = snapshot.store.jobs as Array<Record<string, unknown>>;
 
   // Collect guard timestamps keyed by jobName (normalized: spaces → hyphens).
   // The persistent files take precedence over legacy /tmp/ files.
@@ -194,10 +193,10 @@ export function syncCronLastRunFromGuards(logger: Logger, openclawDir?: string):
 
   if (synced > 0) {
     try {
-      writeFileSync(cronStorePath, JSON.stringify(store, null, 2), "utf-8");
+      writeOpenClawCronStore(dir, snapshot.store, snapshot.backend);
       logger.info(`memory-hybrid: synced lastRunAtMs for ${synced} cron job(s) from persistent guard files`);
     } catch (err) {
-      logger.warn(`memory-hybrid: failed to write cron guard sync to jobs.json: ${err}`);
+      logger.warn(`memory-hybrid: failed to write cron guard sync to OpenClaw cron store: ${err}`);
     }
   }
 }
