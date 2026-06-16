@@ -21,9 +21,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.6.161] - 2026-06-16
+
 ### Fixed
 
 - **#1923 OpenClaw 6.8+ cron store:** `verify`, `verify --fix`, install, maintenance inventory, dashboard, cron guard sync, and active-task wake scheduling now read/write the live OpenClaw cron store (`~/.openclaw/state/openclaw.sqlite`) when legacy `jobs.json` has been migrated, instead of creating a transient JSON file that OpenClaw immediately archives.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.161**.
 
 ---
 
