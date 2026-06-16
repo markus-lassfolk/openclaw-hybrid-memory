@@ -137,7 +137,7 @@ export async function executeMineCommand(
         scope: mineScope,
         scopeTarget: mineScopeTarget,
       });
-      if (result.skipped) return { skipped: true as const };
+      if (result.skipped || !result.newlyStored) return { skipped: true as const };
       db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
         storedContentHash,
         batchId,
@@ -205,8 +205,7 @@ export async function executeMineCommand(
   } else if (opts.embed && embeddings) {
     console.log(`Embedded ${written} facts using ${embeddings.modelName}`);
   }
-  if (opts.synthesize)
-    console.log("Note: --synthesize invokes multi-pass-extractor in a follow-up maintenance job.");
+  if (opts.synthesize) console.log("Note: --synthesize invokes multi-pass-extractor in a follow-up maintenance job.");
 }
 
 export function registerMineCommand(

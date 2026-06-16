@@ -153,17 +153,21 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       parameters: Type.Object({
         idOrQuery: Type.String(),
         reason: Type.Optional(Type.String()),
+        vault: Type.Optional(
+          Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" }),
+        ),
       }),
-      async execute(_id, args: { idOrQuery?: string; reason?: string }) {
+      async execute(_id, args: { idOrQuery?: string; reason?: string; vault?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
           multiAgent: cfg.multiAgent,
           autoRecall: cfg.autoRecall,
         });
-        const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
+        const { factsDb: activeFactsDb } = resolveToolVaultBackends(runtime, args.vault);
+        const fact = resolveFactByIdOrQuery(activeFactsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
         const quota = cfg.retrieval?.recallFeedback?.pinQuota ?? DEFAULT_PIN_QUOTA;
-        const { allowed, current } = checkPinQuota(factsDb, quota, scopeFilter);
+        const { allowed, current } = checkPinQuota(activeFactsDb, quota, scopeFilter);
         if (!allowed) {
           return {
             content: [
@@ -174,7 +178,12 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
             ],
           };
         }
-        const success = pinFact(factsDb, fact.id, args.reason ?? "agent pin", api.context?.sessionId ?? undefined);
+        const success = pinFact(
+          activeFactsDb,
+          fact.id,
+          args.reason ?? "agent pin",
+          api.context?.sessionId ?? undefined,
+        );
         if (!success) {
           return { content: [{ type: "text", text: `Failed to pin fact ${fact.id} (may be superseded or missing)` }] };
         }
@@ -192,14 +201,18 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       parameters: Type.Object({
         idOrQuery: Type.String(),
         until: Type.Optional(Type.String({ description: "ISO date" })),
+        vault: Type.Optional(
+          Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" }),
+        ),
       }),
-      async execute(_id, args: { idOrQuery?: string; until?: string }) {
+      async execute(_id, args: { idOrQuery?: string; until?: string; vault?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
           multiAgent: cfg.multiAgent,
           autoRecall: cfg.autoRecall,
         });
-        const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
+        const { factsDb: activeFactsDb } = resolveToolVaultBackends(runtime, args.vault);
+        const fact = resolveFactByIdOrQuery(activeFactsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
         let untilSec: number;
         if (args.until) {
@@ -210,7 +223,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         } else {
           untilSec = Math.floor(Date.now() / 1000) + DEFAULT_SNOOZE_DAYS * 86_400;
         }
-        snoozeFact(factsDb, fact.id, untilSec);
+        snoozeFact(activeFactsDb, fact.id, untilSec);
         return {
           content: [
             {
