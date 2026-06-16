@@ -23,6 +23,10 @@ import {
 import { resolveMaintenanceSummaryPath } from "../../../services/maintenance-artifact-paths.js";
 import { capturePluginError } from "../../../services/error-reporter.js";
 import {
+  describeCronStoreLocation,
+  readOpenClawCronStore,
+} from "../../../services/openclaw-cron-store.js";
+import {
   analyzeCronJobsAgainstHeartbeatPatterns,
   extractCronJobMessageEntries,
   getHeartbeatMatchersForVerify,
@@ -39,9 +43,9 @@ import {
   isConsolidatedMaintenanceCronEnabled,
   readConsolidatedCronJobsFlag,
 } from "../../install/cron-jobs.js";
-import { approxIntervalMs, relativeTime } from "../../shared.js";
-
 import type { VerifyRunState } from "../verify-run-state.js";
+
+import { approxIntervalMs, relativeTime } from "../../shared.js";
 
 /** Former standalone cron jobs — now config-gated orchestrator modules (not separate cron entries). */
 const CONSOLIDATED_FORMER_STANDALONE_MODULES: Array<{
@@ -200,7 +204,9 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
   }
 
   // Job name regex patterns for matching (use normalized name so "Weekly Reflection" etc. match)
-  const cronStorePath = join(openclawDir, "cron", "jobs.json");
+  const cronStoreSnapshot = readOpenClawCronStore(openclawDir);
+  const cronStoreLabel = describeCronStoreLocation(openclawDir, cronStoreSnapshot.backend);
+  const cronStoreHasJobs = (cronStoreSnapshot.store.jobs?.length ?? 0) > 0;
   const nightlyMemorySweepRe = /nightly[- ]?memory[- ]?sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
   const weeklyReflectionRe = /weekly[- ]?reflection|memory reflection|pattern synthesis/i;
   const extractProceduresRe = /extract[- ]?procedures|weekly[- ]?extract[- ]?procedures|procedural memory/i;
@@ -227,14 +233,12 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     log(`  Heartbeat patterns compiled: ${matchers.length} matcher(s)${patternsHint}.`);
     log("  See docs/GOAL-STEWARDSHIP-OPERATOR.md (Heartbeat scheduling checklist).");
     try {
-      if (!existsSync(cronStorePath)) {
+      if (!cronStoreHasJobs) {
         log(
-          `${WARN} Cannot confirm heartbeat cron: ${cronStorePath} not found. Run \`openclaw hybrid-mem verify --fix\` to seed maintenance jobs, then add a small heartbeat job whose message matches one of the patterns above.`,
+          `${WARN} Cannot confirm heartbeat cron: no jobs in OpenClaw cron store (${cronStoreLabel}). Run \`openclaw hybrid-mem verify --fix\` to seed maintenance jobs, then add a small heartbeat job whose message matches one of the patterns above.`,
         );
       } else {
-        const raw = readFileSync(cronStorePath, "utf-8");
-        const store = JSON.parse(raw) as { jobs?: unknown[] };
-        const entries = extractCronJobMessageEntries(store);
+        const entries = extractCronJobMessageEntries(cronStoreSnapshot.store);
         const h = analyzeCronJobsAgainstHeartbeatPatterns(matchers, entries);
         const withText = entries.filter((e) => e.text.length > 0).length;
         if (entries.length === 0) {
@@ -442,10 +446,9 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     return "ok";
   }
 
-  if (existsSync(cronStorePath)) {
+  if (cronStoreHasJobs) {
     try {
-      const raw = readFileSync(cronStorePath, "utf-8");
-      const store = JSON.parse(raw) as Record<string, unknown>;
+      const store = cronStoreSnapshot.store as Record<string, unknown>;
       const jobs = store.jobs;
       if (Array.isArray(jobs)) {
         for (const j of jobs) {
@@ -578,8 +581,8 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
 
   cronLog(
     useConsolidatedCron
-      ? "\nScheduled maintenance (consolidated orchestrator — ~/.openclaw/cron/jobs.json):"
-      : "\nScheduled jobs (cron store at ~/.openclaw/cron/jobs.json):",
+      ? `\nScheduled maintenance (consolidated orchestrator — ${cronStoreLabel}):`
+      : `\nScheduled jobs (OpenClaw cron store at ${cronStoreLabel}):`,
   );
   if (useConsolidatedCron) {
     cronLog(
@@ -744,14 +747,12 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
   // Issue #965 — isolated hybrid-mem cron runs must not request a different provider family than
   // agents.defaults.model.primary or OpenClaw may throw LiveSessionModelSwitchError.
   try {
-    if (openclawConfigRead.root && existsSync(cronStorePath)) {
+    if (openclawConfigRead.root && cronStoreHasJobs) {
       const root = openclawConfigRead.root;
       const agentPrimary = readEffectiveAgentChatPrimaryFromOpenclawJsonRoot(root);
       if (agentPrimary) {
         const agentFam = inferModelProviderPrefix(agentPrimary);
-        const rawStore = readFileSync(cronStorePath, "utf-8");
-        const store = JSON.parse(rawStore) as { jobs?: unknown[] };
-        const jobs = Array.isArray(store.jobs) ? store.jobs : [];
+        const jobs = Array.isArray(cronStoreSnapshot.store.jobs) ? cronStoreSnapshot.store.jobs : [];
         const WARN = noEmoji ? "[WARN]" : "⚠️";
         for (const j of jobs) {
           if (typeof j !== "object" || j === null) continue;

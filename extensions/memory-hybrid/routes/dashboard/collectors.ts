@@ -28,6 +28,7 @@ import type { VectorDB } from "../../backends/vector-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
 import type { EvolutionStats } from "../../services/evolution-stats.js";
 import { collectEvolutionStats } from "../../services/evolution-stats.js";
+import { readOpenClawCronStore } from "../../services/openclaw-cron-store.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
 import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
@@ -524,11 +525,9 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
 
 async function collectCronJobs(): Promise<CronJobStatus[]> {
   const openclawDir = join(homedir(), ".openclaw");
-  const cronStorePath = join(openclawDir, "cron", "jobs.json");
-  if (!existsSync(cronStorePath)) return [];
   try {
-    const store = await readJsonFile<{ jobs?: unknown[] }>(cronStorePath);
-    if (!store || !Array.isArray(store.jobs)) return [];
+    const { store } = readOpenClawCronStore(openclawDir);
+    if (!Array.isArray(store.jobs)) return [];
     return store.jobs
       .filter((j): j is Record<string, unknown> => typeof j === "object" && j !== null)
       .map((job) => {

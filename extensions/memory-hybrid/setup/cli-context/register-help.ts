@@ -18,6 +18,7 @@ import { applyApprovedProposal, getProposalExpiryError } from "../../cli/proposa
 import type { HybridMemCliContext } from "../../cli/register.js";
 import { getCronModelConfig, getDefaultCronModel, hybridConfigSchema } from "../../config.js";
 import { readGuardTimestampMs } from "../../services/cron-guard.js";
+import { readOpenClawCronStore } from "../../services/openclaw-cron-store.js";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { runPersonaProposalTriage, validatePersonaPolicy } from "../../services/persona-proposal-triage.js";
 import { syncProposalWithdrawnInChangeFeed } from "../../services/change-feed-emit.js";
@@ -226,11 +227,9 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
     getCronJobsStatus: () => {
       const owHome =
         process.env.OPENCLAW_HOME?.trim() || join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".openclaw");
-      const cronStorePath = join(owHome, "cron", "jobs.json");
-      if (!existsSync(cronStorePath)) return [];
       let store: { jobs?: unknown[] };
       try {
-        store = JSON.parse(readFileSync(cronStorePath, "utf-8")) as { jobs?: unknown[] };
+        store = readOpenClawCronStore(owHome).store;
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           operation: "stats-read-jobs-json",

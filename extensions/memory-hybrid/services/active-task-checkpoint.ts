@@ -18,6 +18,7 @@ import {
   activeTaskRenderGoalsOpts,
 } from "./task-ledger-facts.js";
 import { buildGuardPrefix } from "./cron-guard.js";
+import { describeCronStoreLocation, readOpenClawCronStore, writeOpenClawCronStore } from "./openclaw-cron-store.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 
 const ACTIVE_TASK_WAKE_JOB_PREFIX = "hybrid-mem:active-task-wake:";
@@ -389,19 +390,15 @@ async function disableActiveTaskWakeJobsForEntity(
 ): Promise<{ jobsPath: string; disabled: number }> {
   const openclawDir = resolveOpenclawDir(openclawDirOverride);
   return withCronJobsLock(openclawDir, () => {
-    const cronDir = join(openclawDir, "cron");
-    const jobsPath = join(cronDir, "jobs.json");
-    if (!existsSync(jobsPath)) {
-      return { jobsPath, disabled: 0 };
-    }
-
-    let store: { jobs?: unknown[] };
+    const jobsPath = describeCronStoreLocation(openclawDir);
+    let snapshot: ReturnType<typeof readOpenClawCronStore>;
     try {
-      store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
+      snapshot = readOpenClawCronStore(openclawDir);
     } catch (err) {
-      throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
+      throw new Error(`failed to read OpenClaw cron store at ${jobsPath}: ${String(err)}`);
     }
 
+    const store = snapshot.store;
     if (!Array.isArray(store.jobs)) {
       return { jobsPath, disabled: 0 };
     }
@@ -412,10 +409,7 @@ async function disableActiveTaskWakeJobsForEntity(
       return { jobsPath, disabled: 0 };
     }
 
-    const payload = JSON.stringify(store, null, 2);
-    const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tmpPath, payload, "utf-8");
-    renameSync(tmpPath, jobsPath);
+    writeOpenClawCronStore(openclawDir, store, snapshot.backend);
     return { jobsPath, disabled };
   });
 }
@@ -487,17 +481,9 @@ async function scheduleActiveTaskWakeReminder(
 ): Promise<ActiveTaskWakeScheduleResult> {
   const openclawDir = resolveOpenclawDir(input.openclawDir);
   return withCronJobsLock(openclawDir, () => {
-    const cronDir = join(openclawDir, "cron");
-    const jobsPath = join(cronDir, "jobs.json");
-
-    let store: { jobs?: unknown[] } = {};
-    if (existsSync(jobsPath)) {
-      try {
-        store = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs?: unknown[] };
-      } catch (err) {
-        throw new Error(`failed to parse ${jobsPath}: ${String(err)}`);
-      }
-    }
+    const jobsPath = describeCronStoreLocation(openclawDir);
+    const snapshot = readOpenClawCronStore(openclawDir);
+    const store = snapshot.store;
 
     if (!Array.isArray(store.jobs)) {
       store.jobs = [];
@@ -563,10 +549,7 @@ async function scheduleActiveTaskWakeReminder(
       jobs.push(job);
     }
 
-    const payload = JSON.stringify(store, null, 2);
-    const tmpPath = `${jobsPath}.${process.pid}.${Date.now()}.tmp`;
-    writeFileSync(tmpPath, payload, "utf-8");
-    renameSync(tmpPath, jobsPath);
+    writeOpenClawCronStore(openclawDir, store, snapshot.backend);
 
     return {
       scheduled: true,

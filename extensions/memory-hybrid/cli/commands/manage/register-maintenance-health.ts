@@ -1,7 +1,6 @@
 /**
  * Maintenance inventory, status, and cron-health subcommands (Issue #281).
  */
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +11,7 @@ import {
   renderMaintenanceInventoryText,
 } from "../../../services/maintenance-inventory.js";
 import { formatTimestampUtcFromMs } from "../../../utils/dates.js";
+import { readOpenClawCronStore, describeCronStoreLocation } from "../../../services/openclaw-cron-store.js";
 import { type Chainable, relativeTime, withExit } from "../../shared.js";
 
 export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: HybridMemoryConfig): void {
@@ -50,7 +50,7 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
     .option("--json", "Output as JSON")
     .action(
       withExit(async (opts?: { json?: boolean }) => {
-        const cronStorePath = join(homedir(), ".openclaw", "cron", "jobs.json");
+        const openclawDir = join(homedir(), ".openclaw");
         const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
         const nightlyCronExpr = cfg.maintenance?.cronReliability?.nightlyCron ?? "0 3 * * *";
         const weeklyBackupCronExpr = cfg.maintenance?.cronReliability?.weeklyBackupCron ?? "0 4 * * 0";
@@ -95,14 +95,10 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
         const results: JobStatus[] = [];
 
         let cronStore: { jobs?: unknown[] } = { jobs: [] };
-        if (existsSync(cronStorePath)) {
-          try {
-            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as {
-              jobs?: unknown[];
-            };
-          } catch {
-            // corrupt store — treat all as missing
-          }
+        try {
+          cronStore = readOpenClawCronStore(openclawDir).store;
+        } catch {
+          // corrupt store — treat all as missing
         }
 
         const jobs = Array.isArray(cronStore.jobs) ? (cronStore.jobs as Array<Record<string, unknown>>) : [];
@@ -189,7 +185,7 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
 
         console.log("Memory Maintenance Status (Issue #281)");
         console.log("========================================");
-        console.log(`Cron store: ${cronStorePath}`);
+        console.log(`Cron store: ${describeCronStoreLocation(openclawDir)}`);
         console.log(`Stale threshold (daily): ${cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28}h`);
         console.log("");
 
@@ -228,23 +224,21 @@ export function registerMaintenanceHealthCommands(maintenance: Chainable, cfg: H
     )
     .action(
       withExit(async () => {
-        const cronStorePath = join(homedir(), ".openclaw", "cron", "jobs.json");
+        const openclawDir = join(homedir(), ".openclaw");
         const staleThresholdMs = (cfg.maintenance?.cronReliability?.staleThresholdHours ?? 28) * 60 * 60 * 1000;
         const useConsolidatedCron = cfg.maintenance?.orchestrator?.consolidatedCronJobs !== false;
         const criticalJobs = useConsolidatedCron ? ["hybrid-mem:maintenance-nightly"] : ["hybrid-mem:nightly-distill"];
 
         let cronStore: { jobs?: unknown[] } = { jobs: [] };
-        if (existsSync(cronStorePath)) {
-          try {
-            cronStore = JSON.parse(readFileSync(cronStorePath, "utf-8")) as {
-              jobs?: unknown[];
-            };
-          } catch {
-            console.warn("⚠ Could not read cron store — skipping health check.");
+        try {
+          const snapshot = readOpenClawCronStore(openclawDir);
+          cronStore = snapshot.store;
+          if ((snapshot.store.jobs?.length ?? 0) === 0 && snapshot.backend === "json") {
+            console.warn("⚠ Cron store not found — maintenance jobs not installed. Run: hybrid-mem install");
             return;
           }
-        } else {
-          console.warn("⚠ Cron store not found — maintenance jobs not installed. Run: hybrid-mem install");
+        } catch {
+          console.warn("⚠ Could not read cron store — skipping health check.");
           return;
         }
 
