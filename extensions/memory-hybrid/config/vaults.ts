@@ -40,3 +40,13 @@ export function resolveVaultDbPath(vaults: VaultsConfig | undefined, vaultName?:
   if (vaultName && vaults?.[vaultName]) return vaults[vaultName];
   return defaultPath ?? join(homedir(), ".openclaw", "facts.db");
 }
+
+/** Derive a sibling Lance path from a vault sqlite path. */
+export function resolveVaultLancePath(sqlitePath: string): string {
+  if (sqlitePath.endsWith(".db")) return `${sqlitePath.slice(0, -3)}.lance`;
+  return `${sqlitePath}.lance`;
+}
+
+export function listConfiguredVaultNames(vaults: VaultsConfig | undefined): string[] {
+  return vaults ? Object.keys(vaults) : [];
+}

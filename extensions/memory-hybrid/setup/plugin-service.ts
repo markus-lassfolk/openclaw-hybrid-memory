@@ -689,6 +689,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 reinforcement: cfg.reinforcement,
                 provenanceService,
                 eventLog,
+                dedupWindowMinutes: cfg.store.dedupWindowMinutes ?? 30,
               },
               api.logger,
             );

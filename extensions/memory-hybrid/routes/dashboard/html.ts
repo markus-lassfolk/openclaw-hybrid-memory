@@ -325,6 +325,26 @@ function renderAgentHealth(ah) {
   return html;
 }
 
+function renderRecallFeedback(signals) {
+  let html = '<div class="card"><div class="card-title"><span class="icon">📡</span> Recall Feedback</div>';
+  if (!signals) {
+    html += '<div class="empty">Recall signals unavailable</div></div>';
+    return html;
+  }
+  html += \`<div class="stat-row"><span class="stat-label">Window</span><span class="stat-value">\${signals.windowDays}d</span></div>\`;
+  html += \`<div class="stat-row"><span class="stat-label">Snooze candidates</span><span class="stat-value">\${signals.autoSnoozeCandidates}</span></div>\`;
+  html += \`<div class="stat-row"><span class="stat-label">Never referenced (surfaced)</span><span class="stat-value">\${signals.neverReferencedSurfaced}</span></div>\`;
+  html += \`<div class="stat-row"><span class="stat-label">Cross-domain hubs</span><span class="stat-value">\${signals.crossDomainHubs}</span></div>\`;
+  if (signals.snoozeCandidateIds && signals.snoozeCandidateIds.length > 0) {
+    html += '<div style="margin-top:8px;font-size:11px;color:var(--muted)">Top snooze candidates</div>';
+    signals.snoozeCandidateIds.slice(0, 5).forEach(function (id) {
+      html += \`<div class="task-meta">\${escHtml(id)}</div>\`;
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
 function renderAudit(a) {
   let html = '<div class="card section-full"><div class="card-title"><span class="icon">📜</span> Audit Trail (24h)</div>';
   if (!a || !a.enabled) {
@@ -561,14 +581,19 @@ function setActiveNav(mode) {
 
 async function refresh() {
   try {
-    const res = await fetch('/api/status');
+    const [res, signalsRes] = await Promise.all([
+      fetch('/api/status'),
+      fetch('/api/viewer/recall-signals?windowDays=7'),
+    ]);
     const data = await res.json();
+    const signals = signalsRes.ok ? await signalsRes.json() : null;
     if (!res.ok) {
       throw new Error(data.error || 'Server error');
     }
     const grid = document.getElementById('grid');
     grid.innerHTML = [
       renderMemory(data.memory),
+      renderRecallFeedback(signals),
       renderTaskQueue(data.taskQueue),
       renderForge(data.forge),
       renderCronJobs(data.cronJobs),

@@ -19,7 +19,8 @@ import {
   DEFAULT_EDICT_BUDGET_FRACTION,
   finalizeInjectionMemoryContent,
 } from "../services/recalled-context-assembler.js";
-import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import { logRecallEvent } from "../services/recall-events.js";
+import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
 import {
   attributeInjectionToTurn,
   detectReferencedFactIds,
@@ -266,6 +267,24 @@ async function runInjection(
       const assistantTurn = turns.find((t) => t.index === attr.turnIndex);
       if (assistantTurn) {
         attr.referencedFactIds = detectReferencedFactIds(assistantTurn.text, attr.injectedFactIds);
+      }
+      try {
+        recordInjectionAttribution(ctx.factsDb.getRawDb(), {
+          sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
+          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
+          attribution: attr,
+        });
+        const queryText = extractLastUserMessageText(messages) ?? "";
+        logRecallEvent(ctx.factsDb.getRawDb(), {
+          sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
+          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
+          query: queryText.slice(0, 500) || null,
+          factIds: sideEffects.accessedIds,
+          hit: sideEffects.accessedIds.length > 0,
+          source: "auto-recall",
+        });
+      } catch {
+        /* non-fatal attribution persistence */
       }
       emitRecallVerboseLog({
         evt: "recall.attribution",

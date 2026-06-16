@@ -15,6 +15,7 @@ import { getWalCircuitBreakerState } from "../services/wal-helpers.js";
 import { detectAvailableProviders } from "../utils/provider-detection.js";
 import { formatBytes, WAL_SIZE_WARN_BYTES } from "../utils/format.js";
 import { getRecallStatsSnapshot } from "../services/recall-timing-stats.js";
+import { getRecallSignalsSnapshot } from "../services/recall-signals.js";
 import { getStaleMaintenanceJobs } from "../services/maintenance-audit-journal.js";
 import { countPinnedFacts } from "../services/fact-lifecycle-verbs.js";
 
@@ -398,6 +399,23 @@ export function registerDoctorCommand(
           name: "Retrieval health",
           status: "warn",
           message: `Stats unavailable: ${String(err)}`,
+        });
+      }
+
+      try {
+        const signals = getRecallSignalsSnapshot(factsDb.getRawDb(), 7);
+        const status =
+          signals.autoSnoozeCandidates > 0 || signals.neverReferencedSurfaced > 0 ? "warn" : "pass";
+        checks.push({
+          name: "Recall feedback",
+          status,
+          message: `snooze_candidates=${signals.autoSnoozeCandidates} never_referenced=${signals.neverReferencedSurfaced} cross_domain_hubs=${signals.crossDomainHubs}`,
+        });
+      } catch (err) {
+        checks.push({
+          name: "Recall feedback",
+          status: "warn",
+          message: `Signals unavailable: ${String(err)}`,
         });
       }
 

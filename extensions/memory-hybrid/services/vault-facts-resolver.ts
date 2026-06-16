@@ -5,6 +5,29 @@
 import type { FactsDB } from "../backends/facts-db.js";
 import { matchEntitiesInPrompt, type SpoTriple } from "./vault-context.js";
 
+type OrgRow = { id: string; display_name: string };
+type ContactRow = { id: string; display_name: string; primary_org_id: string | null };
+
+function loadOrgRows(db: ReturnType<FactsDB["getRawDb"]>): OrgRow[] {
+  try {
+    return db
+      .prepare(`SELECT id, display_name FROM organizations ORDER BY display_name LIMIT 200`)
+      .all() as OrgRow[];
+  } catch {
+    return [];
+  }
+}
+
+function loadContactRows(db: ReturnType<FactsDB["getRawDb"]>): ContactRow[] {
+  try {
+    return db
+      .prepare(`SELECT id, display_name, primary_org_id FROM contacts ORDER BY display_name LIMIT 200`)
+      .all() as ContactRow[];
+  } catch {
+    return [];
+  }
+}
+
 /** Build SPO triples for entities mentioned in the user prompt. */
 export function resolveVaultFactsTriples(
   factsDb: FactsDB,
@@ -12,23 +35,20 @@ export function resolveVaultFactsTriples(
   maxTriples = 20,
 ): SpoTriple[] {
   const db = factsDb.getRawDb();
-  const orgRows = db
-    .prepare(`SELECT id, name FROM organizations ORDER BY name LIMIT 200`)
-    .all() as Array<{ id: string; name: string }>;
-  const contactRows = db
-    .prepare(`SELECT id, name, primary_org_id FROM contacts ORDER BY name LIMIT 200`)
-    .all() as Array<{ id: string; name: string; primary_org_id: string | null }>;
+  const orgRows = loadOrgRows(db);
+  const contactRows = loadContactRows(db);
+  if (orgRows.length === 0 && contactRows.length === 0) return [];
 
   const knownEntities = [
-    ...orgRows.map((o) => o.name),
-    ...contactRows.map((c) => c.name),
+    ...orgRows.map((o) => o.display_name),
+    ...contactRows.map((c) => c.display_name),
   ];
   const matched = matchEntitiesInPrompt(prompt, knownEntities);
   if (matched.length === 0) return [];
 
   const triples: SpoTriple[] = [];
-  const orgByName = new Map(orgRows.map((o) => [o.name.toLowerCase(), o]));
-  const contactByName = new Map(contactRows.map((c) => [c.name.toLowerCase(), c]));
+  const orgByName = new Map(orgRows.map((o) => [o.display_name.toLowerCase(), o]));
+  const contactByName = new Map(contactRows.map((c) => [c.display_name.toLowerCase(), c]));
 
   for (const entity of matched) {
     const key = entity.toLowerCase();
@@ -36,7 +56,7 @@ export function resolveVaultFactsTriples(
     if (contact?.primary_org_id) {
       const org = orgRows.find((o) => o.id === contact.primary_org_id);
       if (org) {
-        triples.push({ subject: contact.name, predicate: "works_at", object: org.name });
+        triples.push({ subject: contact.display_name, predicate: "works_at", object: org.display_name });
       }
     }
     const org = orgByName.get(key);
@@ -46,7 +66,7 @@ export function resolveVaultFactsTriples(
         const fact = factsDb.getById(factId);
         if (!fact?.key || !fact.value) continue;
         triples.push({
-          subject: org.name,
+          subject: org.display_name,
           predicate: fact.key,
           object: String(fact.value).slice(0, 120),
         });

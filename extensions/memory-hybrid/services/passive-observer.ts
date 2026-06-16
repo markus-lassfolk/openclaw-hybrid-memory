@@ -36,6 +36,7 @@ import {
 } from "./recalled-context-assembler.js";
 import type { ProvenanceService } from "./provenance.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
+import { checkCaptureDedupWindow, computeCaptureDedupHash } from "./capture-dedup.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
 
 // ---------------------------------------------------------------------------
@@ -352,6 +353,8 @@ export async function runPassiveObserver(
     eventLog?: EventLog | null;
     /** Agent's own name. Used by isIdentityFact() for name-specific detection. */
     agentName?: string;
+    /** Observation dedup window in minutes (#1913). */
+    dedupWindowMinutes?: number;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -600,6 +603,13 @@ export async function runPassiveObserver(
         const storedCategory =
           (prepareMemoryMetadataForStorage(fact.category) as MemoryCategory | undefined) ?? fact.category;
 
+        const dedupWindow = opts.dedupWindowMinutes ?? 30;
+        const dedupInput = { text: storedText, entity: null, key: null, sessionId };
+        if (typeof factsDb.getRawDb === "function") {
+          const dedupCheck = checkCaptureDedupWindow(factsDb.getRawDb(), dedupInput, dedupWindow);
+          if (dedupCheck.skip) continue;
+        }
+
         // Embed new fact for dedup check
         let vec: number[];
         try {
@@ -751,6 +761,13 @@ export async function runPassiveObserver(
           continue;
         }
         const stored = storeResult.entry;
+        if (storeResult.newlyStored !== false && typeof factsDb.getRawDb === "function") {
+          const dedupHash = computeCaptureDedupHash(dedupInput);
+          factsDb
+            .getRawDb()
+            .prepare("UPDATE facts SET content_dedup_hash = ? WHERE id = ?")
+            .run(dedupHash, stored.id);
+        }
         await cleanupEvictedVector({
           vectorDb,
           evictedFactId: storeResult.evictedFactId,

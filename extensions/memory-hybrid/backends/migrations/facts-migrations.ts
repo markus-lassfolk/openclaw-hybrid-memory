@@ -911,6 +911,23 @@ function migrateRecallEventsTable(db: DatabaseSync): void {
   `);
 }
 
+/** Per-turn injection attribution for recall feedback (#1916). */
+function migrateInjectionAttributionTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS injection_attribution (
+      id TEXT PRIMARY KEY,
+      occurred_at INTEGER NOT NULL,
+      session_key TEXT,
+      agent_id TEXT,
+      turn_index INTEGER NOT NULL DEFAULT 0,
+      injected_fact_ids TEXT NOT NULL DEFAULT '[]',
+      referenced_fact_ids TEXT NOT NULL DEFAULT '[]'
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_injection_attr_time ON injection_attribution(occurred_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_injection_attr_session ON injection_attribution(session_key)");
+}
+
 /** Per-session language metadata from runtime hooks and JSONL backfill. */
 function migrateSessionMetadataTable(db: DatabaseSync): void {
   db.exec(`
@@ -1446,6 +1463,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Implicit/behavioral feedback
   migrateImplicitSignalsTable(db);
   migrateRecallEventsTable(db);
+  migrateInjectionAttributionTable(db);
   migrateSessionMetadataTable(db);
   migrateReflectionParseLogTable(db);
   migrateSignalClassificationsTable(db);
