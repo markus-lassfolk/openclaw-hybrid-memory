@@ -77,8 +77,11 @@ export function extractCredentialMatch(text: string): { type: string; secretValu
   return null;
 }
 
-/** True if content should be treated as a credential (store in vault when enabled, else in memory). */
-export function isCredentialLike(
+/**
+ * Narrow credential signal: structured fields or extractable secret patterns.
+ * Used for vault routing — does not match broad English words alone (#1896).
+ */
+export function isStructuredCredentialCandidate(
   text: string,
   entity?: string | null,
   key?: string | null,
@@ -89,7 +92,17 @@ export function isCredentialLike(
   const e = (entity ?? "").toLowerCase();
   if (["api_key", "password", "token", "secret", "bearer"].some((x) => k.includes(x) || e.includes(x))) return true;
   if (value && value.length >= 8 && /^(eyJ|sk-|ghp_|gho_|xox[baprs]-)/i.test(value)) return true;
-  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text)) || CAPTURE_FILTER_PATTERNS.some((r) => r.test(text));
+  return CREDENTIAL_PATTERNS.some((p) => p.regex.test(text));
+}
+
+/** True if content looks credential-related (broad or narrow). Used by auto-capture filters, not vault gating. */
+export function isCredentialLike(
+  text: string,
+  entity?: string | null,
+  key?: string | null,
+  value?: string | null,
+): boolean {
+  return isStructuredCredentialCandidate(text, entity, key, value) || CAPTURE_FILTER_PATTERNS.some((r) => r.test(text));
 }
 
 export const VAULT_POINTER_PREFIX = "vault:";
@@ -114,7 +127,7 @@ export function tryParseCredentialForVault(
   url?: string;
   notes?: string;
 } | null {
-  if (!isCredentialLike(text, entity, key, value)) return null;
+  if (!isStructuredCredentialCandidate(text, entity, key, value)) return null;
   const match = extractCredentialMatch(text);
   if (options?.requirePatternMatch && !match) return null;
   // Prefer the secret extracted from a regex pattern match over the structured value param.
@@ -123,7 +136,8 @@ export function tryParseCredentialForVault(
   // If a match exists, it IS the credential — use its value.
   // Only fall back to the structured value param when no pattern matched.
   const secretFromMatch = match?.secretValue ?? null;
-  const secretFromParam = value && value.length >= 8 ? value : null;
+  const secretFromParam =
+    value && value.length >= 8 && !value.startsWith(VAULT_POINTER_PREFIX) ? value : null;
   const secretValue = secretFromMatch ?? secretFromParam ?? null;
   if (!secretValue) return null;
   const typeFromPattern = (match?.type ?? "other") as "token" | "password" | "api_key" | "ssh" | "bearer" | "other";
