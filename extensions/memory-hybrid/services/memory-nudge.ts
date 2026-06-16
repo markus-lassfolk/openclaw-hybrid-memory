@@ -77,9 +77,26 @@ export function buildMemoryNudge(db: DatabaseSync, config: MemoryNudgeConfig): M
 }
 
 /** Format nudge as injection block (≤ maxTokens approx). */
-export function formatMemoryNudgeBlock(nudge: MemoryNudgePayload): string {
-  const lines = nudge.actions.map((a, i) => `${i + 1}. ${a.label} → ${a.toolCall}`);
-  return `<memory-nudge>\n${lines.join("\n")}\n</memory-nudge>`;
+export function formatMemoryNudgeBlock(nudge: MemoryNudgePayload, maxTokens: number = 200): string {
+  const prefix = "<memory-nudge>\n";
+  const suffix = "\n</memory-nudge>";
+  const overheadTokens = Math.ceil((prefix.length + suffix.length) / 4);
+  const availableTokens = Math.max(0, maxTokens - overheadTokens);
+
+  const lines: string[] = [];
+  let estimatedTokens = 0;
+
+  for (let i = 0; i < nudge.actions.length; i++) {
+    const line = `${i + 1}. ${nudge.actions[i].label} → ${nudge.actions[i].toolCall}`;
+    const lineTokens = Math.ceil(line.length / 4);
+    if (estimatedTokens + lineTokens > availableTokens && lines.length > 0) {
+      break;
+    }
+    lines.push(line);
+    estimatedTokens += lineTokens;
+  }
+
+  return `${prefix}${lines.join("\n")}${suffix}`;
 }
 
 const suppressUntilBySession = new Map<string, number>();

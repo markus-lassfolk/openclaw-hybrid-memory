@@ -202,12 +202,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
             ],
           };
         }
-        const success = pinFact(
-          vaultFactsDb,
-          fact.id,
-          args.reason ?? "agent pin",
-          api.context?.sessionId ?? undefined,
-        );
+        const success = pinFact(vaultFactsDb, fact.id, args.reason ?? "agent pin", api.context?.sessionId ?? undefined);
         if (!success) {
           return { content: [{ type: "text", text: `Failed to pin fact ${fact.id} (may be superseded or missing)` }] };
         }
@@ -247,7 +242,12 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         } else {
           untilSec = Math.floor(Date.now() / 1000) + DEFAULT_SNOOZE_DAYS * 86_400;
         }
-        snoozeFact(vaultFactsDb, fact.id, untilSec);
+        const success = snoozeFact(vaultFactsDb, fact.id, untilSec);
+        if (!success) {
+          return {
+            content: [{ type: "text", text: `Failed to snooze fact ${fact.id} (may be superseded or missing)` }],
+          };
+        }
         return {
           content: [
             {

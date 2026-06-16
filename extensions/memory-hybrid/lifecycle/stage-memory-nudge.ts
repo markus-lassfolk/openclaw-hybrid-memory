@@ -35,7 +35,7 @@ export function registerMemoryNudgeInjection(api: ClawdbotPluginApi, ctx: Lifecy
     if (!nudge || nudge.actions.length === 0) return undefined;
 
     recordNudgeEmission(sessionKey);
-    const block = formatMemoryNudgeBlock(nudge);
+    const block = formatMemoryNudgeBlock(nudge, config.maxTokens);
     return { prependContext: `${block}\n\n` };
   });
 }
