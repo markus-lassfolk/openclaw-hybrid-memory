@@ -7,7 +7,7 @@
 
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { tryParseCredentialForVault } from "../services/auto-capture.js";
+import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -155,6 +155,16 @@ export async function runStoreForCli(
         }
         return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
     }
+    return { outcome: "credential_blocked_no_vault" };
+  }
+
+  // When requirePatternMatch rejects vault parsing but the input is still credential-like,
+  // block ordinary storage to prevent plaintext secrets in facts.db (#1896).
+  if (
+    !parsedCredential &&
+    cfg.credentials.autoCapture?.requirePatternMatch === true &&
+    isStructuredCredentialCandidate(text, entity, key, value)
+  ) {
     return { outcome: "credential_blocked_no_vault" };
   }
 

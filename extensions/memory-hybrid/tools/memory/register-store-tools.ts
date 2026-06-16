@@ -18,7 +18,7 @@ import {
   getMemoryCategories,
   isCompactVerbosity,
 } from "../../config.js";
-import { tryParseCredentialForVault } from "../../services/auto-capture.js";
+import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -541,6 +541,31 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               action: "memory_store",
               outcome: "failed",
               error: "credential vault disabled or unavailable",
+              sessionId: api.context?.sessionId ?? undefined,
+            });
+            return {
+              content: [
+                {
+                  type: "text",
+                  text: "Credential-like content detected. Ordinary memory storage is blocked while the credential vault is disabled or unavailable. Enable credentials vault and retry.",
+                },
+              ],
+              details: { action: "credential_blocked_no_vault" },
+            };
+          }
+
+          // When requirePatternMatch rejects vault parsing but the input is still credential-like,
+          // block ordinary storage to prevent plaintext secrets in facts.db (#1896).
+          if (
+            !parsedCredential &&
+            cfg.credentials.autoCapture?.requirePatternMatch === true &&
+            isStructuredCredentialCandidate(textToStore, entity, key, value)
+          ) {
+            auditAppend({
+              agentId: agentIdForAudit(),
+              action: "memory_store",
+              outcome: "failed",
+              error: "credential-like content blocked by requirePatternMatch",
               sessionId: api.context?.sessionId ?? undefined,
             });
             return {

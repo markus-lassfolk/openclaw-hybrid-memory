@@ -28,7 +28,7 @@ import {
   recordAdaptiveSuccess,
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
-import { tryParseCredentialForVault } from "../services/auto-capture.js";
+import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -805,6 +805,18 @@ export async function runDistillForCli(
         if (opts.verbose) sink.log("  skipped credential-like fact: vault disabled or unavailable");
         continue;
       }
+
+      // When requirePatternMatch rejects vault parsing but the input is still credential-like,
+      // skip ordinary storage to prevent plaintext secrets in facts.db (#1896).
+      if (
+        !parsed &&
+        cfg.credentials.autoCapture?.requirePatternMatch === true &&
+        isStructuredCredentialCandidate(fact.text, fact.entity ?? null, fact.key ?? null, fact.value)
+      ) {
+        if (opts.verbose) sink.log("  skipped credential-like fact: blocked by requirePatternMatch");
+        continue;
+      }
+
       if (factsDb.hasDuplicate(fact.text, "distillation")) {
         skipped++;
         continue;

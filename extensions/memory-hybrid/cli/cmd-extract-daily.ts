@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { tryParseCredentialForVault } from "../services/auto-capture.js";
+import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -298,6 +298,18 @@ export async function runExtractDailyForCli(
         if (opts.verbose) sink.log("  skipped credential-like line: vault disabled or unavailable");
         continue;
       }
+
+      // When requirePatternMatch rejects vault parsing but the input is still credential-like,
+      // skip ordinary storage to prevent plaintext secrets in facts.db (#1896).
+      if (
+        !parsed &&
+        cfg.credentials.autoCapture?.requirePatternMatch === true &&
+        isStructuredCredentialCandidate(trimmed, extracted.entity, extracted.key, extracted.value)
+      ) {
+        if (opts.verbose) sink.log("  skipped credential-like line: blocked by requirePatternMatch");
+        continue;
+      }
+
       if (!extracted.entity && !extracted.key && category !== "decision") continue;
       totalExtracted++;
       if (opts.dryRun) {
