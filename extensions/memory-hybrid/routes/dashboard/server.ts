@@ -221,8 +221,12 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify(stats));
         })
         .catch((err: unknown) => {
+          pluginLogger.error(
+            `[dashboard-server] /api/viewer/stats: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
           res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: String(err) }));
+          res.end(JSON.stringify({ error: "InternalServerError" }));
         });
       return;
     }

@@ -230,8 +230,8 @@ export function searchFts(
           filterParams.push(entityFilter.trim());
         }
         if (tagFilter?.trim()) {
-          filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ?";
-          filterParams.push(`%,${tagFilter.toLowerCase().trim()},%`);
+          filterSql += " AND (',' || COALESCE(tags,'') || ',') LIKE ? ESCAPE '\\'";
+          filterParams.push(`%,${tagFilter.toLowerCase().trim().replace(/[%_\\]/g, '\\$&')},%`);
         }
         allFiltered.push(
           ...(db.prepare(filterSql).all(...filterParams) as Array<{
