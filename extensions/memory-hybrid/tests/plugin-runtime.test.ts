@@ -31,10 +31,14 @@ describe("createTimers", () => {
     expect(a.classifyTimer).not.toBe(b.classifyTimer);
   });
 
-  it("all timer refs start null", () => {
+  it("all timer refs start null except shuttingDownRef", () => {
     const t = createTimers();
     for (const key of Object.keys(t) as Array<keyof typeof t>) {
-      expect(t[key].value).toBeNull();
+      if (key === "shuttingDownRef") {
+        expect(t[key].value).toBe(false);
+      } else {
+        expect(t[key].value).toBeNull();
+      }
     }
   });
 
