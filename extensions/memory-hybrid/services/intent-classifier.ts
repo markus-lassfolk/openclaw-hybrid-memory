@@ -105,7 +105,7 @@ const MAX_TRACKED_SESSIONS = 200;
 const STALE_SESSION_TTL_MS = 30 * 60 * 1000;
 
 function evictOldestSession() {
-  if (sessionCaches.size <= MAX_TRACKED_SESSIONS) return;
+  if (sessionCaches.size < MAX_TRACKED_SESSIONS) return;
   const oldest = sessionCaches.keys().next().value;
   if (oldest) {
     sessionCaches.delete(oldest);

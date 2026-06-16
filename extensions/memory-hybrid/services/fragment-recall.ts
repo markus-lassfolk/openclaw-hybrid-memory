@@ -3,7 +3,20 @@
  */
 
 import type { FactsDB } from "../backends/facts-db.js";
+import type { VaultHandle } from "./vault-registry.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
+
+export function resolveFactsDbForEntry(
+  entry: MemoryEntry,
+  defaultDb: FactsDB,
+  vaultHandles?: VaultHandle[],
+): FactsDB {
+  if (!vaultHandles || vaultHandles.length <= 1) return defaultDb;
+  for (const handle of vaultHandles) {
+    if (handle.factsDb.getById(entry.id)) return handle.factsDb;
+  }
+  return defaultDb;
+}
 
 export function isFragmentEntry(entry: MemoryEntry): boolean {
   return entry.source?.startsWith("fragment-of:") === true || (entry.tags?.includes("fragment") ?? false);

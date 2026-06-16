@@ -95,7 +95,7 @@ function clearSessionNudgeMaps(sessionId: string): void {
 }
 
 function evictOldestSession() {
-  if (sessionLastActivity.size <= MAX_TRACKED_SESSIONS) return;
+  if (sessionLastActivity.size < MAX_TRACKED_SESSIONS) return;
   const oldest = sessionLastActivity.keys().next().value;
   if (oldest) clearSessionNudgeMaps(oldest);
 }

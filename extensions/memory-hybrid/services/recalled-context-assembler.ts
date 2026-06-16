@@ -12,7 +12,7 @@ import {
   entriesToVaultFactLines,
   type VaultFactLine,
 } from "./vault-context.js";
-import { resolveRecallInjectionText } from "./fragment-recall.js";
+import { resolveRecallInjectionText, resolveFactsDbForEntry } from "./fragment-recall.js";
 import { filterFactTextsForInjection, type InjectionFilterMode } from "./injection-filter.js";
 import { resolveVaultFactsTriples } from "./vault-facts-resolver.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
@@ -102,6 +102,9 @@ export function finalizeInjectionMemoryContent(
     spoBlock = buildVaultFactsBlock(triples, vaultBudget, estimateTokens);
   }
 
+  const vaultHandles =
+    ctx.cfg.retrieval?.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
+
   const useStructured = boundary?.legacyMemoryContextWrapper === false;
   if (!useStructured) {
     return spoBlock ? `${spoBlock}\n\n${plainMemoryContent}` : plainMemoryContent;
@@ -111,7 +114,11 @@ export function finalizeInjectionMemoryContent(
   const rawFacts: VaultFactLine[] = entriesToVaultFactLines(
     candidates.map((c) => ({
       ...c.entry,
-      text: resolveRecallInjectionText(c.entry, ctx.factsDb, Boolean(c.entry.summary?.trim())),
+      text: resolveRecallInjectionText(
+        c.entry,
+        resolveFactsDbForEntry(c.entry, ctx.factsDb, vaultHandles),
+        Boolean(c.entry.summary?.trim()),
+      ),
     })),
   );
   const facts: VaultFactLine[] = rawFacts

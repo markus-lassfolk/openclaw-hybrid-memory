@@ -28,7 +28,7 @@ import {
 import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
 import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
-import { resolveRecallInjectionText } from "../services/fragment-recall.js";
+import { resolveRecallInjectionText, resolveFactsDbForEntry } from "../services/fragment-recall.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
@@ -208,6 +208,11 @@ async function runInjection(
     ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
   let injectionFilteredCount = 0;
 
+  const vaultHandles =
+    ctx.cfg.retrieval?.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
+  const resolveFactsDbForCandidate = (entry: (typeof candidates)[number]["entry"]) =>
+    resolveFactsDbForEntry(entry, ctx.factsDb, vaultHandles);
+
   const sanitizeFactForInjection = (raw: string): string => {
     const cleaned = sanitizePromptInjection(sanitizeRecallFactText(raw));
     if (!cleaned || injectionFilterMode === "off") return cleaned;
@@ -227,7 +232,7 @@ async function runInjection(
   };
 
   const recallBodyText = (entry: (typeof candidates)[number]["entry"], useSummary: boolean): string =>
-    sanitizeFactForInjection(resolveRecallInjectionText(entry, ctx.factsDb, useSummary));
+    sanitizeFactForInjection(resolveRecallInjectionText(entry, resolveFactsDbForCandidate(entry), useSummary));
 
   const edictMaxTokens = Math.max(
     0,
