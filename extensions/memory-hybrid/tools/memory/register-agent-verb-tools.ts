@@ -188,6 +188,10 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           tags: args.tags,
         });
 
+        if (result.skipped) {
+          return { content: [{ type: "text", text: "Diary entry was not stored (filtered or duplicate)." }] };
+        }
+
         if (result.evictedFactId) {
           const { cleanupEvictedVector } = await import("../../services/vector-maintenance.js");
           await cleanupEvictedVector({
