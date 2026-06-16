@@ -7,10 +7,10 @@
 import type OpenAI from "openai";
 import type { DatabaseSync } from "node:sqlite";
 import type { LifecycleAdaptersConfig } from "../config/types/features.js";
-import type { HybridMemoryConfig } from "../config/types/config.js";
+import { getEnv } from "../utils/env-manager.js";
 import { tryParseFirstJsonObject } from "../utils/llm-json-array.js";
-import { CostFeature } from "./cost-feature-labels.js";
 import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
+import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type MemoryEvolutionResult = {
@@ -103,6 +103,7 @@ async function evolveNeighborWithLlm(
     `Linked context fact:\n${context.text.slice(0, 1200)}\n`;
 
   try {
+    const adaptiveEnabled = (getEnv("OPENCLAW_HYBRID_MEM_ADAPTIVE_DISTILL") ?? "").trim() !== "0";
     const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       openai,
       model,
@@ -114,6 +115,7 @@ async function evolveNeighborWithLlm(
       feature: CostFeature.evolutionPass,
       logger: logger ?? {},
       adaptiveStatePath,
+      enabled: adaptiveEnabled,
     });
     const raw = detail.content;
     const parsed = tryParseFirstJsonObject(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "")) as {
@@ -169,7 +171,7 @@ export async function runMemoryEvolutionPass(
     evolutionCfg.dailyLlmCallCap,
     opts.llmCallsBudget ?? evolutionCfg.dailyLlmCallCap,
   );
-  const useLlm = evolutionCfg.mode === "llm" && Boolean(opts.openai && opts.nanoModels?.[0]);
+  const useLlm = evolutionCfg.mode === "llm" && Boolean(opts.openai && opts.model);
 
   const sinceSec = Math.floor(Date.now() / 1000) - 7 * 86_400;
   const linkLimit = Math.min(200, evolutionCfg.dailyLlmCallCap * evolutionCfg.maxNeighborsPerFact);

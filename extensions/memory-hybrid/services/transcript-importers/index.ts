@@ -24,6 +24,11 @@ export function hashConversation(messages: TranscriptMessage[]): string {
   return createHash("sha256").update(payload).digest("hex");
 }
 
+/** Hash the exact persisted transcript body (after redaction / formatting). */
+export function hashStoredTranscriptText(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 /** Parse Claude Code JSONL (one JSON object per line with type/message). */
 export function parseClaudeCodeJsonl(raw: string): ParsedConversation[] {
   const lines = raw.split("\n").filter((l) => l.trim());

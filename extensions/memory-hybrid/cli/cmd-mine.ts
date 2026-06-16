@@ -8,6 +8,7 @@ import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import {
   estimateMineCostUsd,
+  hashStoredTranscriptText,
   readTranscriptFile,
   redactSecretsInText,
 } from "../services/transcript-importers/index.js";
@@ -108,20 +109,21 @@ export async function executeMineCommand(
   const mineScope = "global";
   const mineScopeTarget = null;
   for (const conv of conversations) {
-    const existing = db
-      .prepare(
-        "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
-      )
-      .get(conv.contentHash, mineScope, mineScopeTarget) as { id: string } | undefined;
-    if (existing) {
-      skipped++;
-      continue;
-    }
     const rawText = conv.messages
       .map((m) => `${m.role}: ${m.content}`)
       .join("\n")
       .slice(0, 50_000);
     const { text, redacted, categories } = redactSecretsInText(rawText);
+    const storedContentHash = hashStoredTranscriptText(text);
+    const existing = db
+      .prepare(
+        "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
+      )
+      .get(storedContentHash, mineScope, mineScopeTarget) as { id: string } | undefined;
+    if (existing) {
+      skipped++;
+      continue;
+    }
     redactedTotal += redacted;
     for (const [k, v] of Object.entries(categories)) {
       redactionCategories[k] = (redactionCategories[k] ?? 0) + v;
@@ -143,7 +145,7 @@ export async function executeMineCommand(
       continue;
     }
     db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
-      conv.contentHash,
+      storedContentHash,
       batchId,
       result.entry.id,
     );
