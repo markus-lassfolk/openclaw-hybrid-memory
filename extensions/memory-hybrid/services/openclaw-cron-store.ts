@@ -539,7 +539,11 @@ function writeCronStoreToSqlite(sqlitePath: string, storeKey: string, store: Ope
       for (const rawJob of jobs) {
         if (typeof rawJob !== "object" || rawJob === null) continue;
         const row = bindCronJobInsertRow(storeKey, rawJob, sortOrder);
-        if (!row) continue;
+        if (!row) {
+          throw new Error(
+            `Job normalization failed for ${JSON.stringify(rawJob).slice(0, 200)}; refusing to drop job from SQLite store`,
+          );
+        }
         insert.run(row);
         sortOrder += 1;
       }
@@ -569,8 +573,8 @@ export function writeOpenClawCronStore(
         store,
       );
       return { backend: "sqlite", displayPath };
-    } catch {
-      // Host may be mid-upgrade — fall back to JSON if SQLite is not ready.
+    } catch (err) {
+      throw new Error(`SQLite write failed on migrated host: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 

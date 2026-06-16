@@ -204,7 +204,18 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
   }
 
   // Job name regex patterns for matching (use normalized name so "Weekly Reflection" etc. match)
-  const cronStoreSnapshot = readOpenClawCronStore(openclawDir);
+  let cronStoreSnapshot;
+  try {
+    cronStoreSnapshot = readOpenClawCronStore(openclawDir);
+  } catch (err) {
+    const FAIL = noEmoji ? "[FAIL]" : "❌";
+    log(`\n${FAIL} Cron store read failed: ${err instanceof Error ? err.message : String(err)}`);
+    state.issues.push(`Cron store read error: ${err instanceof Error ? err.message : String(err)}`);
+    state.fixes.push(
+      "Fix corrupt cron JSON: restore from backup or delete the file to start fresh. See docs/TROUBLESHOOTING.md.",
+    );
+    return;
+  }
   const cronStoreLabel = describeCronStoreLocation(openclawDir, cronStoreSnapshot.backend);
   const cronStoreHasJobs = (cronStoreSnapshot.store.jobs?.length ?? 0) > 0;
   const nightlyMemorySweepRe = /nightly[- ]?memory[- ]?sweep|memory distillation.*nightly|nightly.*memory.*distill/i;
