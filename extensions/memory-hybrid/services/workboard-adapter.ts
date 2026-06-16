@@ -26,7 +26,7 @@ import {
 import {
   type WorkboardRpcCard,
   type WorkboardRpcClient,
-  createWorkboardHttpRpcClient,
+  createWorkboardRpcClient,
 } from "./workboard-rpc-client.js";
 
 export type TaskLoader = () => { active: ActiveTaskEntry[]; completed: ActiveTaskEntry[] };
@@ -59,7 +59,7 @@ export type WorkboardSyncResult = {
 };
 
 export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardAdapter {
-  const client = createWorkboardHttpRpcClient(ctx.cfg.gatewayUrl, ctx.gatewayToken);
+  const client = createWorkboardRpcClient(ctx.cfg.gatewayUrl, ctx.gatewayToken);
   let syncInFlight = false;
 
   return {

@@ -171,4 +171,67 @@ describe("runVerifyForCli - consolidated maintenance cron", () => {
     expect(out).toContain("weekly-audit-health");
     expect(out).toMatch(/Legacy per-task cron jobs still enabled/i);
   });
+
+  it("does not warn when workshop-approval-reminder is enabled under consolidated mode (#1925)", async () => {
+    writeCronStore([
+      {
+        pluginJobId: "hybrid-mem:maintenance-nightly",
+        name: "maintenance-nightly",
+        enabled: true,
+        schedule: { kind: "cron", expr: "0 2 * * *" },
+        payload: { kind: "agentTurn", message: "openclaw hybrid-mem maintenance nightly --verbose" },
+      },
+      {
+        pluginJobId: "hybrid-mem:workshop-approval-reminder",
+        name: "workshop-approval-reminder",
+        enabled: true,
+        schedule: { kind: "cron", expr: "50 1,13 * * *" },
+        payload: { kind: "agentTurn", message: "Workshop approval reminder." },
+      },
+    ]);
+
+    const ctx = buildCtx() as Record<string, unknown>;
+    (ctx.cfg as Record<string, unknown>).workshop = { enabled: true };
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    const lines: string[] = [];
+    await runVerifyForCli(ctx as never, { fix: false }, { log: (m) => lines.push(m) });
+    const out = lines.join("\n");
+
+    expect(out).not.toMatch(/Legacy per-task cron jobs still enabled.*workshop-approval-reminder/i);
+  });
+
+  it("verify --fix keeps enabled workshop-approval-reminder under consolidated mode (#1925)", async () => {
+    writeCronStore([
+      {
+        pluginJobId: "hybrid-mem:nightly-distill",
+        name: "nightly-memory-sweep",
+        enabled: true,
+        schedule: { kind: "cron", expr: "0 2 * * *" },
+        payload: { kind: "agentTurn", message: "legacy sweep" },
+      },
+      {
+        pluginJobId: "hybrid-mem:workshop-approval-reminder",
+        name: "workshop-approval-reminder",
+        enabled: true,
+        schedule: { kind: "cron", expr: "50 1,13 * * *" },
+        payload: { kind: "agentTurn", message: "Workshop approval reminder." },
+      },
+    ]);
+
+    const ctx = buildCtx() as Record<string, unknown>;
+    (ctx.cfg as Record<string, unknown>).workshop = { enabled: true };
+
+    const { runVerifyForCli } = await import("../cli/handlers.js");
+    await runVerifyForCli(ctx as never, { fix: true }, { log: () => {} });
+
+    const jobsPath = join(homeDir!, ".openclaw", "cron", "jobs.json");
+    const next = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs: Array<Record<string, unknown>> };
+    const legacy = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:nightly-distill");
+    const workshop = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:workshop-approval-reminder");
+
+    expect(legacy?.enabled).toBe(false);
+    expect(workshop?.enabled).toBe(true);
+    expect(workshop?.superseded).not.toBe(true);
+  });
 });

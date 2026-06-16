@@ -8,13 +8,13 @@
  * Extracted from cli/handlers.ts to keep that file manageable.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { CredentialType, HybridMemoryConfig } from "../../../config.js";
 import { readGuardTimestampMs } from "../../../services/cron-guard.js";
 import { listMaintenanceSteps } from "../../../services/maintenance-orchestrator.js";
-import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER } from "../../../services/cron-job-bash-harness.js";
+import { HYBRID_MEM_CRON_ENV_SANITIZER_MARKER, maintenanceCronExpectsSummaryArtifact } from "../../../services/cron-job-bash-harness.js";
 import {
   collectRecentHmExitLedgerPaths,
   findDeprecatedHybridMemCronTokens,
@@ -40,6 +40,7 @@ import {
 } from "../../../utils/openclaw-agent-defaults.js";
 import {
   getConsolidatedSupersededLegacyCronJobKeys,
+  getMaintenanceCronJobKeys,
   isConsolidatedMaintenanceCronEnabled,
   readConsolidatedCronJobsFlag,
 } from "../../install/cron-jobs.js";
@@ -296,8 +297,9 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
   });
 
   const legacyCronJobKeys = getConsolidatedSupersededLegacyCronJobKeys();
+  const maintenanceCronJobKeys = getMaintenanceCronJobKeys();
 
-  const knownJobSlugs = new Set(["maintenance-nightly", ...legacyCronJobKeys]);
+  const knownJobSlugs = new Set(["maintenance-nightly", ...maintenanceCronJobKeys]);
   const maintenanceNightlyRe = /maintenance[- ]?nightly|orchestrator.*maintenance/i;
   const nightlyDreamCycleRe = /nightly[- ]?dream[- ]?cycle|dream[- ]?cycle/i;
   const sensorSweepRe = /sensor[- ]?sweep/i;
@@ -606,7 +608,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     if (enabledLegacy.length > 0) {
       const WARN = noEmoji ? "[WARN]" : "⚠️";
       cronLog(
-        `\n${WARN} Legacy per-task cron jobs still enabled under consolidated orchestrator mode: ${enabledLegacy.join(", ")}. Run \`openclaw hybrid-mem verify --fix\` to disable superseded jobs and normalize maintenance-nightly.`,
+        `\n${WARN} Legacy per-task cron jobs still enabled under consolidated orchestrator mode: ${enabledLegacy.join(", ")}. Run \`openclaw hybrid-mem verify --fix\` to disable superseded maintenance jobs and normalize maintenance-nightly.`,
       );
       state.warnings.push(
         `legacy cron jobs still enabled under consolidated orchestrator: ${enabledLegacy.join(", ")}`,
@@ -668,7 +670,7 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
 
   // Truly external jobs: those not in the hybrid-mem canonical list AND not pluginJobId hybrid-mem:*
   const knownKeys = new Set(
-    useConsolidatedCron ? ["maintenance-nightly", ...legacyCronJobKeys] : jobsToDisplay.map((j) => j.key),
+    useConsolidatedCron ? ["maintenance-nightly", ...maintenanceCronJobKeys] : jobsToDisplay.map((j) => j.key),
   );
   const otherJobs = Array.from(allJobs.entries()).filter(([key, job]) => !knownKeys.has(key) && !job.isHybridMem);
 
@@ -735,19 +737,30 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
     capturePluginError(e as Error, { subsystem: "cli", operation: "runVerifyForCli:scan-cron-exit-logs" });
   }
 
-  // #1877 — warn when recent maintenance-nightly runs lack orchestrator summary.json artifacts.
+  // #1877 — warn when the most recent maintenance-nightly run lacks orchestrator summary.json.
   try {
     const logsRoot = join(openclawDir, "logs", "cron-hybrid-mem");
-    if (existsSync(logsRoot)) {
+    const nightlyJob = allJobs.get("maintenance-nightly");
+    const nightlyMessage = nightlyJob?.message ?? "";
+    if (existsSync(logsRoot) && maintenanceCronExpectsSummaryArtifact(nightlyMessage)) {
       const cutoffMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs);
-      const nightlyWithoutSummary = exitFiles.filter((exitPath) => {
-        if (!/maintenance-nightly/i.test(exitPath)) return false;
-        return resolveMaintenanceSummaryPath(exitPath) == null;
-      });
-      if (nightlyWithoutSummary.length > 0) {
+      const exitFiles = collectRecentHmExitLedgerPaths(logsRoot, cutoffMs)
+        .filter((exitPath) => /maintenance-nightly/i.test(exitPath))
+        .sort((a, b) => {
+          try {
+            return statSync(b).mtimeMs - statSync(a).mtimeMs;
+          } catch {
+            return 0;
+          }
+        });
+      const mostRecentWithoutSummary = exitFiles.find((exitPath) => resolveMaintenanceSummaryPath(exitPath) == null);
+      if (mostRecentWithoutSummary) {
+        const WARN = noEmoji ? "[WARN]" : "⚠️";
+        cronLog(
+          `\n${WARN} Most recent maintenance-nightly run is missing .summary.json; upgrade plugin and use maintenance nightly --summary-out or see docs/maintenance-job-runs.md`,
+        );
         state.warnings.push(
-          `recent maintenance-nightly run(s) missing .summary.json (${nightlyWithoutSummary.length}); upgrade plugin and use maintenance nightly --summary-out or see docs/maintenance-job-runs.md`,
+          "most recent maintenance-nightly run missing .summary.json; should clear after one successful post-upgrade nightly with HM_SUMMARY harness",
         );
       }
     }

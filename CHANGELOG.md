@@ -28,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - **#1923 OpenClaw 6.8+ cron store:** `verify`, `verify --fix`, install, maintenance inventory, dashboard, cron guard sync, and active-task wake scheduling now read/write the live OpenClaw cron store (`~/.openclaw/state/openclaw.sqlite`) when legacy `jobs.json` has been migrated, instead of creating a transient JSON file that OpenClaw immediately archives.
+- **#1925 verify false positives:** Standalone plugin cron jobs (`workshop-approval-reminder`, pending digests, log analyzer, sensor sweep, lifecycle sync) are no longer flagged as superseded legacy jobs or disabled by `verify --fix` under consolidated orchestrator mode. Workboard verify/sync falls back to `openclaw gateway call` when HTTP `/rpc/*` is unavailable on OpenClaw 6.8+. Summary.json warnings are scoped to harness-enabled cron payloads and the most recent nightly run only.
 
 ### Changed
 

@@ -6,7 +6,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { HybridMemoryConfig } from "../../config.js";
 import { WIKI_WORKSPACE_EXPORT_SUBDIR } from "../../services/wiki-workspace-export.js";
-import { createWorkboardHttpRpcClient } from "../../services/workboard-rpc-client.js";
+import { createWorkboardRpcClient } from "../../services/workboard-rpc-client.js";
 import { isWikiExportableFact } from "../../services/wiki-fact-filter.js";
 import { globalOnlyScopeFilter } from "../../utils/scope-filter.js";
 import type { FactsDB } from "../../backends/facts-db.js";
@@ -84,7 +84,7 @@ export function inspectWikiWorkspaceMirror(
 }
 
 export async function probeWorkboardRpc(gatewayUrl: string, token?: string): Promise<WorkboardProbeResult> {
-  const client = createWorkboardHttpRpcClient(gatewayUrl, token);
+  const client = createWorkboardRpcClient(gatewayUrl, token);
   try {
     const ok = await client.isAvailable();
     return ok
