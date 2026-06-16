@@ -20,7 +20,7 @@ export type WorkerLeaseRow = {
 };
 
 export const DEFAULT_WORKER_LEASES_CONFIG: WorkerLeasesConfig = {
-  enabled: true,
+  enabled: false,
   defaultTtlSeconds: 120,
   heartbeatIntervalSeconds: 30,
   quietWindow: {

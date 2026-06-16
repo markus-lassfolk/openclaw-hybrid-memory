@@ -469,6 +469,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       tag?: string;
       includeSuperseded?: boolean;
       asOfSec?: number;
+      scopeFilter?: ScopeFilter;
     },
   ): SearchResult[] {
     const ftsHits = searchFts(factsDb.getRawDb(), query, {
@@ -480,7 +481,11 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     });
     const out: SearchResult[] = [];
     for (const hit of ftsHits) {
-      const entry = factsDb.getById(hit.factId, opts.asOfSec != null ? { asOf: opts.asOfSec } : undefined);
+      const getByIdOpts =
+        opts.asOfSec != null || opts.scopeFilter
+          ? ({ asOf: opts.asOfSec, scopeFilter: opts.scopeFilter } as { asOf?: number; scopeFilter?: ScopeFilter })
+          : undefined;
+      const entry = factsDb.getById(hit.factId, getByIdOpts);
       if (entry) {
         out.push({ entry, score: Math.abs(hit.rank), backend: "sqlite" });
       }
@@ -712,6 +717,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         tag,
         includeSuperseded,
         asOfSec,
+        scopeFilter,
       });
       if (!includeCold && results.length > 0) {
         results = results.filter((r) => {
@@ -861,7 +867,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         semanticWarning = vectorPrep.warning;
         if (recallMode !== "semantic" && queryVector == null && semanticWarning) {
           recallFallback = true;
-          results = keywordRecallResults(query, limit, { entity, tag, includeSuperseded, asOfSec });
+          results = keywordRecallResults(query, limit, { entity, tag, includeSuperseded, asOfSec, scopeFilter });
         }
       }
       if (!recallFallback) {
@@ -1207,7 +1213,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         const limit = typeof params.limit === "number" && params.limit > 0 ? Math.floor(params.limit) : 10;
         const entity = typeof params.entity === "string" ? params.entity.trim() : undefined;
         const tag = Array.isArray(params.tags) && params.tags.length > 0 ? String(params.tags[0]) : undefined;
-        const results = keywordRecallResults(query, limit, { entity, tag });
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const results = keywordRecallResults(query, limit, { entity, tag, scopeFilter });
         const lines = results.map((r) => formatMemoryRecallToolLine(r.entry));
         return {
           content: [
