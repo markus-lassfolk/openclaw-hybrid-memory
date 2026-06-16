@@ -292,10 +292,7 @@ export function registerWorkerLeaseShutdown(
     }
   };
 
-  const onSigterm = (): void => {
-    cleanup();
-    process.exit(0);
-  };
+  const onSigterm = cleanup;
   const onBeforeExit = cleanup;
 
   sessionLeaseCleanups.set(ownerSessionId, { cleanup, onSigterm, onBeforeExit });
