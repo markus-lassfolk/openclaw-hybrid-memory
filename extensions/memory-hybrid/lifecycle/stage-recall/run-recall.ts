@@ -32,6 +32,7 @@ import {
 } from "../../services/recalled-context-assembler.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
+import { applyFragmentRecallPostProcess } from "../../services/fragment-recall.js";
 import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import { getFocusTopic } from "../../services/focus-topic.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
@@ -1071,6 +1072,7 @@ export async function runRecall(
         });
         candidates = v2.results;
         recordIntentDistribution(v2.intent.intent);
+        candidates = applyFragmentRecallPostProcess(candidates);
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
           subsystem: "auto-recall",

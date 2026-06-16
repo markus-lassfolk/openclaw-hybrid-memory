@@ -102,6 +102,29 @@ describe("BM25 bypass (#1910)", () => {
     expect(d.bypass).toBe(true);
   });
 
+  it("still applies composite scoring when BM25 bypass is active", async () => {
+    const fts = [
+      { entry: { id: "a", text: "alpha match", pinnedAt: 1 }, score: 0.95, backend: "sqlite" as const },
+      { entry: { id: "b", text: "beta", qualityScore: 0.2 }, score: 0.5, backend: "sqlite" as const },
+    ];
+    const getEntry = (id: string) => fts.find((r) => r.entry.id === id)?.entry ?? null;
+    const v2 = await applyRetrievalV2({
+      query: "alpha",
+      results: fts,
+      ftsResults: fts,
+      getEntry,
+      config: {
+        ...DEFAULT_RETRIEVAL_V2_CONFIG,
+        compositeScore: { version: 2, pinBoostDefault: 0.3, pinBoostCap: 1 },
+        bypass: { enabled: true, bm25MinScore: 0.85, bm25MinGap: 0.15 },
+      },
+      recallId: "bypass-rescore",
+    });
+    expect(v2.bypassed).toBe(true);
+    expect(v2.results[0].entry.id).toBe("a");
+    expect(v2.results[0].score).not.toBe(0.95);
+  });
+
   it("applyRetrievalV2 can skip bypass telemetry when pipeline already recorded", async () => {
     resetRecallStats();
     recordBypassDecision(true);

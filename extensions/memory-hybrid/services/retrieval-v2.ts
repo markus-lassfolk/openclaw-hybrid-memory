@@ -130,47 +130,43 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
   let finalResults: SearchResult[];
   let demotedCount = 0;
 
-  if (bypassDecision.bypass) {
-    finalResults = opts.results;
-  } else {
-    const scored = opts.results.map((r) => {
-      const entry = opts.getEntry(r.entry.id) ?? r.entry;
-      const daysSince = entry.lastAccessed != null ? (nowSec - entry.lastAccessed) / 86_400 : 0;
-      const input = {
-        searchScore: r.score,
-        recencyScore: recencyScoreFromDays(daysSince),
-        confidence: entry.confidence ?? 1,
-        bodyLength: entry.text.length,
-        qualityScore: (entry as MemoryEntry & { qualityScore?: number }).qualityScore,
-        coActivationBoost: 1,
-        pinBoost: entry.pinnedAt != null ? compositeCfg.pinBoostDefault : 0,
-        freqBoost: computeFrequencyBoost(
-          (entry as MemoryEntry & { revisionCount?: number }).revisionCount ?? 0,
-          (entry as MemoryEntry & { duplicateCount?: number }).duplicateCount ?? 0,
-        ),
-        crossDomainBoost: recallStats
-          ? computeCrossDomainBoost(recallStats.get(r.entry.id)?.distinctQueries ?? 0, 3)
-          : 0,
-        intent: intent.intent,
-        focusMultiplier: topicMatchMultiplier(entry.text, opts.focusTopic),
-      };
-      const v2 = computeCompositeScore(input, { ...compositeCfg, version: 2 });
-      const v1 = computeCompositeScore(input, { ...compositeCfg, version: 1 });
-      const useScore = compositeCfg.version === 2 ? v2 : v1;
-      return { result: r, score: useScore, text: entry.text, v1, v2 };
-    });
+  const scored = opts.results.map((r) => {
+    const entry = opts.getEntry(r.entry.id) ?? r.entry;
+    const daysSince = entry.lastAccessed != null ? (nowSec - entry.lastAccessed) / 86_400 : 0;
+    const input = {
+      searchScore: r.score,
+      recencyScore: recencyScoreFromDays(daysSince),
+      confidence: entry.confidence ?? 1,
+      bodyLength: entry.text.length,
+      qualityScore: (entry as MemoryEntry & { qualityScore?: number }).qualityScore,
+      coActivationBoost: 1,
+      pinBoost: entry.pinnedAt != null ? compositeCfg.pinBoostDefault : 0,
+      freqBoost: computeFrequencyBoost(
+        (entry as MemoryEntry & { revisionCount?: number }).revisionCount ?? 0,
+        (entry as MemoryEntry & { duplicateCount?: number }).duplicateCount ?? 0,
+      ),
+      crossDomainBoost: recallStats
+        ? computeCrossDomainBoost(recallStats.get(r.entry.id)?.distinctQueries ?? 0, 3)
+        : 0,
+      intent: intent.intent,
+      focusMultiplier: topicMatchMultiplier(entry.text, opts.focusTopic),
+    };
+    const v2 = computeCompositeScore(input, { ...compositeCfg, version: 2 });
+    const v1 = computeCompositeScore(input, { ...compositeCfg, version: 1 });
+    const useScore = compositeCfg.version === 2 ? v2 : v1;
+    return { result: r, score: useScore, text: entry.text, v1, v2 };
+  });
 
-    scored.sort((a, b) => b.score - a.score);
-    const diversityStarted = Date.now();
-    const { items: diverseItems, demotedCount: dmCount } = applyDiversityDemotion(
-      scored.map((s) => ({ text: s.text, ...s })),
-      opts.config.diversity,
-    );
-    recordRecallStageTiming("mmr", Date.now() - diversityStarted);
-    demotedCount = dmCount;
+  scored.sort((a, b) => b.score - a.score);
+  const diversityStarted = Date.now();
+  const { items: diverseItems, demotedCount: dmCount } = applyDiversityDemotion(
+    scored.map((s) => ({ text: s.text, ...s })),
+    opts.config.diversity,
+  );
+  recordRecallStageTiming("mmr", Date.now() - diversityStarted);
+  demotedCount = dmCount;
 
-    finalResults = diverseItems.map((s) => ({ ...s.result, score: s.score }));
-  }
+  finalResults = diverseItems.map((s) => ({ ...s.result, score: s.score }));
   const v2Order = finalResults.map((r) => r.entry.id);
   const top3Changed = v1Order.slice(0, 3).join() !== v2Order.slice(0, 3).join() && compositeCfg.version === 2;
 

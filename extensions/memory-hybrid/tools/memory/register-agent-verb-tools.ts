@@ -10,6 +10,7 @@ import { recordIntentDistribution } from "../../services/recall-timing-stats.js"
 import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
 import { runMultiVaultExplicitDeepRetrieval } from "../../services/multi-vault-retrieval.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
+import { applyFragmentRecallPostProcess, resolveRecallInjectionText } from "../../services/fragment-recall.js";
 import { buildToolScopeFilter } from "../../utils/scope-filter.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 import { resolveToolVaultBackends, listToolVaultHandles } from "./vault-resolve.js";
@@ -111,8 +112,11 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         });
         recordIntentDistribution(v2.intent.intent);
 
-        const lines = v2.results.slice(0, limit).map((r) => {
-          const text = args.full ? r.entry.text : r.entry.text.slice(0, 200);
+        const ranked = applyFragmentRecallPostProcess(v2.results);
+        const lines = ranked.slice(0, limit).map((r) => {
+          const text = args.full
+            ? resolveRecallInjectionText(r.entry, activeFactsDb, false)
+            : resolveRecallInjectionText(r.entry, activeFactsDb, true).slice(0, 200);
           return `- [${r.entry.category}] ${text} (id=${r.entry.id})`;
         });
         const escalate =

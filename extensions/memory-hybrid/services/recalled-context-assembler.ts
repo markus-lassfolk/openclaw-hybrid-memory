@@ -12,6 +12,7 @@ import {
   entriesToVaultFactLines,
   type VaultFactLine,
 } from "./vault-context.js";
+import { resolveRecallInjectionText } from "./fragment-recall.js";
 import { filterFactTextsForInjection, type InjectionFilterMode } from "./injection-filter.js";
 import { resolveVaultFactsTriples } from "./vault-facts-resolver.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
@@ -107,7 +108,12 @@ export function finalizeInjectionMemoryContent(
   }
 
   const injectionFilterMode: InjectionFilterMode = boundary?.injectionFilter ?? "audit";
-  const rawFacts: VaultFactLine[] = entriesToVaultFactLines(candidates.map((c) => c.entry));
+  const rawFacts: VaultFactLine[] = entriesToVaultFactLines(
+    candidates.map((c) => ({
+      ...c.entry,
+      text: resolveRecallInjectionText(c.entry, ctx.factsDb, Boolean(c.entry.summary?.trim())),
+    })),
+  );
   const facts: VaultFactLine[] = rawFacts
     .map((fact) => {
       const { allowed } = filterFactTextsForInjection([fact.text], injectionFilterMode);

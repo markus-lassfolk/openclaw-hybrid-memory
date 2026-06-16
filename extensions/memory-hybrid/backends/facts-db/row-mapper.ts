@@ -95,5 +95,6 @@ export function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
     qualityScore: sqlNullableInt(row.quality_score),
     duplicateCount: sqlIntOrZero(row.duplicate_count),
     revisionCount: sqlIntOrZero(row.revision_count),
+    parentFactId: (row.parent_fact_id as string) || null,
   };
 }

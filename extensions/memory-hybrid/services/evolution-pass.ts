@@ -6,12 +6,13 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { LifecycleAdaptersConfig } from "../config/types/features.js";
 import { getHalfLifeForContentType } from "./semantic-lifecycle.js";
-import { runMemoryEvolutionPass } from "./memory-evolution.js";
+import { runMemoryEvolutionPass, type MemoryEvolutionOpts } from "./memory-evolution.js";
 
 export type EvolutionPassResult = {
   scanned: number;
   evolved: number;
   neighborsUpdated: number;
+  llmCalls: number;
 };
 
 /** Run deterministic evolution pass: reinforce quality on frequently accessed facts. */
@@ -19,6 +20,7 @@ export async function runEvolutionPass(
   db: DatabaseSync,
   limit = 500,
   lifecycle?: Pick<LifecycleAdaptersConfig, "evolution">,
+  evolutionOpts: MemoryEvolutionOpts = {},
 ): Promise<EvolutionPassResult> {
   const rows = db
     .prepare(
@@ -57,18 +59,27 @@ export async function runEvolutionPass(
     evolved++;
   }
 
-  if (evolved > 0) {
-    db.prepare(
-      `INSERT INTO maintenance_runs (job, started_at, ended_at, status, items_processed, metadata_json)
-       VALUES ('evolution-pass', ?, ?, 'ran', ?, ?)`,
-    ).run(now, now, evolved, JSON.stringify({ scanned: rows.length }));
+  if (evolved > 0 || lifecycle?.evolution?.enabled) {
+    let neighborsUpdated = 0;
+    let llmCalls = 0;
+    if (lifecycle?.evolution) {
+      const mem = await runMemoryEvolutionPass(db, lifecycle.evolution, evolutionOpts);
+      neighborsUpdated = mem.neighborsUpdated;
+      llmCalls = mem.llmCalls;
+    }
+    if (evolved > 0 || neighborsUpdated > 0) {
+      db.prepare(
+        `INSERT INTO maintenance_runs (job, started_at, ended_at, status, items_processed, metadata_json)
+         VALUES ('evolution-pass', ?, ?, 'ran', ?, ?)`,
+      ).run(
+        now,
+        now,
+        evolved,
+        JSON.stringify({ scanned: rows.length, neighborsUpdated, llmCalls }),
+      );
+    }
+    return { scanned: rows.length, evolved, neighborsUpdated, llmCalls };
   }
 
-  let neighborsUpdated = 0;
-  if (lifecycle?.evolution) {
-    const mem = await runMemoryEvolutionPass(db, lifecycle.evolution);
-    neighborsUpdated = mem.neighborsUpdated;
-  }
-
-  return { scanned: rows.length, evolved, neighborsUpdated };
+  return { scanned: rows.length, evolved, neighborsUpdated: 0, llmCalls: 0 };
 }

@@ -112,6 +112,8 @@ export type MemoryEntry = {
   qualityScore?: number | null;
   duplicateCount?: number;
   revisionCount?: number;
+  /** Parent fact id when this row is a document fragment (#1914). */
+  parentFactId?: string | null;
 };
 
 /** Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */

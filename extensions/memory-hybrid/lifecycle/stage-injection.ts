@@ -28,6 +28,7 @@ import {
 import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
 import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
+import { resolveRecallInjectionText } from "../services/fragment-recall.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
@@ -225,6 +226,9 @@ async function runInjection(
     return "";
   };
 
+  const recallBodyText = (entry: (typeof candidates)[number]["entry"], useSummary: boolean): string =>
+    sanitizeFactForInjection(resolveRecallInjectionText(entry, ctx.factsDb, useSummary));
+
   const edictMaxTokens = Math.max(
     0,
     Math.min(maxTokens, Math.floor((r.totalBudget ?? maxTokens) * DEFAULT_EDICT_BUDGET_FRACTION)),
@@ -376,7 +380,7 @@ async function runInjection(
     let pinnedTokens = estimateTokens(pinnedHeader);
     const pinnedBudget = Math.min(memoryTokenBudget, Math.floor(memoryTokenBudget * 0.6));
     for (const x of pinned) {
-      let text = sanitizeFactForInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+      let text = recallBodyText(x.entry, useSummaryInInjection);
       if (!text) continue;
       if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
         text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
@@ -490,7 +494,7 @@ async function runInjection(
   const lines: string[] = [];
   const injectedIds: string[] = [];
   for (const x of candidates) {
-    let text = sanitizeFactForInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+    let text = recallBodyText(x.entry, useSummaryInInjection);
     if (!text) continue;
     if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
     const category = sanitizePromptInjection(x.entry.category);
@@ -537,7 +541,7 @@ async function runInjection(
     });
     const fullBullets = candidates
       .map((x) => {
-        let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+        let text = sanitizePromptInjection(recallBodyText(x.entry, useSummaryInInjection));
         if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
           text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
         const category = sanitizePromptInjection(x.entry.category);

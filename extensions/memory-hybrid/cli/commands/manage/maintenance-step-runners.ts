@@ -914,8 +914,14 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   runners.set("evolution-pass", async () => {
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const r = await runEvolutionPass(deps.factsDb.getRawDb(), 200, deps.cfg.lifecycle);
-    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} semantic=success`;
+    const { getCronModelConfig, getLLMModelPreference } = await import("../../../config/index.js");
+    const nanoModels = getLLMModelPreference(getCronModelConfig(deps.cfg), "nano");
+    const r = await runEvolutionPass(deps.factsDb.getRawDb(), 200, deps.cfg.lifecycle, {
+      openai: deps.openai,
+      nanoModels,
+      logger: deps.logger,
+    });
+    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} llm_calls=${r.llmCalls} semantic=success`;
   });
 
   runners.set("per-folder-context", async () => {

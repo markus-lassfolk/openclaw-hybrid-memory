@@ -78,6 +78,25 @@ export async function runStatusForCli(ctx: StatusContext, opts?: { format?: "tex
   console.log(`  Expired facts: ${status.memory.expiredFacts.toLocaleString()}`);
   console.log(`  Vectors: ${status.memory.vectorCount.toLocaleString()}`);
   console.log(`  Total size: ${status.memory.totalSizeBytes.toLocaleString()} bytes`);
+  if (status.memory.evolution) {
+    const evo = status.memory.evolution;
+    console.log("");
+    console.log("Evolution (#1914)");
+    console.log(`  Evolved facts: ${evo.evolvedFacts.toLocaleString()}`);
+    console.log(`  Fragment children: ${evo.fragmentFacts.toLocaleString()}`);
+    console.log(`  Max evolution version: ${evo.maxEvolutionVersion}`);
+    if (evo.lastEvolutionPassAt) {
+      console.log(`  Last evolution-pass: ${evo.lastEvolutionPassAt}`);
+      if (evo.qualityEvolvedLastPass != null) {
+        console.log(`    quality evolved: ${evo.qualityEvolvedLastPass}`);
+      }
+      if (evo.neighborsUpdatedLastPass != null) {
+        console.log(`    neighbors updated: ${evo.neighborsUpdatedLastPass}`);
+      }
+    } else {
+      console.log("  Last evolution-pass: never");
+    }
+  }
   console.log("");
   console.log("Health home");
   console.log(`  Cron jobs: ${status.cronJobs.length} total, ${needsAttention.length} needing attention`);
