@@ -32,9 +32,9 @@ export function registerMemoryNudgeInjection(api: ClawdbotPluginApi, ctx: Lifecy
         nudgeCfg.neverReferencedThreshold ?? DEFAULT_MEMORY_NUDGE_CONFIG.neverReferencedThreshold,
     };
     const nudge = buildMemoryNudge(ctx.factsDb.getRawDb(), config);
-    recordNudgeEmission(sessionKey);
     if (!nudge || nudge.actions.length === 0) return undefined;
 
+    recordNudgeEmission(sessionKey);
     const block = formatMemoryNudgeBlock(nudge);
     return { prependContext: `${block}\n\n` };
   });
