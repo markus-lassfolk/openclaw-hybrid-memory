@@ -155,6 +155,32 @@ export function recordNudgeEmission(sessionId: string): void {
   sessionLastActivity.set(sessionId, Date.now());
 }
 
+/** Clear per-session nudge throttle/suppress state. */
+export function clearNudgeSessionState(sessionId: string): void {
+  suppressUntilBySession.delete(sessionId);
+  lastNudgeBySession.delete(sessionId);
+  sessionLastActivity.delete(sessionId);
+}
+
+/** Drop expired suppress windows and nudge timestamps older than cutoff (epoch ms). */
+export function sweepStaleNudgeSessionState(cutoffMs: number): number {
+  const now = Date.now();
+  let swept = 0;
+  for (const [sessionId, until] of suppressUntilBySession) {
+    if (until < now) {
+      suppressUntilBySession.delete(sessionId);
+      swept++;
+    }
+  }
+  for (const [sessionId, last] of lastNudgeBySession) {
+    if (last < cutoffMs) {
+      lastNudgeBySession.delete(sessionId);
+      swept++;
+    }
+  }
+  return swept;
+}
+
 /** Clear nudge state (tests). */
 export function resetNudgeState(): void {
   suppressUntilBySession.clear();

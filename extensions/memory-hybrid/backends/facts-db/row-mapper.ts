@@ -6,6 +6,16 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import type { MemoryEntry, MemoryTier } from "../../types/memory.js";
 import { parseTags } from "../../utils/tags.js";
 
+function sqlNullableInt(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sqlIntOrZero(value: unknown): number {
+  return sqlNullableInt(value) ?? 0;
+}
+
 /** Convert a raw SQLite row to MemoryEntry. */
 export function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
   return {
@@ -79,11 +89,11 @@ export function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
         return null;
       }
     })(),
-    pinnedAt: (row.pinned_at as number) ?? null,
+    pinnedAt: sqlNullableInt(row.pinned_at),
     pinnedReason: (row.pinned_reason as string) ?? null,
-    snoozedUntil: (row.snoozed_until as number) ?? null,
-    qualityScore: (row.quality_score as number) ?? null,
-    duplicateCount: (row.duplicate_count as number) ?? 0,
-    revisionCount: (row.revision_count as number) ?? 0,
+    snoozedUntil: sqlNullableInt(row.snoozed_until),
+    qualityScore: sqlNullableInt(row.quality_score),
+    duplicateCount: sqlIntOrZero(row.duplicate_count),
+    revisionCount: sqlIntOrZero(row.revision_count),
   };
 }

@@ -29,6 +29,7 @@ import { scanInjectionFilter, type InjectionFilterMode } from "../services/injec
 import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import {

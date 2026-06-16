@@ -66,15 +66,16 @@ export function detectRecommendedEmbeddingSetup(
     };
   }
 
+  const ollamaHost = readString(getEnv("OLLAMA_HOST"));
   const ollamaInstalled =
     existsSync(join(homedir(), ".ollama")) ||
-    readString(getEnv("OLLAMA_HOST")) !== undefined ||
+    ollamaHost !== undefined ||
     spawnSync("ollama", ["--version"], { stdio: "ignore", timeout: 2_000 }).status === 0;
   if (ollamaInstalled) {
     return {
       provider: "ollama",
       model: "nomic-embed-text",
-      source: readString(getEnv("OLLAMA_HOST"))
+      source: ollamaHost
         ? "OLLAMA_HOST"
         : existsSync(join(homedir(), ".ollama"))
           ? "~/.ollama"

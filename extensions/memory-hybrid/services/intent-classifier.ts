@@ -214,3 +214,16 @@ export function clearIntentSessionCache(sessionId?: string): void {
     staleSweepTimer = null;
   }
 }
+
+/** Drop intent caches for sessions inactive since cutoff (epoch ms). */
+export function sweepStaleIntentSessionCaches(cutoffMs: number): number {
+  let swept = 0;
+  for (const [sessionId, lastActive] of sessionLastActivity) {
+    if (lastActive < cutoffMs) {
+      sessionCaches.delete(sessionId);
+      sessionLastActivity.delete(sessionId);
+      swept++;
+    }
+  }
+  return swept;
+}
