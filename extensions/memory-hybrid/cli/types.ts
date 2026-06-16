@@ -35,6 +35,7 @@ export type StoreCliResult =
   | { outcome: "credential"; id: string; service: string; type: string }
   | { outcome: "credential_skipped_duplicate"; service: string; type: string }
   | { outcome: "credential_blocked_no_vault" }
+  | { outcome: "credential_blocked_require_pattern_match" }
   | { outcome: "credential_parse_error" }
   | { outcome: "credential_vault_error" }
   | { outcome: "credential_db_error" }

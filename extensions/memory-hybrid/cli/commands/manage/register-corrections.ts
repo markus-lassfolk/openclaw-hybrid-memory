@@ -146,6 +146,10 @@ export function registerManageCorrections(mem: Chainable, b: ManageBindings): vo
             console.log(`Credential already in vault (skipped): ${res.service} (${res.type})`);
           } else if (res.outcome === "credential_blocked_no_vault") {
             console.log("Credential-like content blocked: enable credentials vault to store secrets securely.");
+          } else if (res.outcome === "credential_blocked_require_pattern_match") {
+            console.log(
+              "Credential-like content blocked: no recognizable secret pattern found (requirePatternMatch is enabled).",
+            );
           } else if (res.outcome === "credential_parse_error") {
             console.log("Credential parse error (skipped).");
           } else if (res.outcome === "credential_vault_error") {

@@ -358,8 +358,37 @@ describe("runStoreForCli credential_skipped_duplicate", () => {
 // Parse failure
 // ---------------------------------------------------------------------------
 
+describe("runStoreForCli credential broad-only text (#1896)", () => {
+  it("stores ordinary memory when text is broad-sensitive but has no extractable secret", async () => {
+    const opts: StoreCliOpts = {
+      text: "M3 has 5.1B tokens monthly budget",
+      category: "technical",
+      entity: "minimax-quota",
+    };
+
+    const result = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+
+    expect(result.outcome).toBe("stored");
+    if (result.outcome === "stored") {
+      expect(factsDb.getById(result.id)?.text).toContain("tokens monthly budget");
+    }
+    expect(credentialsDb.list()).toHaveLength(0);
+  });
+
+  it("stores api-key prose without a narrow secret pattern as ordinary memory", async () => {
+    const opts: StoreCliOpts = {
+      text: "the API key is used for service auth",
+      category: "technical",
+    };
+
+    const result = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
+    expect(result.outcome).toBe("stored");
+    expect(credentialsDb.list()).toHaveLength(0);
+  });
+});
+
 describe("runStoreForCli credential parse failure", () => {
-  it("returns credential_parse_error when credential-like text cannot be parsed to vault format", async () => {
+  it("stores as ordinary memory when structured fields suggest credential but secret is invalid", async () => {
     // This text matches isCredentialLike but tryParseCredentialForVault returns null
     // because the secret value is too short or doesn't match patterns
     const opts: StoreCliOpts = {
@@ -372,11 +401,10 @@ describe("runStoreForCli credential parse failure", () => {
 
     const result: StoreCliResult = await runStoreForCli(mockCtx, opts, { warn: vi.fn() });
 
-    expect(result.outcome).toBe("credential_parse_error");
+    expect(result.outcome).toBe("stored");
 
-    // Verify nothing stored in vault
-    const vaultList = credentialsDb.list();
-    expect(vaultList.length).toBe(0);
+    expect(credentialsDb.list().length).toBe(0);
+    expect(factsDb.getAll().length).toBeGreaterThan(0);
   });
 });
 
