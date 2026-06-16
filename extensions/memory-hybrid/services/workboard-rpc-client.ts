@@ -268,7 +268,6 @@ export function createWorkboardRpcClient(gatewayUrl: string, token?: string): Wo
       activeClient = cliClient;
       return cliClient;
     }
-    activeClient = httpClient;
     return httpClient;
   }
 
