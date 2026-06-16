@@ -77,7 +77,11 @@ export function detectCronStoreBackend(openclawDir: string): CronStoreBackend {
   try {
     const db = new DatabaseSync(sqlitePath, { readOnly: true });
     try {
-      if (!sqliteHasCronJobsTable(db)) return "json";
+      if (!sqliteHasCronJobsTable(db)) {
+        // DB exists but table missing; check if we're on a migrated host.
+        if (hasMigratedLegacyCronFile(openclawDir)) return "sqlite";
+        return "json";
+      }
       const storeKey = cronStorePartitionKey(legacyPath);
       if (countSqliteCronRows(db, storeKey) > 0) return "sqlite";
       if (existsSync(legacyPath)) return "json";
@@ -88,7 +92,9 @@ export function detectCronStoreBackend(openclawDir: string): CronStoreBackend {
       db.close();
     }
   } catch {
-    return existsSync(legacyPath) ? "json" : "json";
+    // DB exists but can't be opened; check if we're on a migrated host.
+    if (hasMigratedLegacyCronFile(openclawDir)) return "sqlite";
+    return existsSync(legacyPath) ? "json" : "sqlite";
   }
 }
 
