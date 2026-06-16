@@ -77,10 +77,13 @@ describe("user-friendly CLI registration", () => {
       embeddings,
     });
     expect(root.children.map((child) => child.name).sort()).toEqual([
+      "bootstrap",
       "demo",
       "doctor",
       "examples",
+      "focus",
       "health",
+      "mine",
       "providers",
       "setup",
     ]);

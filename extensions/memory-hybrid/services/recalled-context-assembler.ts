@@ -54,23 +54,27 @@ export function wrapUntrustedMemoryContent(memoryContent: string): string {
   return wrapRecalledContext("", trimmed);
 }
 
-/** Wrap memory content with vault-context structure (#1912) inside recalled-context boundary. */
+/** Wrap memory content with optional edicts and the untrusted-data boundary. */
 export function wrapRecalledContext(edicts: string, memoryContent: string): string {
   if (!edicts && !memoryContent) return "";
   const parts: string[] = ["<recalled-context>"];
   if (edicts) parts.push(edicts);
   if (memoryContent) {
     parts.push(RECALLED_CONTEXT_BOUNDARY);
-    const factLines: VaultFactLine[] = memoryContent
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((text) => ({ text }));
-    const vaultBlock = buildVaultContextBlock({ facts: factLines });
-    parts.push(vaultBlock || memoryContent);
+    parts.push(memoryContent);
   }
   parts.push("</recalled-context>");
   return parts.join("\n");
+}
+
+/** Structured vault-context wrapper for explicit opt-in injection paths (#1912). */
+export function wrapRecalledContextStructured(
+  edicts: string,
+  facts: VaultFactLine[],
+  options?: { legacyMemoryContextWrapper?: boolean },
+): string {
+  const vaultBlock = buildVaultContextBlock({ facts, legacyMemoryContextWrapper: options?.legacyMemoryContextWrapper });
+  return wrapRecalledContext(edicts, vaultBlock);
 }
 
 /** Filter fact lines through 5-layer injection filter before injection. */
