@@ -139,15 +139,15 @@ function loadEntityFrequencies(db: DatabaseSync, sinceSec: number): { freq: Map<
 
 function reinforceExistingLink(db: DatabaseSync, sourceId: string, targetId: string, nowSec: number): void {
   const row = db
-    .prepare(
-      "SELECT id, confidence FROM episode_causal_links WHERE source_episode_id = ? AND target_episode_id = ?",
-    )
+    .prepare("SELECT id, confidence FROM episode_causal_links WHERE source_episode_id = ? AND target_episode_id = ?")
     .get(sourceId, targetId) as { id: string; confidence: number } | undefined;
   if (!row) return;
   const bumped = Math.min(1, row.confidence * 1.1);
-  db.prepare(
-    "UPDATE episode_causal_links SET confidence = ?, last_reinforced_at = ? WHERE id = ?",
-  ).run(bumped, nowSec, row.id);
+  db.prepare("UPDATE episode_causal_links SET confidence = ?, last_reinforced_at = ? WHERE id = ?").run(
+    bumped,
+    nowSec,
+    row.id,
+  );
 }
 
 function persistLink(
@@ -159,9 +159,7 @@ function persistLink(
   nowSec: number,
 ): void {
   const existing = db
-    .prepare(
-      "SELECT id FROM episode_causal_links WHERE source_episode_id = ? AND target_episode_id = ?",
-    )
+    .prepare("SELECT id FROM episode_causal_links WHERE source_episode_id = ? AND target_episode_id = ?")
     .get(sourceEpisodeId, targetEpisodeId) as { id: string } | undefined;
   if (existing) {
     reinforceExistingLink(db, sourceEpisodeId, targetEpisodeId, nowSec);
@@ -170,15 +168,7 @@ function persistLink(
   db.prepare(
     `INSERT INTO episode_causal_links (id, source_episode_id, target_episode_id, confidence, score_breakdown, last_reinforced_at, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    randomUUID(),
-    sourceEpisodeId,
-    targetEpisodeId,
-    confidence,
-    JSON.stringify(breakdown),
-    nowSec,
-    nowSec,
-  );
+  ).run(randomUUID(), sourceEpisodeId, targetEpisodeId, confidence, JSON.stringify(breakdown), nowSec, nowSec);
 }
 
 export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCausalLinksResult {
@@ -189,9 +179,7 @@ export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCa
   const { clause: scopeClause, params: scopeParams } = episodeCandidateScopeClause(newEpisode);
 
   const rows = db
-    .prepare(
-      `SELECT * FROM episodes WHERE created_at >= ? AND id != ?${scopeClause} ORDER BY timestamp DESC LIMIT ?`,
-    )
+    .prepare(`SELECT * FROM episodes WHERE created_at >= ? AND id != ?${scopeClause} ORDER BY timestamp DESC LIMIT ?`)
     .all(sinceSec, newEpisode.id, ...scopeParams, MAX_CANDIDATES * 2) as Array<Record<string, unknown>>;
 
   const advisory: CausalLinkCandidate[] = [];
@@ -292,13 +280,7 @@ export function buildEpisodeCausalChain(
     | { scope: string; scope_target: string | null }
     | undefined;
   if (!startRow) return [];
-  if (
-    !scopedRowMatchesFilter(
-      startRow.scope as Episode["scope"],
-      startRow.scope_target,
-      scopeFilter,
-    )
-  ) {
+  if (!scopedRowMatchesFilter(startRow.scope as Episode["scope"], startRow.scope_target, scopeFilter)) {
     return [];
   }
 
@@ -345,7 +327,7 @@ export function buildEpisodeCausalChain(
       .prepare(
         `SELECT er.*, e.event, e.outcome, e.scope, e.scope_target FROM episode_relations er
          JOIN episodes e ON e.id = er.episode_id
-         WHERE er.target_id = ? AND er.relation_type IN ('CAUSED_BY', 'PART_OF')`,
+         WHERE er.target_id = ? AND er.relation_type = 'CAUSED_BY'`,
       )
       .all(id) as Array<Record<string, unknown>>;
 
