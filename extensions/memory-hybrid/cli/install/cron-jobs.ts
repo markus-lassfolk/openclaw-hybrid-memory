@@ -231,7 +231,13 @@ export const WORKSHOP_APPROVAL_REMINDER_MESSAGE =
 
 // Each entry uses pluginJobId as stable identity; resolveCronJob also sets `id` to that value for gateway `cron.run` / UI parity.
 const MAINTENANCE_CRON_JOBS: Array<
-  Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
+  Record<string, unknown> & {
+    modelTier?: "nano" | "default" | "heavy";
+    minIntervalMs?: number;
+    featureGate?: string;
+    /** When true, normalize existing jobs but do not add if missing (#1921). */
+    normalizeOnly?: boolean;
+  }
 > = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill → extract-daily → resolve-contradictions → enrich
   {
@@ -484,6 +490,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     modelTier: "default",
     enabled: true,
     minIntervalMs: MIN_INTERVAL_MS.daily,
+    normalizeOnly: true,
   },
 
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
@@ -821,6 +828,7 @@ export function ensureMaintenanceCronJobs(
       jobsChanged = true;
     }
     if (!existing) {
+      if (def.normalizeOnly === true) continue;
       const job = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
       if (messageOverrides?.[id]) job.message = messageOverrides[id];

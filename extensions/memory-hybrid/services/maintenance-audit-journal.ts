@@ -3,6 +3,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { MAINTENANCE_STEPS } from "./maintenance-orchestrator.js";
 
 export type OrchestratorStepStatus =
   | "ok"
@@ -130,13 +131,11 @@ export function recordMaintenanceStepRun(db: DatabaseSync, step: OrchestratorSte
 /** Jobs not run in the last N hours (for doctor warning). */
 export function getStaleMaintenanceJobs(db: DatabaseSync, hours = 48): string[] {
   const cutoff = Math.floor(Date.now() / 1000) - hours * 3600;
-  const jobs = db
-    .prepare(`SELECT DISTINCT job FROM maintenance_runs`)
-    .all() as Array<{ job: string }>;
+  const monitored = new Set(MAINTENANCE_STEPS.map((step) => step.name));
   const stale: string[] = [];
-  for (const { job } of jobs) {
+  for (const job of monitored) {
     const last = getLastRunForJob(db, job);
-    if (!last || last.started_at < cutoff) stale.push(job);
+    if (last && last.started_at < cutoff) stale.push(job);
   }
   return stale;
 }

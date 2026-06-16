@@ -115,40 +115,48 @@ export async function executeMineCommand(
       .slice(0, 50_000);
     const { text, redacted, categories } = redactSecretsInText(rawText);
     const storedContentHash = hashStoredTranscriptText(text);
-    const existing = db
-      .prepare(
-        "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
-      )
-      .get(storedContentHash, mineScope, mineScopeTarget) as { id: string } | undefined;
-    if (existing) {
-      skipped++;
-      continue;
-    }
+
+    const importOne = db.transaction(() => {
+      const existing = db
+        .prepare(
+          "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
+        )
+        .get(storedContentHash, mineScope, mineScopeTarget) as { id: string } | undefined;
+      if (existing) return { skipped: true as const };
+
+      const result = factsDb.storeWithResult({
+        text,
+        category: "conversation",
+        importance: 0.5,
+        entity: null,
+        key: opts.name ?? conv.title,
+        value: null,
+        source: `mine:${conv.source}`,
+        confidence: 0.8,
+        scope: mineScope,
+        scopeTarget: mineScopeTarget,
+      });
+      if (result.skipped) return { skipped: true as const };
+      db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
+        storedContentHash,
+        batchId,
+        result.entry.id,
+      );
+      return { skipped: false as const, result, text };
+    });
+
     redactedTotal += redacted;
     for (const [k, v] of Object.entries(categories)) {
       redactionCategories[k] = (redactionCategories[k] ?? 0) + v;
     }
-    const result = factsDb.storeWithResult({
-      text,
-      category: "conversation",
-      importance: 0.5,
-      entity: null,
-      key: opts.name ?? conv.title,
-      value: null,
-      source: `mine:${conv.source}`,
-      confidence: 0.8,
-      scope: mineScope,
-      scopeTarget: mineScopeTarget,
-    });
-    if (result.skipped) {
+
+    const txResult = importOne();
+    if (txResult.skipped) {
       skipped++;
       continue;
     }
-    db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
-      storedContentHash,
-      batchId,
-      result.entry.id,
-    );
+
+    const { result, text: storedText } = txResult;
     written++;
 
     if (result.evictedFactId && vectorDb) {
@@ -161,10 +169,10 @@ export async function executeMineCommand(
 
     if (opts.embed && vectorDb && embeddings) {
       try {
-        const vector = await embeddings.embed(text.slice(0, 8000));
+        const vector = await embeddings.embed(storedText.slice(0, 8000));
         factsDb.setEmbeddingModel(result.entry.id, embeddings.modelName);
         await vectorDb.store({
-          text,
+          text: storedText,
           vector,
           importance: 0.5,
           category: "conversation",
