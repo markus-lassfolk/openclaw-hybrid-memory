@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Credentials vault type=url:** Reject invalid credential types at store time; auto-migrate legacy `type=url` rows (merge URL into sibling bearer/token entry or convert to `type=other` with `url` field). Clarify in tools/docs that endpoint URLs use the `url` parameter, not `type`.
+
 ---
 
 ## [2026.6.170] - 2026-06-17

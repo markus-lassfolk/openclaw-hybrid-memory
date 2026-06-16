@@ -9,7 +9,12 @@ import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from "nod
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { CredentialType } from "../config.js";
-import { assertValidCredentialRow } from "../services/credential-validation.js";
+import { CREDENTIAL_TYPES } from "../config.js";
+import {
+  ENDPOINT_ONLY_CREDENTIAL_VALUE,
+  planLegacyUrlCredentialMigration,
+} from "../services/credential-type-migration.js";
+import { assertValidCredentialRow, assertValidCredentialType } from "../services/credential-validation.js";
 import { capturePluginError } from "../services/error-reporter.js";
 import { pluginLogger } from "../utils/logger.js";
 import { tryRestrictSqliteDbFileMode } from "../utils/sqlite-file-perms.js";
@@ -92,6 +97,7 @@ export class CredentialsDB extends BaseSqliteStore {
   private storesEncryptedValues: boolean;
   /** True when a 16+ character encryption key was provided to the constructor. */
   private readonly configuredKeyPresent: boolean;
+  private legacyTypesMigrated = false;
   // SECURITY NOTE: Raw password is stored only for lazy migration from legacy SHA-256 to scrypt.
   // Migration is triggered on first successful get() to verify the password is correct before re-encrypting.
   // After migration completes, this field is cleared to minimize exposure in memory.
@@ -162,6 +168,7 @@ export class CredentialsDB extends BaseSqliteStore {
           .prepare("INSERT OR REPLACE INTO vault_meta (key, value) VALUES ('kdf_version', ?)")
           .run(Buffer.from([CRED_KDF_PLAINTEXT]));
       }
+      this.maybeMigrateLegacyCredentialTypes();
       return;
     }
 
@@ -181,6 +188,7 @@ export class CredentialsDB extends BaseSqliteStore {
             "To encrypt the existing vault at rest, run: openclaw hybrid-mem credentials encrypt-vault --backup --verify --yes",
         );
       }
+      this.maybeMigrateLegacyCredentialTypes();
       return;
     }
 
@@ -218,6 +226,129 @@ export class CredentialsDB extends BaseSqliteStore {
           "Set a strong OPENCLAW_CRED_KEY and restart, or rotate secrets after migration.",
       );
     }
+    this.maybeMigrateLegacyCredentialTypes();
+  }
+
+  /** Migrate invalid legacy credential types (e.g. type=url) to supported schema. Idempotent. */
+  private maybeMigrateLegacyCredentialTypes(): void {
+    if (this.legacyTypesMigrated) return;
+    try {
+      this.migrateLegacyCredentialTypes();
+      this.legacyTypesMigrated = true;
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "credentials",
+        operation: "migrate-legacy-credential-types",
+        severity: "warning",
+      });
+    }
+  }
+
+  private decryptStoredValue(buf: Uint8Array | Buffer): string {
+    const buffer = toBuffer(buf);
+    return this.storesEncryptedValues ? decryptValue(buffer, this.key) : buffer.toString("utf8");
+  }
+
+  private migrateLegacyCredentialTypes(): void {
+    const invalidRows = this.liveDb
+      .prepare(
+        `SELECT service, type FROM credentials
+         WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`,
+      )
+      .all(...CREDENTIAL_TYPES) as Array<{ service: string; type: string }>;
+    if (invalidRows.length === 0) return;
+
+    const migrate = createTransaction(
+      this.liveDb,
+      () => {
+        for (const service of [...new Set(invalidRows.map((r) => r.service))]) {
+          const serviceRows = this.liveDb
+            .prepare("SELECT * FROM credentials WHERE service = ?")
+            .all(service) as Array<Record<string, unknown>>;
+          const typesPresent = new Set(serviceRows.map((r) => String(r.type)));
+
+          for (const row of serviceRows) {
+            const legacyType = String(row.type);
+            if (legacyType !== "url") continue;
+
+            const decryptedValue = this.decryptStoredValue(row.value as Uint8Array | Buffer);
+            const plan = planLegacyUrlCredentialMigration({
+              service,
+              decryptedValue,
+              existingUrl: (row.url as string | null) ?? null,
+              existingNotes: (row.notes as string | null) ?? null,
+              siblingTypesPresent: typesPresent,
+            });
+
+            if (plan.action === "noop" || !plan.endpointUrl) {
+              this.liveDb.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, legacyType);
+              typesPresent.delete(legacyType);
+              continue;
+            }
+
+            const now = Math.floor(Date.now() / 1000);
+
+            if (plan.action === "merge_into_sibling" && plan.siblingType) {
+              this.liveDb
+                .prepare(
+                  "UPDATE credentials SET url = ?, updated = ? WHERE service = ? AND type = ? AND (url IS NULL OR url = '')",
+                )
+                .run(plan.endpointUrl, now, service, plan.siblingType);
+              this.liveDb.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, legacyType);
+              typesPresent.delete(legacyType);
+              continue;
+            }
+
+            if (plan.action === "merge_into_other") {
+              this.liveDb
+                .prepare(
+                  "UPDATE credentials SET url = ?, updated = ? WHERE service = ? AND type = 'other' AND (url IS NULL OR url = '')",
+                )
+                .run(plan.endpointUrl, now, service);
+              this.liveDb.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, legacyType);
+              typesPresent.delete(legacyType);
+              continue;
+            }
+
+            if (plan.action === "convert_to_other") {
+              const stored = this.storesEncryptedValues
+                ? (encryptValue(ENDPOINT_ONLY_CREDENTIAL_VALUE, this.key) as unknown as Uint8Array)
+                : new Uint8Array(Buffer.from(ENDPOINT_ONLY_CREDENTIAL_VALUE, "utf8"));
+              this.liveDb.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, legacyType);
+              this.liveDb
+                .prepare(
+                  `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
+                 VALUES (?, 'other', ?, ?, ?, ?, ?, ?)`,
+                )
+                .run(
+                  service,
+                  stored,
+                  plan.endpointUrl,
+                  plan.notes ?? null,
+                  (row.created as number) ?? now,
+                  now,
+                  (row.expires as number | null) ?? null,
+                );
+              typesPresent.delete(legacyType);
+              typesPresent.add("other");
+            }
+          }
+        }
+
+        // Drop any remaining unsupported types that were not handled above.
+        this.liveDb
+          .prepare(
+            `DELETE FROM credentials WHERE type NOT IN (${CREDENTIAL_TYPES.map(() => "?").join(", ")})`,
+          )
+          .run(...CREDENTIAL_TYPES);
+      },
+      "IMMEDIATE",
+    );
+
+    migrate();
+    pluginLogger.info?.(
+      `memory-hybrid: migrated ${invalidRows.length} legacy credential row(s) with invalid type field`,
+    );
   }
 
   protected getSubsystemName(): string {
@@ -740,6 +871,7 @@ export class CredentialsDB extends BaseSqliteStore {
     notes?: string;
     expires?: number | null;
   }): CredentialEntry {
+    assertValidCredentialType(entry.type);
     const now = Math.floor(Date.now() / 1000);
     const stored = this.storesEncryptedValues ? encryptValue(entry.value, this.key) : Buffer.from(entry.value, "utf8");
     this.liveDb
@@ -767,6 +899,7 @@ export class CredentialsDB extends BaseSqliteStore {
   }
 
   get(service: string, type?: CredentialType): CredentialEntry | null {
+    this.maybeMigrateLegacyCredentialTypes();
     const row = type
       ? (this.liveDb.prepare("SELECT * FROM credentials WHERE service = ? AND type = ?").get(service, type) as
           | Record<string, unknown>
@@ -866,6 +999,7 @@ export class CredentialsDB extends BaseSqliteStore {
     notes?: string;
     expires?: number | null;
   }): CredentialEntry | null {
+    assertValidCredentialType(entry.type);
     // Check for a legacy cross-variant (underscore ↔ hyphen) before inserting so we
     // don't create a parallel entry alongside an existing differently-named one.
     const legacyVariant = entry.service.includes("_")
@@ -917,6 +1051,7 @@ export class CredentialsDB extends BaseSqliteStore {
    * Use sparingly (decrypts every value). Primarily for audit operations.
    */
   listAll(): CredentialEntry[] {
+    this.maybeMigrateLegacyCredentialTypes();
     const rows = this.liveDb.prepare("SELECT * FROM credentials ORDER BY service, type").all() as Array<
       Record<string, unknown>
     >;
@@ -949,6 +1084,7 @@ export class CredentialsDB extends BaseSqliteStore {
   }
 
   list(): Array<{ service: string; type: string; url: string | null; expires: number | null }> {
+    this.maybeMigrateLegacyCredentialTypes();
     const rows = this.liveDb
       .prepare("SELECT service, type, url, expires FROM credentials ORDER BY service, type")
       .all() as Array<{

@@ -7,6 +7,32 @@ import { CREDENTIAL_TYPES, type CredentialType } from "../config.js";
 
 type ValidationResult = { ok: true } | { ok: false; reason: string };
 
+/** Invalid legacy type values stored before store-time validation. */
+export const LEGACY_CREDENTIAL_TYPES = ["url"] as const;
+
+export function isValidCredentialType(type: string): type is CredentialType {
+  return (CREDENTIAL_TYPES as readonly string[]).includes(type);
+}
+
+export function assertValidCredentialType(type: string): asserts type is CredentialType {
+  if (!isValidCredentialType(type)) {
+    throw new Error(
+      `Invalid credential type "${type}". Allowed types: ${CREDENTIAL_TYPES.join(", ")}. ` +
+        "Put endpoint URLs in the optional `url` parameter (or `notes`), not in `type`.",
+    );
+  }
+}
+
+export function auditCredentialType(type: string): string[] {
+  const flags: string[] = [];
+  if ((LEGACY_CREDENTIAL_TYPES as readonly string[]).includes(type as (typeof LEGACY_CREDENTIAL_TYPES)[number])) {
+    flags.push("legacy_invalid_type");
+  } else if (!isValidCredentialType(type)) {
+    flags.push("invalid_credential_type");
+  }
+  return flags;
+}
+
 /** Minimum length for a credential value to be considered valid. */
 export const MIN_CREDENTIAL_VALUE_LENGTH = 8;
 
@@ -201,9 +227,7 @@ export function assertValidCredentialRow(row: {
   if (typeof row.service !== "string" || row.service.trim().length === 0) {
     throw new Error("memory-hybrid: credentials vault row has invalid service");
   }
-  if (!CREDENTIAL_TYPES.includes(row.type as CredentialType)) {
-    throw new Error(`memory-hybrid: credentials vault row has invalid type: ${row.type}`);
-  }
+  assertValidCredentialType(row.type);
   if (!Number.isFinite(row.created) || !Number.isFinite(row.updated)) {
     throw new Error("memory-hybrid: credentials vault row has invalid timestamps");
   }

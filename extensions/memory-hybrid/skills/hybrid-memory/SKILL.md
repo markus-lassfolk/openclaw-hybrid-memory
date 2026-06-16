@@ -158,15 +158,19 @@ When vault is **off**, credential-like content is blocked from ordinary `memory_
 
 ## Credentials vault (when `credentials.enabled: true`)
 
+Secrets live in the encrypted vault only; memory holds **pointer facts** (no secret values in recall).
+
 | Task | CLI |
 | --- | --- |
 | Vault health | `openclaw hybrid-mem credentials vault-status` |
 | List entries (no values) | `credentials list [--service pattern]` |
-| Get secret | `credentials get --service <name> [--type api_key]` |
-| Scripting / piping | `credentials get --service <name> --value-only` (alias: `--quiet`) — value only, no trailing newline |
+| Get secret | `credentials get --service <name> [--type bearer]` |
+| Scripting / piping | `credentials get --service <name> --value-only` (alias: `--quiet`) |
 | Migrate facts → vault | `credentials migrate-to-vault` |
 | Re-encrypt after key change | `credentials encrypt-vault --backup --verify --yes` |
 | Audit / clean | `credentials audit`, `credentials prune [--yes]` |
+
+**Credential `type` vs `url` field:** `type` is the kind of **secret** — `token`, `password`, `api_key`, `ssh`, `bearer`, or `other`. **Do not** use `type=url`. Put endpoint/base URLs in the optional **`url`** parameter on `credential_store` (or in `notes`). Example: `credential_store(service="my-api", type="bearer", value="<token>", url="https://api.example.com")`.
 
 **Encryption key:** `env:VAR`, `file:/absolute/path` (reads **file contents**), or inline secret. Legacy vaults encrypted with the literal string `file:…` still open with a one-time warning — see repo **`docs/CREDENTIALS.md`**.
 

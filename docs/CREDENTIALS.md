@@ -154,12 +154,14 @@ When enabled, four tools are registered:
 ### Credential Types
 
 - `token`, `password`, `api_key`, `ssh`, `bearer`, `other`
+- **`url` is not a credential type.** Endpoint/base URLs belong in the optional **`url`** parameter (or `notes`), not in `type`. Legacy vault rows with `type=url` are migrated automatically on vault open (merged into a sibling `bearer`/`token`/… entry when present, otherwise converted to `type=other` with the URL in the `url` column).
 
 ### Examples
 
 Store:
 ```
 credential_store(service="home-assistant", type="token", value="eyJ...", url="http://localhost:8123")
+credential_store(service="my-api", type="bearer", value="secret-token", url="https://api.example.com/v1")
 credential_store(service="github", type="api_key", value="ghp_...", notes="Personal access token")
 ```
 

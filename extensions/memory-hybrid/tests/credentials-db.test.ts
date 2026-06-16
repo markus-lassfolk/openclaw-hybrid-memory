@@ -2,8 +2,10 @@
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { _testing } from "../index.js";
+import { ENDPOINT_ONLY_CREDENTIAL_VALUE } from "../services/credential-type-migration.js";
 import { pluginLogger } from "../utils/logger.js";
 
 const { CredentialsDB, deriveKey, encryptValue, decryptValue } = _testing;
@@ -628,6 +630,70 @@ describe("CredentialsDB.rekeyVaultSafe", () => {
     expect(db2.get("svc", "api_key")?.value).toBe("secret-before-rekey");
     expect(existsSync(backupPath)).toBe(true);
     db2.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Legacy type=url migration
+// ---------------------------------------------------------------------------
+
+function insertLegacyUrlCredentialRow(dbPath: string, service: string, urlValue: string): void {
+  const now = Math.floor(Date.now() / 1000);
+  const rawDb = new DatabaseSync(dbPath);
+  rawDb
+    .prepare(
+      `INSERT INTO credentials (service, type, value, url, notes, created, updated, expires)
+       VALUES (?, 'url', ?, NULL, NULL, ?, ?, NULL)`,
+    )
+    .run(service, Buffer.from(urlValue, "utf8"), now, now);
+  rawDb.close();
+}
+
+describe("CredentialsDB legacy type=url migration", () => {
+  it("rejects type=url on store", () => {
+    expect(() =>
+      db.store({
+        service: "bad",
+        type: "url",
+        value: "https://api.example.com",
+      }),
+    ).toThrow(/not in `type`/i);
+  });
+
+  it("merges legacy type=url into sibling bearer url field on open", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-url-merge-"));
+    const dbPath = join(dir, "creds.db");
+    const plainDb = new CredentialsDB(dbPath, "");
+    plainDb.store({ service: "my-api", type: "bearer", value: "my-bearer-token-1234567890" });
+    plainDb.close();
+
+    insertLegacyUrlCredentialRow(dbPath, "my-api", "https://api.example.com");
+
+    const reopened = new CredentialsDB(dbPath, "");
+    const bearer = reopened.get("my-api", "bearer");
+    expect(bearer?.url).toBe("https://api.example.com");
+    expect(reopened.get("my-api", "url")).toBeNull();
+    expect(reopened.list("my-api").map((e) => e.type)).toEqual(["bearer"]);
+    reopened.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("converts standalone legacy type=url to type=other with url field", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cred-url-convert-"));
+    const dbPath = join(dir, "creds.db");
+    new CredentialsDB(dbPath, "").close();
+
+    insertLegacyUrlCredentialRow(dbPath, "endpoint-only", "url: https://hooks.example.com/v1");
+
+    const reopened = new CredentialsDB(dbPath, "");
+    const other = reopened.get("endpoint-only", "other");
+    expect(other).not.toBeNull();
+    expect(other?.url).toBe("https://hooks.example.com/v1");
+    expect(other?.value).toBe(ENDPOINT_ONLY_CREDENTIAL_VALUE);
+    expect(other?.notes).toMatch(/legacy vault type=url/i);
+    expect(reopened.get("endpoint-only", "url")).toBeNull();
+    reopened.close();
     rmSync(dir, { recursive: true, force: true });
   });
 });
