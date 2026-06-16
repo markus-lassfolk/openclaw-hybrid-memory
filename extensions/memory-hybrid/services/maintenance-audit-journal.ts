@@ -135,7 +135,7 @@ export function getStaleMaintenanceJobs(db: DatabaseSync, hours = 48): string[] 
   const stale: string[] = [];
   for (const job of monitored) {
     const last = getLastRunForJob(db, job);
-    if (!last || last.started_at < cutoff) stale.push(job);
+    if (last && last.started_at < cutoff) stale.push(job);
   }
   return stale;
 }

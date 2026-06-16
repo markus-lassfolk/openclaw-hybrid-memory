@@ -273,21 +273,43 @@ async function runInjection(
     if (messages && sideEffects?.accessedIds?.length) {
       const turns = segmentTranscriptIntoTurns(messages);
       const attr = attributeInjectionToTurn(turns, sideEffects.accessedIds);
+      const factIdToVaultDb = new Map<string, ReturnType<typeof ctx.factsDb.getRawDb>>();
+      for (const id of sideEffects.accessedIds) {
+        const candidate = candidates.find((c) => c.entry.id === id);
+        if (candidate) {
+          const factsDb = resolveFactsDbForCandidate(candidate.entry);
+          factIdToVaultDb.set(id, factsDb.getRawDb());
+        }
+      }
+      const vaultGroups = new Map<ReturnType<typeof ctx.factsDb.getRawDb>, string[]>();
+      for (const id of sideEffects.accessedIds) {
+        const db = factIdToVaultDb.get(id) ?? ctx.factsDb.getRawDb();
+        const ids = vaultGroups.get(db) ?? [];
+        ids.push(id);
+        vaultGroups.set(db, ids);
+      }
       try {
-        recordInjectionAttribution(ctx.factsDb.getRawDb(), {
-          sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
-          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
-          attribution: attr,
-        });
-        const queryText = extractLastUserMessageText(event) ?? "";
-        logRecallEvent(ctx.factsDb.getRawDb(), {
-          sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
-          agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
-          query: queryText.slice(0, 500) || null,
-          factIds: sideEffects.accessedIds,
-          hit: sideEffects.accessedIds.length > 0,
-          source: "auto-recall",
-        });
+        for (const [db, factIds] of vaultGroups) {
+          const vaultAttr = {
+            ...attr,
+            injectedFactIds: attr.injectedFactIds.filter((id) => factIds.includes(id)),
+            referencedFactIds: attr.referencedFactIds.filter((id) => factIds.includes(id)),
+          };
+          recordInjectionAttribution(db, {
+            sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
+            agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
+            attribution: vaultAttr,
+          });
+          const queryText = extractLastUserMessageText(event) ?? "";
+          logRecallEvent(db, {
+            sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
+            agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
+            query: queryText.slice(0, 500) || null,
+            factIds,
+            hit: factIds.length > 0,
+            source: "auto-recall",
+          });
+        }
       } catch {
         /* non-fatal attribution persistence */
       }
