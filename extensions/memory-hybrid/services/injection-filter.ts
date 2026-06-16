@@ -48,8 +48,9 @@ const LAYER4 = [
 /** Layer 5 — unicode obfuscation (zero-width, RTL, homoglyphs inside Latin words). */
 const ZERO_WIDTH = /[\u200B\u200C\u200D\uFEFF]/;
 const RTL_OVERRIDE = /[\u202E\u202D]/;
-/** Cyrillic lookalikes inside Latin word boundaries. */
-const HOMOGLYPH_IN_LATIN = /\b[a-zA-Z]*[\u0430\u043E\u0435\u0440][a-zA-Z\u0430-\u044F\u0450-\u045F]*\b/;
+/** Cyrillic lookalikes inside Latin word boundaries (requires at least one Latin letter). */
+const HOMOGLYPH_IN_LATIN =
+  /\b[a-zA-Z]+[\u0430\u043E\u0435\u0440][a-zA-Z\u0430-\u044F\u0450-\u045F]*\b|\b[a-zA-Z]*[\u0430\u043E\u0435\u0440][a-zA-Z]+\b/;
 
 const LAYERS: Array<{ layer: number; name: string; test: (text: string) => boolean }> = [
   { layer: 1, name: "legacy_patterns", test: (t) => LAYER1.some((p) => p.test(t)) },
@@ -66,8 +67,8 @@ const LAYERS: Array<{ layer: number; name: string; test: (text: string) => boole
 /** Scan a fact text through all five layers. */
 export function scanInjectionFilter(text: string): InjectionFilterResult {
   if (!text || typeof text !== "string") return { allowed: true };
-  for (const { layer, name } of LAYERS) {
-    if (name && LAYERS.find((l) => l.layer === layer)!.test(text)) {
+  for (const { layer, name, test } of LAYERS) {
+    if (test(text)) {
       return { allowed: false, layer, reason: name };
     }
   }

@@ -153,3 +153,38 @@ export function getSnoozeCandidates(
   }
   return candidates;
 }
+
+export type RecallSignalsSnapshot = {
+  schemaVersion: 1;
+  windowDays: number;
+  autoSnoozeCandidates: number;
+  neverReferencedSurfaced: number;
+  crossDomainHubs: number;
+  snoozeCandidateIds: string[];
+};
+
+/** Dashboard / doctor snapshot for recall feedback (#1916). */
+export function getRecallSignalsSnapshot(
+  db: DatabaseSync,
+  windowDays = 7,
+  config: RecallSignalConfig = DEFAULT_RECALL_SIGNAL_CONFIG,
+): RecallSignalsSnapshot {
+  const stats = aggregateRecallStats(db, windowDays);
+  let crossDomainHubs = 0;
+  let neverReferencedSurfaced = 0;
+  for (const s of stats.values()) {
+    if (s.distinctQueries >= config.crossDomainMinQueries) crossDomainHubs++;
+    if (isNeverReferencedCandidate(s.surfaceCount, s.referenceCount, config.neverReferencedThreshold)) {
+      neverReferencedSurfaced++;
+    }
+  }
+  const snoozeCandidateIds = getSnoozeCandidates(db, config);
+  return {
+    schemaVersion: 1,
+    windowDays,
+    autoSnoozeCandidates: snoozeCandidateIds.length,
+    neverReferencedSurfaced,
+    crossDomainHubs,
+    snoozeCandidateIds: snoozeCandidateIds.slice(0, 20),
+  };
+}

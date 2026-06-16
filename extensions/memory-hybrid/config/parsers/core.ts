@@ -125,6 +125,10 @@ export function parseStoreConfig(cfg: Record<string, unknown>): StoreConfig {
     fuzzyDedupe: storeRaw?.fuzzyDedupe === true,
     classifyBeforeWrite: storeRaw?.classifyBeforeWrite === true,
     classifyModel: typeof storeRaw?.classifyModel === "string" ? storeRaw.classifyModel : undefined,
+    dedupWindowMinutes:
+      typeof storeRaw?.dedupWindowMinutes === "number" && storeRaw.dedupWindowMinutes >= 0
+        ? storeRaw.dedupWindowMinutes
+        : 30,
     sourceProfiles: parseSourceProfiles(storeRaw?.sourceProfiles),
     defaultProfile: parseStoreSourceProfile(storeRaw?.defaultProfile),
   };

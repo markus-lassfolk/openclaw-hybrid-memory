@@ -29,6 +29,8 @@ export interface UserFriendlyContext {
     key: string,
     value: string,
   ) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
+  runConfigMode?: (mode: string) => { ok: boolean; error?: string; message?: string } | Promise<{ ok: boolean; error?: string; message?: string }>;
+  runInstall?: (opts: { dryRun: boolean }) => Promise<{ ok: boolean }>;
 }
 
 function hasCommand(mem: Chainable, name: string): boolean {
@@ -68,7 +70,14 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
   registerIfMissing(mem, "demo", () => registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
   registerIfMissing(mem, "examples", () => registerExamplesCommand(mem));
   registerIfMissing(mem, "mine", () => registerMineCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
-  registerIfMissing(mem, "bootstrap", () => registerBootstrapCommand(mem, ctx.cfg, ctx.factsDb));
+  registerIfMissing(mem, "bootstrap", () =>
+    registerBootstrapCommand(mem, ctx.cfg, ctx.factsDb, {
+      runConfigMode: ctx.runConfigMode,
+      runInstall: ctx.runInstall ? async () => {
+        await ctx.runInstall!({ dryRun: false });
+      } : undefined,
+    }),
+  );
   registerIfMissing(mem, "focus", () => registerFocusCommands(mem));
   registerIfMissing(mem, "list-vaults", () => registerVaultCommands(mem, ctx.cfg));
 }

@@ -15,19 +15,31 @@ export type FocusTopicState = {
   sessionId: string;
 };
 
-function focusPath(sessionId: string): string {
+/** Override focus dir for tests. */
+let focusDirOverride: string | null = null;
+
+export function setFocusDirForTests(dir: string | null): void {
+  focusDirOverride = dir;
+}
+
+function resolveFocusDir(): string {
+  return focusDirOverride ?? FOCUS_DIR;
+}
+
+function focusPath(sessionId: string, dir?: string): string {
   const safe = sessionId.replace(/[^a-zA-Z0-9._-]/g, "_");
-  return join(FOCUS_DIR, `${safe}.json`);
+  return join(dir ?? resolveFocusDir(), `${safe}.json`);
 }
 
 export function setFocusTopic(sessionId: string, topic: string): FocusTopicState {
-  mkdirSync(FOCUS_DIR, { recursive: true });
+  const base = resolveFocusDir();
+  mkdirSync(base, { recursive: true });
   const state: FocusTopicState = {
     topic: topic.trim(),
     setAt: new Date().toISOString(),
     sessionId,
   };
-  writeFileSync(focusPath(sessionId), JSON.stringify(state, null, 2), "utf8");
+  writeFileSync(focusPath(sessionId, base), JSON.stringify(state, null, 2), "utf8");
   return state;
 }
 
@@ -51,34 +63,20 @@ export function clearFocusTopic(sessionId: string): boolean {
   return true;
 }
 
-/** Override focus dir for tests. */
-let focusDirOverride: string | null = null;
-
-export function setFocusDirForTests(dir: string | null): void {
-  focusDirOverride = dir;
-}
-
-function resolveFocusDir(): string {
-  return focusDirOverride ?? FOCUS_DIR;
-}
-
 export function setFocusTopicInDir(sessionId: string, topic: string, dir?: string): FocusTopicState {
   const base = dir ?? resolveFocusDir();
   mkdirSync(base, { recursive: true });
-  const safe = sessionId.replace(/[^a-zA-Z0-9._-]/g, "_");
   const state: FocusTopicState = {
     topic: topic.trim(),
     setAt: new Date().toISOString(),
     sessionId,
   };
-  writeFileSync(join(base, `${safe}.json`), JSON.stringify(state), "utf8");
+  writeFileSync(focusPath(sessionId, base), JSON.stringify(state), "utf8");
   return state;
 }
 
 export function getFocusTopicFromDir(sessionId: string, dir?: string): FocusTopicState | null {
-  const base = dir ?? resolveFocusDir();
-  const safe = sessionId.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const path = join(base, `${safe}.json`);
+  const path = focusPath(sessionId, dir);
   if (!existsSync(path)) return null;
   try {
     return JSON.parse(readFileSync(path, "utf8")) as FocusTopicState;

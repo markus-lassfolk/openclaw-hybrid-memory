@@ -17,7 +17,14 @@ import {
   assembleRecallPrependContext,
   buildEdictBlock,
   DEFAULT_EDICT_BUDGET_FRACTION,
+  finalizeInjectionMemoryContent,
 } from "../services/recalled-context-assembler.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
+import {
+  attributeInjectionToTurn,
+  detectReferencedFactIds,
+  segmentTranscriptIntoTurns,
+} from "../services/per-turn-attribution.js";
 import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
 import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
@@ -196,7 +203,7 @@ async function runInjection(
   const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
 
   const injectionFilterMode: InjectionFilterMode =
-    ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "enforce";
+    ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
   let injectionFilteredCount = 0;
 
   const sanitizeFactForInjection = (raw: string): string => {
@@ -236,7 +243,8 @@ async function runInjection(
     sideEffects?: InjectionSideEffects,
   ): { prependContext: string } | undefined => {
     if (options.emitGate?.emitted) return undefined;
-    const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(memoryContent), {
+    const structured = finalizeInjectionMemoryContent(ctx, event, memoryContent, candidates);
+    const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(structured), {
       prefix,
       edictBlock,
     });
@@ -244,6 +252,29 @@ async function runInjection(
     if (options.emitGate) options.emitGate.emitted = true;
     consumePrependBudget(ctx.prependBudgetRef, prepend);
     if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, progressiveIndexSessionKey, sideEffects);
+    if (injectionFilteredCount > 0) {
+      emitRecallVerboseLog({
+        evt: "injection.summary",
+        feature: "injection_filter",
+        filter_dropped: injectionFilteredCount,
+      });
+    }
+    const messages = (event as { messages?: unknown[] })?.messages;
+    if (messages && sideEffects?.accessedIds?.length) {
+      const turns = segmentTranscriptIntoTurns(messages);
+      const attr = attributeInjectionToTurn(turns, sideEffects.accessedIds);
+      const assistantTurn = turns.find((t) => t.index === attr.turnIndex);
+      if (assistantTurn) {
+        attr.referencedFactIds = detectReferencedFactIds(assistantTurn.text, attr.injectedFactIds);
+      }
+      emitRecallVerboseLog({
+        evt: "recall.attribution",
+        feature: "per_turn_attribution",
+        turn_index: attr.turnIndex,
+        injected: attr.injectedFactIds.length,
+        referenced: attr.referencedFactIds.length,
+      });
+    }
     return { prependContext: prepend };
   };
 

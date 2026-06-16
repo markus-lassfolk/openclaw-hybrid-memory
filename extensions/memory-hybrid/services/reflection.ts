@@ -35,6 +35,8 @@ import { CostFeature } from "./cost-feature-labels.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
+import { runContaminationGuard } from "./contamination-guard.js";
+import { quarantineSynthesisDraft } from "./synthesis-quarantine.js";
 import { recordMaintenanceTimestamp } from "./maintenance-timestamp.js";
 import type { ProvenanceService } from "./provenance.js";
 import {
@@ -775,6 +777,17 @@ export async function runReflection(
     if (opts.dryRun) {
       logger.info(`memory-hybrid: reflection [dry-run] would store: ${patternText.slice(0, 60)}...`);
       stored++;
+      continue;
+    }
+
+    const sourceTexts = recentFacts.map((f) => f.text);
+    const guard = await runContaminationGuard(patternText, sourceTexts, existingPatternFacts.map((f) => f.text), {
+      openai,
+      skipLlm: true,
+    });
+    if (!guard.allowed) {
+      quarantineSynthesisDraft(factsDb.getRawDb(), patternText, guard, sourceTexts);
+      duplicatesSkipped++;
       continue;
     }
 

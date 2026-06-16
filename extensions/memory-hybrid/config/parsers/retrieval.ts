@@ -77,7 +77,7 @@ function parseContextBoundaryConfig(retrievalRaw: Record<string, unknown> | unde
     injectionFilter:
       raw?.injectionFilter === "audit" || raw?.injectionFilter === "enforce" || raw?.injectionFilter === "off"
         ? raw.injectionFilter
-        : "enforce",
+        : "audit",
     vaultFactsMaxTokens: {
       speed: typeof vf?.speed === "number" ? vf.speed : 0,
       balanced: typeof vf?.balanced === "number" ? vf.balanced : 200,

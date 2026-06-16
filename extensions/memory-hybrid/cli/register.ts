@@ -674,6 +674,8 @@ export function registerHybridMemCli(mem: Chainable, ctx: HybridMemCliContext): 
       wal: ctx.wal,
       embeddings: ctx.embeddings,
       runConfigSet: ctx.runConfigSet,
+      runConfigMode: ctx.runConfigMode,
+      runInstall: ctx.runInstall,
     };
     registerUserFriendlyCommands(mem, userFriendlyContext);
   } catch (err) {

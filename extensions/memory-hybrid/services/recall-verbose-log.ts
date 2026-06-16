@@ -3,7 +3,6 @@
  * Enabled via OPENCLAW_HM_VERBOSE=1|debug|trace
  */
 
-import { getEnv } from "../utils/env-manager.js";
 import { nowIso } from "../utils/dates.js";
 
 export type RecallVerboseEvent = {
@@ -29,7 +28,7 @@ let verboseLevel: "off" | "basic" | "debug" | "trace" = "off";
 
 /** Initialize from OPENCLAW_HM_VERBOSE env (call once at plugin startup). */
 export function initHmVerboseFromEnv(env: NodeJS.ProcessEnv = process.env): void {
-  const raw = (getEnv("OPENCLAW_HM_VERBOSE") ?? "").trim().toLowerCase();
+  const raw = (env.OPENCLAW_HM_VERBOSE ?? "").trim().toLowerCase();
   if (raw === "1" || raw === "true" || raw === "basic") verboseLevel = "basic";
   else if (raw === "debug") verboseLevel = "debug";
   else if (raw === "trace") verboseLevel = "trace";
@@ -51,5 +50,9 @@ export function emitRecallVerboseLog(
   if (verboseLevel === "off") return;
   const payload = { ts: nowIso(), ...event };
   const line = JSON.stringify(payload);
-  logger?.debug?.(`memory-hybrid: ${line}`);
+  if (logger?.debug) {
+    logger.debug(`memory-hybrid: ${line}`);
+    return;
+  }
+  process.stderr.write(`memory-hybrid: ${line}\n`);
 }

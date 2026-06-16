@@ -26,6 +26,8 @@ import type OpenAI from "openai";
 import { chatComplete } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { capturePluginError } from "./error-reporter.js";
+import { runContaminationGuard } from "./contamination-guard.js";
+import { quarantineSynthesisDraft } from "./synthesis-quarantine.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,6 +83,9 @@ interface MultiPassExtractorOptions {
   verificationPass?: boolean;
   /** Per-LLM-call timeout in ms (default: 15000). */
   timeoutMs?: number;
+  /** Contamination guard mode for synthesized facts (#1916). */
+  contaminationGuard?: "off" | "audit" | "enforce";
+  quarantineDb?: import("node:sqlite").DatabaseSync;
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +211,8 @@ export class MultiPassExtractor {
   private readonly verificationPass: boolean;
   private readonly extractionPasses: boolean;
   private readonly timeoutMs: number;
+  private readonly contaminationGuard: "off" | "audit" | "enforce";
+  private readonly quarantineDb?: import("node:sqlite").DatabaseSync;
 
   constructor(openai: OpenAI, options?: MultiPassExtractorOptions) {
     this.openai = openai;
@@ -215,6 +222,8 @@ export class MultiPassExtractor {
     this.extractionPasses = options?.extractionPasses ?? true;
     this.verificationPass = options?.verificationPass ?? false;
     this.timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.contaminationGuard = options?.contaminationGuard ?? "audit";
+    this.quarantineDb = options?.quarantineDb;
   }
 
   /** Run Pass 1 explicit extraction. Returns candidates or [] on error. */
@@ -332,6 +341,26 @@ export class MultiPassExtractor {
         verdict: undefined,
         pass: c.pass,
       }));
+    }
+
+    if (this.contaminationGuard !== "off" && facts.length > 0) {
+      const sourceTexts = [transcript];
+      const kept: ExtractedFact[] = [];
+      for (const fact of facts) {
+        const check = await runContaminationGuard(fact.text, sourceTexts, [], {
+          openai: this.openai,
+          skipLlm: this.contaminationGuard === "audit",
+        });
+        if (check.allowed) {
+          kept.push(fact);
+        } else if (this.contaminationGuard === "enforce") {
+          rejectedCount++;
+          if (this.quarantineDb) quarantineSynthesisDraft(this.quarantineDb, fact.text, check, sourceTexts);
+        } else {
+          kept.push(fact);
+        }
+      }
+      facts = kept;
     }
 
     return {

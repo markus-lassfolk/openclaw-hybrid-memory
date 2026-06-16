@@ -17,6 +17,7 @@ export type CompositeScoreInput = {
   coActivationBoost?: number;
   pinBoost?: number;
   freqBoost?: number;
+  crossDomainBoost?: number;
   entityMatchBoost?: number;
   intent: QueryIntent;
   /** Focus topic match multiplier (Issue #1917). */
@@ -95,10 +96,11 @@ export function computeCompositeScore(
   const coAct = input.coActivationBoost ?? 1;
   const pin = Math.min(config.pinBoostCap, input.pinBoost ?? 0);
   const freq = input.freqBoost ?? 0;
+  const crossDomain = input.crossDomainBoost ?? 0;
   const entity = input.entityMatchBoost ?? 0;
   const focus = input.focusMultiplier ?? 1;
 
-  return (base + entity) * qualityMult * lengthNorm * coAct * focus + pin + freq;
+  return (base + entity) * qualityMult * lengthNorm * coAct * focus + pin + freq + crossDomain;
 }
 
 /** Recency score 0–1 from days since last access (newer = higher). */

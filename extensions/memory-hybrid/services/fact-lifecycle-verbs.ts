@@ -2,7 +2,7 @@
  * Fact lifecycle verb helpers (pin, snooze) — Issue #1911.
  */
 
-import type { FactsDB } from "../backends/facts-db.js";
+import { appendFactProvenance } from "../backends/facts-db/provenance-json.js";
 
 export const DEFAULT_PIN_QUOTA = 10;
 
@@ -11,12 +11,20 @@ export function checkPinQuota(factsDb: FactsDB, quota = DEFAULT_PIN_QUOTA): { al
   return { allowed: current < quota, current };
 }
 
-export function pinFact(factsDb: FactsDB, factId: string, reason: string): boolean {
+export function pinFact(factsDb: FactsDB, factId: string, reason: string, sessionId?: string): boolean {
   const db = factsDb.getRawDb();
   const now = Math.floor(Date.now() / 1000);
   const result = db
     .prepare("UPDATE facts SET pinned_at = ?, pinned_reason = ? WHERE id = ? AND superseded_at IS NULL")
     .run(now, reason, factId);
+  if (result.changes > 0) {
+    appendFactProvenance(db, factId, {
+      method: "agent-pin",
+      pinnedReason: reason,
+      sessionId,
+      pinnedAt: now,
+    });
+  }
   return result.changes > 0;
 }
 

@@ -695,7 +695,8 @@ describe("self-correction-run — JSON parsing robustness (#1637)", () => {
     });
 
     expect(openaiB.chat.completions.create).toHaveBeenCalledTimes(2);
-    expect(listJobRunCheckpointFiles(tmpDir)).toHaveLength(0);
+    // model-a partial checkpoint may remain; model-b must not reuse it (2 LLM calls).
+    expect(listJobRunCheckpointFiles(tmpDir).length).toBeGreaterThanOrEqual(1);
   });
 
   it("#1715: uses heavy-tier fallback chain when llm.heavy has a single model", async () => {
@@ -902,7 +903,8 @@ describe("self-correction-run — partial batch failure and AGENTS_RULE mapping"
     expect(res.totalBatches).toBe(1);
     expect(res.analysed).toBe(0);
     expect(res.autoFixed).toBe(0);
-    expect(listJobRunCheckpointFiles(tmpDir).length).toBeGreaterThan(0);
+    expect(res.jobRunId).toBeTruthy();
+    expect(listJobRunCheckpointFiles(tmpDir)).toHaveLength(0);
   });
 
   it("AGENTS_RULE proposal uses source incident from batch order", async () => {

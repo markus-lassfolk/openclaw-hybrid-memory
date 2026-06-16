@@ -6,10 +6,18 @@
 import { capturePluginError } from "./error-reporter.js";
 import { trimBlockToBudget } from "./context-block-trim.js";
 import { RECALLED_CONTEXT_BOUNDARY, sanitizePromptInjection } from "./skill-prompt-injection.js";
-import { buildVaultContextBlock, type VaultFactLine } from "./vault-context.js";
+import {
+  buildVaultContextBlock,
+  buildVaultFactsBlock,
+  entriesToVaultFactLines,
+  type VaultFactLine,
+} from "./vault-context.js";
 import { filterFactTextsForInjection, type InjectionFilterMode } from "./injection-filter.js";
-import { truncateForStorage } from "../utils/text.js";
+import { resolveVaultFactsTriples } from "./vault-facts-resolver.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
+import type { SearchResult } from "../types/memory.js";
+import { estimateTokens, truncateForStorage } from "../utils/text.js";
 
 /** Max share of the interactive prepend budget reserved for edicts (remainder goes to memories). */
 export const DEFAULT_EDICT_BUDGET_FRACTION = 0.2;
@@ -75,6 +83,39 @@ export function wrapRecalledContextStructured(
 ): string {
   const vaultBlock = buildVaultContextBlock({ facts, legacyMemoryContextWrapper: options?.legacyMemoryContextWrapper });
   return wrapRecalledContext(edicts, vaultBlock);
+}
+
+/** Apply structured vault-context wrapper and optional vault-facts SPO block (#1912). */
+export function finalizeInjectionMemoryContent(
+  ctx: LifecycleContext,
+  event: unknown,
+  plainMemoryContent: string,
+  candidates: SearchResult[],
+): string {
+  const boundary = ctx.cfg.retrieval?.contextBoundary;
+  const prompt = extractLastUserMessageText(event) ?? "";
+  const vaultBudget = boundary?.vaultFactsMaxTokens?.balanced ?? 200;
+  let spoBlock = "";
+  if (vaultBudget > 0 && prompt.trim()) {
+    const triples = resolveVaultFactsTriples(ctx.factsDb, prompt);
+    spoBlock = buildVaultFactsBlock(triples, vaultBudget, estimateTokens);
+  }
+
+  const useStructured = boundary?.legacyMemoryContextWrapper === false;
+  if (!useStructured) {
+    return spoBlock ? `${spoBlock}\n\n${plainMemoryContent}` : plainMemoryContent;
+  }
+
+  const facts: VaultFactLine[] = entriesToVaultFactLines(candidates.map((c) => c.entry));
+  if (plainMemoryContent.trim() && facts.length === 0) {
+    facts.push({ text: plainMemoryContent, contentType: "recall" });
+  }
+  const vaultBlock = buildVaultContextBlock({
+    facts,
+    legacyMemoryContextWrapper: boundary?.legacyMemoryContextWrapper !== false,
+  });
+  const parts = [spoBlock, vaultBlock || plainMemoryContent].filter(Boolean);
+  return parts.join("\n\n");
 }
 
 /** Filter fact lines through 5-layer injection filter before injection. */

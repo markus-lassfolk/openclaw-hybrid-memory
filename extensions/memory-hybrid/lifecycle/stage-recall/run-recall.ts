@@ -467,6 +467,8 @@ export async function runRecall(
       deferAccessRefresh: true,
     };
     const hydeUsedRef = { value: false };
+    const bm25BypassedRef = { value: false };
+    const bypassCfg = ctx.cfg.retrieval.bypass ?? DEFAULT_RETRIEVAL_V2_CONFIG.bypass;
     const pipelineDeps: RecallPipelineDeps = {
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
@@ -542,6 +544,8 @@ export async function runRecall(
       timingSpan: recallSpan,
       timingOp: "auto-recall-main",
       pipelineStatusRef,
+      bypass: bypassCfg,
+      bypassedRef: bm25BypassedRef,
     });
     recallTiming.phaseCompleted("main_pipeline", mainPipelineStartedAt, { candidates: candidates.length });
 
@@ -555,6 +559,7 @@ export async function runRecall(
     }
     if (
       !skipPostMainRecallEnrichment &&
+      !bm25BypassedRef.value &&
       interactivePolicy.allowAmbientMultiQuery &&
       ambientCfg.enabled &&
       ambientCfg.multiQuery
@@ -1029,6 +1034,7 @@ export async function runRecall(
           sessionId: sessionKey,
           openai: ctx.openai,
           focusTopic: focusState?.topic,
+          factsDb: ctx.factsDb,
         });
         candidates = v2.results;
         recordIntentDistribution(v2.intent.intent);

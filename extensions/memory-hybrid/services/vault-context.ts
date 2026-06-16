@@ -3,7 +3,6 @@
  */
 
 import type { MemoryEntry } from "../types/memory.js";
-import { trimBlockToBudget } from "./context-block-trim.js";
 
 export type VaultFactLine = {
   text: string;

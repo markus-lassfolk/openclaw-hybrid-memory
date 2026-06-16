@@ -244,7 +244,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         limit: Type.Optional(Type.Number()),
       }),
       async execute(_id, args: { limit?: number }) {
-        const limit = typeof args.limit === "number" ? args.limit : 10;
+        const limit = typeof args.limit === "number" ? Math.min(50, Math.max(1, args.limit)) : 10;
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
           multiAgent: cfg.multiAgent,
           autoRecall: cfg.autoRecall,

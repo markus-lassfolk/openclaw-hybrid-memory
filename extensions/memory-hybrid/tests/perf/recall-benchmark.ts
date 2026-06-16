@@ -3,11 +3,11 @@
  * Runs labeled corpus queries and writes recall-benchmark-<commit>.json
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { classifyIntentHeuristic } from "../services/intent-classifier.js";
-import { computeCompositeScore } from "../services/composite-score.js";
+import { classifyIntentHeuristic } from "../../services/intent-classifier.js";
+import { computeCompositeScore } from "../../services/composite-score.js";
 
 export type CorpusRow = {
   query: string;
@@ -88,6 +88,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const commit = process.env.GIT_COMMIT ?? "local";
   const result = runRecallBenchmark(corpus, commit);
   const out = join(__dirname, `../../.benchmark/recall-benchmark-${commit}.json`);
+  mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
 }

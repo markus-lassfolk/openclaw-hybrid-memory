@@ -13,6 +13,7 @@ import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { capturePluginError } from "../../services/error-reporter.js";
 import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
+import { getRecallSignalsSnapshot } from "../../services/recall-signals.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
@@ -234,6 +235,23 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       } catch (err: unknown) {
         pluginLogger.error(
           `[dashboard-server] /api/viewer/recall-stats: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/viewer/recall-signals") {
+      try {
+        const windowDays = Math.min(90, Math.max(1, Number.parseInt(searchParams.get("windowDays") ?? "7", 10) || 7));
+        const stats = getRecallSignalsSnapshot(ctx.factsDb.getRawDb(), windowDays);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(stats));
+      } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/recall-signals: ${err instanceof Error ? err.message : String(err)}`,
         );
         capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
         res.writeHead(500, { "Content-Type": "application/json" });
