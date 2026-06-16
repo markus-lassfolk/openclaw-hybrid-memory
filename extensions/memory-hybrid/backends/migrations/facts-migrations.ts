@@ -1546,6 +1546,8 @@ function migrateFactsLifecycleColumns(db: DatabaseSync): void {
   add("duplicate_count", "ALTER TABLE facts ADD COLUMN duplicate_count INTEGER NOT NULL DEFAULT 0");
   add("revision_count", "ALTER TABLE facts ADD COLUMN revision_count INTEGER NOT NULL DEFAULT 0");
   add("mine_batch_id", "ALTER TABLE facts ADD COLUMN mine_batch_id TEXT");
+  add("parent_fact_id", "ALTER TABLE facts ADD COLUMN parent_fact_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_parent_fact_id ON facts(parent_fact_id)");
 }
 
 function migrateMaintenanceRunsTable(db: DatabaseSync): void {

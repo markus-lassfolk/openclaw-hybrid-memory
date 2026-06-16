@@ -572,6 +572,20 @@ export type LifecycleAdaptersConfig = {
   adapters: {
     github: LifecycleGitHubAdapterConfig;
   };
+  /** Per-content-type half-lives (#1914). */
+  contentTypeHalfLives: { enabled: boolean };
+  /** A-MEM-style neighbor metadata evolution (#1914). */
+  evolution: {
+    enabled: boolean;
+    maxNeighborsPerFact: number;
+    dailyLlmCallCap: number;
+    mode: "heuristic" | "llm";
+  };
+  /** Fragment-level embedding for long documents (#1914). */
+  fragmentEmbedding: {
+    enabled: boolean;
+    minChars: number;
+  };
 };
 
 /** Frequency-based auto-save: capture repeated references including credentials to vault (Issue #784). */

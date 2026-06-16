@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("runEvolutionPass (#1914)", () => {
-  it("bumps quality_score for frequently accessed facts", () => {
+  it("bumps quality_score for frequently accessed facts", async () => {
     const fact = factsDb.store({
       text: "Frequently recalled deployment checklist",
       category: "pattern",
@@ -33,7 +33,7 @@ describe("runEvolutionPass (#1914)", () => {
     const db = factsDb.getRawDb();
     db.prepare("UPDATE facts SET access_count = 5, quality_score = 0.5 WHERE id = ?").run(fact.id);
 
-    const result = runEvolutionPass(db, 50);
+    const result = await runEvolutionPass(db, 50);
     expect(result.scanned).toBeGreaterThanOrEqual(1);
     expect(result.evolved).toBeGreaterThanOrEqual(1);
 
@@ -47,14 +47,14 @@ describe("runEvolutionPass (#1914)", () => {
     expect(row.revision_count).toBe(0);
   });
 
-  it("skips facts with low access_count", () => {
+  it("skips facts with low access_count", async () => {
     factsDb.store({
       text: "Rarely used note",
       category: "fact",
       importance: 0.5,
       source: "conversation",
     });
-    const result = runEvolutionPass(factsDb.getRawDb(), 50);
+    const result = await runEvolutionPass(factsDb.getRawDb(), 50);
     expect(result.evolved).toBe(0);
   });
 });

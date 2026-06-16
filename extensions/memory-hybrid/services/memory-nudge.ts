@@ -88,15 +88,24 @@ const sessionLastActivity = new Map<string, number>();
 const MAX_TRACKED_SESSIONS = 200;
 const STALE_SESSION_TTL_MS = 30 * 60 * 1000;
 
+function clearSessionNudgeMaps(sessionId: string): void {
+  suppressUntilBySession.delete(sessionId);
+  lastNudgeBySession.delete(sessionId);
+  sessionLastActivity.delete(sessionId);
+}
+
 function evictOldestSession() {
-  if (suppressUntilBySession.size > MAX_TRACKED_SESSIONS) {
-    const oldest = suppressUntilBySession.keys().next().value;
-    if (oldest) {
-      suppressUntilBySession.delete(oldest);
-      lastNudgeBySession.delete(oldest);
-      sessionLastActivity.delete(oldest);
-    }
+  if (sessionLastActivity.size <= MAX_TRACKED_SESSIONS) return;
+  const oldest = sessionLastActivity.keys().next().value;
+  if (oldest) clearSessionNudgeMaps(oldest);
+}
+
+/** Track session activity; evict oldest entry before admitting a new session id. */
+function touchNudgeSession(sessionId: string): void {
+  if (!sessionLastActivity.has(sessionId)) {
+    evictOldestSession();
   }
+  sessionLastActivity.set(sessionId, Date.now());
 }
 
 function sweepStaleSessions() {
@@ -104,9 +113,7 @@ function sweepStaleSessions() {
   const cutoff = now - STALE_SESSION_TTL_MS;
   for (const [sessionId, lastActive] of sessionLastActivity) {
     if (lastActive < cutoff) {
-      suppressUntilBySession.delete(sessionId);
-      lastNudgeBySession.delete(sessionId);
-      sessionLastActivity.delete(sessionId);
+      clearSessionNudgeMaps(sessionId);
     }
   }
 }
@@ -121,14 +128,13 @@ function ensureStaleSweepTimer() {
 
 export function suppressNudgeForSession(sessionId: string, hours: number): void {
   ensureStaleSweepTimer();
-  evictOldestSession();
+  touchNudgeSession(sessionId);
   suppressUntilBySession.set(sessionId, Date.now() + hours * 3600_000);
-  sessionLastActivity.set(sessionId, Date.now());
 }
 
 export function isNudgeSuppressed(sessionId: string): boolean {
   ensureStaleSweepTimer();
-  sessionLastActivity.set(sessionId, Date.now());
+  touchNudgeSession(sessionId);
   const until = suppressUntilBySession.get(sessionId);
   if (!until) return false;
   if (Date.now() > until) {
@@ -140,7 +146,7 @@ export function isNudgeSuppressed(sessionId: string): boolean {
 
 export function shouldEmitNudge(sessionId: string, throttleHours: number): boolean {
   ensureStaleSweepTimer();
-  sessionLastActivity.set(sessionId, Date.now());
+  touchNudgeSession(sessionId);
   if (isNudgeSuppressed(sessionId)) return false;
   const last = lastNudgeBySession.get(sessionId) ?? 0;
   const elapsed = Date.now() - last;
@@ -150,16 +156,13 @@ export function shouldEmitNudge(sessionId: string, throttleHours: number): boole
 
 export function recordNudgeEmission(sessionId: string): void {
   ensureStaleSweepTimer();
-  evictOldestSession();
+  touchNudgeSession(sessionId);
   lastNudgeBySession.set(sessionId, Date.now());
-  sessionLastActivity.set(sessionId, Date.now());
 }
 
 /** Clear per-session nudge throttle/suppress state. */
 export function clearNudgeSessionState(sessionId: string): void {
-  suppressUntilBySession.delete(sessionId);
-  lastNudgeBySession.delete(sessionId);
-  sessionLastActivity.delete(sessionId);
+  clearSessionNudgeMaps(sessionId);
 }
 
 /** Drop expired suppress windows and nudge timestamps older than cutoff (epoch ms). */
@@ -195,4 +198,9 @@ export function disposeMemoryNudge(): void {
 /** Clear nudge state (tests). */
 export function resetNudgeState(): void {
   disposeMemoryNudge();
+}
+
+/** Test hook: count of sessions tracked in the primary activity map. */
+export function _getNudgeTrackedSessionCountForTests(): number {
+  return sessionLastActivity.size;
 }

@@ -71,9 +71,10 @@ export function applyDiversityDemotion<T extends { text: string }>(
 
   const bottomStart = Math.ceil(ranked.length / 2);
   const result = [...kept];
+  let insertAt = Math.min(bottomStart, result.length);
   for (const d of demoted) {
-    const insertAt = Math.min(result.length, bottomStart);
     result.splice(insertAt, 0, d);
+    insertAt++;
   }
 
   return { items: result, demotedCount: demoted.length };

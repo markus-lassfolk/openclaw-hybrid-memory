@@ -77,6 +77,7 @@ import type { MultiAgentConfig, PersonaProposalsConfig, WorkshopConfig } from ".
 import type { SensorSweepConfig } from "./sensors.js";
 import type { WikiIntegrationConfig } from "./wiki-integration.js";
 import type { WorkboardConfig } from "./workboard.js";
+import type { VaultsConfig } from "../vaults.js";
 
 /** Tier for cron job model selection: "default" = standard, "heavy" = larger context/reasoning. */
 /** "nano" = ultra-cheap for high-frequency ops (autoClassify, HyDE, classifyBeforeWrite, summarize); falls back to "default" when unset. */
@@ -644,7 +645,7 @@ export type HybridMemoryConfig = {
   lanceDbPath: string;
   sqlitePath: string;
   /** Optional named vault paths (Issue #1917). */
-  vaults?: import("./vaults.js").VaultsConfig;
+  vaults?: VaultsConfig;
   autoCapture: boolean;
   autoRecall: AutoRecallConfig;
   /** Max characters per captured/stored fact (filter and truncation). Default 5000. */

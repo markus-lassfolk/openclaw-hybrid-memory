@@ -1153,6 +1153,9 @@ export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAda
   const raw = cfg.lifecycle as Record<string, unknown> | undefined;
   const adapters = raw?.adapters as Record<string, unknown> | undefined;
   const github = adapters?.github as Record<string, unknown> | undefined;
+  const evolutionRaw = raw?.evolution as Record<string, unknown> | undefined;
+  const fragmentRaw = (raw?.fragmentEmbedding ?? raw?.fragmentLevelEmbedding) as Record<string, unknown> | undefined;
+  const halfLifeRaw = raw?.contentTypeHalfLives as Record<string, unknown> | undefined;
   const validAction = (value: unknown): "expire-now" | "expire-soon" | "keep-stable" | undefined =>
     value === "expire-now" || value === "expire-soon" || value === "keep-stable" ? value : undefined;
   const repos = Array.isArray(github?.repos)
@@ -1174,6 +1177,28 @@ export function parseLifecycleConfig(cfg: Record<string, unknown>): LifecycleAda
         onClosed: validAction(github?.onClosed),
         onOpen: validAction(github?.onOpen),
       },
+    },
+    contentTypeHalfLives: {
+      enabled: halfLifeRaw?.enabled !== false,
+    },
+    evolution: {
+      enabled: evolutionRaw?.enabled === true,
+      maxNeighborsPerFact:
+        typeof evolutionRaw?.maxNeighborsPerFact === "number" && evolutionRaw.maxNeighborsPerFact > 0
+          ? Math.floor(evolutionRaw.maxNeighborsPerFact)
+          : 5,
+      dailyLlmCallCap:
+        typeof evolutionRaw?.dailyLlmCallCap === "number" && evolutionRaw.dailyLlmCallCap > 0
+          ? Math.floor(evolutionRaw.dailyLlmCallCap)
+          : 50,
+      mode: evolutionRaw?.mode === "llm" ? "llm" : "heuristic",
+    },
+    fragmentEmbedding: {
+      enabled: fragmentRaw?.enabled === true,
+      minChars:
+        typeof fragmentRaw?.minChars === "number" && fragmentRaw.minChars > 0
+          ? Math.floor(fragmentRaw.minChars)
+          : 6000,
     },
   };
 }

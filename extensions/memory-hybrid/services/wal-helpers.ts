@@ -1,22 +1,39 @@
 /**
  * WAL helpers — wrap the write-before-commit / remove-after-commit pattern.
- * Each call site was 8–12 lines of identical boilerplate; these reduce it to 1–2 lines.
- *
- * Circuit breaker: After 10 consecutive failures, WAL is disabled to prevent degradation.
+ * Circuit breaker state is tracked per WAL file path (#1917 multi-vault isolation).
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type WALEntry, WAL_ENTRY_SCHEMA_VERSION, type WriteAheadLog } from "../backends/wal.js";
 import { nowIso } from "../utils/dates.js";
 import { capturePluginError } from "./error-reporter.js";
 
 const WAL_FAILURE_THRESHOLD = 10;
-const WAL_DISABLED_SENTINEL = ".wal.disabled";
-let walFailureCount = 0;
-let walDisabled = false;
-let walPersistentDisableWarned = false;
+const DEFAULT_BREAKER_KEY = "__default__";
+
+type WalBreakerSlice = {
+  failureCount: number;
+  inMemoryDisabled: boolean;
+  persistentDisableWarned: boolean;
+};
+
+const walBreakerByPath = new Map<string, WalBreakerSlice>();
+
+function breakerKey(walPath: string | null): string {
+  return walPath ?? DEFAULT_BREAKER_KEY;
+}
+
+function getBreakerSlice(walPath: string | null): WalBreakerSlice {
+  const key = breakerKey(walPath);
+  let slice = walBreakerByPath.get(key);
+  if (!slice) {
+    slice = { failureCount: 0, inMemoryDisabled: false, persistentDisableWarned: false };
+    walBreakerByPath.set(key, slice);
+  }
+  return slice;
+}
 
 export type WalCircuitBreakerState = {
   failureCount: number;
@@ -37,7 +54,7 @@ function normalizeWalPayload(data: Record<string, unknown>): WALEntry["data"] {
 }
 
 export function getWalDisabledSentinelPath(walPath: string): string {
-  return join(dirname(walPath), WAL_DISABLED_SENTINEL);
+  return `${walPath}.disabled`;
 }
 
 function resolveWalPath(wal: WriteAheadLog | null): string | null {
@@ -63,18 +80,16 @@ export function isWalPersistentlyDisabledAtPath(walPath: string): boolean {
 }
 
 function resetWalCircuitBreakerState(): void {
-  walFailureCount = 0;
-  walDisabled = false;
-  walPersistentDisableWarned = false;
+  walBreakerByPath.clear();
 }
 
-function persistWalDisabledSentinel(walPath: string, err: unknown): string {
+function persistWalDisabledSentinel(walPath: string, failureCount: number, err: unknown): string {
   const sentinelPath = getWalDisabledSentinelPath(walPath);
   mkdirSync(dirname(sentinelPath), { recursive: true });
   const payload = {
     reason: "wal-circuit-breaker-threshold",
     threshold: WAL_FAILURE_THRESHOLD,
-    failureCount: walFailureCount,
+    failureCount,
     trippedAt: nowIso(),
     error: err instanceof Error ? err.message : String(err),
   };
@@ -84,10 +99,11 @@ function persistWalDisabledSentinel(walPath: string, err: unknown): string {
 
 export function getWalCircuitBreakerState(wal: WriteAheadLog | null): WalCircuitBreakerState {
   const walPath = resolveWalPath(wal);
+  const slice = getBreakerSlice(walPath);
   const sentinelPath = walPath ? getWalDisabledSentinelPath(walPath) : null;
   return {
-    failureCount: walFailureCount,
-    inMemoryDisabled: walDisabled,
+    failureCount: slice.failureCount,
+    inMemoryDisabled: slice.inMemoryDisabled,
     persistentDisabled: walPath ? isWalPersistentlyDisabledAtPath(walPath) : false,
     walPath,
     sentinelPath,
@@ -112,18 +128,20 @@ export async function walWrite(
 ): Promise<string | null> {
   if (!wal) return null;
   const id = randomUUID();
-  if (walDisabled) {
+  const walPath = resolveWalPath(wal);
+  const slice = getBreakerSlice(walPath);
+
+  if (slice.inMemoryDisabled) {
     logger.warn("memory-hybrid: WAL write skipped (circuit breaker disabled)");
     return null;
   }
-  const walPath = resolveWalPath(wal);
   if (walPath && isWalPersistentlyDisabledAtPath(walPath)) {
-    walDisabled = true;
-    if (!walPersistentDisableWarned) {
+    slice.inMemoryDisabled = true;
+    if (!slice.persistentDisableWarned) {
       logger.warn(
         `memory-hybrid: WAL persistently disabled via ${getWalDisabledSentinelPath(walPath)} (remove sentinel to retry after fixing durability errors)`,
       );
-      walPersistentDisableWarned = true;
+      slice.persistentDisableWarned = true;
     }
     return null;
   }
@@ -139,22 +157,22 @@ export async function walWrite(
       entry.targetId = supersedeTargetId;
     }
     await wal.write(entry);
-    walFailureCount = 0; // Reset on success
-    walPersistentDisableWarned = false;
+    slice.failureCount = 0;
+    slice.persistentDisableWarned = false;
     return id;
   } catch (err) {
-    walFailureCount++;
+    slice.failureCount++;
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "wal",
       operation: "wal-write",
     });
     logger.warn(`memory-hybrid: WAL write failed: ${err}`);
-    if (walFailureCount >= WAL_FAILURE_THRESHOLD) {
-      walDisabled = true;
+    if (slice.failureCount >= WAL_FAILURE_THRESHOLD) {
+      slice.inMemoryDisabled = true;
       logger.warn(`memory-hybrid: WAL disabled after ${WAL_FAILURE_THRESHOLD} consecutive failures`);
       if (walPath) {
         try {
-          const sentinelPath = persistWalDisabledSentinel(walPath, err);
+          const sentinelPath = persistWalDisabledSentinel(walPath, slice.failureCount, err);
           logger.warn(`memory-hybrid: WAL persistent disable sentinel written: ${sentinelPath}`);
         } catch (persistErr) {
           logger.warn(`memory-hybrid: failed to persist WAL disable sentinel: ${persistErr}`);

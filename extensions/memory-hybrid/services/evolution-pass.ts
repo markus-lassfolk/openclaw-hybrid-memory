@@ -4,15 +4,22 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { LifecycleAdaptersConfig } from "../config/types/features.js";
 import { getHalfLifeForContentType } from "./semantic-lifecycle.js";
+import { runMemoryEvolutionPass } from "./memory-evolution.js";
 
 export type EvolutionPassResult = {
   scanned: number;
   evolved: number;
+  neighborsUpdated: number;
 };
 
 /** Run deterministic evolution pass: reinforce quality on frequently accessed facts. */
-export function runEvolutionPass(db: DatabaseSync, limit = 500): EvolutionPassResult {
+export async function runEvolutionPass(
+  db: DatabaseSync,
+  limit = 500,
+  lifecycle?: Pick<LifecycleAdaptersConfig, "evolution">,
+): Promise<EvolutionPassResult> {
   const rows = db
     .prepare(
       `SELECT id, category, COALESCE(access_count, 0) AS access_count,
@@ -57,5 +64,11 @@ export function runEvolutionPass(db: DatabaseSync, limit = 500): EvolutionPassRe
     ).run(now, now, evolved, JSON.stringify({ scanned: rows.length }));
   }
 
-  return { scanned: rows.length, evolved };
+  let neighborsUpdated = 0;
+  if (lifecycle?.evolution) {
+    const mem = await runMemoryEvolutionPass(db, lifecycle.evolution);
+    neighborsUpdated = mem.neighborsUpdated;
+  }
+
+  return { scanned: rows.length, evolved, neighborsUpdated };
 }

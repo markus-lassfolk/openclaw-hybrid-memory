@@ -1039,6 +1039,25 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
             }
 
+            if (storeResult.newlyStored && cfg.lifecycle.fragmentEmbedding.enabled && textToStore.length >= cfg.lifecycle.fragmentEmbedding.minChars) {
+              setImmediate(() => {
+                void import("../../services/fragment-embedding.js")
+                  .then(({ indexFactFragments }) =>
+                    indexFactFragments({
+                      factsDb: storeFactsDb,
+                      vectorDb: storeVectorDb,
+                      embeddings,
+                      parentFact: entry,
+                      cfg: cfg.lifecycle.fragmentEmbedding,
+                      logger: api.logger,
+                    }),
+                  )
+                  .catch((err) => {
+                    api.logger.warn?.(`memory-hybrid: fragment indexing failed: ${err}`);
+                  });
+              });
+            }
+
             await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
 
             // Issue #150: write event to episodic event log

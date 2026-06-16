@@ -336,8 +336,8 @@ export function buildCliMaintenanceRunners(
 
   set("evolution-pass", async () => {
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const r = runEvolutionPass(b.factsDb.getRawDb(), 200);
-    return `scanned=${r.scanned} evolved=${r.evolved} semantic=success`;
+    const r = await runEvolutionPass(b.factsDb.getRawDb(), 200, b.cfg.lifecycle);
+    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} semantic=success`;
   });
 
   set("per-folder-context", async () => {
@@ -914,8 +914,8 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   runners.set("evolution-pass", async () => {
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const r = runEvolutionPass(deps.factsDb.getRawDb(), 200);
-    return `scanned=${r.scanned} evolved=${r.evolved} semantic=success`;
+    const r = await runEvolutionPass(deps.factsDb.getRawDb(), 200, deps.cfg.lifecycle);
+    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} semantic=success`;
   });
 
   runners.set("per-folder-context", async () => {
