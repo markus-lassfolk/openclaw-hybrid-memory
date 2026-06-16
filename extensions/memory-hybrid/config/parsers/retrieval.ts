@@ -20,6 +20,91 @@ import type {
 export const MIN_QE_TIMEOUT_MS = 10_000;
 export const MIN_RERANK_TIMEOUT_MS = 5_000;
 
+function parseIntentRouterConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").IntentRouterConfig {
+  const raw = retrievalRaw?.intentRouter as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled !== false,
+    llmRefinement: raw?.llmRefinement === true,
+    heuristicThreshold:
+      typeof raw?.heuristicThreshold === "number" && raw.heuristicThreshold >= 0 && raw.heuristicThreshold <= 1
+        ? raw.heuristicThreshold
+        : 0.8,
+    model: typeof raw?.model === "string" ? raw.model : undefined,
+    timeoutMs: typeof raw?.timeoutMs === "number" ? raw.timeoutMs : undefined,
+  };
+}
+
+function parseCompositeScoreConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").CompositeScoreConfig {
+  const raw = retrievalRaw?.compositeScore as Record<string, unknown> | undefined;
+  const v = raw?.v === 2 ? 2 : 1;
+  return {
+    v,
+    pinBoostDefault: typeof raw?.pinBoostDefault === "number" ? raw.pinBoostDefault : 0.3,
+    pinBoostCap: typeof raw?.pinBoostCap === "number" ? raw.pinBoostCap : 1.0,
+  };
+}
+
+function parseRetrievalDiversityConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").RetrievalDiversityConfig {
+  const raw = retrievalRaw?.diversity as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    maxSimilarity: typeof raw?.maxSimilarity === "number" ? raw.maxSimilarity : 0.6,
+  };
+}
+
+function parseRetrievalBypassConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").RetrievalBypassConfig {
+  const raw = retrievalRaw?.bypass as Record<string, unknown> | undefined;
+  return {
+    enabled: raw?.enabled === true,
+    bm25MinScore: typeof raw?.bm25MinScore === "number" ? raw.bm25MinScore : 0.85,
+    bm25MinGap: typeof raw?.bm25MinGap === "number" ? raw.bm25MinGap : 0.15,
+  };
+}
+
+function parseCrossEncoderConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").CrossEncoderRerankConfig {
+  const raw = retrievalRaw?.crossEncoder as Record<string, unknown> | undefined;
+  return {
+    endpoint: typeof raw?.endpoint === "string" ? raw.endpoint : undefined,
+    model: typeof raw?.model === "string" ? raw.model : "Qwen3-Reranker-0.6B-Q8_0",
+    timeoutMs: typeof raw?.timeoutMs === "number" ? raw.timeoutMs : 200,
+  };
+}
+
+function parseContextBoundaryConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").ContextBoundaryConfig {
+  const raw = retrievalRaw?.contextBoundary as Record<string, unknown> | undefined;
+  const vf = raw?.vaultFactsMaxTokens as Record<string, unknown> | undefined;
+  return {
+    injectionFilter:
+      raw?.injectionFilter === "audit" || raw?.injectionFilter === "enforce" || raw?.injectionFilter === "off"
+        ? raw.injectionFilter
+        : "audit",
+    vaultFactsMaxTokens: {
+      speed: typeof vf?.speed === "number" ? vf.speed : 0,
+      balanced: typeof vf?.balanced === "number" ? vf.balanced : 200,
+      deep: typeof vf?.deep === "number" ? vf.deep : 250,
+    },
+    legacyMemoryContextWrapper: raw?.legacyMemoryContextWrapper !== false,
+  };
+}
+
+function parseRecallFeedbackConfig(retrievalRaw: Record<string, unknown> | undefined): import("../types/retrieval.js").RecallFeedbackConfig {
+  const raw = retrievalRaw?.recallFeedback as Record<string, unknown> | undefined;
+  const nudge = raw?.nudge as Record<string, unknown> | undefined;
+  return {
+    pinQuota: typeof raw?.pinQuota === "number" ? raw.pinQuota : undefined,
+    nudge: {
+      enabled: nudge?.enabled === true,
+      snoozeCandidateThreshold:
+        typeof nudge?.snoozeCandidateThreshold === "number" ? nudge.snoozeCandidateThreshold : 5,
+      duplicateCandidateThreshold:
+        typeof nudge?.duplicateCandidateThreshold === "number" ? nudge.duplicateCandidateThreshold : 5,
+      neverReferencedThreshold:
+        typeof nudge?.neverReferencedThreshold === "number" ? nudge.neverReferencedThreshold : 10,
+      throttleHours: typeof nudge?.throttleHours === "number" ? nudge.throttleHours : 24,
+    },
+  };
+}
+
 export function parseAutoClassifyConfig(cfg: Record<string, unknown>): AutoClassifyConfig {
   const acCfg = cfg.autoClassify as Record<string, unknown> | undefined;
   return {
@@ -332,6 +417,14 @@ export function parseRetrievalConfig(cfg: Record<string, unknown>): RetrievalCon
       typeof retrievalRaw?.contradictionLatencyWarnMs === "number" && retrievalRaw.contradictionLatencyWarnMs > 0
         ? Math.floor(retrievalRaw.contradictionLatencyWarnMs)
         : 20,
+    intentRouter: parseIntentRouterConfig(retrievalRaw),
+    compositeScore: parseCompositeScoreConfig(retrievalRaw),
+    diversity: parseRetrievalDiversityConfig(retrievalRaw),
+    bypass: parseRetrievalBypassConfig(retrievalRaw),
+    crossEncoder: parseCrossEncoderConfig(retrievalRaw),
+    contextBoundary: parseContextBoundaryConfig(retrievalRaw),
+    recallFeedback: parseRecallFeedbackConfig(retrievalRaw),
+    multiVaultFanOut: retrievalRaw?.multiVaultFanOut === true,
   };
 }
 
@@ -444,6 +537,9 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
   const rrRaw = cfg.reranking as Record<string, unknown> | undefined;
 
   const enabled = rrRaw?.enabled === true;
+  const kindRaw = typeof rrRaw?.kind === "string" ? rrRaw.kind : undefined;
+  const kind: "llm" | "cross-encoder" | "off" =
+    kindRaw === "cross-encoder" || kindRaw === "off" || kindRaw === "llm" ? kindRaw : "llm";
   const model = typeof rrRaw?.model === "string" && rrRaw.model.trim().length > 0 ? rrRaw.model.trim() : undefined;
   const candidateCount =
     typeof rrRaw?.candidateCount === "number" && rrRaw.candidateCount > 0 ? Math.floor(rrRaw.candidateCount) : 50;
@@ -456,6 +552,7 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
   // Infinity (which would pass > 0 but cannot be safely used with setTimeout).
   if (typeof rawRerankTimeoutRaw === "number" && rawRerankTimeoutRaw <= 0) {
     return {
+      kind,
       enabled,
       model,
       candidateCount,
@@ -473,6 +570,7 @@ export function parseRerankingConfig(cfg: Record<string, unknown>): RerankingCon
     );
   }
   return {
+    kind,
     enabled,
     model,
     candidateCount,

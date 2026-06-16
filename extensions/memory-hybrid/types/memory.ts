@@ -103,6 +103,17 @@ export type MemoryEntry = {
    * Set via `memory preserve <id> --tag <tag>`.
    */
   preserveTags?: string[] | null;
+  /** Epoch seconds when fact was pinned (Issue #1911). */
+  pinnedAt?: number | null;
+  pinnedReason?: string | null;
+  /** Epoch seconds until which fact is snoozed from auto-recall (Issue #1911). */
+  snoozedUntil?: number | null;
+  /** Document quality 0–1 for composite scoring (Issue #1914). */
+  qualityScore?: number | null;
+  duplicateCount?: number;
+  revisionCount?: number;
+  /** Parent fact id when this row is a document fragment (#1914). */
+  parentFactId?: string | null;
 };
 
 /** Memory scoping — global (all), user (per-user), agent (per-agent), session (ephemeral). */

@@ -40,6 +40,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RerankingConfig } from "../config.js";
 import { _testing } from "../index.js";
 import { type ScoredFact, buildRerankPrompt, parseRankedIds, rerankResults } from "../services/reranker.js";
+import * as crossEncoderReranker from "../services/cross-encoder-reranker.js";
 import { DEFAULT_RETRIEVAL_CONFIG, runRetrievalPipeline } from "../services/retrieval-orchestrator.js";
 
 const { FactsDB } = _testing;
@@ -299,6 +300,36 @@ describe("rerankResults — success", () => {
     expect(
       (openai as { chat: { completions: { create: ReturnType<typeof vi.fn> } } }).chat.completions.create,
     ).toHaveBeenCalledWith(expect.objectContaining({ model: "openai/gpt-4.1-nano" }), expect.anything());
+  });
+});
+
+describe("rerankResults — cross-encoder config", () => {
+  it("passes model and timeout from RetrievalConfig.crossEncoder", async () => {
+    const spy = vi.spyOn(crossEncoderReranker, "rerankWithCrossEncoder").mockResolvedValue([]);
+    const facts = [makeFact({ factId: "fact-1" })];
+    const cfg: RerankingConfig = {
+      enabled: true,
+      kind: "cross-encoder",
+      candidateCount: 50,
+      outputCount: 5,
+      timeoutMs: 10000,
+    };
+    await rerankResults("query", facts, cfg, {} as never, {
+      endpoint: "http://localhost:8080/v1/rerank",
+      model: "custom-reranker",
+      timeoutMs: 432,
+    });
+    expect(spy).toHaveBeenCalledWith(
+      "query",
+      facts,
+      expect.objectContaining({
+        endpoint: "http://localhost:8080/v1/rerank",
+        model: "custom-reranker",
+        timeoutMs: 432,
+      }),
+      5,
+    );
+    spy.mockRestore();
   });
 });
 

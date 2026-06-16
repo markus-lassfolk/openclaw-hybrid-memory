@@ -26,7 +26,8 @@ import type { IssueStore } from "../../backends/issue-store.js";
 import type { NarrativesDB } from "../../backends/narratives-db.js";
 import type { VectorDB } from "../../backends/vector-db.js";
 import type { WorkflowStore } from "../../backends/workflow-store.js";
-import type { ProvenanceService } from "../../services/provenance.js";
+import type { EvolutionStats } from "../../services/evolution-stats.js";
+import { collectEvolutionStats } from "../../services/evolution-stats.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { getDirSize, getFileSizeAsync, readJsonFile } from "../../utils/fs.js";
 import { formatTimestampUtc, nowIso } from "../../utils/dates.js";
@@ -201,6 +202,7 @@ interface MemoryStats {
   sqliteSizeBytes: number;
   lanceSizeBytes: number;
   totalSizeBytes: number;
+  evolution: EvolutionStats | null;
 }
 
 interface CronJobStatus {
@@ -516,6 +518,7 @@ async function collectMemoryStats(ctx: DashboardContext): Promise<MemoryStats> {
     sqliteSizeBytes,
     lanceSizeBytes,
     totalSizeBytes: sqliteSizeBytes + lanceSizeBytes,
+    evolution: collectEvolutionStats(ctx.factsDb.getRawDb()),
   };
 }
 

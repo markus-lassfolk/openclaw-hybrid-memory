@@ -60,6 +60,8 @@ export type StoreConfig = {
   classifyBeforeWrite?: boolean;
   /** Model for classification; when unset, runtime uses getDefaultCronModel(cfg, "nano") */
   classifyModel?: string;
+  /** Drop near-duplicate observations within this window (minutes, default 30, #1913). */
+  dedupWindowMinutes?: number;
 };
 
 /** Write-Ahead Log (WAL) configuration for crash resilience */

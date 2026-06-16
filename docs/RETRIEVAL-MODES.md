@@ -28,3 +28,20 @@ Issue #639 formalizes two retrieval paths with explicit module ownership.
 `extensions/memory-hybrid/services/retrieval-mode-policy.ts` defines mode names and allowed behavior.
 Both owner modules consume this file to avoid emergent, duplicated retrieval-policy logic.
 
+## 3) Retrieval v2 (Issue #1910)
+
+Config under `retrieval.*` (all conservative defaults):
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `intentRouter.enabled` | `true` | Heuristic intent (`WHY`/`WHEN`/…) before recall |
+| `intentRouter.llmRefinement` | `false` | Nano LLM when heuristic confidence &lt; 0.8 |
+| `compositeScore.v` | `1` | `1` = legacy ordering; `2` = full composite formula |
+| `bypass.enabled` | `false` | Skip expansion/rerank on strong BM25 signal |
+| `diversity.enabled` | `false` | MMR demotion of near-duplicate top-N |
+| `reranking.kind` | `llm` | `llm` \| `cross-encoder` \| `off` |
+
+Verbose per-stage JSON logs: `OPENCLAW_HM_VERBOSE=1`. Rolling stats: `GET /api/viewer/recall-stats`.
+
+Benchmark: `extensions/memory-hybrid/tests/perf/recall-benchmark.ts` against `tests/fixtures/recall-corpus.jsonl`.
+

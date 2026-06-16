@@ -334,6 +334,32 @@ export function buildCliMaintenanceRunners(
     return assertActiveTasksMaintainSummaryDoesNotBlock(await b.runActiveTasksMaintain());
   });
 
+  set("evolution-pass", async () => {
+    const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
+    const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");
+    const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(b.cfg, "maintenance");
+    const openai = (b as unknown as { openai?: import("openai").default }).openai;
+    const logger = (b as unknown as { logger?: { info?: (s: string) => void; warn?: (s: string) => void } }).logger;
+    const adaptiveStatePath = b.resolvedSqlitePath
+      ? join(dirname(b.resolvedSqlitePath), ".adaptive-llm-limits.json")
+      : undefined;
+    const r = await runEvolutionPass(b.factsDb.getRawDb(), 200, b.cfg.lifecycle, {
+      openai,
+      model: defaultModel,
+      fallbackModels,
+      logger,
+      adaptiveStatePath,
+    });
+    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} llm_calls=${r.llmCalls} semantic=success`;
+  });
+
+  set("per-folder-context", async () => {
+    const { regeneratePerFolderContext } = await import("../../../services/per-folder-context.js");
+    const memoryDir = dirname(b.resolvedSqlitePath);
+    const r = regeneratePerFolderContext(b.factsDb, memoryDir, { days: 7 });
+    return `written=${r.pathsWritten} facts=${r.factsScanned} semantic=success`;
+  });
+
   // --- Nightly staggered ---
   set("extract-daily", async () => {
     if (!b.runExtractDaily) throw new Error("extract-daily unavailable");
@@ -898,6 +924,28 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
       assertActiveTasksMaintainSummaryDoesNotBlock(await deps.runActiveTasksMaintain!()),
     );
   }
+
+  runners.set("evolution-pass", async () => {
+    const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
+    const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");
+    const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(deps.cfg, "maintenance");
+    const adaptiveStatePath = join(dirname(deps.resolvedSqlitePath), ".adaptive-llm-limits.json");
+    const r = await runEvolutionPass(deps.factsDb.getRawDb(), 200, deps.cfg.lifecycle, {
+      openai: deps.openai,
+      model: defaultModel,
+      fallbackModels,
+      logger: deps.logger,
+      adaptiveStatePath,
+    });
+    return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} llm_calls=${r.llmCalls} semantic=success`;
+  });
+
+  runners.set("per-folder-context", async () => {
+    const { regeneratePerFolderContext } = await import("../../../services/per-folder-context.js");
+    const memoryDir = dirname(deps.resolvedSqlitePath);
+    const r = regeneratePerFolderContext(deps.factsDb, memoryDir, { days: 7 });
+    return `written=${r.pathsWritten} facts=${r.factsScanned} semantic=success`;
+  });
 
   return runners;
 }

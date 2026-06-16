@@ -96,6 +96,7 @@ export function mergeResults(
       if (!entry) return true;
       if (entry.supersededAt != null) return true;
       if (entry.expiresAt != null && entry.expiresAt <= nowSec) return true;
+      if (entry.snoozedUntil != null && entry.snoozedUntil > nowSec) return true;
       return false;
     }
     const norm = result.entry.text.toLowerCase();
@@ -170,4 +171,14 @@ export function mergeResults(
 
   // Return results with score replaced by RRF (for display consistency)
   return withRrf.slice(0, limit).map(({ r, rrfScore }) => ({ ...r, score: rrfScore }));
+}
+
+/** Merge heterogeneous recall result lists, keeping the highest score per fact id (#1917). */
+export function mergeSearchResultsByBestScore(results: SearchResult[]): SearchResult[] {
+  const best = new Map<string, SearchResult>();
+  for (const r of results) {
+    const prev = best.get(r.entry.id);
+    if (!prev || r.score > prev.score) best.set(r.entry.id, r);
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score);
 }

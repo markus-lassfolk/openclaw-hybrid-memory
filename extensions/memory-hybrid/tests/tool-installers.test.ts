@@ -25,6 +25,7 @@ describe("tool installers", () => {
       "optional:dashboard",
       "optional:health",
       "optional:publicApi",
+      "optional:factMutationGateway",
     ]);
   });
 

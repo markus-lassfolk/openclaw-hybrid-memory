@@ -689,6 +689,7 @@ export function createPluginService(ctx: PluginServiceContext) {
                 reinforcement: cfg.reinforcement,
                 provenanceService,
                 eventLog,
+                dedupWindowMinutes: cfg.store.dedupWindowMinutes ?? 30,
               },
               api.logger,
             );
@@ -765,9 +766,13 @@ export function createPluginService(ctx: PluginServiceContext) {
             runCredentialsPrune,
           });
 
-          const result = await runMaintenanceTiers({ cfg, runners, logger: api.logger, openclawDir }, ["cycle"], {
-            verbose: false,
-          });
+          const result = await runMaintenanceTiers(
+            { cfg, runners, logger: api.logger, openclawDir, journalDb: factsDb.getRawDb() },
+            ["cycle"],
+            {
+              verbose: false,
+            },
+          );
           if (result.exitCode !== 0) {
             api.logger.warn?.(
               `memory-hybrid: maintenance tick (${label}) exit=${result.exitCode}: ${result.summaryLine}`,

@@ -1,0 +1,5 @@
+{"query":"why did we pick sqlite for facts storage","intent":"WHY","expected_fact_ids":["fact-db-choice"],"seed_text":"We picked sqlite for facts storage because of native FTS5 and WAL support"}
+{"query":"when was the last production deploy","intent":"WHEN","expected_fact_ids":["deploy-2026"],"seed_text":"The last production deploy completed on 2026-03-01 with zero downtime"}
+{"query":"who owns the authentication service","intent":"ENTITY","expected_fact_ids":["auth-owner"],"seed_text":"The authentication service is owned by the platform security team"}
+{"query":"what is our default embedding model","intent":"WHAT","expected_fact_ids":["embed-default"],"seed_text":"Our default embedding model is text-embedding-3-small for recall"}
+{"query":"hybrid memory configuration notes","intent":"GENERAL","expected_fact_ids":["config-notes"],"seed_text":"Hybrid memory configuration notes cover retrieval budgets and vault routing"}

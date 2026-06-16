@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ManageBindings } from "../cli/commands/manage/bindings.js";
 import { runAnalyzeMaintenanceLogs } from "../cli/commands/manage/register-analyze-maintenance-logs.js";
 import { _testing } from "../index.js";
+import { formatTimestampUtcFromMs } from "../utils/dates.js";
 
 const { FactsDB } = _testing;
 
@@ -975,11 +976,15 @@ describe("maintenance log analyzer", () => {
 
   it("persists raw occurrences while reporting summarized current findings", async () => {
     const root = tmpRoot();
-    const day = join(root, "20260601");
+    const nowMs = Date.now() - 2 * 60 * 60 * 1000;
+    const dayStamp = formatTimestampUtcFromMs(nowMs).slice(0, 10).replace(/-/g, "");
+    const day = join(root, dayStamp);
     mkdirSync(day, { recursive: true });
-    const exitPath = join(day, "nightly-distill-20260601T060000Z-123.exit.txt");
+    const iso1 = formatTimestampUtcFromMs(nowMs);
+    const iso2 = formatTimestampUtcFromMs(nowMs + 1000);
+    const exitPath = join(day, `nightly-distill-${dayStamp}T060000Z-123.exit.txt`);
     const logPath = exitPath.replace(/\.exit\.txt$/, ".log");
-    writeFileSync(exitPath, ["2026-06-01T06:00:01Z distill exit=1", "2026-06-01T06:00:02Z distill exit=1"].join("\n"));
+    writeFileSync(exitPath, [`${iso1} distill exit=1`, `${iso2} distill exit=1`].join("\n"));
     writeFileSync(logPath, "TypeError: Cannot read properties of undefined\n");
 
     const outPath = join(root, "report.json");

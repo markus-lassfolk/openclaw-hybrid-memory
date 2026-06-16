@@ -66,15 +66,16 @@ export function detectRecommendedEmbeddingSetup(
     };
   }
 
+  const ollamaHost = readString(getEnv("OLLAMA_HOST"));
   const ollamaInstalled =
     existsSync(join(homedir(), ".ollama")) ||
-    readString(process.env.OLLAMA_HOST) !== undefined ||
-    spawnSync("ollama", ["--version"], { stdio: "ignore" }).status === 0;
+    ollamaHost !== undefined ||
+    spawnSync("ollama", ["--version"], { stdio: "ignore", timeout: 2_000 }).status === 0;
   if (ollamaInstalled) {
     return {
       provider: "ollama",
       model: "nomic-embed-text",
-      source: readString(process.env.OLLAMA_HOST)
+      source: ollamaHost
         ? "OLLAMA_HOST"
         : existsSync(join(homedir(), ".ollama"))
           ? "~/.ollama"
@@ -83,7 +84,7 @@ export function detectRecommendedEmbeddingSetup(
     };
   }
 
-  const openAiEnv = hasUsableSecret(process.env.OPENAI_API_KEY) ? "OPENAI_API_KEY" : undefined;
+  const openAiEnv = hasUsableSecret(getEnv("OPENAI_API_KEY")) ? "OPENAI_API_KEY" : undefined;
   if (openAiEnv) {
     return {
       provider: "openai",
@@ -94,9 +95,9 @@ export function detectRecommendedEmbeddingSetup(
     };
   }
 
-  const googleEnv = hasUsableSecret(process.env.GOOGLE_API_KEY)
+  const googleEnv = hasUsableSecret(getEnv("GOOGLE_API_KEY"))
     ? "GOOGLE_API_KEY"
-    : hasUsableSecret(process.env.GEMINI_API_KEY)
+    : hasUsableSecret(getEnv("GEMINI_API_KEY"))
       ? "GEMINI_API_KEY"
       : undefined;
   if (googleEnv) {

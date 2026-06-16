@@ -7,10 +7,13 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { createServer } from "node:http";
 import type { Server } from "node:http";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
+import { getRecallSignalsSnapshot } from "../../services/recall-signals.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
@@ -24,45 +27,45 @@ const MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
 const _VERIFIED_FACT_SET_TTL_MS = 5000;
 const _verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
 
+import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled } from "../../services/workshop-config.js";
 import {
   collectAgentHealth,
   collectAuditSummary,
+  collectMemoryViewerCorrelation,
   collectMemoryViewerEdicts,
   collectMemoryViewerEntities,
   collectMemoryViewerEpisodes,
   collectMemoryViewerIssues,
   collectMemoryViewerLinks,
-  collectMemoryViewerCorrelation,
   collectMemoryViewerNarratives,
   collectMemoryViewerProvenance,
   collectMemoryViewerStats,
   collectMemoryViewerVerified,
   collectMemoryViewerWorkflows,
   collectStatus,
+  type DashboardContext,
   getVerifiedFactIdSet,
   type MemoryViewerFact,
   parseUrlPathSegment,
   performFactAction,
   readJsonBody,
-  type DashboardContext,
 } from "./collectors.js";
+import { getDashboardHtml } from "./html.js";
 import {
   applyWorkshopProposal,
   collectDreamCycleLog,
   collectSkillTelemetry,
-  collectWorkshopDigest,
   collectWorkshopChanges,
+  collectWorkshopDigest,
   collectWorkshopProposalDetail,
   collectWorkshopProposals,
   quarantineWorkshopProposal,
   rejectWorkshopProposal,
-  reviseWorkshopProposal,
   revertWorkshopChange,
+  reviseWorkshopProposal,
   undoWorkshopProposal,
   type WorkshopDashboardContext,
 } from "./workshop-collectors.js";
-import { getDashboardHtml } from "./html.js";
-import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled } from "../../services/workshop-config.js";
 
 function workshopClientError(err: unknown, route: string): string {
   pluginLogger.error(`[dashboard-server] ${route}: ${err instanceof Error ? err.message : String(err)}`);
@@ -210,7 +213,6 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
       return;
     }
 
-    // Memory Viewer routes (Issue #1023)
     // GET /api/viewer/stats
     if (pathname === "/api/viewer/stats") {
       collectMemoryViewerStats(ctx)
@@ -219,9 +221,46 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
           res.end(JSON.stringify(stats));
         })
         .catch((err: unknown) => {
+          pluginLogger.error(
+            `[dashboard-server] /api/viewer/stats: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
           res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: String(err) }));
+          res.end(JSON.stringify({ error: "InternalServerError" }));
         });
+      return;
+    }
+
+    if (pathname === "/api/viewer/recall-stats") {
+      try {
+        const stats = getRecallStatsSnapshot();
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(stats));
+      } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/recall-stats: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
+      return;
+    }
+
+    if (pathname === "/api/viewer/recall-signals") {
+      try {
+        const windowDays = Math.min(90, Math.max(1, Number.parseInt(searchParams.get("windowDays") ?? "7", 10) || 7));
+        const stats = getRecallSignalsSnapshot(ctx.factsDb.getRawDb(), windowDays);
+        res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
+        res.end(JSON.stringify(stats));
+      } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/recall-signals: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "InternalServerError" }));
+      }
       return;
     }
 

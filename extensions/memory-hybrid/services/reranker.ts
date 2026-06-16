@@ -15,10 +15,11 @@
  */
 
 import type OpenAI from "openai";
-import type { RerankingConfig } from "../config.js";
+import type { CrossEncoderRerankConfig, RerankingConfig } from "../config.js";
 import { chatComplete } from "./chat.js";
 import { CostFeature } from "./cost-feature-labels.js";
 import { extractJsonArray } from "./json-array-parser.js";
+import { rerankWithCrossEncoder, DEFAULT_CROSS_ENCODER_CONFIG } from "./cross-encoder-reranker.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,8 +109,25 @@ export async function rerankResults(
   facts: ScoredFact[],
   config: RerankingConfig,
   openai: OpenAI,
+  crossEncoder?: CrossEncoderRerankConfig,
 ): Promise<ScoredFact[]> {
-  if (!config.enabled || facts.length === 0) return facts;
+  const kind = config.kind ?? (config.enabled ? "llm" : "off");
+  if (kind === "off" || !config.enabled || facts.length === 0) return facts;
+
+  if (kind === "cross-encoder" && crossEncoder?.endpoint) {
+    return rerankWithCrossEncoder(
+      query,
+      facts,
+      {
+        endpoint: crossEncoder.endpoint,
+        model: crossEncoder.model ?? DEFAULT_CROSS_ENCODER_CONFIG.model,
+        timeoutMs: crossEncoder.timeoutMs ?? DEFAULT_CROSS_ENCODER_CONFIG.timeoutMs,
+      },
+      config.outputCount,
+    );
+  }
+
+  if (kind !== "llm") return facts.slice(0, config.outputCount);
 
   // Split into the candidate set (to re-rank) and the tail (to append unchanged).
   const candidates = facts.slice(0, config.candidateCount);

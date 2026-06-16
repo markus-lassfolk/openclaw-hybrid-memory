@@ -33,13 +33,13 @@ import {
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
 import { detectCrystallizationCandidates } from "./pattern-detector.js";
+import type { WorkerLeasesConfig } from "../config/types/maintenance.js";
 import {
   acquireLease,
   heartbeatLease,
   releaseLease,
   resolveWorkerLeasesConfig,
   shouldRunWorker,
-  type WorkerLeasesConfig,
 } from "./worker-lease.js";
 import type { DatabaseSync } from "node:sqlite";
 import { filterUserFacingGoals } from "./workflow-goal-classifier.js";

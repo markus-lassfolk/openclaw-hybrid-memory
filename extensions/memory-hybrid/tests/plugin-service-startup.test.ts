@@ -46,6 +46,7 @@ function makeTimers() {
     watchdogTimer: { value: null as ReturnType<typeof setInterval> | null },
     maintenanceTick: { value: null as ReturnType<typeof setInterval> | null },
     maintenanceStartupTimeout: { value: null as ReturnType<typeof setTimeout> | null },
+    shuttingDownRef: { value: false },
   };
 }
 

@@ -36,7 +36,9 @@ import {
 } from "./recalled-context-assembler.js";
 import type { ProvenanceService } from "./provenance.js";
 import { cleanupEvictedVector } from "./vector-maintenance.js";
+import { checkCaptureDedupWindow, computeCaptureDedupHash } from "./capture-dedup.js";
 import { dotProductSimilarity, normalizeVector } from "./reflection.js";
+import { createTransaction } from "../utils/sqlite-transaction.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -352,6 +354,8 @@ export async function runPassiveObserver(
     eventLog?: EventLog | null;
     /** Agent's own name. Used by isIdentityFact() for name-specific detection. */
     agentName?: string;
+    /** Observation dedup window in minutes (#1913). */
+    dedupWindowMinutes?: number;
   },
   logger: { info: (msg: string) => void; warn: (msg: string) => void },
 ): Promise<ObserverRunResult> {
@@ -726,24 +730,56 @@ export async function runPassiveObserver(
           logger.info(`passive-observer: promoting identity fact to global/permanent: "${storedText.slice(0, 60)}..."`);
         }
 
-        // Store to SQLite — tag with session scope so facts can be scoped to session lifecycle
-        const storeResult = factsDb.storeWithResult({
-          text: storedText,
-          category: storedCategory,
-          importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
-          confidence: 0.6,
-          entity: null,
-          key: null,
-          value: null,
-          source: "passive-observer",
-          decayClass: identity ? "permanent" : "session",
-          scope: identity ? "global" : "session",
-          scopeTarget: identity ? undefined : sessionId,
-          tags: ["passive-observer"],
-          provenanceSession: sessionId,
-          extractionMethod: "passive",
-          extractionConfidence: fact.importance,
-        });
+        const dedupWindow = opts.dedupWindowMinutes ?? 30;
+        const dedupInput = { text: storedText, entity: null, key: null, scope: identity ? "global" : "session", scopeTarget: identity ? null : sessionId };
+
+        const storeWithDedupCheck = createTransaction(
+          factsDb.getRawDb(),
+          () => {
+            if (dedupWindow > 0 && typeof factsDb.getRawDb === "function") {
+              const dedupCheck = checkCaptureDedupWindow(factsDb.getRawDb(), dedupInput, dedupWindow);
+              if (dedupCheck.skip) {
+                return { skipped: true };
+              }
+            }
+
+            const storeResult = factsDb.storeWithResult({
+              text: storedText,
+              category: storedCategory,
+              importance: identity ? Math.max(fact.importance, 0.9) : fact.importance,
+              confidence: 0.6,
+              entity: null,
+              key: null,
+              value: null,
+              source: "passive-observer",
+              decayClass: identity ? "permanent" : "session",
+              scope: identity ? "global" : "session",
+              scopeTarget: identity ? undefined : sessionId,
+              tags: ["passive-observer"],
+              provenanceSession: sessionId,
+              extractionMethod: "passive",
+              extractionConfidence: fact.importance,
+            });
+
+            if (!storeResult.skipped && storeResult.newlyStored !== false && dedupWindow > 0) {
+              const dedupHash = computeCaptureDedupHash(dedupInput);
+              factsDb
+                .getRawDb()
+                .prepare("UPDATE facts SET content_dedup_hash = ? WHERE id = ?")
+                .run(dedupHash, storeResult.entry.id);
+            }
+
+            return { skipped: false, storeResult };
+          },
+          "IMMEDIATE",
+        );
+
+        const txResult = storeWithDedupCheck();
+        if (txResult.skipped) {
+          continue;
+        }
+
+        const storeResult = txResult.storeResult!;
         if (storeResult.skipped) {
           continue;
         }

@@ -77,12 +77,18 @@ describe("user-friendly CLI registration", () => {
       embeddings,
     });
     expect(root.children.map((child) => child.name).sort()).toEqual([
+      "bootstrap",
       "demo",
       "doctor",
       "examples",
+      "focus",
       "health",
+      "list-vaults",
+      "mine",
+      "nudge",
       "providers",
       "setup",
+      "vault-sync",
     ]);
   });
 

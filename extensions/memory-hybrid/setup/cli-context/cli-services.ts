@@ -601,6 +601,7 @@ export function buildCliContextServices(
           reinforcement: cfg.reinforcement,
           provenanceService: ctx.provenanceService ?? null,
           eventLog: ctx.eventLog ?? null,
+          dedupWindowMinutes: cfg.store.dedupWindowMinutes ?? 30,
         },
         pluginLogger,
       );

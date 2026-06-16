@@ -17,9 +17,20 @@ import {
   assembleRecallPrependContext,
   buildEdictBlock,
   DEFAULT_EDICT_BUDGET_FRACTION,
+  finalizeInjectionMemoryContent,
 } from "../services/recalled-context-assembler.js";
+import { logRecallEvent } from "../services/recall-events.js";
+import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
+import {
+  attributeInjectionToTurn,
+  segmentTranscriptIntoTurns,
+} from "../services/per-turn-attribution.js";
+import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
+import { emitRecallVerboseLog } from "../services/recall-verbose-log.js";
 import { createRecallSpan, createRecallTimingLogger } from "../services/recall-timing.js";
+import { resolveRecallInjectionText, resolveFactsDbForEntry } from "../services/fragment-recall.js";
 import { sanitizePromptInjection } from "../services/skill-prompt-injection.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import { extractAssistantMessageText } from "../utils/llm-message.js";
 import {
   estimateTokens,
@@ -193,6 +204,36 @@ async function runInjection(
   } = r;
   const recalledAmbient = issueBlock + narrativeBlock + hotBlock;
 
+  const injectionFilterMode: InjectionFilterMode =
+    ctx.cfg.retrieval?.contextBoundary?.injectionFilter ?? "audit";
+  let injectionFilteredCount = 0;
+
+  const vaultHandles =
+    ctx.cfg.retrieval?.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
+  const resolveFactsDbForCandidate = (entry: (typeof candidates)[number]["entry"]) =>
+    resolveFactsDbForEntry(entry, ctx.factsDb, vaultHandles);
+
+  const sanitizeFactForInjection = (raw: string): string => {
+    const cleaned = sanitizePromptInjection(sanitizeRecallFactText(raw));
+    if (!cleaned || injectionFilterMode === "off") return cleaned;
+    const scan = scanInjectionFilter(cleaned);
+    if (scan.allowed) return cleaned;
+    if (injectionFilterMode === "audit") {
+      emitRecallVerboseLog({
+        evt: "injection.would_drop",
+        feature: "injection_filter",
+        layer: scan.layer,
+        reason: scan.reason,
+      });
+      return cleaned;
+    }
+    injectionFilteredCount++;
+    return "";
+  };
+
+  const recallBodyText = (entry: (typeof candidates)[number]["entry"], useSummary: boolean): string =>
+    sanitizeFactForInjection(resolveRecallInjectionText(entry, resolveFactsDbForCandidate(entry), useSummary));
+
   const edictMaxTokens = Math.max(
     0,
     Math.min(maxTokens, Math.floor((r.totalBudget ?? maxTokens) * DEFAULT_EDICT_BUDGET_FRACTION)),
@@ -212,7 +253,8 @@ async function runInjection(
     sideEffects?: InjectionSideEffects,
   ): { prependContext: string } | undefined => {
     if (options.emitGate?.emitted) return undefined;
-    const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(memoryContent), {
+    const structured = finalizeInjectionMemoryContent(ctx, event, memoryContent, candidates);
+    const prepend = assembleRecallPrependContext(ctx, markDegradedLatency(structured), {
       prefix,
       edictBlock,
     });
@@ -220,6 +262,65 @@ async function runInjection(
     if (options.emitGate) options.emitGate.emitted = true;
     consumePrependBudget(ctx.prependBudgetRef, prepend);
     if (sideEffects) applyInjectionSideEffects(ctx, api, ambientSeenFacts, progressiveIndexSessionKey, sideEffects);
+    if (injectionFilteredCount > 0) {
+      emitRecallVerboseLog({
+        evt: "injection.summary",
+        feature: "injection_filter",
+        filter_dropped: injectionFilteredCount,
+      });
+    }
+    const messages = (event as { messages?: unknown[] })?.messages;
+    if (messages && sideEffects?.accessedIds?.length) {
+      const turns = segmentTranscriptIntoTurns(messages);
+      const attr = attributeInjectionToTurn(turns, sideEffects.accessedIds);
+      const factIdToVaultDb = new Map<string, ReturnType<typeof ctx.factsDb.getRawDb>>();
+      for (const id of sideEffects.accessedIds) {
+        const candidate = candidates.find((c) => c.entry.id === id);
+        if (candidate) {
+          const factsDb = resolveFactsDbForCandidate(candidate.entry);
+          factIdToVaultDb.set(id, factsDb.getRawDb());
+        }
+      }
+      const vaultGroups = new Map<ReturnType<typeof ctx.factsDb.getRawDb>, string[]>();
+      for (const id of sideEffects.accessedIds) {
+        const db = factIdToVaultDb.get(id) ?? ctx.factsDb.getRawDb();
+        const ids = vaultGroups.get(db) ?? [];
+        ids.push(id);
+        vaultGroups.set(db, ids);
+      }
+      try {
+        for (const [db, factIds] of vaultGroups) {
+          const vaultAttr = {
+            ...attr,
+            injectedFactIds: attr.injectedFactIds.filter((id) => factIds.includes(id)),
+            referencedFactIds: attr.referencedFactIds.filter((id) => factIds.includes(id)),
+          };
+          recordInjectionAttribution(db, {
+            sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
+            agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
+            attribution: vaultAttr,
+          });
+          const queryText = extractLastUserMessageText(event) ?? "";
+          logRecallEvent(db, {
+            sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,
+            agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? null,
+            query: queryText.slice(0, 500) || null,
+            factIds,
+            hit: factIds.length > 0,
+            source: "auto-recall",
+          });
+        }
+      } catch {
+        /* non-fatal attribution persistence */
+      }
+      emitRecallVerboseLog({
+        evt: "recall.attribution",
+        feature: "per_turn_attribution",
+        turn_index: attr.turnIndex,
+        injected: attr.injectedFactIds.length,
+        referenced: attr.referencedFactIds.length,
+      });
+    }
     return { prependContext: prepend };
   };
 
@@ -251,11 +352,12 @@ async function runInjection(
       if (x.entry.key) {
         title = sanitizePromptInjection(`${x.entry.entity ? `${x.entry.entity}: ` : ""}${x.entry.key}`);
       } else if (x.entry.summary) {
-        title = sanitizePromptInjection(sanitizeRecallFactText(x.entry.summary));
+        title = sanitizeFactForInjection(x.entry.summary);
       } else {
         const truncated = x.entry.text.length > 60 ? `${x.entry.text.slice(0, 60).trim()}…` : x.entry.text;
-        title = sanitizePromptInjection(sanitizeRecallFactText(truncated));
+        title = sanitizeFactForInjection(truncated);
       }
+      if (!title) continue;
       const tokenCost = estimateTokensForDisplay(x.entry.summary || x.entry.text);
       const pos = startPosition + indexEntries.length;
       const category = sanitizePromptInjection(x.entry.category);
@@ -305,7 +407,8 @@ async function runInjection(
     let pinnedTokens = estimateTokens(pinnedHeader);
     const pinnedBudget = Math.min(memoryTokenBudget, Math.floor(memoryTokenBudget * 0.6));
     for (const x of pinned) {
-      let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+      let text = recallBodyText(x.entry, useSummaryInInjection);
+      if (!text) continue;
       if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
         text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
       const category = sanitizePromptInjection(x.entry.category);
@@ -418,7 +521,8 @@ async function runInjection(
   const lines: string[] = [];
   const injectedIds: string[] = [];
   for (const x of candidates) {
-    let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+    let text = recallBodyText(x.entry, useSummaryInInjection);
+    if (!text) continue;
     if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars) text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
     const category = sanitizePromptInjection(x.entry.category);
     const line =
@@ -463,16 +567,19 @@ async function runInjection(
       candidate_count: candidates.length,
     });
     const fullBullets = candidates
-      .map((x) => {
-        let text = sanitizePromptInjection(useSummaryInInjection && x.entry.summary ? x.entry.summary : x.entry.text);
+      .flatMap((x) => {
+        let text = recallBodyText(x.entry, useSummaryInInjection);
+        if (!text) return [];
         if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
           text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
         const category = sanitizePromptInjection(x.entry.category);
-        return injectionFormat === "minimal"
-          ? `- ${text}`
-          : injectionFormat === "short"
-            ? `- ${category}: ${text}`
-            : `- [${x.backend}/${category}] ${text}`;
+        const line =
+          injectionFormat === "minimal"
+            ? `- ${text}`
+            : injectionFormat === "short"
+              ? `- ${category}: ${text}`
+              : `- [${x.backend}/${category}] ${text}`;
+        return [line];
       })
       .join("\n");
     try {

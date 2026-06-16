@@ -144,6 +144,22 @@ export type RetrievalConfig = {
   episodeCausalLatencyWarnMs: number;
   /** Warn when contradiction detection exceeds this latency (default 20ms). */
   contradictionLatencyWarnMs: number;
+  /** Retrieval v2 intent router (Issue #1910). */
+  intentRouter?: IntentRouterConfig;
+  /** Composite score config (Issue #1910). */
+  compositeScore?: CompositeScoreConfig;
+  /** Result diversity (Issue #1910). */
+  diversity?: RetrievalDiversityConfig;
+  /** BM25 strong-signal bypass (Issue #1910). */
+  bypass?: RetrievalBypassConfig;
+  /** Cross-encoder reranker (Issue #1910). */
+  crossEncoder?: CrossEncoderRerankConfig;
+  /** Context boundary (Issue #1912). */
+  contextBoundary?: ContextBoundaryConfig;
+  /** Recall feedback / nudges (Issue #1916). */
+  recallFeedback?: RecallFeedbackConfig;
+  /** Fan out explicit recall across all configured vaults when true (Issue #1917). */
+  multiVaultFanOut?: boolean;
 };
 
 /** Search options: HyDE query expansion
@@ -191,8 +207,67 @@ export type QueryExpansionConfig = {
   skipForInteractiveTurns: boolean;
 };
 
+/** Intent router for Retrieval v2 (Issue #1910). */
+export type IntentRouterConfig = {
+  enabled: boolean;
+  llmRefinement: boolean;
+  heuristicThreshold: number;
+  model?: string;
+  timeoutMs?: number;
+};
+
+/** Composite score version and pin boost (Issue #1910). */
+export type CompositeScoreConfig = {
+  /** 1 = legacy/shadow, 2 = active composite formula. */
+  v: 1 | 2;
+  pinBoostDefault: number;
+  pinBoostCap: number;
+};
+
+/** MMR diversity demotion (Issue #1910). */
+export type RetrievalDiversityConfig = {
+  enabled: boolean;
+  maxSimilarity: number;
+};
+
+/** Strong-signal BM25 bypass (Issue #1910). */
+export type RetrievalBypassConfig = {
+  enabled: boolean;
+  bm25MinScore: number;
+  bm25MinGap: number;
+};
+
+/** Cross-encoder reranker endpoint (Issue #1910). */
+export type CrossEncoderRerankConfig = {
+  endpoint?: string;
+  model: string;
+  timeoutMs: number;
+};
+
+/** Context boundary hardening (Issue #1912). */
+export type ContextBoundaryConfig = {
+  injectionFilter: "off" | "audit" | "enforce";
+  vaultFactsMaxTokens: { speed: number; balanced: number; deep: number };
+  legacyMemoryContextWrapper: boolean;
+};
+
+/** Recall feedback loop (Issue #1916). */
+export type RecallFeedbackConfig = {
+  /** Max pinned facts before memory_pin is rejected (default 10). */
+  pinQuota?: number;
+  nudge: {
+    enabled: boolean;
+    snoozeCandidateThreshold: number;
+    duplicateCandidateThreshold?: number;
+    neverReferencedThreshold?: number;
+    throttleHours: number;
+  };
+};
+
 /** LLM re-ranking of RRF fusion results (Issue #161). */
 export type RerankingConfig = {
+  /** Reranker kind: llm (default), cross-encoder, or off. */
+  kind?: "llm" | "cross-encoder" | "off";
   /** Enable LLM re-ranking (default: false). */
   enabled: boolean;
   /** LLM model for re-ranking; when unset, defaults to "openai/gpt-4.1-nano". */

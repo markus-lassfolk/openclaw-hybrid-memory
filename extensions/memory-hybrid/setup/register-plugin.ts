@@ -17,6 +17,7 @@ import { runReflection, runReflectionMeta, runReflectionRules } from "../service
 import { PythonBridge } from "../services/python-bridge.js";
 import { findSimilarByEmbedding } from "../services/vector-search.js";
 import { resetStartupMemoryAttribution } from "../services/startup-memory-attribution.js";
+import { createVaultRegistry } from "../services/vault-registry.js";
 import { walRemove, walWrite } from "../services/wal-helpers.js";
 import { registerHybridMemCliMetadataOnly } from "./cli-context/metadata.js";
 import { registerHybridMemCliHelpOnlyWithApi } from "./cli-context/register-help.js";
@@ -120,6 +121,14 @@ async function performHybridMemCliTeardown(): Promise<void> {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {
       subsystem: "cli",
       operation: "hybrid-mem-teardown:dispose-tools",
+    });
+  }
+  try {
+    r.vaultRegistry?.closeAll();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "hybrid-mem-teardown:close-vaults",
     });
   }
   try {
@@ -251,6 +260,15 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     resetStartupMemoryAttribution();
     // Dispose tool registrations when API exposes unregister/dispose handles.
     old.toolRegistrationHandle?.dispose();
+    try {
+      old.vaultRegistry?.closeAll();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-reregister:close-vaults",
+        severity: "warning",
+      });
+    }
     if (reuseDatabases) {
       recordReregisterDatabaseReuse();
       logApi.logger.debug?.(
@@ -455,6 +473,23 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
   // Build PluginRuntime -- single instance-scoped container for all state
   // ========================================================================
 
+  const vaultRegistry =
+    cfg.vaults && Object.keys(cfg.vaults).length > 0
+      ? createVaultRegistry({
+          cfg,
+          api: logApi,
+          defaultFactsDb: dbContext.factsDb,
+          defaultVectorDb: dbContext.vectorDb,
+          defaultSqlitePath: resolvedSqlitePath,
+          defaultLancePath: resolvedLancePath,
+          defaultWal: dbContext.wal,
+          vectorDim: dbContext.embeddings.dimensions,
+        })
+      : null;
+  const resolveVault = vaultRegistry ? (name?: string) => vaultRegistry.resolve(name) : undefined;
+  const resolveAllVaults = vaultRegistry ? () => vaultRegistry.resolveAll() : undefined;
+  const resolveVaultWal = vaultRegistry ? (name?: string) => vaultRegistry.resolveWal(name) : undefined;
+
   const bootstrapSettledRef = { value: false };
   const bootstrapAsyncInit = dbContext.initialized.finally(() => {
     bootstrapSettledRef.value = true;
@@ -494,6 +529,10 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     auditStore,
     agentHealthStore,
     changeFeed,
+    resolveVault,
+    resolveAllVaults,
+    resolveVaultWal,
+    vaultRegistry,
     sessionStateRef: { value: null },
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
     toolRegistrationHandle: null, // set after registerTools below
@@ -568,6 +607,9 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     agentHealthStore: runtime.agentHealthStore,
     changeFeed: runtime.changeFeed,
     sessionStateRef: runtime.sessionStateRef,
+    resolveVault: runtime.resolveVault,
+    resolveAllVaults: runtime.resolveAllVaults,
+    resolveVaultWal: runtime.resolveVaultWal,
   };
 
   // ========================================================================

@@ -18,6 +18,7 @@ import { loadKnownEntitySurfaces, matchEntitySurfacesInText } from "../../servic
 import { capturePluginError } from "../../services/error-reporter.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { type RecallPipelineDeps, runRecallPipelineQuery } from "../../services/recall-pipeline.js";
+import { mergeSearchResultsByBestScore } from "../../services/merge-results.js";
 import { createRecallSpan, createRecallTimingLogger } from "../../services/recall-timing.js";
 import { filterCandidatesByInteractiveGrading } from "../../services/interactive-recall-grader.js";
 import { trimBlockToBudget } from "../../services/context-block-trim.js";
@@ -30,6 +31,10 @@ import {
   sanitizeProcedureText,
 } from "../../services/recalled-context-assembler.js";
 import { resolveInteractiveRecallPolicy } from "../../services/retrieval-mode-policy.js";
+import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
+import { applyFragmentRecallPostProcess } from "../../services/fragment-recall.js";
+import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
+import { getFocusTopic } from "../../services/focus-topic.js";
 import { sanitizePromptInjection } from "../../services/skill-prompt-injection.js";
 import type { ScopeFilter } from "../../types/memory.js";
 import type { SearchResult } from "../../types/memory.js";
@@ -464,6 +469,8 @@ export async function runRecall(
       deferAccessRefresh: true,
     };
     const hydeUsedRef = { value: false };
+    const bm25BypassedRef = { value: false };
+    const bypassCfg = ctx.cfg.retrieval.bypass ?? DEFAULT_RETRIEVAL_V2_CONFIG.bypass;
     const pipelineDeps: RecallPipelineDeps = {
       factsDb: ctx.factsDb,
       vectorDb: ctx.vectorDb,
@@ -482,11 +489,34 @@ export async function runRecall(
       logger: api.logger,
       registrationGeneration: ctx.registrationGeneration,
     };
-    const recallPipeline = (
+    const vaultHandles =
+      ctx.cfg.retrieval.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
+    const fanOutAutoRecall = vaultHandles.length > 1;
+    const recallPipeline = async (
       query: string,
       limitNum: number,
       extra?: Omit<NonNullable<Parameters<typeof runRecallPipelineQuery>[4]>, "stageSignal">,
-    ) => runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
+    ) => {
+      if (!fanOutAutoRecall) {
+        return runRecallPipelineQuery(query, limitNum, pipelineDeps, hydeUsedRef, { ...extra, stageSignal: signal });
+      }
+      const perVault = await Promise.all(
+        vaultHandles.map((handle) =>
+          runRecallPipelineQuery(
+            query,
+            limitNum,
+            {
+              ...pipelineDeps,
+              factsDb: handle.factsDb,
+              vectorDb: handle.vectorDb,
+            },
+            hydeUsedRef,
+            { ...extra, stageSignal: signal },
+          ),
+        ),
+      );
+      return mergeSearchResultsByBestScore(perVault.flat()).slice(0, limitNum);
+    };
 
     const ambientCfg = ctx.cfg.ambient;
     const sessionKey = sessionScopeKey;
@@ -539,6 +569,8 @@ export async function runRecall(
       timingSpan: recallSpan,
       timingOp: "auto-recall-main",
       pipelineStatusRef,
+      bypass: bypassCfg,
+      bypassedRef: bm25BypassedRef,
     });
     recallTiming.phaseCompleted("main_pipeline", mainPipelineStartedAt, { candidates: candidates.length });
 
@@ -552,6 +584,7 @@ export async function runRecall(
     }
     if (
       !skipPostMainRecallEnrichment &&
+      !bm25BypassedRef.value &&
       interactivePolicy.allowAmbientMultiQuery &&
       ambientCfg.enabled &&
       ambientCfg.multiQuery
@@ -1000,6 +1033,55 @@ export async function runRecall(
       );
     }
 
+    // Retrieval v2 post-processing on interactive hot path (#1910).
+    if (!shouldAbortRecall() && candidates.length > 0) {
+      const retrievalCfg = ctx.cfg.retrieval;
+      const v2Config = {
+        intentRouter: retrievalCfg.intentRouter ?? DEFAULT_RETRIEVAL_V2_CONFIG.intentRouter,
+        compositeScore: {
+          version: (retrievalCfg.compositeScore?.v ?? 1) as 1 | 2,
+          pinBoostDefault: retrievalCfg.compositeScore?.pinBoostDefault ?? 0.3,
+          pinBoostCap: retrievalCfg.compositeScore?.pinBoostCap ?? 1.0,
+        },
+        diversity: retrievalCfg.diversity ?? DEFAULT_RETRIEVAL_V2_CONFIG.diversity,
+        bypass: { enabled: false, bm25MinScore: 0, bm25MinGap: 0 },
+      };
+      const focusState = getFocusTopic(sessionKey);
+      try {
+        const getEntry = fanOutAutoRecall
+          ? (id: string) => {
+              for (const handle of vaultHandles) {
+                const entry = handle.factsDb.getById(id);
+                if (entry) return entry;
+              }
+              return ctx.factsDb.getById(id);
+            }
+          : (id: string) => ctx.factsDb.getById(id);
+        const v2 = await applyRetrievalV2({
+          query: e.prompt,
+          results: candidates,
+          ftsResults: candidates,
+          getEntry,
+          config: v2Config,
+          recallId: recallSpan,
+          sessionId: sessionKey,
+          openai: ctx.openai,
+          focusTopic: focusState?.topic,
+          factsDb: fanOutAutoRecall ? undefined : ctx.factsDb,
+          recordBypassTelemetry: false,
+        });
+        candidates = v2.results;
+        recordIntentDistribution(v2.intent.intent);
+        candidates = applyFragmentRecallPostProcess(candidates);
+      } catch (err) {
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+          subsystem: "auto-recall",
+          operation: "retrieval-v2",
+        });
+        api.logger.debug?.(`memory-hybrid: retrieval v2 post-process skipped: ${String(err)}`);
+      }
+    }
+
     const {
       maxPerMemoryChars,
       useSummaryInInjection,
@@ -1104,7 +1186,11 @@ export async function runRecall(
     }
     if (shouldAbortRecall()) {
       const combinedContext = issueBlock + narrativeBlock + hotBlock + procedureBlock;
-      return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
+      if (candidates.length > 0 && !isRecallContextSuperseded(ctx)) {
+        // Abort after main pipeline: keep partial recall, skip ambient/enrichment only.
+      } else {
+        return completeStage(finishEmptyRecallPrepend(ctx, combinedContext));
+      }
     }
 
     setRecallProbePhase("finalize");

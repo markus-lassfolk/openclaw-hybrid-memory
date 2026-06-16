@@ -11,6 +11,7 @@ import { getCronModelConfig, getDefaultCronModel } from "../../config/index.js";
 import type { MemoryCategory } from "../../config.js";
 import "../../config.js";
 import { detectCredentialPatterns } from "../../services/auto-capture.js";
+import { checkCaptureDedupWindow, computeCaptureDedupHash } from "../../services/capture-dedup.js";
 import {
   abortCredentialVaultWriteOnPointerDedupe,
   buildCredentialPointerText,
@@ -42,6 +43,7 @@ import { CLI_STORE_IMPORTANCE } from "../../utils/constants.js";
 import { persistCanonicalFactEmbedding } from "../../utils/fact-embeddings.js";
 import { isStaleLifecycleGeneration } from "../../utils/lifecycle-generation.js";
 import { isRecallContextSuperseded, shouldSuppressStaleLifecycleError } from "../../utils/registration-superseded.js";
+import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { extractTags } from "../../utils/tags.js";
 import { isSubstantiveMemoryText, prepareMemoryTextForStorage } from "../../services/recalled-context-assembler.js";
 import { resolveAgentIdFromHookEvent } from "../resolve-agent-id.js";
@@ -730,21 +732,70 @@ export async function runCapture(
             api.logger.warn?.("memory-hybrid: auto-capture store aborted (WAL write failed)");
             continue;
           }
-          const storeResult = ctx.factsDb.storeWithResult({
+
+          const dedupWindow = ctx.cfg.store.dedupWindowMinutes ?? 30;
+          const dedupInput = {
             text: textToStore,
-            category,
-            importance: CLI_STORE_IMPORTANCE,
             entity: extracted.entity,
             key: extracted.key,
-            value: extracted.value,
-            source: "auto-capture",
-            summary,
-            tags: extractTags(textToStore, extracted.entity),
-            provenanceSession: captureProvenance.sessionId,
-            sourceTurn: candidate.sourceTurn,
-            extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
-            extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
-          });
+            scope: "global",
+            scopeTarget: null,
+          };
+
+          const storeWithDedupCheck = createTransaction(
+            ctx.factsDb.getRawDb(),
+            () => {
+              if (dedupWindow > 0) {
+                const dedupCheck = checkCaptureDedupWindow(ctx.factsDb.getRawDb(), dedupInput, dedupWindow);
+                if (dedupCheck.skip) {
+                  return { skipped: true, dedupExistingId: dedupCheck.existingId };
+                }
+              }
+
+              const storeResult = ctx.factsDb.storeWithResult({
+                text: textToStore,
+                category,
+                importance: CLI_STORE_IMPORTANCE,
+                entity: extracted.entity,
+                key: extracted.key,
+                value: extracted.value,
+                source: "auto-capture",
+                summary,
+                tags: extractTags(textToStore, extracted.entity),
+                provenanceSession: captureProvenance.sessionId,
+                sourceTurn: candidate.sourceTurn,
+                extractionMethod: getAutoCaptureExtractionMethod(candidate.role, captureProvenance),
+                extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
+              });
+
+              if (!storeResult.skipped && dedupWindow > 0) {
+                const dedupHash = computeCaptureDedupHash(dedupInput);
+                ctx.factsDb
+                  .getRawDb()
+                  .prepare("UPDATE facts SET content_dedup_hash = ? WHERE id = ?")
+                  .run(dedupHash, storeResult.entry.id);
+              }
+
+              return { skipped: false, storeResult };
+            },
+            "IMMEDIATE",
+          );
+
+          const txResult = storeWithDedupCheck();
+          if (txResult.skipped) {
+            if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
+            ctx.auditStore?.append({
+              agentId: resolveAgentIdFromHookEvent(event, api) ?? ctx.currentAgentIdRef.value ?? "unknown",
+              action: "auto-capture:dedup-window",
+              target: textToStore.slice(0, 80),
+              outcome: "skipped",
+              sessionId: captureProvenance.sessionId ?? undefined,
+              context: { category, existingId: txResult.dedupExistingId },
+            });
+            continue;
+          }
+
+          const storeResult = txResult.storeResult!;
           if (storeResult.skipped) {
             if (walEntryId) await ctx.walRemove(walEntryId, api.logger);
             continue;

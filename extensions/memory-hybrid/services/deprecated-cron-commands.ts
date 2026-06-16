@@ -9,6 +9,11 @@ export interface DeprecatedCronToken {
 
 export const DEPRECATED_HYBRID_MEM_CRON_TOKENS: readonly DeprecatedCronToken[] = [
   {
+    token: "workshop remind-pending",
+    replacement: "digest pending --since 7d",
+    note: "Removed `hybrid-mem workshop` CLI subcommand; use `openclaw hybrid-mem digest pending`.",
+  },
+  {
     token: "consolidate-episodes",
     replacement: "dream-cycle",
     note: "Old nightly dream-cycle step name; replaced by `openclaw hybrid-mem dream-cycle`.",

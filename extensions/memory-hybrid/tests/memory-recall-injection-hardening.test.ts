@@ -180,7 +180,9 @@ describe("runInjectionStage — untrusted-data boundary in assembled prompt", ()
   });
 
   it("does not expose raw injection text in the assembled prompt", async () => {
-    const ctx = buildRecallLifecycleContext(tmpDir, factsDb);
+    const ctx = buildRecallLifecycleContext(tmpDir, factsDb, {
+      retrieval: { contextBoundary: { injectionFilter: "enforce" } },
+    });
     const api = makeMockStageApi();
     const injectionCandidate = {
       entry: {

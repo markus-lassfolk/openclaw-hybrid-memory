@@ -35,6 +35,11 @@ export const CostFeature = {
   reflectionMeta: "reflection-meta",
   identityReflection: "identity-reflection",
   crossAgentLearning: "cross-agent-learning",
+  intentRouter: "intent-router",
+  compositeScoreEval: "composite-score-eval",
+  evolutionPass: "evolution-pass",
+  contaminationGuard: "contamination-guard",
+  mineSynthesize: "mine-synthesize",
 } as const;
 
 export type CostFeatureId = (typeof CostFeature)[keyof typeof CostFeature];

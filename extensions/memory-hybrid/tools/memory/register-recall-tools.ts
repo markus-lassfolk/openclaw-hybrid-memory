@@ -17,6 +17,7 @@ import {
   type ExplicitDeepRetrievalPolicy,
 } from "../../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import { runMultiVaultExplicitDeepRetrieval } from "../../services/multi-vault-retrieval.js";
 import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
 import { searchFts } from "../../services/fts-search.js";
 import {
@@ -45,6 +46,7 @@ import { getProgressiveIndexIds, resolveProgressiveIndexSessionKey } from "../..
 import { parseSourceDate } from "../../utils/dates.js";
 import { embedCallWithTimeoutAndRetry } from "../../utils/embed-call.js";
 import type { MemoryToolRuntime } from "./runtime.js";
+import { resolveToolVaultBackends, listToolVaultHandles } from "./vault-resolve.js";
 
 export function registerRecallTools(runtime: MemoryToolRuntime): void {
   const {
@@ -98,6 +100,9 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
             description:
               "Fetch a specific memory: fact id (UUID string) or 1-based index from the last progressive index (e.g. 1 for first listed memory).",
           }),
+        ),
+        vault: Type.Optional(
+          Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out across vaults" }),
         ),
         limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
         entity: Type.Optional(
@@ -512,15 +517,16 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       retrievalMode,
       includeSuperseded = false,
       asOf: asOfParam,
-      includeCold = false,
-      userId,
-      agentId,
-      sessionId,
-      confirmCrossTenantScope,
-      expandGraph: expandGraphParam,
-      expandDepth: expandDepthParam,
-      mode: recallModeParam,
-    } = params as {
+        includeCold = false,
+        userId,
+        agentId,
+        sessionId,
+        confirmCrossTenantScope,
+        expandGraph: expandGraphParam,
+        expandDepth: expandDepthParam,
+        mode: recallModeParam,
+        vault: vaultParam,
+      } = params as {
       query?: string;
       id?: string | number;
       limit?: number;
@@ -543,6 +549,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       expandGraph?: boolean;
       expandDepth?: number;
       mode?: "semantic" | "hybrid" | "keyword";
+      vault?: string;
     };
     const recallMode =
       recallModeParam === "semantic" || recallModeParam === "hybrid" || recallModeParam === "keyword"
@@ -555,6 +562,10 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       const trimmed = value.trim();
       return trimmed.length > 0 ? trimmed : undefined;
     };
+    const vaultBackends = resolveToolVaultBackends(runtime, normalizeOptionalString(vaultParam));
+    const recallFactsDb = vaultBackends.factsDb;
+    const recallVectorDb = vaultBackends.vectorDb;
+    const vaultHandles = listToolVaultHandles(runtime, normalizeOptionalString(vaultParam));
     const entity = normalizeOptionalString(entityParam);
     const tag = normalizeOptionalString(tagParam);
     const category = normalizeOptionalString(categoryParam);
@@ -580,7 +591,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       cfg,
     );
     const logRecall = (hit: boolean) => {
-      const maybeFactsDb = factsDb as { logRecall?: (hit: boolean) => void };
+      const maybeFactsDb = recallFactsDb as { logRecall?: (hit: boolean) => void };
       if (typeof maybeFactsDb.logRecall === "function") {
         try {
           maybeFactsDb.logRecall(hit);
@@ -615,13 +626,13 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       }
       if (factId) {
         const getByIdOpts = { asOf: asOfSec, scopeFilter };
-        const entry = factsDb.getById(
+        const entry = recallFactsDb.getById(
           factId,
           asOfSec != null || scopeFilter ? (getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter }) : undefined,
         );
         if (entry) {
           // Access boost — update recall_count and last_accessed on fetch by id
-          factsDb.refreshAccessedFacts([entry.id]);
+          recallFactsDb.refreshAccessedFacts([entry.id]);
           logRecall(true);
           const line = formatMemoryRecallToolLine(entry);
           auditAppend({
@@ -725,7 +736,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         const coldFilterOpts =
           asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
         results = results.filter((r) => {
-          const full = factsDb.getById(r.entry.id, coldFilterOpts);
+          const full = recallFactsDb.getById(r.entry.id, coldFilterOpts);
           return full && full.tier !== "cold";
         });
       }
@@ -802,12 +813,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
 
     // Entity-layer pre-filter: when NER tables match query surfaces, narrow constrained candidates.
     let entityLayerFactIds: string[] | undefined;
-    if (shouldUseConstrainedMode && typeof factsDb.getRawDb === "function") {
+    if (shouldUseConstrainedMode && typeof recallFactsDb.getRawDb === "function") {
       try {
-        const surfaces = loadKnownEntitySurfaces(factsDb.getRawDb(), 300);
+        const surfaces = loadKnownEntitySurfaces(recallFactsDb.getRawDb(), 300);
         const matched = matchEntitySurfacesInText(query, surfaces);
         if (matched.length > 0) {
-          entityLayerFactIds = getFactIdsForEntitySurfaces(factsDb.getRawDb(), matched, 80);
+          entityLayerFactIds = getFactIdsForEntitySurfaces(recallFactsDb.getRawDb(), matched, 80);
         }
       } catch {
         /* non-fatal */
@@ -819,7 +830,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     let entityResults: SearchResult[] = [];
     let recallOutcome: "success" | "degraded_fallback" = "success";
     if (entity && !shouldUseConstrainedMode) {
-      entityResults = factsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
+      entityResults = recallFactsDb.lookup(entity, undefined, tag, { ...recallOpts, limit: 100 });
     }
 
     // Explicit/deep retrieval owns richer semantic prep, including optional HyDE.
@@ -880,34 +891,64 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           ? (text: string) =>
               embedCallWithTimeoutAndRetry(() => embeddings.embed(text), "memory-tools:rrf-deep-retrieval")
           : null;
-      const rrfOutput = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
-        config: rrfConfig,
-        ...(effectiveMode !== "interactive-recall" && effectivePolicy
-          ? { policy: effectivePolicy }
-          : effectiveMode === "interactive-recall"
-            ? { mode: effectiveMode as "interactive-recall" }
-            : {}),
-        ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
-        ...(constrainedFilters ? { constrainedFilters } : {}),
-        includeSuperseded,
-        scopeFilter,
-        asOf: asOfSec ?? undefined,
-        graphHubDegreeCap: cfg.graph.hubDegreeCap,
-        graphHubScorePenalty: cfg.graph.hubScorePenalty,
-        aliasDb: cfg.aliases?.enabled ? aliasDb : null,
-        clustersConfig: cfg.clusters,
-        embeddingRegistry: embeddingRegistry ?? null,
-        factsDbForEmbeddings: factsDb,
-        queryExpander: queryExpander ?? null,
-        embedFn,
-        rerankingConfig: cfg.reranking,
-        rerankingOpenai: openai,
-        adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
-        documentGradingConfig: cfg.documentGrading,
-        issueStore: issueStore ?? null,
-        ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
-        warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
-      });
+      const rrfOutput =
+        vaultHandles.length > 1
+          ? await runMultiVaultExplicitDeepRetrieval(query, queryVector, vaultHandles, {
+              config: rrfConfig,
+              ...(effectiveMode !== "interactive-recall" && effectivePolicy
+                ? { policy: effectivePolicy }
+                : effectiveMode === "interactive-recall"
+                  ? { mode: effectiveMode as "interactive-recall" }
+                  : {}),
+              ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
+              ...(constrainedFilters ? { constrainedFilters } : {}),
+              includeSuperseded,
+              scopeFilter,
+              asOf: asOfSec ?? undefined,
+              graphHubDegreeCap: cfg.graph.hubDegreeCap,
+              graphHubScorePenalty: cfg.graph.hubScorePenalty,
+              aliasDb: cfg.aliases?.enabled ? aliasDb : null,
+              clustersConfig: cfg.clusters,
+              embeddingRegistry: embeddingRegistry ?? null,
+              factsDbForEmbeddings: recallFactsDb,
+              queryExpander: queryExpander ?? null,
+              embedFn,
+              rerankingConfig: cfg.reranking,
+              rerankingOpenai: openai,
+              adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
+              documentGradingConfig: cfg.documentGrading,
+              issueStore: issueStore ?? null,
+              ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
+              warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
+            })
+          : await runExplicitDeepRetrieval(query, queryVector, recallFactsDb.getRawDb(), recallVectorDb, recallFactsDb, {
+              config: rrfConfig,
+              ...(effectiveMode !== "interactive-recall" && effectivePolicy
+                ? { policy: effectivePolicy }
+                : effectiveMode === "interactive-recall"
+                  ? { mode: effectiveMode as "interactive-recall" }
+                  : {}),
+              ...(useLegacyTagShortcut ? { tagFilter: tag ?? undefined } : {}),
+              ...(constrainedFilters ? { constrainedFilters } : {}),
+              includeSuperseded,
+              scopeFilter,
+              asOf: asOfSec ?? undefined,
+              graphHubDegreeCap: cfg.graph.hubDegreeCap,
+              graphHubScorePenalty: cfg.graph.hubScorePenalty,
+              aliasDb: cfg.aliases?.enabled ? aliasDb : null,
+              clustersConfig: cfg.clusters,
+              embeddingRegistry: embeddingRegistry ?? null,
+              factsDbForEmbeddings: recallFactsDb,
+              queryExpander: queryExpander ?? null,
+              embedFn,
+              rerankingConfig: cfg.reranking,
+              rerankingOpenai: openai,
+              adaptiveOpenai: cfg.documentGrading?.enabled ? openai : undefined,
+              documentGradingConfig: cfg.documentGrading,
+              issueStore: issueStore ?? null,
+              ...(entityLayerFactIds?.length ? { entityLayerCandidateIds: entityLayerFactIds } : {}),
+              warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
+            });
 
       // Merge entity-lookup results first, then append RRF results (deduped).
       // When packed is non-empty, only include fused results whose factId was packed
@@ -952,8 +993,8 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           query,
           limit,
           queryVector,
-          factsDb,
-          vectorDb,
+          recallFactsDb,
+          recallVectorDb,
           recallOpts,
           scopeFilter,
           warmTierOnly: !includeCold && cfg.memoryTiering.enabled,
@@ -968,7 +1009,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     if (!includeCold && results.length > 0) {
       const filtered: SearchResult[] = [];
       for (const r of results) {
-        const full = factsDb.getById(r.entry.id);
+        const full = recallFactsDb.getById(r.entry.id);
         if (full && full.tier !== "cold") filtered.push({ ...r, entry: full });
       }
       results = filtered.slice(0, limit);
@@ -978,7 +1019,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     if (asOfSec != null && results.length > 0) {
       const filtered: SearchResult[] = [];
       for (const r of results) {
-        const full = factsDb.getById(r.entry.id, { asOf: asOfSec });
+        const full = recallFactsDb.getById(r.entry.id, { asOf: asOfSec });
         if (full) filtered.push({ ...r, entry: full });
       }
       results = filtered.slice(0, limit);
@@ -1004,7 +1045,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       for (const r of results) {
         originalBackendMap.set(r.entry.id, r.backend);
       }
-      const { results: expanded } = expandGraph(factsDb, seedInputs, {
+      const { results: expanded } = expandGraph(recallFactsDb, seedInputs, {
         maxDepth: depth,
         maxExpandedResults: cfg.graphRetrieval.maxExpandedResults,
         scopeFilter: scopeFilter ?? undefined,
@@ -1029,13 +1070,13 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     } else if (cfg.graph.enabled && cfg.graph.useInRecall && results.length > 0) {
       // Legacy flat-score graph traversal (backward compatible, no path annotation).
       const initialIds = new Set(results.map((r) => r.entry.id));
-      const connectedIds = factsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth, {
+      const connectedIds = recallFactsDb.getConnectedFactIds([...initialIds], cfg.graph.maxTraversalDepth, {
         hubDegreeCap: cfg.graph.hubDegreeCap,
       });
       const extraIds = connectedIds.filter((id) => !initialIds.has(id));
       const getByIdOpts = asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
       for (const id of extraIds) {
-        const entry = factsDb.getById(id, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
+        const entry = recallFactsDb.getById(id, getByIdOpts as { asOf?: number; scopeFilter?: ScopeFilter });
         if (entry) {
           results.push({ entry, score: 0.45, backend: "sqlite" });
         }
@@ -1083,7 +1124,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
 
     const contradictionStatus = new Map<string, boolean>();
     for (const r of results) {
-      contradictionStatus.set(r.entry.id, factsDb.isContradicted(r.entry.id));
+      contradictionStatus.set(r.entry.id, recallFactsDb.isContradicted(r.entry.id));
     }
 
     // Check integrity for verified facts (Issue #162): flag tampered results.

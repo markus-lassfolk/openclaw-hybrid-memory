@@ -26,6 +26,8 @@ import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
 import { createRecallSpan, createRecallTimingLogger } from "./recall-timing.js";
 import { DEFAULT_INTERACTIVE_RECALL_POLICY, type InteractiveRecallPolicy } from "./retrieval-mode-policy.js";
+import { evaluateBm25Bypass, type BypassConfig } from "./retrieval-v2.js";
+import { recordBypassDecision } from "./recall-timing-stats.js";
 import { isDbClosedError, isRegistrationSuperseded } from "../utils/registration-superseded.js";
 import { isTierAllowedForWarmSearch } from "../utils/tier-filter.js";
 
@@ -148,6 +150,10 @@ export async function runRecallPipelineQuery(
     pipelineStatusRef?: { semanticDegraded: boolean };
     /** Parent recall stage abort — skips vector/HyDE and returns partial FTS results when fired. */
     stageSignal?: AbortSignal;
+    /** BM25 strong-signal bypass (#1910): skip HyDE/vector when FTS winner is clear. */
+    bypass?: BypassConfig & { hasExplicitIntent?: boolean };
+    /** Set true when BM25 bypass short-circuited semantic stages. */
+    bypassedRef?: { value: boolean };
   },
 ): Promise<SearchResult[]> {
   const { factsDb, vectorDb, embeddings, openai, cfg, recallOpts, minScore, pendingLLMWarnings, logger } = deps;
@@ -229,6 +235,35 @@ export async function runRecallPipelineQuery(
       entityLookupRows,
     };
   };
+
+  /** Early FTS probe for BM25 bypass before expensive semantic stages (#1910). */
+  if (useSemantic && opts?.bypass?.enabled) {
+    const ftsProbe = runFtsSearchSync();
+    const bypassDecision = evaluateBm25Bypass(
+      ftsProbe.sqliteResults,
+      opts.bypass,
+      opts.bypass.hasExplicitIntent === true,
+    );
+    recordBypassDecision(bypassDecision.bypass);
+    if (bypassDecision.bypass) {
+      if (opts.bypassedRef) opts.bypassedRef.value = true;
+      probeDebug(
+        `memory-hybrid: recall-probe id=${probeId} bm25_bypass top=${bypassDecision.topScore.toFixed(3)} gap=${bypassDecision.gap.toFixed(3)}`,
+      );
+      let results = ftsProbe.sqliteResults.slice(0, limitNum);
+      if (cfg.memoryTieringEnabled && results.length > 0) {
+        results = results
+          .filter((r) => {
+            const full = factsDb.getById(r.entry.id);
+            return full && isTierAllowedForWarmSearch(full.tier);
+          })
+          .slice(0, limitNum);
+      }
+      recallTiming.phaseCompleted("pipeline_run", runStartedAt, { bypassed: true, rows: results.length });
+      clearPipelineProbeWatchdog();
+      return results;
+    }
+  }
 
   try {
     if (!useSemantic) {
@@ -451,6 +486,7 @@ export async function runRecallPipelineQuery(
               if (!entry) return null;
               if (entry.supersededAt != null) return null;
               if (entry.expiresAt != null && entry.expiresAt <= nowSec) return null;
+              if (entry.snoozedUntil != null && entry.snoozedUntil > nowSec) return null;
               return entry;
             },
             recallOpts.scopeFilter,

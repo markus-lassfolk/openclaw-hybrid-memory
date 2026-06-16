@@ -8,6 +8,8 @@
 
 import type { SessionSeenFacts } from "../services/ambient-retrieval.js";
 import type { FrustrationConversationTurn } from "../services/frustration-detector.js";
+import { clearIntentSessionCache } from "../services/intent-classifier.js";
+import { clearNudgeSessionState } from "../services/memory-nudge.js";
 import type { SessionState } from "./types.js";
 
 const MAX_TRACKED_SESSIONS = 200;
@@ -86,6 +88,8 @@ export function createSessionState(
     recallInFlightBySession.delete(sessionKey);
     progressiveIndexBySession?.delete(sessionKey);
     lastAutoRecallPromptBySession?.delete(sessionKey);
+    clearIntentSessionCache(sessionKey);
+    clearNudgeSessionState(sessionKey);
   }
 
   function clearInjectedFactIdsForSession(

@@ -17,6 +17,68 @@ describe("deprecated-cron-commands", () => {
     expect(hits).toContain("consolidate-episodes");
   });
 
+  it("detects removed workshop remind-pending command", () => {
+    const msg =
+      "Workshop approval reminder. Run: openclaw hybrid-mem workshop remind-pending. If empty, reply briefly.";
+    const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);
+    expect(hits).toContain("workshop remind-pending");
+  });
+
+  it("verify --fix path normalizes stale workshop remind-pending messages", () => {
+    const openclawDir = mkdtempSync(join(tmpdir(), "hm-test-openclaw-"));
+    try {
+      mkdirSync(join(openclawDir, "cron"), { recursive: true });
+      writeFileSync(join(openclawDir, "openclaw.json"), "{}", "utf-8");
+
+      const jobsPath = join(openclawDir, "cron", "jobs.json");
+      writeFileSync(
+        jobsPath,
+        JSON.stringify(
+          {
+            jobs: [
+              {
+                pluginJobId: "hybrid-mem:workshop-approval-reminder",
+                id: "hybrid-mem:workshop-approval-reminder",
+                name: "workshop-approval-reminder",
+                schedule: { kind: "cron", expr: "50 1,13 * * *" },
+                enabled: true,
+                sessionTarget: "isolated",
+                delivery: { mode: "announce" },
+                payload: {
+                  kind: "agentTurn",
+                  message:
+                    "Workshop approval reminder. Run: openclaw hybrid-mem workshop remind-pending. If throttled or empty, reply briefly.",
+                },
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
+
+      const result = ensureMaintenanceCronJobs(openclawDir, undefined, {
+        normalizeExisting: true,
+        reEnableDisabled: false,
+        consolidatedCronJobs: false,
+      });
+      expect(result.normalized).toContain("workshop-approval-reminder");
+
+      const next = JSON.parse(readFileSync(jobsPath, "utf-8")) as { jobs: Array<Record<string, unknown>> };
+      const job = next.jobs.find((j) => j.pluginJobId === "hybrid-mem:workshop-approval-reminder") as
+        | Record<string, unknown>
+        | undefined;
+      expect(job).toBeTruthy();
+      const payload = job?.payload as { message?: unknown } | undefined;
+      const msg = String(payload?.message ?? job?.message ?? "");
+      expect(msg).toContain("openclaw hybrid-mem digest pending --since 7d");
+      expect(msg).not.toContain("workshop remind-pending");
+    } finally {
+      rmSync(openclawDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not flag token substrings", () => {
     const msg = "note: consolidate-episodes-v2 is not a command";
     const hits = findDeprecatedHybridMemCronTokens(msg).map((h) => h.token);

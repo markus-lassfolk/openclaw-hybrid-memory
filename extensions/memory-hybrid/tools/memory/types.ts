@@ -76,6 +76,10 @@ export interface MemoryToolsContext {
   auditStore?: AuditStore | null;
   /** Issue lifecycle store for issue-aware recall (#1802). */
   issueStore?: IssueStore | null;
+  /** Multi-vault routing (#1917). */
+  resolveVault?: (vaultName?: string) => import("../../services/vault-registry.js").VaultHandle;
+  resolveAllVaults?: () => import("../../services/vault-registry.js").VaultHandle[];
+  resolveVaultWal?: (vaultName?: string) => import("../../backends/wal.js").WriteAheadLog | null;
 }
 
 type LegacyMemoryToolsContext = Omit<

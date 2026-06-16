@@ -23,6 +23,8 @@ import {
   writeActiveTaskFileOptimistic,
 } from "../services/active-task.js";
 import { capturePluginError } from "../services/error-reporter.js";
+import { sweepStaleIntentSessionCaches, disposeIntentClassifier } from "../services/intent-classifier.js";
+import { sweepStaleNudgeSessionState, disposeMemoryNudge } from "../services/memory-nudge.js";
 import {
   consumePendingTaskSignalsFacts,
   loadTaskLedgerFromFacts,
@@ -329,6 +331,8 @@ function sweepStaleSessions(sessionState: SessionState, injectedFactIdsBySession
       swept++;
     }
   }
+  swept += sweepStaleIntentSessionCaches(cutoff);
+  swept += sweepStaleNudgeSessionState(cutoff);
   return swept;
 }
 
@@ -366,6 +370,8 @@ export function getDispose(
   return () => {
     if (timerRef) clearInterval(timerRef);
     sessionState.clearAll?.(injectedFactIdsBySession);
+    disposeIntentClassifier();
+    disposeMemoryNudge();
   };
 }
 

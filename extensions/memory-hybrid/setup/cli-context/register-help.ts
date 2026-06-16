@@ -565,6 +565,7 @@ export function createHybridMemCliContext(
     auditStore: handlerCtx.auditStore ?? null,
     agentHealthStore: handlerCtx.agentHealthStore ?? null,
     proposalsDb: handlerCtx.proposalsDb ?? null,
+    openai: handlerCtx.openai,
   };
 }
 

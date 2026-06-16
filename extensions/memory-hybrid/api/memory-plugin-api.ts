@@ -146,4 +146,11 @@ export interface MemoryPluginAPI {
   timers: {
     proposalsPruneTimer: { value: ReturnType<typeof setInterval> | null };
   };
+
+  /** Resolve named vault backends when cfg.vaults is configured (#1917). */
+  resolveVault?: (vaultName?: string) => import("../services/vault-registry.js").VaultHandle;
+  /** All configured vaults including default (#1917 fan-out). */
+  resolveAllVaults?: () => import("../services/vault-registry.js").VaultHandle[];
+  /** Per-vault WAL for named vault stores (#1917). */
+  resolveVaultWal?: (vaultName?: string) => import("../backends/wal.js").WriteAheadLog | null;
 }

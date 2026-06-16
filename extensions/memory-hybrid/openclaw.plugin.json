@@ -14,6 +14,8 @@
       "credential_get",
       "credential_list",
       "credential_store",
+      "diary_read",
+      "diary_write",
       "goal_abandon",
       "goal_assess",
       "goal_complete",
@@ -46,6 +48,7 @@
       "memory_keyword_recall",
       "memory_list_edicts",
       "memory_path",
+      "memory_pin",
       "memory_prune",
       "memory_procedure_feedback",
       "memory_promote",
@@ -60,8 +63,10 @@
       "memory_reflect_meta",
       "memory_reflect_rules",
       "memory_remove_edict",
+      "memory_retrieve",
       "memory_search_episodes",
       "memory_session_observability",
+      "memory_snooze",
       "memory_store",
       "memory_tool_approve",
       "memory_tool_proposals",
@@ -998,6 +1003,11 @@
             "type": "string",
             "description": "Model for classify-before-write. When unset, uses nano-tier default; set explicitly if that model often wraps JSON in prose or markdown so batch classification stays on the fast path"
           },
+          "dedupWindowMinutes": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Time window in minutes for deduplication checks. Facts within this window are compared for similarity."
+          },
           "sourceProfiles": {
             "type": "object",
             "description": "Per-source dedupe and daily write quotas. Keys are exact fact source strings or glob patterns (e.g. seed:*, implicit-feedback).",
@@ -1542,6 +1552,22 @@
                 }
               }
             }
+          },
+          "evolution": {
+            "type": "object",
+            "description": "Memory evolution config for neighbor-based tag/summary propagation"
+          },
+          "fragmentEmbedding": {
+            "type": "object",
+            "description": "Fragment-level embedding for long documents"
+          },
+          "fragmentLevelEmbedding": {
+            "type": "object",
+            "description": "Alias for fragmentEmbedding"
+          },
+          "contentTypeHalfLives": {
+            "type": "object",
+            "description": "Content-type based half-life decay config"
           }
         },
         "description": "Lifecycle adapters — GitHub stub (#1196)"

@@ -102,6 +102,9 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     walRemove,
     auditStore,
     issueStore,
+    resolveVault,
+    resolveAllVaults,
+    resolveVaultWal,
   } = ctx;
 
   return {
@@ -130,6 +133,9 @@ function selectMemoryCoreToolsContext(ctx: ToolsContext): MemoryToolsContext {
     findSimilarByEmbedding,
     auditStore,
     issueStore,
+    resolveVault,
+    resolveAllVaults,
+    resolveVaultWal,
   };
 }
 

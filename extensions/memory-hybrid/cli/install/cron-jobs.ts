@@ -161,6 +161,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
  */
 const MIN_INTERVAL_MS: Record<string, number> = {
   daily: 20 * 60 * 60 * 1000, // 20 hours (daily jobs)
+  /** Twice-daily cron slots are 12h apart — guard must be shorter than that. */
+  twiceDaily: 11 * 60 * 60 * 1000, // 11 hours
   weekly: 5 * 24 * 60 * 60 * 1000, // 5 days (weekly jobs)
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
 };
@@ -223,11 +225,21 @@ function ensureHybridMemCronMessageHasEnvSanitizer(message: string): string | nu
   return next === message ? null : next;
 }
 
+/** Agent-turn reminder for operator workshop/pending review backlog (#1921). */
+export const WORKSHOP_APPROVAL_REMINDER_MESSAGE =
+  "Workshop approval reminder. Run: openclaw hybrid-mem digest pending --since 7d. If pending items are listed, summarize for the operator with approve/review instructions. If the command fails (unknown subcommand or non-zero exit), report the error — do not treat it as empty. If throttled or empty, reply briefly.";
+
 // buildGuardPrefix is imported from services/cron-guard.ts (issue #305).
 
 // Each entry uses pluginJobId as stable identity; resolveCronJob also sets `id` to that value for gateway `cron.run` / UI parity.
 const MAINTENANCE_CRON_JOBS: Array<
-  Record<string, unknown> & { modelTier?: "nano" | "default" | "heavy"; minIntervalMs?: number; featureGate?: string }
+  Record<string, unknown> & {
+    modelTier?: "nano" | "default" | "heavy";
+    minIntervalMs?: number;
+    featureGate?: string;
+    /** When true, normalize existing jobs but do not add if missing (#1921). */
+    normalizeOnly?: boolean;
+  }
 > = [
   // Daily 02:00 | nightly-memory-sweep | prune → distill → extract-daily → resolve-contradictions → enrich
   {
@@ -468,6 +480,21 @@ const MAINTENANCE_CRON_JOBS: Array<
     minIntervalMs: MIN_INTERVAL_MS.weekly,
   },
 
+  // Twice daily 01:50 + 13:50 UTC | workshop-approval-reminder | digest pending for operator announce (#1921)
+  {
+    pluginJobId: `${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder`,
+    sessionTarget: "isolated",
+    name: "workshop-approval-reminder",
+    schedule: { kind: "cron", expr: "50 1,13 * * *" },
+    channel: "system",
+    message: WORKSHOP_APPROVAL_REMINDER_MESSAGE,
+    isolated: true,
+    modelTier: "default",
+    enabled: false,
+    minIntervalMs: MIN_INTERVAL_MS.twiceDaily,
+    featureGate: "workshop.enabled",
+  },
+
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
   {
     pluginJobId: `${PLUGIN_JOB_ID_PREFIX}weekly-deep-maintenance`,
@@ -652,7 +679,8 @@ function resolveCronJob(
   const delivery =
     stableId === `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest`
       ? resolveWeeklyPendingDigestDelivery(digestWeeklyDelivery)
-      : stableId === `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`
+      : stableId === `${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder` ||
+          stableId === `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`
         ? { mode: "announce" as const }
         : { mode: "none" as const };
   return { ...rest, ...(stableId ? { id: stableId } : {}), model, delivery };
@@ -686,6 +714,9 @@ const LEGACY_JOB_MATCHERS: Record<string, (j: Record<string, unknown>) => boolea
     if (/weekly-pending-digest-autopilot|pending digest autopilot/i.test(name)) return false;
     return /weekly-pending-digest|pending digest/i.test(name);
   },
+  [`${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder`]: (j) =>
+    /workshop-approval-reminder|workshop approval reminder/i.test(String(j.name ?? "")) ||
+    j.id === `${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder`,
   [`${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer`]: (j) =>
     /maintenance-log-analyzer|analyze-maintenance-logs/i.test(String(j.name ?? "")),
   [`${PLUGIN_JOB_ID_PREFIX}weekly-persona-proposals`]: (j) =>
@@ -799,6 +830,7 @@ export function ensureMaintenanceCronJobs(
       jobsChanged = true;
     }
     if (!existing) {
+      if (def.normalizeOnly === true) continue;
       const job = resolveCronJob(def, pluginConfig, agentPrimary, digestWeeklyDelivery) as Record<string, unknown>;
       if (scheduleExpr) job.schedule = { kind: "cron", expr: scheduleExpr };
       if (messageOverrides?.[id]) job.message = messageOverrides[id];
@@ -900,6 +932,7 @@ export function ensureMaintenanceCronJobs(
         const d = existing.delivery as { mode?: string; channel?: string } | undefined;
         if (
           id !== `${PLUGIN_JOB_ID_PREFIX}weekly-pending-digest` &&
+          id !== `${PLUGIN_JOB_ID_PREFIX}workshop-approval-reminder` &&
           id !== `${PLUGIN_JOB_ID_PREFIX}maintenance-log-analyzer` &&
           d &&
           d.mode === "announce" &&

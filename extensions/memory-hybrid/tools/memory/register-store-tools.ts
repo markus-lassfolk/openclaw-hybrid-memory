@@ -35,7 +35,7 @@ import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
 import { shouldAutoVerify } from "../../services/verification-store.js";
 import { cleanupEvictedVector, deleteVectorForFactId } from "../../services/vector-maintenance.js";
-import { isWalWriteFailure } from "../../services/wal-helpers.js";
+import { isWalWriteFailure, walRemove as walRemoveEntry, walWrite as walWriteEntry } from "../../services/wal-helpers.js";
 import type { MemoryEntry } from "../../types/memory.js";
 import { MEMORY_SCOPES } from "../../types/memory.js";
 import { detectFutureDate } from "../../utils/date-detector.js";
@@ -48,6 +48,7 @@ import {
 } from "../../services/recalled-context-assembler.js";
 import { extractTags } from "../../utils/tags.js";
 import type { MemoryToolRuntime } from "./runtime.js";
+import { resolveToolVaultBackends, resolveToolVaultWal } from "./vault-resolve.js";
 
 export function registerStoreTools(runtime: MemoryToolRuntime): void {
   const {
@@ -69,9 +70,6 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
     pendingLLMWarnings,
     variantQueue,
     buildToolScopeFilter,
-    wal,
-    walWrite,
-    walRemove,
     findSimilarByEmbedding,
     auditStore,
     api,
@@ -166,6 +164,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               "Unix epoch seconds until which confidence decay is paused. Auto-detected from future dates in text if omitted.",
           }),
         ),
+        vault: Type.Optional(Type.String({ description: "Named vault from plugin config vaults map" })),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
         try {
@@ -184,6 +183,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             scopeTarget: paramScopeTarget,
             verification_tier: verificationTier,
             decayFreezeUntil: paramDecayFreezeUntil,
+            vault: vaultParam,
           } = params as {
             text: string;
             why?: string;
@@ -199,7 +199,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             scopeTarget?: string;
             verification_tier?: string;
             decayFreezeUntil?: number;
+            vault?: string;
           };
+
+          const { factsDb: storeFactsDb, vectorDb: storeVectorDb } = resolveToolVaultBackends(
+            runtime,
+            typeof vaultParam === "string" ? vaultParam : undefined,
+          );
+          const storeWal = resolveToolVaultWal(runtime, typeof vaultParam === "string" ? vaultParam : undefined);
 
           // --- Early input validation (must run before any side effects) ---
           if (text.trim().length === 0) {
@@ -274,7 +281,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           const key = prepareMemoryMetadataForStorage(paramKey) ?? prepareMemoryMetadataForStorage(extracted.key);
           const value = prepareMemoryMetadataForStorage(paramValue) ?? prepareMemoryMetadataForStorage(extracted.value);
 
-          if (factsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
+          if (storeFactsDb.hasDuplicate(textToStore, "conversation", { category, entity, key, value })) {
             return {
               content: [{ type: "text", text: "Similar memory already exists." }],
               details: { action: "duplicate" },
@@ -410,7 +417,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 };
               }
 
-              const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "conversation", {
+              const pointer = ensureCredentialVaultPointer(storeFactsDb, parsed.service, parsed.type, "conversation", {
                 why: whyStored,
                 importance,
                 decayClass: paramDecayClass ?? "permanent",
@@ -468,7 +475,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 };
               }
               await cleanupEvictedVector({
-                vectorDb,
+                storeVectorDb,
                 evictedFactId: pointer.evictedFactId,
                 logger: api.logger,
                 context: "memory-store-credential-pointer",
@@ -493,7 +500,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     category: "technical",
                   });
                   await storeRegistryEmbeddings({
-                    factsDb,
+                    storeFactsDb,
                     embeddingRegistry,
                     embeddings,
                     factId: pointerEntry.id,
@@ -622,13 +629,13 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           if (cfg.store.classifyBeforeWrite) {
             let similarFacts: MemoryEntry[] = [];
             if (vector) {
-              similarFacts = await findSimilarByEmbedding(vectorDb, factsDb, vector, 5, 0.3, {
+              similarFacts = await findSimilarByEmbedding(storeVectorDb, storeFactsDb, vector, 5, 0.3, {
                 scope,
                 scopeTarget,
               });
             }
             if (similarFacts.length === 0) {
-              similarFacts = factsDb.findSimilarForClassification(textToStore, entity, key, 5, scope, scopeTarget);
+              similarFacts = storeFactsDb.findSimilarForClassification(textToStore, entity, key, 5, scope, scopeTarget);
             }
             if (similarFacts.length > 0) {
               const classification = await classifyMemoryOperation(
@@ -652,17 +659,17 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 const target = validateScopedClassificationTarget({
                   targetId: classification.targetId,
                   candidates: similarFacts,
-                  getById: (id) => factsDb.getById(id),
+                  getById: (id) => storeFactsDb.getById(id),
                   scope,
                   scopeTarget,
                   warn: (message) => api.logger.warn?.(message),
                   warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store DELETE target ${classification.targetId}`,
                 });
                 if (target) {
-                  factsDb.supersede(classification.targetId, null);
+                  storeFactsDb.supersede(classification.targetId, null);
                   aliasDb?.deleteByFactId(classification.targetId);
                   await deleteVectorForFactId({
-                    vectorDb,
+                    storeVectorDb,
                     factId: classification.targetId,
                     logger: api.logger,
                     context: "store-delete-action",
@@ -689,14 +696,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 const oldFact = validateScopedClassificationTarget({
                   targetId: classification.targetId,
                   candidates: similarFacts,
-                  getById: (id) => factsDb.getById(id),
+                  getById: (id) => storeFactsDb.getById(id),
                   scope,
                   scopeTarget,
                   warn: (message) => api.logger.warn?.(message),
                   warnMessage: `memory-hybrid: blocked cross-scope or unknown memory_store UPDATE target ${classification.targetId}`,
                 });
                 if (oldFact) {
-                  const walEntryId = await walWrite(
+                  const walEntryId = await walWriteEntry(storeWal,
                     "update",
                     {
                       text: textToStore,
@@ -718,12 +725,12 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger,
                     classification.targetId,
                   );
-                  if (isWalWriteFailure(wal, walEntryId)) {
+                  if (isWalWriteFailure(storeWal, walEntryId)) {
                     return walWriteFailedResponse();
                   }
 
                   const nowSec = Math.floor(Date.now() / 1000);
-                  const updateStoreResult = factsDb.storeWithResult({
+                  const updateStoreResult = storeFactsDb.storeWithResult({
                     text: textToStore,
                     why: whyStored,
                     category: category as MemoryCategory,
@@ -751,7 +758,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     updateStoreResult.newlyStored === false &&
                     !updateStoreResult.embeddingStale
                   ) {
-                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -768,14 +775,14 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     updateStoreResult.embeddingStale
                   ) {
                     await cleanupEvictedVector({
-                      vectorDb,
+                      storeVectorDb,
                       evictedFactId: updateStoreResult.evictedFactId,
                       logger: api.logger,
                       context: "memory-store-update-merge",
                     });
                     try {
                       const mergedVector = await embeddings.embed(newEntry.text);
-                      factsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
+                      storeFactsDb.setEmbeddingModel(newEntry.id, embeddings.modelName);
                       await storeActiveCanonicalVector({
                         factId: newEntry.id,
                         text: newEntry.text,
@@ -787,7 +794,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     } catch (err) {
                       api.logger.warn(`memory-hybrid: UPDATE merge vector refresh failed: ${err}`);
                     }
-                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -800,16 +807,16 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                   }
                   if (!updateStoreResult.skipped && updateStoreResult.newlyStored) {
                     await cleanupEvictedVector({
-                      vectorDb,
+                      storeVectorDb,
                       evictedFactId: updateStoreResult.evictedFactId,
                       logger: api.logger,
                       context: "memory-store-update",
                     });
                     recordActiveStoreProvenance(newEntry.id, textToStore);
-                    factsDb.supersede(classification.targetId, newEntry.id);
+                    storeFactsDb.supersede(classification.targetId, newEntry.id);
                     aliasDb?.deleteByFactId(classification.targetId);
                     await deleteVectorForFactId({
-                      vectorDb,
+                      storeVectorDb,
                       factId: classification.targetId,
                       logger: api.logger,
                       context: "store-update-delete-superseded",
@@ -836,7 +843,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                         });
                       }
                       await storeRegistryEmbeddings({
-                        factsDb,
+                        storeFactsDb,
                         embeddingRegistry,
                         embeddings,
                         factId: newEntry.id,
@@ -865,7 +872,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     api.logger.info?.(
                       `memory-hybrid: UPDATE — superseded ${classification.targetId} with ${newEntry.id}: ${classification.reason}`,
                     );
-                    if (walEntryId) await walRemove(walEntryId, api.logger);
+                    if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                     return {
                       content: [
                         {
@@ -885,7 +892,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                     };
                   }
                   // WAL cleanup for skipped update path
-                  if (walEntryId) await walRemove(walEntryId, api.logger);
+                  if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
                   return {
                     content: [
                       {
@@ -912,7 +919,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           // Scope was resolved above (before classify-before-write) for WAL and classification consistency.
 
-          const walEntryId = await walWrite(
+          const walEntryId = await walWriteEntry(storeWal,
             "store",
             {
               text: textToStore,
@@ -933,7 +940,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             },
             api.logger,
           );
-          if (isWalWriteFailure(wal, walEntryId)) {
+          if (isWalWriteFailure(storeWal, walEntryId)) {
             return walWriteFailedResponse();
           }
           const decayFreezeUntil =
@@ -943,7 +950,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
           const nowSec = Math.floor(Date.now() / 1000);
           const storeSessionId = api.context?.sessionId ?? null;
-          const storeResult = factsDb.storeWithResult({
+          const storeResult = storeFactsDb.storeWithResult({
             text: textToStore,
             why: whyStored,
             category: category as MemoryCategory,
@@ -966,7 +973,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           });
           const entry = storeResult.entry;
           if (!storeResult.skipped && storeResult.newlyStored === false && !storeResult.embeddingStale) {
-            if (walEntryId) await walRemove(walEntryId, api.logger);
+            if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
             return {
               content: [
                 {
@@ -980,7 +987,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
           // Guard: skip post-store ops when pre-store guard blocked the write (#1560, #1561)
           if (!storeResult.skipped) {
             await cleanupEvictedVector({
-              vectorDb,
+              storeVectorDb,
               evictedFactId: storeResult.evictedFactId,
               logger: api.logger,
               context: "memory-store",
@@ -990,10 +997,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             }
             if (supersedes?.trim() && storeResult.newlyStored) {
               const supersededId = supersedes.trim();
-              factsDb.supersede(supersededId, entry.id);
+              storeFactsDb.supersede(supersededId, entry.id);
               aliasDb?.deleteByFactId(supersededId);
               await deleteVectorForFactId({
-                vectorDb,
+                storeVectorDb,
                 factId: supersededId,
                 logger: api.logger,
                 context: "store-manual-supersede",
@@ -1013,7 +1020,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 });
               }
               await storeRegistryEmbeddings({
-                factsDb,
+                storeFactsDb,
                 embeddingRegistry,
                 embeddings,
                 factId: entry.id,
@@ -1030,6 +1037,25 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 backend: "lancedb",
               });
               api.logger.warn(`memory-hybrid: vector store failed: ${err}`);
+            }
+
+            if (storeResult.newlyStored && cfg.lifecycle.fragmentEmbedding.enabled && textToStore.length >= cfg.lifecycle.fragmentEmbedding.minChars) {
+              setImmediate(() => {
+                void import("../../services/fragment-embedding.js")
+                  .then(({ indexFactFragments }) =>
+                    indexFactFragments({
+                      factsDb: storeFactsDb,
+                      vectorDb: storeVectorDb,
+                      embeddings,
+                      parentFact: entry,
+                      cfg: cfg.lifecycle.fragmentEmbedding,
+                      logger: api.logger,
+                    }),
+                  )
+                  .catch((err) => {
+                    api.logger.warn?.(`memory-hybrid: fragment indexing failed: ${err}`);
+                  });
+              });
             }
 
             await maybeRefreshProjectActiveTaskProjection(entry.category, entry.id, entry.scope);
@@ -1076,10 +1102,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             // Uses BEGIN IMMEDIATE inside detectContradictions to serialize with concurrent writers.
             // On failure, store still succeeds; nightly repair + fallback will retry.
             const contradictionStarted = Date.now();
-            let contradictions: ReturnType<typeof factsDb.detectContradictions> = [];
+            let contradictions: ReturnType<typeof storeFactsDb.detectContradictions> = [];
             let contradictionDetectFailed = false;
             try {
-              contradictions = factsDb.detectContradictions(
+              contradictions = storeFactsDb.detectContradictions(
                 entry.id,
                 entity ?? null,
                 key ?? null,
@@ -1150,7 +1176,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             if (cfg.graph.enabled && cfg.graph.autoLink) {
               const entryScope = entry.scope ?? "global";
               const entryScopeTarget = entryScope === "global" ? null : (entry.scopeTarget ?? null);
-              const similar = factsDb.findSimilarForClassification(
+              const similar = storeFactsDb.findSimilarForClassification(
                 textToStore,
                 entity ?? null,
                 key ?? null,
@@ -1160,7 +1186,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               );
               for (const s of similar) {
                 if (s.id === entry.id) continue;
-                factsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
+                storeFactsDb.createLink(entry.id, s.id, "RELATED_TO", cfg.graph.autoLinkMinScore);
                 autoLinked++;
               }
             }
@@ -1171,7 +1197,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             let autoSupersededIds: string[] = [];
             if (cfg.graph.enabled && cfg.graph.autoLink) {
               const sessionId = api.context?.sessionId ?? null;
-              const result = factsDb.autoLinkEntities(
+              const result = storeFactsDb.autoLinkEntities(
                 entry.id,
                 textToStore,
                 entity ?? null,
@@ -1200,7 +1226,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 stopWords: cfg.entityExtraction.stopWords,
               })
                 .then(({ mentions, detectedLang }) => {
-                  factsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
+                  storeFactsDb.applyEntityEnrichment(entry.id, mentions, detectedLang);
                 })
                 .catch((err) => {
                   const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
@@ -1245,7 +1271,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               context: { category },
             });
 
-            if (walEntryId) await walRemove(walEntryId, api.logger);
+            if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
             return {
               content: [
                 {
@@ -1279,7 +1305,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
             };
           }
           // WAL cleanup and return for skipped store path (Bug fix #1560, #1561)
-          if (walEntryId) await walRemove(walEntryId, api.logger);
+          if (walEntryId) await walRemoveEntry(storeWal,walEntryId, api.logger);
           return {
             content: [
               {

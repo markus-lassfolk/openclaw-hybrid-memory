@@ -6,8 +6,19 @@
 import { capturePluginError } from "./error-reporter.js";
 import { trimBlockToBudget } from "./context-block-trim.js";
 import { RECALLED_CONTEXT_BOUNDARY, sanitizePromptInjection } from "./skill-prompt-injection.js";
-import { truncateForStorage } from "../utils/text.js";
+import {
+  buildVaultContextBlock,
+  buildVaultFactsBlock,
+  entriesToVaultFactLines,
+  type VaultFactLine,
+} from "./vault-context.js";
+import { resolveRecallInjectionText, resolveFactsDbForEntry } from "./fragment-recall.js";
+import { filterFactTextsForInjection, type InjectionFilterMode } from "./injection-filter.js";
+import { resolveVaultFactsTriplesMulti } from "./vault-facts-resolver.js";
+import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
+import type { SearchResult } from "../types/memory.js";
+import { estimateTokens, truncateForStorage } from "../utils/text.js";
 
 /** Max share of the interactive prepend budget reserved for edicts (remainder goes to memories). */
 export const DEFAULT_EDICT_BUDGET_FRACTION = 0.2;
@@ -63,6 +74,78 @@ export function wrapRecalledContext(edicts: string, memoryContent: string): stri
   }
   parts.push("</recalled-context>");
   return parts.join("\n");
+}
+
+/** Structured vault-context wrapper for explicit opt-in injection paths (#1912). */
+export function wrapRecalledContextStructured(
+  edicts: string,
+  facts: VaultFactLine[],
+  options?: { legacyMemoryContextWrapper?: boolean },
+): string {
+  const vaultBlock = buildVaultContextBlock({ facts, legacyMemoryContextWrapper: options?.legacyMemoryContextWrapper });
+  return wrapRecalledContext(edicts, vaultBlock);
+}
+
+/** Apply structured vault-context wrapper and optional vault-facts SPO block (#1912). */
+export function finalizeInjectionMemoryContent(
+  ctx: LifecycleContext,
+  event: unknown,
+  plainMemoryContent: string,
+  candidates: SearchResult[],
+): string {
+  const boundary = ctx.cfg.retrieval?.contextBoundary;
+  const prompt = extractLastUserMessageText(event) ?? "";
+  const vaultBudget = boundary?.vaultFactsMaxTokens?.balanced ?? 200;
+  const vaultHandles =
+    ctx.cfg.retrieval?.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
+  const factsDbs =
+    vaultHandles.length > 0 ? vaultHandles.map((handle) => handle.factsDb) : [ctx.factsDb];
+  let spoBlock = "";
+  if (vaultBudget > 0 && prompt.trim()) {
+    const triples = resolveVaultFactsTriplesMulti(factsDbs, prompt);
+    spoBlock = buildVaultFactsBlock(triples, vaultBudget, estimateTokens);
+  }
+
+  const useStructured = boundary?.legacyMemoryContextWrapper === false;
+  if (!useStructured) {
+    return spoBlock ? `${spoBlock}\n\n${plainMemoryContent}` : plainMemoryContent;
+  }
+
+  const injectionFilterMode: InjectionFilterMode = boundary?.injectionFilter ?? "audit";
+  const rawFacts: VaultFactLine[] = entriesToVaultFactLines(
+    candidates.map((c) => ({
+      ...c.entry,
+      text: resolveRecallInjectionText(
+        c.entry,
+        resolveFactsDbForEntry(c.entry, ctx.factsDb, vaultHandles),
+        Boolean(c.entry.summary?.trim()),
+      ),
+    })),
+  );
+  const facts: VaultFactLine[] = rawFacts
+    .map((fact) => {
+      const { allowed } = filterFactTextsForInjection([fact.text], injectionFilterMode);
+      return allowed.length > 0 ? { ...fact, text: allowed[0] } : null;
+    })
+    .filter((f): f is VaultFactLine => f !== null);
+  if (plainMemoryContent.trim() && facts.length === 0) {
+    facts.push({ text: plainMemoryContent, contentType: "recall" });
+  }
+  const vaultBlock = buildVaultContextBlock({
+    facts,
+    legacyMemoryContextWrapper: boundary?.legacyMemoryContextWrapper !== false,
+  });
+  const parts = [spoBlock, vaultBlock].filter(Boolean);
+  return parts.join("\n\n");
+}
+
+/** Filter fact lines through 5-layer injection filter before injection. */
+export function filterMemoryLinesForInjection(
+  lines: string[],
+  mode: InjectionFilterMode,
+): { lines: string[]; filtered: number } {
+  const { allowed, stats } = filterFactTextsForInjection(lines, mode);
+  return { lines: allowed, filtered: stats.filtered };
 }
 
 export type AssembleRecallPrependOptions = {

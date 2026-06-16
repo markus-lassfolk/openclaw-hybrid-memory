@@ -911,6 +911,23 @@ function migrateRecallEventsTable(db: DatabaseSync): void {
   `);
 }
 
+/** Per-turn injection attribution for recall feedback (#1916). */
+function migrateInjectionAttributionTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS injection_attribution (
+      id TEXT PRIMARY KEY,
+      occurred_at INTEGER NOT NULL,
+      session_key TEXT,
+      agent_id TEXT,
+      turn_index INTEGER NOT NULL DEFAULT 0,
+      injected_fact_ids TEXT NOT NULL DEFAULT '[]',
+      referenced_fact_ids TEXT NOT NULL DEFAULT '[]'
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_injection_attr_time ON injection_attribution(occurred_at)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_injection_attr_session ON injection_attribution(session_key)");
+}
+
 /** Per-session language metadata from runtime hooks and JSONL backfill. */
 function migrateSessionMetadataTable(db: DatabaseSync): void {
   db.exec(`
@@ -1446,6 +1463,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Implicit/behavioral feedback
   migrateImplicitSignalsTable(db);
   migrateRecallEventsTable(db);
+  migrateInjectionAttributionTable(db);
   migrateSessionMetadataTable(db);
   migrateReflectionParseLogTable(db);
   migrateSignalClassificationsTable(db);
@@ -1503,6 +1521,71 @@ export function runFactsMigrations(db: DatabaseSync): void {
   migrateEpisodeCausalLinksLastDecayAt(db);
   migrateContradictionsResolvedAt(db);
   migrateEpisodeRelationsConfidence(db);
+  migrateEpic1918Columns(db);
+}
+
+/** Epic #1918: pin/snooze, quality, evolution, maintenance audit, dedup, mine batch. */
+function migrateEpic1918Columns(db: DatabaseSync): void {
+  migrateFactsLifecycleColumns(db);
+  migrateMaintenanceRunsTable(db);
+  migrateSynthesisQuarantineTable(db);
+  migrateCaptureDedupColumns(db);
+}
+
+function migrateFactsLifecycleColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  const add = (name: string, ddl: string) => {
+    if (!cols.some((c) => c.name === name)) db.exec(ddl);
+  };
+  add("pinned_at", "ALTER TABLE facts ADD COLUMN pinned_at INTEGER");
+  add("pinned_reason", "ALTER TABLE facts ADD COLUMN pinned_reason TEXT");
+  add("snoozed_until", "ALTER TABLE facts ADD COLUMN snoozed_until INTEGER");
+  add("quality_score", "ALTER TABLE facts ADD COLUMN quality_score REAL");
+  add("evolution_version", "ALTER TABLE facts ADD COLUMN evolution_version INTEGER NOT NULL DEFAULT 0");
+  add("evolution_reason", "ALTER TABLE facts ADD COLUMN evolution_reason TEXT");
+  add("duplicate_count", "ALTER TABLE facts ADD COLUMN duplicate_count INTEGER NOT NULL DEFAULT 0");
+  add("revision_count", "ALTER TABLE facts ADD COLUMN revision_count INTEGER NOT NULL DEFAULT 0");
+  add("mine_batch_id", "ALTER TABLE facts ADD COLUMN mine_batch_id TEXT");
+  add("parent_fact_id", "ALTER TABLE facts ADD COLUMN parent_fact_id TEXT");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_parent_fact_id ON facts(parent_fact_id)");
+}
+
+function migrateMaintenanceRunsTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS maintenance_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job TEXT NOT NULL,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      status TEXT NOT NULL,
+      items_processed INTEGER,
+      cost_estimate REAL,
+      cost_actual REAL,
+      error_summary TEXT,
+      metadata_json TEXT
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_maintenance_runs_job ON maintenance_runs(job, started_at DESC)");
+}
+
+function migrateSynthesisQuarantineTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS synthesis_quarantine (
+      id TEXT PRIMARY KEY,
+      draft_text TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      source_json TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+}
+
+function migrateCaptureDedupColumns(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "content_dedup_hash")) {
+    db.exec("ALTER TABLE facts ADD COLUMN content_dedup_hash TEXT");
+  }
+  db.exec("CREATE INDEX IF NOT EXISTS idx_facts_dedup_hash ON facts(content_dedup_hash)");
 }
 
 /**
