@@ -86,11 +86,23 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           score: fusedScoreMap.get(e.id) ?? 0,
           backend: "sqlite" as const,
         }));
+
+        const vaultByFactId = "vaultByFactId" in result ? result.vaultByFactId : new Map<string, string>();
+        const vaultHandleByName = new Map(vaultHandles.map((h) => [h.name, h]));
+        const getEntry = (id: string) => {
+          const vaultName = vaultByFactId.get(id);
+          if (vaultName) {
+            const handle = vaultHandleByName.get(vaultName);
+            if (handle) return handle.factsDb.getById(id);
+          }
+          return activeFactsDb.getById(id);
+        };
+
         const v2 = await applyRetrievalV2({
           query,
           results: ftsStub,
           ftsResults: ftsStub,
-          getEntry: (id) => activeFactsDb.getById(id),
+          getEntry,
           factsDb: activeFactsDb,
           config: resolveRetrievalV2Config(cfg),
           recallId,
