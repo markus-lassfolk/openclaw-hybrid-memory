@@ -355,6 +355,9 @@ describe("capture dedup window (#1913)", () => {
     expect(computeCaptureDedupHash({ text: "Same   Observation" })).toBe(
       computeCaptureDedupHash({ text: "same observation" }),
     );
+    expect(computeCaptureDedupHash({ text: "x", scope: "session", scopeTarget: "a" })).not.toBe(
+      computeCaptureDedupHash({ text: "x", scope: "session", scopeTarget: "b" }),
+    );
   });
 });
 

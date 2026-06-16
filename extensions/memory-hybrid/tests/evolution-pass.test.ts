@@ -37,12 +37,14 @@ describe("runEvolutionPass (#1914)", () => {
     expect(result.scanned).toBeGreaterThanOrEqual(1);
     expect(result.evolved).toBeGreaterThanOrEqual(1);
 
-    const row = db.prepare("SELECT quality_score, evolution_reason FROM facts WHERE id = ?").get(fact.id) as {
+    const row = db.prepare("SELECT quality_score, evolution_reason, revision_count FROM facts WHERE id = ?").get(fact.id) as {
       quality_score: number;
       evolution_reason: string;
+      revision_count: number;
     };
     expect(row.quality_score).toBeGreaterThan(0.5);
     expect(row.evolution_reason).toContain("access_reinforcement");
+    expect(row.revision_count).toBe(0);
   });
 
   it("skips facts with low access_count", () => {

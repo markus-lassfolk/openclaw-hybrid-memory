@@ -9,7 +9,6 @@ export type CaptureDedupInput = {
   text: string;
   entity?: string | null;
   key?: string | null;
-  sessionId?: string | null;
   scope?: string | null;
   scopeTarget?: string | null;
 };
@@ -20,13 +19,15 @@ export function computeCaptureDedupHash(input: CaptureDedupInput): string {
     input.text.trim().toLowerCase().replace(/\s+/g, " "),
     (input.entity ?? "").trim().toLowerCase(),
     (input.key ?? "").trim().toLowerCase(),
+    (input.scope ?? "global").trim().toLowerCase(),
+    (input.scopeTarget ?? "").trim().toLowerCase(),
   ].join("|");
   return createHash("sha256").update(payload).digest("hex");
 }
 
 /**
- * When an identical hash exists within the window, bump duplicate_count on the existing row
- * and return skip=true. Otherwise returns skip=false.
+ * When an identical hash exists within the window for the same scope, bump duplicate_count
+ * on the existing row and return skip=true. Otherwise returns skip=false.
  */
 export function checkCaptureDedupWindow(
   db: DatabaseSync,
@@ -35,9 +36,9 @@ export function checkCaptureDedupWindow(
 ): { skip: boolean; existingId?: string } {
   if (windowMinutes <= 0) return { skip: false };
   const hash = computeCaptureDedupHash(input);
-  const cutoff = Math.floor(Date.now() / 1000) - windowMinutes * 60;
   const scope = input.scope ?? "global";
   const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
+  const cutoff = Math.floor(Date.now() / 1000) - windowMinutes * 60;
   const row = db
     .prepare(
       `SELECT id FROM facts

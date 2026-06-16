@@ -83,7 +83,7 @@ function parseContextBoundaryConfig(retrievalRaw: Record<string, unknown> | unde
       balanced: typeof vf?.balanced === "number" ? vf.balanced : 200,
       deep: typeof vf?.deep === "number" ? vf.deep : 250,
     },
-    legacyMemoryContextWrapper: raw?.legacyMemoryContextWrapper === true,
+    legacyMemoryContextWrapper: raw?.legacyMemoryContextWrapper !== false,
   };
 }
 

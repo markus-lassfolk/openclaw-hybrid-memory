@@ -12,6 +12,7 @@ import {
   redactSecretsInText,
 } from "../services/transcript-importers/index.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
+import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { Chainable } from "./shared.js";
 
 export type MineOptions = {
@@ -45,11 +46,9 @@ export async function executeMineCommand(
     const db = factsDb.getRawDb();
     const now = Math.floor(Date.now() / 1000);
     const factIds = db
-      .prepare(
-        `SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL`,
-      )
+      .prepare("SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL")
       .all(opts.undo)
-      .map((r: { id: string }) => r.id) as string[];
+      .map((r: { id: string }) => r.id);
     const result = db
       .prepare(
         `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'
@@ -57,15 +56,11 @@ export async function executeMineCommand(
       )
       .run(now, opts.undo);
     if (vectorDb && factIds.length > 0) {
-      for (const factId of factIds) {
-        try {
-          await vectorDb.delete(factId);
-        } catch (err) {
-          console.warn(`Failed to delete vector for fact ${factId}: ${err}`);
-        }
-      }
+      await deleteVectorsForFactIds(vectorDb, factIds, { operation: "mine-undo" });
     }
-    console.log(`Undid mine batch ${opts.undo}: ${result.changes} fact(s) superseded, ${factIds.length} vector(s) deleted.`);
+    console.log(
+      `Undid mine batch ${opts.undo}: ${result.changes} fact(s) superseded, ${factIds.length} vector(s) deleted.`,
+    );
     return;
   }
   if (!path) {

@@ -23,7 +23,6 @@ import { logRecallEvent } from "../services/recall-events.js";
 import { recordInjectionAttribution } from "../services/injection-attribution-store.js";
 import {
   attributeInjectionToTurn,
-  detectReferencedFactIds,
   segmentTranscriptIntoTurns,
 } from "../services/per-turn-attribution.js";
 import { scanInjectionFilter, type InjectionFilterMode } from "../services/injection-filter.js";
@@ -264,10 +263,6 @@ async function runInjection(
     if (messages && sideEffects?.accessedIds?.length) {
       const turns = segmentTranscriptIntoTurns(messages);
       const attr = attributeInjectionToTurn(turns, sideEffects.accessedIds);
-      const assistantTurn = turns.find((t) => t.index === attr.turnIndex);
-      if (assistantTurn && assistantTurn.role === "assistant") {
-        attr.referencedFactIds = detectReferencedFactIds(assistantTurn.text, attr.injectedFactIds);
-      }
       try {
         recordInjectionAttribution(ctx.factsDb.getRawDb(), {
           sessionKey: api.context?.sessionKey ?? api.context?.sessionId ?? null,

@@ -43,7 +43,7 @@ export function segmentTranscriptIntoTurns(
   return turns;
 }
 
-/** Attribute injected fact ids to the assistant turn that follows the last user turn. */
+/** Attribute injected fact ids to the user turn that triggered injection (pre-response). */
 export function attributeInjectionToTurn(
   turns: ConversationTurn[],
   injectedFactIds: string[],
@@ -55,7 +55,7 @@ export function attributeInjectionToTurn(
   for (const t of turns) {
     if (t.role === "user") lastUser = t.index;
   }
-  const targetTurn = lastUser >= 0 ? lastUser + 1 : turns[turns.length - 1]?.index ?? 0;
+  const targetTurn = lastUser >= 0 ? lastUser : turns[turns.length - 1]?.index ?? 0;
   return { turnIndex: targetTurn, injectedFactIds, referencedFactIds: [] };
 }
 

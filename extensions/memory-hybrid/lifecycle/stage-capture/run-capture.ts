@@ -375,7 +375,6 @@ export async function runCapture(
             text: textToStore,
             entity: extracted.entity,
             key: extracted.key,
-            sessionId: captureProvenance.sessionId ?? null,
             scope: "global",
             scopeTarget: null,
           };
