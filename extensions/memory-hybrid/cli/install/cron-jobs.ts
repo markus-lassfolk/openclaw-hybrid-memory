@@ -488,9 +488,9 @@ const MAINTENANCE_CRON_JOBS: Array<
     message: WORKSHOP_APPROVAL_REMINDER_MESSAGE,
     isolated: true,
     modelTier: "default",
-    enabled: true,
+    enabled: false,
     minIntervalMs: MIN_INTERVAL_MS.daily,
-    normalizeOnly: true,
+    featureGate: "workshop.enabled",
   },
 
   // Saturday 04:00 | weekly-deep-maintenance | compact → vectordb-optimize → scope promote
