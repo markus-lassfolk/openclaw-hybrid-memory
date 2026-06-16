@@ -51,6 +51,8 @@ export async function indexFactFragments(opts: {
       tags: ["fragment", `parent:${parentFact.id}`],
     });
 
+    if (result.skipped) continue;
+
     if (result.evictedFactId) {
       await cleanupEvictedVector({
         vectorDb,

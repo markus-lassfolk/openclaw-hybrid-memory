@@ -119,7 +119,7 @@ export async function executeMineCommand(
     }
     const rawText = conv.messages
       .map((m) => `${m.role}: ${m.content}`)
-      .join("\n\n")
+      .join("\n")
       .slice(0, 50_000);
     const { text, redacted, categories } = redactSecretsInText(rawText);
     redactedTotal += redacted;

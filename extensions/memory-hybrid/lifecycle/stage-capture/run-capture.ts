@@ -768,7 +768,7 @@ export async function runCapture(
                 extractionConfidence: getAutoCaptureExtractionConfidence(candidate.role),
               });
 
-              if (!storeResult.skipped && storeResult.newlyStored !== false && dedupWindow > 0) {
+              if (!storeResult.skipped && dedupWindow > 0) {
                 const dedupHash = computeCaptureDedupHash(dedupInput);
                 ctx.factsDb
                   .getRawDb()

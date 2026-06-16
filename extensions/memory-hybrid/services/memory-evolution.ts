@@ -7,9 +7,10 @@
 import type OpenAI from "openai";
 import type { DatabaseSync } from "node:sqlite";
 import type { LifecycleAdaptersConfig } from "../config/types/features.js";
+import type { HybridMemoryConfig } from "../config/types/config.js";
 import { tryParseFirstJsonObject } from "../utils/llm-json-array.js";
 import { CostFeature } from "./cost-feature-labels.js";
-import { chatCompleteWithRetry } from "./chat.js";
+import { chatCompleteWithAdaptiveMaintenanceRetry } from "./adaptive-maintenance-llm.js";
 import { capturePluginError } from "./error-reporter.js";
 
 export type MemoryEvolutionResult = {
@@ -21,8 +22,10 @@ export type MemoryEvolutionResult = {
 export type MemoryEvolutionOpts = {
   llmCallsBudget?: number;
   openai?: OpenAI;
-  nanoModels?: string[];
+  model?: string;
+  fallbackModels?: string[];
   logger?: { warn?: (msg: string) => void; info?: (msg: string) => void };
+  adaptiveStatePath?: string;
 };
 
 const STOP_WORDS = new Set([
@@ -87,8 +90,7 @@ async function evolveNeighborWithLlm(
   context: NeighborRow,
   opts: MemoryEvolutionOpts,
 ): Promise<LlmNeighborUpdate | null> {
-  const { openai, nanoModels, logger } = opts;
-  const model = nanoModels?.[0];
+  const { openai, model, fallbackModels, logger, adaptiveStatePath } = opts;
   if (!openai || !model) return null;
 
   const prompt =
@@ -101,17 +103,19 @@ async function evolveNeighborWithLlm(
     `Linked context fact:\n${context.text.slice(0, 1200)}\n`;
 
   try {
-    const raw = await chatCompleteWithRetry({
+    const detail = await chatCompleteWithAdaptiveMaintenanceRetry({
       openai,
       model,
-      fallbackModels: nanoModels?.slice(1) ?? [],
+      fallbackModels: fallbackModels ?? [],
       content: prompt,
       temperature: 0,
       maxTokens: 220,
-      timeoutMs: 25_000,
       label: "memory-hybrid: evolution-neighbor",
       feature: CostFeature.evolutionPass,
+      logger: logger ?? {},
+      adaptiveStatePath,
     });
+    const raw = detail.content;
     const parsed = tryParseFirstJsonObject(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "")) as {
       tags?: unknown;
       summary?: unknown;

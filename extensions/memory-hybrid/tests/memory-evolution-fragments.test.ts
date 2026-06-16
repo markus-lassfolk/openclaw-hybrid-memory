@@ -14,10 +14,12 @@ import { _resetWalCircuitBreakerForTesting, walWrite } from "../services/wal-hel
 import type { WriteAheadLog } from "../backends/wal.js";
 import { vi } from "vitest";
 
-vi.mock("../services/chat.js", () => ({
-  chatCompleteWithRetry: vi.fn(async () =>
-    JSON.stringify({ tags: ["authentication", "oauth"], summary: "OAuth gateway authentication context" }),
-  ),
+vi.mock("../services/adaptive-maintenance-llm.js", () => ({
+  chatCompleteWithAdaptiveMaintenanceRetry: vi.fn(async () => ({
+    content: JSON.stringify({ tags: ["authentication", "oauth"], summary: "OAuth gateway authentication context" }),
+    model: "gpt-4o-mini",
+    attempts: 1,
+  })),
 }));
 
 describe("runMemoryEvolutionPass (#1914)", () => {
@@ -112,7 +114,8 @@ describe("runMemoryEvolutionPass (#1914)", () => {
       },
       {
         openai: {} as never,
-        nanoModels: ["test/nano"],
+        model: "test/nano",
+        fallbackModels: [],
       },
     );
     expect(result.llmCalls).toBeGreaterThan(0);

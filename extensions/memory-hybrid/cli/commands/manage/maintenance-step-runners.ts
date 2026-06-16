@@ -336,14 +336,19 @@ export function buildCliMaintenanceRunners(
 
   set("evolution-pass", async () => {
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const { getCronModelConfig, getLLMModelPreference } = await import("../../../config/index.js");
-    const nanoModels = getLLMModelPreference(getCronModelConfig(b.cfg), "nano");
+    const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");
+    const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(b.cfg, "maintenance");
     const openai = (b as unknown as { openai?: import("openai").default }).openai;
     const logger = (b as unknown as { logger?: { info?: (s: string) => void; warn?: (s: string) => void } }).logger;
+    const adaptiveStatePath = (b as unknown as { resolvedSqlitePath?: string }).resolvedSqlitePath
+      ? require("node:path").dirname((b as unknown as { resolvedSqlitePath: string }).resolvedSqlitePath) + "/.adaptive-llm-limits.json"
+      : undefined;
     const r = await runEvolutionPass(b.factsDb.getRawDb(), 200, b.cfg.lifecycle, {
       openai,
-      nanoModels,
+      model: defaultModel,
+      fallbackModels,
       logger,
+      adaptiveStatePath,
     });
     return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} llm_calls=${r.llmCalls} semantic=success`;
   });
@@ -922,12 +927,15 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
 
   runners.set("evolution-pass", async () => {
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
-    const { getCronModelConfig, getLLMModelPreference } = await import("../../../config/index.js");
-    const nanoModels = getLLMModelPreference(getCronModelConfig(deps.cfg), "nano");
+    const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");
+    const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(deps.cfg, "maintenance");
+    const adaptiveStatePath = dirname(deps.resolvedSqlitePath) + "/.adaptive-llm-limits.json";
     const r = await runEvolutionPass(deps.factsDb.getRawDb(), 200, deps.cfg.lifecycle, {
       openai: deps.openai,
-      nanoModels,
+      model: defaultModel,
+      fallbackModels,
       logger: deps.logger,
+      adaptiveStatePath,
     });
     return `scanned=${r.scanned} evolved=${r.evolved} neighbors=${r.neighborsUpdated} llm_calls=${r.llmCalls} semantic=success`;
   });
