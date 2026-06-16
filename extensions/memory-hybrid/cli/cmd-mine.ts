@@ -37,19 +37,35 @@ export async function executeMineCommand(
       category: string;
       id: string;
     }) => Promise<unknown>;
+    delete: (factId: string) => Promise<boolean>;
   },
   embeddings?: { embed: (text: string) => Promise<number[]>; modelName: string },
 ): Promise<void> {
   if (opts.undo) {
     const db = factsDb.getRawDb();
     const now = Math.floor(Date.now() / 1000);
+    const factIds = db
+      .prepare(
+        `SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL`,
+      )
+      .all(opts.undo)
+      .map((r: { id: string }) => r.id) as string[];
     const result = db
       .prepare(
         `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'
          WHERE mine_batch_id = ? AND superseded_at IS NULL`,
       )
       .run(now, opts.undo);
-    console.log(`Undid mine batch ${opts.undo}: ${result.changes} fact(s) superseded.`);
+    if (vectorDb && factIds.length > 0) {
+      for (const factId of factIds) {
+        try {
+          await vectorDb.delete(factId);
+        } catch (err) {
+          console.warn(`Failed to delete vector for fact ${factId}: ${err}`);
+        }
+      }
+    }
+    console.log(`Undid mine batch ${opts.undo}: ${result.changes} fact(s) superseded, ${factIds.length} vector(s) deleted.`);
     return;
   }
   if (!path) {
@@ -195,6 +211,7 @@ export function registerMineCommand(
       category: string;
       id: string;
     }) => Promise<unknown>;
+    delete: (factId: string) => Promise<boolean>;
   },
   embeddings?: { embed: (text: string) => Promise<number[]>; modelName: string },
 ): void {

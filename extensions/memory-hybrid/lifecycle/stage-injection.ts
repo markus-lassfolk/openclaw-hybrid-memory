@@ -265,7 +265,7 @@ async function runInjection(
       const turns = segmentTranscriptIntoTurns(messages);
       const attr = attributeInjectionToTurn(turns, sideEffects.accessedIds);
       const assistantTurn = turns.find((t) => t.index === attr.turnIndex);
-      if (assistantTurn) {
+      if (assistantTurn && assistantTurn.role === "assistant") {
         attr.referencedFactIds = detectReferencedFactIds(assistantTurn.text, attr.injectedFactIds);
       }
       try {

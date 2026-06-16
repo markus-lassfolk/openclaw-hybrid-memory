@@ -604,7 +604,7 @@ export async function runPassiveObserver(
           (prepareMemoryMetadataForStorage(fact.category) as MemoryCategory | undefined) ?? fact.category;
 
         const dedupWindow = opts.dedupWindowMinutes ?? 30;
-        const dedupInput = { text: storedText, entity: null, key: null, sessionId };
+        const dedupInput = { text: storedText, entity: null, key: null, sessionId, scope: "global", scopeTarget: null };
         if (typeof factsDb.getRawDb === "function") {
           const dedupCheck = checkCaptureDedupWindow(factsDb.getRawDb(), dedupInput, dedupWindow);
           if (dedupCheck.skip) continue;

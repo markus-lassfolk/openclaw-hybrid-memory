@@ -10,6 +10,8 @@ export type CaptureDedupInput = {
   entity?: string | null;
   key?: string | null;
   sessionId?: string | null;
+  scope?: string | null;
+  scopeTarget?: string | null;
 };
 
 /** Normalize capture content for dedup fingerprint. */
@@ -34,13 +36,17 @@ export function checkCaptureDedupWindow(
   if (windowMinutes <= 0) return { skip: false };
   const hash = computeCaptureDedupHash(input);
   const cutoff = Math.floor(Date.now() / 1000) - windowMinutes * 60;
+  const scope = input.scope ?? "global";
+  const scopeTarget = scope === "global" ? null : (input.scopeTarget ?? null);
   const row = db
     .prepare(
       `SELECT id FROM facts
        WHERE content_dedup_hash = ? AND superseded_at IS NULL AND created_at >= ?
+         AND COALESCE(scope, 'global') = ?
+         AND (? IS NULL OR scope_target = ? OR (scope_target IS NULL AND ? IS NULL))
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .get(hash, cutoff) as { id: string } | undefined;
+    .get(hash, cutoff, scope, scopeTarget, scopeTarget, scopeTarget) as { id: string } | undefined;
   if (!row) return { skip: false };
   db.prepare(
     `UPDATE facts SET duplicate_count = COALESCE(duplicate_count, 0) + 1 WHERE id = ?`,

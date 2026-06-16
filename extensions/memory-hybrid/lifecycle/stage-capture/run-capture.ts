@@ -376,6 +376,8 @@ export async function runCapture(
             entity: extracted.entity,
             key: extracted.key,
             sessionId: captureProvenance.sessionId ?? null,
+            scope: "global",
+            scopeTarget: null,
           };
           const dedupCheck = checkCaptureDedupWindow(ctx.factsDb.getRawDb(), dedupInput, dedupWindow);
           if (dedupCheck.skip) {

@@ -37,7 +37,7 @@ export function runEvolutionPass(db: DatabaseSync, limit = 500): EvolutionPassRe
   const now = Math.floor(Date.now() / 1000);
   const update = db.prepare(
     `UPDATE facts SET quality_score = ?, evolution_version = COALESCE(evolution_version, 0) + 1,
-     evolution_reason = ?, revision_count = COALESCE(revision_count, 0) + 1
+     evolution_reason = ?
      WHERE id = ? AND id NOT IN (SELECT fact_id FROM verified_facts)`,
   );
 
