@@ -3,6 +3,8 @@
  */
 
 import { appendFactProvenance } from "../backends/facts-db/provenance-json.js";
+import type { FactsDB } from "../backends/facts-db.js";
+import { GLOBAL_ONLY_SCOPE_SENTINEL } from "../utils/scope-filter.js";
 
 export const DEFAULT_PIN_QUOTA = 10;
 
@@ -52,10 +54,10 @@ export function countPinnedFacts(
       sql += " AND scope = 'session' AND scope_target = ?";
       params.push(scopeFilter.sessionId);
     } else if (scopeFilter.userId) {
-      sql += " AND ((scope = 'user' AND scope_target = ?) OR scope = 'global')";
+      sql += " AND scope = 'user' AND scope_target = ?";
       params.push(scopeFilter.userId);
-    } else if (scopeFilter.agentId) {
-      sql += " AND ((scope = 'agent' AND scope_target = ?) OR scope = 'global')";
+    } else if (scopeFilter.agentId && scopeFilter.agentId !== GLOBAL_ONLY_SCOPE_SENTINEL) {
+      sql += " AND scope = 'agent' AND scope_target = ?";
       params.push(scopeFilter.agentId);
     } else {
       sql += " AND scope = 'global'";

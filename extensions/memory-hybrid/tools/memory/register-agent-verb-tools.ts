@@ -23,6 +23,29 @@ import { resolveToolVaultBackends, listToolVaultHandles } from "./vault-resolve.
 
 const DEFAULT_SNOOZE_DAYS = 30;
 
+function resolveFactInToolVaults(
+  runtime: MemoryToolRuntime,
+  vaultParam: string | undefined,
+  idOrQuery: string,
+  scopeFilter: ReturnType<typeof buildToolScopeFilter>,
+): { fact: NonNullable<ReturnType<typeof resolveFactByIdOrQuery>>; factsDb: typeof runtime.factsDb } | null {
+  const trimmed = vaultParam?.trim();
+  if (trimmed && trimmed !== "default" && trimmed !== "all") {
+    const { factsDb } = resolveToolVaultBackends(runtime, trimmed);
+    const fact = resolveFactByIdOrQuery(factsDb, idOrQuery, scopeFilter);
+    return fact ? { fact, factsDb } : null;
+  }
+  if (trimmed === "all" && runtime.resolveAllVaults) {
+    for (const handle of runtime.resolveAllVaults()) {
+      const fact = resolveFactByIdOrQuery(handle.factsDb, idOrQuery, scopeFilter);
+      if (fact) return { fact, factsDb: handle.factsDb };
+    }
+    return null;
+  }
+  const fact = resolveFactByIdOrQuery(runtime.factsDb, idOrQuery, scopeFilter);
+  return fact ? { fact, factsDb: runtime.factsDb } : null;
+}
+
 function resolveRetrievalV2Config(cfg: HybridMemoryConfig) {
   const r = cfg.retrieval;
   return {
@@ -116,6 +139,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           config: resolveRetrievalV2Config(cfg),
           recallId,
           openai,
+          closedLoop: cfg.closedLoop,
         });
         recordIntentDistribution(v2.intent.intent);
 
@@ -163,11 +187,11 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           multiAgent: cfg.multiAgent,
           autoRecall: cfg.autoRecall,
         });
-        const { factsDb: activeFactsDb } = resolveToolVaultBackends(runtime, args.vault);
-        const fact = resolveFactByIdOrQuery(activeFactsDb, key, scopeFilter);
-        if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
+        const resolved = resolveFactInToolVaults(runtime, args.vault, key, scopeFilter);
+        if (!resolved) return { content: [{ type: "text", text: "No matching fact found." }] };
+        const { fact, factsDb: vaultFactsDb } = resolved;
         const quota = cfg.retrieval?.recallFeedback?.pinQuota ?? DEFAULT_PIN_QUOTA;
-        const { allowed, current } = checkPinQuota(activeFactsDb, quota, scopeFilter);
+        const { allowed, current } = checkPinQuota(vaultFactsDb, quota, scopeFilter);
         if (!allowed) {
           return {
             content: [
@@ -179,7 +203,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           };
         }
         const success = pinFact(
-          activeFactsDb,
+          vaultFactsDb,
           fact.id,
           args.reason ?? "agent pin",
           api.context?.sessionId ?? undefined,
@@ -211,9 +235,9 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           multiAgent: cfg.multiAgent,
           autoRecall: cfg.autoRecall,
         });
-        const { factsDb: activeFactsDb } = resolveToolVaultBackends(runtime, args.vault);
-        const fact = resolveFactByIdOrQuery(activeFactsDb, key, scopeFilter);
-        if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
+        const resolved = resolveFactInToolVaults(runtime, args.vault, key, scopeFilter);
+        if (!resolved) return { content: [{ type: "text", text: "No matching fact found." }] };
+        const { fact, factsDb: vaultFactsDb } = resolved;
         let untilSec: number;
         if (args.until) {
           const parsed = Date.parse(args.until);
@@ -223,7 +247,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         } else {
           untilSec = Math.floor(Date.now() / 1000) + DEFAULT_SNOOZE_DAYS * 86_400;
         }
-        snoozeFact(activeFactsDb, fact.id, untilSec);
+        snoozeFact(vaultFactsDb, fact.id, untilSec);
         return {
           content: [
             {
@@ -319,22 +343,17 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           multiAgent: cfg.multiAgent,
           autoRecall: cfg.autoRecall,
         });
+        const { scope, scopeTarget } = scopeFilter
+          ? scopeFieldsFromFilter(scopeFilter)
+          : { scope: "global" as const, scopeTarget: undefined };
         const db = factsDb.getRawDb();
         let sql = `SELECT text FROM facts WHERE category = 'diary' AND superseded_at IS NULL`;
         const params: unknown[] = [];
-        if (scopeFilter) {
-          if (scopeFilter.sessionId) {
-            sql += ` AND scope = 'session' AND scope_target = ?`;
-            params.push(scopeFilter.sessionId);
-          } else if (scopeFilter.userId) {
-            sql += ` AND ((scope = 'user' AND scope_target = ?) OR scope = 'global')`;
-            params.push(scopeFilter.userId);
-          } else if (scopeFilter.agentId) {
-            sql += ` AND ((scope = 'agent' AND scope_target = ?) OR scope = 'global')`;
-            params.push(scopeFilter.agentId);
-          } else {
-            sql += ` AND scope = 'global'`;
-          }
+        if (scope === "global") {
+          sql += ` AND scope = 'global'`;
+        } else {
+          sql += ` AND scope = ? AND scope_target IS ?`;
+          params.push(scope, scopeTarget ?? null);
         }
         sql += ` ORDER BY created_at DESC LIMIT ?`;
         params.push(limit);

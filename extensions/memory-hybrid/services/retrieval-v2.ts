@@ -82,6 +82,8 @@ export type ApplyRetrievalV2Opts = {
   nowSec?: number;
   focusTopic?: string;
   factsDb?: { getRawDb(): import("node:sqlite").DatabaseSync };
+  /** When enabled, boost recall ranking for closed-loop rules by importance (#1916). */
+  closedLoop?: { enabled?: boolean };
   /** When false, skip bypass telemetry (pipeline probe already recorded). */
   recordBypassTelemetry?: boolean;
 };
@@ -153,7 +155,10 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
     };
     const v2 = computeCompositeScore(input, { ...compositeCfg, version: 2 });
     const v1 = computeCompositeScore(input, { ...compositeCfg, version: 1 });
-    const useScore = compositeCfg.version === 2 ? v2 : v1;
+    let useScore = compositeCfg.version === 2 ? v2 : v1;
+    if (opts.closedLoop?.enabled !== false && entry.category === "rule") {
+      useScore += Math.max(0, entry.importance - 0.5) * 0.1;
+    }
     return { result: r, score: useScore, text: entry.text, v1, v2 };
   });
 
