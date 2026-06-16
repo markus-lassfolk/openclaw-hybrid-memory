@@ -21,6 +21,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+---
+
+## [2026.6.160] - 2026-06-16
+
 ### Added (Epic #1918 — ClawMem-inspired memory cycle)
 
 - **#1910 Retrieval v2**: intent classifier (`WHY`/`WHEN`/`ENTITY`/`WHAT`/`GENERAL`), composite score (v1 shadow / v2 active), BM25 strong-signal bypass (semantic skip only; composite/MMR still run), MMR diversity demotion, position-aware cross-encoder rerank blend, `OPENCLAW_HM_VERBOSE` structured logging, recall stage stats + `/api/viewer/recall-stats`, labeled corpus + NDCG gate in `tests/perf/recall-benchmark-gate.test.ts`.
@@ -31,6 +35,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **#1915 Conversation mining**: `hybrid-mem mine <path>` CLI with transcript parsers and idempotent content-hash ingest.
 - **#1916 Recall feedback**: recall signals, memory nudge system, contamination guard, closed-loop `applyToRecall` rule boosts in retrieval v2.
 - **#1917 Operator DX**: multi-vault fan-out, per-vault WAL paths, vault registry teardown on reload, per-WAL circuit breaker sentinels (`{walPath}.disabled`), doctor retrieval-health block, `hybrid-mem bootstrap`, `hybrid-mem focus`.
+
+### Changed
+
+- Bumped plugin, `openclaw.plugin.json`, and `openclaw-hybrid-memory-install` package versions to **2026.6.160**.
 
 ### Notes
 
