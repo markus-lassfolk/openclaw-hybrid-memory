@@ -208,7 +208,7 @@ export function createPluginService(ctx: PluginServiceContext) {
 
       if (typeof factsDb.getRawDb === "function") {
         registerWorkerLeaseShutdown(
-          factsDb.getRawDb(),
+          factsDb,
           `plugin-${process.pid}`,
           api.logger as { info?: (msg: string) => void; warn?: (msg: string) => void },
         );

@@ -1117,7 +1117,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                 operation: "memory_store_detect",
                 durationMs: Date.now() - contradictionStarted,
                 warnBudgetMs: cfg.retrieval.contradictionLatencyWarnMs,
-                outcome: contradictions.length > 0 ? "degraded" : "ok",
+                outcome: "ok",
                 fields: {
                   hit_count: contradictions.length,
                   entity: entity ?? null,

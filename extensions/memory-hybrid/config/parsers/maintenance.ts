@@ -188,7 +188,7 @@ function parseWorkerLeasesConfig(raw: unknown) {
   const quietWindow =
     quietRaw && typeof quietRaw === "object"
       ? {
-          enabled: quietRaw.enabled !== false,
+          enabled: quietRaw.enabled === true,
           start:
             typeof quietRaw.start === "string" && quietRaw.start.trim().length > 0
               ? quietRaw.start.trim()
@@ -200,7 +200,7 @@ function parseWorkerLeasesConfig(raw: unknown) {
         }
       : undefined;
   return {
-    enabled: o.enabled !== false,
+    enabled: o.enabled === true,
     defaultTtlSeconds:
       typeof o.defaultTtlSeconds === "number" && o.defaultTtlSeconds > 0
         ? Math.floor(o.defaultTtlSeconds)

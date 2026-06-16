@@ -269,7 +269,7 @@ const sessionLeaseCleanups = new Map<string, () => void>();
 
 /** Register SIGTERM + process exit cleanup for leases held by this session. */
 export function registerWorkerLeaseShutdown(
-  db: DatabaseSync,
+  factsDbStore: { getRawDb: () => DatabaseSync; isOpen: () => boolean },
   ownerSessionId: string,
   logger?: { info?: (msg: string) => void; warn?: (msg: string) => void },
 ): void {
@@ -277,6 +277,8 @@ export function registerWorkerLeaseShutdown(
 
   const cleanup = (): void => {
     try {
+      if (!factsDbStore.isOpen()) return;
+      const db = factsDbStore.getRawDb();
       const n = releaseAllLeasesForSession(db, ownerSessionId);
       if (n > 0) logger?.info?.(`worker-lease: released ${n} lease(s) for session ${ownerSessionId}`);
     } catch (err) {

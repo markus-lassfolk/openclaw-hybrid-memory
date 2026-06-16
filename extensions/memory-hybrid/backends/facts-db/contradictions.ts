@@ -365,9 +365,6 @@ export function repairUndetectedContradictions(
             if (hits.some((h) => h.oldFactId === older.id)) {
               pairsRepaired++;
               pairsFallback++;
-            } else if (hits.length > 0) {
-              pairsRepaired++;
-              pairsFallback++;
             } else {
               pairsFailed++;
             }
