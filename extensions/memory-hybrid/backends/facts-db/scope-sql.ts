@@ -14,7 +14,9 @@ export function scopedRowMatchesFilter(
 ): boolean {
   const effectiveScope = scope ?? "global";
   if (effectiveScope === "global") return true;
-  if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) return true;
+  if (!filter || (!filter.userId && !filter.agentId && !filter.sessionId)) {
+    return false;
+  }
   const target = scopeTarget ?? null;
   return (
     (effectiveScope === "user" && (filter.userId ?? null) === target) ||

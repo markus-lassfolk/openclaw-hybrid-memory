@@ -143,11 +143,9 @@ function reinforceExistingLink(db: DatabaseSync, sourceId: string, targetId: str
     .get(sourceId, targetId) as { id: string; confidence: number } | undefined;
   if (!row) return;
   const bumped = Math.min(1, row.confidence * 1.1);
-  db.prepare("UPDATE episode_causal_links SET confidence = ?, last_reinforced_at = ? WHERE id = ?").run(
-    bumped,
-    nowSec,
-    row.id,
-  );
+  db.prepare(
+    "UPDATE episode_causal_links SET confidence = ?, last_reinforced_at = ?, last_decay_at = NULL WHERE id = ?",
+  ).run(bumped, nowSec, row.id);
 }
 
 function persistLink(
@@ -179,8 +177,12 @@ export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCa
   const { clause: scopeClause, params: scopeParams } = episodeCandidateScopeClause(newEpisode);
 
   const rows = db
-    .prepare(`SELECT * FROM episodes WHERE created_at >= ? AND id != ?${scopeClause} ORDER BY timestamp DESC LIMIT ?`)
-    .all(sinceSec, newEpisode.id, ...scopeParams, MAX_CANDIDATES * 2) as Array<Record<string, unknown>>;
+    .prepare(
+      `SELECT * FROM episodes WHERE created_at >= ? AND id != ? AND timestamp <= ?${scopeClause} ORDER BY timestamp DESC LIMIT ?`,
+    )
+    .all(sinceSec, newEpisode.id, newEpisode.timestamp, ...scopeParams, MAX_CANDIDATES * 2) as Array<
+      Record<string, unknown>
+    >;
 
   const advisory: CausalLinkCandidate[] = [];
   const persisted: CausalLinkCandidate[] = [];
@@ -189,6 +191,7 @@ export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCa
   for (const row of rows) {
     if (evaluated >= MAX_CANDIDATES) break;
     const candidate = rowToEpisode(row);
+    if (candidate.timestamp > newEpisode.timestamp) continue;
     const candSignals = extractEpisodeSignals(db, candidate);
 
     const hasOverlap =
@@ -234,26 +237,34 @@ export function inferCausalLinks(db: DatabaseSync, newEpisode: Episode): InferCa
 export function decayEpisodeCausalLinks(db: DatabaseSync): { updated: number; deleted: number } {
   const nowSec = Math.floor(Date.now() / 1000);
   const rows = db
-    .prepare("SELECT id, confidence, last_reinforced_at, created_at FROM episode_causal_links")
+    .prepare(
+      "SELECT id, confidence, last_reinforced_at, last_decay_at, created_at FROM episode_causal_links",
+    )
     .all() as Array<{
     id: string;
     confidence: number;
     last_reinforced_at: number | null;
+    last_decay_at: number | null;
     created_at: number;
   }>;
 
   let updated = 0;
   let deleted = 0;
   for (const row of rows) {
-    const anchor = row.last_reinforced_at ?? row.created_at;
-    const days = daysBetween(anchor, nowSec);
-    const factor = 0.5 ** (days / 30);
+    const decayAnchor = row.last_decay_at ?? row.last_reinforced_at ?? row.created_at;
+    const daysSinceDecay = daysBetween(decayAnchor, nowSec);
+    if (daysSinceDecay <= 0) continue;
+    const factor = 0.5 ** (daysSinceDecay / 30);
     const newConf = row.confidence * factor;
     if (newConf < 0.2) {
       db.prepare("DELETE FROM episode_causal_links WHERE id = ?").run(row.id);
       deleted++;
     } else if (Math.abs(newConf - row.confidence) > 0.001) {
-      db.prepare("UPDATE episode_causal_links SET confidence = ? WHERE id = ?").run(newConf, row.id);
+      db.prepare("UPDATE episode_causal_links SET confidence = ?, last_decay_at = ? WHERE id = ?").run(
+        newConf,
+        nowSec,
+        row.id,
+      );
       updated++;
     }
   }

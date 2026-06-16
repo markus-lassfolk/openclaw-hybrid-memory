@@ -14,6 +14,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import type { EpisodeOutcome } from "../../types/memory.js";
 import { formatTimestampUtc } from "../../utils/dates.js";
+import { globalOnlyScopeFilter } from "../../utils/scope-filter.js";
 
 import type { MemoryToolRuntime } from "./runtime.js";
 
@@ -61,7 +62,7 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
     const _execRecordEpisode = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
         const episodeStarted = Date.now();
-        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
         const recorded = factsDb.recordEpisodeWithCausalLinks({
           event: params.event as string,
           outcome: params.outcome as EpisodeOutcome,
@@ -158,7 +159,7 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
       "Search episodic memories — structured records of events with outcomes and timestamps. Filter by outcome (success/failure/partial/unknown), time range, or procedure. Returns events ordered by most recent first.";
     const _execSearchEpisodes = async (_toolCallId: string, params: Record<string, unknown>) => {
       try {
-        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
         const episodes = factsDb.searchEpisodes({
           query: params.query as string | undefined,
           outcome: params.outcome as EpisodeOutcome[] | undefined,
@@ -224,7 +225,7 @@ export function registerEpisodeTools(runtime: MemoryToolRuntime): void {
         ),
       }),
       async execute(_toolCallId: string, params: Record<string, unknown>) {
-        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg) ?? globalOnlyScopeFilter();
         const episodeId = typeof params.episodeId === "string" ? params.episodeId.trim() : "";
         if (!episodeId) throw new Error("episodeId is required");
         const depth = typeof params.depth === "number" && params.depth > 0 ? Math.min(10, Math.floor(params.depth)) : 5;

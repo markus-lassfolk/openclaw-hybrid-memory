@@ -8,12 +8,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { _testing } from "../index.js";
 import {
   acquireLease,
+  heartbeatLease,
   releaseAllLeasesForSession,
   releaseLease,
 } from "../services/worker-lease.js";
 import { searchFts } from "../services/fts-search.js";
-import { buildEpisodeCausalChain } from "../services/episode-causal-inference.js";
+import { buildEpisodeCausalChain, decayEpisodeCausalLinks } from "../services/episode-causal-inference.js";
 import { scoreFactContradiction, repairUndetectedContradictions } from "../backends/facts-db/contradictions.js";
+import { scopedRowMatchesFilter } from "../backends/facts-db/scope-sql.js";
+import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 import { parseRetrievalConfig } from "../config/parsers/retrieval.js";
 import { resolveRecallRrfStrategies } from "../services/recall-rrf-strategies.js";
 import { emitFeatureTelemetry } from "../services/feature-telemetry.js";
@@ -44,6 +47,14 @@ describe("worker leases (#1904)", () => {
     const c = acquireLease(raw, "crystallization", "session-b", { ttlSeconds: 120 });
     expect(c).toBe(true);
     releaseAllLeasesForSession(raw, "session-b");
+  });
+
+  it("heartbeatLease returns false when the caller no longer owns the lease", () => {
+    const raw = db.getRawDb();
+    expect(acquireLease(raw, "crystallization", "owner-a", { ttlSeconds: 120 })).toBe(true);
+    expect(heartbeatLease(raw, "crystallization", "owner-b", 120)).toBe(false);
+    expect(heartbeatLease(raw, "crystallization", "owner-a", 120)).toBe(true);
+    releaseAllLeasesForSession(raw, "owner-a");
   });
 });
 
@@ -192,5 +203,84 @@ describe("episode causal chain (#1903)", () => {
     expect(failure.causallyInferredLinks.length).toBeGreaterThan(0);
     const chain = buildEpisodeCausalChain(db.getRawDb(), failure.episode.id, 5, false);
     expect(chain.some((c) => c.episodeId === prior.id)).toBe(true);
+  });
+
+  it("does not infer future episodes as upstream causes", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const future = db.recordEpisodeWithCausalLinks({
+      event: "scheduled deploy",
+      outcome: "unknown",
+      timestamp: now + 7200,
+      tags: ["gateway"],
+      importance: 0.5,
+    }).episode;
+
+    const current = db.recordEpisodeWithCausalLinks({
+      event: "deploy attempt",
+      outcome: "failure",
+      timestamp: now,
+      tags: ["gateway"],
+      importance: 0.8,
+    });
+
+    expect(current.causallyInferredLinks.some((l) => l.episodeId === future.id)).toBe(false);
+  });
+
+  it("decays causal links incrementally without compounding", () => {
+    const raw = db.getRawDb();
+    const now = Math.floor(Date.now() / 1000);
+    const source = db.recordEpisodeWithCausalLinks({
+      event: "older event",
+      outcome: "success",
+      timestamp: now - 7200,
+      importance: 0.5,
+    }).episode;
+    const target = db.recordEpisodeWithCausalLinks({
+      event: "newer event",
+      outcome: "failure",
+      timestamp: now,
+      importance: 0.8,
+    }).episode;
+    raw.prepare("DELETE FROM episode_causal_links").run();
+    raw.prepare(
+      `INSERT INTO episode_causal_links (id, source_episode_id, target_episode_id, confidence, score_breakdown, last_reinforced_at, created_at)
+       VALUES (?, ?, ?, ?, ?, NULL, ?)`,
+    ).run("link-1", source.id, target.id, 0.5, "{}", now - 86400);
+
+    const first = decayEpisodeCausalLinks(raw);
+    expect(first.updated + first.deleted).toBeGreaterThan(0);
+    const afterFirst = raw
+      .prepare("SELECT confidence FROM episode_causal_links WHERE id = ?")
+      .get("link-1") as { confidence: number };
+    const confAfterFirst = afterFirst.confidence;
+
+    const second = decayEpisodeCausalLinks(raw);
+    expect(second.updated).toBe(0);
+    const afterSecond = raw
+      .prepare("SELECT confidence FROM episode_causal_links WHERE id = ?")
+      .get("link-1") as { confidence: number };
+    expect(afterSecond.confidence).toBeCloseTo(confAfterFirst, 5);
+  });
+
+  it("causal chain fails closed for scoped episodes without trusted scope", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const scoped = db.recordEpisodeWithCausalLinks({
+      event: "scoped session incident",
+      outcome: "failure",
+      timestamp: now,
+      scope: "session",
+      scopeTarget: "secret-session",
+      importance: 0.8,
+    }).episode;
+
+    const chain = buildEpisodeCausalChain(
+      db.getRawDb(),
+      scoped.id,
+      5,
+      false,
+      globalOnlyScopeFilter(),
+    );
+    expect(chain).toEqual([]);
+    expect(scopedRowMatchesFilter("session", "secret-session", undefined)).toBe(false);
   });
 });

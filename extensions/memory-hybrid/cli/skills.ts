@@ -635,6 +635,7 @@ export function registerSkillsCommands(mem: Chainable, ctx: SkillsCliContext): v
 
         const result = runCrystallizationProposalCycle(ctx.cfg, {
           changeFeed: ctx.changeFeed ?? null,
+          factsDb,
         });
         if (opts.json) {
           console.log(JSON.stringify({ ok: result.skippedReason !== "stores-unavailable", ...result }, null, 2));

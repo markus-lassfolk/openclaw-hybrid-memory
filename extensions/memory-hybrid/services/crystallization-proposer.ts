@@ -317,12 +317,19 @@ export class CrystallizationProposer {
           const heartbeatMs = this.activeLease.workerLeases.heartbeatIntervalSeconds * 1000;
           const nowMs = Date.now();
           if (nowMs - this.activeLease.lastHeartbeatAtMs >= heartbeatMs) {
-            heartbeatLease(
+            const stillHeld = heartbeatLease(
               this.activeLease.db,
               "crystallization",
               this.activeLease.ownerSessionId,
               this.activeLease.workerLeases.defaultTtlSeconds,
             );
+            if (!stillHeld) {
+              this.activeLease = null;
+              reasons.push(
+                "Lost crystallization lease during cycle (another process may have taken over); stopping early",
+              );
+              break;
+            }
             this.activeLease.lastHeartbeatAtMs = nowMs;
           }
         }

@@ -1500,6 +1500,7 @@ export function runFactsMigrations(db: DatabaseSync): void {
   // Issues #1901–#1904: worker leases, episode causal links, contradiction resolved_at
   migrateWorkerLeasesTable(db);
   migrateEpisodeCausalLinksTable(db);
+  migrateEpisodeCausalLinksLastDecayAt(db);
   migrateContradictionsResolvedAt(db);
   migrateEpisodeRelationsConfidence(db);
 }
@@ -1622,6 +1623,13 @@ function migrateEpisodeCausalLinksTable(db: DatabaseSync): void {
   db.exec(
     "CREATE INDEX IF NOT EXISTS idx_ecl_reinforced ON episode_causal_links(last_reinforced_at)",
   );
+}
+
+function migrateEpisodeCausalLinksLastDecayAt(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(episode_causal_links)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "last_decay_at")) {
+    db.exec("ALTER TABLE episode_causal_links ADD COLUMN last_decay_at INTEGER");
+  }
 }
 
 /** Cursor support for memory_contradictions recall surface (Issue #1902). */
