@@ -130,7 +130,10 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
             ],
           };
         }
-        pinFact(factsDb, fact.id, args.reason ?? "agent pin", api.context?.sessionId ?? undefined);
+        const success = pinFact(factsDb, fact.id, args.reason ?? "agent pin", api.context?.sessionId ?? undefined);
+        if (!success) {
+          return { content: [{ type: "text", text: `Failed to pin fact ${fact.id} (may be superseded or missing)` }] };
+        }
         return { content: [{ type: "text", text: `Pinned fact ${fact.id}` }] };
       },
     },

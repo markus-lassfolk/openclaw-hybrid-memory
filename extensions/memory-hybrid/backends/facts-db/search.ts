@@ -45,6 +45,8 @@ function passesTwoPhaseFilter(
   } else if (!opts.includeSuperseded) {
     if (row.superseded_at != null) return false;
   }
+  const snoozedUntil = row.snoozed_until as number | null | undefined;
+  if (snoozedUntil != null && snoozedUntil > opts.nowSec) return false;
   if (opts.tag?.trim()) {
     const t = `,${((row.tags as string) ?? "").toLowerCase()},`;
     if (!t.includes(`,${opts.tag.toLowerCase().trim()},`)) return false;
