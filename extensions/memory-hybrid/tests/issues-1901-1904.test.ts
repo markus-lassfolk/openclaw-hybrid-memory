@@ -60,9 +60,9 @@ describe("keyword recall (#1901)", () => {
 });
 
 describe("recall mode config (#1901 risk 3)", () => {
-  it("defaults to semantic for backward compatibility", () => {
+  it("defaults to hybrid for backward compatibility", () => {
     const cfg = parseRetrievalConfig({});
-    expect(cfg.defaultRecallMode).toBe("semantic");
+    expect(cfg.defaultRecallMode).toBe("hybrid");
   });
 
   it("allows hybrid via config", () => {

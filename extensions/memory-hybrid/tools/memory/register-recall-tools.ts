@@ -208,7 +208,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         mode: Type.Optional(
           Type.Union([Type.Literal("semantic"), Type.Literal("hybrid"), Type.Literal("keyword")], {
             description:
-              'Recall mode. When omitted, uses retrieval.defaultRecallMode from config (default: "semantic" for backward compatibility).',
+              'Recall mode. When omitted, uses retrieval.defaultRecallMode from config (default: "hybrid" for backward compatibility with multi-strategy RRF fusion).',
           }),
         ),
       }),

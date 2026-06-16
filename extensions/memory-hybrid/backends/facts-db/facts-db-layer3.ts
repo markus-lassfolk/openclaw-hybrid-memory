@@ -500,13 +500,13 @@ export class FactsDB extends FactsDBLayer2 {
   // ============================================================================
 
   recordEpisode(input: Parameters<typeof recordEpisodeImpl>[1]): Episode {
-    return recordEpisodeImpl(this.liveDb, input).episode;
+    return recordEpisodeImpl(this.liveDb, input, false).episode;
   }
 
   recordEpisodeWithCausalLinks(
     input: Parameters<typeof recordEpisodeImpl>[1],
   ): ReturnType<typeof recordEpisodeImpl> {
-    return recordEpisodeImpl(this.liveDb, input);
+    return recordEpisodeImpl(this.liveDb, input, true);
   }
 
   searchEpisodes(

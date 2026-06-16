@@ -135,7 +135,7 @@ export type RetrievalConfig = {
   fts5TopK: number;
   /**
    * Default recall mode when `memory_recall` is called without an explicit `mode` argument.
-   * Default: "semantic" (preserves pre-#1901 behavior). Set to "hybrid" to enable BM25+RRF fusion by default.
+   * Default: "hybrid" (preserves pre-#1901 behavior with multi-strategy RRF fusion).
    */
   defaultRecallMode: "semantic" | "hybrid" | "keyword";
   /** Warn in logs when explicit `memory_recall` exceeds this latency (default 150ms). */

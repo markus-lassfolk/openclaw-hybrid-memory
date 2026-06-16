@@ -265,7 +265,10 @@ export function listWorkerLeases(db: DatabaseSync): WorkerLeaseRow[] {
   }));
 }
 
-const sessionLeaseCleanups = new Map<string, () => void>();
+const sessionLeaseCleanups = new Map<
+  string,
+  { cleanup: () => void; onSigterm: () => void; onBeforeExit: () => void }
+>();
 
 /** Register SIGTERM + process exit cleanup for leases held by this session. */
 export function registerWorkerLeaseShutdown(
@@ -273,7 +276,12 @@ export function registerWorkerLeaseShutdown(
   ownerSessionId: string,
   logger?: { info?: (msg: string) => void; warn?: (msg: string) => void },
 ): void {
-  if (sessionLeaseCleanups.has(ownerSessionId)) return;
+  // On plugin reload, remove old handlers before registering new ones
+  const existing = sessionLeaseCleanups.get(ownerSessionId);
+  if (existing) {
+    process.removeListener("SIGTERM", existing.onSigterm);
+    process.removeListener("beforeExit", existing.onBeforeExit);
+  }
 
   const cleanup = (): void => {
     try {
@@ -286,12 +294,14 @@ export function registerWorkerLeaseShutdown(
     }
   };
 
-  sessionLeaseCleanups.set(ownerSessionId, cleanup);
-
   const onSigterm = (): void => {
     cleanup();
     process.exit(0);
   };
+  const onBeforeExit = cleanup;
+
+  sessionLeaseCleanups.set(ownerSessionId, { cleanup, onSigterm, onBeforeExit });
+
   process.once("SIGTERM", onSigterm);
-  process.once("beforeExit", cleanup);
+  process.once("beforeExit", onBeforeExit);
 }

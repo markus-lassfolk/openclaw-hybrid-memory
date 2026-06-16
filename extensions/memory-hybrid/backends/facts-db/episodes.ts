@@ -66,6 +66,7 @@ export function recordEpisode(
     userId?: string;
     sessionId?: string;
   },
+  inferCausal?: boolean,
 ): RecordEpisodeResult {
   const id = randomUUID();
   const nowSec = Math.floor(Date.now() / 1000);
@@ -144,7 +145,7 @@ export function recordEpisode(
     createdAt: nowSec,
   };
 
-  const causal = inferCausalLinks(db, episode);
+  const causal = inferCausal ? inferCausalLinks(db, episode) : { advisory: [] };
   return { episode, causallyInferredLinks: causal.advisory };
 }
 
