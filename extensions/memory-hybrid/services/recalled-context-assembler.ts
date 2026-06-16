@@ -14,7 +14,7 @@ import {
 } from "./vault-context.js";
 import { resolveRecallInjectionText, resolveFactsDbForEntry } from "./fragment-recall.js";
 import { filterFactTextsForInjection, type InjectionFilterMode } from "./injection-filter.js";
-import { resolveVaultFactsTriples } from "./vault-facts-resolver.js";
+import { resolveVaultFactsTriplesMulti } from "./vault-facts-resolver.js";
 import { extractLastUserMessageText } from "../utils/extract-last-user-message.js";
 import type { LifecycleContext } from "../lifecycle/types.js";
 import type { SearchResult } from "../types/memory.js";
@@ -96,14 +96,15 @@ export function finalizeInjectionMemoryContent(
   const boundary = ctx.cfg.retrieval?.contextBoundary;
   const prompt = extractLastUserMessageText(event) ?? "";
   const vaultBudget = boundary?.vaultFactsMaxTokens?.balanced ?? 200;
-  let spoBlock = "";
-  if (vaultBudget > 0 && prompt.trim()) {
-    const triples = resolveVaultFactsTriples(ctx.factsDb, prompt);
-    spoBlock = buildVaultFactsBlock(triples, vaultBudget, estimateTokens);
-  }
-
   const vaultHandles =
     ctx.cfg.retrieval?.multiVaultFanOut === true && ctx.resolveAllVaults ? ctx.resolveAllVaults() : [];
+  const factsDbs =
+    vaultHandles.length > 0 ? vaultHandles.map((handle) => handle.factsDb) : [ctx.factsDb];
+  let spoBlock = "";
+  if (vaultBudget > 0 && prompt.trim()) {
+    const triples = resolveVaultFactsTriplesMulti(factsDbs, prompt);
+    spoBlock = buildVaultFactsBlock(triples, vaultBudget, estimateTokens);
+  }
 
   const useStructured = boundary?.legacyMemoryContextWrapper === false;
   if (!useStructured) {

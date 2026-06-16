@@ -49,6 +49,8 @@ export async function indexFactFragments(opts: {
       importance: Math.max(0.3, (parentFact.importance ?? 0.5) * 0.85),
       source: `fragment-of:${parentFact.id}`,
       tags: ["fragment", `parent:${parentFact.id}`],
+      scope: parentFact.scope,
+      scopeTarget: parentFact.scopeTarget ?? null,
     });
 
     if (result.skipped) continue;

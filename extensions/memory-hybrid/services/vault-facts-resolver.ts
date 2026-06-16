@@ -78,6 +78,27 @@ export function resolveVaultFactsTriples(
   return sortTriples(triples).slice(0, maxTriples);
 }
 
+/** Merge SPO triples from multiple vault facts DBs (multi-vault fan-out). */
+export function resolveVaultFactsTriplesMulti(
+  factsDbs: FactsDB[],
+  prompt: string,
+  maxTriples = 20,
+): SpoTriple[] {
+  if (factsDbs.length === 0) return [];
+  const seen = new Set<string>();
+  const merged: SpoTriple[] = [];
+  for (const factsDb of factsDbs) {
+    for (const triple of resolveVaultFactsTriples(factsDb, prompt, maxTriples)) {
+      const key = `${triple.subject}|${triple.predicate}|${triple.object}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(triple);
+      if (merged.length >= maxTriples) return sortTriples(merged);
+    }
+  }
+  return sortTriples(merged).slice(0, maxTriples);
+}
+
 function sortTriples(triples: SpoTriple[]): SpoTriple[] {
   return [...triples].sort((a, b) => {
     const sub = a.subject.localeCompare(b.subject);

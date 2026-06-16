@@ -169,6 +169,36 @@ describe("indexFactFragments (#1914)", () => {
     };
     expect(childCount.c).toBeGreaterThan(1);
   });
+
+  it("inherits parent scope and scopeTarget on fragment children", async () => {
+    const longBody = `${"## Scoped section\n\nSession-scoped operational detail.\n\n".repeat(40)}## More\n\nExtra context.`;
+    const parent = factsDb.store({
+      text: longBody,
+      category: "fact",
+      importance: 0.7,
+      source: "conversation",
+      scope: "session",
+      scopeTarget: "sess-fragment-scope",
+    });
+
+    await indexFactFragments({
+      factsDb,
+      vectorDb,
+      embeddings: { embed: async () => [0.1, 0.2, 0.3, 0.4], modelName: "test" },
+      parentFact: parent,
+      cfg: { enabled: true, minChars: 500 },
+    });
+
+    const children = factsDb
+      .getRawDb()
+      .prepare("SELECT scope, scope_target FROM facts WHERE parent_fact_id = ?")
+      .all(parent.id) as Array<{ scope: string; scope_target: string | null }>;
+    expect(children.length).toBeGreaterThan(0);
+    for (const child of children) {
+      expect(child.scope).toBe("session");
+      expect(child.scope_target).toBe("sess-fragment-scope");
+    }
+  });
 });
 
 describe("wal circuit breaker per path (#1917)", () => {
