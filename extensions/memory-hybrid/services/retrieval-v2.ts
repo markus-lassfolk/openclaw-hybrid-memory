@@ -82,6 +82,8 @@ export type ApplyRetrievalV2Opts = {
   nowSec?: number;
   focusTopic?: string;
   factsDb?: { getRawDb(): import("node:sqlite").DatabaseSync };
+  /** When false, skip bypass telemetry (pipeline probe already recorded). */
+  recordBypassTelemetry?: boolean;
 };
 
 export type RetrievalV2Outcome = {
@@ -115,7 +117,9 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
 
   const bypassDecision = evaluateBm25Bypass(opts.ftsResults, opts.config.bypass, intent.source === "explicit");
   recordRecallStageTiming("bypass_decision", 0);
-  recordBypassDecision(bypassDecision.bypass);
+  if (opts.recordBypassTelemetry !== false) {
+    recordBypassDecision(bypassDecision.bypass);
+  }
 
   const v1Order = opts.results.map((r) => r.entry.id);
   const compositeCfg = opts.config.compositeScore;
@@ -123,7 +127,6 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
     opts.factsDb && compositeCfg.version === 2
       ? aggregateRecallStats(opts.factsDb.getRawDb(), 30)
       : null;
-
   let finalResults: SearchResult[];
   let demotedCount = 0;
 

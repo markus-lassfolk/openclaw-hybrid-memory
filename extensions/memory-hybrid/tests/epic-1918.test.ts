@@ -11,7 +11,7 @@ import {
   computeFrequencyBoost,
 } from "../services/composite-score.js";
 import { jaccardBigramSimilarity, applyDiversityDemotion } from "../services/diversity.js";
-import { evaluateBm25Bypass } from "../services/retrieval-v2.js";
+import { evaluateBm25Bypass, applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../services/retrieval-v2.js";
 import { scanInjectionFilter, filterFactTextsForInjection } from "../services/injection-filter.js";
 import { buildVaultContextBlock, extractPromptNgrams } from "../services/vault-context.js";
 import { getHalfLifeForContentType, effectiveHalfLifeDays } from "../services/semantic-lifecycle.js";
@@ -29,7 +29,7 @@ import { computeCrossDomainBoost, isNeverReferencedCandidate } from "../services
 import { buildMemoryNudge, resetNudgeState } from "../services/memory-nudge.js";
 import { validateVaultPath } from "../config/vaults.js";
 import { positionAwareAlpha, blendRerankScores } from "../services/cross-encoder-reranker.js";
-import { resetRecallStats, recordRecallStageTiming, getRecallStatsSnapshot } from "../services/recall-timing-stats.js";
+import { resetRecallStats, recordRecallStageTiming, getRecallStatsSnapshot, recordBypassDecision } from "../services/recall-timing-stats.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -100,6 +100,22 @@ describe("BM25 bypass (#1910)", () => {
     const fts = [{ entry: { id: "a", text: "x" }, score: 0.9, backend: "sqlite" as const }, { entry: { id: "b", text: "y" }, score: 0.5, backend: "sqlite" as const }];
     const d = evaluateBm25Bypass(fts, { enabled: true, bm25MinScore: 0.85, bm25MinGap: 0.15 }, false);
     expect(d.bypass).toBe(true);
+  });
+
+  it("applyRetrievalV2 can skip bypass telemetry when pipeline already recorded", async () => {
+    resetRecallStats();
+    recordBypassDecision(true);
+    const fts = [{ entry: { id: "a", text: "x" }, score: 0.9, backend: "sqlite" as const }];
+    await applyRetrievalV2({
+      query: "test",
+      results: fts,
+      ftsResults: fts,
+      getEntry: (id) => fts.find((r) => r.entry.id === id)?.entry ?? null,
+      config: { ...DEFAULT_RETRIEVAL_V2_CONFIG, bypass: { enabled: false, bm25MinScore: 0, bm25MinGap: 0 } },
+      recallId: "test-span",
+      recordBypassTelemetry: false,
+    });
+    expect(getRecallStatsSnapshot().bypassRate).toBe(1);
   });
 });
 

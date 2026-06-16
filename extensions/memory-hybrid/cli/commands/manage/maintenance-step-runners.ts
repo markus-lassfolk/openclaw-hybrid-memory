@@ -912,6 +912,19 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     );
   }
 
+  runners.set("evolution-pass", async () => {
+    const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
+    const r = runEvolutionPass(deps.factsDb.getRawDb(), 200);
+    return `scanned=${r.scanned} evolved=${r.evolved} semantic=success`;
+  });
+
+  runners.set("per-folder-context", async () => {
+    const { regeneratePerFolderContext } = await import("../../../services/per-folder-context.js");
+    const memoryDir = dirname(deps.resolvedSqlitePath);
+    const r = regeneratePerFolderContext(deps.factsDb, memoryDir, { days: 7 });
+    return `written=${r.pathsWritten} facts=${r.factsScanned} semantic=success`;
+  });
+
   return runners;
 }
 

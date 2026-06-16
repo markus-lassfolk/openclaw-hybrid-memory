@@ -124,6 +124,14 @@ async function performHybridMemCliTeardown(): Promise<void> {
     });
   }
   try {
+    r.vaultRegistry?.closeAll();
+  } catch (err) {
+    capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+      subsystem: "cli",
+      operation: "hybrid-mem-teardown:close-vaults",
+    });
+  }
+  try {
     closeOldDatabases({
       factsDb: r.factsDb,
       edictStore: r.edictStore,

@@ -8,10 +8,11 @@ import { pinFact, resolveFactByIdOrQuery, snoozeFact, checkPinQuota, DEFAULT_PIN
 import { createRecallSpan } from "../../services/recall-timing.js";
 import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import { runMultiVaultExplicitDeepRetrieval } from "../../services/multi-vault-retrieval.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
 import { buildToolScopeFilter } from "../../utils/scope-filter.js";
 import type { MemoryToolRuntime } from "./runtime.js";
-import { resolveToolVaultBackends } from "./vault-resolve.js";
+import { resolveToolVaultBackends, listToolVaultHandles } from "./vault-resolve.js";
 
 const DEFAULT_SNOOZE_DAYS = 30;
 
@@ -41,13 +42,14 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         query: Type.String({ description: "Natural language recall query" }),
         full: Type.Optional(Type.Boolean({ description: "Return full fact text" })),
         limit: Type.Optional(Type.Number({ description: "Max results (default 5)" })),
-        vault: Type.Optional(Type.String({ description: "Named vault from plugin config vaults map" })),
+        vault: Type.Optional(Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" })),
       }),
       async execute(_id, args: { query?: string; full?: boolean; limit?: number; vault?: string }) {
         const query = String(args.query ?? "").trim();
         if (!query) return { content: [{ type: "text", text: "Query is required." }] };
         const limit = typeof args.limit === "number" ? Math.min(20, args.limit) : 5;
         const { factsDb: activeFactsDb, vectorDb: activeVectorDb } = resolveToolVaultBackends(runtime, args.vault);
+        const vaultHandles = listToolVaultHandles(runtime, args.vault);
         const recallId = createRecallSpan("retrieve");
 
         const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
@@ -59,13 +61,24 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         const queryVector = embeddings ? await embeddings.embed(query) : null;
         const embedFn = embeddings ? (text: string) => embeddings.embed(text) : undefined;
 
-        const result = await runExplicitDeepRetrieval(query, queryVector, activeFactsDb.getRawDb(), activeVectorDb, activeFactsDb, {
+        const pipelineOpts = {
           config: cfg.retrieval,
           rerankingConfig: cfg.reranking,
           rerankingOpenai: openai,
           embedFn,
           scopeFilter,
-        });
+        };
+        const result =
+          vaultHandles.length > 1
+            ? await runMultiVaultExplicitDeepRetrieval(query, queryVector, vaultHandles, pipelineOpts)
+            : await runExplicitDeepRetrieval(
+                query,
+                queryVector,
+                activeFactsDb.getRawDb(),
+                activeVectorDb,
+                activeFactsDb,
+                pipelineOpts,
+              );
 
         const fusedScoreMap = new Map(result.fused.map((f) => [f.factId, f.finalScore]));
         const ftsStub = result.entries.map((e) => ({
@@ -82,6 +95,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           config: resolveRetrievalV2Config(cfg),
           recallId,
           openai,
+          closedLoop: cfg.closedLoop,
         });
         recordIntentDistribution(v2.intent.intent);
 

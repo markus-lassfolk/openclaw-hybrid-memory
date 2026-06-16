@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { FactsDB } from "../backends/facts-db.js";
 import { VectorDB } from "../backends/vector-db.js";
 import { createVaultRegistry } from "../services/vault-registry.js";
@@ -13,14 +13,18 @@ import { recordInjectionAttribution } from "../services/injection-attribution-st
 
 describe("vault registry (#1917)", () => {
   it("resolves default vault without opening extra handles", () => {
-    const dir = mkdtempSync(join(tmpdir(), "hm-vault-"));
+    const dir = mkdtempSync(join(homedir(), "hm-vault-"));
     try {
       const sqlitePath = join(dir, "facts.db");
       const lancePath = join(dir, "facts.lance");
       const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
       const vectorDb = new VectorDB(lancePath, 8, false);
       const registry = createVaultRegistry({
-        cfg: { vaults: { project: join(dir, "project.db") } } as never,
+        cfg: {
+          vaults: { project: join(dir, "project.db") },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
         api: { resolvePath: (p: string) => p, logger: { warn: () => {} } } as never,
         defaultFactsDb: factsDb,
         defaultVectorDb: vectorDb,
@@ -36,11 +40,38 @@ describe("vault registry (#1917)", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("resolveAll returns default plus configured vaults", () => {
+    const dir = mkdtempSync(join(homedir(), ".hm-vault-all-"));
+    try {
+      const sqlitePath = join(dir, "facts.db");
+      const lancePath = join(dir, "facts.lance");
+      const factsDb = new FactsDB(sqlitePath, { fuzzyDedupe: false, storeConfig: {} });
+      const vectorDb = new VectorDB(lancePath, 8, false);
+      const registry = createVaultRegistry({
+        cfg: {
+          vaults: { project: join(dir, "project.db") },
+          store: { fuzzyDedupe: false },
+          vector: { autoRepair: false },
+        } as never,
+        api: { resolvePath: (p: string) => p, logger: { warn: () => {} } } as never,
+        defaultFactsDb: factsDb,
+        defaultVectorDb: vectorDb,
+        defaultSqlitePath: sqlitePath,
+        defaultLancePath: lancePath,
+        vectorDim: 8,
+      });
+      const all = registry.resolveAll();
+      expect(all.map((h) => h.name)).toEqual(["default", "project"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("injection attribution store (#1916)", () => {
   it("persists attribution rows", () => {
-    const dir = mkdtempSync(join(tmpdir(), "hm-attr-"));
+    const dir = mkdtempSync(join(homedir(), "hm-attr-"));
     try {
       const factsDb = new FactsDB(join(dir, "facts.db"), { fuzzyDedupe: false, storeConfig: {} });
       const db = factsDb.getRawDb();

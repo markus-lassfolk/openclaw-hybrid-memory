@@ -158,6 +158,8 @@ export type RetrievalConfig = {
   contextBoundary?: ContextBoundaryConfig;
   /** Recall feedback / nudges (Issue #1916). */
   recallFeedback?: RecallFeedbackConfig;
+  /** Fan out explicit recall across all configured vaults when true (Issue #1917). */
+  multiVaultFanOut?: boolean;
 };
 
 /** Search options: HyDE query expansion

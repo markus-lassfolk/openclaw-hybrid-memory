@@ -1034,6 +1034,7 @@ export async function runRecall(
           openai: ctx.openai,
           focusTopic: focusState?.topic,
           factsDb: ctx.factsDb,
+          recordBypassTelemetry: false,
         });
         candidates = v2.results;
         recordIntentDistribution(v2.intent.intent);

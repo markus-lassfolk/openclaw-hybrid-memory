@@ -424,6 +424,7 @@ export function parseRetrievalConfig(cfg: Record<string, unknown>): RetrievalCon
     crossEncoder: parseCrossEncoderConfig(retrievalRaw),
     contextBoundary: parseContextBoundaryConfig(retrievalRaw),
     recallFeedback: parseRecallFeedbackConfig(retrievalRaw),
+    multiVaultFanOut: retrievalRaw?.multiVaultFanOut === true,
   };
 }
 
