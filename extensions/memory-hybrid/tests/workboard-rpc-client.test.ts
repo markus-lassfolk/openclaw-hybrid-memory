@@ -4,7 +4,7 @@ const { spawnSyncMock } = vi.hoisted(() => ({
   spawnSyncMock: vi.fn(),
 }));
 
-vi.mock("node:child_process", () => ({
+vi.mock("../utils/process-runner.js", () => ({
   spawnSync: spawnSyncMock,
 }));
 
@@ -43,6 +43,26 @@ describe("workboard-rpc-client (#1925)", () => {
     const args = spawnSyncMock.mock.calls[0]?.[1] as string[];
     expect(args).toContain("gateway");
     expect(args).toContain("workboard.cards.list");
+    expect(args).not.toContain("--token");
+  });
+
+  it("createWorkboardGatewayCliRpcClient passes token via OPENCLAW_GATEWAY_TOKEN env", async () => {
+    spawnSyncMock.mockReturnValue({
+      status: 0,
+      stdout: JSON.stringify({ cards: [] }),
+      stderr: "",
+      pid: 1,
+      output: [null, "", ""],
+      signal: null,
+      error: undefined,
+    });
+
+    const client = createWorkboardGatewayCliRpcClient("secret-token");
+    await client.isAvailable();
+    const env = spawnSyncMock.mock.calls[0]?.[2]?.env as NodeJS.ProcessEnv;
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("secret-token");
+    const args = spawnSyncMock.mock.calls[0]?.[1] as string[];
+    expect(args).not.toContain("--token");
   });
 
   it("createWorkboardGatewayCliRpcClient parses cards from gateway call JSON", async () => {

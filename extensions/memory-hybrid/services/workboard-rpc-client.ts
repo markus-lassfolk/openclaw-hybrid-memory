@@ -6,8 +6,7 @@
  * a direct plugin-to-plugin API if that becomes available.
  */
 
-import { spawnSync } from "node:child_process";
-
+import { spawnSync } from "../utils/process-runner.js";
 import { pluginLogger } from "../utils/logger.js";
 
 export type WorkboardRpcCard = {
@@ -183,12 +182,12 @@ function runWorkboardGatewayCliCall(method: string, params: Record<string, unkno
     "--timeout",
     String(REQUEST_TIMEOUT_MS),
   ];
-  if (token) args.push("--token", token);
 
   try {
+    const env = token ? { ...process.env, OPENCLAW_GATEWAY_TOKEN: token } : process.env;
     const result = spawnSync("openclaw", args, {
       encoding: "utf-8",
-      env: process.env,
+      env,
       timeout: REQUEST_TIMEOUT_MS + 2000,
     });
     if (result.error || result.status !== 0) {

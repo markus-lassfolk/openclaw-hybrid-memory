@@ -753,8 +753,8 @@ export async function runVerifyConfigCronSection(state: VerifyRunState): Promise
             return 0;
           }
         });
-      const mostRecentWithoutSummary = exitFiles.find((exitPath) => resolveMaintenanceSummaryPath(exitPath) == null);
-      if (mostRecentWithoutSummary) {
+      const mostRecentExit = exitFiles[0];
+      if (mostRecentExit && resolveMaintenanceSummaryPath(mostRecentExit) == null) {
         const WARN = noEmoji ? "[WARN]" : "⚠️";
         cronLog(
           `\n${WARN} Most recent maintenance-nightly run is missing .summary.json; upgrade plugin and use maintenance nightly --summary-out or see docs/maintenance-job-runs.md`,
