@@ -735,10 +735,7 @@ export function promoteScope(
 }
 
 /** Promote a fact to global scope, distinguishing benign no-ops from hard failures. */
-export function promoteScopeToGlobalWithOutcome(
-  db: DatabaseSync,
-  factId: string,
-): "promoted" | "skipped" | "failed" {
+export function promoteScopeToGlobalWithOutcome(db: DatabaseSync, factId: string): "promoted" | "skipped" | "failed" {
   const row = db.prepare("SELECT scope, scope_target FROM facts WHERE id = ?").get(factId) as
     | { scope: string; scope_target: string | null }
     | undefined;

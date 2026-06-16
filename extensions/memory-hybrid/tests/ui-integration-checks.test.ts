@@ -51,11 +51,7 @@ describe("ui-integration-checks", () => {
 
   it("reports mirror disabled when interval is 0", () => {
     const factsDb = { getAll: vi.fn(() => []) } as any;
-    const result = inspectWikiWorkspaceMirror(
-      makeCfg({ workspaceExportIntervalMinutes: 0 }),
-      tmpDir,
-      factsDb,
-    );
+    const result = inspectWikiWorkspaceMirror(makeCfg({ workspaceExportIntervalMinutes: 0 }), tmpDir, factsDb);
 
     expect(result.enabled).toBe(false);
     expect(result.intervalMinutes).toBe(0);

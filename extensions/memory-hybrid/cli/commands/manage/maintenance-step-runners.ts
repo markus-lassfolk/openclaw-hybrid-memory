@@ -143,12 +143,7 @@ function assertActiveTasksMaintainSummaryDoesNotBlock(summary: string): string {
   const status = summary.match(/\bstatus=(partial|failed)\b/i)?.[1]?.toLowerCase();
   const failed = Number.parseInt(summary.match(/\bfailed=(\d+)\b/i)?.[1] ?? "0", 10);
   const semantic = parseSemanticTokenFromSummary(summary);
-  if (
-    status === "partial" ||
-    status === "failed" ||
-    failed > 0 ||
-    semanticOutcomeBlocksOrchestratorGuard(semantic)
-  ) {
+  if (status === "partial" || status === "failed" || failed > 0 || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
     const semanticSummary = summary.includes("semantic=") ? summary : `${summary} semantic=partial`;
     throw new Error(`active-tasks-maintain ${status ?? semantic ?? "partial"} failure (${semanticSummary})`);
   }
@@ -180,10 +175,13 @@ function formatEntityEnrichmentSummary(r: {
   return `processed=${r.processed} enriched=${r.factsEnriched} llmFailures=${llmFailures} stopReason=${stopReason} remaining=${r.remainingTotal ?? 0} semantic=${partial ? "partial" : "success"}`;
 }
 
-function assertEntityEnrichmentNotPartial(r: {
-  llmFailures?: number;
-  stopReason?: string;
-}, summary: string): void {
+function assertEntityEnrichmentNotPartial(
+  r: {
+    llmFailures?: number;
+    stopReason?: string;
+  },
+  summary: string,
+): void {
   const llmFailures = r.llmFailures ?? 0;
   const stopReason = r.stopReason ?? "completed";
   const incompleteCatchUp =
@@ -225,10 +223,7 @@ function resolveOpenclawHomeFromSqlitePath(resolvedSqlitePath: string | null | u
   return join(homedir(), ".openclaw");
 }
 
-function assertContradictionMaintenanceSummaryDoesNotBlock(
-  summary: string,
-  evaluation: { degraded: boolean },
-): string {
+function assertContradictionMaintenanceSummaryDoesNotBlock(summary: string, evaluation: { degraded: boolean }): string {
   const semantic = parseSemanticTokenFromSummary(summary);
   if (evaluation.degraded || semanticOutcomeBlocksOrchestratorGuard(semantic)) {
     throw new Error(`resolve-contradictions degraded backlog (${summary})`);
@@ -689,10 +684,11 @@ export function buildCliMaintenanceRunners(
 
   set("digest-autopilot", async () => {
     const result = await runPendingDigestAutopilotCron({ cfg: b.cfg, factsDb: b.factsDb });
-    const semantic =
-      result.summary.status === "failed" || result.summary.status === "partial" ? "partial" : "success";
+    const semantic = result.summary.status === "failed" || result.summary.status === "partial" ? "partial" : "success";
     if (result.summary.status === "failed" || result.summary.status === "partial") {
-      throw new Error(`digest-autopilot ${result.summary.status} (status=${result.summary.status} semantic=${semantic})`);
+      throw new Error(
+        `digest-autopilot ${result.summary.status} (status=${result.summary.status} semantic=${semantic})`,
+      );
     }
     return `status=${result.summary.status} semantic=${semantic}`;
   });
@@ -714,7 +710,9 @@ export function buildCliMaintenanceRunners(
       (skipped ? "failed" : clustersFailed > 0 || vectorFailures > 0 ? "partial" : "success");
     const summary = `merged=${r.merged} clusters=${r.clustersFound} clustersFailed=${clustersFailed} vector_failures=${vectorFailures} semantic=${semantic}`;
     if (skipped) {
-      throw new Error(`consolidate skipped (${(r as { skipReason?: string }).skipReason ?? "unavailable"}): ${summary}`);
+      throw new Error(
+        `consolidate skipped (${(r as { skipReason?: string }).skipReason ?? "unavailable"}): ${summary}`,
+      );
     }
     assertSemanticOutcomeDoesNotBlockStep("consolidate", semantic, summary);
     return summary;
@@ -869,9 +867,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     );
   }
   if (deps.runLifecycleSync) {
-    runners.set("lifecycle-sync", async () =>
-      assertLifecycleSyncSummaryDoesNotBlock(await deps.runLifecycleSync!()),
-    );
+    runners.set("lifecycle-sync", async () => assertLifecycleSyncSummaryDoesNotBlock(await deps.runLifecycleSync!()));
   }
   if (deps.runPassiveObserverOnce) {
     runners.set("passive-observer", async () =>

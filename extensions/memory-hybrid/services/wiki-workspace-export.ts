@@ -15,12 +15,7 @@ import { globalOnlyScopeFilter } from "../utils/scope-filter.js";
 import { nowIso } from "../utils/dates.js";
 import { traceIntegration } from "../utils/integration-trace.js";
 import { pluginLogger } from "../utils/logger.js";
-import {
-  isWikiExportableFact,
-  wikiFactKind,
-  wikiFactTitle,
-  wikiFactUpdatedIso,
-} from "./wiki-fact-filter.js";
+import { isWikiExportableFact, wikiFactKind, wikiFactTitle, wikiFactUpdatedIso } from "./wiki-fact-filter.js";
 
 /** Relative to OpenClaw workspace root. */
 export const WIKI_WORKSPACE_EXPORT_SUBDIR = "memory/hybrid-wiki";

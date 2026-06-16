@@ -75,7 +75,14 @@ describe("wiki-workspace-export", () => {
           key: "dream-ingested-run:run-001",
           tags: ["dream-ingester-sentinel"],
         }),
-        makeFact({ id: "good-1", text: "User prefers dark mode", category: "preference", entity: null, key: null, value: null }),
+        makeFact({
+          id: "good-1",
+          text: "User prefers dark mode",
+          category: "preference",
+          entity: null,
+          key: null,
+          value: null,
+        }),
       ]),
     } as any;
 

@@ -28,7 +28,7 @@ import {
   recordAdaptiveSuccess,
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
-import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -719,96 +719,102 @@ export async function runDistillForCli(
     let stored = 0;
     let skipped = 0;
     for (const fact of allFacts) {
-      const isCred = isCredentialLike(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
-      if (isCred) {
+      const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
+        requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+      });
+      if (parsed) {
         if (cfg.credentials.enabled && credentialsDb) {
-          const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
-            requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-          });
-          if (parsed) {
-            if (!opts.dryRun) {
-              let storedInVault = false;
+          let storedInVault = false;
+          try {
+            const credStoreResult = credentialsDb.storeIfNew({
+              service: parsed.service,
+              type: parsed.type,
+              value: parsed.secretValue,
+              url: parsed.url,
+              notes: parsed.notes,
+            });
+            storedInVault = credStoreResult;
+            const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "distillation", {
+              importance: BATCH_STORE_IMPORTANCE,
+              sourceDate: sourceDateSec(fact.source_date),
+            });
+            if (!pointer.ok) {
+              if (storedInVault) {
+                rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
+              }
+              continue;
+            }
+            if (
+              abortCredentialVaultWriteOnPointerDedupe(
+                storedInVault,
+                pointer,
+                credentialsDb,
+                parsed.service,
+                parsed.type,
+              )
+            ) {
+              continue;
+            }
+            const entry = pointer.entry;
+            const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
+            // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
+            await cleanupEvictedVector({
+              vectorDb: vectorDb,
+              evictedFactId: pointer.evictedFactId,
+              logger: sink,
+              context: "distill",
+            });
+            if (pointer.newlyStored || pointer.embeddingStale) {
               try {
-                const credStoreResult = credentialsDb.storeIfNew({
-                  service: parsed.service,
-                  type: parsed.type,
-                  value: parsed.secretValue,
-                  url: parsed.url,
-                  notes: parsed.notes,
-                });
-                storedInVault = credStoreResult;
-                const pointer = ensureCredentialVaultPointer(factsDb, parsed.service, parsed.type, "distillation", {
-                  importance: BATCH_STORE_IMPORTANCE,
-                  sourceDate: sourceDateSec(fact.source_date),
-                });
-                if (!pointer.ok) {
-                  if (storedInVault) {
-                    rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
-                  }
-                  continue;
-                }
-                if (
-                  abortCredentialVaultWriteOnPointerDedupe(
-                    storedInVault,
-                    pointer,
-                    credentialsDb,
-                    parsed.service,
-                    parsed.type,
-                  )
-                ) {
-                  continue;
-                }
-                const entry = pointer.entry;
-                const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
-                // CRITICAL FIX (#2): Delete vector for evicted fact to prevent orphaned vectors
-                await cleanupEvictedVector({
-                  vectorDb: vectorDb,
-                  evictedFactId: pointer.evictedFactId,
-                  logger: sink,
-                  context: "distill",
-                });
-                if (pointer.newlyStored || pointer.embeddingStale) {
-                  try {
-                    const vector = await embeddings.embed(pointerText);
-                    factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
-                    if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
-                      await vectorDb.store({
-                        text: pointerText,
-                        vector,
-                        importance: BATCH_STORE_IMPORTANCE,
-                        category: "technical",
-                        id: entry.id,
-                      });
-                    }
-                  } catch (err) {
-                    capturePluginError(err as Error, {
-                      subsystem: "cli",
-                      operation: "runDistillForCli:credential-vector-store",
-                    });
-                  }
-                }
-                stored++;
-                if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
-              } catch (err) {
-                if (storedInVault) {
-                  rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (message, cleanupErr) => {
-                    if (opts.verbose) sink.log(`  ${message}: ${cleanupErr}`);
-                    capturePluginError(cleanupErr as Error, {
-                      subsystem: "cli",
-                      operation: "runDistillForCli:credential-compensating-delete",
-                    });
+                const vector = await embeddings.embed(pointerText);
+                factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+                if (!(await vectorDb.hasDuplicate(vector, DISTILL_DEDUP_THRESHOLD))) {
+                  await vectorDb.store({
+                    text: pointerText,
+                    vector,
+                    importance: BATCH_STORE_IMPORTANCE,
+                    category: "technical",
+                    id: entry.id,
                   });
                 }
-                capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
+              } catch (err) {
+                capturePluginError(err as Error, {
+                  subsystem: "cli",
+                  operation: "runDistillForCli:credential-vector-store",
+                });
               }
             }
-            continue;
+            stored++;
+            if (opts.verbose) sink.log(`  stored credential: ${parsed.service}`);
+          } catch (err) {
+            if (storedInVault) {
+              rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type, (message, cleanupErr) => {
+                if (opts.verbose) sink.log(`  ${message}: ${cleanupErr}`);
+                capturePluginError(cleanupErr as Error, {
+                  subsystem: "cli",
+                  operation: "runDistillForCli:credential-compensating-delete",
+                });
+              });
+            }
+            capturePluginError(err as Error, { subsystem: "cli", operation: "runDistillForCli:credential-store" });
           }
           continue;
         }
         if (opts.verbose) sink.log("  skipped credential-like fact: vault disabled or unavailable");
         continue;
       }
+
+      // When requirePatternMatch rejects vault parsing but the input is still credential-like,
+      // skip ordinary storage to prevent plaintext secrets in facts.db (#1896).
+      if (
+        !parsed &&
+        cfg.credentials.autoCapture?.requirePatternMatch === true &&
+        isStructuredCredentialCandidate(fact.text, fact.entity ?? null, fact.key ?? null, fact.value)
+      ) {
+        if (opts.verbose) sink.log("  skipped credential-like fact: blocked by requirePatternMatch");
+        continue;
+      }
+
       if (factsDb.hasDuplicate(fact.text, "distillation")) {
         skipped++;
         continue;

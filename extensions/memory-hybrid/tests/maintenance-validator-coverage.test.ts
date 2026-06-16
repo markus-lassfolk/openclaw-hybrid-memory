@@ -81,10 +81,9 @@ describe("maintenance validator coverage registry", () => {
     const orchestratorNames = new Set(MAINTENANCE_STEPS.map((step) => step.name));
     const aliases = new Set(["maintenance", "cursor", "persona-proposals"]);
     for (const stepName of GUARD_BLOCKING_SEMANTIC_STEP_NAMES) {
-      expect(
-        orchestratorNames.has(stepName) || aliases.has(stepName),
-        `unexpected guard step name ${stepName}`,
-      ).toBe(true);
+      expect(orchestratorNames.has(stepName) || aliases.has(stepName), `unexpected guard step name ${stepName}`).toBe(
+        true,
+      );
     }
   });
 
