@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { relativeTime } from "../cli/shared.js";
-import { describeCronStoreLocation, readOpenClawCronStore, resolveLegacyCronJobsPath } from "./openclaw-cron-store.js";
+import { describeCronStoreLocation, readOpenClawCronStore } from "./openclaw-cron-store.js";
 import { getGuardFilePath, readGuardTimestampMs } from "./cron-guard.js";
 import { readExitLedger, validateMaintenanceExecution } from "./cron-exit-validator.js";
 import { HYBRID_MEM_CRON_DEFAULT_JOB_STEPS } from "./hybrid-mem-cron-default-job-steps.js";
@@ -712,7 +712,7 @@ export function collectMaintenanceInventory(
   openclawDir: string,
   options: MaintenanceInventoryOptions = {},
 ): MaintenanceInventoryReport {
-  const cronStorePath = resolveLegacyCronJobsPath(openclawDir);
+  const cronStorePath = describeCronStoreLocation(openclawDir);
   const logRoot = join(openclawDir, "logs", "cron-hybrid-mem");
   const crontab =
     options.crontabText !== undefined || options.crontabError !== undefined

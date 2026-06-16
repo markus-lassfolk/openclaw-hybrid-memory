@@ -134,7 +134,8 @@ function mergeJobFromSqliteRow(row: {
   const job: Record<string, unknown> = { ...config, state };
   if (job.id == null && row.job_id) job.id = row.job_id;
   if (job.name == null && row.name) job.name = row.name;
-  if (job.enabled === undefined) job.enabled = row.enabled !== 0;
+  // SQLite indexed column is authoritative for enabled (job_json can lag).
+  job.enabled = row.enabled !== 0;
   if (job.schedule == null && row.schedule_expr) {
     job.schedule = { kind: "cron", expr: row.schedule_expr };
   }
@@ -143,7 +144,12 @@ function mergeJobFromSqliteRow(row: {
 
 function readCronStoreFromJson(legacyPath: string): OpenClawCronStoreFile {
   if (!existsSync(legacyPath)) return { version: 1, jobs: [] };
-  const parsed = JSON.parse(readFileSync(legacyPath, "utf-8")) as OpenClawCronStoreFile;
+  let parsed: OpenClawCronStoreFile;
+  try {
+    parsed = JSON.parse(readFileSync(legacyPath, "utf-8")) as OpenClawCronStoreFile;
+  } catch (err) {
+    throw new Error(`failed to parse cron store at ${legacyPath}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   if (!Array.isArray(parsed.jobs)) parsed.jobs = [];
   return parsed;
 }
@@ -533,6 +539,20 @@ function writeCronStoreToJson(legacyPath: string, store: OpenClawCronStoreFile):
   renameSync(tmpPath, legacyPath);
 }
 
+function cronJobRowId(rawJob: Record<string, unknown>): string {
+  return String(rawJob.id ?? rawJob.pluginJobId ?? rawJob.name ?? "").trim();
+}
+
+function loadExistingSqliteCronRows(db: DatabaseSync, storeKey: string): Map<string, Record<string, unknown>> {
+  const rows = db.prepare(`SELECT * FROM cron_jobs WHERE store_key = ?`).all(storeKey) as Array<Record<string, unknown>>;
+  const out = new Map<string, Record<string, unknown>>();
+  for (const row of rows) {
+    const jobId = String(row.job_id ?? "");
+    if (jobId) out.set(jobId, row);
+  }
+  return out;
+}
+
 function writeCronStoreToSqlite(sqlitePath: string, storeKey: string, store: OpenClawCronStoreFile): void {
   mkdirSync(dirname(sqlitePath), { recursive: true });
   const db = new DatabaseSync(sqlitePath);
@@ -540,21 +560,49 @@ function writeCronStoreToSqlite(sqlitePath: string, storeKey: string, store: Ope
     if (!sqliteHasCronJobsTable(db)) {
       throw new Error("cron_jobs table missing in OpenClaw state database");
     }
+    const existingByJobId = loadExistingSqliteCronRows(db, storeKey);
     const jobs = Array.isArray(store.jobs) ? (store.jobs as Array<Record<string, unknown>>) : [];
+    const incomingIds = new Set<string>();
+    const rowsToInsert: Array<Record<string, string | number | null>> = [];
+
+    let sortOrder = 0;
+    for (const rawJob of jobs) {
+      if (typeof rawJob !== "object" || rawJob === null) continue;
+      const jobId = cronJobRowId(rawJob);
+      if (!jobId) {
+        throw new Error("Refusing to persist cron store with a job missing id/pluginJobId/name");
+      }
+      incomingIds.add(jobId);
+      const row = bindCronJobInsertRow(storeKey, rawJob, sortOrder);
+      if (row) {
+        rowsToInsert.push(row);
+        sortOrder += 1;
+        continue;
+      }
+      const preserved = existingByJobId.get(jobId);
+      if (preserved) {
+        rowsToInsert.push(preserved as Record<string, string | number | null>);
+        sortOrder += 1;
+        continue;
+      }
+      throw new Error(
+        `Job normalization failed for ${JSON.stringify(rawJob).slice(0, 200)}; refusing to drop job from SQLite store`,
+      );
+    }
+
+    // Keep DB rows not represented in the in-memory store (defensive — full reads should include all jobs).
+    for (const [jobId, preserved] of existingByJobId) {
+      if (!incomingIds.has(jobId)) {
+        rowsToInsert.push(preserved as Record<string, string | number | null>);
+        sortOrder += 1;
+      }
+    }
+
     const tx = createTransaction(db, () => {
       db.prepare(`DELETE FROM cron_jobs WHERE store_key = ?`).run(storeKey);
       const insert = db.prepare(CRON_JOBS_INSERT_SQL);
-      let sortOrder = 0;
-      for (const rawJob of jobs) {
-        if (typeof rawJob !== "object" || rawJob === null) continue;
-        const row = bindCronJobInsertRow(storeKey, rawJob, sortOrder);
-        if (!row) {
-          throw new Error(
-            `Job normalization failed for ${JSON.stringify(rawJob).slice(0, 200)}; refusing to drop job from SQLite store`,
-          );
-        }
+      for (const row of rowsToInsert) {
         insert.run(row);
-        sortOrder += 1;
       }
     }, "IMMEDIATE");
     tx();

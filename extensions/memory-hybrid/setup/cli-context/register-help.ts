@@ -232,7 +232,7 @@ function buildRichStatsExtras(ctx: HandlerContext): NonNullable<HybridMemCliCont
         store = readOpenClawCronStore(owHome).store;
       } catch (err) {
         capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          operation: "stats-read-jobs-json",
+          operation: "stats-read-cron-store",
           severity: "info",
           subsystem: "cli",
         });

@@ -159,6 +159,73 @@ describe("openclaw-cron-store (#1923)", () => {
     const job = snapshot.store.jobs?.[0] as Record<string, unknown>;
     expect(job.pluginJobId ?? job.id).toBe("hybrid-mem:maintenance-nightly");
     expect((job.state as { lastRunStatus?: string }).lastRunStatus).toBe("ok");
+    expect((job.state as { lastStatus?: string }).lastStatus).toBe("ok");
+  });
+
+  it("uses SQLite enabled column over stale job_json", () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-cron-store-"));
+    const openclawDir = join(homeDir, ".openclaw");
+    const legacyPath = resolveLegacyCronJobsPath(openclawDir);
+    const sqlitePath = resolveOpenClawStateSqlitePath(openclawDir);
+    mkdirSync(join(openclawDir, "state"), { recursive: true });
+    const db = new DatabaseSync(sqlitePath);
+    db.exec(CRON_JOBS_DDL);
+    const storeKey = cronStorePartitionKey(legacyPath);
+    db.prepare(
+      `INSERT INTO cron_jobs (
+        store_key, job_id, name, enabled, created_at_ms, updated_at, session_target, wake_mode,
+        schedule_kind, schedule_expr, payload_kind, payload_message, delivery_mode,
+        state_json, sort_order, job_json
+      ) VALUES (?, ?, ?, 0, ?, ?, 'main', 'now', 'cron', '0 2 * * *', 'agentTurn', 'msg', 'none', '{}', 0, ?)`,
+    ).run(
+      storeKey,
+      "hybrid-mem:maintenance-nightly",
+      "maintenance-nightly",
+      Date.now(),
+      Date.now(),
+      JSON.stringify({ id: "hybrid-mem:maintenance-nightly", enabled: true, payload: { kind: "agentTurn", message: "msg" } }),
+    );
+    db.close();
+
+    const snapshot = readOpenClawCronStore(openclawDir);
+    const job = snapshot.store.jobs?.[0] as Record<string, unknown>;
+    expect(job.enabled).toBe(false);
+  });
+
+  it("preserves existing SQLite rows when an in-memory job cannot be re-normalized", () => {
+    homeDir = mkdtempSync(join(tmpdir(), "oc-cron-store-"));
+    const openclawDir = join(homeDir, ".openclaw");
+    seedSqliteCronJob(openclawDir, {
+      id: "external:custom-job",
+      name: "external-custom",
+      enabled: true,
+      payload: { kind: "command", argv: ["echo", "hello"] },
+    });
+    seedSqliteCronJob(openclawDir, {
+      id: "hybrid-mem:maintenance-nightly",
+      pluginJobId: "hybrid-mem:maintenance-nightly",
+      name: "maintenance-nightly",
+      schedule: { kind: "cron", expr: "5 2 * * *" },
+      sessionTarget: "isolated",
+      payload: { kind: "agentTurn", message: "openclaw hybrid-mem maintenance nightly --verbose" },
+    });
+
+    const snapshot = readOpenClawCronStore(openclawDir);
+    expect(snapshot.store.jobs?.length).toBe(2);
+    const jobs = snapshot.store.jobs as Array<Record<string, unknown>>;
+    const nightly = jobs.find((j) => j.id === "hybrid-mem:maintenance-nightly");
+    expect(nightly).toBeTruthy();
+    const state = (nightly?.state as Record<string, unknown>) ?? {};
+    state.lastRunAtMs = Date.now();
+    const external = jobs.find((j) => j.id === "external:custom-job");
+    expect(external).toBeTruthy();
+    // Simulate a lossy in-memory shape that cannot round-trip through bindCronJobInsertRow.
+    delete external!.payload;
+
+    writeOpenClawCronStore(openclawDir, { jobs }, snapshot.backend);
+    const after = readOpenClawCronStore(openclawDir);
+    expect(after.store.jobs?.length).toBe(2);
+    expect(after.store.jobs?.some((j) => (j as { id?: string }).id === "external:custom-job")).toBe(true);
   });
 
   it("reads legacy jobs.json when SQLite has no rows", () => {
