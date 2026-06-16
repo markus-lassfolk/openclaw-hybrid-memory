@@ -10,6 +10,7 @@ import { capturePluginError } from "../../services/error-reporter.js";
 import { expandGraph, formatLinkPath } from "../../services/graph-retrieval.js";
 import { formatNarrativeRange, recallNarrativeSummaries } from "../../services/narrative-recall.js";
 import { QueryExpander } from "../../services/query-expander.js";
+import { resolveRecallRrfStrategies } from "../../services/recall-rrf-strategies.js";
 import {
   resolveConstrainedRetrievalPolicy,
   resolveExplicitDeepRetrievalPolicy,
@@ -17,6 +18,14 @@ import {
 } from "../../services/retrieval-mode-policy.js";
 import { buildExplicitSemanticQueryVector, runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
 import { runScopedFtsVectorFallback } from "../../services/retrieval-scoped-fallback.js";
+import { searchFts } from "../../services/fts-search.js";
+import {
+  isInQuietWindow,
+  listWorkerLeases,
+  quietWindowEndEpochSec,
+  resolveWorkerLeasesConfig,
+} from "../../services/worker-lease.js";
+import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { inferEntityFilterFromQuery, inferRetrievalModeFromQuery } from "../../services/retrieval-mode-selector.js";
 import {
   getFactIdsForEntitySurfaces,
@@ -195,6 +204,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
           Type.Number({
             description:
               "Number of BFS hops to expand when expandGraph=true (default: 2, max: graphRetrieval.maxExpandDepth from config).",
+          }),
+        ),
+        mode: Type.Optional(
+          Type.Union([Type.Literal("semantic"), Type.Literal("hybrid"), Type.Literal("keyword")], {
+            description:
+              'Recall mode. When omitted, uses retrieval.defaultRecallMode from config (default: "hybrid" for backward compatibility with multi-strategy RRF fusion).',
           }),
         ),
       }),
@@ -447,6 +462,39 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
   );
 
   // Internal implementation so we can return from the try block
+  function keywordRecallResults(
+    query: string,
+    recallLimit: number,
+    opts: {
+      entity?: string;
+      tag?: string;
+      includeSuperseded?: boolean;
+      asOfSec?: number;
+      scopeFilter?: ScopeFilter;
+    },
+  ): SearchResult[] {
+    const ftsHits = searchFts(factsDb.getRawDb(), query, {
+      limit: recallLimit,
+      entityFilter: opts.entity,
+      tagFilter: opts.tag,
+      includeSuperseded: opts.includeSuperseded,
+      asOf: opts.asOfSec,
+    });
+    const out: SearchResult[] = [];
+    for (const hit of ftsHits) {
+      const getByIdOpts =
+        opts.asOfSec != null || opts.scopeFilter
+          ? ({ asOf: opts.asOfSec, scopeFilter: opts.scopeFilter } as { asOf?: number; scopeFilter?: ScopeFilter })
+          : undefined;
+      const entry = factsDb.getById(hit.factId, getByIdOpts);
+      if (entry) {
+        // FTS5 rank is negative (closer to 0 is better); invert for descending sort.
+        out.push({ entry, score: -hit.rank, backend: "sqlite" });
+      }
+    }
+    return out.slice(0, recallLimit);
+  }
+
   async function memoryRecallImpl(params: Record<string, unknown>) {
     const recallStartedAt = Date.now();
     const {
@@ -471,6 +519,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       confirmCrossTenantScope,
       expandGraph: expandGraphParam,
       expandDepth: expandDepthParam,
+      mode: recallModeParam,
     } = params as {
       query?: string;
       id?: string | number;
@@ -493,7 +542,14 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       confirmCrossTenantScope?: boolean;
       expandGraph?: boolean;
       expandDepth?: number;
+      mode?: "semantic" | "hybrid" | "keyword";
     };
+    const recallMode =
+      recallModeParam === "semantic" || recallModeParam === "hybrid" || recallModeParam === "keyword"
+        ? recallModeParam
+        : cfg.retrieval.defaultRecallMode;
+    let recallFallback = false;
+    const recallBudgetMs = cfg.retrieval.recallLatencyWarnMs;
     const normalizeOptionalString = (value: unknown): string | undefined => {
       if (typeof value !== "string") return undefined;
       const trimmed = value.trim();
@@ -657,6 +713,48 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       ...(asOfSec != null ? { asOf: asOfSec } : {}),
     };
 
+    if (recallMode === "keyword") {
+      let results = keywordRecallResults(query, limit, {
+        entity,
+        tag,
+        includeSuperseded,
+        asOfSec,
+        scopeFilter,
+      });
+      if (!includeCold && results.length > 0) {
+        const coldFilterOpts =
+          asOfSec != null || scopeFilter ? { asOf: asOfSec, scopeFilter } : undefined;
+        results = results.filter((r) => {
+          const full = factsDb.getById(r.entry.id, coldFilterOpts);
+          return full && full.tier !== "cold";
+        });
+      }
+      logRecall(results.length > 0);
+      const lines = results.map((r) => formatMemoryRecallToolLine(r.entry));
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text:
+              results.length > 0
+                ? `${memoryRecallToolBoundaryPrefix()}Found ${results.length} keyword match(es):\n\n${lines.join("\n\n")}`
+                : "No memories found for keyword query.",
+          },
+        ],
+        details: {
+          count: results.length,
+          mode: "keyword",
+          fallback: recallFallback,
+          memories: results.map((r) => ({
+            id: r.entry.id,
+            text: sanitizeMemoryField(r.entry.text),
+            score: r.score,
+            backend: r.backend,
+          })),
+        },
+      };
+    }
+
     const hasAdditionalConstrainedFilters = Boolean(
       category || source || verificationTier || validFromSec != null || validUntilSec != null || sourceSession,
     );
@@ -733,10 +831,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
     // because tag/entity/category/etc. are applied before ranking inside the candidate set.
     let results: SearchResult[] = [];
     try {
-      const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode);
-      const rrfStrategies = useLegacyTagShortcut
-        ? cfg.retrieval.strategies.filter((s) => s !== "semantic")
-        : cfg.retrieval.strategies;
+      const useLegacyTagShortcut = Boolean(tag && !shouldUseConstrainedMode && recallMode !== "semantic");
+      const rrfStrategies = resolveRecallRrfStrategies(
+        recallMode,
+        cfg.retrieval.strategies,
+        useLegacyTagShortcut,
+      );
       const rrfConfig = { ...cfg.retrieval, strategies: rrfStrategies };
       // interactive-recall uses a different policy with its own vector prep; skip for other modes
       const effectivePolicy =
@@ -765,7 +865,12 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         });
         queryVector = vectorPrep.queryVector;
         semanticWarning = vectorPrep.warning;
+        if (recallMode !== "semantic" && queryVector == null && semanticWarning) {
+          recallFallback = true;
+          results = keywordRecallResults(query, limit, { entity, tag, includeSuperseded, asOfSec, scopeFilter });
+        }
       }
+      if (!recallFallback) {
       const queryExpander =
         cfg.queryExpansion?.enabled && rrfStrategies.includes("semantic")
           ? new QueryExpander(cfg.queryExpansion, openai)
@@ -828,6 +933,7 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       }
       results.sort((a, b) => b.score - a.score);
       results = results.slice(0, limit);
+      }
     } catch (err) {
       capturePluginError(err instanceof Error ? err : new Error(String(err)), {
         subsystem: "search",
@@ -1055,6 +1161,21 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
       },
     });
 
+    const recallDurationMs = Date.now() - recallStartedAt;
+    emitFeatureTelemetry(api.logger, {
+      feature: "recall",
+      operation: "memory_recall",
+      durationMs: recallDurationMs,
+      warnBudgetMs: recallBudgetMs,
+      outcome: recallFallback || recallOutcome === "degraded_fallback" ? "degraded" : "ok",
+      fields: {
+        mode: recallMode,
+        fallback: recallFallback || recallOutcome === "degraded_fallback",
+        result_count: results.length,
+        query_len: query.length,
+      },
+    });
+
     return {
       content: [
         {
@@ -1067,9 +1188,108 @@ export function registerRecallTools(runtime: MemoryToolRuntime): void {
         memories: sanitized,
         warning: semanticWarning ?? undefined,
         retrieval: retrievalExplanation,
+        mode: recallMode,
+        fallback: recallFallback || recallOutcome === "degraded_fallback",
       },
     };
   }
+
+  api.registerTool(
+    {
+      name: "memory_keyword_recall",
+      label: "Keyword Memory Recall",
+      description: "Pure BM25/FTS5 keyword search over facts (no embedding round-trip).",
+      parameters: Type.Object({
+        query: Type.String({ description: "Search query (exact phrase and proper-noun friendly)." }),
+        limit: Type.Optional(Type.Number({ description: "Max results (default: 10)" })),
+        entity: Type.Optional(Type.String({ description: "Optional entity filter." })),
+        tags: Type.Optional(Type.Array(Type.String(), { description: "Optional tag filters." })),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const query = typeof params.query === "string" ? params.query.trim() : "";
+        if (!query) {
+          return { content: [{ type: "text", text: "Provide a query." }], details: { count: 0 } };
+        }
+        const limit =
+          typeof params.limit === "number" && params.limit > 0
+            ? Math.min(100, Math.floor(params.limit))
+            : 10;
+        const entity = typeof params.entity === "string" ? params.entity.trim() : undefined;
+        const tag = Array.isArray(params.tags) && params.tags.length > 0 ? String(params.tags[0]) : undefined;
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const results = keywordRecallResults(query, limit, { entity, tag, scopeFilter });
+        const lines = results.map((r) => formatMemoryRecallToolLine(r.entry));
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                results.length > 0
+                  ? `Found ${results.length} keyword match(es):\n\n${lines.join("\n\n")}`
+                  : "No keyword matches.",
+            },
+          ],
+          details: {
+            count: results.length,
+            mode: "keyword",
+            memories: results.map((r) => ({
+              id: r.entry.id,
+              text: sanitizeMemoryField(r.entry.text),
+              score: r.score,
+              entity: r.entry.entity,
+              key: r.entry.key,
+              tags: r.entry.tags,
+            })),
+          },
+        };
+      },
+    },
+    { name: "memory_keyword_recall" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_worker_status",
+      label: "Worker Lease Status",
+      description: "Returns current background worker lease holders, expiry, and eligibility windows.",
+      parameters: Type.Object({}),
+      async execute() {
+        const workerLeases = resolveWorkerLeasesConfig(cfg.maintenance.orchestrator?.workerLeases);
+        const now = Math.floor(Date.now() / 1000);
+        const leases = listWorkerLeases(factsDb.getRawDb());
+        const workers = leases.map((l) => {
+          const quietEnd = isInQuietWindow(workerLeases) ? quietWindowEndEpochSec(workerLeases) : null;
+          const nextEligibleAt = Math.max(l.expiresAt, quietEnd ?? 0);
+          const staleThreshold = workerLeases.heartbeatIntervalSeconds * 2;
+          return {
+            workerId: l.workerId,
+            ownerSessionId: l.ownerSessionId,
+            pid: l.pid,
+            host: l.host,
+            acquiredAt: l.acquiredAt,
+            lastHeartbeatAt: l.lastHeartbeatAt,
+            expiresAt: l.expiresAt,
+            nextEligibleAt,
+            stateJson: l.stateJson,
+            isStale: l.lastHeartbeatAt < now - staleThreshold,
+          };
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                workers.length === 0
+                  ? "No active worker leases."
+                  : workers.map((w) => `${w.workerId}: owner=${w.ownerSessionId} expires=${w.expiresAt}`).join("\n"),
+            },
+          ],
+          details: { workers },
+        };
+      },
+    },
+    { name: "memory_worker_status" },
+  );
 
   if (cfg.procedures.enabled) {
     api.registerTool(

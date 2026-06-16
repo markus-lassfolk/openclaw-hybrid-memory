@@ -29,6 +29,7 @@ import { classifyMemoryOperation } from "../../services/classification.js";
 import { AllEmbeddingProvidersFailed, shouldSuppressEmbeddingError } from "../../services/embeddings.js";
 import { extractEntityMentionsWithLlm } from "../../services/entity-enrichment.js";
 import { addOperationBreadcrumb, capturePluginError } from "../../services/error-reporter.js";
+import { emitFeatureTelemetry } from "../../services/feature-telemetry.js";
 import { extractStructuredFields } from "../../services/fact-extraction.js";
 import { storeAliases } from "../../services/retrieval-aliases.js";
 import { validateScopedClassificationTarget } from "../../services/classification-scope.js";
@@ -98,7 +99,7 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
       name: "memory_store",
       label: "Memory Store",
       description:
-        "Save important information in long-term memory. Stores to both structured (SQLite) and semantic (LanceDB) backends.",
+        "Save important information in long-term memory. Stores to both structured (SQLite) and semantic (LanceDB) backends. When entity+key+value are present, runs contradiction detection (serialized via DB lock; nightly dream-cycle repair backfills any missed pairs).",
       parameters: Type.Object({
         text: Type.String({ description: "Information to remember" }),
         why: Type.Optional(
@@ -1072,14 +1073,58 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
 
             // Contradiction detection (Issue #157): check for same entity+key, different value
             // Pass the stored fact's scope so detection stays within the same scope boundary.
-            const contradictions = factsDb.detectContradictions(
-              entry.id,
-              entity ?? null,
-              key ?? null,
-              value ?? null,
-              entry.scope ?? null,
-              entry.scopeTarget ?? null,
-            );
+            // Uses BEGIN IMMEDIATE inside detectContradictions to serialize with concurrent writers.
+            // On failure, store still succeeds; nightly repair + fallback will retry.
+            const contradictionStarted = Date.now();
+            let contradictions: ReturnType<typeof factsDb.detectContradictions> = [];
+            let contradictionDetectFailed = false;
+            try {
+              contradictions = factsDb.detectContradictions(
+                entry.id,
+                entity ?? null,
+                key ?? null,
+                value ?? null,
+                entry.scope ?? null,
+                entry.scopeTarget ?? null,
+                textToStore,
+              );
+            } catch (contradictionErr) {
+              contradictionDetectFailed = true;
+              capturePluginError(
+                contradictionErr instanceof Error ? contradictionErr : new Error(String(contradictionErr)),
+                {
+                  subsystem: "memory",
+                  operation: "memory-store-contradiction-detect",
+                  phase: "runtime",
+                },
+              );
+              emitFeatureTelemetry(api.logger, {
+                feature: "contradiction",
+                operation: "memory_store_detect",
+                durationMs: Date.now() - contradictionStarted,
+                warnBudgetMs: cfg.retrieval.contradictionLatencyWarnMs,
+                outcome: "error",
+                fields: {
+                  entity: entity ?? null,
+                  key: key ?? null,
+                  deferred_to_repair: true,
+                },
+              });
+            }
+            if (!contradictionDetectFailed) {
+              emitFeatureTelemetry(api.logger, {
+                feature: "contradiction",
+                operation: "memory_store_detect",
+                durationMs: Date.now() - contradictionStarted,
+                warnBudgetMs: cfg.retrieval.contradictionLatencyWarnMs,
+                outcome: "ok",
+                fields: {
+                  hit_count: contradictions.length,
+                  entity: entity ?? null,
+                  key: key ?? null,
+                },
+              });
+            }
             for (const { contradictionId, oldFactId } of contradictions) {
               if (eventLog) {
                 eventLog.append({
@@ -1222,6 +1267,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
                       contradictions: contradictions.map((c) => ({
                         contradictionId: c.contradictionId,
                         oldFactId: c.oldFactId,
+                        fact_id: c.oldFactId,
+                        score: c.score,
+                        heuristicSignals: c.heuristicSignals,
+                        preview: c.preview,
                       })),
                     }
                   : {}),
@@ -1259,5 +1308,51 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
       },
     },
     { name: "memory_store" },
+  );
+
+  api.registerTool(
+    {
+      name: "memory_contradictions",
+      label: "List Memory Contradictions",
+      description:
+        "Returns facts flagged with contradictions — useful for reviewing uncertain or conflicting knowledge.",
+      parameters: Type.Object({
+        since: Type.Optional(Type.String({ description: "ISO8601 timestamp cursor — only contradictions after this time." })),
+        entity: Type.Optional(Type.String({ description: "Filter to contradictions involving this entity." })),
+        limit: Type.Optional(Type.Number({ description: "Max results (default 50, max 200)." })),
+        resolved: Type.Optional(
+          Type.Boolean({ description: "When true, only resolved; when false, only unresolved." }),
+        ),
+      }),
+      async execute(_toolCallId: string, params: Record<string, unknown>) {
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, cfg);
+        const rows = factsDb.queryContradictionSurface({
+          since: typeof params.since === "string" ? params.since : undefined,
+          entity: typeof params.entity === "string" ? params.entity : undefined,
+          limit:
+            typeof params.limit === "number" && params.limit > 0 ? Math.min(200, Math.floor(params.limit)) : 50,
+          resolved: typeof params.resolved === "boolean" ? params.resolved : undefined,
+          scopeFilter,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                rows.length === 0
+                  ? "No contradictions found."
+                  : rows
+                      .map(
+                        (r) =>
+                          `- [${r.score.toFixed(2)}] ${r.preview} (new=${r.factId}, old=${r.contradictingFactId})`,
+                      )
+                      .join("\n"),
+            },
+          ],
+          details: { count: rows.length, contradictions: rows },
+        };
+      },
+    },
+    { name: "memory_contradictions" },
   );
 }

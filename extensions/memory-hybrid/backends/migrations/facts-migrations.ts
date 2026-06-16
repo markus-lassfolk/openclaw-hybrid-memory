@@ -1496,6 +1496,13 @@ export function runFactsMigrations(db: DatabaseSync): void {
 
   // Legacy TEXT timestamps → ISO UTC (idempotent)
   backfillFactsDbTextTimestamps(db);
+
+  // Issues #1901–#1904: worker leases, episode causal links, contradiction resolved_at
+  migrateWorkerLeasesTable(db);
+  migrateEpisodeCausalLinksTable(db);
+  migrateEpisodeCausalLinksLastDecayAt(db);
+  migrateContradictionsResolvedAt(db);
+  migrateEpisodeRelationsConfidence(db);
 }
 
 /**
@@ -1572,6 +1579,81 @@ function migrateClassifyAttemptColumn(db: DatabaseSync): void {
   const cols = db.prepare("PRAGMA table_info(facts)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "last_classify_attempt_at")) {
     db.exec("ALTER TABLE facts ADD COLUMN last_classify_attempt_at INTEGER");
+  }
+}
+
+/** DB-backed distributed lease for background workers (Issue #1904). */
+function migrateWorkerLeasesTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worker_leases (
+      worker_id TEXT PRIMARY KEY,
+      owner_session_id TEXT NOT NULL,
+      pid INTEGER,
+      host TEXT,
+      acquired_at INTEGER NOT NULL,
+      last_heartbeat_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      state_json TEXT
+    )
+  `);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_worker_leases_expires ON worker_leases(expires_at)");
+}
+
+/** Inferred causal links between episodes (Issue #1903). */
+function migrateEpisodeCausalLinksTable(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS episode_causal_links (
+      id TEXT PRIMARY KEY,
+      source_episode_id TEXT NOT NULL,
+      target_episode_id TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0.5,
+      score_breakdown TEXT,
+      last_reinforced_at INTEGER,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (source_episode_id) REFERENCES episodes(id) ON DELETE CASCADE,
+      FOREIGN KEY (target_episode_id) REFERENCES episodes(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_ecl_source ON episode_causal_links(source_episode_id)",
+  );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_ecl_target ON episode_causal_links(target_episode_id, confidence DESC)",
+  );
+  db.exec(
+    "CREATE INDEX IF NOT EXISTS idx_ecl_reinforced ON episode_causal_links(last_reinforced_at)",
+  );
+}
+
+function migrateEpisodeCausalLinksLastDecayAt(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(episode_causal_links)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "last_decay_at")) {
+    db.exec("ALTER TABLE episode_causal_links ADD COLUMN last_decay_at INTEGER");
+  }
+}
+
+/** Cursor support for memory_contradictions recall surface (Issue #1902). */
+function migrateContradictionsResolvedAt(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(contradictions)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "resolved_at")) {
+    db.exec("ALTER TABLE contradictions ADD COLUMN resolved_at TEXT");
+  }
+  if (!cols.some((c) => c.name === "heuristic_score")) {
+    db.exec("ALTER TABLE contradictions ADD COLUMN heuristic_score REAL");
+  }
+  if (!cols.some((c) => c.name === "heuristic_signals")) {
+    db.exec("ALTER TABLE contradictions ADD COLUMN heuristic_signals TEXT");
+  }
+}
+
+/** Confidence/decay metadata on explicit episode relations (Issue #1903). */
+function migrateEpisodeRelationsConfidence(db: DatabaseSync): void {
+  const cols = db.prepare("PRAGMA table_info(episode_relations)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "confidence")) {
+    db.exec("ALTER TABLE episode_relations ADD COLUMN confidence REAL");
+  }
+  if (!cols.some((c) => c.name === "decay_after")) {
+    db.exec("ALTER TABLE episode_relations ADD COLUMN decay_after INTEGER");
   }
 }
 

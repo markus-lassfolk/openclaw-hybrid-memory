@@ -50,9 +50,10 @@ import {
   renderActiveTaskMarkdownFile,
 } from "../services/task-ledger-facts.js";
 import { runTaskQueueWatchdog } from "../services/task-queue-watchdog.js";
+import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
 import { deleteVectorsForFactIds } from "../services/vector-maintenance.js";
 import type { VerificationStore } from "../services/verification-store.js";
-import { runPreConsolidationFlush } from "../services/pre-consolidation-flush.js";
+import { registerWorkerLeaseShutdown } from "../services/worker-lease.js";
 import { isWorkshopEnabled } from "../services/workshop-config.js";
 import { syncWorkshopProposedEvents, withWorkshopDefaults } from "../services/workshop-service.js";
 import { parseDuration } from "../utils/duration.js";
@@ -205,6 +206,14 @@ export function createPluginService(ctx: PluginServiceContext) {
       api.logger.info(
         `memory-hybrid: initialized v${versionInfo.pluginVersion} (sqlite: ${sqlCount} facts, lance: ${resolvedLancePath}, model: ${cfg.embedding.model})`,
       );
+
+      if (typeof factsDb.getRawDb === "function") {
+        registerWorkerLeaseShutdown(
+          factsDb,
+          `plugin-${process.pid}`,
+          api.logger as { info?: (msg: string) => void; warn?: (msg: string) => void },
+        );
+      }
 
       checkOpenClawVersion(api.version, api.logger);
 

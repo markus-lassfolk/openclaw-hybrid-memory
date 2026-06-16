@@ -14,7 +14,7 @@ import {
 } from "../../utils/sqlite-outcome-compat.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
-import { sanitizeFts5QueryForFacts } from "./fts-text.js";
+import { inferCausalLinks, type CausalLinkCandidate } from "../../services/episode-causal-inference.js";
 import { scopeFilterClausePositional } from "./scope-sql.js";
 
 export function rowToEpisode(row: Record<string, unknown>): Episode {
@@ -42,6 +42,11 @@ export function rowToEpisode(row: Record<string, unknown>): Episode {
   };
 }
 
+export type RecordEpisodeResult = {
+  episode: Episode;
+  causallyInferredLinks: CausalLinkCandidate[];
+};
+
 export function recordEpisode(
   db: DatabaseSync,
   input: {
@@ -61,7 +66,8 @@ export function recordEpisode(
     userId?: string;
     sessionId?: string;
   },
-): Episode {
+  inferCausal?: boolean,
+): RecordEpisodeResult {
   const id = randomUUID();
   const nowSec = Math.floor(Date.now() / 1000);
   const timestamp = input.timestamp ?? nowSec;
@@ -118,7 +124,7 @@ export function recordEpisode(
   });
   tx();
 
-  return {
+  const episode: Episode = {
     id,
     category: "episode",
     event: input.event,
@@ -138,6 +144,9 @@ export function recordEpisode(
     decayClass,
     createdAt: nowSec,
   };
+
+  const causal = inferCausal ? inferCausalLinks(db, episode) : { advisory: [] };
+  return { episode, causallyInferredLinks: causal.advisory };
 }
 
 export function searchEpisodes(

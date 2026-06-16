@@ -59,7 +59,7 @@ type IssueInstallerContext = Pick<ToolsContext, "issueStore" | "factsDb" | "cfg"
 type WorkflowInstallerContext = Pick<ToolsContext, "workflowStore" | "cfg">;
 type CrystallizationInstallerContext = Pick<
   ToolsContext,
-  "crystallizationStore" | "workflowStore" | "cfg" | "changeFeed"
+  "crystallizationStore" | "workflowStore" | "factsDb" | "cfg" | "changeFeed"
 >;
 type SelfExtensionInstallerContext = Pick<ToolsContext, "toolProposalStore" | "workflowStore" | "cfg" | "changeFeed">;
 type ApitapInstallerContext = Pick<ToolsContext, "apitapStore" | "cfg">;
@@ -303,10 +303,11 @@ function installWorkflowTools(ctx: WorkflowInstallerContext, api: ClawdbotPlugin
 function selectCrystallizationToolsContext({
   crystallizationStore,
   workflowStore,
+  factsDb,
   cfg,
   changeFeed,
 }: ToolsContext): CrystallizationInstallerContext {
-  return { crystallizationStore, workflowStore, cfg, changeFeed };
+  return { crystallizationStore, workflowStore, factsDb, cfg, changeFeed };
 }
 
 function installCrystallizationTools(ctx: CrystallizationInstallerContext, api: ClawdbotPluginApi): void {
@@ -315,6 +316,7 @@ function installCrystallizationTools(ctx: CrystallizationInstallerContext, api: 
       {
         crystallizationStore: ctx.crystallizationStore,
         workflowStore: ctx.workflowStore,
+        factsDb: ctx.factsDb,
         cfg: ctx.cfg,
         changeFeed: ctx.changeFeed ?? null,
       },

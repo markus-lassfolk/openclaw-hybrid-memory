@@ -7,12 +7,72 @@ import type { SQLInputValue } from "node:sqlite";
 import type { DatabaseSync } from "node:sqlite";
 
 import { capturePluginError } from "../../services/error-reporter.js";
-import type { MemoryEntry } from "../../types/memory.js";
+import type { MemoryEntry, ScopeFilter } from "../../types/memory.js";
 import { createTransaction } from "../../utils/sqlite-transaction.js";
 import { nowIso } from "../../utils/dates.js";
 import { parseTags, serializeTags } from "../../utils/tags.js";
 import { rowToMemoryEntry } from "./row-mapper.js";
+import { scopeFilterClauseForAlias, scopeFilterClausePositional } from "./scope-sql.js";
 import type { MemoryLinkType } from "./types.js";
+
+export interface ContradictionDetectionResult {
+  contradictionId: string;
+  oldFactId: string;
+  oldFactOriginalConfidence: number;
+  score: number;
+  heuristicSignals: string[];
+  preview: string;
+}
+
+const NEGATION_PATTERN = /\b(not|no|never|without|disable|stop|don't|dont)\b/gi;
+const NUMERIC_PATTERN = /(\d+(?:\.\d+)?)\s*(ms|s|sec|seconds|min|minutes|h|hours|days|%)?/gi;
+
+function truncatePreview(text: string, maxLen = 200): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length <= maxLen ? t : `${t.slice(0, maxLen - 1)}…`;
+}
+
+/** Heuristic contradiction scoring when entity+key match (Issue #1902). */
+export function scoreFactContradiction(
+  newText: string,
+  newValue: string,
+  oldText: string,
+  oldValue: string,
+): { score: number; heuristicSignals: string[] } {
+  const signals: string[] = [];
+  let score = 0;
+
+  const newNeg = (newText.match(NEGATION_PATTERN) ?? []).length + (newValue.match(NEGATION_PATTERN) ?? []).length;
+  const oldNeg = (oldText.match(NEGATION_PATTERN) ?? []).length + (oldValue.match(NEGATION_PATTERN) ?? []).length;
+  if (newNeg !== oldNeg && (newNeg > 0 || oldNeg > 0)) {
+    signals.push("negation_token_mismatch");
+    score += 0.35;
+  }
+
+  const newNums = [...`${newText} ${newValue}`.matchAll(NUMERIC_PATTERN)].map((m) => m[0]);
+  const oldNums = [...`${oldText} ${oldValue}`.matchAll(NUMERIC_PATTERN)].map((m) => m[0]);
+  if (newNums.length > 0 && oldNums.length > 0) {
+    const overlap = newNums.some((n) => oldNums.includes(n));
+    if (!overlap && newNums.join() !== oldNums.join()) {
+      signals.push("numeric_conflict");
+      score += 0.3;
+    }
+  }
+
+  const newBool = /\b(true|false|enabled|disabled|yes|no)\b/i.test(newValue);
+  const oldBool = /\b(true|false|enabled|disabled|yes|no)\b/i.test(oldValue);
+  if (newBool && oldBool && newValue.toLowerCase() !== oldValue.toLowerCase()) {
+    signals.push("polarity_mismatch");
+    score += 0.25;
+  }
+
+  if (oldValue.trim().toLowerCase() !== newValue.trim().toLowerCase()) {
+    score += 0.2;
+    signals.push("value_mismatch");
+  }
+
+  return { score: Math.min(1, score), heuristicSignals: signals };
+}
 
 export interface ContradictionRecord {
   id: string;
@@ -86,12 +146,48 @@ export function findConflictingFacts(
   return rows.map((r) => rowToMemoryEntry(r));
 }
 
+export function contradictionPairExists(db: DatabaseSync, factIdA: string, factIdB: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM contradictions
+       WHERE resolved = 0
+         AND (
+           (fact_id_new = ? AND fact_id_old = ?)
+           OR (fact_id_new = ? AND fact_id_old = ?)
+         )
+       LIMIT 1`,
+    )
+    .get(factIdA, factIdB, factIdB, factIdA);
+  return row != null;
+}
+
 export function recordContradiction(
   db: DatabaseSync,
   factIdNew: string,
   factIdOld: string,
   createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
+  meta?: { score?: number; heuristicSignals?: string[] },
 ): { id: string; oldFactOriginalConfidence: number } {
+  if (contradictionPairExists(db, factIdNew, factIdOld)) {
+    const row = db
+      .prepare(
+        `SELECT id, old_fact_original_confidence FROM contradictions
+         WHERE resolved = 0
+           AND (
+             (fact_id_new = ? AND fact_id_old = ?)
+             OR (fact_id_new = ? AND fact_id_old = ?)
+           )
+         LIMIT 1`,
+      )
+      .get(factIdNew, factIdOld, factIdOld, factIdNew) as
+      | { id: string; old_fact_original_confidence: number | null }
+      | undefined;
+    return {
+      id: row?.id ?? factIdNew,
+      oldFactOriginalConfidence: row?.old_fact_original_confidence ?? 1.0,
+    };
+  }
+
   const id = randomUUID();
   const detectedAt = nowIso();
   let oldFactOriginalConfidence = 1.0;
@@ -103,9 +199,17 @@ export function recordContradiction(
     oldFactOriginalConfidence = oldFactRow?.confidence ?? 1.0;
 
     db.prepare(
-      `INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at, resolved, resolution, old_fact_original_confidence)
-           VALUES (?, ?, ?, ?, 0, NULL, ?)`,
-    ).run(id, factIdNew, factIdOld, detectedAt, oldFactOriginalConfidence);
+      `INSERT INTO contradictions (id, fact_id_new, fact_id_old, detected_at, resolved, resolution, old_fact_original_confidence, heuristic_score, heuristic_signals)
+           VALUES (?, ?, ?, ?, 0, NULL, ?, ?, ?)`,
+    ).run(
+      id,
+      factIdNew,
+      factIdOld,
+      detectedAt,
+      oldFactOriginalConfidence,
+      meta?.score ?? null,
+      meta?.heuristicSignals?.length ? JSON.stringify(meta.heuristicSignals) : null,
+    );
 
     createLink(factIdNew, factIdOld, "CONTRADICTS", 1.0);
 
@@ -124,23 +228,156 @@ export function detectContradictions(
   scope: string | null | undefined,
   scopeTarget: string | null | undefined,
   createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
-): Array<{ contradictionId: string; oldFactId: string; oldFactOriginalConfidence: number }> {
+  newText?: string | null,
+): ContradictionDetectionResult[] {
   if (!entity?.trim() || !key?.trim() || !value?.trim()) return [];
 
-  const conflicting = findConflictingFacts(db, entity.trim(), key.trim(), value.trim(), newFactId, scope, scopeTarget);
-  const results: Array<{ contradictionId: string; oldFactId: string; oldFactOriginalConfidence: number }> = [];
+  // BEGIN IMMEDIATE serializes cross-process writers so post-insert reads see committed peers.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const conflicting = findConflictingFacts(
+      db,
+      entity.trim(),
+      key.trim(),
+      value.trim(),
+      newFactId,
+      scope,
+      scopeTarget,
+    );
+    const results: ContradictionDetectionResult[] = [];
 
-  for (const old of conflicting) {
-    if (old.value?.toLowerCase() === value.trim().toLowerCase()) continue;
-    const contradiction = recordContradiction(db, newFactId, old.id, createLink);
-    results.push({
-      contradictionId: contradiction.id,
-      oldFactId: old.id,
-      oldFactOriginalConfidence: contradiction.oldFactOriginalConfidence,
-    });
+    for (const old of conflicting) {
+      if (old.value?.toLowerCase() === value.trim().toLowerCase()) continue;
+      const { score, heuristicSignals } = scoreFactContradiction(
+        newText ?? value.trim(),
+        value.trim(),
+        old.text ?? "",
+        old.value ?? "",
+      );
+      const contradiction = recordContradiction(db, newFactId, old.id, createLink, { score, heuristicSignals });
+      results.push({
+        contradictionId: contradiction.id,
+        oldFactId: old.id,
+        oldFactOriginalConfidence: contradiction.oldFactOriginalConfidence,
+        score,
+        heuristicSignals,
+        preview: truncatePreview(old.text ?? old.value ?? ""),
+      });
+    }
+
+    db.exec("COMMIT");
+    return results;
+  } catch (err) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
+/** Nightly repair: ensure active same entity+key groups with differing values have contradiction rows. */
+export type ContradictionRepairResult = {
+  groupsScanned: number;
+  pairsRepaired: number;
+  /** Pairs fixed via store-time detectContradictions after direct insert failed. */
+  pairsFallback: number;
+  /** Pairs still missing after primary + fallback; retried next dream cycle. */
+  pairsFailed: number;
+};
+
+export function repairUndetectedContradictions(
+  db: DatabaseSync,
+  createLink: (a: string, b: string, t: MemoryLinkType, s?: number) => string,
+  limitGroups = 200,
+): ContradictionRepairResult {
+  const groups = db
+    .prepare(
+      `SELECT lower(entity) AS entity_l, lower(key) AS key_l, scope, scope_target, COUNT(*) AS cnt
+       FROM facts
+       WHERE superseded_at IS NULL
+         AND entity IS NOT NULL AND trim(entity) != ''
+         AND key IS NOT NULL AND trim(key) != ''
+       GROUP BY entity_l, key_l, scope, scope_target
+       HAVING cnt > 1
+       ORDER BY cnt DESC
+       LIMIT ?`,
+    )
+    .all(limitGroups) as Array<{
+    entity_l: string;
+    key_l: string;
+    scope: string;
+    scope_target: string | null;
+    cnt: number;
+  }>;
+
+  let pairsRepaired = 0;
+  let pairsFallback = 0;
+  let pairsFailed = 0;
+  for (const group of groups) {
+    const facts = db
+      .prepare(
+        `SELECT id, text, value, scope, scope_target FROM facts
+         WHERE superseded_at IS NULL
+           AND lower(entity) = ?
+           AND lower(key) = ?
+           AND scope = ?
+           AND ((scope_target IS NULL AND ? IS NULL) OR scope_target = ?)
+         ORDER BY created_at DESC
+         LIMIT 50`,
+      )
+      .all(group.entity_l, group.key_l, group.scope, group.scope_target, group.scope_target) as Array<{
+      id: string;
+      text: string;
+      value: string | null;
+      scope: string;
+      scope_target: string | null;
+    }>;
+
+    for (let i = 0; i < facts.length; i++) {
+      for (let j = i + 1; j < facts.length; j++) {
+        const newer = facts[i]!;
+        const older = facts[j]!;
+        if ((newer.value ?? "").trim().toLowerCase() === (older.value ?? "").trim().toLowerCase()) continue;
+        if (contradictionPairExists(db, newer.id, older.id)) continue;
+        const { score, heuristicSignals } = scoreFactContradiction(
+          newer.text ?? newer.value ?? "",
+          newer.value ?? "",
+          older.text ?? "",
+          older.value ?? "",
+        );
+        try {
+          recordContradiction(db, newer.id, older.id, createLink, { score, heuristicSignals });
+          pairsRepaired++;
+        } catch {
+          try {
+            const hits = detectContradictions(
+              db,
+              newer.id,
+              group.entity_l,
+              group.key_l,
+              newer.value ?? "",
+              newer.scope,
+              newer.scope_target,
+              createLink,
+              newer.text,
+            );
+            if (hits.some((h) => h.oldFactId === older.id)) {
+              pairsRepaired++;
+              pairsFallback++;
+            } else {
+              pairsFailed++;
+            }
+          } catch {
+            pairsFailed++;
+          }
+        }
+      }
+    }
   }
 
-  return results;
+  return { groupsScanned: groups.length, pairsRepaired, pairsFallback, pairsFailed };
 }
 
 export function getContradictions(db: DatabaseSync, factId?: string): ContradictionRecord[] {
@@ -169,8 +406,8 @@ export function resolveContradiction(
   resolution: "superseded" | "kept" | "merged",
 ): boolean {
   const result = db
-    .prepare("UPDATE contradictions SET resolved = 1, resolution = ? WHERE id = ? AND resolved = 0")
-    .run(resolution, contradictionId);
+    .prepare("UPDATE contradictions SET resolved = 1, resolution = ?, resolved_at = ? WHERE id = ? AND resolved = 0")
+    .run(resolution, nowIso(), contradictionId);
   return result.changes > 0;
 }
 
@@ -1067,6 +1304,139 @@ export function applyContradictionReviewDecisions(
   }
 
   return { applied, keptNew, keptOld, manualReview, rejected, errors };
+}
+
+export function detectEpisodeFailureContradictions(
+  db: DatabaseSync,
+  eventText: string,
+  procedureId?: string | null,
+  scopeFilter?: ScopeFilter | null,
+): Array<{
+  factId: string;
+  score: number;
+  heuristicSignals: string[];
+  preview: string;
+}> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const conditions = [
+    "superseded_at IS NULL",
+    "(expires_at IS NULL OR expires_at > ?)",
+    "category IN ('procedure', 'workflow')",
+  ];
+  const params: SQLInputValue[] = [nowSec];
+  if (procedureId?.trim()) {
+    conditions.push("(id = ? OR entity = ? OR key = ?)");
+    params.push(procedureId.trim(), procedureId.trim(), procedureId.trim());
+  }
+  const scope = scopeFilterClausePositional(scopeFilter);
+  if (scope.clause) {
+    conditions.push(scope.clause.trim().replace(/^ AND /, ""));
+    params.push(...scope.params);
+  }
+  const rows = db
+    .prepare(
+      `SELECT id, text, value FROM facts WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC LIMIT 20`,
+    )
+    .all(...params) as Array<{ id: string; text: string; value: string | null }>;
+
+  const out: Array<{ factId: string; score: number; heuristicSignals: string[]; preview: string }> = [];
+  for (const row of rows) {
+    const { score, heuristicSignals } = scoreFactContradiction(
+      eventText,
+      eventText,
+      row.text ?? "",
+      row.value ?? "",
+    );
+    if (score >= 0.3) {
+      out.push({
+        factId: row.id,
+        score,
+        heuristicSignals,
+        preview: truncatePreview(row.text ?? row.value ?? ""),
+      });
+    }
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+
+export function queryContradictionSurface(
+  db: DatabaseSync,
+  options: {
+    since?: string;
+    entity?: string;
+    limit?: number;
+    resolved?: boolean;
+    scopeFilter?: ScopeFilter | null;
+  } = {},
+): Array<{
+  factId: string;
+  contradictingFactId: string;
+  contradictionId: string;
+  score: number;
+  heuristicSignals: string[];
+  createdAt: string;
+  preview: string;
+  resolved: boolean;
+}> {
+  const limit = Math.min(options.limit ?? 50, 200);
+  const conditions: string[] = [];
+  const params: SQLInputValue[] = [];
+
+  if (options.since?.trim()) {
+    conditions.push("c.detected_at >= ?");
+    params.push(options.since.trim());
+  }
+  if (options.resolved === true) {
+    conditions.push("c.resolved = 1");
+  } else if (options.resolved === false) {
+    conditions.push("c.resolved = 0");
+  }
+  if (options.entity?.trim()) {
+    conditions.push("(LOWER(f_new.entity) = LOWER(?) OR LOWER(f_old.entity) = LOWER(?))");
+    params.push(options.entity.trim(), options.entity.trim());
+  }
+  const newScope = scopeFilterClauseForAlias(options.scopeFilter, "f_new");
+  const oldScope = scopeFilterClauseForAlias(options.scopeFilter, "f_old");
+  if (newScope.clause) {
+    conditions.push(newScope.clause.trim().replace(/^ AND /, ""));
+    params.push(...newScope.params);
+  }
+  if (oldScope.clause) {
+    conditions.push(oldScope.clause.trim().replace(/^ AND /, ""));
+    params.push(...oldScope.params);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const rows = db
+    .prepare(
+      `SELECT c.id, c.fact_id_new, c.fact_id_old, c.detected_at, c.resolved,
+              c.heuristic_score, c.heuristic_signals,
+              f_old.text AS old_text, f_old.value AS old_value
+       FROM contradictions c
+       JOIN facts f_old ON f_old.id = c.fact_id_old
+       JOIN facts f_new ON f_new.id = c.fact_id_new
+       ${where}
+       ORDER BY c.detected_at DESC
+       LIMIT ?`,
+    )
+    .all(...params, limit) as Array<Record<string, unknown>>;
+
+  return rows.map((r) => ({
+    factId: r.fact_id_new as string,
+    contradictingFactId: r.fact_id_old as string,
+    contradictionId: r.id as string,
+    score: typeof r.heuristic_score === "number" ? (r.heuristic_score as number) : 0,
+    heuristicSignals: (() => {
+      try {
+        return r.heuristic_signals ? (JSON.parse(String(r.heuristic_signals)) as string[]) : [];
+      } catch {
+        return [];
+      }
+    })(),
+    createdAt: r.detected_at as string,
+    preview: truncatePreview(String(r.old_text ?? r.old_value ?? "")),
+    resolved: (r.resolved as number) === 1,
+  }));
 }
 
 export function contradictionsCount(db: DatabaseSync): number {

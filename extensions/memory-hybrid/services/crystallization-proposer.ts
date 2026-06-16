@@ -33,6 +33,15 @@ import {
   summarizeSkillProposalValidation,
 } from "./generated-skill-validation.js";
 import { detectCrystallizationCandidates } from "./pattern-detector.js";
+import {
+  acquireLease,
+  heartbeatLease,
+  releaseLease,
+  resolveWorkerLeasesConfig,
+  shouldRunWorker,
+  type WorkerLeasesConfig,
+} from "./worker-lease.js";
+import type { DatabaseSync } from "node:sqlite";
 import { filterUserFacingGoals } from "./workflow-goal-classifier.js";
 import {
   buildCrystallizationInstallFiles,
@@ -130,8 +139,24 @@ export function outputDirForInstalledSkill(outputPath: string, skillName: string
 // CrystallizationProposer
 // ---------------------------------------------------------------------------
 
+export interface CrystallizationRunCycleOpts {
+  autoApproveOverride?: boolean;
+  leaseContext?: {
+    db: DatabaseSync;
+    ownerSessionId: string;
+    workerLeases?: WorkerLeasesConfig;
+    logger?: { info?: (msg: string) => void; warn?: (msg: string) => void };
+  };
+}
+
 export class CrystallizationProposer {
   private readonly validator: GeneratedSkillValidationService;
+  private activeLease: {
+    db: DatabaseSync;
+    ownerSessionId: string;
+    workerLeases: WorkerLeasesConfig;
+    lastHeartbeatAtMs: number;
+  } | null = null;
 
   constructor(
     private readonly workflowStore: WorkflowStore | null,
@@ -159,7 +184,50 @@ export class CrystallizationProposer {
    *
    * Returns a summary of what was proposed / skipped.
    */
-  runCycle(opts?: { autoApproveOverride?: boolean }): ProposeResult {
+  runCycle(opts?: CrystallizationRunCycleOpts): ProposeResult {
+    const leaseContext = opts?.leaseContext;
+    const workerLeases = resolveWorkerLeasesConfig(leaseContext?.workerLeases);
+    let leaseHeld = false;
+    const workerId = "crystallization";
+
+    if (leaseContext?.db && workerLeases.enabled) {
+      const gate = shouldRunWorker(leaseContext.db, workerLeases, leaseContext.logger);
+      if (!gate.allowed) {
+        return {
+          proposed: 0,
+          skipped: 0,
+          reasons: [`Worker gated: ${gate.reason ?? "not_eligible"}`],
+        };
+      }
+      leaseHeld = acquireLease(leaseContext.db, workerId, leaseContext.ownerSessionId, {
+        ttlSeconds: workerLeases.defaultTtlSeconds,
+        heartbeatIntervalSeconds: workerLeases.heartbeatIntervalSeconds,
+        logger: leaseContext.logger,
+      });
+      if (!leaseHeld) {
+        return { proposed: 0, skipped: 0, reasons: ["Another process holds the crystallization lease"] };
+      }
+    }
+
+    try {
+      if (leaseHeld && leaseContext?.db) {
+        this.activeLease = {
+          db: leaseContext.db,
+          ownerSessionId: leaseContext.ownerSessionId,
+          workerLeases,
+          lastHeartbeatAtMs: Date.now(),
+        };
+      }
+      return this.runCycleInner(opts?.autoApproveOverride);
+    } finally {
+      this.activeLease = null;
+      if (leaseHeld && leaseContext?.db) {
+        releaseLease(leaseContext.db, workerId, leaseContext.ownerSessionId);
+      }
+    }
+  }
+
+  private runCycleInner(autoApproveOverride?: boolean): ProposeResult {
     if (!this.cfg.enabled) {
       return {
         proposed: 0,
@@ -229,7 +297,7 @@ export class CrystallizationProposer {
       }
       return { proposed: 0, skipped: 0, reasons: reasons.length > 0 ? reasons : ["No new candidates found"] };
     }
-    const autoApprove = opts?.autoApproveOverride ?? this.cfg.autoApprove;
+    const autoApprove = autoApproveOverride ?? this.cfg.autoApprove;
     const remainingSlots = Math.max(0, this.cfg.maxCrystallized - approvedCount);
     const pendingRemaining =
       this.cfg.maxPendingProposals > 0
@@ -245,6 +313,26 @@ export class CrystallizationProposer {
 
     for (const candidate of batch) {
       try {
+        if (this.activeLease) {
+          const heartbeatMs = this.activeLease.workerLeases.heartbeatIntervalSeconds * 1000;
+          const nowMs = Date.now();
+          if (nowMs - this.activeLease.lastHeartbeatAtMs >= heartbeatMs) {
+            const stillHeld = heartbeatLease(
+              this.activeLease.db,
+              "crystallization",
+              this.activeLease.ownerSessionId,
+              this.activeLease.workerLeases.defaultTtlSeconds,
+            );
+            if (!stillHeld) {
+              this.activeLease = null;
+              reasons.push(
+                "Lost crystallization lease during cycle (another process may have taken over); stopping early",
+              );
+              break;
+            }
+            this.activeLease.lastHeartbeatAtMs = nowMs;
+          }
+        }
         if (
           this.cfg.excludeSystemGoals !== false &&
           filterUserFacingGoals(candidate.pattern.exampleGoals, this.cfg).length === 0

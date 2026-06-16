@@ -314,6 +314,24 @@ export function parseRetrievalConfig(cfg: Record<string, unknown>): RetrievalCon
         : 20,
     fts5TopK:
       typeof retrievalRaw?.fts5TopK === "number" && retrievalRaw.fts5TopK > 0 ? Math.floor(retrievalRaw.fts5TopK) : 20,
+    defaultRecallMode:
+      retrievalRaw?.defaultRecallMode === "semantic" ||
+      retrievalRaw?.defaultRecallMode === "hybrid" ||
+      retrievalRaw?.defaultRecallMode === "keyword"
+        ? retrievalRaw.defaultRecallMode
+        : "hybrid",
+    recallLatencyWarnMs:
+      typeof retrievalRaw?.recallLatencyWarnMs === "number" && retrievalRaw.recallLatencyWarnMs > 0
+        ? Math.floor(retrievalRaw.recallLatencyWarnMs)
+        : 150,
+    episodeCausalLatencyWarnMs:
+      typeof retrievalRaw?.episodeCausalLatencyWarnMs === "number" && retrievalRaw.episodeCausalLatencyWarnMs > 0
+        ? Math.floor(retrievalRaw.episodeCausalLatencyWarnMs)
+        : 30,
+    contradictionLatencyWarnMs:
+      typeof retrievalRaw?.contradictionLatencyWarnMs === "number" && retrievalRaw.contradictionLatencyWarnMs > 0
+        ? Math.floor(retrievalRaw.contradictionLatencyWarnMs)
+        : 20,
   };
 }
 

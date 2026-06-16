@@ -14,6 +14,7 @@ import {
   assertCrystallizationQueueStatusFilter,
   type CrystallizationStore,
 } from "../backends/crystallization-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import type { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { CrystallizationProposer } from "../services/crystallization-proposer.js";
@@ -25,12 +26,13 @@ import { summarizeSkillProposalValidation } from "../services/generated-skill-va
 interface CrystallizationToolsContext {
   crystallizationStore: CrystallizationStore;
   workflowStore: WorkflowStore;
+  factsDb: FactsDB;
   cfg: HybridMemoryConfig;
   changeFeed?: ChangeFeed | null;
 }
 
 export function registerCrystallizationTools(ctx: CrystallizationToolsContext, api: ClawdbotPluginApi): void {
-  const { crystallizationStore, workflowStore, cfg, changeFeed } = ctx;
+  const { crystallizationStore, workflowStore, factsDb, cfg, changeFeed } = ctx;
   const changeFeedEmit =
     changeFeed && cfg.liveChangeFeed?.enabled !== false
       ? { changeFeed, cfg, sessionKey: BROADCAST_CHANGE_SESSION_KEY }
@@ -54,7 +56,15 @@ export function registerCrystallizationTools(ctx: CrystallizationToolsContext, a
           changeFeedEmit,
         );
         // Issue: skill proposal lifecycle — tool-triggered crystallization should never install directly.
-        const result = proposer.runCycle({ autoApproveOverride: false });
+        const result = proposer.runCycle({
+          autoApproveOverride: false,
+          leaseContext: {
+            db: factsDb.getRawDb(),
+            ownerSessionId: `plugin-${process.pid}`,
+            workerLeases: cfg.maintenance.orchestrator?.workerLeases,
+            logger: api.logger,
+          },
+        });
 
         const lines: string[] = [];
         lines.push("Crystallization cycle complete.");

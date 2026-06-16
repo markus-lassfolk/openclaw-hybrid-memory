@@ -992,6 +992,7 @@ export function registerManageReflectionPipeline(
                 async () => {
                   const crystalRes = runCrystallizationProposalCycle(cfg, {
                     changeFeed: b.changeFeed ?? null,
+                    factsDb,
                   });
                   if (crystalRes.skippedReason === "disabled") {
                     console.log("Crystallization: skipped (disabled).");

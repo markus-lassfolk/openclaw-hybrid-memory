@@ -3,6 +3,7 @@
  */
 
 import { CrystallizationStore } from "../backends/crystallization-store.js";
+import type { FactsDB } from "../backends/facts-db.js";
 import { WorkflowStore } from "../backends/workflow-store.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { ChangeFeed } from "./change-feed.js";
@@ -11,6 +12,7 @@ import { defaultWorkflowDbPath } from "./maintenance-coverage.js";
 import { pendingStorePaths } from "./pending-review-digest.js";
 import { detectCrystallizationCandidates } from "./pattern-detector.js";
 import { patternHasUserFacingGoal } from "./workflow-goal-classifier.js";
+import { resolveWorkerLeasesConfig } from "./worker-lease.js";
 
 export type CrystallizationCycleResult = {
   proposed: number;
@@ -114,10 +116,20 @@ export function previewCrystallizationCycle(
 
 export function runCrystallizationProposalCycle(
   cfg: HybridMemoryConfig,
-  opts?: { changeFeed?: ChangeFeed | null; sessionKey?: string },
+  opts?: { changeFeed?: ChangeFeed | null; sessionKey?: string; factsDb?: FactsDB | null },
 ): CrystallizationCycleResult {
   if (!cfg.crystallization?.enabled) {
     return { proposed: 0, skipped: 0, reasons: ["Crystallization is disabled"], skippedReason: "disabled" };
+  }
+
+  const workerLeases = resolveWorkerLeasesConfig(cfg.maintenance?.orchestrator?.workerLeases);
+  if (workerLeases.enabled && (!opts?.factsDb || typeof opts.factsDb.getRawDb !== "function")) {
+    return {
+      proposed: 0,
+      skipped: 0,
+      reasons: ["Worker leases enabled but facts DB unavailable for crystallization lease"],
+      skippedReason: "stores-unavailable",
+    };
   }
 
   const paths = pendingStorePaths(cfg.sqlitePath);
@@ -131,7 +143,15 @@ export function runCrystallizationProposalCycle(
       cfg,
       sessionKey: opts?.sessionKey,
     });
-    return proposer.runCycle();
+    const leaseContext =
+      workerLeases.enabled && opts?.factsDb
+        ? {
+            db: opts.factsDb.getRawDb(),
+            ownerSessionId: `plugin-${process.pid}`,
+            workerLeases: cfg.maintenance?.orchestrator?.workerLeases,
+          }
+        : undefined;
+    return proposer.runCycle({ leaseContext });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return {

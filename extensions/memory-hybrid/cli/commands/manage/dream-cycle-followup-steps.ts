@@ -106,6 +106,7 @@ export async function runToolEffectivenessStep(deps: DreamCycleFollowUpDeps, ver
 export async function runCrystallizationProposalsStep(deps: DreamCycleFollowUpDeps): Promise<string> {
   const crystalRes = runCrystallizationProposalCycle(deps.cfg, {
     changeFeed: deps.changeFeed ?? null,
+    factsDb: deps.factsDb,
   });
   if (crystalRes.skippedReason === "disabled") return "skipped (disabled)";
   if (crystalRes.skippedReason === "stores-unavailable") {
