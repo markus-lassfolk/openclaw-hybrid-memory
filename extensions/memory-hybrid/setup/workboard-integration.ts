@@ -42,7 +42,7 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
   
   const checkSuperseded = () => shouldAbort?.() ?? false;
 
-  const uiIntegrationVerbose = integrationVerbose(cfg);
+  const uiIntegrationVerbose = integrationVerbose(cfg.verbosity);
 
   try {
     const { createWorkboardAdapter } = await import("../services/workboard-adapter.js");
@@ -156,5 +156,6 @@ export async function armWorkboardIntegration(ctx: WorkboardIntegrationContext):
 
 /** Fire-and-forget re-arm after hot reload cleared timers without re-running plugin-service.start(). */
 export function scheduleWorkboardIntegrationAfterReregister(ctx: WorkboardIntegrationContext): void {
+  if (ctx.shouldAbort?.()) return;
   void armWorkboardIntegration({ ...ctx, connectLabel: "re-register" });
 }

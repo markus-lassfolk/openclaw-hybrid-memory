@@ -71,8 +71,7 @@ describe("workboard-integration", () => {
     expect(sync).toHaveBeenCalledTimes(1);
     expect(timers.workboardSync?.value).not.toBeNull();
 
-    vi.advanceTimersByTime(5 * 60 * 1000);
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
     expect(sync).toHaveBeenCalledTimes(2);
   });
 
