@@ -94,6 +94,7 @@ export interface PluginRuntime {
   /** Multi-vault routing (#1917). */
   resolveVault?: (vaultName?: string) => import("../services/vault-registry.js").VaultHandle;
   resolveAllVaults?: () => import("../services/vault-registry.js").VaultHandle[];
+  resolveVaultWal?: (vaultName?: string) => import("../backends/wal.js").WriteAheadLog | null;
   vaultRegistry?: import("../services/vault-registry.js").VaultRegistry | null;
   /** Populated after lifecycle hooks register; used for frustration reset on revert. */
   sessionStateRef: { value: SessionState | null };

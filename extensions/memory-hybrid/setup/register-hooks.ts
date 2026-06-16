@@ -203,6 +203,7 @@ export function registerLifecycleHooks(ctx: HooksContext, api: ClawdbotPluginApi
       toolProposalStore: ctx.toolProposalStore ?? null,
       registrationGeneration,
       currentRegistrationGenerationRef,
+      resolveAllVaults: ctx.resolveAllVaults,
     };
   } catch (err) {
     capturePluginError(err instanceof Error ? err : new Error(String(err)), {

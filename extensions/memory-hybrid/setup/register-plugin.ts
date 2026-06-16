@@ -260,6 +260,15 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     resetStartupMemoryAttribution();
     // Dispose tool registrations when API exposes unregister/dispose handles.
     old.toolRegistrationHandle?.dispose();
+    try {
+      old.vaultRegistry?.closeAll();
+    } catch (err) {
+      capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+        subsystem: "registration",
+        operation: "plugin-reregister:close-vaults",
+        severity: "warning",
+      });
+    }
     if (reuseDatabases) {
       recordReregisterDatabaseReuse();
       logApi.logger.debug?.(
@@ -473,11 +482,13 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
           defaultVectorDb: dbContext.vectorDb,
           defaultSqlitePath: resolvedSqlitePath,
           defaultLancePath: resolvedLancePath,
+          defaultWal: dbContext.wal,
           vectorDim: dbContext.embeddings.dimensions,
         })
       : null;
   const resolveVault = vaultRegistry ? (name?: string) => vaultRegistry.resolve(name) : undefined;
   const resolveAllVaults = vaultRegistry ? () => vaultRegistry.resolveAll() : undefined;
+  const resolveVaultWal = vaultRegistry ? (name?: string) => vaultRegistry.resolveWal(name) : undefined;
 
   const bootstrapSettledRef = { value: false };
   const bootstrapAsyncInit = dbContext.initialized.finally(() => {
@@ -520,6 +531,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     changeFeed,
     resolveVault,
     resolveAllVaults,
+    resolveVaultWal,
     vaultRegistry,
     sessionStateRef: { value: null },
     lifecycleHooksHandle: null, // set after registerLifecycleHooks below
@@ -597,6 +609,7 @@ function runMemoryHybridRegisterImpl(api: ClawdbotPluginApi): void {
     sessionStateRef: runtime.sessionStateRef,
     resolveVault: runtime.resolveVault,
     resolveAllVaults: runtime.resolveAllVaults,
+    resolveVaultWal: runtime.resolveVaultWal,
   };
 
   // ========================================================================

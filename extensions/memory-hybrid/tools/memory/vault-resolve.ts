@@ -6,6 +6,7 @@ import type { FactsDB } from "../../backends/facts-db.js";
 import type { VectorDB } from "../../backends/vector-db.js";
 import type { HybridMemoryConfig } from "../../config.js";
 import type { VaultHandle } from "../../services/vault-registry.js";
+import type { WriteAheadLog } from "../../backends/wal.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 
 export type ResolvedVaultBackends = {
@@ -51,4 +52,12 @@ export function shouldFanOutVaultRecall(cfg: HybridMemoryConfig, vaultParam?: st
   if (trimmed === "all") return true;
   if (trimmed && trimmed !== "default") return false;
   return cfg.retrieval?.multiVaultFanOut === true && Boolean(cfg.vaults && Object.keys(cfg.vaults).length > 0);
+}
+
+/** WAL for store durability — routes to vault-specific path for named vaults (#1917). */
+export function resolveToolVaultWal(runtime: MemoryToolRuntime, vaultName?: string): WriteAheadLog | null {
+  const trimmed = vaultName?.trim();
+  if (!trimmed || trimmed === "default") return runtime.wal;
+  if (runtime.resolveVaultWal) return runtime.resolveVaultWal(trimmed);
+  return runtime.wal;
 }
