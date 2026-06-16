@@ -4,14 +4,20 @@
 
 import { Type } from "@sinclair/typebox";
 import type { HybridMemoryConfig } from "../../config.js";
-import { pinFact, resolveFactByIdOrQuery, snoozeFact, checkPinQuota, DEFAULT_PIN_QUOTA } from "../../services/fact-lifecycle-verbs.js";
+import {
+  pinFact,
+  resolveFactByIdOrQuery,
+  snoozeFact,
+  checkPinQuota,
+  DEFAULT_PIN_QUOTA,
+} from "../../services/fact-lifecycle-verbs.js";
 import { createRecallSpan } from "../../services/recall-timing.js";
 import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
 import { runMultiVaultExplicitDeepRetrieval } from "../../services/multi-vault-retrieval.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
 import { applyFragmentRecallPostProcess, resolveRecallInjectionText } from "../../services/fragment-recall.js";
-import { buildToolScopeFilter } from "../../utils/scope-filter.js";
+import { buildToolScopeFilter, scopeFieldsFromFilter } from "../../utils/scope-filter.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 import { resolveToolVaultBackends, listToolVaultHandles } from "./vault-resolve.js";
 
@@ -43,7 +49,9 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         query: Type.String({ description: "Natural language recall query" }),
         full: Type.Optional(Type.Boolean({ description: "Return full fact text" })),
         limit: Type.Optional(Type.Number({ description: "Max results (default 5)" })),
-        vault: Type.Optional(Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" })),
+        vault: Type.Optional(
+          Type.String({ description: "Named vault from plugin config vaults map, or 'all' to fan out" }),
+        ),
       }),
       async execute(_id, args: { query?: string; full?: boolean; limit?: number; vault?: string }) {
         const query = String(args.query ?? "").trim();
@@ -108,15 +116,18 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           config: resolveRetrievalV2Config(cfg),
           recallId,
           openai,
-          closedLoop: cfg.closedLoop,
         });
         recordIntentDistribution(v2.intent.intent);
 
         const ranked = applyFragmentRecallPostProcess(v2.results);
         const lines = ranked.slice(0, limit).map((r) => {
+          const vaultName = vaultByFactId.get(r.entry.id);
+          const factsDbForEntry = vaultName
+            ? (vaultHandleByName.get(vaultName)?.factsDb ?? activeFactsDb)
+            : activeFactsDb;
           const text = args.full
-            ? resolveRecallInjectionText(r.entry, activeFactsDb, false)
-            : resolveRecallInjectionText(r.entry, activeFactsDb, true).slice(0, 200);
+            ? resolveRecallInjectionText(r.entry, factsDbForEntry, false)
+            : resolveRecallInjectionText(r.entry, factsDbForEntry, true).slice(0, 200);
           return `- [${r.entry.category}] ${text} (id=${r.entry.id})`;
         });
         const escalate =
@@ -152,7 +163,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
         const quota = cfg.retrieval?.recallFeedback?.pinQuota ?? DEFAULT_PIN_QUOTA;
-        const { allowed, current } = checkPinQuota(factsDb, quota);
+        const { allowed, current } = checkPinQuota(factsDb, quota, scopeFilter);
         if (!allowed) {
           return {
             content: [
@@ -225,6 +236,13 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       async execute(_id, args: { text?: string; tags?: string[] }) {
         const text = String(args.text ?? "").trim();
         if (!text) return { content: [{ type: "text", text: "text is required." }] };
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
+          multiAgent: cfg.multiAgent,
+          autoRecall: cfg.autoRecall,
+        });
+        const { scope, scopeTarget } = scopeFilter
+          ? scopeFieldsFromFilter(scopeFilter)
+          : { scope: "global" as const, scopeTarget: undefined };
         const result = factsDb.storeWithResult({
           text,
           category: "diary",
@@ -235,6 +253,8 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           source: "diary_write",
           confidence: 0.9,
           tags: args.tags,
+          scope,
+          scopeTarget,
         });
 
         if (result.skipped) {

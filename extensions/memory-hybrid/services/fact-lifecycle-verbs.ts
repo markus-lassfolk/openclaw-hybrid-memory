@@ -6,8 +6,12 @@ import { appendFactProvenance } from "../backends/facts-db/provenance-json.js";
 
 export const DEFAULT_PIN_QUOTA = 10;
 
-export function checkPinQuota(factsDb: FactsDB, quota = DEFAULT_PIN_QUOTA): { allowed: boolean; current: number } {
-  const current = countPinnedFacts(factsDb);
+export function checkPinQuota(
+  factsDb: FactsDB,
+  quota = DEFAULT_PIN_QUOTA,
+  scopeFilter?: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
+): { allowed: boolean; current: number } {
+  const current = countPinnedFacts(factsDb, scopeFilter);
   return { allowed: current < quota, current };
 }
 
@@ -36,11 +40,28 @@ export function snoozeFact(factsDb: FactsDB, factId: string, untilSec: number): 
   return result.changes > 0;
 }
 
-export function countPinnedFacts(factsDb: FactsDB): number {
+export function countPinnedFacts(
+  factsDb: FactsDB,
+  scopeFilter?: { userId?: string | null; agentId?: string | null; sessionId?: string | null },
+): number {
   const db = factsDb.getRawDb();
-  const row = db
-    .prepare("SELECT COUNT(*) AS cnt FROM facts WHERE pinned_at IS NOT NULL AND superseded_at IS NULL")
-    .get() as { cnt: number } | undefined;
+  let sql = "SELECT COUNT(*) AS cnt FROM facts WHERE pinned_at IS NOT NULL AND superseded_at IS NULL";
+  const params: unknown[] = [];
+  if (scopeFilter) {
+    if (scopeFilter.sessionId) {
+      sql += " AND scope = 'session' AND scope_target = ?";
+      params.push(scopeFilter.sessionId);
+    } else if (scopeFilter.userId) {
+      sql += " AND ((scope = 'user' AND scope_target = ?) OR scope = 'global')";
+      params.push(scopeFilter.userId);
+    } else if (scopeFilter.agentId) {
+      sql += " AND ((scope = 'agent' AND scope_target = ?) OR scope = 'global')";
+      params.push(scopeFilter.agentId);
+    } else {
+      sql += " AND scope = 'global'";
+    }
+  }
+  const row = db.prepare(sql).get(...params) as { cnt: number } | undefined;
   return row?.cnt ?? 0;
 }
 
