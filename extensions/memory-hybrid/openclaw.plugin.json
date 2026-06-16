@@ -1552,6 +1552,22 @@
                 }
               }
             }
+          },
+          "evolution": {
+            "type": "object",
+            "description": "Memory evolution config for neighbor-based tag/summary propagation"
+          },
+          "fragmentEmbedding": {
+            "type": "object",
+            "description": "Fragment-level embedding for long documents"
+          },
+          "fragmentLevelEmbedding": {
+            "type": "object",
+            "description": "Alias for fragmentEmbedding"
+          },
+          "contentTypeHalfLives": {
+            "type": "object",
+            "description": "Content-type based half-life decay config"
           }
         },
         "description": "Lifecycle adapters — GitHub stub (#1196)"

@@ -192,7 +192,7 @@ export async function runMemoryEvolutionPass(
     `UPDATE facts SET tags = ?, summary = COALESCE(?, summary),
      evolution_version = COALESCE(evolution_version, 0) + 1,
      evolution_reason = ?
-     WHERE id = ?`,
+     WHERE id = ? AND id NOT IN (SELECT fact_id FROM verified_facts)`,
   );
 
   const neighborBudget = new Map<string, number>();

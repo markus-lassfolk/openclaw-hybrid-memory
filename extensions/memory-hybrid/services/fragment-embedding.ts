@@ -10,6 +10,7 @@ import type { LifecycleAdaptersConfig } from "../config/types/features.js";
 import type { MemoryEntry } from "../types/memory.js";
 import type { EmbeddingProvider } from "./embeddings.js";
 import { chunkMarkdown } from "./document-chunker.js";
+import { cleanupEvictedVector } from "./vector-maintenance.js";
 
 export type FragmentIndexResult = {
   fragmentsStored: number;
@@ -41,7 +42,7 @@ export async function indexFactFragments(opts: {
 
   for (const chunk of chunks) {
     const fragmentText = `[fragment of ${parentFact.id}] ${parentSummary}\n\n${chunk.text}`;
-    const entry = factsDb.store({
+    const result = factsDb.storeWithResult({
       text: fragmentText,
       summary: chunk.sectionHeading ? `${chunk.sectionHeading}: ${chunk.text.slice(0, 160)}` : chunk.text.slice(0, 200),
       category: "fact",
@@ -50,8 +51,17 @@ export async function indexFactFragments(opts: {
       tags: ["fragment", `parent:${parentFact.id}`],
     });
 
+    if (result.evictedFactId) {
+      await cleanupEvictedVector({
+        vectorDb,
+        evictedFactId: result.evictedFactId,
+        context: "fragment-embedding",
+        logger,
+      });
+    }
+
     try {
-      factsDb.getRawDb().prepare("UPDATE facts SET parent_fact_id = ? WHERE id = ?").run(parentFact.id, entry.id);
+      factsDb.getRawDb().prepare("UPDATE facts SET parent_fact_id = ? WHERE id = ?").run(parentFact.id, result.entry.id);
     } catch {
       /* column may be missing on very old DBs until migration */
     }
@@ -59,15 +69,15 @@ export async function indexFactFragments(opts: {
     try {
       const vector = await embeddings.embed(fragmentText);
       await vectorDb.store({
-        id: entry.id,
+        id: result.entry.id,
         text: fragmentText,
         vector,
-        importance: entry.importance,
-        category: entry.category,
+        importance: result.entry.importance,
+        category: result.entry.category,
       });
       stored++;
     } catch (err) {
-      logger?.warn?.(`memory-hybrid: fragment embed failed for ${entry.id}: ${err}`);
+      logger?.warn?.(`memory-hybrid: fragment embed failed for ${result.entry.id}: ${err}`);
     }
   }
 
