@@ -545,16 +545,19 @@ async function runInjection(
       candidate_count: candidates.length,
     });
     const fullBullets = candidates
-      .map((x) => {
-        let text = sanitizePromptInjection(recallBodyText(x.entry, useSummaryInInjection));
+      .flatMap((x) => {
+        let text = recallBodyText(x.entry, useSummaryInInjection);
+        if (!text) return [];
         if (maxPerMemoryChars > 0 && text.length > maxPerMemoryChars)
           text = `${text.slice(0, maxPerMemoryChars).trim()}…`;
         const category = sanitizePromptInjection(x.entry.category);
-        return injectionFormat === "minimal"
-          ? `- ${text}`
-          : injectionFormat === "short"
-            ? `- ${category}: ${text}`
-            : `- [${x.backend}/${category}] ${text}`;
+        const line =
+          injectionFormat === "minimal"
+            ? `- ${text}`
+            : injectionFormat === "short"
+              ? `- ${category}: ${text}`
+              : `- [${x.backend}/${category}] ${text}`;
+        return [line];
       })
       .join("\n");
     try {

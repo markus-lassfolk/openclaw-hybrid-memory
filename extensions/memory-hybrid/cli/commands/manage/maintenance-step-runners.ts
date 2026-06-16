@@ -340,8 +340,8 @@ export function buildCliMaintenanceRunners(
     const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(b.cfg, "maintenance");
     const openai = (b as unknown as { openai?: import("openai").default }).openai;
     const logger = (b as unknown as { logger?: { info?: (s: string) => void; warn?: (s: string) => void } }).logger;
-    const adaptiveStatePath = (b as unknown as { resolvedSqlitePath?: string }).resolvedSqlitePath
-      ? require("node:path").dirname((b as unknown as { resolvedSqlitePath: string }).resolvedSqlitePath) + "/.adaptive-llm-limits.json"
+    const adaptiveStatePath = b.resolvedSqlitePath
+      ? join(dirname(b.resolvedSqlitePath), ".adaptive-llm-limits.json")
       : undefined;
     const r = await runEvolutionPass(b.factsDb.getRawDb(), 200, b.cfg.lifecycle, {
       openai,
@@ -929,7 +929,7 @@ export function buildPluginCycleRunners(deps: PluginCycleRunnerDeps): Map<string
     const { runEvolutionPass } = await import("../../../services/evolution-pass.js");
     const { resolveReflectionModelAndFallbacks } = await import("../../../config/index.js");
     const { defaultModel, fallbackModels } = resolveReflectionModelAndFallbacks(deps.cfg, "maintenance");
-    const adaptiveStatePath = dirname(deps.resolvedSqlitePath) + "/.adaptive-llm-limits.json";
+    const adaptiveStatePath = join(dirname(deps.resolvedSqlitePath), ".adaptive-llm-limits.json");
     const r = await runEvolutionPass(deps.factsDb.getRawDb(), 200, deps.cfg.lifecycle, {
       openai: deps.openai,
       model: defaultModel,

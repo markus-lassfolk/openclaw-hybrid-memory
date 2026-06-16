@@ -161,6 +161,8 @@ export function ensureGoalStewardshipHeartbeatCronJob(
  */
 const MIN_INTERVAL_MS: Record<string, number> = {
   daily: 20 * 60 * 60 * 1000, // 20 hours (daily jobs)
+  /** Twice-daily cron slots are 12h apart — guard must be shorter than that. */
+  twiceDaily: 11 * 60 * 60 * 1000, // 11 hours
   weekly: 5 * 24 * 60 * 60 * 1000, // 5 days (weekly jobs)
   monthly: 25 * 24 * 60 * 60 * 1000, // 25 days (monthly jobs)
 };
@@ -489,7 +491,7 @@ const MAINTENANCE_CRON_JOBS: Array<
     isolated: true,
     modelTier: "default",
     enabled: false,
-    minIntervalMs: MIN_INTERVAL_MS.daily,
+    minIntervalMs: MIN_INTERVAL_MS.twiceDaily,
     featureGate: "workshop.enabled",
   },
 
