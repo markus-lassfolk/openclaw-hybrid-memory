@@ -28,7 +28,7 @@ import {
   recordAdaptiveSuccess,
   saveAdaptiveModelLimits,
 } from "../services/adaptive-model-limits.js";
-import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { tryParseCredentialForVault } from "../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -719,13 +719,11 @@ export async function runDistillForCli(
     let stored = 0;
     let skipped = 0;
     for (const fact of allFacts) {
-      const isCred = isCredentialLike(fact.text, fact.entity ?? null, fact.key ?? null, fact.value);
-      if (isCred) {
+      const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
+        requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+      });
+      if (parsed) {
         if (cfg.credentials.enabled && credentialsDb) {
-          const parsed = tryParseCredentialForVault(fact.text, fact.entity ?? null, fact.key ?? null, fact.value, {
-            requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-          });
-          if (parsed) {
             if (!opts.dryRun) {
               let storedInVault = false;
               try {
@@ -803,8 +801,6 @@ export async function runDistillForCli(
               }
             }
             continue;
-          }
-          continue;
         }
         if (opts.verbose) sink.log("  skipped credential-like fact: vault disabled or unavailable");
         continue;

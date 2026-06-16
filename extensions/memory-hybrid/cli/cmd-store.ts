@@ -7,7 +7,7 @@
 
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { tryParseCredentialForVault } from "../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -66,12 +66,12 @@ export async function runStoreForCli(
   const entity = opts.entity ?? extracted.entity ?? null;
   const key = opts.key ?? extracted.key ?? null;
   const value = opts.value ?? extracted.value ?? null;
-  if (isCredentialLike(text, entity, key, value)) {
+  const parsedCredential = tryParseCredentialForVault(text, entity, key, value, {
+    requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+  });
+  if (parsedCredential) {
+    const parsed = parsedCredential;
     if (cfg.credentials.enabled && credentialsDb) {
-      const parsed = tryParseCredentialForVault(text, entity, key, value, {
-        requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-      });
-      if (parsed) {
         let storedInVault = false;
         try {
           storedInVault = credentialsDb.storeIfNew({
@@ -154,8 +154,6 @@ export async function runStoreForCli(
           return { outcome: "credential_db_error" };
         }
         return { outcome: "credential", id: pointerEntry.id, service: parsed.service, type: parsed.type };
-      }
-      return { outcome: "credential_parse_error" };
     }
     return { outcome: "credential_blocked_no_vault" };
   }
