@@ -146,10 +146,7 @@ export function createWorkboardAdapter(ctx: WorkboardAdapterContext): WorkboardA
           const deleted = await client.deleteCard(card.id);
           if (deleted) {
             result.cardsRemoved++;
-            traceIntegration(
-              verbose,
-              `workboard sync [${syncRunId}] push delete ${extId} (card ${card.id})`,
-            );
+            traceIntegration(verbose, `workboard sync [${syncRunId}] push delete ${extId} (card ${card.id})`);
           } else {
             const msg = `Failed to delete stale card ${card.id} (${extId})`;
             result.errors.push(msg);
@@ -263,7 +260,10 @@ async function pullChanges(
 
     if (parsed.type === "task") {
       if (!ctx.updateTaskStatus) {
-        traceIntegration(verbose, `workboard sync [${syncRunId}] pull skip task ${extId} — no updateTaskStatus handler`);
+        traceIntegration(
+          verbose,
+          `workboard sync [${syncRunId}] pull skip task ${extId} — no updateTaskStatus handler`,
+        );
         continue;
       }
       const task = taskByLabel.get(parsed.label);
@@ -274,11 +274,17 @@ async function pullChanges(
 
       const expectedColumn = taskToCard(task, ctx.cfg.columns, ctx.cfg.cardTag)?.column;
       if (!expectedColumn) {
-        traceIntegration(verbose, `workboard sync [${syncRunId}] pull skip task ${extId} — unmapped status "${task.status}"`);
+        traceIntegration(
+          verbose,
+          `workboard sync [${syncRunId}] pull skip task ${extId} — unmapped status "${task.status}"`,
+        );
         continue;
       }
       if (card.column === expectedColumn) {
-        traceIntegration(verbose, `workboard sync [${syncRunId}] pull noop task ${extId} — column "${card.column}" matches memory`);
+        traceIntegration(
+          verbose,
+          `workboard sync [${syncRunId}] pull noop task ${extId} — column "${card.column}" matches memory`,
+        );
         continue;
       }
 
@@ -307,7 +313,10 @@ async function pullChanges(
 
     if (parsed.type === "goal") {
       if (!ctx.updateGoalStatus) {
-        traceIntegration(verbose, `workboard sync [${syncRunId}] pull skip goal ${extId} — no updateGoalStatus handler`);
+        traceIntegration(
+          verbose,
+          `workboard sync [${syncRunId}] pull skip goal ${extId} — no updateGoalStatus handler`,
+        );
         continue;
       }
       const goal = goalById.get(parsed.goalId);
@@ -318,11 +327,17 @@ async function pullChanges(
 
       const expectedColumn = goalToCard(goal, ctx.cfg.columns, ctx.cfg.cardTag)?.column;
       if (!expectedColumn) {
-        traceIntegration(verbose, `workboard sync [${syncRunId}] pull skip goal ${extId} — unmapped status "${goal.status}"`);
+        traceIntegration(
+          verbose,
+          `workboard sync [${syncRunId}] pull skip goal ${extId} — unmapped status "${goal.status}"`,
+        );
         continue;
       }
       if (card.column === expectedColumn) {
-        traceIntegration(verbose, `workboard sync [${syncRunId}] pull noop goal ${extId} — column "${card.column}" matches memory`);
+        traceIntegration(
+          verbose,
+          `workboard sync [${syncRunId}] pull noop goal ${extId} — column "${card.column}" matches memory`,
+        );
         continue;
       }
 

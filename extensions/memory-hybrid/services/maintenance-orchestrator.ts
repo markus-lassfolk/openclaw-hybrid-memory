@@ -574,10 +574,7 @@ export async function runMaintenanceOrchestrator(
     try {
       const summary = await runner();
       const meta = parseStepRunnerMetadata(summary);
-      if (
-        step.name === "reflect-rules" &&
-        reflectRulesStepSummaryIndicatesFailure(summary)
-      ) {
+      if (step.name === "reflect-rules" && reflectRulesStepSummaryIndicatesFailure(summary)) {
         logger?.warn?.(`maintenance-orchestrator: ${step.name} semantic failure (summary diagnostics): ${summary}`);
         results.push({
           name: step.name,

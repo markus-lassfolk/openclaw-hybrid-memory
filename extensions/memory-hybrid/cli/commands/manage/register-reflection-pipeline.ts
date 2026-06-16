@@ -1591,7 +1591,9 @@ export function registerManageReflectionPipeline(
             `Classify complete: reclassified ${res.reclassified}/${res.total} facts ${dryRun ? "(dry-run)" : ""}`,
           );
           const batchFailures = res.batchFailures ?? 0;
-          console.log(`auto-classify reclassified=${res.reclassified}/${res.total} batchFailures=${batchFailures} semantic=${batchFailures > 0 ? "partial" : "success"}`);
+          console.log(
+            `auto-classify reclassified=${res.reclassified}/${res.total} batchFailures=${batchFailures} semantic=${batchFailures > 0 ? "partial" : "success"}`,
+          );
           if (batchFailures > 0) {
             process.exitCode = 2;
           }

@@ -619,9 +619,9 @@ describe("CredentialsDB.rekeyVaultSafe", () => {
       return originalGet(service, type);
     });
 
-    expect(() =>
-      db2.rekeyVaultSafe(TEST_REKEY_ENCRYPTION_KEY, { backupPath, verify: true }),
-    ).toThrow(/Verification failed: credential svc\/api_key mismatch after rekey/);
+    expect(() => db2.rekeyVaultSafe(TEST_REKEY_ENCRYPTION_KEY, { backupPath, verify: true })).toThrow(
+      /Verification failed: credential svc\/api_key mismatch after rekey/,
+    );
     getMock.mockRestore();
 
     expect(db2.getVaultStatus().kdfVersion).toBe(statusBefore.kdfVersion);

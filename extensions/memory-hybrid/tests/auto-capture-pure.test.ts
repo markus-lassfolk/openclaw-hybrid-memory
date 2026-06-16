@@ -269,6 +269,18 @@ describe("isCredentialLike", () => {
     expect(isCredentialLike("the user prefers dark mode in VS Code", null, null, null)).toBe(false);
   });
 
+  it("isCredentialLike is true for broad-only token wording but structured candidate is false (#1896)", () => {
+    const text = "M3 has 5.1B tokens monthly budget";
+    expect(isCredentialLike(text, "minimax-quota", null, null)).toBe(true);
+    expect(tryParseCredentialForVault(text, "minimax-quota", null, null)).toBeNull();
+  });
+
+  it("stores broad api-key prose without narrow secret as non-vault candidate (#1896)", () => {
+    const text = "the API key is used for service auth";
+    expect(isCredentialLike(text, null, null, null)).toBe(true);
+    expect(tryParseCredentialForVault(text, null, null, null)).toBeNull();
+  });
+
   it("returns false when value is too short (< 8 chars)", () => {
     // "sk-abc" (6 chars) fails the sk- credential pattern (requires 20+ alphanum after prefix)
     // and also fails the value length guard (< 8 chars), so isCredentialLike returns false.
@@ -324,6 +336,16 @@ describe("tryParseCredentialForVault", () => {
     // When requirePatternMatch=true and there's no regex match in text, returns null
     const opts: TryParseCredentialOptions = { requirePatternMatch: true };
     const result = tryParseCredentialForVault("plain text no pattern", "credentials", "myservice", SK_PROJ, opts);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when structured value is an existing vault pointer", () => {
+    const result = tryParseCredentialForVault(
+      "stored credential reference",
+      "openai",
+      "api_key",
+      `${VAULT_POINTER_PREFIX}openai:api_key`,
+    );
     expect(result).toBeNull();
   });
 

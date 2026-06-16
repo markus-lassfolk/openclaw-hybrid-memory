@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryCategory } from "../config.js";
 import { getCronModelConfig, getDefaultCronModel } from "../config.js";
-import { isCredentialLike, tryParseCredentialForVault } from "../services/auto-capture.js";
+import { tryParseCredentialForVault, isStructuredCredentialCandidate } from "../services/auto-capture.js";
 import {
   buildCredentialPointerText,
   ensureCredentialVaultPointer,
@@ -213,96 +213,103 @@ export async function runExtractDailyForCli(
       if (trimmed.length < 15 || trimmed.length > 500) continue;
       const category = ctx.detectCategory(trimmed);
       const extracted = extractStructuredFields(trimmed, category);
-      if (isCredentialLike(trimmed, extracted.entity, extracted.key, extracted.value)) {
+      const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value, {
+        requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
+      });
+      if (parsed) {
         if (cfg.credentials.enabled && credentialsDb) {
-          const parsed = tryParseCredentialForVault(trimmed, extracted.entity, extracted.key, extracted.value, {
-            requirePatternMatch: cfg.credentials.autoCapture?.requirePatternMatch === true,
-          });
-          if (parsed) {
-            totalExtracted++;
-            if (!opts.dryRun) {
-              let storedInVault = false;
-              try {
-                storedInVault = credentialsDb.storeIfNew({
-                  service: parsed.service,
-                  type: parsed.type,
-                  value: parsed.secretValue,
-                  url: parsed.url,
-                  notes: parsed.notes,
-                });
-                const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
-                const pointer = ensureCredentialVaultPointer(
-                  factsDb,
-                  parsed.service,
-                  parsed.type,
-                  `daily-scan:${dateStr}`,
-                  {
-                    importance: BATCH_STORE_IMPORTANCE,
-                    sourceDate: sourceDateSec,
-                  },
-                );
-                if (!pointer.ok) {
-                  if (storedInVault) {
-                    rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
-                  }
-                  continue;
-                }
-                if (
-                  abortCredentialVaultWriteOnPointerDedupe(
-                    storedInVault,
-                    pointer,
-                    credentialsDb,
-                    parsed.service,
-                    parsed.type,
-                  )
-                ) {
-                  continue;
-                }
-                const pointerEntry = pointer.entry;
-                await cleanupEvictedVector({
-                  vectorDb,
-                  evictedFactId: pointer.evictedFactId,
-                  logger: sink,
-                  context: "extract-daily-credential-pointer",
-                });
-                if (pointer.newlyStored || pointer.embeddingStale) {
-                  const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
-                  try {
-                    const vector = await embeddings.embed(pointerText);
-                    factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
-                    if (!(await vectorDb.hasDuplicate(vector))) {
-                      await vectorDb.store({
-                        text: pointerText,
-                        vector,
-                        importance: BATCH_STORE_IMPORTANCE,
-                        category: "technical",
-                        id: pointerEntry.id,
-                      });
-                    }
-                  } catch (err) {
-                    recordVectorFailure(err, "runExtractDailyForCli:vector-store");
-                  }
-                }
-                totalStored++;
-              } catch (err) {
+          totalExtracted++;
+          if (!opts.dryRun) {
+            let storedInVault = false;
+            try {
+              storedInVault = credentialsDb.storeIfNew({
+                service: parsed.service,
+                type: parsed.type,
+                value: parsed.secretValue,
+                url: parsed.url,
+                notes: parsed.notes,
+              });
+              const sourceDateSec = Math.floor(new Date(dateStr).getTime() / 1000);
+              const pointer = ensureCredentialVaultPointer(
+                factsDb,
+                parsed.service,
+                parsed.type,
+                `daily-scan:${dateStr}`,
+                {
+                  importance: BATCH_STORE_IMPORTANCE,
+                  sourceDate: sourceDateSec,
+                },
+              );
+              if (!pointer.ok) {
                 if (storedInVault) {
                   rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
                 }
-                capturePluginError(err as Error, {
-                  subsystem: "cli",
-                  operation: "runExtractDailyForCli:credential-store",
-                });
+                continue;
               }
+              if (
+                abortCredentialVaultWriteOnPointerDedupe(
+                  storedInVault,
+                  pointer,
+                  credentialsDb,
+                  parsed.service,
+                  parsed.type,
+                )
+              ) {
+                continue;
+              }
+              const pointerEntry = pointer.entry;
+              await cleanupEvictedVector({
+                vectorDb,
+                evictedFactId: pointer.evictedFactId,
+                logger: sink,
+                context: "extract-daily-credential-pointer",
+              });
+              if (pointer.newlyStored || pointer.embeddingStale) {
+                const pointerText = buildCredentialPointerText(parsed.service, parsed.type);
+                try {
+                  const vector = await embeddings.embed(pointerText);
+                  factsDb.setEmbeddingModel(pointerEntry.id, embeddings.modelName);
+                  if (!(await vectorDb.hasDuplicate(vector))) {
+                    await vectorDb.store({
+                      text: pointerText,
+                      vector,
+                      importance: BATCH_STORE_IMPORTANCE,
+                      category: "technical",
+                      id: pointerEntry.id,
+                    });
+                  }
+                } catch (err) {
+                  recordVectorFailure(err, "runExtractDailyForCli:vector-store");
+                }
+              }
+              totalStored++;
+            } catch (err) {
+              if (storedInVault) {
+                rollbackVaultCredentialWrite(credentialsDb, parsed.service, parsed.type);
+              }
+              capturePluginError(err as Error, {
+                subsystem: "cli",
+                operation: "runExtractDailyForCli:credential-store",
+              });
             }
-            // Skip normal fact-storage path — this line has been handled as a credential.
-            continue;
           }
-          // isCredentialLike but vault parse failed — skip this line entirely.
           continue;
         }
         if (opts.verbose) sink.log("  skipped credential-like line: vault disabled or unavailable");
         continue;
       }
+
+      // When requirePatternMatch rejects vault parsing but the input is still credential-like,
+      // skip ordinary storage to prevent plaintext secrets in facts.db (#1896).
+      if (
+        !parsed &&
+        cfg.credentials.autoCapture?.requirePatternMatch === true &&
+        isStructuredCredentialCandidate(trimmed, extracted.entity, extracted.key, extracted.value)
+      ) {
+        if (opts.verbose) sink.log("  skipped credential-like line: blocked by requirePatternMatch");
+        continue;
+      }
+
       if (!extracted.entity && !extracted.key && category !== "decision") continue;
       totalExtracted++;
       if (opts.dryRun) {

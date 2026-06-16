@@ -102,6 +102,44 @@ describe("goal stewardship integration (mock plugin API)", () => {
     expect(prep).toContain("integration_goal");
   });
 
+  it("before_agent_start injects stewardship when heartbeat text is only in event.prompt (#1895)", async () => {
+    const cfg = parseCfg();
+    const ctx = minimalLifecycleContext(cfg);
+    const api = createMockPluginApi();
+    registerGoalStewardshipInjection(api as unknown as ClawdbotPluginApi, ctx, goalsDir, undefined);
+
+    await createGoal(
+      goalsDir,
+      {
+        label: "prompt_heartbeat_goal",
+        description: "test",
+        acceptanceCriteria: ["criterion one"],
+        cooldownMinutes: 1,
+      },
+      { ...defaults, cooldownMinutes: 1 },
+    );
+    const goals = await listGoals(goalsDir);
+    const g0 = goals[0];
+    expect(g0).toBeDefined();
+    if (!g0) throw new Error("fixture: expected one goal");
+    const old = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    await updateGoal(
+      goalsDir,
+      g0.id,
+      { lastAssessedAt: old },
+      { timestamp: new Date().toISOString(), action: "test", detail: "cooldown", actor: "user" },
+    );
+
+    const event = {
+      prompt: "Read HEARTBEAT.md if it exists. Workspace ok. Reply HEARTBEAT_OK.",
+    };
+    const result = await api.emitFirstResult("before_agent_start", event);
+    expect(result && typeof result === "object" && "prependContext" in result).toBe(true);
+    const prep = (result as { prependContext?: string }).prependContext ?? "";
+    expect(prep).toContain("<goal-stewardship-bundle>");
+    expect(prep).toContain("prompt_heartbeat_goal");
+  });
+
   it("before_agent_start returns undefined without heartbeat keyword", async () => {
     const cfg = parseCfg();
     const ctx = minimalLifecycleContext(cfg);
