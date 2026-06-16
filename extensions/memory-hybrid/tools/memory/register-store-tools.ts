@@ -572,10 +572,10 @@ export function registerStoreTools(runtime: MemoryToolRuntime): void {
               content: [
                 {
                   type: "text",
-                  text: "Credential-like content detected. Ordinary memory storage is blocked while the credential vault is disabled or unavailable. Enable credentials vault and retry.",
+                  text: "Credential-like content detected but no recognizable secret pattern was found (requirePatternMatch is enabled). Store using a known credential format or disable requirePatternMatch.",
                 },
               ],
-              details: { action: "credential_blocked_no_vault" },
+              details: { action: "credential_blocked_require_pattern_match" },
             };
           }
 

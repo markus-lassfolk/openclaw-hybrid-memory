@@ -339,6 +339,16 @@ describe("tryParseCredentialForVault", () => {
     expect(result).toBeNull();
   });
 
+  it("returns null when structured value is an existing vault pointer", () => {
+    const result = tryParseCredentialForVault(
+      "stored credential reference",
+      "openai",
+      "api_key",
+      `${VAULT_POINTER_PREFIX}openai:api_key`,
+    );
+    expect(result).toBeNull();
+  });
+
   it("includes notes field containing original text when text is short enough", () => {
     const text = `github token: ${GHP_TOKEN}`;
     const result = tryParseCredentialForVault(text, null, null, null);
