@@ -41,9 +41,9 @@ export function isFactSnoozed(factsDb: FactsDB, factId: string, nowSec = Math.fl
   return row?.snoozed_until != null && row.snoozed_until > nowSec;
 }
 
-export function resolveFactByIdOrQuery(factsDb: FactsDB, idOrQuery: string) {
+export function resolveFactByIdOrQuery(factsDb: FactsDB, idOrQuery: string, scopeFilter?: { userId?: string | null; agentId?: string | null; sessionId?: string | null }) {
   const direct = factsDb.getById(idOrQuery);
   if (direct) return direct;
-  const hits = factsDb.search(idOrQuery, 1, {});
+  const hits = factsDb.search(idOrQuery, 1, { scopeFilter });
   return hits[0]?.entry ?? null;
 }

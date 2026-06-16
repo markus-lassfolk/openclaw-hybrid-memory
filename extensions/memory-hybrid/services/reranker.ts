@@ -120,8 +120,8 @@ export async function rerankResults(
       facts,
       {
         endpoint: crossEncoderEndpoint,
-        model: DEFAULT_CROSS_ENCODER_CONFIG.model,
-        timeoutMs: DEFAULT_CROSS_ENCODER_CONFIG.timeoutMs,
+        model: config.crossEncoder?.model ?? DEFAULT_CROSS_ENCODER_CONFIG.model,
+        timeoutMs: config.crossEncoder?.timeoutMs ?? DEFAULT_CROSS_ENCODER_CONFIG.timeoutMs,
       },
       config.outputCount,
     );

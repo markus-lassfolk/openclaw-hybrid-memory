@@ -9,6 +9,7 @@ import { createRecallSpan } from "../../services/recall-timing.js";
 import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
 import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
 import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
+import { buildToolScopeFilter } from "../../utils/scope-filter.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 
 const DEFAULT_SNOOZE_DAYS = 30;
@@ -30,6 +31,12 @@ function resolveRetrievalV2Config(cfg: HybridMemoryConfig) {
 export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
   const { api, cfg, factsDb, vectorDb, openai } = runtime;
 
+  const scopeFilter = buildToolScopeFilter(
+    {},
+    api.context?.agentId ?? null,
+    { multiAgent: cfg.multiAgent, autoRecall: cfg.autoRecall }
+  );
+
   api.registerTool(
     {
       name: "memory_retrieve",
@@ -46,10 +53,16 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         const limit = typeof args.limit === "number" ? Math.min(20, args.limit) : 5;
         const recallId = createRecallSpan("retrieve");
 
-        const result = await runExplicitDeepRetrieval(query, null, factsDb.getRawDb(), vectorDb, factsDb, {
+        const embeddings = runtime.embeddings;
+        const queryVector = embeddings ? await embeddings.embed(query) : null;
+        const embedFn = embeddings ? (text: string) => embeddings.embed(text) : undefined;
+
+        const result = await runExplicitDeepRetrieval(query, queryVector, factsDb.getRawDb(), vectorDb, factsDb, {
           config: cfg.retrieval,
           rerankingConfig: cfg.reranking,
           rerankingOpenai: openai,
+          embedFn,
+          scopeFilter,
         });
 
         const ftsStub = result.entries.map((e, i) => ({
@@ -98,7 +111,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       }),
       async execute(_id, args: { idOrQuery?: string; reason?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
-        const fact = resolveFactByIdOrQuery(factsDb, key);
+        const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
         pinFact(factsDb, fact.id, args.reason ?? "agent pin");
         return { content: [{ type: "text", text: `Pinned fact ${fact.id}` }] };
@@ -118,7 +131,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       }),
       async execute(_id, args: { idOrQuery?: string; until?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
-        const fact = resolveFactByIdOrQuery(factsDb, key);
+        const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
         let untilSec: number;
         if (args.until) {
@@ -155,7 +168,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       async execute(_id, args: { text?: string; tags?: string[] }) {
         const text = String(args.text ?? "").trim();
         if (!text) return { content: [{ type: "text", text: "text is required." }] };
-        const entry = factsDb.store({
+        const result = factsDb.storeWithResult({
           text,
           category: "diary",
           importance: 0.7,
@@ -166,7 +179,33 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           confidence: 0.9,
           tags: args.tags,
         });
-        return { content: [{ type: "text", text: `Diary entry stored: ${entry.id}` }] };
+
+        if (result.evictedFactId) {
+          const { cleanupEvictedVector } = await import("../../services/vector-maintenance.js");
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: result.evictedFactId,
+            context: "diary_write",
+          });
+        }
+
+        if (runtime.embeddings && result.newlyStored) {
+          try {
+            const vector = await runtime.embeddings.embed(text);
+            factsDb.setEmbeddingModel(result.entry.id, runtime.embeddings.modelName);
+            await vectorDb.store({
+              text,
+              vector,
+              importance: 0.7,
+              category: "diary",
+              id: result.entry.id,
+            });
+          } catch (err) {
+            api.logger.warn?.(`diary_write: failed to embed fact ${result.entry.id}: ${err}`);
+          }
+        }
+
+        return { content: [{ type: "text", text: `Diary entry stored: ${result.entry.id}` }] };
       },
     },
     { optional: true },
@@ -183,11 +222,25 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       async execute(_id, args: { limit?: number }) {
         const limit = typeof args.limit === "number" ? args.limit : 10;
         const db = factsDb.getRawDb();
-        const rows = db
-          .prepare(
-            `SELECT text FROM facts WHERE category = 'diary' AND superseded_at IS NULL ORDER BY created_at DESC LIMIT ?`,
-          )
-          .all(limit) as Array<{ text: string }>;
+        let sql = `SELECT text FROM facts WHERE category = 'diary' AND superseded_at IS NULL`;
+        const params: unknown[] = [];
+        if (scopeFilter) {
+          if (scopeFilter.sessionId) {
+            sql += ` AND scope = 'session' AND scope_target = ?`;
+            params.push(scopeFilter.sessionId);
+          } else if (scopeFilter.userId) {
+            sql += ` AND ((scope = 'user' AND scope_target = ?) OR scope = 'global')`;
+            params.push(scopeFilter.userId);
+          } else if (scopeFilter.agentId) {
+            sql += ` AND ((scope = 'agent' AND scope_target = ?) OR scope = 'global')`;
+            params.push(scopeFilter.agentId);
+          } else {
+            sql += ` AND scope = 'global'`;
+          }
+        }
+        sql += ` ORDER BY created_at DESC LIMIT ?`;
+        params.push(limit);
+        const rows = db.prepare(sql).all(...params) as Array<{ text: string }>;
         const lines = rows.map((r) => `- ${r.text.slice(0, 300)}`);
         return { content: [{ type: "text", text: lines.join("\n") || "No diary entries." }] };
       },

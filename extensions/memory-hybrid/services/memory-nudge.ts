@@ -72,8 +72,20 @@ export function formatMemoryNudgeBlock(nudge: MemoryNudgePayload): string {
 }
 
 const suppressUntilBySession = new Map<string, number>();
+const MAX_TRACKED_SESSIONS = 200;
+
+function evictOldestSession() {
+  if (suppressUntilBySession.size > MAX_TRACKED_SESSIONS) {
+    const oldest = suppressUntilBySession.keys().next().value;
+    if (oldest) {
+      suppressUntilBySession.delete(oldest);
+      lastNudgeBySession.delete(oldest);
+    }
+  }
+}
 
 export function suppressNudgeForSession(sessionId: string, hours: number): void {
+  evictOldestSession();
   suppressUntilBySession.set(sessionId, Date.now() + hours * 3600_000);
 }
 
@@ -94,6 +106,7 @@ export function shouldEmitNudge(sessionId: string, throttleHours: number): boole
   const last = lastNudgeBySession.get(sessionId) ?? 0;
   const elapsed = Date.now() - last;
   if (elapsed < throttleHours * 3600_000) return false;
+  evictOldestSession();
   lastNudgeBySession.set(sessionId, Date.now());
   return true;
 }

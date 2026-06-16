@@ -58,7 +58,6 @@ export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<str
       continue;
     }
     const _day = Math.floor(row.occurred_at / 86_400);
-    const query = row.query?.trim() || "";
     for (const factId of ids) {
       let s = stats.get(factId);
       if (!s) {
@@ -72,12 +71,6 @@ export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<str
         stats.set(factId, s);
       }
       s.surfaceCount++;
-    }
-    if (query) {
-      for (const factId of ids) {
-        const s = stats.get(factId)!;
-        s.referenceCount++;
-      }
     }
   }
 

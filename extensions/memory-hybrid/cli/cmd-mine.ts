@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
 import { estimateMineCostUsd, readTranscriptFile } from "../services/transcript-importers/index.js";
+import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import type { Chainable } from "./shared.js";
 
 export type MineOptions = {
@@ -88,7 +89,7 @@ export function registerMineCommand(
           .map((m) => `${m.role}: ${m.content}`)
           .join("\n\n")
           .slice(0, 50_000);
-        const entry = factsDb.store({
+        const result = factsDb.storeWithResult({
           text,
           category: "conversation",
           importance: 0.5,
@@ -101,23 +102,31 @@ export function registerMineCommand(
         db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
           conv.contentHash,
           batchId,
-          entry.id,
+          result.entry.id,
         );
         written++;
+
+        if (result.evictedFactId && vectorDb) {
+          await cleanupEvictedVector({
+            vectorDb,
+            evictedFactId: result.evictedFactId,
+            context: "mine",
+          });
+        }
 
         if (opts.embed && vectorDb && embeddings) {
           try {
             const vector = await embeddings.embed(text.slice(0, 8000));
-            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            factsDb.setEmbeddingModel(result.entry.id, embeddings.modelName);
             await vectorDb.store({
               text,
               vector,
               importance: 0.5,
               category: "conversation",
-              id: entry.id,
+              id: result.entry.id,
             });
           } catch (err) {
-            console.warn(`Failed to embed fact ${entry.id}: ${err}`);
+            console.warn(`Failed to embed fact ${result.entry.id}: ${err}`);
           }
         }
       }

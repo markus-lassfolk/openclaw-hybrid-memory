@@ -75,7 +75,7 @@ export async function validateAttributionsWithLlm(
     }
     return { allowed: false, reason: "LLM rejected attributions", layer: "llm" };
   } catch {
-    return { allowed: true, layer: "llm" };
+    return { allowed: false, reason: "LLM validation failed", layer: "llm" };
   }
 }
 

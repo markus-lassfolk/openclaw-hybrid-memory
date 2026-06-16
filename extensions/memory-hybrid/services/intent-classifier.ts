@@ -100,6 +100,13 @@ export type IntentClassifierConfig = {
 type SessionCache = Map<string, IntentClassification>;
 
 const sessionCaches = new Map<string, SessionCache>();
+const MAX_TRACKED_SESSIONS = 200;
+
+function evictOldestSession() {
+  if (sessionCaches.size <= MAX_TRACKED_SESSIONS) return;
+  const oldest = sessionCaches.keys().next().value;
+  if (oldest) sessionCaches.delete(oldest);
+}
 
 function queryHash(query: string): string {
   return createHash("sha256").update(query.trim().toLowerCase()).digest("hex").slice(0, 16);
@@ -126,6 +133,7 @@ export async function classifyQueryIntent(
   if (opts?.sessionId) {
     let cache = sessionCaches.get(opts.sessionId);
     if (!cache) {
+      evictOldestSession();
       cache = new Map();
       sessionCaches.set(opts.sessionId, cache);
     }
