@@ -6,7 +6,11 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import { estimateMineCostUsd, readTranscriptFile, redactSecretsInText } from "../services/transcript-importers/index.js";
+import {
+  estimateMineCostUsd,
+  readTranscriptFile,
+  redactSecretsInText,
+} from "../services/transcript-importers/index.js";
 import { cleanupEvictedVector } from "../services/vector-maintenance.js";
 import type { Chainable } from "./shared.js";
 
@@ -97,10 +101,14 @@ export function registerMineCommand(
       const redactionCategories: Record<string, number> = {};
       const db = factsDb.getRawDb();
       const sourceLabel = conversations[0]?.source ?? opts.source ?? "unknown";
+      const mineScope = "global";
+      const mineScopeTarget = null;
       for (const conv of conversations) {
         const existing = db
-          .prepare("SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL LIMIT 1")
-          .get(conv.contentHash) as { id: string } | undefined;
+          .prepare(
+            "SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL AND scope = ? AND (scope_target IS ? OR scope_target IS NULL) LIMIT 1",
+          )
+          .get(conv.contentHash, mineScope, mineScopeTarget) as { id: string } | undefined;
         if (existing) {
           skipped++;
           continue;
@@ -123,6 +131,8 @@ export function registerMineCommand(
           value: null,
           source: `mine:${conv.source}`,
           confidence: 0.8,
+          scope: mineScope,
+          scopeTarget: mineScopeTarget,
         });
         if (result.skipped) {
           skipped++;

@@ -33,10 +33,7 @@ export type MemoryNudgePayload = {
 };
 
 /** Build top-3 nudge actions from vault backlog. */
-export function buildMemoryNudge(
-  db: DatabaseSync,
-  config: MemoryNudgeConfig,
-): MemoryNudgePayload | null {
+export function buildMemoryNudge(db: DatabaseSync, config: MemoryNudgeConfig): MemoryNudgePayload | null {
   if (!config.enabled) return null;
 
   const actions: NudgeAction[] = [];
@@ -49,9 +46,7 @@ export function buildMemoryNudge(
   }
 
   const dupRow = db
-    .prepare(
-      `SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND duplicate_count > 1`,
-    )
+    .prepare(`SELECT COUNT(*) AS cnt FROM facts WHERE superseded_at IS NULL AND duplicate_count > 1`)
     .get() as { cnt: number } | undefined;
   const dupCount = dupRow?.cnt ?? 0;
   if (dupCount >= config.duplicateCandidateThreshold) {
@@ -122,9 +117,12 @@ export function shouldEmitNudge(sessionId: string, throttleHours: number): boole
   const last = lastNudgeBySession.get(sessionId) ?? 0;
   const elapsed = Date.now() - last;
   if (elapsed < throttleHours * 3600_000) return false;
+  return true;
+}
+
+export function recordNudgeEmission(sessionId: string): void {
   evictOldestSession();
   lastNudgeBySession.set(sessionId, Date.now());
-  return true;
 }
 
 /** Clear nudge state (tests). */

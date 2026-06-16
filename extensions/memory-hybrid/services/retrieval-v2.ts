@@ -20,7 +20,7 @@ import {
   type QueryIntent,
 } from "./intent-classifier.js";
 import { emitRecallVerboseLog, isHmVerbose } from "./recall-verbose-log.js";
-import { recordRecallStageTiming } from "./recall-timing-stats.js";
+import { recordRecallStageTiming, recordBypassDecision } from "./recall-timing-stats.js";
 
 export type BypassConfig = {
   enabled: boolean;
@@ -64,11 +64,7 @@ export function evaluateBm25Bypass(
   const top = sorted[0]?.score ?? 0;
   const second = sorted[1]?.score ?? 0;
   const gap = top - second;
-  const bypass =
-    config.enabled &&
-    !hasExplicitIntent &&
-    top >= config.bm25MinScore &&
-    gap >= config.bm25MinGap;
+  const bypass = config.enabled && !hasExplicitIntent && top >= config.bm25MinScore && gap >= config.bm25MinGap;
   return { bypass, topScore: top, gap };
 }
 
@@ -115,53 +111,56 @@ export async function applyRetrievalV2(opts: ApplyRetrievalV2Opts): Promise<Retr
   });
   recordRecallStageTiming("intent", Date.now() - intentStarted);
 
-  const bypassDecision = evaluateBm25Bypass(
-    opts.ftsResults,
-    opts.config.bypass,
-    intent.source === "explicit",
-  );
+  const bypassDecision = evaluateBm25Bypass(opts.ftsResults, opts.config.bypass, intent.source === "explicit");
   recordRecallStageTiming("bypass_decision", 0);
+  recordBypassDecision(bypassDecision.bypass);
 
   const v1Order = opts.results.map((r) => r.entry.id);
   const compositeCfg = opts.config.compositeScore;
 
-  const scored = opts.results.map((r) => {
-    const entry = opts.getEntry(r.entry.id) ?? r.entry;
-    const daysSince =
-      entry.lastAccessed != null ? (nowSec - entry.lastAccessed) / 86_400 : 0;
-    const input = {
-      searchScore: r.score,
-      recencyScore: recencyScoreFromDays(daysSince),
-      confidence: entry.confidence ?? 1,
-      bodyLength: entry.text.length,
-      qualityScore: (entry as MemoryEntry & { qualityScore?: number }).qualityScore,
-      coActivationBoost: 1,
-      pinBoost: entry.pinnedAt != null ? compositeCfg.pinBoostDefault : 0,
-      freqBoost: computeFrequencyBoost(
-        (entry as MemoryEntry & { revisionCount?: number }).revisionCount ?? 0,
-        (entry as MemoryEntry & { duplicateCount?: number }).duplicateCount ?? 0,
-      ),
-      intent: intent.intent,
-      focusMultiplier: topicMatchMultiplier(entry.text, opts.focusTopic),
-    };
-    const v2 = computeCompositeScore(input, { ...compositeCfg, version: 2 });
-    const v1 = computeCompositeScore(input, { ...compositeCfg, version: 1 });
-    const useScore = compositeCfg.version === 2 ? v2 : v1;
-    return { result: r, score: useScore, text: entry.text, v1, v2 };
-  });
+  let finalResults: SearchResult[];
+  let demotedCount = 0;
 
-  scored.sort((a, b) => b.score - a.score);
-  const diversityStarted = Date.now();
-  const { items: diverseItems, demotedCount } = applyDiversityDemotion(
-    scored.map((s) => ({ text: s.text, ...s })),
-    opts.config.diversity,
-  );
-  recordRecallStageTiming("mmr", Date.now() - diversityStarted);
+  if (bypassDecision.bypass) {
+    finalResults = opts.results;
+  } else {
+    const scored = opts.results.map((r) => {
+      const entry = opts.getEntry(r.entry.id) ?? r.entry;
+      const daysSince = entry.lastAccessed != null ? (nowSec - entry.lastAccessed) / 86_400 : 0;
+      const input = {
+        searchScore: r.score,
+        recencyScore: recencyScoreFromDays(daysSince),
+        confidence: entry.confidence ?? 1,
+        bodyLength: entry.text.length,
+        qualityScore: (entry as MemoryEntry & { qualityScore?: number }).qualityScore,
+        coActivationBoost: 1,
+        pinBoost: entry.pinnedAt != null ? compositeCfg.pinBoostDefault : 0,
+        freqBoost: computeFrequencyBoost(
+          (entry as MemoryEntry & { revisionCount?: number }).revisionCount ?? 0,
+          (entry as MemoryEntry & { duplicateCount?: number }).duplicateCount ?? 0,
+        ),
+        intent: intent.intent,
+        focusMultiplier: topicMatchMultiplier(entry.text, opts.focusTopic),
+      };
+      const v2 = computeCompositeScore(input, { ...compositeCfg, version: 2 });
+      const v1 = computeCompositeScore(input, { ...compositeCfg, version: 1 });
+      const useScore = compositeCfg.version === 2 ? v2 : v1;
+      return { result: r, score: useScore, text: entry.text, v1, v2 };
+    });
 
-  const finalResults = diverseItems.map((s) => ({ ...s.result, score: s.score }));
+    scored.sort((a, b) => b.score - a.score);
+    const diversityStarted = Date.now();
+    const { items: diverseItems, demotedCount: dmCount } = applyDiversityDemotion(
+      scored.map((s) => ({ text: s.text, ...s })),
+      opts.config.diversity,
+    );
+    recordRecallStageTiming("mmr", Date.now() - diversityStarted);
+    demotedCount = dmCount;
+
+    finalResults = diverseItems.map((s) => ({ ...s.result, score: s.score }));
+  }
   const v2Order = finalResults.map((r) => r.entry.id);
-  const top3Changed =
-    v1Order.slice(0, 3).join() !== v2Order.slice(0, 3).join() && compositeCfg.version === 2;
+  const top3Changed = v1Order.slice(0, 3).join() !== v2Order.slice(0, 3).join() && compositeCfg.version === 2;
 
   if (isHmVerbose()) {
     emitRecallVerboseLog({

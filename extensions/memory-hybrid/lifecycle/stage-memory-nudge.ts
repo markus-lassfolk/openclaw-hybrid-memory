@@ -7,6 +7,7 @@ import {
   buildMemoryNudge,
   formatMemoryNudgeBlock,
   shouldEmitNudge,
+  recordNudgeEmission,
   DEFAULT_MEMORY_NUDGE_CONFIG,
 } from "../services/memory-nudge.js";
 import type { LifecycleContext } from "./types.js";
@@ -33,6 +34,7 @@ export function registerMemoryNudgeInjection(api: ClawdbotPluginApi, ctx: Lifecy
     const nudge = buildMemoryNudge(ctx.factsDb.getRawDb(), config);
     if (!nudge || nudge.actions.length === 0) return undefined;
 
+    recordNudgeEmission(sessionKey);
     const block = formatMemoryNudgeBlock(nudge);
     return { prependContext: `${block}\n\n` };
   });
