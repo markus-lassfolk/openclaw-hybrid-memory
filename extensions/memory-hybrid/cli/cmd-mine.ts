@@ -99,6 +99,10 @@ export function registerMineCommand(
           source: `mine:${conv.source}`,
           confidence: 0.8,
         });
+        if (result.skipped) {
+          skipped++;
+          continue;
+        }
         db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
           conv.contentHash,
           batchId,

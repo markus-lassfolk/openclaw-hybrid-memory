@@ -808,8 +808,9 @@ export async function runExplicitDeepRetrieval(
     queryText: string,
     initial: OrchestratorResult,
   ): Promise<OrchestratorResult> => {
-    if (!(policy as ExplicitDeepRetrievalPolicy).allowReranking || !rerankingConfig?.enabled || !rerankingOpenai)
-      return initial;
+    if (!(policy as ExplicitDeepRetrievalPolicy).allowReranking || !rerankingConfig?.enabled) return initial;
+    const kind = rerankingConfig.kind ?? (rerankingConfig.enabled ? "llm" : "off");
+    if (kind === "llm" && !rerankingOpenai) return initial;
 
     try {
       const rrfScoreMap = new Map(initial.fused.map((result) => [result.factId, result.finalScore]));
@@ -1183,49 +1184,54 @@ export async function runExplicitDeepRetrieval(
       }
     }
 
-    if (rerankingConfig?.enabled && rerankingOpenai && !expansion.skipReranking) {
-      try {
-        const rrfScoreMap = new Map<string, number>(scopedFused.map((result) => [result.factId, result.finalScore]));
-        const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
-          const storedSec = entry.sourceDate ?? entry.createdAt;
-          return {
-            factId,
-            text: entry.text,
-            confidence: entry.confidence,
-            storedDate: formatDateUtc(storedSec),
-            finalScore: rrfScoreMap.get(factId) ?? 0,
-          };
-        });
+    if (rerankingConfig?.enabled && !expansion.skipReranking) {
+      const kind = rerankingConfig.kind ?? (rerankingConfig.enabled ? "llm" : "off");
+      if (kind === "llm" && !rerankingOpenai) {
+        // Skip reranking if LLM mode requires OpenAI but it's not available
+      } else {
+        try {
+          const rrfScoreMap = new Map<string, number>(scopedFused.map((result) => [result.factId, result.finalScore]));
+          const scoredFacts: ScoredFact[] = orderedEntries.map(({ factId, entry }) => {
+            const storedSec = entry.sourceDate ?? entry.createdAt;
+            return {
+              factId,
+              text: entry.text,
+              confidence: entry.confidence,
+              storedDate: formatDateUtc(storedSec),
+              finalScore: rrfScoreMap.get(factId) ?? 0,
+            };
+          });
 
-        const reranked = await rerankResults(
-          queryText,
-          scoredFacts,
-          rerankingConfig,
-          rerankingOpenai,
-          config.crossEncoder?.endpoint,
-        );
-        const rerankedOrder = new Map(reranked.map((fact, index) => [fact.factId, index]));
-        orderedEntries.sort(
-          (a, b) =>
-            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
-            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
-        );
-        if (orderedEntries.length > reranked.length) {
-          orderedEntries.length = reranked.length;
+          const reranked = await rerankResults(
+            queryText,
+            scoredFacts,
+            rerankingConfig,
+            rerankingOpenai,
+            config.crossEncoder?.endpoint,
+          );
+          const rerankedOrder = new Map(reranked.map((fact, index) => [fact.factId, index]));
+          orderedEntries.sort(
+            (a, b) =>
+              (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+              (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
+          );
+          if (orderedEntries.length > reranked.length) {
+            orderedEntries.length = reranked.length;
+          }
+          scopedFused.sort(
+            (a, b) =>
+              (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
+              (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
+          );
+          if (scopedFused.length > reranked.length) {
+            scopedFused.length = reranked.length;
+          }
+        } catch (err) {
+          capturePluginError(err instanceof Error ? err : new Error(String(err)), {
+            subsystem: "retrieval",
+            operation: "reranking",
+          });
         }
-        scopedFused.sort(
-          (a, b) =>
-            (rerankedOrder.get(a.factId) ?? Number.POSITIVE_INFINITY) -
-            (rerankedOrder.get(b.factId) ?? Number.POSITIVE_INFINITY),
-        );
-        if (scopedFused.length > reranked.length) {
-          scopedFused.length = reranked.length;
-        }
-      } catch (err) {
-        capturePluginError(err instanceof Error ? err : new Error(String(err)), {
-          subsystem: "retrieval",
-          operation: "reranking",
-        });
       }
     }
 

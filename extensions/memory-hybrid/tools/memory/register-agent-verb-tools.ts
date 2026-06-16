@@ -29,13 +29,7 @@ function resolveRetrievalV2Config(cfg: HybridMemoryConfig) {
 }
 
 export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
-  const { api, cfg, factsDb, vectorDb, openai } = runtime;
-
-  const scopeFilter = buildToolScopeFilter(
-    {},
-    api.context?.agentId ?? null,
-    { multiAgent: cfg.multiAgent, autoRecall: cfg.autoRecall }
-  );
+  const { api, cfg, factsDb, vectorDb, openai, currentAgentIdRef } = runtime;
 
   api.registerTool(
     {
@@ -53,6 +47,11 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         const limit = typeof args.limit === "number" ? Math.min(20, args.limit) : 5;
         const recallId = createRecallSpan("retrieve");
 
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
+          multiAgent: cfg.multiAgent,
+          autoRecall: cfg.autoRecall,
+        });
+
         const embeddings = runtime.embeddings;
         const queryVector = embeddings ? await embeddings.embed(query) : null;
         const embedFn = embeddings ? (text: string) => embeddings.embed(text) : undefined;
@@ -65,9 +64,10 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           scopeFilter,
         });
 
-        const ftsStub = result.entries.map((e, i) => ({
+        const fusedScoreMap = new Map(result.fused.map((f) => [f.factId, f.finalScore]));
+        const ftsStub = result.entries.map((e) => ({
           entry: e,
-          score: 1 - i * 0.01,
+          score: fusedScoreMap.get(e.id) ?? 0,
           backend: "sqlite" as const,
         }));
         const v2 = await applyRetrievalV2({
@@ -111,6 +111,10 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       }),
       async execute(_id, args: { idOrQuery?: string; reason?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
+          multiAgent: cfg.multiAgent,
+          autoRecall: cfg.autoRecall,
+        });
         const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
         pinFact(factsDb, fact.id, args.reason ?? "agent pin");
@@ -131,6 +135,10 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       }),
       async execute(_id, args: { idOrQuery?: string; until?: string }) {
         const key = String(args.idOrQuery ?? "").trim();
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
+          multiAgent: cfg.multiAgent,
+          autoRecall: cfg.autoRecall,
+        });
         const fact = resolveFactByIdOrQuery(factsDb, key, scopeFilter);
         if (!fact) return { content: [{ type: "text", text: "No matching fact found." }] };
         let untilSec: number;
@@ -221,6 +229,10 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
       }),
       async execute(_id, args: { limit?: number }) {
         const limit = typeof args.limit === "number" ? args.limit : 10;
+        const scopeFilter = buildToolScopeFilter({}, currentAgentIdRef.value, {
+          multiAgent: cfg.multiAgent,
+          autoRecall: cfg.autoRecall,
+        });
         const db = factsDb.getRawDb();
         let sql = `SELECT text FROM facts WHERE category = 'diary' AND superseded_at IS NULL`;
         const params: unknown[] = [];
