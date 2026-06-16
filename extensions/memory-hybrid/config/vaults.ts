@@ -26,11 +26,11 @@ export function validateVaultPath(path: string): { ok: boolean; reason?: string 
     return { ok: false, reason: "vault path cannot be filesystem root or home directory" };
   }
   for (const prefix of RESTRICTED_PREFIXES) {
-    if (resolved.startsWith(prefix + "/") || resolved === prefix) {
+    if (resolved.startsWith(`${prefix}/`) || resolved === prefix) {
       return { ok: false, reason: `vault path under restricted prefix ${prefix}` };
     }
   }
-  if (!resolved.startsWith(home + "/") && !resolved.startsWith(home)) {
+  if (!resolved.startsWith(`${home}/`)) {
     return { ok: false, reason: "vault path must be under $HOME" };
   }
   return { ok: true };

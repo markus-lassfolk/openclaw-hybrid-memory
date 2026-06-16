@@ -3,16 +3,12 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
-import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import type { HybridMemoryConfig } from "../../config.js";
+import { pinFact, resolveFactByIdOrQuery, snoozeFact } from "../../services/fact-lifecycle-verbs.js";
 import { createRecallSpan } from "../../services/recall-timing.js";
 import { recordIntentDistribution } from "../../services/recall-timing-stats.js";
-import {
-  pinFact,
-  resolveFactByIdOrQuery,
-  snoozeFact,
-} from "../../services/fact-lifecycle-verbs.js";
-import type { HybridMemoryConfig } from "../../config.js";
+import { runExplicitDeepRetrieval } from "../../services/retrieval-orchestrator.js";
+import { applyRetrievalV2, DEFAULT_RETRIEVAL_V2_CONFIG } from "../../services/retrieval-v2.js";
 import type { MemoryToolRuntime } from "./runtime.js";
 
 const DEFAULT_SNOOZE_DAYS = 30;
@@ -38,8 +34,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
     {
       name: "memory_retrieve",
       label: "Memory Retrieve",
-      description:
-        "Auto-routing recall with intent classification. Returns compact summaries by default.",
+      description: "Auto-routing recall with intent classification. Returns compact summaries by default.",
       parameters: Type.Object({
         query: Type.String({ description: "Natural language recall query" }),
         full: Type.Optional(Type.Boolean({ description: "Return full fact text" })),
@@ -51,14 +46,14 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
         const limit = typeof args.limit === "number" ? Math.min(20, args.limit) : 5;
         const recallId = createRecallSpan("retrieve");
 
-        const result = await runExplicitDeepRetrieval(query, null, factsDb, vectorDb, {
+        const result = await runExplicitDeepRetrieval(query, null, factsDb.getRawDb(), vectorDb, factsDb, {
           config: cfg.retrieval,
           rerankingConfig: cfg.reranking,
           rerankingOpenai: openai,
         });
 
         const ftsStub = result.entries.map((e, i) => ({
-          entry: e.entry,
+          entry: e,
           score: 1 - i * 0.01,
           backend: "sqlite" as const,
         }));
@@ -78,9 +73,7 @@ export function registerAgentVerbTools(runtime: MemoryToolRuntime): void {
           return `- [${r.entry.category}] ${text} (id=${r.entry.id})`;
         });
         const escalate =
-          v2.intent.confidence < 0.6
-            ? '\nescalate_to: memory_recall mode=hybrid for deeper retrieval'
-            : "";
+          v2.intent.confidence < 0.6 ? "\nescalate_to: memory_recall mode=hybrid for deeper retrieval" : "";
         return {
           content: [
             {

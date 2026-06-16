@@ -223,6 +223,8 @@ export function searchFts(
           filterSql += " AND superseded_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
           filterParams.push(nowSec);
         }
+        filterSql += " AND (snoozed_until IS NULL OR snoozed_until <= ?)";
+        filterParams.push(nowSec);
         if (entityFilter?.trim()) {
           filterSql += " AND LOWER(entity) = LOWER(?)";
           filterParams.push(entityFilter.trim());

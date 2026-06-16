@@ -2,21 +2,21 @@
  * Register user-friendly commands (setup, demo, providers, health, doctor, examples)
  */
 
-import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { WriteAheadLog } from "../backends/wal.js";
 import type { HybridMemoryConfig } from "../config.js";
 import type { EmbeddingProvider } from "../services/embeddings.js";
+import { registerBootstrapCommand } from "./cmd-bootstrap.js";
 import { registerDemoCommand } from "./cmd-demo.js";
 import { registerDoctorCommand } from "./cmd-doctor.js";
 import { registerExamplesCommand } from "./cmd-examples.js";
+import { registerFocusCommands } from "./cmd-focus.js";
 import { registerHealthCommand } from "./cmd-health.js";
+import { registerMineCommand } from "./cmd-mine.js";
 import { registerProvidersCommand } from "./cmd-providers.js";
 import { registerSetupCommand } from "./cmd-setup.js";
-import { registerMineCommand } from "./cmd-mine.js";
-import { registerBootstrapCommand } from "./cmd-bootstrap.js";
-import { registerFocusCommands } from "./cmd-focus.js";
+import type { Chainable } from "./shared.js";
 
 export interface UserFriendlyContext {
   cfg: HybridMemoryConfig;
@@ -66,7 +66,7 @@ export function registerUserFriendlyCommands(mem: Chainable, ctx: UserFriendlyCo
   );
   registerIfMissing(mem, "demo", () => registerDemoCommand(mem, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
   registerIfMissing(mem, "examples", () => registerExamplesCommand(mem));
-  registerIfMissing(mem, "mine", () => registerMineCommand(mem, ctx.cfg, ctx.factsDb));
+  registerIfMissing(mem, "mine", () => registerMineCommand(mem, ctx.cfg, ctx.factsDb, ctx.vectorDb, ctx.embeddings));
   registerIfMissing(mem, "bootstrap", () => registerBootstrapCommand(mem, ctx.cfg, ctx.factsDb));
   registerIfMissing(mem, "focus", () => registerFocusCommands(mem));
 }

@@ -7,16 +7,17 @@
  *   GET /api/status — JSON data for all dashboard sections
  */
 
-import { createServer } from "node:http";
 import type { Server } from "node:http";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
+import { capturePluginError } from "../../services/error-reporter.js";
+import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
 import type { VerificationStore } from "../../services/verification-store.js";
 import { pluginLogger } from "../../utils/logger.js";
 import { execFile as execFileCb } from "../../utils/process-runner.js";
 import { parseTags } from "../../utils/tags.js";
 import { collectGraphPayload, collectGraphRecallPayload, getGraphExplorerHtml } from "../dashboard-graph.js";
-import { getRecallStatsSnapshot } from "../../services/recall-timing-stats.js";
 
 const _execFile = promisify(execFileCb);
 const _require = createRequire(import.meta.url);
@@ -25,45 +26,45 @@ const MAX_DASHBOARD_JSON_BODY_BYTES = 64 * 1024;
 const _VERIFIED_FACT_SET_TTL_MS = 5000;
 const _verifiedFactIdCacheByStore = new WeakMap<VerificationStore, { at: number; ids: Set<string> }>();
 
+import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled } from "../../services/workshop-config.js";
 import {
   collectAgentHealth,
   collectAuditSummary,
+  collectMemoryViewerCorrelation,
   collectMemoryViewerEdicts,
   collectMemoryViewerEntities,
   collectMemoryViewerEpisodes,
   collectMemoryViewerIssues,
   collectMemoryViewerLinks,
-  collectMemoryViewerCorrelation,
   collectMemoryViewerNarratives,
   collectMemoryViewerProvenance,
   collectMemoryViewerStats,
   collectMemoryViewerVerified,
   collectMemoryViewerWorkflows,
   collectStatus,
+  type DashboardContext,
   getVerifiedFactIdSet,
   type MemoryViewerFact,
   parseUrlPathSegment,
   performFactAction,
   readJsonBody,
-  type DashboardContext,
 } from "./collectors.js";
+import { getDashboardHtml } from "./html.js";
 import {
   applyWorkshopProposal,
   collectDreamCycleLog,
   collectSkillTelemetry,
-  collectWorkshopDigest,
   collectWorkshopChanges,
+  collectWorkshopDigest,
   collectWorkshopProposalDetail,
   collectWorkshopProposals,
   quarantineWorkshopProposal,
   rejectWorkshopProposal,
-  reviseWorkshopProposal,
   revertWorkshopChange,
+  reviseWorkshopProposal,
   undoWorkshopProposal,
   type WorkshopDashboardContext,
 } from "./workshop-collectors.js";
-import { getDashboardHtml } from "./html.js";
-import { DEFAULT_WORKSHOP_LIST_LIMIT, isWorkshopEnabled } from "../../services/workshop-config.js";
 
 function workshopClientError(err: unknown, route: string): string {
   pluginLogger.error(`[dashboard-server] ${route}: ${err instanceof Error ? err.message : String(err)}`);
@@ -231,8 +232,12 @@ export async function createDashboardServer(ctx: DashboardContext, port: number)
         res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-cache" });
         res.end(JSON.stringify(stats));
       } catch (err: unknown) {
+        pluginLogger.error(
+          `[dashboard-server] /api/viewer/recall-stats: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        capturePluginError(err instanceof Error ? err : new Error(String(err)), { route: pathname });
         res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: "InternalServerError" }));
       }
       return;
     }

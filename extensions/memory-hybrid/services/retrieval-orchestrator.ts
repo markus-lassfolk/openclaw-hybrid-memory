@@ -11,47 +11,48 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { parseFactProvenanceJson, resolveProvenanceSourceFacts } from "../backends/facts-db/provenance-json.js";
+import { getCandidateIdsByStructuredFilters, hasActiveFilters } from "../backends/facts-db/search.js";
+import type { IssueStore } from "../backends/issue-store.js";
 import type { VectorDB } from "../backends/vector-db.js";
 import type { ClustersConfig, RerankingConfig, RetrievalConfig } from "../config.js";
 import type { MemoryEntry, SearchResult } from "../types/memory.js";
+import { formatDateUtc } from "../utils/dates.js";
+import { pluginLogger } from "../utils/logger.js";
 import { stableStringify } from "../utils/stable-stringify.js";
 import { isTierAllowedForWarmSearch } from "../utils/tier-filter.js";
-import { pluginLogger } from "../utils/logger.js";
-import { formatDateUtc } from "../utils/dates.js";
 import { DocumentGrader } from "./document-grader.js";
 import type { EmbeddingRegistry } from "./embedding-registry.js";
 import { shouldSuppressEmbeddingError } from "./embeddings.js";
 import { capturePluginError } from "./error-reporter.js";
 import { searchFts } from "./fts-search.js";
-import { type GraphFactLookup, expandGraph } from "./graph-retrieval.js";
+import { expandGraph, type GraphFactLookup } from "./graph-retrieval.js";
 import { expandQueryWithHyde } from "./hyde-helper.js";
+import { getCriticalOpenIssueFactIds, runIssueRetrievalStrategy } from "./issue-retrieval.js";
 import type { QueryExpander } from "./query-expander.js";
 import { type QueryValidationResult, validateQueryForMemoryLookup } from "./query-validator.js";
-import { type ScoredFact, rerankResults } from "./reranker.js";
+import { rerankResults, type ScoredFact } from "./reranker.js";
 import { type AliasDB, searchAliasStrategy } from "./retrieval-aliases.js";
 import {
-  DEFAULT_INTERACTIVE_RECALL_POLICY,
   type ConstrainedRetrievalPolicy,
+  DEFAULT_INTERACTIVE_RECALL_POLICY,
   type ExplicitDeepRetrievalPolicy,
   type InteractiveRecallPolicy,
   resolveConstrainedRetrievalPolicy,
   resolveExplicitDeepRetrievalPolicy,
 } from "./retrieval-mode-policy.js";
-import { getCandidateIdsByStructuredFilters, hasActiveFilters } from "../backends/facts-db/search.js";
+import { packIntoBudget } from "./retrieval-orchestrator/packing.js";
 import {
+  applyPostRrfAdjustments,
   type FactMetadata,
   type FusedResult,
-  RRF_K_DEFAULT,
-  type RankedResult,
-  applyPostRrfAdjustments,
   fuseResults,
+  type RankedResult,
+  RRF_K_DEFAULT,
 } from "./rrf-fusion.js";
-import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
-import { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
-import type { IssueStore } from "../backends/issue-store.js";
-import { getCriticalOpenIssueFactIds, runIssueRetrievalStrategy } from "./issue-retrieval.js";
-import { parseFactProvenanceJson, resolveProvenanceSourceFacts } from "../backends/facts-db/provenance-json.js";
 import { sanitizePromptInjection } from "./skill-prompt-injection.js";
+import { type ClusterFactLookup, detectClusters } from "./topic-clusters.js";
+
 export { estimateTokenCount, packIntoBudget, serializeFactForContext } from "./retrieval-orchestrator/packing.js";
 
 // ---------------------------------------------------------------------------
@@ -191,11 +192,17 @@ async function runSemanticStrategy(
   queryVector: number[],
   topK: number,
   candidateIds?: Set<string> | null,
+  nowSec?: number,
 ): Promise<RankedResult[]> {
   // Use a larger topK when filtering to account for candidates being filtered out
   const effectiveTopK = candidateIds ? Math.max(topK * 5, 200) : topK;
   const results: SearchResult[] = await vectorDb.search(queryVector, effectiveTopK, 0.3);
-  const filtered = candidateIds ? results.filter((r) => candidateIds.has(r.entry.id)) : results;
+  const now = nowSec ?? Math.floor(Date.now() / 1000);
+  const filtered = results.filter((r) => {
+    if (candidateIds && !candidateIds.has(r.entry.id)) return false;
+    if (r.entry.snoozedUntil != null && r.entry.snoozedUntil > now) return false;
+    return true;
+  });
   return filtered.slice(0, topK).map((r, i) => ({
     factId: r.entry.id,
     rank: i + 1,
@@ -825,7 +832,13 @@ export async function runExplicitDeepRetrieval(
           },
         ];
       });
-      const reranked = await rerankResults(queryText, scoredFacts, rerankingConfig, rerankingOpenai);
+      const reranked = await rerankResults(
+        queryText,
+        scoredFacts,
+        rerankingConfig,
+        rerankingOpenai,
+        config.crossEncoder?.endpoint,
+      );
       const orderedEntriesReranked = reranked
         .map((fact) => ({ factId: fact.factId, entry: fusedEntryMap.get(fact.factId)! }))
         .filter((entry) => entry.entry);
@@ -920,7 +933,9 @@ export async function runExplicitDeepRetrieval(
 
     if (strategies.includes("semantic") && currentQueryVector) {
       strategyPromises.push(
-        safeStrategy("semantic", () => runSemanticStrategy(vectorDb, currentQueryVector, semanticTopK, candidateIds)),
+        safeStrategy("semantic", () =>
+          runSemanticStrategy(vectorDb, currentQueryVector, semanticTopK, candidateIds, nowSec),
+        ),
       );
     }
 
@@ -928,7 +943,7 @@ export async function runExplicitDeepRetrieval(
       strategyPromises.push(
         safeStrategy("issues", () => {
           const results = runIssueRetrievalStrategy(queryText, issueStore, semanticTopK, factsDb);
-          const filtered = candidateIds ? results.filter((r) => candidateIds!.has(r.factId)) : results;
+          const filtered = candidateIds ? results.filter((r) => candidateIds?.has(r.factId)) : results;
           return filtered.map((r, i) => ({ ...r, rank: i + 1 }));
         }),
       );
@@ -965,7 +980,7 @@ export async function runExplicitDeepRetrieval(
           strategyPromises.push(
             safeStrategy(strategyName, async () => {
               const variantVector = await embedFn(variantQuery);
-              return runSemanticStrategy(vectorDb, variantVector, semanticTopK, candidateIds);
+              return runSemanticStrategy(vectorDb, variantVector, semanticTopK, candidateIds, nowSec);
             }),
           );
         }
@@ -1182,7 +1197,13 @@ export async function runExplicitDeepRetrieval(
           };
         });
 
-        const reranked = await rerankResults(queryText, scoredFacts, rerankingConfig, rerankingOpenai);
+        const reranked = await rerankResults(
+          queryText,
+          scoredFacts,
+          rerankingConfig,
+          rerankingOpenai,
+          config.crossEncoder?.endpoint,
+        );
         const rerankedOrder = new Map(reranked.map((fact, index) => [fact.factId, index]));
         orderedEntries.sort(
           (a, b) =>

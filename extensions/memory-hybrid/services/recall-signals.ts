@@ -30,11 +30,7 @@ export function hasSpacedRecall(distinctDays: number, minDays: number): boolean 
 }
 
 /** Auto-snooze candidate: surfaced > K times but never referenced. */
-export function isNeverReferencedCandidate(
-  surfaceCount: number,
-  referenceCount: number,
-  threshold: number,
-): boolean {
+export function isNeverReferencedCandidate(surfaceCount: number, referenceCount: number, threshold: number): boolean {
   return surfaceCount >= threshold && referenceCount === 0;
 }
 
@@ -47,15 +43,10 @@ export type FactRecallStats = {
 };
 
 /** Aggregate recall_events stats per fact (last N days). */
-export function aggregateRecallStats(
-  db: DatabaseSync,
-  windowDays = 30,
-): Map<string, FactRecallStats> {
+export function aggregateRecallStats(db: DatabaseSync, windowDays = 30): Map<string, FactRecallStats> {
   const cutoff = Math.floor(Date.now() / 1000) - windowDays * 86_400;
   const rows = db
-    .prepare(
-      `SELECT fact_ids, query, occurred_at FROM recall_events WHERE occurred_at >= ? AND hit = 1`,
-    )
+    .prepare("SELECT fact_ids, query, occurred_at FROM recall_events WHERE occurred_at >= ? AND hit = 1")
     .all(cutoff) as Array<{ fact_ids: string; query: string | null; occurred_at: number }>;
 
   const stats = new Map<string, FactRecallStats>();
@@ -66,7 +57,8 @@ export function aggregateRecallStats(
     } catch {
       continue;
     }
-    const day = Math.floor(row.occurred_at / 86_400);
+    const _day = Math.floor(row.occurred_at / 86_400);
+    const query = row.query?.trim() || "";
     for (const factId of ids) {
       let s = stats.get(factId);
       if (!s) {
@@ -81,7 +73,53 @@ export function aggregateRecallStats(
       }
       s.surfaceCount++;
     }
+    if (query) {
+      for (const factId of ids) {
+        const s = stats.get(factId)!;
+        s.referenceCount++;
+      }
+    }
   }
+
+  const queryDayTracker = new Map<string, Set<string>>();
+  const dayTracker = new Map<string, Set<number>>();
+  for (const row of rows) {
+    let ids: string[] = [];
+    try {
+      ids = JSON.parse(row.fact_ids) as string[];
+    } catch {
+      continue;
+    }
+    const day = Math.floor(row.occurred_at / 86_400);
+    const query = row.query?.trim() || "";
+    if (query) {
+      for (const factId of ids) {
+        const key = `${factId}:${query}`;
+        if (!queryDayTracker.has(key)) {
+          queryDayTracker.set(key, new Set());
+        }
+        queryDayTracker.get(key)?.add(`${day}`);
+      }
+    }
+    for (const factId of ids) {
+      if (!dayTracker.has(factId)) {
+        dayTracker.set(factId, new Set());
+      }
+      dayTracker.get(factId)?.add(day);
+    }
+  }
+
+  for (const [factId, s] of stats.entries()) {
+    const uniqueQueries = new Set<string>();
+    for (const key of queryDayTracker.keys()) {
+      if (key.startsWith(`${factId}:`)) {
+        uniqueQueries.add(key);
+      }
+    }
+    s.distinctQueries = uniqueQueries.size;
+    s.distinctDays = dayTracker.get(factId)?.size ?? 0;
+  }
+
   return stats;
 }
 

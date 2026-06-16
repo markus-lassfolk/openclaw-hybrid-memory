@@ -79,5 +79,11 @@ export function rowToMemoryEntry(row: Record<string, unknown>): MemoryEntry {
         return null;
       }
     })(),
+    pinnedAt: (row.pinned_at as number) ?? null,
+    pinnedReason: (row.pinned_reason as string) ?? null,
+    snoozedUntil: (row.snoozed_until as number) ?? null,
+    qualityScore: (row.quality_score as number) ?? null,
+    duplicateCount: (row.duplicate_count as number) ?? 0,
+    revisionCount: (row.revision_count as number) ?? 0,
   };
 }

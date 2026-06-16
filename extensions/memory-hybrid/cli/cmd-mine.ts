@@ -4,14 +4,10 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import type { Chainable } from "./shared.js";
 import type { FactsDB } from "../backends/facts-db.js";
 import type { HybridMemoryConfig } from "../config.js";
-import {
-  estimateMineCostUsd,
-  readTranscriptFile,
-  type ParsedConversation,
-} from "../services/transcript-importers/index.js";
+import { estimateMineCostUsd, readTranscriptFile } from "../services/transcript-importers/index.js";
+import type { Chainable } from "./shared.js";
 
 export type MineOptions = {
   name?: string;
@@ -26,8 +22,18 @@ const DEFAULT_MAX_BUDGET_USD = 5;
 
 export function registerMineCommand(
   program: Chainable,
-  cfg: HybridMemoryConfig,
+  _cfg: HybridMemoryConfig,
   factsDb: FactsDB,
+  vectorDb?: {
+    store: (entry: {
+      text: string;
+      vector: number[];
+      importance: number;
+      category: string;
+      id: string;
+    }) => Promise<unknown>;
+  },
+  embeddings?: { embed: (text: string) => Promise<number[]>; modelName: string },
 ): void {
   program
     .command("mine <path>")
@@ -49,10 +55,7 @@ export function registerMineCommand(
         process.exit(1);
       }
       const batchId = randomUUID();
-      const byteCount = conversations.reduce(
-        (n, c) => n + c.messages.reduce((m, msg) => m + msg.content.length, 0),
-        0,
-      );
+      const byteCount = conversations.reduce((n, c) => n + c.messages.reduce((m, msg) => m + msg.content.length, 0), 0);
       const estCost = estimateMineCostUsd(byteCount);
       console.log(`Parsed ${conversations.length} conversation(s), ~${byteCount} bytes`);
       if (opts.synthesize) {
@@ -75,15 +78,16 @@ export function registerMineCommand(
       const db = factsDb.getRawDb();
       for (const conv of conversations) {
         const existing = db
-          .prepare(
-            `SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL LIMIT 1`,
-          )
+          .prepare("SELECT id FROM facts WHERE content_dedup_hash = ? AND superseded_at IS NULL LIMIT 1")
           .get(conv.contentHash) as { id: string } | undefined;
         if (existing) {
           skipped++;
           continue;
         }
-        const text = conv.messages.map((m) => `${m.role}: ${m.content}`).join("\n\n").slice(0, 50_000);
+        const text = conv.messages
+          .map((m) => `${m.role}: ${m.content}`)
+          .join("\n\n")
+          .slice(0, 50_000);
         const entry = factsDb.store({
           text,
           category: "conversation",
@@ -94,15 +98,38 @@ export function registerMineCommand(
           source: `mine:${conv.source}`,
           confidence: 0.8,
         });
-        db.prepare(`UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?`).run(
+        db.prepare("UPDATE facts SET content_dedup_hash = ?, mine_batch_id = ? WHERE id = ?").run(
           conv.contentHash,
           batchId,
           entry.id,
         );
         written++;
+
+        if (opts.embed && vectorDb && embeddings) {
+          try {
+            const vector = await embeddings.embed(text.slice(0, 8000));
+            factsDb.setEmbeddingModel(entry.id, embeddings.modelName);
+            await vectorDb.store({
+              text,
+              vector,
+              importance: 0.5,
+              category: "conversation",
+              id: entry.id,
+            });
+          } catch (err) {
+            console.warn(`Failed to embed fact ${entry.id}: ${err}`);
+          }
+        }
       }
       console.log(`Mine complete: batch=${batchId} written=${written} skipped=${skipped}`);
-      if (opts.embed) console.log("Note: run storage re-index or wait for background embed to vectorize new facts.");
-      if (opts.synthesize) console.log("Note: --synthesize invokes multi-pass-extractor in a follow-up maintenance job.");
+      if (opts.embed && (!vectorDb || !embeddings)) {
+        console.log(
+          "Note: --embed requires configured vectorDb and embeddings. Run storage re-index or wait for background embed to vectorize new facts.",
+        );
+      } else if (opts.embed && embeddings) {
+        console.log(`Embedded ${written} facts using ${embeddings.modelName}`);
+      }
+      if (opts.synthesize)
+        console.log("Note: --synthesize invokes multi-pass-extractor in a follow-up maintenance job.");
     });
 }
