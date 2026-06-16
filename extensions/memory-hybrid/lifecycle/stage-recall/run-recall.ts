@@ -1067,7 +1067,7 @@ export async function runRecall(
           sessionId: sessionKey,
           openai: ctx.openai,
           focusTopic: focusState?.topic,
-          factsDb: ctx.factsDb,
+          factsDb: fanOutAutoRecall ? undefined : ctx.factsDb,
           recordBypassTelemetry: false,
         });
         candidates = v2.results;
