@@ -35,10 +35,19 @@ export function registerGoalStewardshipInjection(
   api.on("before_agent_start", async (event: unknown, hookCtx: unknown) => {
     try {
       const userText = extractLastUserMessageText(event);
-      if (!userText || !matchesHeartbeat(userText, gs)) return undefined;
+      if (!userText) {
+        api.logger?.debug?.(
+          "memory-hybrid: goal stewardship skipped — no user text in hook event (expected event.prompt or messages)",
+        );
+        return undefined;
+      }
+      if (!matchesHeartbeat(userText, gs)) return undefined;
       const resolvedApi = withHookResolutionApi(api, hookCtx);
       const sessionKey = resolveSessionKeyFromHookEvent(event, resolvedApi);
-      if (isSubagentSession(sessionKey ?? undefined)) return undefined;
+      if (isSubagentSession(sessionKey ?? undefined)) {
+        api.logger?.info?.("memory-hybrid: goal stewardship skipped — subagent session");
+        return undefined;
+      }
 
       const goals = await listActiveGoals(goalsDir);
 
@@ -68,7 +77,10 @@ export function registerGoalStewardshipInjection(
         }
       }
 
-      if (goals.length === 0) return undefined;
+      if (goals.length === 0) {
+        api.logger?.info?.("memory-hybrid: goal stewardship skipped — no active goals");
+        return undefined;
+      }
 
       if (isGlobalRateLimited(gs.globalLimits.maxDispatchesPerHour, goalsDir)) {
         api.logger?.warn?.("memory-hybrid: goal stewardship skipped — global dispatch rate limit");
@@ -93,7 +105,12 @@ export function registerGoalStewardshipInjection(
         suggestHeavyDirective: gs.triageSuggestHeavyDirective,
         triageHeavy,
       });
-      if (!built) return undefined;
+      if (!built) {
+        api.logger?.info?.(
+          "memory-hybrid: goal stewardship skipped — no candidate goals past cooldown/budget filters",
+        );
+        return undefined;
+      }
 
       api.logger?.info?.(
         `memory-hybrid: goal stewardship bundle (${built.goalsIncluded.length} goal(s), heavyHint=${built.suggestHeavy})`,
