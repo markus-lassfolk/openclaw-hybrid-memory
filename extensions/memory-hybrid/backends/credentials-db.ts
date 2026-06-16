@@ -289,22 +289,48 @@ export class CredentialsDB extends BaseSqliteStore {
             const now = Math.floor(Date.now() / 1000);
 
             if (plan.action === "merge_into_sibling" && plan.siblingType) {
-              this.liveDb
+              const updateResult = this.liveDb
                 .prepare(
                   "UPDATE credentials SET url = ?, updated = ? WHERE service = ? AND type = ? AND (url IS NULL OR url = '')",
                 )
                 .run(plan.endpointUrl, now, service, plan.siblingType);
+              if (updateResult.changes === 0) {
+                const targetRow = this.liveDb
+                  .prepare("SELECT notes FROM credentials WHERE service = ? AND type = ?")
+                  .get(service, plan.siblingType) as { notes: string | null } | undefined;
+                const existingNotes = targetRow?.notes?.trim() || "";
+                const legacyEndpointNote = `[Legacy endpoint: ${plan.endpointUrl}]`;
+                const updatedNotes = existingNotes
+                  ? `${existingNotes} ${legacyEndpointNote}`
+                  : legacyEndpointNote;
+                this.liveDb
+                  .prepare("UPDATE credentials SET notes = ?, updated = ? WHERE service = ? AND type = ?")
+                  .run(updatedNotes, now, service, plan.siblingType);
+              }
               this.liveDb.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, legacyType);
               typesPresent.delete(legacyType);
               continue;
             }
 
             if (plan.action === "merge_into_other") {
-              this.liveDb
+              const updateResult = this.liveDb
                 .prepare(
                   "UPDATE credentials SET url = ?, updated = ? WHERE service = ? AND type = 'other' AND (url IS NULL OR url = '')",
                 )
                 .run(plan.endpointUrl, now, service);
+              if (updateResult.changes === 0) {
+                const targetRow = this.liveDb
+                  .prepare("SELECT notes FROM credentials WHERE service = ? AND type = 'other'")
+                  .get(service) as { notes: string | null } | undefined;
+                const existingNotes = targetRow?.notes?.trim() || "";
+                const legacyEndpointNote = `[Legacy endpoint: ${plan.endpointUrl}]`;
+                const updatedNotes = existingNotes
+                  ? `${existingNotes} ${legacyEndpointNote}`
+                  : legacyEndpointNote;
+                this.liveDb
+                  .prepare("UPDATE credentials SET notes = ?, updated = ? WHERE service = ? AND type = 'other'")
+                  .run(updatedNotes, now, service);
+              }
               this.liveDb.prepare("DELETE FROM credentials WHERE service = ? AND type = ?").run(service, legacyType);
               typesPresent.delete(legacyType);
               continue;
