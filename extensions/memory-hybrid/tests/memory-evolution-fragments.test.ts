@@ -14,6 +14,12 @@ import { _resetWalCircuitBreakerForTesting, walWrite } from "../services/wal-hel
 import type { WriteAheadLog } from "../backends/wal.js";
 import { vi } from "vitest";
 
+vi.mock("../services/chat.js", () => ({
+  chatCompleteWithRetry: vi.fn(async () =>
+    JSON.stringify({ tags: ["authentication", "oauth"], summary: "OAuth gateway authentication context" }),
+  ),
+}));
+
 describe("runMemoryEvolutionPass (#1914)", () => {
   let tmpDir: string;
   let factsDb: FactsDB;
@@ -73,6 +79,50 @@ describe("runMemoryEvolutionPass (#1914)", () => {
       mode: "heuristic",
     });
     expect(result.neighborsUpdated).toBe(0);
+  });
+
+  it("uses nano LLM when mode=llm", async () => {
+    const db = factsDb.getRawDb();
+    const a = factsDb.store({
+      text: "Authentication service uses OAuth gateway tokens",
+      category: "fact",
+      importance: 0.7,
+      source: "conversation",
+    });
+    const b = factsDb.store({
+      text: "Unrelated deployment checklist",
+      category: "fact",
+      importance: 0.5,
+      source: "conversation",
+      tags: ["ops"],
+    });
+    const now = Math.floor(Date.now() / 1000);
+    db.prepare(
+      `INSERT INTO memory_links (id, source_fact_id, target_fact_id, link_type, strength, created_at)
+       VALUES (?, ?, ?, 'RELATED', 1.0, ?)`,
+    ).run("link-llm", a.id, b.id, now);
+
+    const result = await runMemoryEvolutionPass(
+      db,
+      {
+        enabled: true,
+        maxNeighborsPerFact: 5,
+        dailyLlmCallCap: 50,
+        mode: "llm",
+      },
+      {
+        openai: {} as never,
+        nanoModels: ["test/nano"],
+      },
+    );
+    expect(result.llmCalls).toBeGreaterThan(0);
+    expect(result.neighborsUpdated).toBeGreaterThanOrEqual(1);
+    const row = db.prepare("SELECT evolution_reason, tags FROM facts WHERE id = ?").get(b.id) as {
+      evolution_reason: string;
+      tags: string;
+    };
+    expect(row.evolution_reason).toContain(":llm");
+    expect(row.tags).toContain("oauth");
   });
 });
 
