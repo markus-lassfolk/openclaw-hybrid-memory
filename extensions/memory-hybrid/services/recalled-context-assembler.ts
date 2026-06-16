@@ -121,7 +121,7 @@ export function finalizeInjectionMemoryContent(
     facts,
     legacyMemoryContextWrapper: boundary?.legacyMemoryContextWrapper !== false,
   });
-  const parts = [spoBlock, vaultBlock, plainMemoryContent].filter(Boolean);
+  const parts = [spoBlock, vaultBlock].filter(Boolean);
   return parts.join("\n\n");
 }
 

@@ -200,18 +200,23 @@ export async function classifyQueryIntent(
   return result;
 }
 
+/** Dispose intent classifier (clear timer and caches). */
+export function disposeIntentClassifier(): void {
+  sessionCaches.clear();
+  sessionLastActivity.clear();
+  if (staleSweepTimer !== null) {
+    clearInterval(staleSweepTimer);
+    staleSweepTimer = null;
+  }
+}
+
 /** Clear session intent cache (for tests). */
 export function clearIntentSessionCache(sessionId?: string): void {
   if (sessionId) {
     sessionCaches.delete(sessionId);
     sessionLastActivity.delete(sessionId);
   } else {
-    sessionCaches.clear();
-    sessionLastActivity.clear();
-  }
-  if (staleSweepTimer !== null) {
-    clearInterval(staleSweepTimer);
-    staleSweepTimer = null;
+    disposeIntentClassifier();
   }
 }
 

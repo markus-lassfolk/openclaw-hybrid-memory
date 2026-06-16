@@ -1047,11 +1047,20 @@ export async function runRecall(
       };
       const focusState = getFocusTopic(sessionKey);
       try {
+        const getEntry = fanOutAutoRecall
+          ? (id: string) => {
+              for (const handle of vaultHandles) {
+                const entry = handle.factsDb.getById(id);
+                if (entry) return entry;
+              }
+              return ctx.factsDb.getById(id);
+            }
+          : (id: string) => ctx.factsDb.getById(id);
         const v2 = await applyRetrievalV2({
           query: e.prompt,
           results: candidates,
           ftsResults: candidates,
-          getEntry: (id) => ctx.factsDb.getById(id),
+          getEntry,
           config: v2Config,
           recallId: recallSpan,
           sessionId: sessionKey,

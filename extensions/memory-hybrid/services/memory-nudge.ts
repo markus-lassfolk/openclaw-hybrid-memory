@@ -181,8 +181,8 @@ export function sweepStaleNudgeSessionState(cutoffMs: number): number {
   return swept;
 }
 
-/** Clear nudge state (tests). */
-export function resetNudgeState(): void {
+/** Dispose memory nudge (clear timer and state). */
+export function disposeMemoryNudge(): void {
   suppressUntilBySession.clear();
   lastNudgeBySession.clear();
   sessionLastActivity.clear();
@@ -190,4 +190,9 @@ export function resetNudgeState(): void {
     clearInterval(staleSweepTimer);
     staleSweepTimer = null;
   }
+}
+
+/** Clear nudge state (tests). */
+export function resetNudgeState(): void {
+  disposeMemoryNudge();
 }
