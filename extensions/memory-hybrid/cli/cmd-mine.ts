@@ -46,13 +46,17 @@ export async function executeMineCommand(
     const db = factsDb.getRawDb();
     const now = Math.floor(Date.now() / 1000);
     const factIds = db
-      .prepare("SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL")
+      .prepare(
+        `SELECT id FROM facts WHERE mine_batch_id = ? AND superseded_at IS NULL
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
+      )
       .all(opts.undo)
       .map((r: { id: string }) => r.id);
     const result = db
       .prepare(
         `UPDATE facts SET superseded_at = ?, superseded_by = 'mine-undo'
-         WHERE mine_batch_id = ? AND superseded_at IS NULL`,
+         WHERE mine_batch_id = ? AND superseded_at IS NULL
+         AND id NOT IN (SELECT fact_id FROM verified_facts)`,
       )
       .run(now, opts.undo);
     if (vectorDb && factIds.length > 0) {
